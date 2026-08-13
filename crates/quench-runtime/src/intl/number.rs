@@ -276,12 +276,18 @@ impl NumberOptions {
         }
         let negative = text.starts_with('-');
         let zero = number == 0.0;
+        let rounded_zero = text
+            .trim_start_matches('-')
+            .chars()
+            .all(|character| matches!(character, '0' | '.' | ','));
         let hide_negative = self.sign_display == "never"
             || (self.sign_display == "auto" && zero && self.style == "currency")
-            || (self.sign_display == "exceptZero" && zero);
+            || (self.sign_display == "exceptZero" && rounded_zero);
         if hide_negative && negative {
             text.remove(0);
-        } else if !negative && (self.sign_display == "always" || self.sign_display == "exceptZero")
+        } else if !negative
+            && (self.sign_display == "always"
+                || (self.sign_display == "exceptZero" && !rounded_zero))
         {
             text.insert(0, '+');
         }
