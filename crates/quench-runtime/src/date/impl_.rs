@@ -173,7 +173,7 @@ fn date_parse(arguments: &[Value]) -> Value {
 }
 
 fn date_utc(arguments: &[Value]) -> Result<Value, VmError> {
-    let year = date_argument(arguments, 0, 0.0)?;
+    let year = date_argument(arguments, 0, f64::NAN)?;
     let month = date_argument(arguments, 1, 0.0)?;
     let day = date_argument(arguments, 2, 1.0)?;
     let hour = date_argument(arguments, 3, 0.0)?;

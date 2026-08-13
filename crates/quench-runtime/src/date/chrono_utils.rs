@@ -40,6 +40,7 @@ const MS_PER_DAY: f64 = 86_400_000.0;
 /// Year values 0–99 are interpreted as 1900+year in the Date constructor and
 /// Date.UTC (not in the setters).
 pub fn normalize_constructor_year(year: f64) -> f64 {
+    let year = year.trunc();
     if (0.0..=99.0).contains(&year) {
         1900.0 + year
     } else {
@@ -69,6 +70,13 @@ pub fn make_date_ms(
     {
         return f64::NAN;
     }
+    let year = year.trunc();
+    let month = month.trunc();
+    let day = day.trunc();
+    let hour = hour.trunc();
+    let minute = minute.trunc();
+    let second = second.trunc();
+    let ms = ms.trunc();
     let year_of = year + (month / 12.0).floor();
     let month_of = month.rem_euclid(12.0) + 1.0;
     let Some(first) = NaiveDate::from_ymd_opt(year_of as i32, month_of as u32, 1) else {
