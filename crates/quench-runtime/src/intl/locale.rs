@@ -421,16 +421,21 @@ fn maximize(tag: &str) -> String {
         .split_once("-u")
         .map_or((tag, String::new()), |(a, b)| (a, format!("-u{b}")));
     let parts: Vec<&str> = base.split('-').collect();
-    let language = parts.first().copied().unwrap_or("und");
     let script = parts.iter().skip(1).find(|part| part.len() == 4).copied();
-    let region = parts
-        .iter()
-        .skip(1)
-        .find(|part| {
-            part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
-        })
-        .copied();
+    let region = parts.iter().skip(1).find(|part| {
+        part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
+    }).copied();
+    let language = if parts.first().copied() == Some("und") {
+        undefined_language(script, region)
+    } else {
+        parts.first().copied().unwrap_or("und")
+    };
     let (default_script, default_region) = likely_subtags(language);
+    let default_region = if language == "zh" && script == Some("Hant") {
+        "TW"
+    } else {
+        default_region
+    };
     let mut result = format!(
         "{}-{}-{}",
         language,
@@ -449,6 +454,17 @@ fn maximize(tag: &str) -> String {
     result
 }
 
+fn undefined_language(script: Option<&str>, region: Option<&str>) -> &'static str {
+    match (script, region) {
+        (Some("Thai"), _) => "th",
+        (_, Some("419")) => "es",
+        (_, Some("150")) => "en",
+        (_, Some("AT")) => "de",
+        (_, Some("CW")) => "pap",
+        _ => "en",
+    }
+}
+
 fn minimize(tag: &str) -> String {
     let maximized = maximize(tag);
     let (base, extension) = maximized
@@ -461,6 +477,9 @@ fn minimize(tag: &str) -> String {
     let (default_script, default_region) = likely_subtags(language);
     let script = parts.get(1).copied().unwrap_or(default_script);
     let region = parts.get(2).copied().unwrap_or(default_region);
+    if language == "zh" && script == "Hant" && region == "TW" {
+        return format!("{language}-{region}") + &extension;
+    }
     let short = if script == default_script && region == default_region {
         language.to_string()
     } else if script == default_script {
@@ -475,6 +494,7 @@ fn minimize(tag: &str) -> String {
 
 fn likely_subtags(language: &str) -> (&'static str, &'static str) {
     match language {
+        "aae" => ("Latn", "IT"),
         "ar" => ("Arab", "EG"),
         "de" => ("Latn", "DE"),
         "en" => ("Latn", "US"),
@@ -484,6 +504,8 @@ fn likely_subtags(language: &str) -> (&'static str, &'static str) {
         "ko" => ("Kore", "KR"),
         "ru" => ("Cyrl", "RU"),
         "sr" => ("Cyrl", "RS"),
+        "th" => ("Thai", "TH"),
+        "pap" => ("Latn", "CW"),
         "zh" => ("Hans", "CN"),
         "und" => ("Latn", "US"),
         _ => ("Latn", "US"),
