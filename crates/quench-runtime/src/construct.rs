@@ -77,11 +77,10 @@ pub(crate) fn construct_value_with_new_target(
 }
 pub(crate) fn construct_super(
     target: &Value,
-    new_target: &std::rc::Rc<crate::value::FunctionValue>,
+    new_target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let new_target = Value::Function(std::rc::Rc::clone(new_target));
-    construct_with_new_target(target, &new_target, arguments)
+    construct_with_new_target(target, new_target, arguments)
 }
 fn construct_with_new_target(
     target: &Value,
