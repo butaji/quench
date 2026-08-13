@@ -88,8 +88,8 @@ pub(crate) fn prototype_method(
         }
         crate::ops::Builtin::IntlListFormatResolvedOptions => Ok(make_object(vec![
             ("locale".to_string(), Value::String(locale)),
-            ("style".to_string(), Value::String(style)),
             ("type".to_string(), Value::String(list_type)),
+            ("style".to_string(), Value::String(style)),
         ])),
         _ => Err(runtime_error("TypeError: method not found")),
     }
