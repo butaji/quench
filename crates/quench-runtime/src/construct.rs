@@ -423,6 +423,7 @@ fn construct_data_view(arguments: &[Value]) -> Result<Value, crate::execute::VmE
     ))))
 }
 
+include!("construct_typed_length.rs");
 include!("construct_typed_low.rs");
 include!("construct_typed_high.rs");
 include!("construct_typed_bigint.rs");
