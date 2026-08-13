@@ -5,7 +5,7 @@ use crate::{execute::VmError, ops::Builtin, value::Value};
 use super::{chrono_utils, extract_time, store_time};
 
 pub fn set_date(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let current = date_time(receiver)?;
+    let current = time_value(receiver)?;
     let day = argument(arguments, 0, f64::NAN)?;
     if current.is_nan() {
         return Ok(Value::Number(f64::NAN));
@@ -17,7 +17,7 @@ pub fn set_date(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
 }
 
 pub fn set_full_year(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let current = date_time(receiver)?;
+    let current = time_value(receiver)?;
     let parts = if current.is_nan() {
         chrono_utils::utc_components(0.0)
     } else {
@@ -32,7 +32,7 @@ pub fn set_full_year(receiver: Option<&Value>, arguments: &[Value]) -> Result<Va
 }
 
 pub fn set_month(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let current = date_time(receiver)?;
+    let current = time_value(receiver)?;
     let parts = chrono_utils::local_components(current);
     let month = argument(arguments, 0, f64::NAN)?;
     let day = argument(arguments, 1, parts.map_or(f64::NAN, |parts| parts.2 as f64))?;
@@ -46,7 +46,7 @@ pub fn set_month(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
 }
 
 pub fn set_time(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    date_time(receiver)?;
+    time_value(receiver)?;
     store(receiver, argument(arguments, 0, f64::NAN)?)
 }
 
@@ -75,7 +75,7 @@ fn set_components(
     start: usize,
     utc: bool,
 ) -> Result<Value, VmError> {
-    let current = date_time(receiver)?;
+    let current = time_value(receiver)?;
     let parts = if utc {
         chrono_utils::utc_components(current)
     } else {
@@ -142,7 +142,7 @@ fn argument(arguments: &[Value], index: usize, default: f64) -> Result<f64, VmEr
         .map(|value| value.unwrap_or(default))
 }
 
-fn date_time(receiver: Option<&Value>) -> Result<f64, VmError> {
+pub(crate) fn time_value(receiver: Option<&Value>) -> Result<f64, VmError> {
     let valid = receiver.and_then(|value| match value {
         Value::Object(properties) => properties
             .iter()
