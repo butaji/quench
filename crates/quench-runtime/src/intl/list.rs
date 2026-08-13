@@ -18,13 +18,20 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 "Cannot convert null or undefined to object",
             ));
         }
-        let style_value = crate::execute::get_property_result(options, "style")?;
-        if !matches!(style_value, Value::Undefined) {
-            style = crate::conversion::to_string(&style_value)?;
+        let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
+        if !matches!(matcher, Value::Undefined) {
+            let matcher = crate::conversion::to_string(&matcher)?;
+            if !matches!(matcher.as_str(), "lookup" | "best fit") {
+                return Err(runtime_error("RangeError: invalid localeMatcher"));
+            }
         }
         let type_value = crate::execute::get_property_result(options, "type")?;
         if !matches!(type_value, Value::Undefined) {
             list_type = crate::conversion::to_string(&type_value)?;
+        }
+        let style_value = crate::execute::get_property_result(options, "style")?;
+        if !matches!(style_value, Value::Undefined) {
+            style = crate::conversion::to_string(&style_value)?;
         }
     }
     if !matches!(style.as_str(), "long" | "short" | "narrow") {
