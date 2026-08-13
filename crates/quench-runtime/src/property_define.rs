@@ -100,11 +100,32 @@ fn accessor_bound(
 }
 
 fn accessor_builtin(builtin: Builtin, key: &str, field: &str) -> Option<Value> {
-    crate::builtins::read_intrinsic_override(builtin, field_key(key))
+    static_accessor(builtin, field_key(key))
         .and_then(|descriptor| descriptor_field(&descriptor, field))
+        .or_else(|| {
+            crate::builtins::read_intrinsic_override(builtin, field_key(key))
+                .and_then(|descriptor| descriptor_field(&descriptor, field))
+        })
         .or_else(|| {
             builtin_prototype(builtin).and_then(|prototype| accessor_value(&prototype, key, field))
         })
+}
+
+/// Accessor properties that are intrinsic to a builtin itself (get-only, no
+/// runtime override needed), e.g. `get Set [@@species]`.
+fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
+    let getter = match (builtin, key) {
+        (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
+        (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
+        (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
+        _ => return None,
+    };
+    Some(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            ("get".to_string(), Value::Builtin(getter)),
+            ("set".to_string(), Value::Undefined),
+        ]),
+    )))
 }
 
 fn field_key(descriptor_key: &str) -> &str {

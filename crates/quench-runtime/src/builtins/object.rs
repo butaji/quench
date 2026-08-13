@@ -142,30 +142,13 @@ fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError>
 }
 fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
     Ok(match receiver {
-        Value::Object(properties) => {
-            let deleted = properties
-                .iter()
-                .any(|(name, _)| name == &crate::builtins::deleted_key(key));
-            properties
-                .iter()
-                .any(|(name, _)| name == key && !super::is_descriptor_key(name))
-                || (!deleted
-                    && crate::vm::is_global_object(&Value::Object(properties.clone()))
-                    && crate::vm::global_builtin_exists(key))
-        }
+        Value::Object(properties) => object_data_owns(properties, key),
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
             .upgrade()
             .is_some_and(|properties| object_owns(&properties, key)),
-        Value::Array(values) => {
-            (!values.is_arguments() && key == "length")
-                || key
-                    .parse::<usize>()
-                    .is_ok_and(|index| values.has_index(index))
-                || values.property(key).is_some()
-                || (values.is_strict_arguments() && key == "callee")
-        }
+        Value::Array(values) => array_owns(values, key),
         Value::String(value) => {
             key == "length" || valid_index(key, crate::strings::utf16_len(value))
         }
@@ -181,6 +164,27 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
         }
         _ => false,
     })
+}
+
+fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
+    let deleted = properties
+        .iter()
+        .any(|(name, _)| name == &crate::builtins::deleted_key(key));
+    properties
+        .iter()
+        .any(|(name, _)| name == key && !super::is_descriptor_key(name))
+        || (!deleted
+            && crate::vm::is_global_object(&Value::Object(properties.clone()))
+            && crate::vm::global_builtin_exists(key))
+}
+
+fn array_owns(values: &crate::value::ArrayData, key: &str) -> bool {
+    (!values.is_arguments() && key == "length")
+        || key
+            .parse::<usize>()
+            .is_ok_and(|index| values.has_index(index))
+        || values.property(key).is_some()
+        || (values.is_strict_arguments() && key == "callee")
 }
 
 fn object_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
@@ -314,6 +318,9 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::SetPrototype && key == "size" {
         return Some(accessor_descriptor(Builtin::SetSizeGetter));
     }
+    if builtin == Builtin::Set && key == "Symbol.species" {
+        return Some(accessor_descriptor(Builtin::SetSpeciesGetter));
+    }
     if builtin == Builtin::Symbol && key == "unscopables" {
         return super::special_property(builtin, key)
             .map(|property| descriptor_object_with_flags(property, false, false, false));
@@ -351,69 +358,7 @@ fn accessor_descriptor(getter: Builtin) -> Value {
     ])))
 }
 include!("object_property_flags.rs");
-fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
-    if let Some(descriptor) = values.descriptor(key) {
-        return Some(refresh_array_descriptor(values, key, descriptor));
-    }
-    if values.is_strict_arguments() && key == "callee" {
-        return Some(strict_callee_descriptor());
-    }
-    if values.is_arguments() && matches!(key, "length" | "callee") {
-        return values
-            .property(key)
-            .map(|value| descriptor_object_with_flags(value, true, false, true));
-    }
-    if values.is_arguments() && key == "Symbol.iterator" {
-        return values
-            .property(key)
-            .map(|value| descriptor_object_with_flags(value, true, false, true));
-    }
-    if key == "length" {
-        return Some(descriptor_object_with_flags(
-            Value::Number(values.logical_len() as f64),
-            true,
-            false,
-            false,
-        ));
-    }
-    key.parse::<usize>()
-        .ok()
-        .and_then(|index| values.get_index(index))
-        .map(|value| descriptor_object(&value))
-        .or_else(|| {
-            values
-                .property(key)
-                .map(|value| descriptor_object_with_flags(value, true, true, true))
-        })
-}
-fn refresh_array_descriptor(
-    values: &crate::value::ArrayData,
-    key: &str,
-    mut descriptor: Value,
-) -> Value {
-    let (Ok(index), Value::Object(properties)) = (key.parse::<usize>(), &mut descriptor) else {
-        return descriptor;
-    };
-    let Some(value) = values.get_index(index) else {
-        return descriptor;
-    };
-    if let Some((_, current)) = Rc::make_mut(properties)
-        .iter_mut()
-        .find(|(name, _)| name == "value")
-    {
-        *current = value;
-    }
-    descriptor
-}
-fn strict_callee_descriptor() -> Value {
-    let thrower = Value::Builtin(Builtin::TypeError);
-    Value::Object(Rc::new(ObjectData::new(vec![
-        ("get".to_string(), thrower.clone()),
-        ("set".to_string(), thrower),
-        ("enumerable".to_string(), Value::Boolean(false)),
-        ("configurable".to_string(), Value::Boolean(false)),
-    ])))
-}
+include!("object_array_descriptor.rs");
 fn string_descriptor(value: &str, key: &str) -> Option<Value> {
     crate::strings::char_at_utf16(value, key.parse::<usize>().ok()?)
         .map(|character| descriptor_object_with_flags(Value::String(character), false, true, false))

@@ -39,7 +39,18 @@ pub(crate) fn from_set(receiver: Option<&Value>) -> Result<Value, crate::execute
             "Set iterator called on incompatible receiver",
         ));
     };
-    Ok(make_set(Rc::clone(data)))
+    Ok(make_set(Rc::clone(data), 0))
+}
+
+pub(crate) fn from_set_entries(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Set(data)) =
+        receiver.filter(|value| matches!(value, Value::Set(data) if !data.weak))
+    else {
+        return Err(crate::value::error::throw_type_error(
+            "Set iterator called on incompatible receiver",
+        ));
+    };
+    Ok(make_set(Rc::clone(data), 1))
 }
 
 pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -118,11 +129,12 @@ pub(crate) fn make_regexp_string(
     }))
 }
 
-fn make_set(data: Rc<crate::value::SetData>) -> Value {
+fn make_set(data: Rc<crate::value::SetData>, kind: u8) -> Value {
     Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Set {
             data,
             index: 0,
+            kind,
             done: false,
         }),
     }))

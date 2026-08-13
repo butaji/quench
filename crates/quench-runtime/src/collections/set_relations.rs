@@ -1,7 +1,6 @@
 enum SetRecord {
     Native {
-        values: Vec<Value>,
-        source: Option<Value>,
+        data: Rc<SetData>,
     },
     Like {
         receiver: Value,
@@ -11,19 +10,26 @@ enum SetRecord {
     },
 }
 
+enum Fold<T> {
+    Next(T),
+    Stop(T),
+}
+
 impl SetRecord {
     fn size(&self) -> f64 {
         match self {
-            Self::Native { values, .. } => values.len() as f64,
+            Self::Native { data } => data.values.borrow().len() as f64,
             Self::Like { size, .. } => *size,
         }
     }
 
     fn contains(&self, value: &Value) -> Result<bool, VmError> {
         match self {
-            Self::Native { values, .. } => {
-                Ok(values.iter().any(|item| same_value_zero(item, value)))
-            }
+            Self::Native { data } => Ok(data
+                .values
+                .borrow()
+                .iter()
+                .any(|item| same_value_zero(item, value))),
             Self::Like { receiver, has, .. } => {
                 let result = crate::functions::execute_target(
                     has,
@@ -31,21 +37,6 @@ impl SetRecord {
                     std::slice::from_ref(value),
                 )?;
                 Ok(crate::execute::is_truthy(&result))
-            }
-        }
-    }
-
-    fn keys(&self) -> Result<Vec<Value>, VmError> {
-        match self {
-            Self::Native { values, source } => {
-                if let Some(Value::Set(data)) = source {
-                    return Ok(data.values.borrow().iter().cloned().collect());
-                }
-                Ok(values.clone())
-            }
-            Self::Like { receiver, keys, .. } => {
-                let iterator = crate::functions::execute_target(keys, receiver, &[])?;
-                crate::collections::iterator::collect_iterator_object(iterator)
             }
         }
     }
@@ -70,30 +61,23 @@ pub(crate) fn set_relation(
     }
 }
 
-fn native_receiver(receiver: Option<&Value>) -> Result<SetRecord, VmError> {
-    let Some(Value::Set(data)) = receiver else {
+fn native_receiver(receiver: Option<&Value>) -> Result<Rc<SetData>, VmError> {
+    let Some(Value::Set(data)) = receiver.filter(|value| matches!(value, Value::Set(d) if !d.weak))
+    else {
         return Err(crate::value::error::throw_type_error(
             "Set method called on incompatible receiver",
         ));
     };
-    if data.weak {
-        return Err(crate::value::error::throw_type_error(
-            "Set method called on incompatible receiver",
-        ));
-    }
-    Ok(SetRecord::Native {
-        values: data.values.borrow().iter().cloned().collect(),
-        source: Some(Value::Set(Rc::clone(data))),
-    })
+    Ok(Rc::clone(data))
 }
 
 fn set_record(value: Value) -> Result<SetRecord, VmError> {
     if let Value::Set(data) = &value {
-        let values = data.values.borrow().iter().cloned().collect();
-        return Ok(SetRecord::Native {
-            values,
-            source: Some(value),
-        });
+        if !data.weak {
+            return Ok(SetRecord::Native {
+                data: Rc::clone(data),
+            });
+        }
     }
     let size = crate::conversion::to_number(&crate::execute::get_property_result(&value, "size")?)?;
     if !size.is_finite() || size < 0.0 {
@@ -121,127 +105,215 @@ fn set_record(value: Value) -> Result<SetRecord, VmError> {
     })
 }
 
-fn difference(own: &SetRecord, other: &SetRecord) -> Result<Value, VmError> {
-    let values = own_values(own);
-    if own.size() <= other.size() {
-        return filter_values(values, |value| other.contains(value).map(|contains| !contains));
-    }
-    let mut result = values;
-    for value in other.keys()? {
-        result.retain(|item| !same_value_zero(item, &value));
-    }
-    Ok(new_set(result))
-}
-
-fn intersection(own: &SetRecord, other: &SetRecord) -> Result<Value, VmError> {
-    if own.size() <= other.size() {
-        return filter_values(own_values(own), |value| other.contains(value));
-    }
-    let own_values = own_values(own);
-    let result = other
-        .keys()?
-        .into_iter()
-        .filter(|value| own_values.iter().any(|item| same_value_zero(item, value)))
-        .collect();
-    Ok(new_set(result))
-}
-
-fn symmetric_difference(own: &SetRecord, other: &SetRecord) -> Result<Value, VmError> {
-    let own_values = own_values(own);
-    let other_values = other.keys()?;
-    let mut result: Vec<Value> = own_values
-        .iter()
-        .filter(|value| !other_values.iter().any(|item| same_value_zero(item, value)))
-        .cloned()
-        .collect();
-    result.extend(
-        other_values
-            .into_iter()
-            .filter(|value| !own_values.iter().any(|item| same_value_zero(item, value))),
-    );
-    Ok(new_set(result))
-}
-
-fn union(own: &SetRecord, other: &SetRecord) -> Result<Value, VmError> {
-    let mut result = own_values(own);
-    for value in other.keys()? {
-        if !result.iter().any(|item| same_value_zero(item, &value)) {
-            result.push(value);
-        }
-    }
-    Ok(new_set(result))
-}
-
-fn disjoint(own: &SetRecord, other: &SetRecord) -> Result<Value, VmError> {
-    if own.size() <= other.size() {
-        return Ok(Value::Boolean(all_values(&own_values(own), |value| {
-            other.contains(value).map(|contains| !contains)
-        })?));
-    }
-    let own_values = own_values(own);
-    Ok(Value::Boolean(!other
-        .keys()?
-        .iter()
-        .any(|value| own_values.iter().any(|item| same_value_zero(item, value)))))
-}
-
-fn subset(own: &SetRecord, other: &SetRecord) -> Result<Value, VmError> {
-    if own.size() > other.size() {
-        return Ok(Value::Boolean(false));
-    }
-    Ok(Value::Boolean(all_values(&own_values(own), |value| {
-        other.contains(value)
-    })?))
-}
-
-fn superset(own: &SetRecord, other: &SetRecord) -> Result<Value, VmError> {
-    if own.size() < other.size() {
-        return Ok(Value::Boolean(false));
-    }
-    let own_values = own_values(own);
-    Ok(Value::Boolean(
-        other
-            .keys()?
-            .iter()
-            .all(|value| own_values.iter().any(|item| same_value_zero(item, value))),
-    ))
-}
-
-fn own_values(record: &SetRecord) -> Vec<Value> {
-    match record {
-        SetRecord::Native { values, source } => {
-            if let Some(Value::Set(data)) = source {
-                return data.values.borrow().iter().cloned().collect();
+fn difference(own: &Rc<SetData>, other: &SetRecord) -> Result<Value, VmError> {
+    if own.values.borrow().len() as f64 <= other.size() {
+        let mut result = Vec::new();
+        for_each_live(own, &mut |value| {
+            if !other.contains(value)? {
+                result.push(value.clone());
             }
-            values.clone()
-        }
-        SetRecord::Like { .. } => Vec::new(),
+            Ok(true)
+        })?;
+        return Ok(new_set(result));
     }
+    let mut result: Vec<Value> = own.values.borrow().iter().cloned().collect();
+    fold_keys(other, (), &mut |(), value| {
+        result.retain(|item| !same_value_zero(item, value));
+        Ok(Fold::Next(()))
+    })?;
+    Ok(new_set(result))
 }
 
-fn all_values<F>(values: &[Value], mut predicate: F) -> Result<bool, VmError>
-where
-    F: FnMut(&Value) -> Result<bool, VmError>,
-{
-    for value in values {
-        if !predicate(value)? {
+fn intersection(own: &Rc<SetData>, other: &SetRecord) -> Result<Value, VmError> {
+    let mut result: Vec<Value> = Vec::new();
+    if own.values.borrow().len() as f64 <= other.size() {
+        for_each_live(own, &mut |value| {
+            if other.contains(value)? && !result.iter().any(|item| same_value_zero(item, value)) {
+                result.push(value.clone());
+            }
+            Ok(true)
+        })?;
+        return Ok(new_set(result));
+    }
+    fold_keys(other, (), &mut |(), value| {
+        if native_contains(own, value) && !result.iter().any(|item| same_value_zero(item, value)) {
+            result.push(value.clone());
+        }
+        Ok(Fold::Next(()))
+    })?;
+    Ok(new_set(result))
+}
+
+fn symmetric_difference(own: &Rc<SetData>, other: &SetRecord) -> Result<Value, VmError> {
+    let mut result: Vec<Value> = own.values.borrow().iter().cloned().collect();
+    fold_keys(other, (), &mut |(), value| {
+        if native_contains(own, value) {
+            result.retain(|item| !same_value_zero(item, value));
+        } else if !result.iter().any(|item| same_value_zero(item, value)) {
+            result.push(value.clone());
+        }
+        Ok(Fold::Next(()))
+    })?;
+    Ok(new_set(result))
+}
+
+fn union(own: &Rc<SetData>, other: &SetRecord) -> Result<Value, VmError> {
+    let mut result: Vec<Value> = own.values.borrow().iter().cloned().collect();
+    fold_keys(other, (), &mut |(), value| {
+        if !result.iter().any(|item| same_value_zero(item, value)) {
+            result.push(value.clone());
+        }
+        Ok(Fold::Next(()))
+    })?;
+    Ok(new_set(result))
+}
+
+fn disjoint(own: &Rc<SetData>, other: &SetRecord) -> Result<Value, VmError> {
+    if own.values.borrow().len() as f64 <= other.size() {
+        let mut disjoint = true;
+        for_each_live(own, &mut |value| {
+            if other.contains(value)? {
+                disjoint = false;
+                return Ok(false);
+            }
+            Ok(true)
+        })?;
+        return Ok(Value::Boolean(disjoint));
+    }
+    let found = fold_keys(other, false, &mut |_, value| {
+        Ok(if native_contains(own, value) {
+            Fold::Stop(true)
+        } else {
+            Fold::Next(false)
+        })
+    })?;
+    Ok(Value::Boolean(!found))
+}
+
+fn subset(own: &Rc<SetData>, other: &SetRecord) -> Result<Value, VmError> {
+    if (own.values.borrow().len() as f64) > other.size() {
+        return Ok(Value::Boolean(false));
+    }
+    let mut is_subset = true;
+    for_each_live(own, &mut |value| {
+        if !other.contains(value)? {
+            is_subset = false;
             return Ok(false);
         }
-    }
-    Ok(true)
+        Ok(true)
+    })?;
+    Ok(Value::Boolean(is_subset))
 }
 
-fn filter_values<F>(values: Vec<Value>, mut predicate: F) -> Result<Value, VmError>
+fn superset(own: &Rc<SetData>, other: &SetRecord) -> Result<Value, VmError> {
+    if (own.values.borrow().len() as f64) < other.size() {
+        return Ok(Value::Boolean(false));
+    }
+    let missing = fold_keys(other, false, &mut |_, value| {
+        Ok(if native_contains(own, value) {
+            Fold::Next(false)
+        } else {
+            Fold::Stop(true)
+        })
+    })?;
+    Ok(Value::Boolean(!missing))
+}
+
+fn native_contains(data: &Rc<SetData>, value: &Value) -> bool {
+    data.values
+        .borrow()
+        .iter()
+        .any(|item| same_value_zero(item, value))
+}
+
+fn for_each_live<F>(data: &Rc<SetData>, visit: &mut F) -> Result<(), VmError>
 where
     F: FnMut(&Value) -> Result<bool, VmError>,
 {
-    let mut result = Vec::new();
-    for value in values {
-        if predicate(&value)? {
-            result.push(value);
+    let mut index = 0;
+    loop {
+        let Some(value) = data.values.borrow().get(index).cloned() else {
+            break;
+        };
+        if !visit(&value)? {
+            break;
+        }
+        let still_at_index = data
+            .values
+            .borrow()
+            .get(index)
+            .is_some_and(|current| same_value_zero(current, &value));
+        if still_at_index {
+            index += 1;
         }
     }
-    Ok(new_set(result))
+    Ok(())
+}
+
+fn fold_keys<T, F>(other: &SetRecord, init: T, step: &mut F) -> Result<T, VmError>
+where
+    F: FnMut(T, &Value) -> Result<Fold<T>, VmError>,
+{
+    match other {
+        SetRecord::Native { data } => {
+            let mut acc = init;
+            let values: Vec<Value> = data.values.borrow().iter().cloned().collect();
+            for value in values {
+                acc = match step(acc, &value)? {
+                    Fold::Next(acc) => acc,
+                    Fold::Stop(acc) => return Ok(acc),
+                };
+            }
+            Ok(acc)
+        }
+        SetRecord::Like { receiver, keys, .. } => fold_like_keys(receiver, keys, init, step),
+    }
+}
+
+fn fold_like_keys<T, F>(
+    receiver: &Value,
+    keys: &Value,
+    init: T,
+    step: &mut F,
+) -> Result<T, VmError>
+where
+    F: FnMut(T, &Value) -> Result<Fold<T>, VmError>,
+{
+    let object = crate::functions::execute_target(keys, receiver, &[])?;
+    let iterator = crate::collections::iterator::open_self_iterator(object)?;
+    let mut acc = init;
+    loop {
+        match crate::collections::iterator::step_value(&iterator) {
+            Ok(Some(value)) => match step(acc, &value) {
+                Ok(Fold::Next(next)) => acc = next,
+                Ok(Fold::Stop(done)) => {
+                    close_iterator(&iterator, crate::completion::Completion::Normal)?;
+                    return Ok(done);
+                }
+                Err(error) => return close_with_error(&iterator, error),
+            },
+            Ok(None) => return Ok(acc),
+            Err(error) => return close_with_error(&iterator, error),
+        }
+    }
+}
+
+fn close_with_error<T>(iterator: &Value, error: VmError) -> Result<T, VmError> {
+    if let VmError::Thrown(reason) = &error {
+        let _ = close_iterator(
+            iterator,
+            crate::completion::Completion::Throw(reason.clone()),
+        );
+    }
+    Err(error)
+}
+
+fn close_iterator(
+    iterator: &Value,
+    completion: crate::completion::Completion,
+) -> Result<(), VmError> {
+    crate::collections::iterator::close(iterator.clone(), completion)?;
+    Ok(())
 }
 
 fn new_set(values: Vec<Value>) -> Value {
