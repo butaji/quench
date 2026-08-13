@@ -185,6 +185,7 @@ pub enum Builtin {
     Symbol,
     SymbolToString,
     SymbolValueOf,
+    SymbolPrototypeToPrimitive,
     SymbolDescriptionGetter,
     SymbolIterator,
     SymbolUnscopables,

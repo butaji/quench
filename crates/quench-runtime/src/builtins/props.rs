@@ -55,6 +55,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
+        (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
         (Symbol, "unscopables") => Some(Value::String("Symbol.unscopables\0".to_string())),
         (Symbol, k) => crate::builtin_meta::symbol::symbol_prop(k).map(Value::Builtin),
@@ -413,6 +414,8 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Symbol, "prototype") => Some(SymbolPrototype),
         (SymbolPrototype, "toString") => Some(SymbolToString),
         (SymbolPrototype, "valueOf") => Some(SymbolValueOf),
+        (SymbolPrototype, "Symbol.toPrimitive") => Some(SymbolPrototypeToPrimitive),
+        (SymbolPrototype, "constructor") => Some(Symbol),
         (String, "prototype") => Some(StringPrototype),
         (StringPrototype, "valueOf") => Some(StringValueOf),
         (BigInt, "prototype") => Some(BigIntPrototype),
