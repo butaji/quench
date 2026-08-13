@@ -142,6 +142,11 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
         (Value::Number(left), Value::Number(right)) => left == right,
         (Value::Boolean(left), Value::Boolean(right)) => left == right,
         (Value::String(left), Value::String(right)) => left == right,
+        (Value::StringUnits(_), Value::String(_))
+        | (Value::String(_), Value::StringUnits(_))
+        | (Value::StringUnits(_), Value::StringUnits(_)) => {
+            crate::strings::units_equal(left, right)
+        }
         (Value::BigInt(left), Value::BigInt(right)) => left == right,
         (Value::Builtin(left), Value::Builtin(right)) => left == right,
         (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => true,

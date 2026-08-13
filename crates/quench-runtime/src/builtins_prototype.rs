@@ -17,6 +17,7 @@ pub(crate) fn prototype_value_of(
             Ok(box_primitive(value, crate::ops::Builtin::Symbol))
         }
         Value::String(_) => Ok(box_primitive(value, crate::ops::Builtin::String)),
+        Value::StringUnits(_) => Ok(box_primitive(value, crate::ops::Builtin::String)),
         Value::BigInt(_) => Ok(box_primitive(value, crate::ops::Builtin::BigInt)),
         _ => Ok(value.clone()),
     }
@@ -45,9 +46,15 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::Number(_)) => "Number",
         Some(Value::String(s)) if s.starts_with("Symbol(") => "Symbol",
         Some(Value::String(_)) => "String",
+        Some(Value::StringUnits(_)) => "String",
         Some(Value::BigInt(_)) => "BigInt",
         Some(Value::Array(_)) => "Array",
-        Some(Value::Object(properties)) => boxed_object_tag(properties).unwrap_or("Object"),
+        Some(Value::Object(properties)) => {
+            if properties.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT) {
+                return "Error";
+            }
+            boxed_object_tag(properties).unwrap_or("Object")
+        }
         Some(Value::ArrayBuffer(_)) => "ArrayBuffer",
         Some(Value::DataView(_)) => "DataView",
         Some(Value::Float32Array(_)) => "Float32Array",
