@@ -72,6 +72,7 @@ pub(crate) fn prototype_method(
     match builtin {
         crate::ops::Builtin::IntlDisplayNamesOf => {
             let code = to_string_value(arguments.first().unwrap_or(&Value::Undefined));
+            validate_code(&code, &display_type)?;
             Ok(display_name(
                 &code,
                 &display_type,
@@ -91,6 +92,30 @@ pub(crate) fn prototype_method(
             ),
         ])),
         _ => Err(runtime_error("TypeError: method not found")),
+    }
+}
+
+fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
+    let valid = match display_type {
+        "language" => {
+            (2..=3).contains(&code.len()) && code.chars().all(|c| c.is_ascii_alphabetic())
+        }
+        "region" => {
+            (code.len() == 2 && code.chars().all(|c| c.is_ascii_alphabetic()))
+                || (code.len() == 3 && code.chars().all(|c| c.is_ascii_digit()))
+        }
+        "script" => code.len() == 4 && code.chars().all(|c| c.is_ascii_alphabetic()),
+        "currency" => code.len() == 3 && code.chars().all(|c| c.is_ascii_alphabetic()),
+        "calendar" => {
+            !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        }
+        "dateTimeField" => !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric()),
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(runtime_error("RangeError: invalid code"))
     }
 }
 
