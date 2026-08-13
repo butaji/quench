@@ -384,7 +384,7 @@ pub(crate) fn array_to_locale_string(
     let options = arguments.get(1);
     let mut parts = Vec::new();
     for value in values.iter() {
-        parts.push(element_to_locale_string(value, &locales, options));
+        parts.push(element_to_locale_string(value, &locales, options)?);
     }
     Ok(Value::String(parts.join(",")))
 }
@@ -406,12 +406,34 @@ pub(crate) fn dispatch(
     Some(result)
 }
 
-fn element_to_locale_string(value: &Value, locales: &[String], options: Option<&Value>) -> String {
+fn element_to_locale_string(
+    value: &Value,
+    locales: &[String],
+    options: Option<&Value>,
+) -> Result<String, VmError> {
     match value {
-        Value::Number(number) => format_number(*number, locales, options),
-        Value::Null | Value::Undefined => String::new(),
-        _ => to_string_value(value),
+        Value::Number(number) => Ok(format_number(*number, locales, options)),
+        Value::Null | Value::Undefined => Ok(String::new()),
+        _ => locale_element_call(value, locales, options),
     }
+}
+
+fn locale_element_call(
+    value: &Value,
+    locales: &[String],
+    options: Option<&Value>,
+) -> Result<String, VmError> {
+    let method = crate::execute::get_property_result(value, "toLocaleString")?;
+    if !matches!(method, Value::Undefined | Value::Null) {
+        let locale_value = Value::array(locales.iter().cloned().map(Value::String).collect());
+        let mut arguments = vec![locale_value];
+        if let Some(options) = options {
+            arguments.push(options.clone());
+        }
+        let result = crate::functions::execute_target_with_receiver(&method, value, &arguments)?;
+        return Ok(crate::conversion::to_string(&result.0)?);
+    }
+    Ok(to_string_value(value))
 }
 
 pub(crate) fn number_to_locale_string(
