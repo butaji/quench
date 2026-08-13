@@ -140,7 +140,7 @@ fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, Strin
         return (", ".to_string(), ", ".to_string(), ", ".to_string());
     }
     if style == "narrow" {
-        return (" ".to_string(), " ".to_string(), " ".to_string());
+        return (", ".to_string(), ", ".to_string(), ", ".to_string());
     }
     let spanish = locale.starts_with("es");
     let disjunction = list_type == "disjunction";
