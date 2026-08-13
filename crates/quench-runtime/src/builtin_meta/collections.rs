@@ -121,6 +121,8 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::MapEntries => Some("Map.prototype.entries"),
         Builtin::MapKeys => Some("Map.prototype.keys"),
         Builtin::MapValues => Some("Map.prototype.values"),
+        Builtin::MapGetOrInsert => Some("getOrInsert"),
+        Builtin::MapGetOrInsertComputed => Some("getOrInsertComputed"),
         Builtin::WeakMapSet => Some("WeakMap.prototype.set"),
         Builtin::WeakMapGet => Some("WeakMap.prototype.get"),
         Builtin::WeakMapHas => Some("WeakMap.prototype.has"),
