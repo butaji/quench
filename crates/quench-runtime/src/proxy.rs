@@ -374,6 +374,10 @@ pub(crate) fn proxy_define_property(
             );
         }
     }
+    let target = match target {
+        Value::Proxy(proxy) => &proxy.target,
+        target => target,
+    };
     let updated = crate::builtins::define_property(&[
         target.clone(),
         Value::String(prop.to_string()),
