@@ -138,6 +138,7 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
             Rc::ptr_eq(left, right)
         }
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
+        (Value::BoundFunction(left), Value::BoundFunction(right)) => Rc::ptr_eq(left, right),
         (Value::Generator(left), Value::Generator(right)) => Rc::ptr_eq(left, right),
         (Value::Number(left), Value::Number(right)) => left == right,
         (Value::Boolean(left), Value::Boolean(right)) => left == right,
