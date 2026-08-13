@@ -167,7 +167,7 @@ pub(crate) fn execute_constructor(
         return Err(VmError::MissingReturn);
     };
     let context = current()?;
-    let arguments = call_arguments(registers, args, spreads)?;
+    let arguments = crate::vm::vm_ops::collect_call_arguments(registers, args, spreads)?;
     let superclass = crate::construct::derived_constructor(&context.function)?;
     let receiver = crate::construct::construct_super(&superclass, &context.function, &arguments)?;
     let this_slot = context
@@ -187,22 +187,6 @@ pub(crate) fn execute_constructor(
     crate::locals::write(this_slot, receiver.clone());
     crate::execute::write_value(registers, *dst, receiver);
     Ok(())
-}
-
-fn call_arguments(
-    registers: &[Value],
-    args: &[u16],
-    spreads: &[bool],
-) -> Result<Vec<Value>, VmError> {
-    let mut arguments = Vec::new();
-    for (index, spread) in args.iter().zip(spreads) {
-        let value = crate::execute::read_register(registers, *index)?;
-        match (spread, value) {
-            (true, Value::Array(values)) => arguments.extend(values.iter().cloned()),
-            (_, value) => arguments.push(value),
-        }
-    }
-    Ok(arguments)
 }
 
 fn current() -> Result<Context, VmError> {
