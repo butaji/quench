@@ -206,7 +206,8 @@ pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError>
             );
         }
     }
-    let (_, deleted) = crate::builtins::delete_property(target.clone(), prop);
+    let (updated, deleted) = crate::builtins::delete_property(target.clone(), prop);
+    crate::locals::replace_value(target, &updated);
     Ok(Value::Boolean(deleted))
 }
 
