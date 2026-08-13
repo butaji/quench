@@ -22,6 +22,46 @@ pub(crate) fn group_integer(text: &str) -> String {
     result
 }
 
+pub(crate) fn group_integer_locale(text: &str, locale: &str) -> String {
+    if locale.starts_with("en-IN") {
+        return group_indian(text);
+    }
+    let grouped = group_integer(text);
+    if locale.starts_with("de") {
+        grouped.replace(',', ".")
+    } else {
+        grouped
+    }
+}
+
+fn group_indian(text: &str) -> String {
+    let (sign, rest) = text
+        .strip_prefix('-')
+        .map_or(("", text), |rest| ("-", rest));
+    let (integer, fraction) = rest
+        .split_once('.')
+        .map_or((rest, None), |value| (value.0, Some(value.1)));
+    if integer.len() <= 3 {
+        return text.to_string();
+    }
+    let split = integer.len() - 3;
+    let mut chunks = vec![integer[split..].to_string()];
+    let prefix = &integer[..split];
+    let mut end = prefix.len();
+    while end > 2 {
+        chunks.push(prefix[end - 2..end].to_string());
+        end -= 2;
+    }
+    chunks.push(prefix[..end].to_string());
+    chunks.reverse();
+    let mut out = format!("{sign}{}", chunks.join(","));
+    if let Some(fraction) = fraction {
+        out.push('.');
+        out.push_str(fraction);
+    }
+    out
+}
+
 pub(crate) fn apply_minimum_integer(text: &str, minimum: u32) -> String {
     if text
         .trim_start_matches(['-', '+'])
