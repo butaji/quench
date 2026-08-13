@@ -44,6 +44,7 @@ fn date_prop_setter(key: &str) -> Option<Builtin> {
         "setFullYear" => Some(DateSetFullYear),
         "setMonth" => Some(DateSetMonth),
         "setDate" => Some(DateSetDate),
+        "setUTCDate" => Some(DateSetUTCDate),
         "setHours" => Some(DateSetHours),
         "setMinutes" => Some(DateSetMinutes),
         "setSeconds" => Some(DateSetSeconds),
@@ -105,6 +106,7 @@ const fn fn_name_set(b: Builtin) -> Option<&'static str> {
         DateSetFullYear => Some("Date.prototype.setFullYear"),
         DateSetMonth => Some("Date.prototype.setMonth"),
         DateSetDate => Some("Date.prototype.setDate"),
+        DateSetUTCDate => Some("Date.prototype.setUTCDate"),
         DateSetHours => Some("Date.prototype.setHours"),
         DateSetMinutes => Some("Date.prototype.setMinutes"),
         DateSetSeconds => Some("Date.prototype.setSeconds"),
@@ -158,9 +160,12 @@ const fn fn_len_get_or_set(b: Builtin) -> Option<f64> {
         | DateToLocaleString
         | DateToLocaleDateString
         | DateToLocaleTimeString => Some(0.0),
-        DateSetTime | DateSetDate | DateSetMilliseconds | DateSetYear | DateSetUTCMilliseconds => {
-            Some(1.0)
-        }
+        DateSetTime
+        | DateSetDate
+        | DateSetUTCDate
+        | DateSetMilliseconds
+        | DateSetYear
+        | DateSetUTCMilliseconds => Some(1.0),
         DateSetMonth => Some(2.0),
         DateSetFullYear => Some(3.0),
         DateSetHours | DateSetUTCHours => Some(4.0),
@@ -207,6 +212,7 @@ const fn short_name_utc_or_set(b: Builtin) -> Option<&'static str> {
         DateSetFullYear => Some("setFullYear"),
         DateSetMonth => Some("setMonth"),
         DateSetDate => Some("setDate"),
+        DateSetUTCDate => Some("setUTCDate"),
         DateSetHours => Some("setHours"),
         DateSetMinutes => Some("setMinutes"),
         DateSetSeconds => Some("setSeconds"),
