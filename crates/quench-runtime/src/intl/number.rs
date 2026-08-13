@@ -16,6 +16,7 @@ pub(crate) struct NumberOptions {
     pub currency_display: String,
     pub currency_sign: String,
     pub unit: Option<String>,
+    pub unit_display: String,
     pub minimum_integer_digits: u32,
     pub minimum_fraction_digits: u32,
     pub maximum_fraction_digits: u32,
@@ -31,6 +32,7 @@ pub(crate) struct RawOptions {
     currency_display: String,
     currency_sign: String,
     unit: Option<String>,
+    unit_display: String,
     minimum_fraction_digits: f64,
     maximum_fraction_digits: f64,
     use_grouping: bool,
@@ -47,6 +49,7 @@ impl RawOptions {
             currency_display: "symbol".to_string(),
             currency_sign: "standard".to_string(),
             unit: None,
+            unit_display: "short".to_string(),
             minimum_fraction_digits: 0.0,
             maximum_fraction_digits: 3.0,
             use_grouping: true,
@@ -63,6 +66,7 @@ impl RawOptions {
                     "currencyDisplay" => raw.currency_display = value,
                     "currencySign" => raw.currency_sign = value,
                     "unit" => raw.unit = Some(value),
+                    "unitDisplay" => raw.unit_display = value,
                     "minimumFractionDigits" => {
                         raw.minimum_fraction_digits = value.parse().unwrap_or(0.0)
                     }
@@ -109,6 +113,7 @@ impl NumberOptions {
             currency_display: raw.currency_display,
             currency_sign: raw.currency_sign,
             unit: raw.unit,
+            unit_display: raw.unit_display,
             minimum_integer_digits: 1,
             minimum_fraction_digits,
             maximum_fraction_digits,
@@ -178,6 +183,10 @@ impl NumberOptions {
         }
         if let Some(unit) = &self.unit {
             properties.push(("unit".to_string(), Value::String(unit.clone())));
+            properties.push((
+                "unitDisplay".to_string(),
+                Value::String(self.unit_display.clone()),
+            ));
         }
         make_object(properties)
     }
@@ -237,6 +246,7 @@ impl NumberOptions {
             currency_sign: slot_string(slots, "currencySign")
                 .unwrap_or_else(|| "standard".to_string()),
             unit: slot_string(slots, "unit"),
+            unit_display: slot_string(slots, "unitDisplay").unwrap_or_else(|| "short".to_string()),
             minimum_integer_digits: slot_number(slots, "minimumIntegerDigits").unwrap_or(1.0)
                 as u32,
             minimum_fraction_digits: slot_number(slots, "minimumFractionDigits").unwrap_or(0.0)
@@ -304,7 +314,7 @@ impl NumberOptions {
                     &self.currency_sign,
                 )
             }
-            "unit" => text = format_unit(&text, self.unit.as_deref()),
+            "unit" => text = format_unit(&text, self.unit.as_deref(), &self.unit_display),
             _ => {}
         }
         if magnitude > 0 {
