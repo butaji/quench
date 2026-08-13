@@ -11,6 +11,8 @@ use std::{
     thread,
 };
 
+use serde_json::json;
+
 use quench_test262::{
     discover_js_files, HarnessCache, RuntimeHost, Test262Runner, TestMetadata, TestOutcome,
 };
@@ -21,6 +23,13 @@ struct RunReport {
     passed: usize,
     failed: usize,
     failures: Vec<(PathBuf, String)>,
+    outcomes: Vec<JsonOutcome>,
+}
+
+/// One outcome row fed to the machine-readable JSON report.
+struct JsonOutcome {
+    path: PathBuf,
+    category: String,
 }
 
 /// Deep parser/reducer recursion needs more than the default 8 MiB stack.
@@ -40,6 +49,7 @@ struct Args {
     limit: usize,
     threads: usize,
     filters: Vec<String>,
+    json: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -64,7 +74,12 @@ fn main() -> ExitCode {
     };
     println!("selected={} discovered={discovered_count}", files.len());
     let threads = args.threads.max(1).min(files.len());
-    let (passed, failed, failures) = run_parallel(&root, sources, args.limit, threads);
+    let (passed, failed, failures, outcomes) = run_parallel(&root, sources, args.limit, threads);
+    if let Some(path) = &args.json {
+        if let Err(error) = write_json_report(path, &args, &root, passed, failed, &outcomes) {
+            return fail(&error);
+        }
+    }
     let buckets = bucket_failures(failures);
     print_report(passed, failed, &buckets);
     if failed == 0 {
@@ -74,14 +89,102 @@ fn main() -> ExitCode {
     }
 }
 
+/// Emit a machine-readable JSON report consumable by
+/// `tools/merge-differential-reports.cjs`: a fingerprint identifying the run
+/// tree plus one `{fixture, category}` row per executed test.
+fn write_json_report(
+    path: &Path,
+    args: &Args,
+    root: &Path,
+    passed: usize,
+    failed: usize,
+    outcomes: &[JsonOutcome],
+) -> Result<(), String> {
+    let base = root.join("test").join(&args.target);
+    let results: Vec<_> = outcomes
+        .iter()
+        .map(|outcome| {
+            let fixture = relative_fixture(&outcome.path, &base)?;
+            Ok(json!({ "fixture": fixture, "category": outcome.category }))
+        })
+        .collect::<Result<_, String>>()?;
+    let report = json!({
+        "tool": "quench-triage",
+        "fingerprints": fingerprints(root, args.target.as_path()),
+        "passed": passed,
+        "failed": failed,
+        "results": results,
+    });
+    std::fs::write(path, serde_json::to_string_pretty(&report).unwrap())
+        .map_err(|error| format!("write {}: {error}", path.display()))
+}
+
+fn fingerprints(root: &Path, target: &Path) -> serde_json::Value {
+    json!({ "test262_tree": test262_tree_commit(root), "target": target.display().to_string() })
+}
+
+fn test262_tree_commit(root: &Path) -> String {
+    let head = read_git_head(&root.join("HEAD"));
+    if !head.is_empty() {
+        return head;
+    }
+    std::fs::read_to_string(root.join(".git"))
+        .ok()
+        .and_then(|line| {
+            line.strip_prefix("gitdir: ")
+                .map(str::trim)
+                .map(String::from)
+        })
+        .map(|gitdir| {
+            let gitdir = PathBuf::from(gitdir);
+            let gitdir = if gitdir.is_absolute() {
+                gitdir
+            } else {
+                root.join(&gitdir)
+            };
+            read_git_head(&gitdir.join("HEAD"))
+        })
+        .unwrap_or_default()
+}
+
+/// Read a git HEAD (either a direct SHA or a `ref: <path>` indirection).
+fn read_git_head(head_path: &Path) -> String {
+    let raw = std::fs::read_to_string(head_path).unwrap_or_default();
+    let raw = raw.trim();
+    match raw.strip_prefix("ref: ") {
+        Some(ref_name) => {
+            let ref_path = head_path
+                .parent()
+                .unwrap_or_else(|| Path::new(""))
+                .join(ref_name);
+            std::fs::read_to_string(ref_path)
+                .map(|value| value.trim().to_string())
+                .unwrap_or_default()
+        }
+        None => raw.to_string(),
+    }
+}
+
+fn relative_fixture(path: &Path, target: &Path) -> Result<String, String> {
+    path.strip_prefix(target)
+        .map(|relative| relative.to_string_lossy().into_owned())
+        .map_err(|_| format!("outside target: {}", path.display()))
+}
+
 fn parse_args(mut values: ArgsOs) -> Result<Args, String> {
     let _binary = values.next();
     let target = values.next().ok_or_else(usage)?;
     let mut positionals = Vec::new();
     let mut filters = Vec::new();
+    let mut json = None;
     while let Some(value) = values.next() {
         if value == "--filter" {
             filters.push(filter_value(values.next())?);
+        } else if value == "--json" {
+            let out = values
+                .next()
+                .ok_or_else(|| "--json requires a path".to_string())?;
+            json = Some(PathBuf::from(out));
         } else if value.to_string_lossy().starts_with("--") {
             return Err(format!("unknown option: {}", value.to_string_lossy()));
         } else {
@@ -96,11 +199,13 @@ fn parse_args(mut values: ArgsOs) -> Result<Args, String> {
         limit: positional(&positionals, 0)?.unwrap_or(1_000_000),
         threads: positional(&positionals, 1)?.unwrap_or_else(default_threads),
         filters,
+        json,
     })
 }
 
 fn usage() -> String {
-    "usage: triage <test-subdir> [limit] [threads] [--filter <substring>]...".to_string()
+    "usage: triage <test-subdir> [limit] [threads] [--filter <substr>]... [--json <out.json>]"
+        .to_string()
 }
 
 fn filter_value(value: Option<OsString>) -> Result<String, String> {
@@ -153,7 +258,7 @@ fn run_parallel(
     files: Vec<TestSource>,
     limit: usize,
     threads: usize,
-) -> (usize, usize, Vec<(PathBuf, String)>) {
+) -> (usize, usize, Vec<(PathBuf, String)>, Vec<JsonOutcome>) {
     let counter = Arc::new(AtomicUsize::new(0));
     let files = Arc::new(files);
     let next = Arc::new(AtomicUsize::new(0));
@@ -173,14 +278,17 @@ fn run_parallel(
     let mut passed = 0;
     let mut failed = 0;
     let mut failures = Vec::new();
+    let mut outcomes = Vec::new();
     for handle in handles {
         let report = handle.join().unwrap_or_default();
         passed += report.passed;
         failed += report.failed;
         failures.extend(report.failures);
+        outcomes.extend(report.outcomes);
     }
     failures.sort_by(|a, b| a.0.cmp(&b.0));
-    (passed, failed, failures)
+    outcomes.sort_by(|a, b| a.path.cmp(&b.path));
+    (passed, failed, failures, outcomes)
 }
 
 /// Pull tests from a shared queue, stopping when the global failure cap is hit.
@@ -229,9 +337,19 @@ fn run_fixture_batch(
         }
         let outcome =
             runner.run_test_with_cache_and_metadata(&fixture.source, &fixture.metadata, harness);
-        match outcome {
-            Ok(TestOutcome::Pass) => report.passed += 1,
+        let (category, reason) = match outcome {
+            Ok(TestOutcome::Pass) => (String::from("pass"), None),
             Ok(TestOutcome::Fail { reason }) | Err(reason) => {
+                (normalize_reason(reason.trim()), Some(reason))
+            }
+        };
+        report.outcomes.push(JsonOutcome {
+            path: fixture.path.clone(),
+            category,
+        });
+        match reason {
+            None => report.passed += 1,
+            Some(reason) => {
                 counter.fetch_add(1, Ordering::Relaxed);
                 report.failed += 1;
                 report
