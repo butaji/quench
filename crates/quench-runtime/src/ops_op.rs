@@ -258,6 +258,7 @@ pub enum Op {
         dst: u16,
         heritage: u16,
     },
+    CheckSuperThis,
     AppendInstanceField(AppendInstanceFieldOp),
     SetProperty {
         object: u16,
