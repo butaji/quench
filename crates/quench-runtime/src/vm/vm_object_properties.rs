@@ -3,7 +3,10 @@ fn object_alias_property(alias: &crate::value::ObjectAliasValue, key: &str) -> V
         .0
         .borrow()
         .upgrade()
-        .map_or(Value::Undefined, |object| object_property(&object, key))
+        .map_or(Value::Undefined, |object| {
+            let object = crate::locals::resolved_replacement(Value::Object(object));
+            get_property(&object, key)
+        })
 }
 
 pub(crate) fn has_restricted_function_property(value: &Value, key: &str) -> bool {
