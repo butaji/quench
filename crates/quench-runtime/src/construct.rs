@@ -579,6 +579,10 @@ fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
             Value::String(value.clone()),
             crate::ops::Builtin::String,
         )),
+        Value::StringUnits(value) => Ok(boxed_primitive(
+            Value::StringUnits(value.clone()),
+            crate::ops::Builtin::String,
+        )),
         Value::BigInt(value) => Ok(boxed_primitive(
             Value::BigInt(value.clone()),
             crate::ops::Builtin::BigInt,

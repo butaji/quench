@@ -404,6 +404,7 @@ fn to_object_value(this_value: &Value) -> Value {
         Value::Number(_) => boxed_primitive(this_value, crate::ops::Builtin::Number),
         Value::Boolean(_) => boxed_primitive(this_value, crate::ops::Builtin::Boolean),
         Value::String(_) => boxed_primitive(this_value, crate::ops::Builtin::String),
+        Value::StringUnits(_) => boxed_primitive(this_value, crate::ops::Builtin::String),
         Value::BigInt(_) => boxed_primitive(this_value, crate::ops::Builtin::BigInt),
         Value::Null | Value::Undefined | Value::BindingCell(_) => this_value.clone(),
     }
