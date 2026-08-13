@@ -185,6 +185,7 @@ pub(crate) fn descriptor(
         Value::String(value) => string_descriptor(value, &key),
         Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),
         Value::Function(function) => function_descriptor(function, &key),
+        Value::BoundFunction(bound) => bound_descriptor(bound, &key),
         _ => None,
     };
     Ok(descriptor.unwrap_or(Value::Undefined))
@@ -209,6 +210,25 @@ fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Opt
         return Some(descriptor_object_with_flags(value, false, false, false));
     }
     Some(descriptor_object(&value))
+}
+
+fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> Option<Value> {
+    if let Some((_, metadata)) = function
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find(|(name, _)| name == &super::descriptor_key(key))
+    {
+        return Some(public_descriptor(metadata));
+    }
+    function
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| descriptor_object(value))
 }
 fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value> {
     if let Some((_, metadata)) = properties
@@ -236,13 +256,24 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
+        (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
+        (Builtin::DataViewPrototype, "byteLength") => Builtin::DataViewByteLengthGetter,
+        (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
         (Builtin::DisposableStackPrototype, "disposed") => Builtin::DisposableStackDisposed,
         (Builtin::AsyncDisposableStackPrototype, "disposed") => {
             Builtin::AsyncDisposableStackDisposed
         }
+        (Builtin::ErrorPrototype, "stack") => Builtin::ErrorPrototypeStackGetter,
         _ => return None,
     };
-    Some(accessor_descriptor(getter))
+    let descriptor = match (builtin, key) {
+        (Builtin::ErrorPrototype, "stack") => accessor_descriptor_with_setter(
+            Builtin::ErrorPrototypeStackGetter,
+            Some(Builtin::ErrorPrototypeStackSetter),
+        ),
+        _ => accessor_descriptor_with_setter(getter, None),
+    };
+    Some(descriptor)
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
@@ -293,6 +324,17 @@ fn accessor_descriptor(getter: Builtin) -> Value {
     Value::Object(Rc::new(ObjectData::new(vec![
         ("get".to_string(), Value::Builtin(getter)),
         ("set".to_string(), Value::Undefined),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])))
+}
+fn accessor_descriptor_with_setter(getter: Builtin, setter: Option<Builtin>) -> Value {
+    let set = setter
+        .as_ref()
+        .map_or(Value::Undefined, |setter| Value::Builtin(*setter));
+    Value::Object(Rc::new(ObjectData::new(vec![
+        ("get".to_string(), Value::Builtin(getter)),
+        ("set".to_string(), set),
         ("enumerable".to_string(), Value::Boolean(false)),
         ("configurable".to_string(), Value::Boolean(true)),
     ])))
