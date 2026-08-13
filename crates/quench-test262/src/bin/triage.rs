@@ -24,7 +24,8 @@ struct RunReport {
 }
 
 /// Deep parser/reducer recursion needs more than the default 8 MiB stack.
-const DEFAULT_STACK_SIZE: usize = 256 * 1024 * 1024;
+/// Keep the default bounded so concurrent failure clustering remains usable.
+const DEFAULT_STACK_SIZE: usize = 32 * 1024 * 1024;
 const STACK_SIZE_ENV: &str = "TRIAGE_WORKER_STACK_SIZE_BYTES";
 const WORK_BATCH: usize = 32;
 
