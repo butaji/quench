@@ -47,7 +47,12 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
-        Builtin::MathAtan2 | Builtin::MathImul | Builtin::MathPow => Some(2.0),
+        Builtin::MathAtan2
+        | Builtin::MathHypot
+        | Builtin::MathImul
+        | Builtin::MathMax
+        | Builtin::MathMin
+        | Builtin::MathPow => Some(2.0),
         Builtin::MathAbs
         | Builtin::MathFloor
         | Builtin::MathCeil
