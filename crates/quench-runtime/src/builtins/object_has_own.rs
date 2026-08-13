@@ -58,6 +58,7 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
         Value::Proxy(_) => {
             crate::proxy::proxy_get_own_property_descriptor(receiver, key)? != Value::Undefined
         }
+        Value::DataView(view) => view.own_property(key).is_some(),
         _ => false,
     })
 }
