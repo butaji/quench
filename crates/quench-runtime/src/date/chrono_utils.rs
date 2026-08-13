@@ -112,6 +112,12 @@ pub fn parse_date_string(s: &str) -> f64 {
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
         return dt.timestamp_millis() as f64;
     }
+    if let Some(value) = parse_local_iso(s) {
+        return value;
+    }
+    if let Some(value) = parse_display_string(s) {
+        return value;
+    }
     let formats = [
         "%Y-%m-%dT%H:%M:%S%.f",
         "%Y-%m-%dT%H:%M:%S",
@@ -132,6 +138,24 @@ pub fn parse_date_string(s: &str) -> f64 {
             .map_or(f64::NAN, |value| value.and_utc().timestamp_millis() as f64);
     }
     f64::NAN
+}
+
+fn parse_local_iso(s: &str) -> Option<f64> {
+    let dt = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f").ok()?;
+    Some(dt.and_utc().timestamp_millis() as f64 - local_offset_ms())
+}
+
+fn parse_display_string(s: &str) -> Option<f64> {
+    let formats = ["%a %b %d %Y %H:%M:%S GMT%z", "%a, %d %b %Y %H:%M:%S GMT"];
+    for format in formats {
+        if let Ok(dt) = chrono::DateTime::parse_from_str(s, format) {
+            return Some(dt.timestamp_millis() as f64);
+        }
+        if let Ok(dt) = NaiveDateTime::parse_from_str(s, format) {
+            return Some(dt.and_utc().timestamp_millis() as f64);
+        }
+    }
+    None
 }
 
 /// Get local timezone offset in minutes.
