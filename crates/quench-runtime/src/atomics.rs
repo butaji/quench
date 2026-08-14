@@ -169,11 +169,8 @@ fn store_result(view: &Value, value: Option<&Value>) -> Result<Value, VmError> {
         return Ok(Value::BigInt(raw));
     }
     let number = crate::conversion::to_number(&primitive)?;
-    Ok(Value::Number(if number.is_nan() {
-        0.0
-    } else {
-        number.trunc()
-    }))
+    let result = if number.is_nan() { 0.0 } else { number.trunc() };
+    Ok(Value::Number(if result == 0.0 { 0.0 } else { result }))
 }
 
 fn bigint_from_bits(view: &Value, bits: u64) -> Value {
