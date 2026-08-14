@@ -305,6 +305,11 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     let property = get_property(value, key);
+    if let Value::Object(properties) = value {
+        if properties.iter().rev().any(|(name, _)| name == key) {
+            return property;
+        }
+    }
     if matches!(value, Value::Builtin(_)) {
         return property;
     }
