@@ -23,6 +23,9 @@ enum StepTarget {
 }
 
 fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
+    if matches!(&*data.state.borrow(), IteratorState::Concat { .. }) {
+        return concat_step(data);
+    }
     let mut state = data.state.borrow_mut();
     Ok(match &mut *state {
         IteratorState::Native {
@@ -58,7 +61,44 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
         IteratorState::Protocol { iterator, next, .. } => {
             StepTarget::Protocol(iterator.clone(), next.clone())
         }
+        IteratorState::Concat { .. } => StepTarget::Value(None),
     })
+}
+
+fn concat_step(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
+    loop {
+        let item = {
+            let mut state = data.state.borrow_mut();
+            let IteratorState::Concat {
+                items,
+                index,
+                current,
+                done,
+            } = &mut *state
+            else {
+                return Ok(StepTarget::Value(None));
+            };
+            if *done {
+                return Ok(StepTarget::Value(None));
+            }
+            if current.is_none() {
+                let Some(value) = items.get(*index).cloned() else {
+                    *done = true;
+                    return Ok(StepTarget::Value(None));
+                };
+                *index += 1;
+                *current = Some(super::open(value)?);
+            }
+            current.clone()
+        };
+        let Some(item) = item else { continue };
+        if let Some(value) = super::step_value(&item)? {
+            return Ok(StepTarget::Value(Some(value)));
+        }
+        if let IteratorState::Concat { current, .. } = &mut *data.state.borrow_mut() {
+            *current = None;
+        }
+    }
 }
 
 fn resolve_next(

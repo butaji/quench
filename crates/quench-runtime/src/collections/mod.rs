@@ -30,6 +30,7 @@ fn execute_core(
         return Some(result);
     }
     match builtin {
+        IteratorConcat => Some(iterator_concat(arguments)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
@@ -56,6 +57,34 @@ fn execute_core(
         SetSpeciesGetter | MapSpeciesGetter | SpeciesGetter => Some(set::set_species(receiver)),
         _ => None,
     }
+}
+
+fn iterator_concat(arguments: &[Value]) -> Result<Value, VmError> {
+    for value in arguments {
+        if !crate::value::is_object(value) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.concat item is not an object",
+            ));
+        }
+        let method = crate::execute::get_property_result(value, "Symbol.iterator")?;
+        if !matches!(method, Value::Undefined | Value::Null)
+            && !crate::conversion::is_callable(&method)
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.concat item is not iterable",
+            ));
+        }
+    }
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::Concat {
+                items: arguments.to_vec(),
+                index: 0,
+                current: None,
+                done: false,
+            }),
+        },
+    )))
 }
 
 fn execute_iterator_next(
