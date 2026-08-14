@@ -238,7 +238,9 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlListFormat => Some(construct(arguments)),
+        crate::ops::Builtin::IntlListFormat => Some(Err(crate::value::error::throw_type_error(
+            "Intl.ListFormat requires 'new'",
+        ))),
         crate::ops::Builtin::IntlListFormatFormat
         | crate::ops::Builtin::IntlListFormatFormatToParts
         | crate::ops::Builtin::IntlListFormatResolvedOptions => {
