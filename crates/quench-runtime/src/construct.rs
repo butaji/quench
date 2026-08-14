@@ -92,6 +92,7 @@ fn construct_with_new_target(
             if *builtin == crate::ops::Builtin::SharedArrayBuffer
                 && !crate::builtins::same_value(Some(target), Some(new_target))
             {
+                validate_shared_array_buffer_length(arguments)?;
                 let prototype = crate::execute::get_property_result(new_target, "prototype")?;
                 let value = construct_builtin(*builtin, arguments)?;
                 let prototype = if crate::value::is_object(&prototype) {
@@ -121,6 +122,28 @@ fn construct_with_new_target(
         _ => Err(crate::vm::not_callable()),
     };
     result
+}
+
+fn validate_shared_array_buffer_length(
+    arguments: &[Value],
+) -> Result<(), crate::execute::VmError> {
+    let length = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    let length = to_index(length)?;
+    let Some(options) = arguments.get(1).filter(|value| crate::value::is_object(value)) else {
+        return Ok(());
+    };
+    let maximum = crate::execute::get_property_result(options, "maxByteLength")?;
+    if matches!(maximum, Value::Undefined) {
+        return Ok(());
+    }
+    if to_index(crate::conversion::to_number(&maximum)?)? < length {
+        return Err(range_error("maxByteLength is smaller than byteLength"));
+    }
+    Ok(())
 }
 fn with_new_target_prototype(
     value: Value,
