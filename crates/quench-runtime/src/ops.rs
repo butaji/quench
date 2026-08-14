@@ -68,6 +68,7 @@ pub enum Builtin {
     SharedArrayBufferGrowableGetter,
     SharedArrayBufferMaxByteLengthGetter,
     SharedArrayBufferGrow,
+    SharedArrayBufferSlice,
     ArrayBufferTransferToImmutable,
     ArrayIsArray,
     ArrayFrom,
