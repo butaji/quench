@@ -485,7 +485,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlDateTimeFormat => Some(construct(arguments)),
+        crate::ops::Builtin::IntlDateTimeFormat => Some(construct_or_legacy(arguments, receiver)),
         crate::ops::Builtin::IntlDateTimeFormatFormat
         | crate::ops::Builtin::IntlDateTimeFormatFormatToParts
         | crate::ops::Builtin::IntlDateTimeFormatFormatRange
@@ -495,4 +495,19 @@ pub(crate) fn dispatch(
         }
         _ => None,
     }
+}
+
+fn construct_or_legacy(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    if !matches!(receiver, Some(Value::Object(_))) {
+        return construct(arguments);
+    }
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let id = FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let symbol = format!("Symbol.IntlLegacyConstructedSymbol\0{id}");
+    Ok(crate::builtins::set_property(
+        receiver.cloned().unwrap_or(Value::Undefined),
+        &symbol,
+        Value::Boolean(true),
+    ))
 }
