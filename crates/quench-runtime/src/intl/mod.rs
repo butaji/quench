@@ -172,6 +172,24 @@ pub(crate) fn execute(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
+    if receiver.is_some()
+        && matches!(
+            builtin,
+            Builtin::IntlCollator
+                | Builtin::IntlDateTimeFormat
+                | Builtin::IntlDisplayNames
+                | Builtin::IntlListFormat
+                | Builtin::IntlLocale
+                | Builtin::IntlNumberFormat
+                | Builtin::IntlPluralRules
+                | Builtin::IntlRelativeTimeFormat
+                | Builtin::IntlSegmenter
+        )
+    {
+        return Some(Err(crate::value::error::throw_type_error(
+            "Intl constructor requires new",
+        )));
+    }
     match builtin {
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
