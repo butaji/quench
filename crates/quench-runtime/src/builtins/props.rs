@@ -46,8 +46,14 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "Symbol.iterator" {
         return Some(Value::Builtin(IteratorSelf));
     }
+    if builtin == IteratorPrototype && key == "toArray" {
+        return Some(Value::Builtin(IteratorToArray));
+    }
     if builtin == Iterator && key == "concat" {
         return Some(Value::Builtin(IteratorConcat));
+    }
+    if builtin == Iterator && key == "from" {
+        return Some(Value::Builtin(IteratorFrom));
     }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);
@@ -178,6 +184,7 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
     }
     match key {
         "Symbol.iterator" => Some(Value::Builtin(Builtin::IteratorSelf)),
+        "toArray" => Some(Value::Builtin(Builtin::IteratorToArray)),
         "Symbol.toStringTag" => Some(Value::String("Iterator".into())),
         "constructor" => Some(Value::Builtin(Builtin::Iterator)),
         _ => None,
