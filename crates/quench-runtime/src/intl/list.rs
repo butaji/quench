@@ -12,7 +12,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
     let mut style = "long".to_string();
     let mut list_type = "conjunction".to_string();
-    if let Some(options) = arguments.get(1) {
+    if let Some(options) = arguments
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
         if matches!(options, Value::Null) {
             return Err(crate::value::error::throw_type_error(
                 "Cannot convert null or undefined to object",
