@@ -87,7 +87,6 @@ impl RelativeOptions {
                         if !valid_numbering_system(&text) {
                             return Err(runtime_error("RangeError: invalid numberingSystem"));
                         }
-                        formatter.numbering_system = text;
                     }
                     _ => {}
                 }
