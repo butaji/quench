@@ -60,8 +60,15 @@ impl LinkedModuleGraph {
         }
         link_reexports(graph, &units)?;
         bind_imports(graph, &units)?;
+        for unit in units.values() {
+            unit.reset_links();
+        }
         link_reexports(graph, &units)?;
         bind_imports(graph, &units)?;
+        for unit in units.values() {
+            unit.reset_links();
+        }
+        link_reexports(graph, &units)?;
         Ok(Self { units })
     }
 
@@ -299,6 +306,11 @@ impl LinkedModule {
         self.linked_exports
             .borrow_mut()
             .insert(name.to_string(), cell);
+    }
+
+    fn reset_links(&self) {
+        self.linked_exports.borrow_mut().clear();
+        self.ambiguous_exports.borrow_mut().clear();
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
