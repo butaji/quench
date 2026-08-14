@@ -464,6 +464,7 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (NumberPrototype, "valueOf") => Some(NumberValueOf),
         (NumberPrototype, "toFixed") => Some(NumberToFixed),
         (NumberPrototype, "toPrecision") => Some(NumberToPrecision),
+        (NumberPrototype, "constructor") => Some(Number),
         (NumberPrototype, "toExponential") => Some(NumberToExponential),
         (Number, "isNaN") => Some(IsNaN),
         (Number, "isFinite") => Some(IsFinite),
