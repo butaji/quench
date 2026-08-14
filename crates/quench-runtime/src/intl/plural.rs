@@ -12,49 +12,67 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let mut minimum_integer_digits = 1.0;
     let mut minimum_fraction_digits = 0.0;
     let mut maximum_fraction_digits = 3.0;
-    let plural_type = match arguments.get(1) {
-        Some(Value::Object(properties)) => {
-            for (key, value) in properties.iter() {
-                if matches!(value, Value::Undefined) {
-                    continue;
-                }
-                let text = super::to_string_value(value);
-                match key.as_str() {
-                    "notation" => {
-                        if !matches!(
-                            text.as_str(),
-                            "standard" | "compact" | "scientific" | "engineering"
-                        ) {
-                            return Err(runtime_error("RangeError: invalid notation"));
-                        }
-                        notation = text;
-                    }
-                    "compactDisplay" => {
-                        if !matches!(text.as_str(), "short" | "long") {
-                            return Err(runtime_error("RangeError: invalid compactDisplay"));
-                        }
-                        compact_display = Some(text);
-                    }
-                    "minimumIntegerDigits" => {
-                        minimum_integer_digits = text.parse().ok().map_or(1.0, |value| value)
-                    }
-                    "minimumFractionDigits" => {
-                        minimum_fraction_digits = text.parse().ok().map_or(0.0, |value| value)
-                    }
-                    "maximumFractionDigits" => {
-                        maximum_fraction_digits = text.parse().ok().map_or(3.0, |value| value)
-                    }
-                    _ => {}
-                }
-            }
-            properties
-                .iter()
-                .find(|(key, _)| key == "type")
-                .map(|(_, value)| super::to_string_value(value))
-                .unwrap_or_else(|| "cardinal".to_string())
+    let mut plural_type = "cardinal".to_string();
+    if let Some(options) = arguments
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
+        if matches!(options, Value::Null) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot convert null to object",
+            ));
         }
-        _ => "cardinal".to_string(),
-    };
+        let source = options.clone();
+        for key in [
+            "localeMatcher",
+            "type",
+            "notation",
+            "compactDisplay",
+            "minimumIntegerDigits",
+            "minimumFractionDigits",
+            "maximumFractionDigits",
+            "minimumSignificantDigits",
+            "maximumSignificantDigits",
+            "roundingIncrement",
+            "roundingMode",
+            "roundingPriority",
+            "trailingZeroDisplay",
+        ] {
+            let value = crate::execute::get_property_result(&source, key)?;
+            if matches!(value, Value::Undefined) {
+                continue;
+            }
+            let text = crate::conversion::to_string(&value)?;
+            match key {
+                "type" => plural_type = text,
+                "notation" => {
+                    if !matches!(
+                        text.as_str(),
+                        "standard" | "compact" | "scientific" | "engineering"
+                    ) {
+                        return Err(runtime_error("RangeError: invalid notation"));
+                    }
+                    notation = text;
+                }
+                "compactDisplay" => {
+                    if !matches!(text.as_str(), "short" | "long") {
+                        return Err(runtime_error("RangeError: invalid compactDisplay"));
+                    }
+                    compact_display = Some(text);
+                }
+                "minimumIntegerDigits" => {
+                    minimum_integer_digits = text.parse().ok().map_or(1.0, |value| value)
+                }
+                "minimumFractionDigits" => {
+                    minimum_fraction_digits = text.parse().ok().map_or(0.0, |value| value)
+                }
+                "maximumFractionDigits" => {
+                    maximum_fraction_digits = text.parse().ok().map_or(3.0, |value| value)
+                }
+                _ => {}
+            }
+        }
+    }
     if !matches!(plural_type.as_str(), "cardinal" | "ordinal") {
         return Err(runtime_error("RangeError: invalid type"));
     }
