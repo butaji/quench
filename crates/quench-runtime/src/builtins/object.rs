@@ -347,6 +347,16 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             true,
         ));
     }
+    if key == "name" {
+        if let Some(name) = error_prototype_name(builtin) {
+            return Some(descriptor_object_with_flags(
+                Value::String(name.to_string()),
+                true,
+                false,
+                true,
+            ));
+        }
+    }
     let property = super::callable_property(builtin, key)
         .or_else(|| super::special_property(builtin, key))
         .or_else(|| match super::property(builtin, key) {
@@ -380,6 +390,19 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         false,
         configurable,
     ))
+}
+fn error_prototype_name(builtin: Builtin) -> Option<&'static str> {
+    Some(match builtin {
+        Builtin::ErrorPrototype => "Error",
+        Builtin::EvalErrorPrototype => "EvalError",
+        Builtin::RangeErrorPrototype => "RangeError",
+        Builtin::ReferenceErrorPrototype => "ReferenceError",
+        Builtin::SyntaxErrorPrototype => "SyntaxError",
+        Builtin::TypeErrorPrototype => "TypeError",
+        Builtin::URIErrorPrototype => "URIError",
+        Builtin::AggregateErrorPrototype => "AggregateError",
+        _ => return None,
+    })
 }
 fn accessor_descriptor(getter: Builtin) -> Value {
     Value::Object(Rc::new(ObjectData::new(vec![
