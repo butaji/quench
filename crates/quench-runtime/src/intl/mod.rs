@@ -317,7 +317,7 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
             }
             Ok(dedupe(out))
         }
-        Value::Object(_) => resolve_array_like_locales(locales),
+        Value::Object(_) | Value::Proxy(_) => resolve_array_like_locales(locales),
         _ => Ok(vec![default_locale()]),
     }
 }
@@ -331,7 +331,11 @@ fn resolve_array_like_locales(locales: &Value) -> Result<Vec<String>, VmError> {
     let length = length.floor().min(100_000.0) as usize;
     let mut result = Vec::with_capacity(length);
     for index in 0..length {
-        let value = crate::execute::get_property_result(locales, &index.to_string())?;
+        let key = index.to_string();
+        if !crate::with_scope::has_property(locales, &key)? {
+            continue;
+        }
+        let value = crate::execute::get_property_result(locales, &key)?;
         if matches!(value, Value::Number(_)) {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
