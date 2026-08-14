@@ -104,19 +104,20 @@ fn validate_view(view: &Value) -> Result<(), VmError> {
 }
 
 fn array_index(view: &Value, value: Option<&Value>) -> Result<usize, VmError> {
+    let length = view_length(view);
     if let Some(Value::BigInt(raw)) = value {
         let index = raw
             .parse::<u128>()
             .map_err(|_| crate::value::error::throw_range_error("Invalid index"))?;
-        return check_index(view, usize::try_from(index).unwrap_or(usize::MAX));
+        return check_index(length, usize::try_from(index).unwrap_or(usize::MAX));
     }
     let number = crate::conversion::to_number(value.unwrap_or(&Value::Undefined))?;
     let index = crate::construct::to_index(number)?;
-    check_index(view, index)
+    check_index(length, index)
 }
 
-fn check_index(view: &Value, index: usize) -> Result<usize, VmError> {
-    let length = match view {
+fn view_length(view: &Value) -> usize {
+    match view {
         Value::Int8Array(v) => v.logical_len(),
         Value::Uint8Array(v) => v.logical_len(),
         Value::Int16Array(v) => v.logical_len(),
@@ -126,7 +127,10 @@ fn check_index(view: &Value, index: usize) -> Result<usize, VmError> {
         Value::BigInt64Array(v) => v.logical_len(),
         Value::BigUint64Array(v) => v.logical_len(),
         _ => 0,
-    };
+    }
+}
+
+fn check_index(length: usize, index: usize) -> Result<usize, VmError> {
     if index >= length {
         return Err(crate::value::error::throw_range_error("Invalid index"));
     }
