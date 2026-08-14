@@ -136,6 +136,14 @@ pub(crate) fn prototype_method(
             Ok(Value::String(select(number, &plural_type, &locale, &notation)))
         }
         crate::ops::Builtin::IntlPluralRulesSelectRange => {
+            if arguments.len() < 2
+                || matches!(arguments.first(), Some(Value::Undefined))
+                || matches!(arguments.get(1), Some(Value::Undefined))
+            {
+                return Err(crate::value::error::throw_type_error(
+                    "selectRange requires two arguments",
+                ));
+            }
             let start = super::tolocale::value::to_number_result(arguments.first())?;
             let end = super::tolocale::value::to_number_result(arguments.get(1))?;
             if !start.is_finite() || !end.is_finite() {
