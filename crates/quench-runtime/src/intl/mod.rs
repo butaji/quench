@@ -133,6 +133,11 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
         }
+        (Builtin::IntlListFormatPrototype, "format") => Builtin::IntlListFormatFormat,
+        (Builtin::IntlListFormatPrototype, "formatToParts") => Builtin::IntlListFormatFormatToParts,
+        (Builtin::IntlListFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlListFormatResolvedOptions
+        }
         _ => return None,
     })
 }
