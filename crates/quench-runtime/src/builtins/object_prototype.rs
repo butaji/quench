@@ -12,7 +12,7 @@ fn prototype_for_value(value: &Value) -> Value {
     }
     match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
-        Value::Builtin(Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype) => {
+        Value::Builtin(Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype | Builtin::AbstractModuleSourcePrototype) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
@@ -22,6 +22,8 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(Builtin::FunctionPrototype) => Value::Builtin(Builtin::ObjectPrototype),
+        Value::Builtin(Builtin::AggregateError) => Value::Builtin(Builtin::Error),
+        Value::Builtin(Builtin::AggregateErrorPrototype) => Value::Builtin(Builtin::ErrorPrototype),
         Value::Builtin(Builtin::SuppressedError) => Value::Builtin(Builtin::Error),
         Value::Builtin(Builtin::SuppressedErrorPrototype) => {
             Value::Builtin(Builtin::ErrorPrototype)
