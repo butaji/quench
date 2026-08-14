@@ -87,7 +87,8 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
                 | Builtin::SyntaxErrorPrototype
                 | Builtin::TypeErrorPrototype
                 | Builtin::URIErrorPrototype
-                | Builtin::AggregateErrorPrototype,
+                | Builtin::AggregateErrorPrototype
+                | Builtin::SuppressedErrorPrototype,
             ),
         ) => "Object",
         Some(Value::Builtin(_)) => "Function",
