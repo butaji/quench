@@ -12,7 +12,8 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
 }
 
 fn metadata_builtin_name(builtin: Builtin) -> Option<&'static str> {
-    crate::builtin_meta::methods::short_name(builtin)
+    crate::builtin_meta::intl::short_name(builtin)
+        .or_else(|| crate::builtin_meta::methods::short_name(builtin))
         .or_else(|| crate::builtin_meta::methods::function_name(builtin))
         .or_else(|| data_view_name::data_view_name(builtin))
         .or_else(|| error_name(builtin))
