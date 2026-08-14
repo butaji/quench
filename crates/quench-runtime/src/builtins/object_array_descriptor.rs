@@ -53,7 +53,7 @@ fn refresh_array_descriptor(
     descriptor
 }
 fn strict_callee_descriptor() -> Value {
-    let thrower = Value::Builtin(Builtin::TypeError);
+    let thrower = Value::Builtin(Builtin::ThrowTypeError);
     Value::Object(Rc::new(ObjectData::new(vec![
         ("get".to_string(), thrower.clone()),
         ("set".to_string(), thrower),
