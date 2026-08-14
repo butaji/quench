@@ -56,6 +56,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
+        (ArrayIteratorPrototype, "next") => Some(Value::Builtin(IteratorNext)),
+        (ArrayIteratorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Array Iterator".into()))
+        }
         (AbstractModuleSource, "prototype") => Some(Value::Builtin(AbstractModuleSourcePrototype)),
         (AbstractModuleSourcePrototype, "constructor") => {
             Some(Value::Builtin(AbstractModuleSource))
