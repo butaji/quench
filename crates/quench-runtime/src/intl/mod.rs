@@ -385,7 +385,10 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 /// Canonicalize a single BCP-47 language tag.
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let tag = tag.trim();
-    if tag.is_empty() || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    if tag.eq_ignore_ascii_case("nan")
+        || tag.is_empty()
+        || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
     let mut parts = tag.split('-');
