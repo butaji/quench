@@ -124,6 +124,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
+            | Builtin::ThrowTypeError
             | Builtin::SuppressedError
             | Builtin::ErrorIsError
             | Builtin::ErrorPrototypeToString
@@ -190,6 +191,7 @@ fn execute_simple_builtin(
         | Builtin::URIError
         | Builtin::AggregateError
         | Builtin::TypeError
+        | Builtin::ThrowTypeError
         | Builtin::SuppressedError
         | Builtin::ErrorIsError
         | Builtin::ErrorPrototypeToString
@@ -210,6 +212,9 @@ fn error_builtin(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     match builtin {
+        Builtin::ThrowTypeError => Err(crate::value::error::throw_type_error(
+            "Restricted arguments property",
+        )),
         Builtin::Error
         | Builtin::RangeError
         | Builtin::ReferenceError
