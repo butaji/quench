@@ -18,30 +18,34 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let mut numeric = extension.numeric;
     let mut case_first = extension.case_first.unwrap_or_else(|| "false".to_string());
     let mut collation = extension.collation.unwrap_or_else(|| "default".to_string());
-    if let Some(Value::Object(properties)) = arguments.get(1) {
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
-            usage = crate::conversion::to_string(value)?;
+    if arguments
+        .get(1)
+        .is_some_and(|value| !matches!(value, Value::Undefined))
+    {
+        let options = arguments.get(1).unwrap_or(&Value::Undefined);
+        if let Some(value) = option(options, "usage")? {
+            usage = crate::conversion::to_string(&value)?;
             if !matches!(usage.as_str(), "sort" | "search") {
                 return Err(runtime_error("RangeError: invalid usage"));
             }
         }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "numeric") {
-            numeric = truthy_option(value);
+        if let Some(value) = option(options, "numeric")? {
+            numeric = truthy_option(&value);
         }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
-            case_first = crate::conversion::to_string(value)?;
+        if let Some(value) = option(options, "caseFirst")? {
+            case_first = crate::conversion::to_string(&value)?;
             if !matches!(case_first.as_str(), "upper" | "lower" | "false") {
                 return Err(runtime_error("RangeError: invalid caseFirst"));
             }
         }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
-            sensitivity = crate::conversion::to_string(value)?;
+        if let Some(value) = option(options, "sensitivity")? {
+            sensitivity = crate::conversion::to_string(&value)?;
             if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
                 return Err(runtime_error("RangeError: invalid sensitivity"));
             }
         }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "collation") {
-            collation = crate::conversion::to_string(value)?;
+        if let Some(value) = option(options, "collation")? {
+            collation = crate::conversion::to_string(&value)?;
             if !matches!(
                 collation.as_str(),
                 "default" | "search" | "standard" | "phonebk" | "pinyin" | "eor"
@@ -66,14 +70,11 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         if numeric {
             locale = remove_conflicting_extension(&locale, "kn", "true");
         }
-        if let Some((_, value)) = properties
-            .iter()
-            .find(|(name, _)| name == "ignorePunctuation")
-        {
-            ignore_punctuation = truthy_option(value);
+        if let Some(value) = option(options, "ignorePunctuation")? {
+            ignore_punctuation = truthy_option(&value);
         }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "localeMatcher") {
-            let matcher = crate::conversion::to_string(value)?;
+        if let Some(value) = option(options, "localeMatcher")? {
+            let matcher = crate::conversion::to_string(&value)?;
             if !matches!(matcher.as_str(), "lookup" | "best fit") {
                 return Err(runtime_error("RangeError: invalid localeMatcher"));
             }
@@ -108,6 +109,11 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             Value::Builtin(crate::ops::Builtin::IntlCollatorPrototype),
         ),
     ]))
+}
+
+fn option(options: &Value, key: &str) -> Result<Option<Value>, VmError> {
+    let value = crate::execute::get_property_result(options, key)?;
+    Ok((!matches!(value, Value::Undefined)).then_some(value))
 }
 
 fn remove_conflicting_extension(locale: &str, key: &str, value: &str) -> String {
