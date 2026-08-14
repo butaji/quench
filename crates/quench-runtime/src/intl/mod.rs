@@ -669,6 +669,16 @@ pub(crate) fn make_object(properties: Vec<(String, Value)>) -> Value {
     Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
 }
 
+pub(crate) fn make_instance(
+    constructor: crate::ops::Builtin,
+    mut properties: Vec<(String, Value)>,
+) -> Value {
+    if let Some(prototype) = crate::builtin_meta::instance_prototype(constructor) {
+        properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
+    }
+    make_object(properties)
+}
+
 pub(crate) fn make_array(values: Vec<Value>) -> Value {
     Value::array(values)
 }
