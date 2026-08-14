@@ -327,6 +327,11 @@ fn reduce_default_function_declaration<'a>(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
+    if function.id.is_none() {
+        let src = crate::functions::reduce_expression(function, ops, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported default declaration".to_string()])?;
+        return store_default(src, ops, next_slot, locals);
+    }
     reduce_exported_default!(
         function function,
         ops,
@@ -345,14 +350,72 @@ fn reduce_default_class_declaration<'a>(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    reduce_module_exported_decl!(
+    if class.id.is_none() {
+        let src = crate::classes::reduce_expression(class, ops, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported default declaration".to_string()])?;
+        return store_default(src, ops, next_slot, locals);
+    }
+    let result = reduce_module_exported_decl!(
         class class,
         ops,
         facts,
         next_register,
         next_slot,
         locals
-    )
+    );
+    if let Some(identifier) = class.id.as_ref() {
+        if let Some(&src_slot) = locals.get(identifier.name.as_str()) {
+            alias_default(src_slot, ops, next_register, next_slot, locals);
+        }
+    }
+    result
+}
+
+fn alias_default(
+    src_slot: u16,
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) {
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    locals.insert("default".to_string(), slot);
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::DeclareEvalBinding {
+        name: "default".to_string(),
+        slot,
+    });
+    ops.push(Op::LoadLocal {
+        dst: register,
+        slot: src_slot,
+    });
+    ops.push(Op::StoreLocal {
+        slot,
+        src: register,
+    });
+}
+
+fn store_default(
+    src: u16,
+    ops: &mut Vec<Op>,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<Option<u16>, Vec<String>> {
+    ops.push(Op::SetFunctionName {
+        function: src,
+        name: "default".to_string(),
+    });
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    locals.insert("default".to_string(), slot);
+    ops.push(Op::DeclareEvalBinding {
+        name: "default".to_string(),
+        slot,
+    });
+    ops.push(Op::StoreLocal { slot, src });
+    Ok(None)
 }
 
 fn reduce_class(
