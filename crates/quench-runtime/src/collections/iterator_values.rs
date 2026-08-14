@@ -101,6 +101,7 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
         IteratorState::Native { .. } | IteratorState::Protocol { .. } => {
             crate::ops::Builtin::ArrayIteratorPrototype
         }
+        IteratorState::Concat { .. } => crate::ops::Builtin::IteratorPrototype,
     };
     Value::Builtin(builtin)
 }
@@ -129,6 +130,7 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
         IteratorState::Set { .. } => "Set Iterator",
         IteratorState::Map { .. } => "Map Iterator",
         IteratorState::Protocol { .. } => "Iterator",
+        IteratorState::Concat { .. } => "Iterator",
     };
     Value::String(tag.to_string())
 }
@@ -143,6 +145,7 @@ fn next_for(value: &Value) -> Value {
         IteratorState::Set { .. } => Builtin::SetIteratorNext,
         IteratorState::Map { .. } => Builtin::MapIteratorNext,
         IteratorState::Native { .. } | IteratorState::Protocol { .. } => Builtin::IteratorNext,
+        IteratorState::Concat { .. } => Builtin::IteratorNext,
     };
     Value::Builtin(builtin)
 }
