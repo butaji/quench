@@ -134,6 +134,7 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             Builtin::IntlDateTimeFormatResolvedOptions
         }
         (Builtin::IntlPluralRulesPrototype, "select") => Builtin::IntlPluralRulesSelect,
+        (Builtin::IntlPluralRulesPrototype, "selectRange") => Builtin::IntlPluralRulesSelectRange,
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
         }
