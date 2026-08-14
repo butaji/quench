@@ -81,6 +81,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             crate::builtin_meta::finalization_registry::property(k).map(Value::Builtin)
         }
         (ObjectPrototype, "constructor") => Some(Value::Builtin(Object)),
+        (ObjectPrototype, "toLocaleString") => Some(Value::Builtin(ObjectPrototypeToString)),
+        (ObjectPrototype, k) => object_prototype_method(k).map(Value::Builtin),
         (DatePrototype, k) => crate::builtin_meta::date::date_prop(k).map(Value::Builtin),
         (DisposableStack, "prototype") => Some(Value::Builtin(DisposableStackPrototype)),
         (AsyncDisposableStack, "prototype") => Some(Value::Builtin(AsyncDisposableStackPrototype)),
