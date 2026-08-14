@@ -24,6 +24,29 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         .cloned()
         .unwrap_or_else(default_locale);
     let options = arguments.get(1);
+    if let Some(value) = options {
+        if !matches!(value, Value::Object(_) | Value::Proxy(_) | Value::Undefined) {
+            return Err(crate::value::error::throw_type_error(
+                "DurationFormat options must be an object",
+            ));
+        }
+    }
+    validate_option(options, "localeMatcher", &["lookup", "best fit"])?;
+    if let Some(numbering) = option(options, "numberingSystem")? {
+        if !(3..=8).contains(&numbering.len())
+            || !numbering.chars().all(|ch| ch.is_ascii_alphanumeric())
+        {
+            return Err(runtime_error("RangeError: invalid numberingSystem"));
+        }
+    }
+    if let Some(fractional) = option(options, "fractionalDigits")? {
+        let digits = fractional
+            .parse::<i64>()
+            .map_err(|_| runtime_error("RangeError: invalid fractionalDigits"))?;
+        if !(0..=9).contains(&digits) {
+            return Err(runtime_error("RangeError: invalid fractionalDigits"));
+        }
+    }
     let style = option(options, "style")?.unwrap_or_else(|| "short".to_string());
     if !matches!(style.as_str(), "long" | "short" | "narrow" | "digital") {
         return Err(runtime_error("RangeError: invalid style"));
@@ -55,6 +78,12 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         resolved.push((unit.to_string(), Value::String(value)));
         resolved.push((format!("{unit}Display"), Value::String("auto".to_string())));
     }
+    if let Some(value) = option(options, "fractionalDigits")? {
+        resolved.push((
+            "fractionalDigits".to_string(),
+            Value::Number(value.parse::<f64>().unwrap_or(0.0)),
+        ));
+    }
     Ok(make_object(vec![
         (
             "format".to_string(),
@@ -74,6 +103,17 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             Value::Builtin(Builtin::IntlDurationFormatPrototype),
         ),
     ]))
+}
+
+fn validate_option(options: Option<&Value>, key: &str, allowed: &[&str]) -> Result<(), VmError> {
+    let Some(value) = option(options, key)? else {
+        return Ok(());
+    };
+    if allowed.contains(&value.as_str()) {
+        Ok(())
+    } else {
+        Err(runtime_error("RangeError: invalid option"))
+    }
 }
 
 fn numbering_system(options: Option<&Value>) -> String {
