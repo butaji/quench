@@ -55,7 +55,7 @@ fn operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
     if builtin == Builtin::AtomicsStore {
         let value = atomic_value(view, arguments.get(2))?;
         store(view, index, &value)?;
-        return crate::execute::get_property_result(view, &index.to_string());
+        return store_result(view, arguments.get(2));
     }
     if builtin == Builtin::AtomicsCompareExchange {
         let expected = atomic_value(view, arguments.get(2))?;
@@ -150,6 +150,26 @@ fn atomic_value(view: &Value, value: Option<&Value>) -> Result<Value, VmError> {
         _ => number,
     };
     Ok(Value::Number(normalized))
+}
+
+fn store_result(view: &Value, value: Option<&Value>) -> Result<Value, VmError> {
+    let value = value.unwrap_or(&Value::Undefined);
+    let primitive = crate::conversion::to_primitive(value, "number")?;
+    if matches!(view, Value::BigInt64Array(_) | Value::BigUint64Array(_)) {
+        let raw = match primitive {
+            Value::BigInt(raw) | Value::String(raw) => raw,
+            _ => return Err(type_error("Cannot convert a non-BigInt value to BigInt")),
+        };
+        raw.parse::<num_bigint::BigInt>()
+            .map_err(|_| type_error("Invalid BigInt value"))?;
+        return Ok(Value::BigInt(raw));
+    }
+    let number = crate::conversion::to_number(&primitive)?;
+    Ok(Value::Number(if number.is_nan() {
+        0.0
+    } else {
+        number.trunc()
+    }))
 }
 
 fn bigint_from_bits(view: &Value, bits: u64) -> Value {
