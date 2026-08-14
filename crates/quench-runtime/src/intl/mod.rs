@@ -159,6 +159,10 @@ pub(crate) fn execute(
     }
 }
 
+pub(crate) fn construct_list_format(arguments: &[Value]) -> Result<Value, VmError> {
+    list::construct(arguments)
+}
+
 fn supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = requested_locales(arguments)?;
     validate_supported_options(arguments.get(1))?;
