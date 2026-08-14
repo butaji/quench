@@ -324,7 +324,10 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
 fn regexp_source(value: &Value) -> Result<Value, crate::execute::VmError> {
     let primitive = crate::conversion::to_primitive(value, "string")?;
     if matches!(primitive, Value::String(_) | Value::StringUnits(_)) {
-        return Ok(primitive);
+        return Ok(match primitive {
+            Value::String(source) => crate::strings::decode_surrogate_escapes(&source),
+            value => value,
+        });
     }
     crate::conversion::to_string(&primitive).map(Value::String)
 }
