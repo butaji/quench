@@ -65,6 +65,7 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     let (ops, _) = reduced.ok_or_else(|| invalid("Unsupported function source"))?;
     let length = crate::function_parameters::expected_argument_count(&function.params);
     let value = dynamic_value(ops, count, length, strictness, kind, is_async);
+    let _ = crate::builtins::set_function_name(&value, "anonymous");
     mark_dynamic(&value);
     Ok(value)
 }
