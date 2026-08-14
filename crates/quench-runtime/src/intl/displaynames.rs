@@ -111,7 +111,22 @@ fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
         "calendar" => code.split('-').all(|part| {
             (3..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
         }),
-        "dateTimeField" => !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric()),
+        "dateTimeField" => matches!(
+            code,
+            "era"
+                | "year"
+                | "quarter"
+                | "month"
+                | "weekOfYear"
+                | "weekday"
+                | "day"
+                | "dayPeriod"
+                | "hour"
+                | "minute"
+                | "second"
+                | "fractionalSecond"
+                | "timeZoneName"
+        ),
         _ => false,
     };
     if valid {
@@ -124,11 +139,52 @@ fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
 fn language_code_valid(code: &str) -> bool {
     let mut parts = code.split('-');
     let language = parts.next().unwrap_or("");
-    ((2..=3).contains(&language.len()) || (5..=8).contains(&language.len()))
-        && language.chars().all(|c| c.is_ascii_alphabetic())
-        && parts.all(|part| {
-            (2..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
-        })
+    if language == "root"
+        || !((2..=3).contains(&language.len()) || (5..=8).contains(&language.len()))
+        || !language.chars().all(|c| c.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    let mut script = false;
+    let mut region = false;
+    let mut variants = Vec::<String>::new();
+    for part in parts {
+        if !valid_language_part(part, &mut script, &mut region, &mut variants) {
+            return false;
+        }
+    }
+    true
+}
+
+fn valid_language_part(
+    part: &str,
+    script: &mut bool,
+    region: &mut bool,
+    variants: &mut Vec<String>,
+) -> bool {
+    if !(2..=8).contains(&part.len()) || !part.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    if part.len() == 4 && part.chars().all(|c| c.is_ascii_alphabetic()) {
+        let fresh = !*script;
+        *script = true;
+        return fresh;
+    }
+    if (part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic()))
+        || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
+    {
+        let fresh = !*region;
+        *region = true;
+        return fresh;
+    }
+    if part.len() <= 3 {
+        return false;
+    }
+    if part.len() == 1 || variants.iter().any(|variant| variant == part) {
+        return false;
+    }
+    variants.push(part.to_string());
+    true
 }
 
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
