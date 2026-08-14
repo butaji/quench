@@ -241,7 +241,8 @@ pub(crate) fn get_property_with_receiver(
     }
     if let Value::Array(values) = value {
         let has_own = key == "length"
-            || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+            || crate::arrays::array_index(key)
+                .is_some_and(|index| values.has_index(index as usize))
             || values.descriptor(key).is_some()
             || values.property(key).is_some();
         if !has_own {
@@ -347,6 +348,7 @@ fn is_accessor_builtin(builtin: Builtin) -> bool {
 fn same_property_receiver(value: &Value, receiver: &Value) -> bool {
     match (value, receiver) {
         (Value::Builtin(left), Value::Builtin(right)) => left == right,
+        (Value::Object(left), Value::Object(right)) => std::rc::Rc::ptr_eq(left, right),
         (Value::Map(left), Value::Map(right)) => std::rc::Rc::ptr_eq(left, right),
         (Value::Set(left), Value::Set(right)) => std::rc::Rc::ptr_eq(left, right),
         (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
