@@ -1,7 +1,7 @@
 pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
     use Builtin::*;
     if let Some(name) = metadata_builtin_name(builtin) {
-        return name;
+        return name.strip_prefix("Intl.").unwrap_or(name);
     }
     match builtin {
         Escape => "escape", Unescape => "unescape", EncodeURI => "encodeURI", EncodeURIComponent => "encodeURIComponent", DecodeURI => "decodeURI", DecodeURIComponent => "decodeURIComponent", Array => "Array", ArrayBuffer => "ArrayBuffer",
