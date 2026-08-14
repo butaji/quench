@@ -140,6 +140,7 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlLocaleVariantsGetter => Some(0.0),
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlCollatorSupportedLocalesOf => Some(1.0),
+        Builtin::IntlDurationFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(1.0),
         Builtin::IntlListFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlNumberFormatFormat => Some(1.0),
@@ -230,6 +231,7 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlSegmenterResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlDisplayNamesOf => Some("of"),
         Builtin::IntlDisplayNamesResolvedOptions => Some("resolvedOptions"),
+        Builtin::IntlDurationFormatSupportedLocalesOf => Some("supportedLocalesOf"),
         _ => None,
     }
 }
