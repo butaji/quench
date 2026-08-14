@@ -65,7 +65,8 @@ fn iterator_to_array(receiver: Option<&Value>) -> Result<Value, VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error("Iterator receiver required"));
     };
-    Ok(Value::array(iterator::collect(receiver)?))
+    let iterator = iterator::open(receiver.clone())?;
+    Ok(Value::array(iterator::collect(&iterator)?))
 }
 
 fn iterator_from(arguments: &[Value]) -> Result<Value, VmError> {
