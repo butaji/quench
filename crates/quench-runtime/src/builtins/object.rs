@@ -353,10 +353,11 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             Value::Undefined => None,
             value => Some(value),
         })?;
-    let writable = !matches!(
+    let writable = (!matches!(
         key,
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
-    ) && !is_well_known_symbol_property(builtin, key)
+    ) || (key == "name" && builtin == Builtin::ErrorPrototype))
+        && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);
     let configurable = !matches!(key, "prototype" | "unscopables")
         && !is_well_known_symbol_property(builtin, key)
