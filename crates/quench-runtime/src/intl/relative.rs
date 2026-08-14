@@ -3,7 +3,8 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string, SLOT,
+    default_locale, make_array, make_instance, make_object, resolve_locales, runtime_error,
+    slot_string, SLOT,
 };
 
 pub(crate) struct RelativeOptions {
@@ -82,7 +83,7 @@ impl RelativeOptions {
             ),
             (SLOT.to_string(), self.slot()),
         ];
-        make_object(properties)
+        make_instance(crate::ops::Builtin::IntlRelativeTimeFormat, properties)
     }
 
     fn slot(&self) -> Value {
