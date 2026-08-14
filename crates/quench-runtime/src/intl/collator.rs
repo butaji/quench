@@ -22,6 +22,12 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 return Err(runtime_error("RangeError: invalid usage"));
             }
         }
+        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "localeMatcher") {
+            let matcher = crate::conversion::to_string(value)?;
+            if !matches!(matcher.as_str(), "lookup" | "best fit") {
+                return Err(runtime_error("RangeError: invalid localeMatcher"));
+            }
+        }
         if let Some((_, Value::Boolean(value))) =
             properties.iter().find(|(name, _)| name == "numeric")
         {
