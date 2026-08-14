@@ -47,7 +47,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(IteratorSelf));
     }
     if builtin == AsyncIteratorPrototype && key == "Symbol.asyncIterator" {
-        return Some(Value::Builtin(IteratorSelf));
+        return Some(Value::Builtin(AsyncIteratorSelf));
+    }
+    if builtin == AsyncIteratorPrototype && key == "Symbol.asyncDispose" {
+        return Some(Value::Builtin(AsyncIteratorDispose));
     }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);
