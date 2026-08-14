@@ -25,6 +25,20 @@ fn make_protocol(iterator: Value) -> Value {
         }),
     }))
 }
+
+pub(crate) fn open_with_method(
+    iterable: Value,
+    method: Value,
+) -> Result<Value, crate::execute::VmError> {
+    let iterator = crate::functions::execute_target(&method, &iterable, &[])?;
+    if !crate::value::is_object(&iterator) {
+        return Err(not_iterable());
+    }
+    if matches!(iterator, Value::Iterator(_)) {
+        return Ok(iterator);
+    }
+    Ok(make_protocol(iterator))
+}
 pub(crate) fn execute(
     registers: &mut Vec<Value>,
     op: &crate::ops::Op,
