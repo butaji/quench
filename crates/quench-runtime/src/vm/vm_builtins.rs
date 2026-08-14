@@ -575,6 +575,9 @@ pub(crate) fn execute_shared_array_buffer_builtin(
             Ok(Value::Number(buffer.byte_length() as f64))
         }
         Builtin::SharedArrayBufferGrow => {
+            if buffer.max_byte_length.is_none() {
+                return Err(type_error("SharedArrayBuffer is not growable"));
+            }
             let length = arguments.first().ok_or_else(|| type_error("Missing length"))?;
             let length = crate::construct::to_index(crate::conversion::to_number(length)?)?;
             buffer
