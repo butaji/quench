@@ -322,24 +322,31 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
-                if matches!(value, Value::Number(_)) {
-                    return Err(runtime_error("RangeError: invalid language tag"));
+                if !matches!(value, Value::String(_) | Value::Object(_)) {
+                    return Err(crate::value::error::throw_type_error(
+                        "Locale list element must be a string or object",
+                    ));
                 }
                 out.push(canonicalize(&crate::conversion::to_string(value)?)?);
             }
             Ok(dedupe(out))
         }
         Value::Object(_) => object_locales(locales),
-        _ => Ok(vec![default_locale()]),
+        Value::Undefined => Ok(vec![default_locale()]),
+        _ => Err(crate::value::error::throw_type_error(
+            "Locales must be a string or object",
+        )),
     }
 }
 
 fn object_locales(locales: &Value) -> Result<Vec<String>, VmError> {
     let length = crate::execute::get_property_result(locales, "length")?;
-    let Value::Number(length) = length else {
-        return Ok(Vec::new());
+    let length = crate::conversion::to_number(&length)?;
+    let length = if !length.is_finite() || length <= 0.0 {
+        0
+    } else {
+        length.floor().min(100.0) as usize
     };
-    let length = length.max(0.0).min(100.0) as usize;
     let mut result = Vec::new();
     for index in 0..length {
         let value = crate::execute::get_property_result(locales, &index.to_string())?;
@@ -398,6 +405,14 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
+    if language.len() == 4
+        && parts
+            .clone()
+            .next()
+            .is_some_and(|part| part.len() == 3 && part.chars().all(|c| c.is_ascii_alphabetic()))
+    {
+        return Err(runtime_error("RangeError: invalid language tag"));
+    }
     let mut out = Vec::new();
     let mut script_done = false;
     if language.eq_ignore_ascii_case("sh") {
@@ -415,6 +430,9 @@ fn canonicalize_subtags(
     mut out: Vec<String>,
     mut script_done: bool,
 ) -> Result<Vec<String>, VmError> {
+    let mut singletons = std::collections::HashSet::new();
+    let mut variants = std::collections::HashSet::new();
+    let mut extension_pending = false;
     let mut region_done = false;
     let mut variant_done = false;
     let mut extension_done = false;
@@ -423,9 +441,25 @@ fn canonicalize_subtags(
             return Err(runtime_error("RangeError: invalid language tag"));
         }
         if extension_done || part.len() == 1 {
+            if part.len() == 1 {
+                if !singletons.insert(part.to_ascii_lowercase()) {
+                    return Err(runtime_error("RangeError: invalid language tag"));
+                }
+                extension_pending = true;
+            } else {
+                extension_pending = false;
+            }
             out.push(part.to_ascii_lowercase());
             extension_done = true;
             continue;
+        }
+        if variant_done
+            && ((part.len() >= 4 && part.chars().all(|c| c.is_ascii_alphabetic()))
+                || (part.len() >= 5
+                    && part.chars().next().is_some_and(|c| c.is_ascii_digit())
+                    && part[1..].chars().all(|c| c.is_ascii_alphanumeric())))
+        {
+            return Err(runtime_error("RangeError: invalid language tag"));
         }
         match classify_subtag(part, script_done, region_done, variant_done) {
             Subtag::Script => {
@@ -437,11 +471,17 @@ fn canonicalize_subtags(
                 region_done = true;
             }
             Subtag::Variant => {
+                if !variants.insert(part.to_ascii_lowercase()) {
+                    return Err(runtime_error("RangeError: invalid language tag"));
+                }
                 out.push(part.to_ascii_lowercase());
                 variant_done = true;
             }
             Subtag::Extension => out.push(part.to_ascii_lowercase()),
         }
+    }
+    if extension_pending {
+        return Err(runtime_error("RangeError: invalid language tag"));
     }
     Ok(out)
 }
