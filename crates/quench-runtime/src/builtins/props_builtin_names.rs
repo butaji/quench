@@ -19,6 +19,7 @@ fn intl_constructor_short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::IntlCollator => "Collator",
         Builtin::IntlDateTimeFormat => "DateTimeFormat",
         Builtin::IntlDisplayNames => "DisplayNames",
+        Builtin::IntlDurationFormat => "DurationFormat",
         Builtin::IntlListFormat => "ListFormat",
         Builtin::IntlLocale => "Locale",
         Builtin::IntlNumberFormat => "NumberFormat",
