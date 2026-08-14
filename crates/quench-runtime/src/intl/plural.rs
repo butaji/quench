@@ -199,7 +199,7 @@ fn plural_categories(locale: &str, plural_type: &str) -> Vec<Value> {
     } else if locale.starts_with("ru") || locale.starts_with("uk") {
         &["one", "few", "many", "other"]
     } else if locale.starts_with("fr") {
-        &["many", "one", "other"]
+        &["one", "many", "other"]
     } else {
         &["one", "other"]
     };
