@@ -8,7 +8,10 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             &["constructor", "prototype", "Symbol.toStringTag"]
         }
         Builtin::AsyncGeneratorPrototype => {
-            &["constructor", "next", "return", "throw", "Symbol.toStringTag"]
+            &[
+                "constructor", "next", "return", "throw", "Symbol.toStringTag",
+                "Symbol.asyncIterator", "Symbol.asyncDispose",
+            ]
         }
         Builtin::AsyncIteratorPrototype => &["Symbol.asyncIterator", "Symbol.asyncDispose"],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
