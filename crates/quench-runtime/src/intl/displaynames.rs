@@ -104,11 +104,9 @@ fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
         }
         "script" => code.len() == 4 && code.chars().all(|c| c.is_ascii_alphabetic()),
         "currency" => code.len() == 3 && code.chars().all(|c| c.is_ascii_alphabetic()),
-        "calendar" => {
-            code.split('-').all(|part| {
-                (3..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
-            })
-        }
+        "calendar" => code.split('-').all(|part| {
+            (3..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
+        }),
         "dateTimeField" => !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric()),
         _ => false,
     };
