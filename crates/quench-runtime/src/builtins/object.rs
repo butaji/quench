@@ -277,6 +277,9 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
         (Builtin::DataViewPrototype, "byteLength") => Builtin::DataViewByteLengthGetter,
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
+        (Builtin::SharedArrayBufferPrototype, "byteLength") => {
+            Builtin::SharedArrayBufferByteLengthGetter
+        }
         (Builtin::DisposableStackPrototype, "disposed") => Builtin::DisposableStackDisposed,
         (Builtin::AsyncDisposableStackPrototype, "disposed") => {
             Builtin::AsyncDisposableStackDisposed
