@@ -9,12 +9,14 @@ use super::{
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let raw_locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let (mut locale, extension) = normalize_locale_extensions(&raw_locale);
     let mut usage = "sort".to_string();
     let mut sensitivity = "variant".to_string();
     let mut ignore_punctuation = locale.starts_with("th");
-    let mut numeric = false;
-    let mut case_first = "false".to_string();
+    let mut numeric = extension.numeric;
+    let mut case_first = extension.case_first.unwrap_or_else(|| "false".to_string());
+    let mut collation = extension.collation.unwrap_or_else(|| "default".to_string());
     if let Some(Value::Object(properties)) = arguments.get(1) {
         if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
             usage = to_string_value(value);
@@ -22,10 +24,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 return Err(runtime_error("RangeError: invalid usage"));
             }
         }
-        if let Some((_, Value::Boolean(value))) =
-            properties.iter().find(|(name, _)| name == "numeric")
-        {
-            numeric = *value;
+        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "numeric") {
+            numeric = truthy_option(value);
         }
         if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
             case_first = to_string_value(value);
@@ -37,6 +37,26 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             sensitivity = to_string_value(value);
             if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
                 return Err(runtime_error("RangeError: invalid sensitivity"));
+            }
+        }
+        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "collation") {
+            collation = to_string_value(value);
+            if !matches!(
+                collation.as_str(),
+                "default" | "search" | "standard" | "phonebk" | "pinyin" | "eor"
+            ) {
+                return Err(runtime_error("RangeError: invalid collation"));
+            }
+            if collation == "pinyin" {
+                collation = normalize_locale_extensions(&raw_locale)
+                    .1
+                    .collation
+                    .unwrap_or_else(|| "default".to_string());
+            }
+            if collation == "eor" {
+                locale = strip_unicode_key(&locale, "co");
+            } else if collation == "default" {
+                locale = strip_unicode_key(&locale, "co");
             }
         }
         if case_first != "false" {
@@ -73,6 +93,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                     "ignorePunctuation".to_string(),
                     Value::Boolean(ignore_punctuation),
                 ),
+                ("collation".to_string(), Value::String(collation)),
             ]),
         ),
         (
@@ -87,19 +108,119 @@ fn remove_conflicting_extension(locale: &str, key: &str, value: &str) -> String 
     let Some(index) = parts.iter().position(|part| part.eq_ignore_ascii_case(key)) else {
         return locale.to_string();
     };
-    let extension_value = parts.get(index + 1).copied().unwrap_or("true");
+    let next = parts.get(index + 1).copied();
+    let extension_value = next.filter(|part| part.len() != 2).unwrap_or("true");
     if extension_value.eq_ignore_ascii_case(value) {
         return locale.to_string();
     }
+    let remove_count = usize::from(next.is_some_and(|part| part.len() != 2)) + 1;
     let result = parts[..index]
         .iter()
-        .chain(parts.get(index + 2..).unwrap_or_default().iter())
+        .chain(parts.get(index + remove_count..).unwrap_or_default().iter())
         .copied()
         .collect::<Vec<_>>()
         .join("-")
         .trim_end_matches("-u")
         .to_string();
     result
+}
+
+struct LocaleExtensions {
+    numeric: bool,
+    case_first: Option<String>,
+    collation: Option<String>,
+}
+
+fn normalize_locale_extensions(locale: &str) -> (String, LocaleExtensions) {
+    let parts = locale.split('-').collect::<Vec<_>>();
+    let Some(index) = parts.iter().position(|part| *part == "u") else {
+        return (
+            locale.to_string(),
+            LocaleExtensions {
+                numeric: false,
+                case_first: None,
+                collation: None,
+            },
+        );
+    };
+    let base = parts[..index].join("-");
+    let extension = &parts[index + 1..];
+    let mut numeric = false;
+    let mut case_first = None;
+    let mut collation = None;
+    let mut retained = Vec::new();
+    let mut cursor = 0;
+    while cursor < extension.len() {
+        let key = extension[cursor];
+        if key.len() != 2 {
+            cursor += 1;
+            continue;
+        }
+        let value = extension.get(cursor + 1).copied();
+        match key {
+            "kn" => {
+                numeric =
+                    value.is_none_or(|item| item.len() == 1 || item.len() == 2 || item == "true");
+                if value != Some("false") {
+                    retained.push("kn");
+                }
+            }
+            "kf" if matches!(value, Some("upper" | "lower" | "false")) => {
+                case_first = value.map(str::to_string);
+                retained.extend(["kf", value.unwrap_or("false")]);
+            }
+            "co" if base.starts_with("de")
+                && matches!(value, Some("phonebk" | "dict" | "ducet" | "pinyin")) =>
+            {
+                collation = value.map(str::to_string);
+                retained.extend(["co", value.unwrap_or("")]);
+            }
+            _ => {}
+        }
+        cursor += if value.is_some_and(|item| item.len() > 2) {
+            2
+        } else {
+            1
+        };
+    }
+    let normalized = if retained.is_empty() {
+        base
+    } else {
+        format!("{base}-u-{}", retained.join("-"))
+    };
+    (
+        normalized,
+        LocaleExtensions {
+            numeric,
+            case_first,
+            collation,
+        },
+    )
+}
+
+fn strip_unicode_key(locale: &str, key: &str) -> String {
+    let parts = locale.split('-').collect::<Vec<_>>();
+    let Some(index) = parts.iter().position(|part| *part == key) else {
+        return locale.to_string();
+    };
+    parts[..index]
+        .iter()
+        .chain(parts.get(index + 2..).unwrap_or_default().iter())
+        .copied()
+        .collect::<Vec<_>>()
+        .join("-")
+        .trim_end_matches("-u")
+        .to_string()
+}
+
+fn truthy_option(value: &Value) -> bool {
+    match value {
+        Value::Undefined | Value::Null => false,
+        Value::Boolean(value) => *value,
+        Value::Number(value) => *value != 0.0 && !value.is_nan(),
+        Value::String(value) => !value.is_empty(),
+        _ => true,
+    }
 }
 
 pub(crate) fn prototype_method(
@@ -133,7 +254,9 @@ pub(crate) fn prototype_method(
             ),
             (
                 "collation".to_string(),
-                Value::String("default".to_string()),
+                Value::String(
+                    slot_string(&slots, "collation").unwrap_or_else(|| "default".to_string()),
+                ),
             ),
             (
                 "numeric".to_string(),
