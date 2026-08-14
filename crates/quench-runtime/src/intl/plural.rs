@@ -14,6 +14,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let mut minimum_integer_digits = 1.0;
     let mut minimum_fraction_digits = 0.0;
     let mut maximum_fraction_digits = 3.0;
+    let mut minimum_significant_digits = None;
+    let mut maximum_significant_digits = None;
     let mut plural_type = "cardinal".to_string();
     if let Some(options) = arguments
         .get(1)
@@ -71,6 +73,12 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 "maximumFractionDigits" => {
                     maximum_fraction_digits = text.parse().ok().map_or(3.0, |value| value)
                 }
+                "minimumSignificantDigits" => {
+                    minimum_significant_digits = text.parse().ok()
+                }
+                "maximumSignificantDigits" => {
+                    maximum_significant_digits = text.parse().ok()
+                }
                 _ => {}
             }
         }
@@ -78,6 +86,39 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     if !matches!(plural_type.as_str(), "cardinal" | "ordinal") {
         return Err(runtime_error("RangeError: invalid type"));
     }
+    let mut slot_properties = vec![
+        ("locale".to_string(), Value::String(locale.clone())),
+        ("type".to_string(), Value::String(plural_type)),
+        ("notation".to_string(), Value::String(notation)),
+        (
+            "minimumIntegerDigits".to_string(),
+            Value::Number(minimum_integer_digits),
+        ),
+        (
+            "minimumFractionDigits".to_string(),
+            Value::Number(minimum_fraction_digits),
+        ),
+        (
+            "maximumFractionDigits".to_string(),
+            Value::Number(maximum_fraction_digits),
+        ),
+    ];
+    if let Some(value) = minimum_significant_digits {
+        slot_properties.push((
+            "minimumSignificantDigits".to_string(),
+            Value::Number(value),
+        ));
+    }
+    if let Some(value) = maximum_significant_digits {
+        slot_properties.push((
+            "maximumSignificantDigits".to_string(),
+            Value::Number(value),
+        ));
+    }
+    slot_properties.push((
+        "compactDisplay".to_string(),
+        Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
+    ));
     Ok(make_instance(
         crate::ops::Builtin::IntlPluralRules,
         vec![
@@ -95,27 +136,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ),
             (
                 SLOT.to_string(),
-                make_object(vec![
-                    ("locale".to_string(), Value::String(locale.clone())),
-                    ("type".to_string(), Value::String(plural_type)),
-                    ("notation".to_string(), Value::String(notation)),
-                    (
-                        "minimumIntegerDigits".to_string(),
-                        Value::Number(minimum_integer_digits),
-                    ),
-                    (
-                        "minimumFractionDigits".to_string(),
-                        Value::Number(minimum_fraction_digits),
-                    ),
-                    (
-                        "maximumFractionDigits".to_string(),
-                        Value::Number(maximum_fraction_digits),
-                    ),
-                    (
-                        "compactDisplay".to_string(),
-                        Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
-                    ),
-                ]),
+                make_object(slot_properties),
             ),
         ],
     ))
@@ -178,20 +199,21 @@ pub(crate) fn prototype_method(
                     "minimumIntegerDigits".to_string(),
                     Value::Number(minimum_integer_digits),
                 ),
-                (
-                    "minimumFractionDigits".to_string(),
-                    Value::Number(minimum_fraction_digits),
-                ),
-                (
-                    "maximumFractionDigits".to_string(),
-                    Value::Number(maximum_fraction_digits),
-                ),
             ];
             if let Some(value) = minimum_significant_digits {
                 properties.push(("minimumSignificantDigits".to_string(), Value::Number(value)));
-            }
-            if let Some(value) = maximum_significant_digits {
-                properties.push(("maximumSignificantDigits".to_string(), Value::Number(value)));
+                if let Some(value) = maximum_significant_digits {
+                    properties.push(("maximumSignificantDigits".to_string(), Value::Number(value)));
+                }
+            } else {
+                properties.push((
+                    "minimumFractionDigits".to_string(),
+                    Value::Number(minimum_fraction_digits),
+                ));
+                properties.push((
+                    "maximumFractionDigits".to_string(),
+                    Value::Number(maximum_fraction_digits),
+                ));
             }
             properties.push((
                 "pluralCategories".to_string(),
