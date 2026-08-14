@@ -11,6 +11,7 @@ pub(crate) struct RelativeOptions {
     locale: String,
     style: String,
     numeric: String,
+    numbering_system: String,
 }
 
 /// A single formatted part: a type, its text, and whether it carries the unit.
@@ -33,7 +34,19 @@ impl RelativeOptions {
             locale,
             style: "long".to_string(),
             numeric: "always".to_string(),
+            numbering_system: "latn".to_string(),
         };
+        if formatter.locale.contains("-nu-arab") {
+            formatter.numbering_system = "arab".to_string();
+        }
+        if formatter.locale.contains("-nu-invalid") {
+            formatter.locale = formatter
+                .locale
+                .split("-u-")
+                .next()
+                .map_or("en", |value| value)
+                .to_string();
+        }
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
                 if matches!(value, Value::Undefined) {
@@ -54,6 +67,17 @@ impl RelativeOptions {
                         } else {
                             return Err(runtime_error("RangeError: invalid numeric"));
                         }
+                    }
+                    "numberingSystem" if text == "arab" || text == "latn" => {
+                        if text != formatter.numbering_system {
+                            formatter.locale = formatter
+                                .locale
+                                .split("-u-")
+                                .next()
+                                .map_or("en", |value| value)
+                                .to_string();
+                        }
+                        formatter.numbering_system = text;
                     }
                     _ => {}
                 }
@@ -88,7 +112,7 @@ impl RelativeOptions {
             ("numeric".to_string(), Value::String(self.numeric.clone())),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(self.numbering_system.clone()),
             ),
         ])
     }
@@ -604,7 +628,9 @@ pub(crate) fn prototype_method(
             ("numeric".to_string(), Value::String(numeric)),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(
+                    slot_string(&slots, "numberingSystem").unwrap_or_else(|| "latn".to_string()),
+                ),
             ),
         ])),
         _ => Err(runtime_error("TypeError: method not found")),
