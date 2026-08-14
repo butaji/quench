@@ -525,14 +525,30 @@ fn construct_error(
         .filter(|value| !matches!(value, Value::Undefined))
     {
         let options = to_object(cause_source)?;
-        if !crate::with_scope::has_property(&options, "cause")? {
-            return Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))));
+        if crate::with_scope::has_property(&options, "cause")? {
+            let cause = crate::execute::get_property_result(&options, "cause")?;
+            properties.push(("cause".to_string(), cause));
         }
-        let cause = crate::execute::get_property_result(&options, "cause")?;
-        properties.push(("cause".to_string(), cause));
     }
 
+    for key in ["name", "message", "cause"] {
+        if let Some((_, value)) = properties.iter().rev().find(|(current, _)| current == key) {
+            properties.push((
+                crate::builtins::descriptor_key(key),
+                non_enumerable_descriptor(value),
+            ));
+        }
+    }
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
+}
+
+fn non_enumerable_descriptor(value: &Value) -> Value {
+    Value::Object(std::rc::Rc::new(ObjectData::new(vec![
+        ("value".to_string(), value.clone()),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])))
 }
 
 fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
