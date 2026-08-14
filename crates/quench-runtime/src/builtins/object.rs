@@ -168,10 +168,18 @@ pub(crate) fn descriptor(
                 .any(|(name, _)| name == &crate::builtins::deleted_key(&key));
             if !deleted
                 && crate::vm::is_global_object(&global)
-                && crate::vm::global_builtin_exists(&key)
+                && (crate::vm::global_builtin_exists(&key)
+                    || crate::globals::is_global_constant(&key))
             {
-                let value = crate::execute::get_property(&global, &key);
-                Some(descriptor_object_with_flags(value, true, false, true))
+                let value = crate::globals::immutable_value(&key)
+                    .unwrap_or_else(|| crate::execute::get_property(&global, &key));
+                let immutable = crate::globals::is_global_constant(&key);
+                Some(descriptor_object_with_flags(
+                    value,
+                    !immutable,
+                    false,
+                    !immutable,
+                ))
             } else {
                 object_descriptor(properties, &key)
             }
