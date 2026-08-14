@@ -36,16 +36,22 @@ impl RelativeOptions {
             numeric: "always".to_string(),
             numbering_system: "latn".to_string(),
         };
-        if formatter.locale.contains("-nu-arab") {
-            formatter.numbering_system = "arab".to_string();
-        }
-        if formatter.locale.contains("-nu-invalid") {
-            formatter.locale = formatter
-                .locale
-                .split("-u-")
-                .next()
-                .map_or("en", |value| value)
-                .to_string();
+        let mut unicode_locale = None;
+        let mut unicode_numbering = None;
+        if let Some((base, extension)) = formatter.locale.split_once("-u-") {
+            let parts: Vec<&str> = extension.split('-').collect();
+            if let Some(value) = parts
+                .windows(2)
+                .find(|pair| pair[0] == "nu")
+                .map(|pair| pair[1])
+            {
+                unicode_numbering = Some(value.to_string());
+                if matches!(value, "arab" | "latn") {
+                    formatter.numbering_system = value.to_string();
+                    unicode_locale = Some(formatter.locale.clone());
+                }
+            }
+            formatter.locale = base.to_string();
         }
         if matches!(options, Some(Value::Null)) {
             return Err(crate::value::error::throw_type_error(
@@ -62,6 +68,11 @@ impl RelativeOptions {
                 if !matches!(value, Value::Undefined) {
                     apply_option(&mut formatter, key, &value)?;
                 }
+            }
+        }
+        if let (Some(locale), Some(numbering)) = (unicode_locale, unicode_numbering) {
+            if formatter.numbering_system == numbering {
+                formatter.locale = locale;
             }
         }
         Ok(formatter)
