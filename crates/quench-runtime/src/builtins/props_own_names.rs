@@ -11,7 +11,14 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "isError",
         ],
         Builtin::ThrowTypeError => &["length", "name"],
-        Builtin::SharedArrayBufferPrototype => &["constructor", "byteLength", "Symbol.toStringTag"],
+        Builtin::SharedArrayBufferPrototype => &[
+            "constructor",
+            "byteLength",
+            "grow",
+            "growable",
+            "maxByteLength",
+            "Symbol.toStringTag",
+        ],
         Builtin::ErrorPrototype => {
             &["constructor", "name", "message", "cause", "stack", "toString"]
         }
