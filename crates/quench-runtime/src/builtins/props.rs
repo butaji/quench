@@ -60,6 +60,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (ArrayIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Array Iterator".into()))
         }
+        (builtin, "Symbol.iterator" | "values") if is_typed_array_prototype(builtin) => {
+            Some(Value::Builtin(ArrayIterator))
+        }
         (AbstractModuleSource, "prototype") => Some(Value::Builtin(AbstractModuleSourcePrototype)),
         (AbstractModuleSourcePrototype, "constructor") => {
             Some(Value::Builtin(AbstractModuleSource))
