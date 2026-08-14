@@ -3,6 +3,7 @@ pub(crate) fn promise_combinator(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    validate_constructor(receiver)?;
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     let result = Rc::new(PromiseData::default());
     let values = match collect_resolved(source, receiver) {
@@ -23,6 +24,22 @@ pub(crate) fn promise_combinator(
         finish_empty_aggregate(&aggregate);
     }
     Ok(Value::Promise(result))
+}
+
+fn validate_constructor(receiver: Option<&Value>) -> Result<(), VmError> {
+    let constructor = receiver.unwrap_or(&Value::Builtin(crate::ops::Builtin::Promise));
+    if !crate::conversion::is_callable(constructor) {
+        return Err(crate::value::error::throw_type_error(
+            "Promise constructor must be callable",
+        ));
+    }
+    let resolve = crate::execute::get_property_result(constructor, "resolve")?;
+    if !crate::conversion::is_callable(&resolve) {
+        return Err(crate::value::error::throw_type_error(
+            "Promise resolve must be callable",
+        ));
+    }
+    Ok(())
 }
 
 fn collect_resolved(
