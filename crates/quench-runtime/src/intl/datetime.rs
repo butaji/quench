@@ -200,6 +200,10 @@ impl DateTimeOptions {
                 Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatResolvedOptions),
             ),
             (SLOT.to_string(), self.slot()),
+            (
+                "\0prototype".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatPrototype),
+            ),
         ];
         make_object(properties)
     }

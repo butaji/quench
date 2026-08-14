@@ -1,5 +1,17 @@
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::IntlDateTimeFormat => &[
+            "length", "name", "prototype", "supportedLocalesOf",
+        ],
+        Builtin::IntlDateTimeFormatPrototype => &[
+            "constructor",
+            "format",
+            "formatToParts",
+            "formatRange",
+            "formatRangeToParts",
+            "resolvedOptions",
+            "Symbol.toStringTag",
+        ],
         Builtin::IntlCollator => &[
             "length", "name", "prototype", "supportedLocalesOf",
         ],
