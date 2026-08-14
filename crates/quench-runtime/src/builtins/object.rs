@@ -318,6 +318,10 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         let writable = !matches!(key, "constructor" | "Symbol.toStringTag");
         return Some(descriptor_object_with_flags(property, writable, false, true));
     }
+    if builtin == Builtin::AsyncGeneratorFunctionPrototype && key == "prototype" {
+        let property = super::special_property(builtin, key)?;
+        return Some(descriptor_object_with_flags(property, false, false, true));
+    }
     if builtin == Builtin::Object && key == "hasOwn" {
         return Some(descriptor_object_with_flags(
             Value::Builtin(Builtin::ObjectHasOwn),
@@ -372,10 +376,11 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
     ) && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);
-    let configurable = !matches!(key, "prototype" | "unscopables")
+    let configurable = (builtin == Builtin::AsyncGeneratorFunctionPrototype && key == "prototype")
+        || (!matches!(key, "prototype" | "unscopables")
         && !is_well_known_symbol_property(builtin, key)
         && builtin_property_configurable(builtin, key)
-        && !crate::conversion::is_symbol(&property);
+        && !crate::conversion::is_symbol(&property));
     Some(descriptor_object_with_flags(
         property,
         writable,
