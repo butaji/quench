@@ -484,7 +484,7 @@ fn attach_prototype(value: &crate::value::Value) {
 
 fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue>) {
     let generator_parent = if function.is_async {
-        crate::ops::Builtin::AsyncIteratorPrototype
+        crate::ops::Builtin::AsyncGeneratorPrototype
     } else {
         crate::ops::Builtin::ObjectPrototype
     };

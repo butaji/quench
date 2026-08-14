@@ -20,6 +20,9 @@ fn prototype_for_value(value: &Value) -> Value {
         }
         Value::Builtin(Builtin::AsyncFunctionPrototype) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Builtin(Builtin::AsyncFunction) => Value::Builtin(Builtin::Function),
+        Value::Builtin(Builtin::AsyncGeneratorPrototype) => {
+            Value::Builtin(Builtin::AsyncIteratorPrototype)
+        }
         Value::Builtin(builtin) if is_intrinsic_prototype(*builtin) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
@@ -297,6 +300,7 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::BigIntPrototype
             | Builtin::AsyncFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype
+            | Builtin::AsyncGeneratorPrototype
             | Builtin::AsyncIteratorPrototype
     )
 }
