@@ -507,6 +507,7 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
         }
         "resizable" => Value::Boolean(buffer.max_byte_length.is_some()),
         "resize" => Value::Builtin(Builtin::ArrayBufferResize),
+        "grow" if buffer.shared => Value::Builtin(Builtin::ArrayBufferResize),
         "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
     }
