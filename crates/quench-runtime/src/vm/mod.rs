@@ -366,9 +366,15 @@ pub(crate) fn bare_call_receiver(
         && matches!(function.strictness, FunctionStrictness::Sloppy)
     {
         if matches!(this_value, Value::Undefined | Value::Null) {
-            return current_global_object();
+            let global = function.captures.get(0);
+            return if matches!(global, Value::Object(_)) {
+                global
+            } else {
+                current_global_object()
+            };
         }
-        return to_object_value(this_value);
+        let global = function.captures.get(0);
+        return to_object_value_in_realm(this_value, &global);
     }
     this_value.clone()
 }
@@ -408,6 +414,23 @@ fn to_object_value(this_value: &Value) -> Value {
         Value::BigInt(_) => boxed_primitive(this_value, crate::ops::Builtin::BigInt),
         Value::Null | Value::Undefined | Value::BindingCell(_) => this_value.clone(),
     }
+}
+
+fn to_object_value_in_realm(this_value: &Value, global: &Value) -> Value {
+    let constructor = match this_value {
+        Value::Boolean(_) => "Boolean",
+        Value::Number(_) => "Number",
+        Value::String(_) | Value::StringUnits(_) => "String",
+        Value::BigInt(_) => "BigInt",
+        _ => return to_object_value(this_value),
+    };
+    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("_value".to_string(), this_value.clone()),
+        (
+            "constructor".to_string(),
+            crate::execute::get_property(global, constructor),
+        ),
+    ])))
 }
 
 fn boxed_primitive(value: &Value, constructor: crate::ops::Builtin) -> Value {
