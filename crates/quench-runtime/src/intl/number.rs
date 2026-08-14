@@ -272,6 +272,10 @@ impl NumberOptions {
                 Value::Builtin(crate::ops::Builtin::IntlNumberFormatResolvedOptions),
             ),
             (SLOT.to_string(), self.slot()),
+            (
+                "\0prototype".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlNumberFormatPrototype),
+            ),
         ];
         make_object(properties)
     }
