@@ -1,5 +1,9 @@
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::Atomics => &[
+            "add", "and", "compareExchange", "exchange", "isLockFree", "load", "notify",
+            "or", "pause", "store", "sub", "wait", "waitAsync", "xor", "Symbol.toStringTag",
+        ],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => {
             &["constructor", "toString", "valueOf", "Symbol.toStringTag"]
