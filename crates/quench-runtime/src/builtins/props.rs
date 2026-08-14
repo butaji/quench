@@ -241,7 +241,17 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (GeneratorFunction, "prototype") => Some(GeneratorFunctionPrototype),
         (AsyncGeneratorFunction, "prototype") => Some(AsyncGeneratorFunctionPrototype),
         (GeneratorFunctionPrototype, "constructor") => Some(GeneratorFunction),
+        (GeneratorFunctionPrototype, "toString" | "valueOf") => Some(if key == "toString" {
+            FunctionPrototypeToString
+        } else {
+            FunctionPrototypeValueOf
+        }),
         (AsyncGeneratorFunctionPrototype, "constructor") => Some(AsyncGeneratorFunction),
+        (AsyncGeneratorFunctionPrototype, "toString" | "valueOf") => Some(if key == "toString" {
+            FunctionPrototypeToString
+        } else {
+            FunctionPrototypeValueOf
+        }),
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
