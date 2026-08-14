@@ -330,6 +330,7 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     match property {
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)
+                && !is_iterator_next_builtin(builtin)
                 && crate::intl::tolocale::symbol::name(builtin).is_none() =>
         {
             bind_method(receiver, property)
@@ -337,6 +338,16 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
         other => other,
     }
 }
+
+fn is_iterator_next_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::RegExpStringIteratorNext
+            | Builtin::SetIteratorNext
+            | Builtin::MapIteratorNext
+    )
+}
+
 /// Accessor getters/setters carry their `this` at invocation time; binding
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
