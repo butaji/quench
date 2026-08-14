@@ -591,12 +591,15 @@ pub(crate) fn execute_shared_array_buffer_builtin(
                 .map_err(|_| crate::value::error::throw_range_error("Invalid grow length"))?;
             Ok(Value::Undefined)
         }
-        Builtin::SharedArrayBufferSlice => shared_array_buffer_slice(buffer, arguments),
+        Builtin::SharedArrayBufferSlice => {
+            shared_array_buffer_slice(receiver, buffer, arguments)
+        }
         _ => Err(type_error("Unknown SharedArrayBuffer builtin")),
     }
 }
 
 fn shared_array_buffer_slice(
+    receiver: Option<&Value>,
     buffer: &crate::value::ArrayBufferData,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
@@ -604,11 +607,22 @@ fn shared_array_buffer_slice(
     let start = slice_index(arguments.first(), length)?.unwrap_or(0);
     let end = slice_index(arguments.get(1), length)?.unwrap_or(length).max(start);
     let bytes = buffer.bytes.borrow()[start as usize..end as usize].to_vec();
-    let mut result = crate::value::ArrayBufferData::try_new(bytes.len())
-        .ok_or_else(|| crate::value::error::throw_range_error("SharedArrayBuffer is too large"))?;
-    result.shared = true;
+    let constructor = crate::execute::get_property_result(
+        receiver.ok_or_else(|| type_error("Missing SharedArrayBuffer receiver"))?,
+        "constructor",
+    )?;
+    let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
+    let species = if matches!(species, Value::Undefined | Value::Null) {
+        Value::Builtin(Builtin::SharedArrayBuffer)
+    } else {
+        species
+    };
+    let result = crate::construct::construct_value(&species, &[Value::Number(bytes.len() as f64)])?;
+    let Value::ArrayBuffer(result) = result else {
+        return Err(type_error("SharedArrayBuffer species must return a buffer"));
+    };
     result.bytes.borrow_mut().copy_from_slice(&bytes);
-    Ok(Value::ArrayBuffer(std::rc::Rc::new(result)))
+    Ok(Value::ArrayBuffer(result))
 }
 
 fn slice_index(value: Option<&Value>, length: i64) -> Result<Option<i64>, VmError> {
