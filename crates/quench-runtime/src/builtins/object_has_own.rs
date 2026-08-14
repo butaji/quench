@@ -118,6 +118,9 @@ fn object_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
     object_data_owns(properties, key)
 }
 fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
+    if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
+        return false;
+    }
     if builtin == Builtin::AsyncFunctionPrototype && matches!(key, "length" | "name") {
         return false;
     }
@@ -128,9 +131,6 @@ fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
         && matches!(key, "constructor" | "next" | "return" | "throw" | "Symbol.toStringTag")
     {
         return true;
-    }
-    if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
-        return false;
     }
     (builtin == Builtin::Object && key == "hasOwn")
         || builtin_descriptor(builtin, key).is_some()
