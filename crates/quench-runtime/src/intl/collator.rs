@@ -75,6 +75,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
             ]),
         ),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(crate::ops::Builtin::IntlCollatorPrototype),
+        ),
     ]))
 }
 
