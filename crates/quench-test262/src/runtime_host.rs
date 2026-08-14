@@ -29,6 +29,7 @@ pub struct LinkedModule {
     fixed_exports: Vec<(String, quench_runtime::value::Value)>,
     linked_exports: RefCell<HashMap<String, ModuleBindingCell>>,
     ambiguous_exports: RefCell<HashSet<String>>,
+    namespace: RefCell<Option<ModuleBindingCell>>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -196,6 +197,9 @@ fn namespace_cell(
     let unit = units
         .get(&target)
         .ok_or_else(|| "module unit missing".to_string())?;
+    if let Some(namespace) = unit.namespace.borrow().as_ref() {
+        return Ok(namespace.clone());
+    }
     let properties = unit
         .export_names()
         .iter()
@@ -207,9 +211,11 @@ fn namespace_cell(
             )
         })
         .collect();
-    Ok(ModuleBindingCell::new(
+    let namespace = ModuleBindingCell::new(
         quench_runtime::value::Value::object(properties),
-    ))
+    );
+    unit.namespace.replace(Some(namespace.clone()));
+    Ok(namespace)
 }
 
 impl LinkedModule {
@@ -221,6 +227,7 @@ impl LinkedModule {
             fixed_exports: Vec::new(),
             linked_exports: RefCell::new(HashMap::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
+            namespace: RefCell::new(None),
         })
     }
 
@@ -232,6 +239,7 @@ impl LinkedModule {
             fixed_exports: Vec::new(),
             linked_exports: RefCell::new(HashMap::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
+            namespace: RefCell::new(None),
         })
     }
 
