@@ -229,6 +229,8 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ArrayBufferPrototype, "resize") => Some(ArrayBufferResize),
         (ArrayBufferPrototype, "transferToImmutable") => Some(ArrayBufferTransferToImmutable),
         (SharedArrayBufferPrototype, "constructor") => Some(SharedArrayBuffer),
+        (SharedArrayBufferPrototype, "byteLength") => Some(SharedArrayBufferByteLengthGetter),
+        (SharedArrayBufferPrototype, "grow") => Some(SharedArrayBufferGrow),
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),
         (Function, "prototype") => Some(FunctionPrototype),
