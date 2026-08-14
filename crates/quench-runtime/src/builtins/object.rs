@@ -373,10 +373,22 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             Value::Undefined => None,
             value => Some(value),
         })?;
-    let writable = !matches!(
+    let writable = ((!matches!(
         key,
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
-    ) && !is_well_known_symbol_property(builtin, key)
+    )) || (key == "name"
+        && matches!(
+            builtin,
+            Builtin::ErrorPrototype
+                | Builtin::EvalErrorPrototype
+                | Builtin::RangeErrorPrototype
+                | Builtin::ReferenceErrorPrototype
+                | Builtin::SyntaxErrorPrototype
+                | Builtin::TypeErrorPrototype
+                | Builtin::URIErrorPrototype
+                | Builtin::AggregateErrorPrototype
+         )))
+        && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);
     let configurable = ((key == "prototype" && builtin_property_configurable(builtin, key))
         || (!matches!(key, "prototype" | "unscopables")
