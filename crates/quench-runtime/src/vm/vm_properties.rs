@@ -452,6 +452,8 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
         RefCell::new(number_format_bound_properties())
     } else if builtin == Builtin::IntlCollatorCompare {
         RefCell::new(collator_compare_bound_properties())
+    } else if builtin == Builtin::IntlDateTimeFormatFormat {
+        RefCell::new(datetime_format_bound_properties())
     } else {
         RefCell::new(Vec::new())
     };
@@ -461,6 +463,27 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
         arguments: Vec::new(),
         properties,
     }))
+}
+
+fn datetime_format_bound_properties() -> Vec<(String, Value)> {
+    [
+        ("length", Value::Number(1.0)),
+        ("name", Value::String(String::new())),
+    ]
+    .into_iter()
+    .flat_map(|(key, value)| {
+        let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ])));
+        [
+            (key.to_string(), value),
+            (crate::builtins::descriptor_key(key), descriptor),
+        ]
+    })
+    .collect()
 }
 
 fn collator_compare_bound_properties() -> Vec<(String, Value)> {
