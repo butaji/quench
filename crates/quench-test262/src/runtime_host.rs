@@ -59,23 +59,16 @@ impl LinkedModuleGraph {
             units.insert(unit.id, module);
         }
         link_reexports(graph, &units)?;
-        let ids = units.keys().copied().collect::<Vec<_>>();
-        for id in ids {
-            let metadata = units
-                .get(&id)
-                .and_then(|unit| unit.program.module_metadata.as_ref())
-                .ok_or_else(|| "module metadata missing".to_string())?;
-            for binding in &metadata.imports {
-                let target = graph
-                    .resolve(id, &binding.source)
-                    .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-                let cell = import_cell(&units, target, &binding.imported)?;
-                units
-                    .get(&id)
-                    .ok_or_else(|| "module unit missing".to_string())?
-                    .bind_import(&binding.local, cell)?;
-            }
+        bind_imports(graph, &units)?;
+        for unit in units.values() {
+            unit.reset_links();
         }
+        link_reexports(graph, &units)?;
+        bind_imports(graph, &units)?;
+        for unit in units.values() {
+            unit.reset_links();
+        }
+        link_reexports(graph, &units)?;
         Ok(Self { units })
     }
 
@@ -92,6 +85,30 @@ impl LinkedModuleGraph {
     pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
         self.units.get(&unit)?.export_cell(name)
     }
+}
+
+fn bind_imports(
+    graph: &ModuleGraph,
+    units: &HashMap<ModuleId, LinkedModule>,
+) -> Result<(), String> {
+    let ids = units.keys().copied().collect::<Vec<_>>();
+    for id in ids {
+        let metadata = units
+            .get(&id)
+            .and_then(|unit| unit.program.module_metadata.as_ref())
+            .ok_or_else(|| "module metadata missing".to_string())?;
+        for binding in &metadata.imports {
+            let target = graph
+                .resolve(id, &binding.source)
+                .ok_or_else(|| format!("unresolved module {}", binding.source))?;
+            let cell = import_cell(units, target, &binding.imported)?;
+            units
+                .get(&id)
+                .ok_or_else(|| "module unit missing".to_string())?
+                .bind_import(&binding.local, cell)?;
+        }
+    }
+    Ok(())
 }
 
 fn link_reexports(
@@ -289,6 +306,11 @@ impl LinkedModule {
         self.linked_exports
             .borrow_mut()
             .insert(name.to_string(), cell);
+    }
+
+    fn reset_links(&self) {
+        self.linked_exports.borrow_mut().clear();
+        self.ambiguous_exports.borrow_mut().clear();
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
