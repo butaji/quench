@@ -3,6 +3,7 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
         Builtin::AbstractModuleSource => &["length", "name", "prototype"],
         Builtin::AbstractModuleSourcePrototype => &["constructor", "Symbol.toStringTag"],
         Builtin::ArrayIteratorPrototype => &["next", "Symbol.toStringTag"],
+        Builtin::AsyncFunctionPrototype => &["constructor", "Symbol.toStringTag"],
         Builtin::AsyncIteratorPrototype => &["Symbol.asyncIterator", "Symbol.asyncDispose"],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => &["constructor", "toString", "valueOf", "Symbol.toStringTag"],
