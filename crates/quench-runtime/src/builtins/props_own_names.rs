@@ -14,6 +14,7 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
         Builtin::SharedArrayBufferPrototype => &[
             "constructor",
             "byteLength",
+            "slice",
             "grow",
             "growable",
             "maxByteLength",
