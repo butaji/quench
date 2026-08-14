@@ -108,6 +108,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         return Some(name);
     }
     match b {
+        Builtin::IteratorConcat => Some("Iterator.concat"),
         Builtin::IteratorSelf => Some("Iterator.prototype[Symbol.iterator]"),
         Builtin::SetIteratorNext => Some("SetIteratorPrototype.prototype.next"),
         Builtin::MapIteratorNext => Some("MapIteratorPrototype.prototype.next"),
@@ -162,6 +163,7 @@ const fn set_fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
+        Builtin::IteratorConcat => Some(0.0),
         Builtin::IteratorSelf => Some(0.0),
         Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some(0.0),
         Builtin::MapSet => Some(2.0),
@@ -203,6 +205,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         return Some(name);
     }
     match b {
+        Builtin::IteratorConcat => Some("concat"),
         Builtin::IteratorSelf => Some("[Symbol.iterator]"),
         Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some("next"),
         Builtin::MapSet => Some("set"),
