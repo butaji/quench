@@ -1,6 +1,7 @@
 //! `Intl.Collator`.
 
 use crate::{execute::VmError, value::Value};
+use unicode_normalization::UnicodeNormalization;
 
 use super::{
     default_locale, make_object, resolve_locales, runtime_error, slot_bool, slot_string,
@@ -240,7 +241,7 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlCollatorCompare => {
             let left = to_string_value(arguments.first().unwrap_or(&Value::Undefined));
             let right = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
-            Ok(Value::Number(compare(&left, &right, &locale)))
+            Ok(Value::Number(compare(&left, &right, &locale, &slots)))
         }
         crate::ops::Builtin::IntlCollatorResolvedOptions => Ok(make_object(vec![
             ("locale".to_string(), Value::String(locale)),
@@ -283,13 +284,36 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
     super::intl_slots(receiver)
 }
 
-fn compare(left: &str, right: &str, locale: &str) -> f64 {
+fn compare(left: &str, right: &str, locale: &str, slots: &[(String, Value)]) -> f64 {
     let _ = locale;
-    match left.cmp(right) {
+    let left = comparison_key(left, slots);
+    let right = comparison_key(right, slots);
+    match left.cmp(&right) {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => 0.0,
         std::cmp::Ordering::Greater => 1.0,
     }
+}
+
+fn comparison_key(value: &str, slots: &[(String, Value)]) -> String {
+    let ignore_punctuation = slot_bool(slots, "ignorePunctuation").unwrap_or(false);
+    let sensitivity = slot_string(slots, "sensitivity").unwrap_or_else(|| "variant".to_string());
+    let normalized = value.nfd();
+    let mut key = String::new();
+    for ch in normalized {
+        if ignore_punctuation && !ch.is_alphanumeric() {
+            continue;
+        }
+        if matches!(ch, '\u{0300}'..='\u{036f}') {
+            continue;
+        }
+        key.push(if matches!(sensitivity.as_str(), "base" | "accent") {
+            ch.to_ascii_lowercase()
+        } else {
+            ch
+        });
+    }
+    key
 }
 
 pub(crate) fn dispatch(
