@@ -310,6 +310,21 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if matches!(builtin, Builtin::ErrorPrototype | Builtin::SuppressedErrorPrototype)
+        && key == "name"
+    {
+        let value = if builtin == Builtin::ErrorPrototype {
+            "Error"
+        } else {
+            "SuppressedError"
+        };
+        return Some(descriptor_object_with_flags(
+            Value::String(value.to_string()),
+            true,
+            false,
+            true,
+        ));
+    }
     if builtin == Builtin::Object && key == "hasOwn" {
         return Some(descriptor_object_with_flags(
             Value::Builtin(Builtin::ObjectHasOwn),
