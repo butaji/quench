@@ -439,12 +439,17 @@ fn reduce_this_atom(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> u16 {
-    if let Some(slot) = locals
+    let slot = locals
         .get("this")
         .or_else(|| locals.get(SCRIPT_THIS_SLOT))
-        .or_else(|| locals.get("globalThis"))
         .copied()
-    {
+        .or_else(|| {
+            locals
+                .contains_key(SCRIPT_THIS_SLOT)
+                .then(|| locals.get("globalThis").copied())
+                .flatten()
+        });
+    if let Some(slot) = slot {
         return emit_load_local(ops, next_register, slot);
     }
     crate::reduce_support::emit_undefined(ops, next_register)
