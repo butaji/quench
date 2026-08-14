@@ -60,6 +60,7 @@ fn execute_core(
 }
 
 fn iterator_concat(arguments: &[Value]) -> Result<Value, VmError> {
+    let mut items = Vec::with_capacity(arguments.len());
     for value in arguments {
         if !crate::value::is_object(value) {
             return Err(crate::value::error::throw_type_error(
@@ -67,18 +68,17 @@ fn iterator_concat(arguments: &[Value]) -> Result<Value, VmError> {
             ));
         }
         let method = crate::execute::get_property_result(value, "Symbol.iterator")?;
-        if !matches!(method, Value::Undefined | Value::Null)
-            && !crate::conversion::is_callable(&method)
-        {
+        if !crate::conversion::is_callable(&method) {
             return Err(crate::value::error::throw_type_error(
                 "Iterator.concat item is not iterable",
             ));
         }
+        items.push((value.clone(), method));
     }
     Ok(Value::Iterator(std::rc::Rc::new(
         crate::value::IteratorData {
             state: std::cell::RefCell::new(crate::value::IteratorState::Concat {
-                items: arguments.to_vec(),
+                items,
                 index: 0,
                 current: None,
                 done: false,
