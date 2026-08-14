@@ -46,10 +46,18 @@ impl RelativeOptions {
                 .map_or("en", |value| value)
                 .to_string();
         }
-        if let Some(Value::Object(properties)) = options {
+        if matches!(options, Some(Value::Null)) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot convert null to object",
+            ));
+        }
+        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+            let source = match options {
+                Value::Object(properties) => Value::Object(properties.clone()),
+                _ => Value::Builtin(crate::ops::Builtin::ObjectPrototype),
+            };
             for key in ["localeMatcher", "numberingSystem", "style", "numeric"] {
-                let value =
-                    crate::execute::get_property_result(&Value::Object(properties.clone()), key)?;
+                let value = crate::execute::get_property_result(&source, key)?;
                 if !matches!(value, Value::Undefined) {
                     apply_option(&mut formatter, key, &value)?;
                 }
