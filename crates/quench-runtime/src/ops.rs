@@ -393,6 +393,7 @@ pub enum Builtin {
     IntlPluralRules,
     IntlPluralRulesSupportedLocalesOf,
     IntlPluralRulesSelect,
+    IntlPluralRulesSelectRange,
     IntlPluralRulesResolvedOptions,
     IntlDateTimeFormat,
     IntlDateTimeFormatSupportedLocalesOf,
