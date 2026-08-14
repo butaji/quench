@@ -37,6 +37,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringMatch => Some("String.prototype.match"),
         Builtin::StringToLocaleLowerCase => Some("String.prototype.toLocaleLowerCase"),
         Builtin::StringToLocaleUpperCase => Some("String.prototype.toLocaleUpperCase"),
+        Builtin::StringLocaleCompare => Some("String.prototype.localeCompare"),
         _ => None,
     }
 }
@@ -74,6 +75,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::StringSplit => Some(2.0),
         Builtin::StringPadStart | Builtin::StringPadEnd => Some(1.0),
         Builtin::StringReplace | Builtin::StringReplaceAll => Some(2.0),
+        Builtin::StringLocaleCompare => Some(1.0),
         _ => None,
     }
 }
