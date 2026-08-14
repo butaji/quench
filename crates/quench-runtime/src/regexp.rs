@@ -208,6 +208,7 @@ fn find_close_paren(body: &str, start: usize) -> Option<usize> {
 include!("regexp_named_groups.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
+    validate_literal_ranges(pattern)?;
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
         .map_err(|_| "invalid regular expression".to_string())?
@@ -215,11 +216,44 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
 }
 
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
+    validate_literal_ranges(pattern).map_err(|error| format!("SyntaxError: {error}"))?;
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
         .map_err(|_| "SyntaxError: invalid regular expression".to_string())?
         .map(|_| ())
         .map_err(|error| format!("SyntaxError: {error}"))
+}
+
+fn validate_literal_ranges(pattern: &str) -> Result<(), String> {
+    let bytes = pattern.as_bytes();
+    let mut in_class = false;
+    let mut escaped = false;
+    for index in 0..bytes.len().saturating_sub(2) {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            continue;
+        }
+        if byte == b'[' {
+            in_class = true;
+            continue;
+        }
+        if byte == b']' {
+            in_class = false;
+            continue;
+        }
+        if in_class && bytes[index + 1] == b'-' && bytes[index + 2] > byte {
+            continue;
+        }
+        if in_class && bytes[index + 1] == b'-' && bytes[index + 2] < byte {
+            return Err("invalid character range".to_string());
+        }
+    }
+    Ok(())
 }
 
 pub fn execute_builtin(
