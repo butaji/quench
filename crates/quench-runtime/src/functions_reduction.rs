@@ -1,3 +1,8 @@
+thread_local! {
+    static GENERATOR_PROTOTYPES: std::cell::RefCell<std::collections::HashMap<usize, crate::value::Value>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 pub(super) fn reduce_function_ops(
     statements: &[oxc::ast::ast::Statement<'_>],
     formal: &oxc::ast::ast::FormalParameters<'_>,
@@ -478,31 +483,29 @@ fn attach_prototype(value: &crate::value::Value) {
 }
 
 fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue>) {
-    let generator = shared_generator_prototype();
+    let generator = generator_prototype();
     if matches!(generator, crate::value::Value::Undefined) {
         return;
     }
-    let function_prototype = crate::value::Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(vec![
-            ("prototype".to_string(), generator.clone()),
-            ("constructor".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::GeneratorFunction)),
-            ("Symbol.toStringTag".to_string(), crate::value::Value::String("GeneratorFunction".into())),
-            (crate::builtins::descriptor_key("Symbol.toStringTag"), immutable_descriptor()),
-            ("\0prototype".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::FunctionPrototype)),
-        ]),
-    ));
     let instance = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
         vec![("\0prototype".to_string(), generator)],
     )));
     function.properties.borrow_mut().extend([
-        ("\0prototype".to_string(), function_prototype),
+        ("\0prototype".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::GeneratorFunctionPrototype)),
         ("prototype".to_string(), instance.clone()),
         (crate::builtins::descriptor_key("prototype"), prototype_descriptor(instance)),
     ]);
 }
 
-fn shared_generator_prototype() -> crate::value::Value {
+pub(crate) fn generator_prototype() -> crate::value::Value {
     let global = crate::vm::current_global_object();
+    let key = match &global {
+        crate::value::Value::Object(object) => std::rc::Rc::as_ptr(object) as usize,
+        _ => 0,
+    };
+    if let Some(value) = GENERATOR_PROTOTYPES.with(|prototypes| prototypes.borrow().get(&key).cloned()) {
+        return value;
+    }
     if let crate::value::Value::Object(object) = &global {
         if let Some((_, value)) = object
             .properties
@@ -514,20 +517,46 @@ fn shared_generator_prototype() -> crate::value::Value {
         }
     }
     let generator = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-            ("constructor".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::GeneratorFunction)),
+            ("constructor".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::GeneratorFunctionPrototype)),
+            (crate::builtins::descriptor_key("constructor"), generator_constructor_descriptor()),
             ("next".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::GeneratorNext)),
+            (crate::builtins::descriptor_key("next"), generator_method_descriptor(crate::value::Value::Builtin(crate::ops::Builtin::GeneratorNext))),
             ("return".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::GeneratorReturn)),
+            (crate::builtins::descriptor_key("return"), generator_method_descriptor(crate::value::Value::Builtin(crate::ops::Builtin::GeneratorReturn))),
             ("throw".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::GeneratorThrow)),
+            (crate::builtins::descriptor_key("throw"), generator_method_descriptor(crate::value::Value::Builtin(crate::ops::Builtin::GeneratorThrow))),
             ("Symbol.toStringTag".to_string(), crate::value::Value::String("Generator".into())),
+            (crate::builtins::descriptor_key("Symbol.toStringTag"), generator_tag_descriptor()),
             ("\0prototype".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::GeneratorFunctionPrototype)),
         ],
     )));
     crate::builtins::set_property(global, "\0generator_prototype", generator.clone());
+    GENERATOR_PROTOTYPES.with(|prototypes| {
+        prototypes.borrow_mut().insert(key, generator.clone());
+    });
     generator
 }
 
-fn immutable_descriptor() -> crate::value::Value {
+fn generator_tag_descriptor() -> crate::value::Value {
     crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("writable".to_string(), crate::value::Value::Boolean(false)),
+        ("enumerable".to_string(), crate::value::Value::Boolean(false)),
+        ("configurable".to_string(), crate::value::Value::Boolean(true)),
+    ])))
+}
+
+fn generator_method_descriptor(value: crate::value::Value) -> crate::value::Value {
+    crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), crate::value::Value::Boolean(true)),
+        ("enumerable".to_string(), crate::value::Value::Boolean(false)),
+        ("configurable".to_string(), crate::value::Value::Boolean(true)),
+    ])))
+}
+
+fn generator_constructor_descriptor() -> crate::value::Value {
+    crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::GeneratorFunctionPrototype)),
         ("writable".to_string(), crate::value::Value::Boolean(false)),
         ("enumerable".to_string(), crate::value::Value::Boolean(false)),
         ("configurable".to_string(), crate::value::Value::Boolean(true)),

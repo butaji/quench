@@ -448,7 +448,15 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
     };
-    let properties = if builtin == Builtin::IntlNumberFormatFormat {
+    let properties = if matches!(builtin, Builtin::GeneratorNext | Builtin::GeneratorReturn | Builtin::GeneratorThrow) {
+        let name = crate::builtins::builtin_name(builtin).to_string();
+        RefCell::new(vec![
+            ("length".to_string(), Value::Number(1.0)),
+            ("name".to_string(), Value::String(name)),
+            (crate::builtins::descriptor_key("length"), bound_function_descriptor(Value::Number(1.0))),
+            (crate::builtins::descriptor_key("name"), bound_function_descriptor(Value::String(crate::builtins::builtin_name(builtin).to_string()))),
+        ])
+    } else if builtin == Builtin::IntlNumberFormatFormat {
         RefCell::new(number_format_bound_properties())
     } else {
         RefCell::new(Vec::new())
@@ -459,6 +467,15 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
         arguments: Vec::new(),
         properties,
     }))
+}
+
+fn bound_function_descriptor(value: Value) -> Value {
+    Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(false)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])))
 }
 fn number_format_bound_properties() -> Vec<(String, Value)> {
     [
