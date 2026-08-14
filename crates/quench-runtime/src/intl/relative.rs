@@ -47,48 +47,11 @@ impl RelativeOptions {
                 .to_string();
         }
         if let Some(Value::Object(properties)) = options {
-            for (key, value) in properties.iter() {
-                if matches!(value, Value::Undefined) {
-                    continue;
-                }
-                let text = crate::conversion::to_string(value)?;
-                match key.as_str() {
-                    "style" => {
-                        if let Some(style) = valid_enum(&text, &["long", "short", "narrow"]) {
-                            formatter.style = style;
-                        } else {
-                            return Err(runtime_error("RangeError: invalid style"));
-                        }
-                    }
-                    "numeric" => {
-                        if let Some(numeric) = valid_enum(&text, &["always", "auto"]) {
-                            formatter.numeric = numeric;
-                        } else {
-                            return Err(runtime_error("RangeError: invalid numeric"));
-                        }
-                    }
-                    "localeMatcher" => {
-                        if !matches!(text.as_str(), "lookup" | "best fit") {
-                            return Err(runtime_error("RangeError: invalid localeMatcher"));
-                        }
-                    }
-                    "numberingSystem" if text == "arab" || text == "latn" => {
-                        if text != formatter.numbering_system {
-                            formatter.locale = formatter
-                                .locale
-                                .split("-u-")
-                                .next()
-                                .map_or("en", |value| value)
-                                .to_string();
-                        }
-                        formatter.numbering_system = text;
-                    }
-                    "numberingSystem" => {
-                        if !valid_numbering_system(&text) {
-                            return Err(runtime_error("RangeError: invalid numberingSystem"));
-                        }
-                    }
-                    _ => {}
+            for key in ["localeMatcher", "numberingSystem", "style", "numeric"] {
+                let value =
+                    crate::execute::get_property_result(&Value::Object(properties.clone()), key)?;
+                if !matches!(value, Value::Undefined) {
+                    apply_option(&mut formatter, key, &value)?;
                 }
             }
         }
@@ -125,6 +88,47 @@ impl RelativeOptions {
             ),
         ])
     }
+}
+
+fn apply_option(formatter: &mut RelativeOptions, key: &str, value: &Value) -> Result<(), VmError> {
+    let text = crate::conversion::to_string(value)?;
+    match key {
+        "localeMatcher" if matches!(text.as_str(), "lookup" | "best fit") => Ok(()),
+        "localeMatcher" => Err(runtime_error("RangeError: invalid localeMatcher")),
+        "style" => set_enum(
+            &mut formatter.style,
+            &text,
+            &["long", "short", "narrow"],
+            "style",
+        ),
+        "numeric" => set_enum(
+            &mut formatter.numeric,
+            &text,
+            &["always", "auto"],
+            "numeric",
+        ),
+        "numberingSystem" => set_numbering_system(formatter, text),
+        _ => Ok(()),
+    }
+}
+
+fn set_enum(target: &mut String, text: &str, allowed: &[&str], name: &str) -> Result<(), VmError> {
+    let value = valid_enum(text, allowed).ok_or_else(|| match name {
+        "style" => runtime_error("RangeError: invalid style"),
+        _ => runtime_error("RangeError: invalid numeric"),
+    })?;
+    *target = value;
+    Ok(())
+}
+
+fn set_numbering_system(formatter: &mut RelativeOptions, text: String) -> Result<(), VmError> {
+    if !valid_numbering_system(&text) {
+        return Err(runtime_error("RangeError: invalid numberingSystem"));
+    }
+    if matches!(text.as_str(), "arab" | "latn") {
+        formatter.numbering_system = text;
+    }
+    Ok(())
 }
 
 fn valid_enum(text: &str, allowed: &[&str]) -> Option<String> {
