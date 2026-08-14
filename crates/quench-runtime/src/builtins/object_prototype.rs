@@ -291,6 +291,16 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
+            | Builtin::IntlLocalePrototype
+            | Builtin::IntlNumberFormatPrototype
+            | Builtin::IntlPluralRulesPrototype
+            | Builtin::IntlDateTimeFormatPrototype
+            | Builtin::IntlCollatorPrototype
+            | Builtin::IntlListFormatPrototype
+            | Builtin::IntlRelativeTimeFormatPrototype
+            | Builtin::IntlSegmenterPrototype
+            | Builtin::IntlDisplayNamesPrototype
+            | Builtin::IntlDurationFormatPrototype
     )
 }
 
