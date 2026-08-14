@@ -577,15 +577,25 @@ pub(crate) fn prototype_method(
     let numeric = slot_string(&slots, "numeric").unwrap_or_else(|| "always".to_string());
     match builtin {
         crate::ops::Builtin::IntlRelativeTimeFormatFormat => {
-            let value = super::number::to_number(arguments.first());
-            let unit = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
+            let value = super::tolocale::value::to_number_result(arguments.first())?;
+            let unit = crate::conversion::to_string(
+                arguments.get(1).map_or(&Value::Undefined, |value| value),
+            )?;
+            if !value.is_finite() {
+                return Err(runtime_error("RangeError: value must be finite"));
+            }
             Ok(Value::String(format_relative(
                 value, &unit, &style, &numeric, &locale,
             )?))
         }
         crate::ops::Builtin::IntlRelativeTimeFormatFormatToParts => {
-            let value = super::number::to_number(arguments.first());
-            let unit = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
+            let value = super::tolocale::value::to_number_result(arguments.first())?;
+            let unit = crate::conversion::to_string(
+                arguments.get(1).map_or(&Value::Undefined, |value| value),
+            )?;
+            if !value.is_finite() {
+                return Err(runtime_error("RangeError: value must be finite"));
+            }
             parts_value(value, &unit, &style, &numeric, &locale)
         }
         crate::ops::Builtin::IntlRelativeTimeFormatResolvedOptions => Ok(make_object(vec![
