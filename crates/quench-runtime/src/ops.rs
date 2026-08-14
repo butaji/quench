@@ -449,6 +449,7 @@ pub enum Builtin {
     BigIntAsIntN,
     BigIntAsUintN,
     BigIntToString,
+    BigIntToLocaleString,
     BigIntValueOf,
     BoxedValueOf,
     Map,
