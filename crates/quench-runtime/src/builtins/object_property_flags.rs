@@ -40,6 +40,9 @@ fn builtin_property_configurable(builtin: Builtin, key: &str) -> bool {
     if builtin == Builtin::GeneratorFunctionPrototype && key == "prototype" {
         return true;
     }
+    if key == "prototype" {
+        return false;
+    }
     builtin != Builtin::Math || crate::math::constant(key).is_none()
 }
 pub(crate) fn is_well_known_symbol_property(builtin: Builtin, key: &str) -> bool {
