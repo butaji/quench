@@ -261,6 +261,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (AsyncGeneratorFunction, "prototype") => Some(AsyncGeneratorFunctionPrototype),
         (GeneratorFunctionPrototype, "constructor") => Some(GeneratorFunction),
         (AsyncGeneratorFunctionPrototype, "constructor") => Some(AsyncGeneratorFunction),
+        (AsyncGeneratorFunctionPrototype, "prototype") => Some(AsyncIteratorPrototype),
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
