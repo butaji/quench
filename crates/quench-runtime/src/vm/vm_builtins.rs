@@ -75,7 +75,8 @@ fn array_like_length(value: &Value) -> Result<usize, VmError> {
 fn is_simple_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::Boolean
+        Builtin::Atomics
+            | Builtin::Boolean
             | Builtin::BooleanValueOf
             | Builtin::BooleanToString
             | Builtin::Eval
@@ -145,6 +146,9 @@ fn execute_simple_builtin(
         return result;
     }
     match builtin {
+        Builtin::Atomics => Err(crate::value::error::throw_type_error(
+            "Atomics is not callable",
+        )),
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
         Builtin::BooleanValueOf => boolean_value_of(receiver),
         Builtin::BooleanToString => boolean_to_string(receiver),
