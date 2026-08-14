@@ -308,9 +308,9 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
 }
 
 fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let source = arguments
+    let source_value = arguments
         .first()
-        .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
+        .map_or_else(|| Ok(Value::String(String::new())), regexp_source)?;
     let flags = arguments
         .get(1)
         .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
@@ -325,11 +325,11 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
         ),
         (
             "source".to_string(),
-            Value::BindingCell(Rc::new(RefCell::new(Value::String(source.clone())))),
+            Value::BindingCell(Rc::new(RefCell::new(source_value.clone()))),
         ),
         (
             crate::builtins::descriptor_key("source"),
-            regexp_data_descriptor(false, true, Value::String(source)),
+            regexp_data_descriptor(false, true, source_value),
         ),
         (
             "flags".to_string(),
@@ -347,6 +347,14 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     ];
     entries.extend(regexp_flag_entries(&flags));
     Ok(Value::Object(Rc::new(ObjectData::new(entries))))
+}
+
+fn regexp_source(value: &Value) -> Result<Value, crate::execute::VmError> {
+    let primitive = crate::conversion::to_primitive(value, "string")?;
+    if matches!(primitive, Value::String(_) | Value::StringUnits(_)) {
+        return Ok(primitive);
+    }
+    crate::conversion::to_string(&primitive).map(Value::String)
 }
 
 fn regexp_data_descriptor(writable: bool, configurable: bool, value: Value) -> Value {
