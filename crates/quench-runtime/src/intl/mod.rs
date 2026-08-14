@@ -309,6 +309,9 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         return Ok(vec![default_locale()]);
     };
     match locales {
+        Value::Null => Err(crate::value::error::throw_type_error(
+            "Cannot convert null to object",
+        )),
         Value::String(_) => Ok(vec![canonicalize(&to_string_value(locales))?]),
         Value::Array(values) => {
             let mut out = Vec::new();
@@ -316,6 +319,30 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
                 out.push(canonicalize(&to_string_value(value))?);
             }
             Ok(dedupe(out))
+        }
+        Value::Object(properties) => {
+            let length = properties
+                .iter()
+                .find_map(|(key, value)| {
+                    (key == "length").then(|| match value {
+                        Value::Number(number) => (*number).max(0.0).trunc() as usize,
+                        _ => 0,
+                    })
+                })
+                .unwrap_or(0);
+            let mut out = Vec::new();
+            for index in 0..length {
+                if let Some((_, value)) =
+                    properties.iter().find(|(key, _)| key == &index.to_string())
+                {
+                    out.push(canonicalize(&crate::conversion::to_string(value)?)?);
+                }
+            }
+            if out.is_empty() {
+                Ok(vec![default_locale()])
+            } else {
+                Ok(dedupe(out))
+            }
         }
         _ => Ok(vec![default_locale()]),
     }
