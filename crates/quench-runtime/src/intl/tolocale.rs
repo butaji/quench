@@ -427,6 +427,7 @@ pub(crate) fn dispatch(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     let result = match builtin {
+        Builtin::StringLocaleCompare => string_locale_compare(receiver, arguments),
         Builtin::ArrayToLocaleString => array_to_locale_string(receiver, arguments),
         Builtin::NumberToLocaleString => number_to_locale_string(receiver, arguments),
         Builtin::StringToLocaleLowerCase => string_to_locale_case(receiver, false),
@@ -437,6 +438,31 @@ pub(crate) fn dispatch(
         _ => return None,
     };
     Some(result)
+}
+
+fn string_locale_compare(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(crate::vm::not_callable)?;
+    if matches!(receiver, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "String.prototype.localeCompare called on null or undefined",
+        ));
+    }
+    let left = crate::conversion::to_string(receiver)?;
+    let right = crate::conversion::to_string(arguments.first().map_or(&Value::Undefined, |value| value))?;
+    let result = match left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => match (left == right, left.cmp(&right)) {
+            (true, _) => 0.0,
+            (false, std::cmp::Ordering::Less) => 1.0,
+            (false, std::cmp::Ordering::Greater) => -1.0,
+            (false, std::cmp::Ordering::Equal) => 0.0,
+        },
+        std::cmp::Ordering::Greater => 1.0,
+    };
+    Ok(Value::Number(result))
 }
 
 fn element_to_locale_string(
