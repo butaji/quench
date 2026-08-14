@@ -198,6 +198,7 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::MapIteratorPrototype
             | Builtin::ObjectPrototype
             | Builtin::ArrayIteratorPrototype
+            | Builtin::StringIteratorPrototype
             | Builtin::NumberPrototype
             | Builtin::BooleanPrototype
             | Builtin::SymbolPrototype

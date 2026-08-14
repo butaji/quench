@@ -14,8 +14,20 @@ pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpda
 pub(crate) use iterator_step::step_value;
 pub(crate) use iterator_values::{
     from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_regexp_string,
-    next, next_map, next_set, property_for, prototype_of,
+    make_string, next, next_map, next_set, property_for, prototype_of,
 };
+
+pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let branded = matches!(receiver, Some(Value::Iterator(data)) if matches!(
+        &*data.state.borrow(), IteratorState::String { .. }
+    ));
+    if !branded {
+        return Err(crate::value::error::throw_type_error(
+            "String iterator called on incompatible receiver",
+        ));
+    }
+    next(receiver)
+}
 fn make_protocol(iterator: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Protocol {
@@ -73,11 +85,13 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
     let state = data.state.borrow();
     match &*state {
         IteratorState::Native { done: true, .. }
+        | IteratorState::String { done: true, .. }
         | IteratorState::Set { done: true, .. }
         | IteratorState::Map { done: true, .. }
         | IteratorState::Protocol { done: true, .. }
         | IteratorState::RegExpString { done: true, .. }
         | IteratorState::Native { .. } => Ok(None),
+        IteratorState::String { .. } => Ok(None),
         IteratorState::Set { .. } => Ok(None),
         IteratorState::Map { .. } => Ok(None),
         IteratorState::RegExpString { .. } => Ok(None),
@@ -275,6 +289,7 @@ pub fn delegate_next(
             }
             IteratorState::Set { .. }
             | IteratorState::Map { .. }
+            | IteratorState::String { .. }
             | IteratorState::RegExpString { .. } => {
                 return Ok(DelegationResult::Done(Value::Undefined));
             }
@@ -356,6 +371,7 @@ fn delegation_target(
         IteratorState::Native { .. }
         | IteratorState::Set { .. }
         | IteratorState::Map { .. }
+        | IteratorState::String { .. }
         | IteratorState::RegExpString { .. } => None,
     };
     Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
@@ -403,6 +419,7 @@ pub(super) fn native_step(values: &[Value], index: &mut usize, done: &mut bool) 
 pub(super) fn mark_done(data: &IteratorData) {
     match &mut *data.state.borrow_mut() {
         IteratorState::Native { done, .. }
+        | IteratorState::String { done, .. }
         | IteratorState::Set { done, .. }
         | IteratorState::Map { done, .. }
         | IteratorState::Protocol { done, .. }
