@@ -146,7 +146,6 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlCollatorCompare
         | Builtin::IntlCollatorResolvedOptions
         | Builtin::IntlSegmenterSegmentsIterator
-        | Builtin::IntlSegmenterSegmentsContaining
         | Builtin::IntlSegmenterResolvedOptions
         | Builtin::IntlDisplayNamesOf
         | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
@@ -165,6 +164,7 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
             Some(2.0)
         }
         Builtin::IntlSegmenterSegment => Some(1.0),
+        Builtin::IntlSegmenterSegmentsContaining => Some(1.0),
         _ => None,
     }
 }

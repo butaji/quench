@@ -324,6 +324,8 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
                 | Builtin::IntlRelativeTimeFormatFormatToParts
                 | Builtin::IntlRelativeTimeFormatResolvedOptions
                 | Builtin::IntlSegmenterSegment
+                | Builtin::IntlSegmenterSegmentsIterator
+                | Builtin::IntlSegmenterSegmentsContaining
                 | Builtin::IntlSegmenterResolvedOptions
         )
     ) {
