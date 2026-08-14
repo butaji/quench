@@ -15,9 +15,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined))
     {
-        if matches!(options, Value::Null) {
+        if !crate::value::is_object(options) {
             return Err(crate::value::error::throw_type_error(
-                "Cannot convert null or undefined to object",
+                "ListFormat options must be an object",
             ));
         }
         let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
