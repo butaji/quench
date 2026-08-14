@@ -400,6 +400,7 @@ pub enum Builtin {
     IntlDateTimeFormatFormatRangeToParts,
     IntlDateTimeFormatResolvedOptions,
     IntlCollator,
+    IntlCollatorSupportedLocalesOf,
     IntlCollatorCompare,
     IntlCollatorResolvedOptions,
     IntlListFormat,
