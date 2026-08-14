@@ -228,9 +228,12 @@ fn global_builtin_deleted(global: &Value, key: &str) -> bool {
 fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, src)?;
     if crate::locals::is_immutable_name(key) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot assign to immutable binding",
-        ));
+        if strict {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot assign to immutable binding",
+            ));
+        }
+        return Ok(());
     }
     if set_if_bound(key, &value)? {
         return Ok(());
