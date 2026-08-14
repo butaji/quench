@@ -504,8 +504,13 @@ fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue
     let instance = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
         vec![("\0prototype".to_string(), generator)],
     )));
+    let internal_prototype = if function.is_async {
+        crate::value::Value::Builtin(crate::ops::Builtin::AsyncGeneratorFunctionPrototype)
+    } else {
+        function_prototype
+    };
     function.properties.borrow_mut().extend([
-        ("\0prototype".to_string(), function_prototype),
+        ("\0prototype".to_string(), internal_prototype),
         ("prototype".to_string(), instance.clone()),
         (
             crate::builtins::descriptor_key("prototype"),
