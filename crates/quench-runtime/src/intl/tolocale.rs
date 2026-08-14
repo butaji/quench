@@ -481,14 +481,17 @@ fn number_resolved(locale: String, options: Option<&Value>) -> Vec<(String, Valu
             match key.as_str() {
                 "minimumFractionDigits" => {
                     if let Ok(number) = value.parse() {
-                        properties
-                            .push(("minimumFractionDigits".to_string(), Value::Number(number)));
+                        set_number_option(&mut properties, "minimumFractionDigits", number);
                     }
                 }
                 "maximumFractionDigits" => {
                     if let Ok(number) = value.parse() {
-                        properties
-                            .push(("maximumFractionDigits".to_string(), Value::Number(number)));
+                        set_number_option(&mut properties, "maximumFractionDigits", number);
+                    }
+                }
+                "minimumSignificantDigits" | "maximumSignificantDigits" => {
+                    if let Ok(number) = value.parse() {
+                        set_number_option(&mut properties, key, number);
                     }
                 }
                 _ => {}
@@ -496,6 +499,14 @@ fn number_resolved(locale: String, options: Option<&Value>) -> Vec<(String, Valu
         }
     }
     properties
+}
+
+fn set_number_option(properties: &mut Vec<(String, Value)>, key: &str, value: f64) {
+    if let Some((_, current)) = properties.iter_mut().find(|(name, _)| name == key) {
+        *current = Value::Number(value);
+    } else {
+        properties.push((key.to_string(), Value::Number(value)));
+    }
 }
 
 pub(crate) fn string_to_locale_case(

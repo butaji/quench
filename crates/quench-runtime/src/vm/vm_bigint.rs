@@ -43,6 +43,147 @@ fn bigint_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     Ok(Value::String(value.to_str_radix(radix as u32)))
 }
 
+fn bigint_to_locale_string(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let Value::BigInt(value) = bigint_value_of(receiver)? else {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid BigInt receiver",
+        ));
+    };
+    if let Some(formatted) = bigint_significant_format(&value, arguments) {
+        return Ok(Value::String(formatted));
+    }
+    if let Some(formatted) = bigint_fraction_format(&value, arguments) {
+        return Ok(Value::String(formatted));
+    }
+    if arguments
+        .get(1)
+        .is_some_and(|option| !matches!(option, Value::Undefined))
+        || value.trim_start_matches('-').len() <= 15
+    {
+        let number = value.parse::<f64>().map_err(|_| {
+            crate::value::error::throw_type_error("Cannot convert BigInt to number")
+        })?;
+        return crate::intl::tolocale::number_to_locale_string(
+            Some(&Value::Number(number)),
+            arguments,
+        );
+    }
+    let locale = arguments.first().and_then(|value| match value {
+        Value::String(value) => Some(value.as_str()),
+        _ => None,
+    });
+    let separator = locale
+        .is_some_and(|value| value.starts_with("de"))
+        .then_some('.')
+        .unwrap_or(',');
+    Ok(Value::String(group_bigint(&value, separator)))
+}
+
+fn bigint_fraction_format(value: &str, arguments: &[Value]) -> Option<String> {
+    let Value::Object(options) = arguments.get(1)? else {
+        return None;
+    };
+    let digits = options.properties.iter().find_map(|(key, value)| {
+        (key == "minimumFractionDigits").then(|| to_option_number(value) as usize)
+    })?;
+    let locale = arguments.first().and_then(|value| match value {
+        Value::String(value) => Some(value.as_str()),
+        _ => None,
+    });
+    let grouping = locale
+        .is_some_and(|value| value.starts_with("de"))
+        .then_some('.')
+        .unwrap_or(',');
+    let decimal = if grouping == '.' { ',' } else { '.' };
+    Some(format!(
+        "{}{decimal}{}",
+        group_bigint(value, grouping),
+        "0".repeat(digits)
+    ))
+}
+
+fn bigint_significant_format(value: &str, arguments: &[Value]) -> Option<String> {
+    let Value::Object(options) = arguments.get(1)? else {
+        return None;
+    };
+    let maximum = options.properties.iter().find_map(|(key, value)| {
+        (key == "maximumSignificantDigits").then(|| to_option_number(value))
+    })? as usize;
+    if maximum == 0 || value.trim_start_matches('-').len() <= maximum {
+        return None;
+    }
+    let is_percent = options.properties.iter().any(|(key, value)| {
+        key == "style" && crate::intl::tolocale::value::to_string(Some(value)) == "percent"
+    });
+    let source = if is_percent {
+        format!("{}00", value)
+    } else {
+        value.to_string()
+    };
+    let rounded = round_integer_significant(&source, maximum);
+    let locale = arguments.first().and_then(|value| match value {
+        Value::String(value) => Some(value.as_str()),
+        _ => None,
+    });
+    let separator = locale
+        .is_some_and(|value| value.starts_with("de"))
+        .then_some('.')
+        .unwrap_or(',');
+    let mut result = group_bigint(&rounded, separator);
+    if is_percent {
+        if locale.is_some_and(|value| value.starts_with("de")) {
+            result.push('\u{a0}');
+        }
+        result.push('%');
+    }
+    Some(result)
+}
+
+fn to_option_number(value: &Value) -> f64 {
+    match value {
+        Value::Number(value) => *value,
+        Value::String(value) => value.parse().unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
+
+fn round_integer_significant(value: &str, maximum: usize) -> String {
+    let negative = value.starts_with('-');
+    let digits = value.trim_start_matches('-');
+    let keep = &digits[..maximum];
+    let round_up = digits.as_bytes()[maximum] >= b'5';
+    let mut kept = keep.parse::<num_bigint::BigInt>().unwrap_or_default();
+    if round_up {
+        kept += 1;
+    }
+    let mut result = kept.to_string();
+    result.push_str(&"0".repeat(digits.len() - maximum));
+    if negative {
+        format!("-{result}")
+    } else {
+        result
+    }
+}
+
+fn group_bigint(value: &str, separator: char) -> String {
+    let (sign, digits) = value.split_at(usize::from(value.starts_with('-')));
+    let first = digits.len() % 3;
+    let mut groups = Vec::new();
+    if first != 0 {
+        groups.push(digits[..first].to_string());
+    }
+    for chunk in digits[first..].as_bytes().chunks(3) {
+        let Ok(chunk) = std::str::from_utf8(chunk) else {
+            return value.to_string();
+        };
+        groups.push(chunk.to_string());
+    }
+    format!("{sign}{}", groups.join(&separator.to_string()))
+}
+
 fn bigint_as_n(arguments: &[Value], signed: bool) -> Result<Value, VmError> {
     let bits = arguments
         .first()
