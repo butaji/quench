@@ -340,36 +340,30 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
             let input = arguments.first().unwrap_or(&Value::Undefined);
             let number = range_number(input)?;
-            if let Some(value) = day_period_format(&slots, number) {
-                return Ok(Value::String(value));
-            }
-            if let Some(value) = proleptic_year_format(&slots, number) {
-                return Ok(Value::String(value));
-            }
-            if let Some(value) = fractional_format(&slots, number) {
-                return Ok(Value::String(value));
-            }
-            let value = range_text(number);
-            Ok(Value::String(value))
+            Ok(Value::String(format_number(&slots, number)))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatToParts => {
             let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
             if let Some(value) = day_period_parts(&slots, number) {
                 return Ok(make_array(value));
             }
-            let value = range_text(number);
+            let value = format_number(&slots, number);
             Ok(make_array(vec![literal_part(&value)]))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRange => {
             let (start, end) = range_values(arguments)?;
-            if start == end {
+            let start = format_number(&slots, start);
+            let end = format_number(&slots, end);
+            if start == end || nearly_equal_range(arguments)? {
                 return Ok(Value::String(start));
             }
             Ok(Value::String(format!("{start} – {end}")))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts => {
             let (start, end) = range_values(arguments)?;
-            if start == end {
+            let start = format_number(&slots, start);
+            let end = format_number(&slots, end);
+            if start == end || nearly_equal_range(arguments)? {
                 return Ok(make_array(vec![literal_part(&start)]));
             }
             Ok(make_array(vec![
@@ -381,6 +375,19 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots)),
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn format_number(slots: &[(String, Value)], number: f64) -> String {
+    if let Some(value) = day_period_format(slots, number) {
+        return value;
+    }
+    if let Some(value) = proleptic_year_format(slots, number) {
+        return value;
+    }
+    if let Some(value) = fractional_format(slots, number) {
+        return value;
+    }
+    range_text(number)
 }
 
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
@@ -417,7 +424,7 @@ fn day_period_name(hour: u32, with_prefix: bool) -> String {
     }
 }
 
-fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
+fn range_values(arguments: &[Value]) -> Result<(f64, f64), VmError> {
     let Some(start_value) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
             "date value is undefined",
@@ -435,7 +442,12 @@ fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
     }
     let start = range_number(start_value)?;
     let end = range_number(end_value)?;
-    Ok((range_text(start), range_text(end)))
+    Ok((start, end))
+}
+
+fn nearly_equal_range(arguments: &[Value]) -> Result<bool, VmError> {
+    let (start, end) = range_values(arguments)?;
+    Ok((start - end).abs() < 1_000.0)
 }
 
 fn fractional_format(slots: &[(String, Value)], number: f64) -> Option<String> {
