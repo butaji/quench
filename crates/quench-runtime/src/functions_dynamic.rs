@@ -57,7 +57,8 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
         .map_err(|_| syntax_error("Invalid function parameters"))?;
     let strictness = crate::reduce_support::function_strictness(body, false);
     if matches!(strictness, crate::ops::FunctionStrictness::Strict)
-        && has_duplicate_parameters(&function.params)
+        && (has_duplicate_parameters(&function.params)
+            || has_strict_reserved_parameter(&function.params))
     {
         return Err(syntax_error("duplicate parameter in strict function"));
     }
@@ -108,6 +109,17 @@ fn has_duplicate_parameters(parameters: &oxc::ast::ast::FormalParameters<'_>) ->
             return false;
         };
         !names.insert(identifier.name.as_str())
+    })
+}
+
+fn has_strict_reserved_parameter(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    parameters.items.iter().any(|parameter| {
+        let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+            &parameter.pattern.kind
+        else {
+            return false;
+        };
+        matches!(identifier.name.as_str(), "eval" | "arguments")
     })
 }
 
