@@ -80,6 +80,7 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
         (Builtin::IntlListFormatPrototype, "constructor") => Builtin::IntlListFormat,
         (Builtin::IntlLocalePrototype, "constructor") => Builtin::IntlLocale,
+        (Builtin::IntlNumberFormatPrototype, "constructor") => Builtin::IntlNumberFormat,
         (Builtin::IntlLocalePrototype, "toString") => Builtin::IntlLocaleToString,
         (Builtin::IntlLocalePrototype, "maximize") => Builtin::IntlLocaleMaximize,
         (Builtin::IntlLocalePrototype, "minimize") => Builtin::IntlLocaleMinimize,
