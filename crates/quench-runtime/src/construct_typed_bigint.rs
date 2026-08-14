@@ -149,7 +149,8 @@ fn typed_byte_length(length: usize) -> Result<usize, crate::execute::VmError> {
 }
 
 pub(crate) fn bigint_bits(value: &Value) -> Result<u64, crate::execute::VmError> {
-    let raw = match value {
+    let primitive = crate::conversion::to_primitive(value, "number")?;
+    let raw = match &primitive {
         Value::BigInt(raw) | Value::String(raw) => raw,
         _ => return Err(type_error("Cannot convert a non-BigInt value to BigInt")),
     };
