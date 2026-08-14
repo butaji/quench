@@ -194,6 +194,7 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::AsyncFunctionPrototype
             | Builtin::GeneratorFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype
+            | Builtin::AsyncGeneratorPrototype
             | Builtin::AsyncIteratorPrototype
             | Builtin::DatePrototype
             | Builtin::DisposableStackPrototype
