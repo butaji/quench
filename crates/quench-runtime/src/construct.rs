@@ -369,11 +369,13 @@ fn construct_promise(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
 }
 
 fn construct_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let length = arguments.first().map_or(0.0, |value| {
-        crate::intl::tolocale::value::to_number(Some(value))
-    });
+    let length = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
     let length = to_index(length)?;
-    let buffer = match arguments.get(1) {
+    let buffer = match arguments.get(1).filter(|options| crate::value::is_object(options)) {
         Some(options) => resizable_array_buffer(length, options)?,
         None => crate::value::ArrayBufferData::try_new(length)
             .ok_or_else(|| range_error("ArrayBuffer length is too large"))?,
@@ -385,8 +387,12 @@ fn resizable_array_buffer(
     length: usize,
     options: &Value,
 ) -> Result<crate::value::ArrayBufferData, crate::execute::VmError> {
-    let maximum = crate::execute::get_property(options, "maxByteLength");
-    let maximum = to_index(crate::intl::tolocale::value::to_number(Some(&maximum)))?;
+    let maximum = crate::execute::get_property_result(options, "maxByteLength")?;
+    if matches!(maximum, Value::Undefined) {
+        return crate::value::ArrayBufferData::try_new(length)
+            .ok_or_else(|| range_error("ArrayBuffer length is too large"));
+    }
+    let maximum = to_index(crate::conversion::to_number(&maximum)?)?;
     if maximum < length {
         return Err(range_error("maxByteLength is smaller than byteLength"));
     }
