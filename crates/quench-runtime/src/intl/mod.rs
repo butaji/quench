@@ -129,6 +129,12 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlDateTimeFormatPrototype, "resolvedOptions") => {
             Builtin::IntlDateTimeFormatResolvedOptions
         }
+        (Builtin::IntlCollatorPrototype, "compare") => Builtin::IntlCollatorCompare,
+        (Builtin::IntlCollatorPrototype, "resolvedOptions") => Builtin::IntlCollatorResolvedOptions,
+        (Builtin::IntlDisplayNamesPrototype, "of") => Builtin::IntlDisplayNamesOf,
+        (Builtin::IntlDisplayNamesPrototype, "resolvedOptions") => {
+            Builtin::IntlDisplayNamesResolvedOptions
+        }
         (Builtin::IntlPluralRulesPrototype, "select") => Builtin::IntlPluralRulesSelect,
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
