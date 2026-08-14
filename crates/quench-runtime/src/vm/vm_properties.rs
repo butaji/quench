@@ -329,7 +329,6 @@ fn receiver_property(value: &Value, key: &str, _receiver: &Value) -> Value {
 /// Accessor getters/setters carry their `this` at invocation time; binding
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
-
 pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
     let Value::Array(values) = value else {
         return None;
