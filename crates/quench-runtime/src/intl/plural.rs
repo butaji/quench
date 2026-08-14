@@ -200,6 +200,12 @@ fn plural_categories(locale: &str, plural_type: &str) -> Vec<Value> {
         &["one", "few", "many", "other"]
     } else if locale.starts_with("fr") {
         &["one", "many", "other"]
+    } else if locale.starts_with("gv") {
+        &["one", "two", "few", "many", "other"]
+    } else if locale.starts_with("sl") {
+        &["one", "two", "few", "other"]
+    } else if locale.starts_with("ko") {
+        &["other"]
     } else {
         &["one", "other"]
     };
