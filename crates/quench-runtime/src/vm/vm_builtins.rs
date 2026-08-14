@@ -591,8 +591,32 @@ pub(crate) fn execute_shared_array_buffer_builtin(
                 .map_err(|_| crate::value::error::throw_range_error("Invalid grow length"))?;
             Ok(Value::Undefined)
         }
+        Builtin::SharedArrayBufferSlice => shared_array_buffer_slice(buffer, arguments),
         _ => Err(type_error("Unknown SharedArrayBuffer builtin")),
     }
+}
+
+fn shared_array_buffer_slice(
+    buffer: &crate::value::ArrayBufferData,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let length = buffer.byte_length() as i64;
+    let start = slice_index(arguments.first(), length)?.unwrap_or(0);
+    let end = slice_index(arguments.get(1), length)?.unwrap_or(length).max(start);
+    let bytes = buffer.bytes.borrow()[start as usize..end as usize].to_vec();
+    let mut result = crate::value::ArrayBufferData::try_new(bytes.len())
+        .ok_or_else(|| crate::value::error::throw_range_error("SharedArrayBuffer is too large"))?;
+    result.shared = true;
+    result.bytes.borrow_mut().copy_from_slice(&bytes);
+    Ok(Value::ArrayBuffer(std::rc::Rc::new(result)))
+}
+
+fn slice_index(value: Option<&Value>, length: i64) -> Result<Option<i64>, VmError> {
+    let Some(value) = value else { return Ok(None) };
+    let number = crate::conversion::to_number(value)?;
+    if number.is_nan() { return Ok(Some(0)); }
+    let integer = number.trunc() as i64;
+    Ok(Some(if integer < 0 { (length + integer).max(0) } else { integer.min(length) }))
 }
 fn is_number_receiver(receiver: Option<&Value>) -> bool {
     matches!(receiver, Some(Value::Builtin(Builtin::Number)))
