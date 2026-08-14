@@ -1,5 +1,10 @@
 fn array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    Ok(crate::collections::iterator::make(array_iterator_values(receiver)?))
+    let Some(value) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Array iterator called on incompatible receiver",
+        ));
+    };
+    Ok(crate::collections::iterator::make_array_like(value.clone()))
 }
 
 fn array_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
