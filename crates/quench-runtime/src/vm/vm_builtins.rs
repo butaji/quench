@@ -559,6 +559,32 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewByteOffsetGetter
     )
 }
+
+pub(crate) fn execute_shared_array_buffer_builtin(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver.filter(|value| {
+        matches!(value, Value::ArrayBuffer(data) if data.shared)
+    }) else {
+        return Err(type_error("SharedArrayBuffer method called on incompatible receiver"));
+    };
+    match builtin {
+        Builtin::SharedArrayBufferByteLengthGetter => {
+            Ok(Value::Number(buffer.byte_length() as f64))
+        }
+        Builtin::SharedArrayBufferGrow => {
+            let length = arguments.first().ok_or_else(|| type_error("Missing length"))?;
+            let length = crate::construct::to_index(crate::conversion::to_number(length)?)?;
+            buffer
+                .resize(length)
+                .map_err(|_| crate::value::error::throw_range_error("Invalid grow length"))?;
+            Ok(Value::Undefined)
+        }
+        _ => Err(type_error("Unknown SharedArrayBuffer builtin")),
+    }
+}
 fn is_number_receiver(receiver: Option<&Value>) -> bool {
     matches!(receiver, Some(Value::Builtin(Builtin::Number)))
 }

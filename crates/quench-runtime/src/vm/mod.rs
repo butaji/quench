@@ -440,6 +440,12 @@ pub fn execute_builtin_with_receiver(
     if is_data_view_builtin(builtin) {
         return execute_data_view_builtin(builtin, receiver, arguments);
     }
+    if matches!(
+        builtin,
+        Builtin::SharedArrayBufferByteLengthGetter | Builtin::SharedArrayBufferGrow
+    ) {
+        return execute_shared_array_buffer_builtin(builtin, receiver, arguments);
+    }
     if let Builtin::HostCapability(kind) = builtin {
         return vm_ops::execute_host_capability(kind, receiver, arguments);
     }

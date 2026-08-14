@@ -64,6 +64,8 @@ pub enum Builtin {
     DataViewBufferGetter,
     DataViewByteLengthGetter,
     DataViewByteOffsetGetter,
+    SharedArrayBufferByteLengthGetter,
+    SharedArrayBufferGrow,
     ArrayBufferTransferToImmutable,
     ArrayIsArray,
     ArrayFrom,
