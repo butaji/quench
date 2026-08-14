@@ -3,8 +3,7 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string,
-    to_string_value, SLOT,
+    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string, SLOT,
 };
 
 pub(crate) struct RelativeOptions {
@@ -52,7 +51,7 @@ impl RelativeOptions {
                 if matches!(value, Value::Undefined) {
                     continue;
                 }
-                let text = to_string_value(value);
+                let text = crate::conversion::to_string(value)?;
                 match key.as_str() {
                     "style" => {
                         if let Some(style) = valid_enum(&text, &["long", "short", "narrow"]) {
