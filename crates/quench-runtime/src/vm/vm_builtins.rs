@@ -814,7 +814,7 @@ fn function_prototype_builtin(
 ) -> Result<Value, VmError> {
     match builtin {
         Builtin::FunctionPrototypeToString => {
-            Ok(crate::builtins::function_prototype_to_string(receiver))
+            crate::builtins::function_prototype_to_string(receiver)
         }
         Builtin::FunctionPrototypeValueOf => {
             Ok(crate::builtins::function_prototype_value_of(receiver))
