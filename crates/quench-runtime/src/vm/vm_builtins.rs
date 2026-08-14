@@ -613,6 +613,9 @@ fn shared_array_buffer_slice(
 
 fn slice_index(value: Option<&Value>, length: i64) -> Result<Option<i64>, VmError> {
     let Some(value) = value else { return Ok(None) };
+    if matches!(value, Value::Undefined) {
+        return Ok(None);
+    }
     let number = crate::conversion::to_number(value)?;
     if number.is_nan() { return Ok(Some(0)); }
     let integer = number.trunc() as i64;
