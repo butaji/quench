@@ -523,6 +523,9 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
     if key == "grow" && buffer.shared {
         return Value::Builtin(Builtin::SharedArrayBufferGrow);
     }
+    if key == "slice" && buffer.shared {
+        return Value::Builtin(Builtin::SharedArrayBufferSlice);
+    }
     match key {
         "byteLength" => Value::Number(buffer.byte_length() as f64),
         "maxByteLength" => {
