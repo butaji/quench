@@ -516,7 +516,9 @@ fn construct_error(
         ),
         (
             "\0prototype".to_string(),
-            Value::Builtin(crate::ops::Builtin::ErrorPrototype),
+            Value::Builtin(crate::builtin_meta::instance_prototype(*builtin).unwrap_or(
+                crate::ops::Builtin::ErrorPrototype,
+            )),
         ),
     ];
 
