@@ -60,6 +60,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             Some(Value::String("RegExp String Iterator".into()))
         }
         (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
+        (Atomics, "Symbol.toStringTag") => Some(Value::String("Atomics".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
@@ -152,6 +153,9 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
 }
 fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
+    if builtin == Atomics {
+        return atomics_method(key);
+    }
     if builtin == ArrayPrototype {
         return array_method(key);
     }
@@ -189,6 +193,27 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         return Some(method);
     }
     builtin_method_core(builtin, key)
+}
+
+fn atomics_method(key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    Some(match key {
+        "add" => AtomicsAdd,
+        "and" => AtomicsAnd,
+        "compareExchange" => AtomicsCompareExchange,
+        "exchange" => AtomicsExchange,
+        "isLockFree" => AtomicsIsLockFree,
+        "load" => AtomicsLoad,
+        "notify" => AtomicsNotify,
+        "or" => AtomicsOr,
+        "pause" => AtomicsPause,
+        "store" => AtomicsStore,
+        "sub" => AtomicsSub,
+        "wait" => AtomicsWait,
+        "waitAsync" => AtomicsWaitAsync,
+        "xor" => AtomicsXor,
+        _ => return None,
+    })
 }
 fn data_view_method_for(builtin: Builtin, key: &str) -> Option<Builtin> {
     (builtin == Builtin::DataViewPrototype)
