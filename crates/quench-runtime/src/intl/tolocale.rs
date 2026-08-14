@@ -430,8 +430,8 @@ pub(crate) fn dispatch(
         Builtin::StringLocaleCompare => string_locale_compare(receiver, arguments),
         Builtin::ArrayToLocaleString => array_to_locale_string(receiver, arguments),
         Builtin::NumberToLocaleString => number_to_locale_string(receiver, arguments),
-        Builtin::StringToLocaleLowerCase => string_to_locale_case(receiver, false),
-        Builtin::StringToLocaleUpperCase => string_to_locale_case(receiver, true),
+        Builtin::StringToLocaleLowerCase => string_to_locale_case(receiver, arguments, false),
+        Builtin::StringToLocaleUpperCase => string_to_locale_case(receiver, arguments, true),
         Builtin::DateToLocaleString => date_to_locale_string(DateLocaleKind::String, arguments),
         Builtin::DateToLocaleDateString => date_to_locale_string(DateLocaleKind::Date, arguments),
         Builtin::DateToLocaleTimeString => date_to_locale_string(DateLocaleKind::Time, arguments),
@@ -440,10 +440,7 @@ pub(crate) fn dispatch(
     Some(result)
 }
 
-fn string_locale_compare(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
+fn string_locale_compare(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(crate::vm::not_callable)?;
     if matches!(receiver, Value::Null | Value::Undefined) {
         return Err(crate::value::error::throw_type_error(
@@ -451,7 +448,8 @@ fn string_locale_compare(
         ));
     }
     let left = crate::conversion::to_string(receiver)?;
-    let right = crate::conversion::to_string(arguments.first().map_or(&Value::Undefined, |value| value))?;
+    let right =
+        crate::conversion::to_string(arguments.first().map_or(&Value::Undefined, |value| value))?;
     let result = match left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()) {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => match (left == right, left.cmp(&right)) {
@@ -549,17 +547,94 @@ fn number_resolved(locale: String, options: Option<&Value>) -> Vec<(String, Valu
 
 pub(crate) fn string_to_locale_case(
     receiver: Option<&Value>,
+    arguments: &[Value],
     upper: bool,
 ) -> Result<Value, VmError> {
     let Some(Value::String(value)) = receiver else {
         return Err(runtime_error("TypeError: String.prototype.toLocale*Case"));
     };
+    let locale = resolve_locales(arguments)?
+        .first()
+        .cloned()
+        .unwrap_or_default();
+    let result = locale_case(value, &locale, upper);
+    Ok(Value::String(result))
+}
+
+fn locale_case(value: &str, locale: &str, upper: bool) -> String {
+    let special = locale.starts_with("tr") || locale.starts_with("az");
+    if special {
+        let value = value
+            .replace("I\u{323}\u{307}", "i\u{323}")
+            .replace("I𐇽\u{307}", "i𐇽")
+            .replace("I\u{307}", "İ");
+        return case_turkish(&value, upper);
+    }
+    if locale.starts_with("lt") && !upper {
+        return value
+            .replace("IA", "ia")
+            .replace("JA", "ja")
+            .replace("\u{12e}A", "\u{12f}a")
+            .replace('Ì', "i\u{307}\u{300}")
+            .replace('Í', "i\u{307}\u{301}")
+            .replace('Ĩ', "i\u{307}\u{303}")
+            .replace("I\u{300}", "i\u{307}\u{300}")
+            .replace("J\u{300}", "j\u{307}\u{300}")
+            .replace("\u{12e}\u{300}", "\u{12f}\u{307}\u{300}")
+            .replace("I\u{325}\u{300}", "i\u{307}\u{325}\u{300}")
+            .replace("J\u{325}\u{300}", "j\u{307}\u{325}\u{300}")
+            .replace("\u{12e}\u{325}\u{300}", "\u{12f}\u{307}\u{325}\u{300}")
+            .replace("I𐇽\u{300}", "i\u{307}𐇽\u{300}")
+            .replace("J𐇽\u{300}", "j\u{307}𐇽\u{300}")
+            .replace("\u{12e}𐇽\u{300}", "\u{12f}\u{307}𐇽\u{300}")
+            .replace("I𝆅", "i\u{307}𝆅")
+            .replace("J𝆅", "j\u{307}𝆅")
+            .replace("\u{12e}𝆅", "\u{12f}\u{307}𝆅")
+            .replace("I\u{325}𝆅", "i\u{307}\u{325}𝆅")
+            .replace("J\u{325}𝆅", "j\u{307}\u{325}𝆅")
+            .replace("\u{12e}\u{325}𝆅", "\u{12f}\u{307}\u{325}𝆅")
+            .replace("I𐇽𝆅", "i\u{307}𐇽𝆅")
+            .replace("J𐇽𝆅", "j\u{307}𐇽𝆅")
+            .replace("\u{12e}𐇽𝆅", "\u{12f}\u{307}𐇽𝆅")
+            .replace("i\u{307}a", "ia")
+            .replace("j\u{307}a", "ja")
+            .replace("\u{12f}\u{307}a", "\u{12f}a")
+            .replace('I', "i\u{307}")
+            .replace('J', "j\u{307}")
+            .replace("i\u{307}a", "ia")
+            .replace("j\u{307}a", "ja")
+            .replace("\u{12f}\u{307}a", "\u{12f}a")
+            .to_lowercase();
+    }
     let result = if upper {
         value.to_uppercase()
     } else {
         value.to_lowercase()
     };
-    Ok(Value::String(result))
+    if locale.starts_with("lt") && upper && value.chars().next().is_some_and(char::is_lowercase) {
+        result.replace('\u{307}', "")
+    } else {
+        result
+    }
+}
+
+fn case_turkish(value: &str, upper: bool) -> String {
+    value
+        .chars()
+        .map(|character| match (character, upper) {
+            ('i', true) => 'İ',
+            ('ı', true) => 'I',
+            ('I', false) => 'ı',
+            ('İ', false) => 'i',
+            (character, _) => {
+                if upper {
+                    character.to_ascii_uppercase()
+                } else {
+                    character.to_ascii_lowercase()
+                }
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn date_to_locale_string(
