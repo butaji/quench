@@ -132,7 +132,8 @@ pub(crate) fn prototype_method(
             let slots = super::intl_slots(receiver)?;
             let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
-            Ok(Value::String(select(number, &plural_type, &locale)))
+            let notation = slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
+            Ok(Value::String(select(number, &plural_type, &locale, &notation)))
         }
         crate::ops::Builtin::IntlPluralRulesSelectRange => {
             let start = super::tolocale::value::to_number_result(arguments.first())?;
@@ -143,7 +144,8 @@ pub(crate) fn prototype_method(
             let slots = super::intl_slots(receiver)?;
             let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
-            Ok(Value::String(select(end, &plural_type, &locale)))
+            let notation = slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
+            Ok(Value::String(select(end, &plural_type, &locale, &notation)))
         }
         crate::ops::Builtin::IntlPluralRulesResolvedOptions => {
             let slots = super::intl_slots(receiver)?;
@@ -233,12 +235,18 @@ fn slot_number(slots: &[(String, Value)], key: &str) -> Option<f64> {
         })
 }
 
-fn select(number: f64, plural_type: &str, locale: &str) -> String {
+fn select(number: f64, plural_type: &str, locale: &str, notation: &str) -> String {
     if plural_type == "ordinal" {
         return ordinal_select(number);
     }
     if locale.starts_with("fr") {
-        return if number == 0.0 || number == 1.0 {
+        if notation == "compact" && number.abs() >= 1_000_000.0 {
+            return "many".to_string();
+        }
+        if notation == "standard" && number.abs() == 1_000_000.0 {
+            return "many".to_string();
+        }
+        return if number.abs() < 2.0 {
             "one"
         } else {
             "other"
