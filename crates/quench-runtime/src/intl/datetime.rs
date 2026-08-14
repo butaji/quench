@@ -6,7 +6,7 @@ use crate::{conversion, execute::VmError, value::Value};
 
 use super::{
     default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
-    slot_string, to_string_value, SLOT,
+    slot_string, SLOT,
 };
 
 /// Allowed values for each string-valued date/time component option.
@@ -93,7 +93,7 @@ impl DateTimeOptions {
         if matches!(value, Value::Undefined) {
             return Ok(());
         }
-        let text = to_string_value(value);
+        let text = conversion::to_string(value)?;
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
             if let Some(valid) = valid_component(&text, allowed) {
                 self.set_component(name, valid);
@@ -110,14 +110,19 @@ impl DateTimeOptions {
                 }
                 self.time_zone = canonicalize_time_zone(&text);
             }
-            "calendar" => self.calendar = text.to_ascii_lowercase(),
-            "numberingSystem" => self.numbering_system = text.to_ascii_lowercase(),
+            "calendar" => self.calendar = canonicalize_calendar(&text)?,
+            "numberingSystem" => {
+                self.numbering_system = validate_identifier(&text, "numberingSystem")?
+            }
             "fractionalSecondDigits" => {
+                if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+                    let _ = conversion::to_number(value)?;
+                }
                 let digits = conversion::to_number(value)?;
-                if !digits.is_finite() || digits.fract() != 0.0 || !(1.0..=9.0).contains(&digits) {
+                if !digits.is_finite() || !(1.0..=3.0).contains(&digits) {
                     return Err(runtime_error("RangeError: invalid fractionalSecondDigits"));
                 }
-                self.fractional_second_digits = Some(digits as u32);
+                self.fractional_second_digits = Some(digits.trunc() as u32);
             }
             _ => {}
         }
@@ -253,6 +258,36 @@ fn valid_component(text: &str, allowed: &[&str]) -> Option<String> {
     } else {
         None
     }
+}
+
+fn canonicalize_calendar(value: &str) -> Result<String, VmError> {
+    let value = value.to_ascii_lowercase();
+    if value.is_empty()
+        || !value.split('-').all(|part| {
+            (3..=8).contains(&part.len()) && part.chars().all(|ch| ch.is_ascii_alphanumeric())
+        })
+    {
+        return Err(runtime_error("RangeError: invalid calendar"));
+    }
+    Ok(match value.as_str() {
+        "islamicc" => "islamic-civil".to_string(),
+        "gregory" | "buddhist" | "japanese" | "islamic-civil" | "persian" | "iso8601"
+        | "chinese" | "coptic" | "ethiopic" | "hebrew" | "indian" | "islamic-tbla"
+        | "islamic-umalqura" | "roc" => value,
+        "islamic" | "islamic-rgsa" => "islamic-civil".to_string(),
+        _ => "gregory".to_string(),
+    })
+}
+
+fn validate_identifier(value: &str, name: &str) -> Result<String, VmError> {
+    if value.is_empty()
+        || !value.split('-').all(|part| {
+            (3..=8).contains(&part.len()) && part.chars().all(|ch| ch.is_ascii_alphanumeric())
+        })
+    {
+        return Err(runtime_error(&format!("RangeError: invalid {name}")));
+    }
+    Ok(value.to_ascii_lowercase())
 }
 
 fn canonicalize_time_zone(time_zone: &str) -> String {
