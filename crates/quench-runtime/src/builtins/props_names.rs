@@ -12,7 +12,9 @@ fn typed_array_name(builtin: Builtin) -> Option<&'static str> {
 fn generator_name(builtin: Builtin) -> Option<&'static str> {
     Some(match builtin {
         Builtin::GeneratorNext => "next", Builtin::GeneratorReturn => "return",
-        Builtin::GeneratorThrow => "throw", _ => return None,
+        Builtin::GeneratorThrow | Builtin::AsyncGeneratorThrow => "throw",
+        Builtin::AsyncGeneratorNext => "next",
+        Builtin::AsyncGeneratorReturn => "return", _ => return None,
     })
 }
 

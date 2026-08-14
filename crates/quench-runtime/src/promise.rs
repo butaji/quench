@@ -96,6 +96,9 @@ fn process_continuation(continuation: PromiseContinuation, state: &PromiseState)
         PromiseContinuation::AsyncGeneratorYield { generator, result } => {
             process_async_continuation(generator, result, true, state)
         }
+        PromiseContinuation::AsyncGeneratorQueue { generator } => {
+            process_async_queue(&generator)
+        }
     }
 }
 
@@ -126,6 +129,37 @@ fn process_async_continuation(
         }
         Err(VmError::Thrown(reason)) => reject_promise(&result, reason),
         Err(_) => reject_promise(&result, Value::Undefined),
+    }
+}
+
+fn process_async_queue(generator: &Rc<crate::value::GeneratorData>) {
+    let Some((input, result)) = generator.async_queue.borrow_mut().pop_front() else {
+        return;
+    };
+    match crate::generator::resume_async_next(generator, input) {
+        Ok(value) => finish_async_queue(generator, result, Ok(value)),
+        Err(VmError::Suspended(awaited)) => register_async_generator(&awaited, generator.clone(), result),
+        Err(VmError::Thrown(reason)) => finish_async_queue(generator, result, Err(reason)),
+        Err(_) => finish_async_queue(generator, result, Err(Value::Undefined)),
+    }
+}
+
+fn finish_async_queue(
+    generator: &Rc<crate::value::GeneratorData>,
+    result: Rc<PromiseData>,
+    value: Result<Value, Value>,
+) {
+    match value {
+        Ok(value) => resolve_promise(&result, value),
+        Err(reason) => reject_promise(&result, reason),
+    }
+    if !generator.async_queue.borrow().is_empty() {
+        result
+            .continuations
+            .borrow_mut()
+            .push(PromiseContinuation::AsyncGeneratorQueue {
+                generator: generator.clone(),
+            });
     }
 }
 
@@ -209,7 +243,17 @@ pub(crate) fn from_async_generator_completion(
 ) -> Value {
     let promise = Rc::new(PromiseData::default());
     match completion {
-        Ok(value) => resolve_promise(&promise, value),
+        Ok(value) => {
+            if !generator.async_queue.borrow().is_empty() {
+                promise
+                    .continuations
+                    .borrow_mut()
+                    .push(PromiseContinuation::AsyncGeneratorQueue {
+                        generator: generator.clone(),
+                    });
+            }
+            resolve_promise(&promise, value)
+        }
         Err(VmError::Suspended(awaited)) => {
             register_async_generator(&awaited, generator, Rc::clone(&promise))
         }
