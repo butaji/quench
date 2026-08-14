@@ -375,7 +375,8 @@ fn construct_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::
     let length = to_index(length)?;
     let buffer = match arguments.get(1) {
         Some(options) => resizable_array_buffer(length, options)?,
-        None => crate::value::ArrayBufferData::new(length),
+        None => crate::value::ArrayBufferData::try_new(length)
+            .ok_or_else(|| range_error("ArrayBuffer length is too large"))?,
     };
     Ok(Value::ArrayBuffer(Rc::new(buffer)))
 }
@@ -389,9 +390,8 @@ fn resizable_array_buffer(
     if maximum < length {
         return Err(range_error("maxByteLength is smaller than byteLength"));
     }
-    Ok(crate::value::ArrayBufferData::new_resizable(
-        length, maximum,
-    ))
+    crate::value::ArrayBufferData::try_new_resizable(length, maximum)
+        .ok_or_else(|| range_error("ArrayBuffer length is too large"))
 }
 
 fn view_length(buffer: &crate::value::ArrayBufferData, fixed_length: usize) -> usize {
