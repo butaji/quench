@@ -9,9 +9,15 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
     let mut notation = "standard".to_string();
     let mut compact_display: Option<String> = None;
+    let mut minimum_integer_digits = 1.0;
+    let mut minimum_fraction_digits = 0.0;
+    let mut maximum_fraction_digits = 3.0;
     let plural_type = match arguments.get(1) {
         Some(Value::Object(properties)) => {
             for (key, value) in properties.iter() {
+                if matches!(value, Value::Undefined) {
+                    continue;
+                }
                 let text = super::to_string_value(value);
                 match key.as_str() {
                     "notation" => {
@@ -28,6 +34,15 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                             return Err(runtime_error("RangeError: invalid compactDisplay"));
                         }
                         compact_display = Some(text);
+                    }
+                    "minimumIntegerDigits" => {
+                        minimum_integer_digits = text.parse().ok().map_or(1.0, |value| value)
+                    }
+                    "minimumFractionDigits" => {
+                        minimum_fraction_digits = text.parse().ok().map_or(0.0, |value| value)
+                    }
+                    "maximumFractionDigits" => {
+                        maximum_fraction_digits = text.parse().ok().map_or(3.0, |value| value)
                     }
                     _ => {}
                 }
@@ -55,9 +70,12 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         (
             SLOT.to_string(),
             make_object(vec![
-                ("locale".to_string(), Value::String(locale)),
+                ("locale".to_string(), Value::String(locale.clone())),
                 ("type".to_string(), Value::String(plural_type)),
                 ("notation".to_string(), Value::String(notation)),
+                ("minimumIntegerDigits".to_string(), Value::Number(minimum_integer_digits)),
+                ("minimumFractionDigits".to_string(), Value::Number(minimum_fraction_digits)),
+                ("maximumFractionDigits".to_string(), Value::Number(maximum_fraction_digits)),
                 (
                     "compactDisplay".to_string(),
                     Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
@@ -88,11 +106,29 @@ pub(crate) fn prototype_method(
                 slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
             let compact_display =
                 slot_string(&slots, "compactDisplay").unwrap_or_else(|| "short".to_string());
+            let minimum_integer_digits = slot_number(&slots, "minimumIntegerDigits").unwrap_or(1.0);
+            let minimum_fraction_digits = slot_number(&slots, "minimumFractionDigits").unwrap_or(0.0);
+            let maximum_fraction_digits = slot_number(&slots, "maximumFractionDigits").unwrap_or(3.0);
+            let minimum_significant_digits = slot_number(&slots, "minimumSignificantDigits");
+            let maximum_significant_digits = slot_number(&slots, "maximumSignificantDigits");
             let mut properties = vec![
-                ("locale".to_string(), Value::String(locale)),
-                ("type".to_string(), Value::String(plural_type)),
+                ("locale".to_string(), Value::String(locale.clone())),
+                ("type".to_string(), Value::String(plural_type.clone())),
                 ("notation".to_string(), Value::String(notation.clone())),
+                ("minimumIntegerDigits".to_string(), Value::Number(minimum_integer_digits)),
+                ("minimumFractionDigits".to_string(), Value::Number(minimum_fraction_digits)),
+                ("maximumFractionDigits".to_string(), Value::Number(maximum_fraction_digits)),
             ];
+            if let Some(value) = minimum_significant_digits {
+                properties.push(("minimumSignificantDigits".to_string(), Value::Number(value)));
+            }
+            if let Some(value) = maximum_significant_digits {
+                properties.push(("maximumSignificantDigits".to_string(), Value::Number(value)));
+            }
+            properties.push((
+                "pluralCategories".to_string(),
+                Value::array(plural_categories(&locale, &plural_type)),
+            ));
             if notation == "compact" {
                 properties.push(("compactDisplay".to_string(), Value::String(compact_display)));
             }
@@ -100,6 +136,27 @@ pub(crate) fn prototype_method(
         }
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn plural_categories(locale: &str, plural_type: &str) -> Vec<Value> {
+    let names: &[&str] = if plural_type == "ordinal" {
+        &["one", "two", "few", "other"]
+    } else if locale.starts_with("ar") {
+        &["zero", "one", "two", "few", "many", "other"]
+    } else if locale.starts_with("ru") || locale.starts_with("uk") {
+        &["one", "few", "many", "other"]
+    } else if locale.starts_with("fr") {
+        &["many", "one", "other"]
+    } else {
+        &["one", "other"]
+    };
+    names.iter().map(|name| Value::String((*name).to_string())).collect()
+}
+
+fn slot_number(slots: &[(String, Value)], key: &str) -> Option<f64> {
+    slots.iter().find_map(|(name, value)| (name == key).then_some(value)).and_then(|value| {
+        if let Value::Number(number) = value { Some(*number) } else { None }
+    })
 }
 
 fn select(number: f64, plural_type: &str, locale: &str) -> String {

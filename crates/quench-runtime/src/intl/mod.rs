@@ -54,6 +54,10 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     if key == "supportedLocalesOf" {
         return match builtin {
             Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatSupportedLocalesOf),
+            Builtin::IntlPluralRules => Some(Builtin::IntlPluralRulesSupportedLocalesOf),
+            Builtin::IntlRelativeTimeFormat => {
+                Some(Builtin::IntlRelativeTimeFormatSupportedLocalesOf)
+            }
             Builtin::IntlSegmenter => Some(Builtin::IntlSegmenterSupportedLocalesOf),
             Builtin::IntlListFormat => Some(Builtin::IntlListFormatSupportedLocalesOf),
             _ => None,
@@ -133,6 +137,19 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
         }
+        (Builtin::IntlRelativeTimeFormatPrototype, "format") => {
+            Builtin::IntlRelativeTimeFormatFormat
+        }
+        (Builtin::IntlRelativeTimeFormatPrototype, "formatToParts") => {
+            Builtin::IntlRelativeTimeFormatFormatToParts
+        }
+        (Builtin::IntlRelativeTimeFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlRelativeTimeFormatResolvedOptions
+        }
+        (Builtin::IntlSegmenterPrototype, "segment") => Builtin::IntlSegmenterSegment,
+        (Builtin::IntlSegmenterPrototype, "resolvedOptions") => {
+            Builtin::IntlSegmenterResolvedOptions
+        }
         _ => return None,
     })
 }
@@ -146,6 +163,8 @@ pub(crate) fn execute(
     match builtin {
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
+        Builtin::IntlPluralRulesSupportedLocalesOf
+        | Builtin::IntlRelativeTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlListFormatSupportedLocalesOf => Some(list_supported_locales_of(arguments)),
         Builtin::IntlGetCanonicalLocales => Some(get_canonical_locales(arguments)),
         Builtin::IntlSupportedValuesOf => Some(supported_values_of(arguments)),
