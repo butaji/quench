@@ -171,8 +171,8 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
     }
     let index = array_index(view, arguments.get(1))?;
     if builtin == Builtin::AtomicsNotify {
+        let _ = crate::conversion::to_number(arguments.get(2).unwrap_or(&Value::Undefined))?;
         if view_buffer(view).is_some_and(|buffer| !buffer.shared) {
-            let _ = crate::conversion::to_number(arguments.get(2).unwrap_or(&Value::Undefined))?;
             return Ok(Value::Number(0.0));
         }
         return Ok(Value::Number(0.0));
