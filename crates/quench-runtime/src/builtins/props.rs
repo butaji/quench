@@ -3,6 +3,13 @@ include!("props_modules.rs");
 include!("props_own_names.rs");
 include!("props_collections.rs");
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
+    if matches!(
+        builtin,
+        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype
+    ) && matches!(key, "length" | "name")
+    {
+        return Value::Undefined;
+    }
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return Value::Undefined;
     }
@@ -56,6 +63,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
+        (GeneratorFunctionPrototype, "prototype") => Some(crate::functions::generator_prototype()),
         (GeneratorFunctionPrototype, "Symbol.toStringTag") => {
             Some(Value::String("GeneratorFunction".into()))
         }
@@ -233,7 +241,6 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (GeneratorFunction, "prototype") => Some(GeneratorFunctionPrototype),
         (AsyncGeneratorFunction, "prototype") => Some(AsyncGeneratorFunctionPrototype),
         (GeneratorFunctionPrototype, "constructor") => Some(GeneratorFunction),
-        (GeneratorFunctionPrototype, "prototype") => Some(GeneratorFunctionPrototype),
         (AsyncGeneratorFunctionPrototype, "constructor") => Some(AsyncGeneratorFunction),
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
@@ -503,6 +510,13 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
+    if matches!(
+        builtin,
+        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype
+    ) && matches!(key, "length" | "name")
+    {
+        return None;
+    }
     match key {
         "call" => Some(Value::Builtin(Builtin::FunctionCall)),
         "bind" => Some(Value::Builtin(Builtin::FunctionBind)),
@@ -511,15 +525,15 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
         _ => None,
     }
 }
-pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
-    if key == "prototype" {
+pub(crate) fn is_builtin_deletable(builtin: Builtin, key: &str) -> bool {
+    if key == "prototype" && builtin != Builtin::GeneratorFunctionPrototype {
         return false;
     }
-    if crate::builtins::object::is_well_known_symbol_property(_builtin, key) {
+    if crate::builtins::object::is_well_known_symbol_property(builtin, key) {
         return false;
     }
     if matches!(
-        (_builtin, key),
+        (builtin, key),
         (
             Builtin::Math,
             "E" | "LN2" | "LN10" | "LOG2E" | "LOG10E" | "PI" | "SQRT1_2" | "SQRT2"
