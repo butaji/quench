@@ -51,6 +51,29 @@ const EXPLICIT_COMPONENTS: &[&str] = &[
     "timeZoneName",
 ];
 
+const OPTION_ORDER: &[&str] = &[
+    "localeMatcher",
+    "calendar",
+    "numberingSystem",
+    "hour12",
+    "hourCycle",
+    "timeZone",
+    "weekday",
+    "era",
+    "year",
+    "month",
+    "day",
+    "dayPeriod",
+    "hour",
+    "minute",
+    "second",
+    "fractionalSecondDigits",
+    "timeZoneName",
+    "formatMatcher",
+    "dateStyle",
+    "timeStyle",
+];
+
 pub(crate) struct DateTimeOptions {
     locale: String,
     calendar: String,
@@ -81,9 +104,17 @@ impl DateTimeOptions {
             fractional_second_digits: None,
             hour12: None,
         };
-        if let Some(Value::Object(properties)) = options {
-            for (key, value) in properties.iter() {
-                formatter.apply(key, value)?;
+        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+            for key in OPTION_ORDER {
+                let value = crate::execute::get_property_result(options, key)?;
+                if *key == "localeMatcher" && !matches!(value, Value::Undefined) {
+                    let matcher = conversion::to_string(&value)?;
+                    if !matches!(matcher.as_str(), "lookup" | "best fit") {
+                        return Err(runtime_error("RangeError: invalid localeMatcher"));
+                    }
+                } else {
+                    formatter.apply(key, &value)?;
+                }
             }
         }
         formatter.apply_defaults();
@@ -96,6 +127,18 @@ impl DateTimeOptions {
         if matches!(value, Value::Undefined) {
             return Ok(());
         }
+        if key == "hour12" {
+            self.hour12 = Some(crate::execute::is_truthy(value));
+            return Ok(());
+        }
+        if key == "fractionalSecondDigits" {
+            let digits = conversion::to_number(value)?;
+            if !digits.is_finite() || !(1.0..=3.0).contains(&digits) {
+                return Err(runtime_error("RangeError: invalid fractionalSecondDigits"));
+            }
+            self.fractional_second_digits = Some(digits.trunc() as u32);
+            return Ok(());
+        }
         let text = conversion::to_string(value)?;
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
             if let Some(valid) = valid_component(&text, allowed) {
@@ -106,7 +149,6 @@ impl DateTimeOptions {
             return Ok(());
         }
         match key {
-            "hour12" => self.hour12 = Some(text == "true"),
             "timeZone" => {
                 if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
                     return Err(runtime_error("RangeError: invalid time zone"));
@@ -116,16 +158,6 @@ impl DateTimeOptions {
             "calendar" => self.calendar = canonicalize_calendar(&text)?,
             "numberingSystem" => {
                 self.numbering_system = validate_identifier(&text, "numberingSystem")?
-            }
-            "fractionalSecondDigits" => {
-                if matches!(value, Value::String(_) | Value::StringUnits(_)) {
-                    let _ = conversion::to_number(value)?;
-                }
-                let digits = conversion::to_number(value)?;
-                if !digits.is_finite() || !(1.0..=3.0).contains(&digits) {
-                    return Err(runtime_error("RangeError: invalid fractionalSecondDigits"));
-                }
-                self.fractional_second_digits = Some(digits.trunc() as u32);
             }
             _ => {}
         }
