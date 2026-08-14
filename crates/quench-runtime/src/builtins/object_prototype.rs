@@ -22,6 +22,8 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(Builtin::FunctionPrototype) => Value::Builtin(Builtin::ObjectPrototype),
+        Value::Builtin(Builtin::AsyncFunctionPrototype) => Value::Builtin(Builtin::FunctionPrototype),
+        Value::Builtin(Builtin::AsyncFunction) => Value::Builtin(Builtin::Function),
         Value::Builtin(Builtin::AggregateError) => Value::Builtin(Builtin::Error),
         Value::Builtin(Builtin::AggregateErrorPrototype) => Value::Builtin(Builtin::ErrorPrototype),
         Value::Builtin(Builtin::SuppressedError) => Value::Builtin(Builtin::Error),
@@ -293,6 +295,7 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
+            | Builtin::AsyncFunctionPrototype
     )
 }
 

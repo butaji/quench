@@ -74,6 +74,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             Some(Value::Builtin(AbstractModuleSource))
         }
         (AbstractModuleSourcePrototype, "Symbol.toStringTag") => Some(Value::Undefined),
+        (AsyncFunctionPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("AsyncFunction".into()))
+        }
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
@@ -249,7 +252,8 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),
         (Function, "prototype") => Some(FunctionPrototype),
-        (AsyncFunction, "prototype") => Some(FunctionPrototype),
+        (AsyncFunction, "prototype") => Some(AsyncFunctionPrototype),
+        (AsyncFunctionPrototype, "constructor") => Some(AsyncFunction),
         (GeneratorFunction, "prototype") => Some(GeneratorFunctionPrototype),
         (AsyncGeneratorFunction, "prototype") => Some(AsyncGeneratorFunctionPrototype),
         (GeneratorFunctionPrototype, "constructor") => Some(GeneratorFunction),
