@@ -311,6 +311,9 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     if matches!(value, Value::Object(_)) && crate::vm::is_global_object(value) {
         return property;
     }
+    if matches!(value, Value::HostCapability(_)) && key == "AbstractModuleSource" {
+        return property;
+    }
     if matches!(
         property,
         Value::Builtin(
@@ -393,6 +396,10 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
             ("long".into(), Value::Number(1_000.0)),
             ("huge".into(), Value::Number(10_000.0)),
         ]);
+    }
+    if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "AbstractModuleSource"
+    {
+        return Value::Builtin(Builtin::AbstractModuleSource);
     }
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
