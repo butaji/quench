@@ -55,7 +55,7 @@ fn operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
     if builtin == Builtin::AtomicsStore {
         let value = atomic_value(view, arguments.get(2))?;
         store(view, index, &value)?;
-        return crate::execute::get_property_result(view, &index.to_string());
+        return Ok(value);
     }
     if builtin == Builtin::AtomicsCompareExchange {
         let expected = atomic_value(view, arguments.get(2))?;
@@ -136,20 +136,24 @@ fn check_index(view: &Value, index: usize) -> Result<usize, VmError> {
 fn atomic_value(view: &Value, value: Option<&Value>) -> Result<Value, VmError> {
     let value = value.unwrap_or(&Value::Undefined);
     if matches!(view, Value::BigInt64Array(_) | Value::BigUint64Array(_)) {
-        let bits = crate::construct::bigint_bits(value)?;
-        return Ok(bigint_from_bits(view, bits));
+        let primitive = crate::conversion::to_primitive(value, "number")?;
+        match primitive {
+            Value::BigInt(raw) => return Ok(Value::BigInt(raw)),
+            Value::String(raw) if raw.parse::<num_bigint::BigInt>().is_ok() => {
+                return Ok(Value::BigInt(raw));
+            }
+            _ => {}
+        }
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert a non-BigInt value to BigInt",
+        ));
     }
     let number = crate::conversion::to_number(value)?;
-    let normalized = match view {
-        Value::Int8Array(_) => crate::construct::to_int8(number) as f64,
-        Value::Uint8Array(_) => crate::construct::to_uint8(number) as f64,
-        Value::Int16Array(_) => crate::construct::to_int16(number) as f64,
-        Value::Uint16Array(_) => crate::construct::to_uint16(number) as f64,
-        Value::Int32Array(_) => crate::construct::to_int32(number) as f64,
-        Value::Uint32Array(_) => crate::construct::to_uint32(number) as f64,
-        _ => number,
-    };
-    Ok(Value::Number(normalized))
+    Ok(Value::Number(if number.is_nan() {
+        0.0
+    } else {
+        number.trunc()
+    }))
 }
 
 fn bigint_from_bits(view: &Value, bits: u64) -> Value {
