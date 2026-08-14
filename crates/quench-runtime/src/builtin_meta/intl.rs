@@ -60,7 +60,7 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
         Builtin::IntlPluralRulesResolvedOptions => {
             Some("Intl.PluralRules.prototype.resolvedOptions")
         }
-        Builtin::IntlDateTimeFormatFormat => Some("Intl.DateTimeFormat.prototype.format"),
+        Builtin::IntlDateTimeFormatFormat => Some("get format"),
         Builtin::IntlDateTimeFormatFormatToParts => {
             Some("Intl.DateTimeFormat.prototype.formatToParts")
         }
@@ -77,7 +77,7 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
 
 const fn intl_name_group_b(b: Builtin) -> Option<&'static str> {
     match b {
-        Builtin::IntlCollatorCompare => Some("Intl.Collator.prototype.compare"),
+        Builtin::IntlCollatorCompare => Some("get compare"),
         Builtin::IntlCollatorResolvedOptions => Some("Intl.Collator.prototype.resolvedOptions"),
         Builtin::IntlListFormatFormat => Some("Intl.ListFormat.prototype.format"),
         Builtin::IntlListFormatFormatToParts => Some("Intl.ListFormat.prototype.formatToParts"),
@@ -198,12 +198,12 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlNumberFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlPluralRulesSelect => Some("select"),
         Builtin::IntlPluralRulesResolvedOptions => Some("resolvedOptions"),
-        Builtin::IntlDateTimeFormatFormat => Some("format"),
+        Builtin::IntlDateTimeFormatFormat => Some("get format"),
         Builtin::IntlDateTimeFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlDateTimeFormatFormatRange => Some("formatRange"),
         Builtin::IntlDateTimeFormatFormatRangeToParts => Some("formatRangeToParts"),
         Builtin::IntlDateTimeFormatResolvedOptions => Some("resolvedOptions"),
-        Builtin::IntlCollatorCompare => Some("compare"),
+        Builtin::IntlCollatorCompare => Some("get compare"),
         Builtin::IntlCollatorResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlListFormatFormat => Some("format"),
         Builtin::IntlListFormatFormatToParts => Some("formatToParts"),
