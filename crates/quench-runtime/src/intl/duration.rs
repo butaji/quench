@@ -30,6 +30,10 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let mut resolved = vec![
         ("locale".to_string(), Value::String(locale)),
+        (
+            "numberingSystem".to_string(),
+            Value::String(numbering_system(options)),
+        ),
         ("style".to_string(), Value::String(style)),
     ];
     for unit in [
@@ -49,6 +53,7 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             return Err(runtime_error("RangeError: invalid unit style"));
         }
         resolved.push((unit.to_string(), Value::String(value)));
+        resolved.push((format!("{unit}Display"), Value::String("auto".to_string())));
     }
     Ok(make_object(vec![
         (
@@ -69,6 +74,21 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             Value::Builtin(Builtin::IntlDurationFormatPrototype),
         ),
     ]))
+}
+
+fn numbering_system(options: Option<&Value>) -> String {
+    let Some(Value::Object(properties)) = options else {
+        return "latn".to_string();
+    };
+    properties
+        .iter()
+        .find_map(|(name, value)| {
+            (name == "numberingSystem").then(|| match value {
+                Value::String(value) if !value.is_empty() => value.clone(),
+                _ => "latn".to_string(),
+            })
+        })
+        .unwrap_or_else(|| "latn".to_string())
 }
 
 fn valid_unit_style(unit: &str, style: &str) -> bool {
