@@ -311,7 +311,8 @@ fn comparison_key(value: &str, slots: &[(String, Value)]) -> String {
         if ignore_punctuation && !ch.is_alphanumeric() {
             continue;
         }
-        if matches!(ch, '\u{0300}'..='\u{036f}') {
+        if matches!(sensitivity.as_str(), "base" | "case") && matches!(ch, '\u{0300}'..='\u{036f}')
+        {
             continue;
         }
         key.push(if matches!(sensitivity.as_str(), "base" | "accent") {
