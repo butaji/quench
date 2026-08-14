@@ -286,7 +286,7 @@ fn intl_constructor_length(builtin: Builtin) -> Option<f64> {
         | Builtin::IntlListFormat
         | Builtin::IntlNumberFormat
         | Builtin::IntlRelativeTimeFormat
-        | Builtin::IntlSegmenter => 2.0,
+        | Builtin::IntlSegmenter => 0.0,
         Builtin::IntlLocale => 1.0,
         _ => return None,
     })
