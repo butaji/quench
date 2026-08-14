@@ -341,6 +341,12 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
 fn is_accessor_builtin(builtin: Builtin) -> bool {
+    if matches!(
+        builtin,
+        Builtin::IntlCollatorCompare | Builtin::IntlDateTimeFormatFormat
+    ) {
+        return false;
+    }
     let name = crate::builtins::builtin_name(builtin);
     name.starts_with("get ") || name.starts_with("set ")
 }
@@ -451,9 +457,9 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     let properties = if builtin == Builtin::IntlNumberFormatFormat {
         RefCell::new(number_format_bound_properties())
     } else if builtin == Builtin::IntlCollatorCompare {
-        RefCell::new(collator_compare_bound_properties())
+        RefCell::new(collator_compare_bound_properties(is_accessor_descriptor(receiver)))
     } else if builtin == Builtin::IntlDateTimeFormatFormat {
-        RefCell::new(datetime_format_bound_properties())
+        RefCell::new(datetime_format_bound_properties(is_accessor_descriptor(receiver)))
     } else {
         RefCell::new(Vec::new())
     };
@@ -465,10 +471,10 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     }))
 }
 
-fn datetime_format_bound_properties() -> Vec<(String, Value)> {
+fn datetime_format_bound_properties(accessor: bool) -> Vec<(String, Value)> {
     [
-        ("length", Value::Number(1.0)),
-        ("name", Value::String(String::new())),
+        ("length", Value::Number(if accessor { 0.0 } else { 1.0 })),
+        ("name", Value::String(if accessor { "get format" } else { "" }.to_string())),
     ]
     .into_iter()
     .flat_map(|(key, value)| {
@@ -486,10 +492,10 @@ fn datetime_format_bound_properties() -> Vec<(String, Value)> {
     .collect()
 }
 
-fn collator_compare_bound_properties() -> Vec<(String, Value)> {
+fn collator_compare_bound_properties(accessor: bool) -> Vec<(String, Value)> {
     [
-        ("length", Value::Number(2.0)),
-        ("name", Value::String(String::new())),
+        ("length", Value::Number(if accessor { 0.0 } else { 2.0 })),
+        ("name", Value::String(if accessor { "get compare" } else { "" }.to_string())),
     ]
     .into_iter()
     .flat_map(|(key, value)| {
@@ -505,6 +511,14 @@ fn collator_compare_bound_properties() -> Vec<(String, Value)> {
         ]
     })
     .collect()
+}
+
+fn is_accessor_descriptor(receiver: &Value) -> bool {
+    let Value::Object(properties) = receiver else {
+        return false;
+    };
+    properties.iter().any(|(key, _)| key == "enumerable")
+        && properties.iter().any(|(key, _)| key == "get")
 }
 fn number_format_bound_properties() -> Vec<(String, Value)> {
     [
