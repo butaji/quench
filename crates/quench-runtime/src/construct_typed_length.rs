@@ -1,10 +1,17 @@
-fn object_array_like(properties: &crate::value::ObjectData) -> Option<Vec<Value>> {
-    let (_, length) = properties.iter().rev().find(|(name, _)| name == "length")?;
+fn object_array_like(
+    properties: &crate::value::ObjectData,
+) -> Result<Option<Vec<Value>>, crate::execute::VmError> {
+    let Some((_, length)) = properties.iter().rev().find(|(name, _)| name == "length") else {
+        return Ok(None);
+    };
     let Value::Number(length) = length else {
-        return None;
+        return Ok(None);
     };
     let length = (*length).max(0.0) as usize;
-    let mut values = Vec::with_capacity(length);
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(length)
+        .map_err(|_| range_error("Typed-array length is too large"))?;
     for index in 0..length {
         let key = index.to_string();
         let value = properties
@@ -15,7 +22,7 @@ fn object_array_like(properties: &crate::value::ObjectData) -> Option<Vec<Value>
             .unwrap_or(Value::Undefined);
         values.push(value);
     }
-    Some(values)
+    Ok(Some(values))
 }
 fn length_uint8_array(length: f64) -> Result<Value, crate::execute::VmError> {
     let length = to_index(length)?;
@@ -41,9 +48,9 @@ fn length_float32_array(length: f64) -> Result<Value, crate::execute::VmError> {
 fn length_int8_array(length: f64) -> Result<Value, crate::execute::VmError> {
     let length = to_index(length)?;
     let buffer = Rc::new(crate::value::ArrayBufferData::new(length));
-    Ok(Value::Int8Array(Rc::new(
-        crate::value::Int8ArrayData::new(buffer, 0, length),
-    )))
+    Ok(Value::Int8Array(Rc::new(crate::value::Int8ArrayData::new(
+        buffer, 0, length,
+    ))))
 }
 fn length_int16_array(length: f64) -> Result<Value, crate::execute::VmError> {
     let length = to_index(length)?;
