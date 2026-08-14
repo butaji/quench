@@ -1,4 +1,20 @@
-use crate::{execute::VmError, ops::Builtin, value::Value};
+use std::{cell::RefCell, rc::Rc};
+
+use crate::{
+    execute::VmError,
+    ops::Builtin,
+    value::{PromiseData, PromiseState, Value},
+};
+
+struct Waiter {
+    buffer: Rc<crate::value::ArrayBufferData>,
+    index: usize,
+    promise: Rc<PromiseData>,
+}
+
+thread_local! {
+    static WAITERS: RefCell<Vec<Waiter>> = const { RefCell::new(Vec::new()) };
+}
 
 pub(crate) fn execute(builtin: Builtin, arguments: &[Value]) -> Option<Result<Value, VmError>> {
     if builtin == Builtin::AtomicsIsLockFree {
@@ -192,11 +208,12 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
     }
     let index = array_index(view, arguments.get(1))?;
     if builtin == Builtin::AtomicsNotify {
-        let _ = crate::conversion::to_number(arguments.get(2).unwrap_or(&Value::Undefined))?;
+        let count = wait_count(arguments.get(2))?;
         if view_buffer(view).is_some_and(|buffer| !buffer.shared) {
             return Ok(Value::Number(0.0));
         }
-        return Ok(Value::Number(0.0));
+        let buffer = view_buffer(view).ok_or_else(|| type_error("Invalid typed array"))?;
+        return Ok(Value::Number(wake_waiters(buffer, index, count) as f64));
     }
     let current = crate::execute::get_property_result(view, &index.to_string())?;
     let expected = atomic_value(view, arguments.get(2))?;
@@ -209,14 +226,67 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
         }
         return Ok(Value::String("not-equal".into()));
     }
-    let _ = crate::conversion::to_number(arguments.get(3).unwrap_or(&Value::Undefined))?;
+    let timeout = crate::conversion::to_number(arguments.get(3).unwrap_or(&Value::Undefined))?;
     if builtin == Builtin::AtomicsWaitAsync {
+        return wait_async_result(view, index, timeout);
+    }
+    Ok(Value::String("timed-out".into()))
+}
+
+fn wait_count(value: Option<&Value>) -> Result<usize, VmError> {
+    if value.is_none() || matches!(value, Some(Value::Undefined)) {
+        return Ok(usize::MAX);
+    }
+    let number = crate::conversion::to_number(value.unwrap_or(&Value::Undefined))?;
+    if number.is_nan() || number <= 0.0 {
+        return Ok(0);
+    }
+    Ok(if number.is_infinite() {
+        usize::MAX
+    } else {
+        number.trunc() as usize
+    })
+}
+
+fn wake_waiters(buffer: &Rc<crate::value::ArrayBufferData>, index: usize, count: usize) -> usize {
+    let mut woken = 0;
+    WAITERS.with(|waiters| {
+        waiters.borrow_mut().retain(|waiter| {
+            let matches = Rc::ptr_eq(&waiter.buffer, buffer) && waiter.index == index;
+            if matches && woken < count {
+                crate::promise::resolve_promise(&waiter.promise, Value::String("ok".into()));
+                woken += 1;
+                false
+            } else {
+                true
+            }
+        });
+    });
+    woken
+}
+
+fn wait_async_result(view: &Value, index: usize, timeout: f64) -> Result<Value, VmError> {
+    if timeout.is_finite() && timeout <= 0.0 {
         return Ok(Value::object(vec![
             ("async".into(), Value::Boolean(false)),
             ("value".into(), Value::String("timed-out".into())),
         ]));
     }
-    Ok(Value::String("timed-out".into()))
+    let buffer = view_buffer(view)
+        .ok_or_else(|| type_error("Invalid typed array"))?
+        .clone();
+    let promise = Rc::new(PromiseData::new(PromiseState::Pending));
+    WAITERS.with(|waiters| {
+        waiters.borrow_mut().push(Waiter {
+            buffer,
+            index,
+            promise: Rc::clone(&promise),
+        })
+    });
+    Ok(Value::object(vec![
+        ("async".into(), Value::Boolean(true)),
+        ("value".into(), Value::Promise(promise)),
+    ]))
 }
 
 fn validate_wait_view(view: &Value) -> Result<(), VmError> {
