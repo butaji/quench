@@ -46,7 +46,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             if matches!(value, Value::Undefined) {
                 continue;
             }
-            let text = crate::conversion::to_string(&value)?;
+            let text = option_string(&value)?;
             match key {
                 "type" => plural_type = text,
                 "notation" => {
@@ -140,6 +140,24 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ),
         ],
     ))
+}
+
+fn option_string(value: &Value) -> Result<String, VmError> {
+    if crate::value::is_object(value) {
+        if let Ok(Value::String(value)) = crate::execute::get_property_result(value, "_value") {
+            return Ok(value);
+        }
+    }
+    if let Value::Object(properties) = value {
+        if let Some(Value::String(value)) = properties
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "_value").then_some(value))
+        {
+            return Ok(value.clone());
+        }
+    }
+    crate::conversion::to_string(value)
 }
 
 pub(crate) fn prototype_method(
