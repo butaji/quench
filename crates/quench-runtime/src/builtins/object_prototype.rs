@@ -27,6 +27,9 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::ErrorPrototype)
         }
         Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::SetIteratorPrototype | Builtin::MapIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
+        Value::Function(function) if function.kind == crate::ops::FunctionKind::Generator => {
+            Value::Builtin(Builtin::GeneratorFunctionPrototype)
+        }
         Value::Function(function) => {
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
         }
@@ -291,6 +294,8 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
+            | Builtin::GeneratorFunctionPrototype
+            | Builtin::AsyncGeneratorFunctionPrototype
     )
 }
 
