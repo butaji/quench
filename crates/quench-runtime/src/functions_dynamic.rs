@@ -9,7 +9,18 @@ pub(crate) fn construct(
     kind: FunctionKind,
     is_async: bool,
 ) -> Result<Value, VmError> {
-    let source = function_source(arguments, kind, is_async);
+    if kind == FunctionKind::Generator
+        && arguments
+            .get(..arguments.len().saturating_sub(1))
+            .is_some_and(|parameters| {
+                parameters
+                    .iter()
+                    .any(|value| to_string(value).is_ok_and(|text| text.contains("yield")))
+            })
+    {
+        return Err(syntax_error("YieldExpression not permitted generally"));
+    }
+    let source = function_source(arguments, kind, is_async)?;
     reduce_dynamic(&source, kind, is_async)
 }
 
@@ -94,14 +105,14 @@ fn dynamic_value(
     )
 }
 
-fn function_source(arguments: &[Value], kind: FunctionKind, is_async: bool) -> String {
-    let body = arguments.last().map_or_else(String::new, to_string);
+fn function_source(arguments: &[Value], kind: FunctionKind, is_async: bool) -> Result<String, VmError> {
+    let body = arguments.last().map_or_else(|| Ok(String::new()), |value| to_string(value))?;
     let parameters = arguments
         .get(..arguments.len().saturating_sub(1))
         .unwrap_or_default()
         .iter()
         .map(to_string)
-        .collect::<Vec<_>>()
+        .collect::<Result<Vec<_>, _>>()?
         .join(",");
     let prefix = match (kind, is_async) {
         (FunctionKind::Generator, true) => "async function*",
@@ -109,19 +120,19 @@ fn function_source(arguments: &[Value], kind: FunctionKind, is_async: bool) -> S
         (_, true) => "async function",
         (_, false) => "function",
     };
-    format!("{prefix} anonymous({parameters}){{{body}}}")
+    Ok(format!("{prefix} anonymous({parameters}){{{body}}}"))
 }
 
-fn to_string(value: &Value) -> String {
-    crate::intl::tolocale::value::to_string(Some(value))
+fn to_string(value: &Value) -> Result<String, VmError> {
+    crate::conversion::to_string(value)
 }
 
 fn mark_dynamic(value: &Value) {
     if let Value::Function(function) = value {
-        function
-            .properties
-            .borrow_mut()
-            .push(("\0dynamic_function".to_string(), Value::Boolean(true)));
+        function.properties.borrow_mut().extend([
+            ("\0dynamic_function".to_string(), Value::Boolean(true)),
+            ("name".to_string(), Value::String("anonymous".to_string())),
+        ]);
     }
 }
 
