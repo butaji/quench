@@ -253,6 +253,19 @@ fn dispatch_all(
 
 /// Implement `Intl.getCanonicalLocales`.
 fn get_canonical_locales(arguments: &[Value]) -> Result<Value, VmError> {
+    if arguments.first().is_some_and(|value| {
+        matches!(
+            value,
+            Value::Null
+                | Value::Undefined
+                | Value::Boolean(_)
+                | Value::Number(_)
+                | Value::BigInt(_)
+                | Value::HostCapability(_)
+        )
+    }) {
+        return Ok(make_array(Vec::new()));
+    }
     let locales = resolve_locales(arguments)?;
     Ok(make_array(locales.into_iter().map(Value::String).collect()))
 }
@@ -280,10 +293,16 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         return Ok(vec![default_locale()]);
     };
     match locales {
+        Value::Null => Err(crate::value::error::throw_type_error(
+            "Cannot convert null to object",
+        )),
         Value::String(_) => Ok(vec![canonicalize(&to_string_value(locales))?]),
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
+                if matches!(value, Value::Number(_)) {
+                    return Err(runtime_error("RangeError: invalid language tag"));
+                }
                 out.push(canonicalize(&crate::conversion::to_string(value)?)?);
             }
             Ok(dedupe(out))
@@ -303,6 +322,9 @@ fn resolve_array_like_locales(locales: &Value) -> Result<Vec<String>, VmError> {
     let mut result = Vec::with_capacity(length);
     for index in 0..length {
         let value = crate::execute::get_property_result(locales, &index.to_string())?;
+        if matches!(value, Value::Number(_)) {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
         result.push(canonicalize(&crate::conversion::to_string(&value)?)?);
     }
     Ok(dedupe(result))
