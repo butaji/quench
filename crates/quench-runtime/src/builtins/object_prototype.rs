@@ -12,7 +12,7 @@ fn prototype_for_value(value: &Value) -> Value {
     }
     match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
-        Value::Builtin(Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype) => {
+        Value::Builtin(Builtin::Intl | Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
