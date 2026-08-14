@@ -280,9 +280,11 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
 
 fn intl_constructor_length(builtin: Builtin) -> Option<f64> {
     Some(match builtin {
-        Builtin::Intl | Builtin::IntlCollator | Builtin::IntlPluralRules => 0.0,
-        Builtin::IntlDateTimeFormat
-        | Builtin::IntlDisplayNames
+        Builtin::Intl
+        | Builtin::IntlCollator
+        | Builtin::IntlPluralRules
+        | Builtin::IntlDateTimeFormat => 0.0,
+        Builtin::IntlDisplayNames
         | Builtin::IntlListFormat
         | Builtin::IntlNumberFormat
         | Builtin::IntlRelativeTimeFormat

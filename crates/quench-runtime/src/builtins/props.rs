@@ -76,6 +76,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (IntlCollatorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.Collator".to_string()))
         }
+        (IntlDateTimeFormatPrototype, "constructor") => Some(Value::Builtin(IntlDateTimeFormat)),
+        (IntlDateTimeFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DateTimeFormat".to_string()))
+        }
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
         (FinalizationRegistry, "prototype") => Some(Value::Builtin(FinalizationRegistryPrototype)),
         (FinalizationRegistryPrototype, "Symbol.toStringTag") => {
