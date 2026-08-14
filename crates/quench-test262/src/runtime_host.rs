@@ -1,6 +1,12 @@
 //! Adapter from the runner contract to the residual runtime.
 
-use std::{cell::RefCell, collections::HashMap, path::Path, sync::OnceLock};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    path::Path,
+    rc::Rc,
+    sync::OnceLock,
+};
 
 use quench_runtime::module_bindings::ModuleBindingCell;
 use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef, RealmId};
@@ -22,6 +28,7 @@ pub struct LinkedModule {
     scope: ExecutionScope,
     fixed_exports: Vec<(String, quench_runtime::value::Value)>,
     linked_exports: RefCell<HashMap<String, ModuleBindingCell>>,
+    ambiguous_exports: RefCell<HashSet<String>>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -206,6 +213,7 @@ impl LinkedModule {
             scope: ExecutionScope::new(),
             fixed_exports: Vec::new(),
             linked_exports: RefCell::new(HashMap::new()),
+            ambiguous_exports: RefCell::new(HashSet::new()),
         })
     }
 
@@ -216,6 +224,7 @@ impl LinkedModule {
             scope: ExecutionScope::new(),
             fixed_exports: Vec::new(),
             linked_exports: RefCell::new(HashMap::new()),
+            ambiguous_exports: RefCell::new(HashSet::new()),
         })
     }
 
@@ -239,6 +248,9 @@ impl LinkedModule {
     }
 
     pub fn export_cell(&self, name: &str) -> Option<ModuleBindingCell> {
+        if self.ambiguous_exports.borrow().contains(name) {
+            return None;
+        }
         if let Some(cell) = self.linked_exports.borrow().get(name) {
             return Some(cell.clone());
         }
@@ -265,7 +277,7 @@ impl LinkedModule {
             .as_ref()
             .map_or_else(Vec::new, |metadata| metadata.exported_names.clone());
         for name in self.linked_exports.borrow().keys() {
-            if !names.contains(name) {
+            if !self.ambiguous_exports.borrow().contains(name) && !names.contains(name) {
                 names.push(name.clone());
             }
         }
@@ -273,6 +285,17 @@ impl LinkedModule {
     }
 
     fn link_export(&self, name: &str, cell: ModuleBindingCell) {
+        if self.ambiguous_exports.borrow().contains(name) {
+            return;
+        }
+        let existing = self.linked_exports.borrow().get(name).cloned();
+        if let Some(existing) = existing {
+            if !Rc::ptr_eq(&existing.shared(), &cell.shared()) {
+                self.linked_exports.borrow_mut().remove(name);
+                self.ambiguous_exports.borrow_mut().insert(name.to_string());
+            }
+            return;
+        }
         self.linked_exports
             .borrow_mut()
             .insert(name.to_string(), cell);
