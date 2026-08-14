@@ -280,6 +280,12 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::SharedArrayBufferPrototype, "byteLength") => {
             Builtin::SharedArrayBufferByteLengthGetter
         }
+        (Builtin::SharedArrayBufferPrototype, "growable") => {
+            Builtin::SharedArrayBufferGrowableGetter
+        }
+        (Builtin::SharedArrayBufferPrototype, "maxByteLength") => {
+            Builtin::SharedArrayBufferMaxByteLengthGetter
+        }
         (Builtin::DisposableStackPrototype, "disposed") => Builtin::DisposableStackDisposed,
         (Builtin::AsyncDisposableStackPrototype, "disposed") => {
             Builtin::AsyncDisposableStackDisposed

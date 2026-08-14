@@ -230,6 +230,10 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ArrayBufferPrototype, "transferToImmutable") => Some(ArrayBufferTransferToImmutable),
         (SharedArrayBufferPrototype, "constructor") => Some(SharedArrayBuffer),
         (SharedArrayBufferPrototype, "byteLength") => Some(SharedArrayBufferByteLengthGetter),
+        (SharedArrayBufferPrototype, "growable") => Some(SharedArrayBufferGrowableGetter),
+        (SharedArrayBufferPrototype, "maxByteLength") => {
+            Some(SharedArrayBufferMaxByteLengthGetter)
+        }
         (SharedArrayBufferPrototype, "grow") => Some(SharedArrayBufferGrow),
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),

@@ -574,6 +574,12 @@ pub(crate) fn execute_shared_array_buffer_builtin(
         Builtin::SharedArrayBufferByteLengthGetter => {
             Ok(Value::Number(buffer.byte_length() as f64))
         }
+        Builtin::SharedArrayBufferGrowableGetter => {
+            Ok(Value::Boolean(buffer.max_byte_length.is_some()))
+        }
+        Builtin::SharedArrayBufferMaxByteLengthGetter => Ok(Value::Number(
+            buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64,
+        )),
         Builtin::SharedArrayBufferGrow => {
             if buffer.max_byte_length.is_none() {
                 return Err(type_error("SharedArrayBuffer is not growable"));
