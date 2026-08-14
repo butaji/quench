@@ -443,6 +443,8 @@ pub fn execute_builtin_with_receiver(
     if matches!(
         builtin,
         Builtin::SharedArrayBufferByteLengthGetter | Builtin::SharedArrayBufferGrow
+            | Builtin::SharedArrayBufferGrowableGetter
+            | Builtin::SharedArrayBufferMaxByteLengthGetter
     ) {
         return execute_shared_array_buffer_builtin(builtin, receiver, arguments);
     }
