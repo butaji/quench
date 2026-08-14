@@ -78,6 +78,16 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
 const fn intl_name_group_b(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IntlCollatorCompare => Some("get compare"),
+        Builtin::IntlDurationFormatFormat => Some("Intl.DurationFormat.prototype.format"),
+        Builtin::IntlDurationFormatSupportedLocalesOf => {
+            Some("Intl.DurationFormat.supportedLocalesOf")
+        }
+        Builtin::IntlDurationFormatFormatToParts => {
+            Some("Intl.DurationFormat.prototype.formatToParts")
+        }
+        Builtin::IntlDurationFormatResolvedOptions => {
+            Some("Intl.DurationFormat.prototype.resolvedOptions")
+        }
         Builtin::IntlCollatorResolvedOptions => Some("Intl.Collator.prototype.resolvedOptions"),
         Builtin::IntlListFormatFormat => Some("Intl.ListFormat.prototype.format"),
         Builtin::IntlListFormatFormatToParts => Some("Intl.ListFormat.prototype.formatToParts"),
@@ -204,6 +214,9 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlDateTimeFormatFormatRangeToParts => Some("formatRangeToParts"),
         Builtin::IntlDateTimeFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlCollatorCompare => Some("get compare"),
+        Builtin::IntlDurationFormatFormat => Some("format"),
+        Builtin::IntlDurationFormatFormatToParts => Some("formatToParts"),
+        Builtin::IntlDurationFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlCollatorResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlListFormatFormat => Some("format"),
         Builtin::IntlListFormatFormatToParts => Some("formatToParts"),

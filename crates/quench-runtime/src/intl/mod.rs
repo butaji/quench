@@ -10,6 +10,7 @@ use crate::{execute::VmError, ops::Builtin, value::Value};
 pub(crate) mod collator;
 pub(crate) mod datetime;
 pub(crate) mod displaynames;
+pub(crate) mod duration;
 pub(crate) mod list;
 pub(crate) mod locale;
 pub(crate) mod number;
@@ -43,6 +44,7 @@ fn global_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         "RelativeTimeFormat" => Builtin::IntlRelativeTimeFormat,
         "Segmenter" => Builtin::IntlSegmenter,
         "DisplayNames" => Builtin::IntlDisplayNames,
+        "DurationFormat" => Builtin::IntlDurationFormat,
         "Locale" => Builtin::IntlLocale,
         "getCanonicalLocales" => Builtin::IntlGetCanonicalLocales,
         "supportedValuesOf" => Builtin::IntlSupportedValuesOf,
@@ -56,6 +58,7 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatSupportedLocalesOf),
             Builtin::IntlCollator => Some(Builtin::IntlCollatorSupportedLocalesOf),
             Builtin::IntlSegmenter => Some(Builtin::IntlSegmenterSupportedLocalesOf),
+            Builtin::IntlDurationFormat => Some(Builtin::IntlDurationFormatSupportedLocalesOf),
             Builtin::IntlListFormat => Some(Builtin::IntlListFormatSupportedLocalesOf),
             _ => None,
         };
@@ -73,6 +76,7 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         Builtin::IntlRelativeTimeFormat => Builtin::IntlRelativeTimeFormatPrototype,
         Builtin::IntlSegmenter => Builtin::IntlSegmenterPrototype,
         Builtin::IntlDisplayNames => Builtin::IntlDisplayNamesPrototype,
+        Builtin::IntlDurationFormat => Builtin::IntlDurationFormatPrototype,
         _ => return None,
     })
 }
@@ -136,6 +140,13 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlDisplayNamesPrototype, "resolvedOptions") => {
             Builtin::IntlDisplayNamesResolvedOptions
         }
+        (Builtin::IntlDurationFormatPrototype, "format") => Builtin::IntlDurationFormatFormat,
+        (Builtin::IntlDurationFormatPrototype, "formatToParts") => {
+            Builtin::IntlDurationFormatFormatToParts
+        }
+        (Builtin::IntlDurationFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlDurationFormatResolvedOptions
+        }
         (Builtin::IntlPluralRulesPrototype, "select") => Builtin::IntlPluralRulesSelect,
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
@@ -155,6 +166,7 @@ pub(crate) fn execute(
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
         Builtin::IntlListFormatSupportedLocalesOf => Some(list_supported_locales_of(arguments)),
+        Builtin::IntlDurationFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlGetCanonicalLocales => Some(get_canonical_locales(arguments)),
         Builtin::IntlSupportedValuesOf => Some(supported_values_of(arguments)),
         _ => dispatch_all(builtin, arguments, receiver),
@@ -240,7 +252,7 @@ fn dispatch_all(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
-    const HANDLERS: [Handler; 9] = [
+    const HANDLERS: [Handler; 10] = [
         locale::dispatch,
         number::dispatch,
         plural::dispatch,
@@ -250,6 +262,7 @@ fn dispatch_all(
         relative::dispatch,
         segmenter::dispatch,
         displaynames::dispatch,
+        duration::dispatch,
     ];
     for handler in HANDLERS {
         if let Some(result) = handler(builtin, arguments, receiver) {
