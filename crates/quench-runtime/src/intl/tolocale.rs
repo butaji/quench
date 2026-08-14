@@ -450,6 +450,10 @@ fn string_locale_compare(receiver: Option<&Value>, arguments: &[Value]) -> Resul
     let left = crate::conversion::to_string(receiver)?;
     let right =
         crate::conversion::to_string(arguments.first().map_or(&Value::Undefined, |value| value))?;
+    let collator_arguments = arguments
+        .get(1..)
+        .map_or_else(Vec::new, |values| values.to_vec());
+    crate::intl::collator::construct(&collator_arguments)?;
     let result = match left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()) {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => match (left == right, left.cmp(&right)) {
