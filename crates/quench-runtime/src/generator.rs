@@ -4,7 +4,7 @@ use crate::{
     ops::Op,
     value::{GeneratorData, GeneratorState, Value},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::{
     cell::{Ref, RefCell, RefMut},
     rc::Rc,
@@ -59,6 +59,7 @@ pub(crate) fn create(
         done: RefCell::new(false),
         state: RefCell::new(state),
         pending_yield: RefCell::new(false),
+        async_queue: RefCell::new(VecDeque::new()),
     })))
 }
 
@@ -142,6 +143,17 @@ fn require_normal_parameter_completion(
 }
 pub(crate) fn next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_handle(receiver, "next")?;
+    if generator.function.is_async && is_executing(&generator) {
+        let promise = crate::promise::new_promise();
+        let Value::Promise(result) = promise.clone() else {
+            return Err(VmError::MissingReturn);
+        };
+        generator
+            .async_queue
+            .borrow_mut()
+            .push_back((first_argument(arguments), result));
+        return Ok(promise);
+    }
     let completion = resume(&generator, Resume::Next(first_argument(arguments)));
     if generator.function.is_async {
         return Ok(crate::promise::from_async_generator_completion(
@@ -149,6 +161,76 @@ pub(crate) fn next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
         ));
     }
     completion
+}
+
+pub(crate) fn async_next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let generator = match generator_handle(receiver, "next") {
+        Ok(generator) => generator,
+        Err(error) => return Ok(rejected_promise(error)),
+    };
+    if is_executing(&generator) {
+        let promise = crate::promise::new_promise();
+        let Value::Promise(result) = promise.clone() else {
+            return Err(VmError::MissingReturn);
+        };
+        generator
+            .async_queue
+            .borrow_mut()
+            .push_back((first_argument(arguments), result));
+        return Ok(promise);
+    }
+    Ok(crate::promise::from_async_generator_completion(
+        resume(&generator, Resume::Next(first_argument(arguments))),
+        generator,
+    ))
+}
+
+pub(crate) fn async_return(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    async_completion(receiver, Resume::Return(first_argument(arguments)))
+}
+
+pub(crate) fn async_throw(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    async_completion(receiver, Resume::Throw(first_argument(arguments)))
+}
+
+fn async_completion(receiver: Option<&Value>, resume_input: Resume) -> Result<Value, VmError> {
+    let generator = match generator_handle(receiver, "async generator") {
+        Ok(generator) => generator,
+        Err(error) => return Ok(rejected_promise(error)),
+    };
+    Ok(crate::promise::from_async_generator_completion(
+        resume(&generator, resume_input),
+        generator,
+    ))
+}
+
+fn rejected_promise(error: VmError) -> Value {
+    let reason = match error {
+        VmError::Thrown(value) => value,
+        _ => Value::Undefined,
+    };
+    crate::promise::promise_reject(&[reason])
+}
+
+fn is_executing(generator: &GeneratorData) -> bool {
+    generator
+        .state
+        .borrow()
+        .as_ref()
+        .is_some_and(|state| state.suspension.is_none())
+}
+
+pub(crate) fn resume_async_next(
+    generator: &GeneratorData,
+    value: Value,
+) -> Result<Value, VmError> {
+    resume(generator, Resume::Next(value))
 }
 pub(crate) fn return_(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_receiver(receiver, "return")?;
