@@ -82,6 +82,7 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 
 fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
+        (Builtin::IntlPluralRulesPrototype, "constructor") => Builtin::IntlPluralRules,
         (Builtin::IntlLocalePrototype, "toString") => Builtin::IntlLocaleToString,
         (Builtin::IntlLocalePrototype, "maximize") => Builtin::IntlLocaleMaximize,
         (Builtin::IntlLocalePrototype, "minimize") => Builtin::IntlLocaleMinimize,
