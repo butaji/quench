@@ -4,6 +4,7 @@ use crate::ops::Builtin;
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::StringIteratorNext => Some("StringIterator.prototype.next"),
         Builtin::StringFromCharCode => Some("String.fromCharCode"),
         Builtin::StringFromCodePoint => Some("String.fromCodePoint"),
         Builtin::StringRaw => Some("String.raw"),
@@ -43,6 +44,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
+        Builtin::StringIteratorNext => Some(0.0),
         Builtin::StringFromCharCode => Some(1.0),
         Builtin::StringFromCodePoint => Some(1.0),
         Builtin::StringRaw => Some(1.0),
@@ -80,6 +82,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::StringIteratorNext => Some("next"),
         Builtin::StringFromCharCode => Some("fromCharCode"),
         Builtin::StringFromCodePoint => Some("fromCodePoint"),
         Builtin::StringRaw => Some("raw"),

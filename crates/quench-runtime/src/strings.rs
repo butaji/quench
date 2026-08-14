@@ -139,6 +139,9 @@ fn is_surrogate(code: u32) -> bool {
 }
 
 pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
+    if key == "Symbol.iterator" {
+        return Some(crate::ops::Builtin::StringIterator);
+    }
     match key {
         "includes" => Some(crate::ops::Builtin::StringIncludes),
         "isWellFormed" => Some(crate::ops::Builtin::StringIsWellFormed),
@@ -178,6 +181,7 @@ pub(crate) fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, crate::execute::VmError>> {
     let result = match builtin {
+        crate::ops::Builtin::StringIterator => string_iterator(receiver),
         crate::ops::Builtin::StringFromCharCode => from_char_code(arguments),
         crate::ops::Builtin::StringFromCodePoint => from_code_point(arguments),
         crate::ops::Builtin::StringRaw => raw(arguments),
@@ -211,6 +215,17 @@ pub(crate) fn execute_builtin(
         _ => return None,
     };
     Some(result)
+}
+
+fn string_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let value = receiver.ok_or_else(|| {
+        crate::value::error::throw_type_error("Cannot convert undefined to object")
+    })?;
+    let units = match crate::strings::units_of(value) {
+        Some(units) => units,
+        None => string_receiver(Some(value))?.encode_utf16().collect(),
+    };
+    Ok(crate::collections::iterator::make_string(units))
 }
 
 fn from_char_code(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {

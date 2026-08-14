@@ -59,6 +59,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
+        (StringIteratorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("String Iterator".into()))
+        }
         (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
@@ -258,6 +261,7 @@ fn regexp_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "Symbol.split") => RegExpSymbolSplit,
         (RegExpPrototype, "Symbol.matchAll") => RegExpSymbolMatchAll,
         (RegExpStringIteratorPrototype, "next") => RegExpStringIteratorNext,
+        (StringIteratorPrototype, "next") => StringIteratorNext,
         _ => return None,
     })
 }
