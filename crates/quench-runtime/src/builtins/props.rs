@@ -77,6 +77,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (AsyncFunctionPrototype, "Symbol.toStringTag") => {
             Some(Value::String("AsyncFunction".into()))
         }
+        (AsyncGeneratorFunctionPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("AsyncGeneratorFunction".into()))
+        }
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
