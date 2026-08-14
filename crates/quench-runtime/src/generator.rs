@@ -365,11 +365,78 @@ fn suspended_try<'a>(
         return None;
     };
     let body = body.ops()?;
-    let (yield_index, yield_op) = body
-        .iter()
-        .enumerate()
-        .find(|(_, candidate)| suspended_try_op(candidate, generator))?;
-    Some((op, yield_op, &body[yield_index + 1..]))
+    if let Some(found) = find_outer_suspended_try(op, body, generator) {
+        return Some(found);
+    }
+    None
+}
+
+fn find_outer_suspended_try<'a>(
+    op: &'a Op,
+    body: &'a [Op],
+    generator: &GeneratorData,
+) -> Option<(&'a Op, &'a Op, &'a [Op])> {
+    for (index, candidate) in body.iter().enumerate() {
+        if suspended_try_op(candidate, generator) {
+            return Some((op, candidate, &body[index + 1..]));
+        }
+        if let Op::Try {
+            body: nested_body,
+            handler,
+            finalizer,
+            ..
+        } = candidate
+        {
+            if let Some(yield_op) =
+                nested_suspended_yield(nested_body, handler, finalizer, generator)
+            {
+                return Some((op, yield_op, &body[index + 1..]));
+            }
+        }
+    }
+    None
+}
+
+fn nested_suspended_yield<'a>(
+    body: &'a crate::machine::FunctionCode,
+    handler: &'a Option<crate::machine::FunctionCode>,
+    finalizer: &'a Option<crate::machine::FunctionCode>,
+    generator: &GeneratorData,
+) -> Option<&'a Op> {
+    body.ops()
+        .and_then(|ops| find_suspended_yield(ops, generator))
+        .or_else(|| {
+            handler
+                .as_ref()
+                .and_then(|code| code.ops())
+                .and_then(|ops| find_suspended_yield(ops, generator))
+        })
+        .or_else(|| {
+            finalizer
+                .as_ref()
+                .and_then(|code| code.ops())
+                .and_then(|ops| find_suspended_yield(ops, generator))
+        })
+}
+
+fn find_suspended_yield<'a>(ops: &'a [Op], generator: &GeneratorData) -> Option<&'a Op> {
+    for op in ops {
+        if suspended_try_op(op, generator) {
+            return Some(op);
+        }
+        if let Op::Try {
+            body,
+            handler,
+            finalizer,
+            ..
+        } = op
+        {
+            if let Some(found) = nested_suspended_yield(body, handler, finalizer, generator) {
+                return Some(found);
+            }
+        }
+    }
+    None
 }
 
 fn resume_suspended_try(
