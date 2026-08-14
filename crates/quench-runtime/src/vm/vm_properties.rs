@@ -353,6 +353,12 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     let property = builtin_property(builtin, key);
     if matches!(key, "prototype" | "constructor") {
+        if key == "constructor"
+            && matches!(property, Value::Undefined)
+            && crate::builtin_meta::constructor_name(builtin).is_some()
+        {
+            return Value::Builtin(Builtin::Function);
+        }
         return property;
     }
     if !matches!(property, Value::Undefined) {
