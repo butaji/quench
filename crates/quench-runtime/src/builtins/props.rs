@@ -507,6 +507,21 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     }
 }
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
+    if _builtin == Builtin::Number
+        && matches!(
+            key,
+            "EPSILON"
+                | "MAX_SAFE_INTEGER"
+                | "MAX_VALUE"
+                | "MIN_SAFE_INTEGER"
+                | "MIN_VALUE"
+                | "NaN"
+                | "NEGATIVE_INFINITY"
+                | "POSITIVE_INFINITY"
+        )
+    {
+        return false;
+    }
     if key == "prototype" {
         return false;
     }
