@@ -83,7 +83,10 @@ fn iterator_property(value: &Value, key: &str) -> Value {
     if matches!(
         property,
         Value::Builtin(
-            Builtin::RegExpStringIteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext
+            Builtin::RegExpStringIteratorNext
+                | Builtin::StringIteratorNext
+                | Builtin::SetIteratorNext
+                | Builtin::MapIteratorNext
         )
     ) {
         return property;
