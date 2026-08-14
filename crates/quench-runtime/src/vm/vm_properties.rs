@@ -317,6 +317,14 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
             Builtin::IntlNumberFormatFormatToParts
                 | Builtin::IntlNumberFormatFormatRange
                 | Builtin::IntlNumberFormatFormatRangeToParts
+                | Builtin::IntlPluralRulesSelect
+                | Builtin::IntlPluralRulesSelectRange
+                | Builtin::IntlPluralRulesResolvedOptions
+                | Builtin::IntlRelativeTimeFormatFormat
+                | Builtin::IntlRelativeTimeFormatFormatToParts
+                | Builtin::IntlRelativeTimeFormatResolvedOptions
+                | Builtin::IntlSegmenterSegment
+                | Builtin::IntlSegmenterResolvedOptions
         )
     ) {
         return property;
