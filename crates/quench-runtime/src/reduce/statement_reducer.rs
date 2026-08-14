@@ -3,6 +3,10 @@ impl StatementReducer {
         self.locals.clone()
     }
 
+    pub(super) fn enter_module(&mut self) {
+        self.locals.remove(SCRIPT_THIS_SLOT);
+    }
+
     pub(super) fn new_with_global(source_type: SourceType, global: bool) -> Self {
         let locals = initialize_statement_locals(source_type);
         let (mut ops, next_register) = initialize_statement_ops(global);
@@ -28,7 +32,9 @@ impl StatementReducer {
         let barrier_len = facts.eval_var_barrier.len();
         facts
             .eval_var_barrier
-            .extend(crate::semantic_early::lexically_declared_names_in(statements));
+            .extend(crate::semantic_early::lexically_declared_names_in(
+                statements,
+            ));
         let result = self.append_scoped(statements, facts, program_scope);
         facts.eval_var_barrier.truncate(barrier_len);
         result
