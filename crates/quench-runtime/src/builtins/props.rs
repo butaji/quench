@@ -66,6 +66,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (IntlLocalePrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.Locale".into()))
         }
+        (IntlNumberFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.NumberFormat".into()))
+        }
         (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
