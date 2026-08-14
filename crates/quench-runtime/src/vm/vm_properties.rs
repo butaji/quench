@@ -343,6 +343,7 @@ fn is_iterator_next_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
         Builtin::RegExpStringIteratorNext
+            | Builtin::StringIteratorNext
             | Builtin::SetIteratorNext
             | Builtin::MapIteratorNext
     )
