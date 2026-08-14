@@ -54,8 +54,32 @@ pub(crate) struct RawOptions {
     rounding_priority: String,
 }
 
+const OPTION_READ_ORDER: [&str; 21] = [
+    "localeMatcher",
+    "numberingSystem",
+    "style",
+    "currency",
+    "currencyDisplay",
+    "currencySign",
+    "unit",
+    "unitDisplay",
+    "notation",
+    "minimumIntegerDigits",
+    "minimumFractionDigits",
+    "maximumFractionDigits",
+    "minimumSignificantDigits",
+    "maximumSignificantDigits",
+    "roundingIncrement",
+    "roundingMode",
+    "roundingPriority",
+    "trailingZeroDisplay",
+    "compactDisplay",
+    "useGrouping",
+    "signDisplay",
+];
+
 impl RawOptions {
-    fn from_value(options: Option<&Value>) -> Self {
+    fn from_value(options: Option<&Value>) -> Result<Self, VmError> {
         let mut raw = RawOptions {
             style: "decimal".to_string(),
             currency: None,
@@ -77,6 +101,11 @@ impl RawOptions {
             maximum_significant_digits: -1.0,
             rounding_priority: "auto".to_string(),
         };
+        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+            for key in OPTION_READ_ORDER {
+                let _ = crate::execute::get_property_result(options, key)?;
+            }
+        }
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
                 if matches!(value, Value::Undefined) {
@@ -119,7 +148,7 @@ impl RawOptions {
                 }
             }
         }
-        raw
+        Ok(raw)
     }
 }
 
@@ -158,7 +187,7 @@ impl NumberOptions {
                 }
             }
         }
-        let raw = RawOptions::from_value(options);
+        let raw = RawOptions::from_value(options)?;
         if raw.style == "currency" {
             let Some(currency) = raw.currency.as_deref() else {
                 return Err(crate::value::error::throw_type_error("currency is required"));
