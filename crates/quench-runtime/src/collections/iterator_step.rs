@@ -82,12 +82,12 @@ fn concat_step(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
                 return Ok(StepTarget::Value(None));
             }
             if current.is_none() {
-                let Some(value) = items.get(*index).cloned() else {
+                let Some((value, method)) = items.get(*index).cloned() else {
                     *done = true;
                     return Ok(StepTarget::Value(None));
                 };
                 *index += 1;
-                *current = Some(super::open(value)?);
+                *current = Some(super::open_with_method(value, method)?);
             }
             current.clone()
         };
