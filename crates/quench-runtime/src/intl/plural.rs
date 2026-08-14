@@ -64,6 +64,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             Value::Builtin(crate::ops::Builtin::IntlPluralRulesSelect),
         ),
         (
+            "selectRange".to_string(),
+            Value::Builtin(crate::ops::Builtin::IntlPluralRulesSelectRange),
+        ),
+        (
             "resolvedOptions".to_string(),
             Value::Builtin(crate::ops::Builtin::IntlPluralRulesResolvedOptions),
         ),
@@ -73,9 +77,18 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 ("locale".to_string(), Value::String(locale.clone())),
                 ("type".to_string(), Value::String(plural_type)),
                 ("notation".to_string(), Value::String(notation)),
-                ("minimumIntegerDigits".to_string(), Value::Number(minimum_integer_digits)),
-                ("minimumFractionDigits".to_string(), Value::Number(minimum_fraction_digits)),
-                ("maximumFractionDigits".to_string(), Value::Number(maximum_fraction_digits)),
+                (
+                    "minimumIntegerDigits".to_string(),
+                    Value::Number(minimum_integer_digits),
+                ),
+                (
+                    "minimumFractionDigits".to_string(),
+                    Value::Number(minimum_fraction_digits),
+                ),
+                (
+                    "maximumFractionDigits".to_string(),
+                    Value::Number(maximum_fraction_digits),
+                ),
                 (
                     "compactDisplay".to_string(),
                     Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
@@ -98,6 +111,17 @@ pub(crate) fn prototype_method(
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
             Ok(Value::String(select(number, &plural_type, &locale)))
         }
+        crate::ops::Builtin::IntlPluralRulesSelectRange => {
+            let start = super::tolocale::value::to_number_result(arguments.first())?;
+            let end = super::tolocale::value::to_number_result(arguments.get(1))?;
+            if !start.is_finite() || !end.is_finite() {
+                return Err(runtime_error("RangeError: value must be finite"));
+            }
+            let slots = super::intl_slots(receiver)?;
+            let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
+            let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
+            Ok(Value::String(select(end, &plural_type, &locale)))
+        }
         crate::ops::Builtin::IntlPluralRulesResolvedOptions => {
             let slots = super::intl_slots(receiver)?;
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
@@ -107,17 +131,28 @@ pub(crate) fn prototype_method(
             let compact_display =
                 slot_string(&slots, "compactDisplay").unwrap_or_else(|| "short".to_string());
             let minimum_integer_digits = slot_number(&slots, "minimumIntegerDigits").unwrap_or(1.0);
-            let minimum_fraction_digits = slot_number(&slots, "minimumFractionDigits").unwrap_or(0.0);
-            let maximum_fraction_digits = slot_number(&slots, "maximumFractionDigits").unwrap_or(3.0);
+            let minimum_fraction_digits =
+                slot_number(&slots, "minimumFractionDigits").unwrap_or(0.0);
+            let maximum_fraction_digits =
+                slot_number(&slots, "maximumFractionDigits").unwrap_or(3.0);
             let minimum_significant_digits = slot_number(&slots, "minimumSignificantDigits");
             let maximum_significant_digits = slot_number(&slots, "maximumSignificantDigits");
             let mut properties = vec![
                 ("locale".to_string(), Value::String(locale.clone())),
                 ("type".to_string(), Value::String(plural_type.clone())),
                 ("notation".to_string(), Value::String(notation.clone())),
-                ("minimumIntegerDigits".to_string(), Value::Number(minimum_integer_digits)),
-                ("minimumFractionDigits".to_string(), Value::Number(minimum_fraction_digits)),
-                ("maximumFractionDigits".to_string(), Value::Number(maximum_fraction_digits)),
+                (
+                    "minimumIntegerDigits".to_string(),
+                    Value::Number(minimum_integer_digits),
+                ),
+                (
+                    "minimumFractionDigits".to_string(),
+                    Value::Number(minimum_fraction_digits),
+                ),
+                (
+                    "maximumFractionDigits".to_string(),
+                    Value::Number(maximum_fraction_digits),
+                ),
             ];
             if let Some(value) = minimum_significant_digits {
                 properties.push(("minimumSignificantDigits".to_string(), Value::Number(value)));
@@ -150,13 +185,23 @@ fn plural_categories(locale: &str, plural_type: &str) -> Vec<Value> {
     } else {
         &["one", "other"]
     };
-    names.iter().map(|name| Value::String((*name).to_string())).collect()
+    names
+        .iter()
+        .map(|name| Value::String((*name).to_string()))
+        .collect()
 }
 
 fn slot_number(slots: &[(String, Value)], key: &str) -> Option<f64> {
-    slots.iter().find_map(|(name, value)| (name == key).then_some(value)).and_then(|value| {
-        if let Value::Number(number) = value { Some(*number) } else { None }
-    })
+    slots
+        .iter()
+        .find_map(|(name, value)| (name == key).then_some(value))
+        .and_then(|value| {
+            if let Value::Number(number) = value {
+                Some(*number)
+            } else {
+                None
+            }
+        })
 }
 
 fn select(number: f64, plural_type: &str, locale: &str) -> String {
@@ -250,6 +295,7 @@ pub(crate) fn dispatch(
     match builtin {
         crate::ops::Builtin::IntlPluralRules => Some(construct(arguments)),
         crate::ops::Builtin::IntlPluralRulesSelect
+        | crate::ops::Builtin::IntlPluralRulesSelectRange
         | crate::ops::Builtin::IntlPluralRulesResolvedOptions => {
             Some(prototype_method(builtin, arguments, receiver))
         }
