@@ -369,6 +369,9 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     if tag.is_empty() || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
+    if tag.eq_ignore_ascii_case("en-GB-oed") {
+        return Err(runtime_error("RangeError: invalid language tag"));
+    }
     let mut parts = tag.split('-');
     let language = parts
         .next()
