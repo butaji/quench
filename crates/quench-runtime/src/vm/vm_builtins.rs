@@ -134,6 +134,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::ErrorPrototypeCauseGetter
             | Builtin::ErrorPrototypeStackGetter
             | Builtin::ErrorPrototypeStackSetter
+            | Builtin::AbstractModuleSourceToStringTagGetter
             | Builtin::WeakRefDeref
     )
 }
@@ -231,6 +232,7 @@ fn error_builtin(
         Builtin::ErrorPrototypeNameGetter => Ok(error_name_getter(receiver)?),
         Builtin::ErrorPrototypeMessageGetter => Ok(error_message_getter(receiver)?),
         Builtin::ErrorPrototypeCauseGetter => Ok(error_cause_getter(receiver)?),
+        Builtin::AbstractModuleSourceToStringTagGetter => Ok(Value::Undefined),
         Builtin::ErrorPrototypeStackGetter => error_stack_getter(receiver),
         Builtin::ErrorPrototypeStackSetter => error_stack_setter(receiver, arguments),
         _ => Ok(Value::Undefined),
