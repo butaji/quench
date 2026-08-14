@@ -319,7 +319,10 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(descriptor_object_with_flags(property, writable, false, true));
     }
     if builtin == Builtin::AsyncGeneratorFunctionPrototype && key == "prototype" {
-        let property = super::special_property(builtin, key)?;
+        let property = match super::property(builtin, key) {
+            Value::Undefined => return None,
+            value => value,
+        };
         return Some(descriptor_object_with_flags(property, false, false, true));
     }
     if builtin == Builtin::Object && key == "hasOwn" {
