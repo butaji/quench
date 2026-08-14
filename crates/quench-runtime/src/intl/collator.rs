@@ -19,7 +19,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let mut collation = extension.collation.unwrap_or_else(|| "default".to_string());
     if let Some(Value::Object(properties)) = arguments.get(1) {
         if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
-            usage = to_string_value(value);
+            usage = crate::conversion::to_string(value)?;
             if !matches!(usage.as_str(), "sort" | "search") {
                 return Err(runtime_error("RangeError: invalid usage"));
             }
@@ -28,19 +28,19 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             numeric = truthy_option(value);
         }
         if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
-            case_first = to_string_value(value);
+            case_first = crate::conversion::to_string(value)?;
             if !matches!(case_first.as_str(), "upper" | "lower" | "false") {
                 return Err(runtime_error("RangeError: invalid caseFirst"));
             }
         }
         if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
-            sensitivity = to_string_value(value);
+            sensitivity = crate::conversion::to_string(value)?;
             if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
                 return Err(runtime_error("RangeError: invalid sensitivity"));
             }
         }
         if let Some((_, value)) = properties.iter().find(|(name, _)| name == "collation") {
-            collation = to_string_value(value);
+            collation = crate::conversion::to_string(value)?;
             if !matches!(
                 collation.as_str(),
                 "default" | "search" | "standard" | "phonebk" | "pinyin" | "eor"
@@ -65,11 +65,17 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         if numeric {
             locale = remove_conflicting_extension(&locale, "kn", "true");
         }
-        if let Some((_, Value::Boolean(value))) = properties
+        if let Some((_, value)) = properties
             .iter()
             .find(|(name, _)| name == "ignorePunctuation")
         {
-            ignore_punctuation = *value;
+            ignore_punctuation = truthy_option(value);
+        }
+        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "localeMatcher") {
+            let matcher = crate::conversion::to_string(value)?;
+            if !matches!(matcher.as_str(), "lookup" | "best fit") {
+                return Err(runtime_error("RangeError: invalid localeMatcher"));
+            }
         }
     }
     Ok(make_object(vec![
