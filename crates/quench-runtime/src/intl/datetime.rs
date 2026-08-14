@@ -88,9 +88,73 @@ static LEGACY_SYMBOL_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let locale = locales
+        .first()
+        .map(|value| sanitize_locale_extensions(value))
+        .unwrap_or_else(default_locale);
     let options = DateTimeOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
+}
+
+fn sanitize_locale_extensions(locale: &str) -> String {
+    let Some(index) = locale.split('-').position(|part| part == "u") else {
+        return locale.to_string();
+    };
+    let parts: Vec<&str> = locale.split('-').collect();
+    let mut result = parts[..index]
+        .iter()
+        .map(|part| (*part).to_string())
+        .collect::<Vec<_>>();
+    let mut cursor = index + 1;
+    while cursor < parts.len() {
+        let key = parts[cursor];
+        if key.len() != 2 {
+            cursor += 1;
+            continue;
+        }
+        let value = parts.get(cursor + 1).copied().unwrap_or_default();
+        if key == "nu" && valid_numbering_system(value) {
+            result.push(key.to_string());
+            result.push(value.to_string());
+        }
+        cursor += 1;
+        while cursor < parts.len() && parts[cursor].len() > 2 {
+            cursor += 1;
+        }
+    }
+    if result.len() == index {
+        return result.join("-");
+    }
+    result.join("-")
+}
+
+fn valid_numbering_system(value: &str) -> bool {
+    matches!(
+        value,
+        "adlm"
+            | "arab"
+            | "arabext"
+            | "bali"
+            | "beng"
+            | "deva"
+            | "fullwide"
+            | "gujr"
+            | "guru"
+            | "hanidec"
+            | "khmr"
+            | "knda"
+            | "laoo"
+            | "latn"
+            | "limb"
+            | "mlym"
+            | "mong"
+            | "mymr"
+            | "orya"
+            | "tamldec"
+            | "telu"
+            | "thai"
+            | "tibt"
+    )
 }
 
 impl DateTimeOptions {
