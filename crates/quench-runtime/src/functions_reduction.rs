@@ -488,11 +488,20 @@ fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue
     } else {
         crate::ops::Builtin::ObjectPrototype
     };
-    let generator =
-        crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![(
-            "\0prototype".to_string(),
-            crate::value::Value::Builtin(generator_parent),
-        )])));
+    let mut generator_properties = vec![(
+        "\0prototype".to_string(),
+        crate::value::Value::Builtin(generator_parent),
+    )];
+    if function.is_async {
+        generator_properties.extend(async_generator_property("constructor", crate::value::Value::Builtin(crate::ops::Builtin::AsyncGeneratorFunctionPrototype), false));
+        generator_properties.extend(async_generator_property("next", crate::value::Value::Builtin(crate::ops::Builtin::AsyncGeneratorNext), true));
+        generator_properties.extend(async_generator_property("return", crate::value::Value::Builtin(crate::ops::Builtin::AsyncGeneratorReturn), true));
+        generator_properties.extend(async_generator_property("throw", crate::value::Value::Builtin(crate::ops::Builtin::AsyncGeneratorThrow), true));
+        generator_properties.extend(async_generator_property("Symbol.toStringTag", crate::value::Value::String("AsyncGenerator".into()), false));
+    }
+    let generator = crate::value::Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(generator_properties),
+    ));
     let function_prototype =
         crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
             ("prototype".to_string(), generator.clone()),
@@ -517,6 +526,22 @@ fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue
             prototype_descriptor(instance),
         ),
     ]);
+}
+
+fn async_generator_property(
+    name: &str,
+    value: crate::value::Value,
+    writable: bool,
+) -> Vec<(String, crate::value::Value)> {
+    let descriptor = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+        vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), crate::value::Value::Boolean(writable)),
+            ("enumerable".to_string(), crate::value::Value::Boolean(false)),
+            ("configurable".to_string(), crate::value::Value::Boolean(true)),
+        ],
+    )));
+    vec![(name.to_string(), value), (crate::builtins::descriptor_key(name), descriptor)]
 }
 
 fn prototype_descriptor(value: crate::value::Value) -> crate::value::Value {
