@@ -67,6 +67,11 @@ impl RelativeOptions {
                             return Err(runtime_error("RangeError: invalid numeric"));
                         }
                     }
+                    "localeMatcher" => {
+                        if !matches!(text.as_str(), "lookup" | "best fit") {
+                            return Err(runtime_error("RangeError: invalid localeMatcher"));
+                        }
+                    }
                     "numberingSystem" if text == "arab" || text == "latn" => {
                         if text != formatter.numbering_system {
                             formatter.locale = formatter
@@ -75,6 +80,12 @@ impl RelativeOptions {
                                 .next()
                                 .map_or("en", |value| value)
                                 .to_string();
+                        }
+                        formatter.numbering_system = text;
+                    }
+                    "numberingSystem" => {
+                        if !valid_numbering_system(&text) {
+                            return Err(runtime_error("RangeError: invalid numberingSystem"));
                         }
                         formatter.numbering_system = text;
                     }
@@ -123,6 +134,16 @@ fn valid_enum(text: &str, allowed: &[&str]) -> Option<String> {
     } else {
         None
     }
+}
+
+fn valid_numbering_system(text: &str) -> bool {
+    !text.is_empty()
+        && text.split('-').all(|part| {
+            (3..=8).contains(&part.len())
+                && part
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        })
 }
 
 fn singularize(unit: &str) -> String {
