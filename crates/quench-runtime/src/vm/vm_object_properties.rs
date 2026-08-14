@@ -72,6 +72,9 @@ pub(crate) fn object_property(
             .any(|(name, _)| name == crate::builtins::ERROR_SLOT)
     {
         if let Some(constructor) = error_constructor(properties) {
+            if let Some(realm) = error_realm(properties) {
+                return crate::vm::intrinsic_for_realm(realm, constructor);
+            }
             return Value::Builtin(constructor);
         }
     }
@@ -123,6 +126,15 @@ fn error_constructor(properties: &[(String, Value)]) -> Option<Builtin> {
         "AggregateError" => Builtin::AggregateError,
         "SuppressedError" => Builtin::SuppressedError,
         _ => Builtin::Error,
+    })
+}
+
+fn error_realm(properties: &[(String, Value)]) -> Option<crate::ops::RealmId> {
+    properties.iter().rev().find_map(|(key, value)| {
+        (key == "\0realm").then(|| match value {
+            Value::HostCapability(capability) => capability.realm(),
+            _ => crate::ops::RealmId::ROOT,
+        })
     })
 }
 
