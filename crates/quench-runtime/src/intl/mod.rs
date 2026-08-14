@@ -244,6 +244,9 @@ fn validate_supported_options(options: Option<&Value>) -> Result<(), VmError> {
     let Some(options) = options else {
         return Ok(());
     };
+    if matches!(options, Value::Undefined) {
+        return Ok(());
+    }
     if matches!(options, Value::Null) {
         return Err(crate::value::error::throw_type_error(
             "Cannot convert null to object",
