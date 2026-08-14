@@ -112,6 +112,34 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (ErrorPrototype, "message") => Some(Value::String("".to_string())),
         (ErrorPrototype, "cause") => Some(Value::Undefined),
         (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
+        (EvalErrorPrototype, "name") => Some(Value::String("EvalError".to_string())),
+        (RangeErrorPrototype, "name") => Some(Value::String("RangeError".to_string())),
+        (ReferenceErrorPrototype, "name") => Some(Value::String("ReferenceError".to_string())),
+        (SyntaxErrorPrototype, "name") => Some(Value::String("SyntaxError".to_string())),
+        (TypeErrorPrototype, "name") => Some(Value::String("TypeError".to_string())),
+        (URIErrorPrototype, "name") => Some(Value::String("URIError".to_string())),
+        (AggregateErrorPrototype, "name") => Some(Value::String("AggregateError".to_string())),
+        (EvalErrorPrototype, "message")
+        | (RangeErrorPrototype, "message")
+        | (ReferenceErrorPrototype, "message")
+        | (SyntaxErrorPrototype, "message")
+        | (TypeErrorPrototype, "message")
+        | (URIErrorPrototype, "message")
+        | (AggregateErrorPrototype, "message") => Some(Value::String(std::string::String::new())),
+        (EvalErrorPrototype, "constructor") => Some(Value::Builtin(EvalError)),
+        (RangeErrorPrototype, "constructor") => Some(Value::Builtin(RangeError)),
+        (ReferenceErrorPrototype, "constructor") => Some(Value::Builtin(ReferenceError)),
+        (SyntaxErrorPrototype, "constructor") => Some(Value::Builtin(SyntaxError)),
+        (TypeErrorPrototype, "constructor") => Some(Value::Builtin(TypeError)),
+        (URIErrorPrototype, "constructor") => Some(Value::Builtin(URIError)),
+        (AggregateErrorPrototype, "constructor") => Some(Value::Builtin(AggregateError)),
+        (EvalErrorPrototype, "toString")
+        | (RangeErrorPrototype, "toString")
+        | (ReferenceErrorPrototype, "toString")
+        | (SyntaxErrorPrototype, "toString")
+        | (TypeErrorPrototype, "toString")
+        | (URIErrorPrototype, "toString")
+        | (AggregateErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
         (SuppressedError, "prototype") => Some(Value::Builtin(SuppressedErrorPrototype)),
         (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
         (SuppressedErrorPrototype, "message") => Some(Value::String("".to_string())),
@@ -291,19 +319,20 @@ fn builtin_method_prefix(builtin: Builtin, key: &str) -> Option<Builtin> {
     specialized_method(builtin, key).or_else(|| error_prototype(builtin, key))
 }
 fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
-    (key == "prototype"
-        && matches!(
-            builtin,
-            Builtin::Error
-                | Builtin::RangeError
-                | Builtin::ReferenceError
-                | Builtin::SyntaxError
-                | Builtin::EvalError
-                | Builtin::URIError
-                | Builtin::AggregateError
-                | Builtin::TypeError
-        ))
-    .then_some(Builtin::ErrorPrototype)
+    if key != "prototype" {
+        return None;
+    }
+    Some(match builtin {
+        Builtin::Error => Builtin::ErrorPrototype,
+        Builtin::RangeError => Builtin::RangeErrorPrototype,
+        Builtin::ReferenceError => Builtin::ReferenceErrorPrototype,
+        Builtin::SyntaxError => Builtin::SyntaxErrorPrototype,
+        Builtin::EvalError => Builtin::EvalErrorPrototype,
+        Builtin::URIError => Builtin::URIErrorPrototype,
+        Builtin::AggregateError => Builtin::AggregateErrorPrototype,
+        Builtin::TypeError => Builtin::TypeErrorPrototype,
+        _ => return None,
+    })
 }
 fn specialized_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_property(builtin, key).or_else(|| {
