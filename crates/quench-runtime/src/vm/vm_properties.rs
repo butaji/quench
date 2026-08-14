@@ -303,7 +303,7 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
     }
 }
 
-fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
+fn receiver_property(value: &Value, key: &str, _receiver: &Value) -> Value {
     let property = get_property(value, key);
     if matches!(value, Value::Builtin(_)) {
         return property;
@@ -324,40 +324,11 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     if matches!(key, "constructor" | "prototype") {
         return property;
     }
-    if same_property_receiver(value, receiver) {
-        return property;
-    }
-    match property {
-        Value::Builtin(builtin)
-            if !is_accessor_builtin(builtin)
-                && crate::intl::tolocale::symbol::name(builtin).is_none() =>
-        {
-            bind_method(receiver, property)
-        }
-        other => other,
-    }
+    property
 }
 /// Accessor getters/setters carry their `this` at invocation time; binding
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
-fn is_accessor_builtin(builtin: Builtin) -> bool {
-    let name = crate::builtins::builtin_name(builtin);
-    name.starts_with("get ") || name.starts_with("set ")
-}
-fn same_property_receiver(value: &Value, receiver: &Value) -> bool {
-    match (value, receiver) {
-        (Value::Builtin(left), Value::Builtin(right)) => left == right,
-        (Value::Map(left), Value::Map(right)) => std::rc::Rc::ptr_eq(left, right),
-        (Value::Set(left), Value::Set(right)) => std::rc::Rc::ptr_eq(left, right),
-        (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
-        (Value::Number(_), Value::Number(_))
-        | (Value::Boolean(_), Value::Boolean(_))
-        | (Value::BigInt(_), Value::BigInt(_))
-        | (Value::String(_), Value::String(_))
-        | (Value::StringUnits(_), Value::StringUnits(_)) => value == receiver,
-        _ => false,
-    }
-}
 
 pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
     let Value::Array(values) = value else {
