@@ -140,7 +140,7 @@ struct LocaleExtensions {
 
 fn normalize_locale_extensions(locale: &str) -> (String, LocaleExtensions) {
     let parts = locale.split('-').collect::<Vec<_>>();
-    let Some(index) = parts.iter().position(|part| *part == "u") else {
+    let Some(index) = unicode_extension_index(&parts) else {
         return (
             locale.to_string(),
             LocaleExtensions {
@@ -203,6 +203,13 @@ fn normalize_locale_extensions(locale: &str) -> (String, LocaleExtensions) {
             collation,
         },
     )
+}
+
+fn unicode_extension_index(parts: &[&str]) -> Option<usize> {
+    parts
+        .iter()
+        .position(|part| *part == "u")
+        .filter(|index| !parts[..*index].contains(&"x"))
 }
 
 fn strip_unicode_key(locale: &str, key: &str) -> String {
