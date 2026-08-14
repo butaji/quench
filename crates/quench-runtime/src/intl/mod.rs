@@ -164,7 +164,9 @@ pub(crate) fn execute(
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
         Builtin::IntlPluralRulesSupportedLocalesOf
-        | Builtin::IntlRelativeTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
+        | Builtin::IntlRelativeTimeFormatSupportedLocalesOf => {
+            Some(supported_locales_of(arguments))
+        }
         Builtin::IntlListFormatSupportedLocalesOf => Some(list_supported_locales_of(arguments)),
         Builtin::IntlGetCanonicalLocales => Some(get_canonical_locales(arguments)),
         Builtin::IntlSupportedValuesOf => Some(supported_values_of(arguments)),
@@ -303,12 +305,29 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
-                out.push(canonicalize(&to_string_value(value))?);
+                out.push(canonicalize(&crate::conversion::to_string(value)?)?);
             }
             Ok(dedupe(out))
         }
+        Value::Object(_) => object_locales(locales),
         _ => Ok(vec![default_locale()]),
     }
+}
+
+fn object_locales(locales: &Value) -> Result<Vec<String>, VmError> {
+    let length = crate::execute::get_property_result(locales, "length")?;
+    let Value::Number(length) = length else {
+        return Ok(Vec::new());
+    };
+    let length = length.max(0.0).min(100.0) as usize;
+    let mut result = Vec::new();
+    for index in 0..length {
+        let value = crate::execute::get_property_result(locales, &index.to_string())?;
+        if !matches!(value, Value::Undefined) {
+            result.push(canonicalize(&crate::conversion::to_string(&value)?)?);
+        }
+    }
+    Ok(dedupe(result))
 }
 
 pub(crate) fn default_locale() -> String {
@@ -343,6 +362,9 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let tag = tag.trim();
     if tag.is_empty() || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(runtime_error("RangeError: invalid language tag"));
+    }
+    if tag.eq_ignore_ascii_case("en-gb-oed") || tag.eq_ignore_ascii_case("x-private") {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
     let mut parts = tag.split('-');
