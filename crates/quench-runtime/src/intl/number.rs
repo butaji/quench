@@ -79,6 +79,9 @@ impl RawOptions {
         };
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
+                if matches!(value, Value::Undefined) {
+                    continue;
+                }
                 let value = to_string_value(value);
                 match key.as_str() {
                     "style" => raw.style = value,
@@ -220,10 +223,6 @@ impl NumberOptions {
             ),
             ("notation".to_string(), Value::String(self.notation.clone())),
             (
-                "compactDisplay".to_string(),
-                Value::String(self.compact_display.clone()),
-            ),
-            (
                 "signDisplay".to_string(),
                 Value::String(self.sign_display.clone()),
             ),
@@ -240,6 +239,9 @@ impl NumberOptions {
                 Value::Number(self.rounding_increment as f64),
             ),
         ];
+        if self.notation == "compact" {
+            properties.insert(8, ("compactDisplay".to_string(), Value::String(self.compact_display.clone())));
+        }
         if let Some(value) = self.minimum_significant_digits {
             properties.push((
                 "minimumSignificantDigits".to_string(),
@@ -714,7 +716,7 @@ impl NumberOptions {
     }
 
     fn resolved(&self) -> Value {
-        make_object(vec![
+        let mut properties = vec![
             ("locale".to_string(), Value::String(self.locale.clone())),
             (
                 "numberingSystem".to_string(),
@@ -736,10 +738,6 @@ impl NumberOptions {
             ),
             ("notation".to_string(), Value::String(self.notation.clone())),
             (
-                "compactDisplay".to_string(),
-                Value::String(self.compact_display.clone()),
-            ),
-            (
                 "signDisplay".to_string(),
                 Value::String(self.sign_display.clone()),
             ),
@@ -747,7 +745,11 @@ impl NumberOptions {
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
             ),
-        ])
+        ];
+        if self.notation == "compact" {
+            properties.insert(8, ("compactDisplay".to_string(), Value::String(self.compact_display.clone())));
+        }
+        make_object(properties)
     }
 }
 
