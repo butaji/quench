@@ -521,6 +521,8 @@ pub enum Builtin {
     WeakRefDeref,
     IteratorNext,
     IteratorConcat,
+    IteratorFrom,
+    IteratorToArray,
     SetIteratorNext,
     MapIteratorNext,
     IteratorSelf,

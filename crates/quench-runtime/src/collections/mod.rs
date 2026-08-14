@@ -31,6 +31,8 @@ fn execute_core(
     }
     match builtin {
         IteratorConcat => Some(iterator_concat(arguments)),
+        IteratorFrom => Some(iterator_from(arguments)),
+        IteratorToArray => Some(iterator_to_array(receiver)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
@@ -57,6 +59,42 @@ fn execute_core(
         SetSpeciesGetter | MapSpeciesGetter | SpeciesGetter => Some(set::set_species(receiver)),
         _ => None,
     }
+}
+
+fn iterator_to_array(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error("Iterator receiver required"));
+    };
+    Ok(Value::array(iterator::collect(receiver)?))
+}
+
+fn iterator_from(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(value) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.from requires an argument",
+        ));
+    };
+    if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        return iterator::open(value.clone());
+    }
+    let method = crate::execute::get_property_result(value, "Symbol.iterator")?;
+    if crate::conversion::is_callable(&method) {
+        return iterator::open(value.clone());
+    }
+    if !matches!(method, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("value is not iterable"));
+    }
+    let next = crate::execute::get_property_result(value, "next")?;
+    if !crate::conversion::is_callable(&next) {
+        return Err(crate::value::error::throw_type_error("value is not iterable"));
+    }
+    Ok(Value::Iterator(std::rc::Rc::new(crate::value::IteratorData {
+        state: std::cell::RefCell::new(crate::value::IteratorState::Protocol {
+            iterator: value.clone(),
+            next,
+            done: false,
+        }),
+    })))
 }
 
 fn iterator_concat(arguments: &[Value]) -> Result<Value, VmError> {
