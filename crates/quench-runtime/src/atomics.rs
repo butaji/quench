@@ -165,12 +165,15 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
         .first()
         .ok_or_else(|| type_error("Invalid typed array"))?;
     if builtin == Builtin::AtomicsNotify {
-        validate_view(view)?;
+        validate_notify_view(view)?;
     } else {
         validate_wait_view(view)?;
     }
     let index = array_index(view, arguments.get(1))?;
     if builtin == Builtin::AtomicsNotify {
+        if view_buffer(view).is_some_and(|buffer| !buffer.shared) {
+            return Ok(Value::Number(0.0));
+        }
         return Ok(Value::Number(0.0));
     }
     let current = crate::execute::get_property_result(view, &index.to_string())?;
@@ -196,6 +199,13 @@ fn validate_wait_view(view: &Value) -> Result<(), VmError> {
         || matches!(view, Value::BigInt64Array(v) if !v.buffer.shared)
     {
         return Err(type_error("Atomics.wait requires a shared buffer"));
+    }
+    validate_view(view)
+}
+
+fn validate_notify_view(view: &Value) -> Result<(), VmError> {
+    if !matches!(view, Value::Int32Array(_) | Value::BigInt64Array(_)) {
+        return Err(type_error("Invalid typed array"));
     }
     validate_view(view)
 }
