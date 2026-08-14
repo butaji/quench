@@ -12,6 +12,16 @@ fn prototype_for_value(value: &Value) -> Value {
     }
     match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
+        Value::Builtin(
+            Builtin::Error
+            | Builtin::EvalError
+            | Builtin::RangeError
+            | Builtin::ReferenceError
+            | Builtin::SyntaxError
+            | Builtin::TypeError
+            | Builtin::URIError
+            | Builtin::AggregateError,
+        ) => Value::Builtin(Builtin::Error),
         Value::Builtin(Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
@@ -305,6 +315,14 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::BigIntPrototype
             | Builtin::GeneratorFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype
+            | Builtin::ErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
     )
 }
 
