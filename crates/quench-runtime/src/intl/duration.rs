@@ -126,6 +126,14 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
     let hours = number(properties, "hours");
     let minutes = number(properties, "minutes");
     let seconds = number(properties, "seconds");
+    let days = number(properties, "days");
+    let negative = [days, hours, minutes, seconds]
+        .iter()
+        .any(|value| *value < 0);
+    let days = days.abs();
+    let hours = hours.abs();
+    let minutes = minutes.abs();
+    let seconds = seconds.abs();
     let style = slots
         .iter()
         .find_map(|(key, value)| (key == "style").then_some(value))
@@ -135,7 +143,20 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
         })
         .unwrap_or("short");
     if style == "digital" {
-        return Ok(format!("{hours:02}:{minutes:02}:{seconds:02}"));
+        let clock = if hours == 0 {
+            format!("{minutes:02}:{seconds:02}")
+        } else {
+            format!("{hours}:{minutes:02}:{seconds:02}")
+        };
+        return if days == 0 {
+            Ok(if negative { format!("-{clock}") } else { clock })
+        } else {
+            Ok(if negative {
+                format!("-{days} day, {clock}")
+            } else {
+                format!("{days} day, {clock}")
+            })
+        };
     }
     Ok(format!("{hours} hr, {minutes} min, {seconds} sec"))
 }
