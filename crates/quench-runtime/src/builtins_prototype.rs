@@ -111,7 +111,10 @@ fn boxed_object_tag(properties: &crate::value::ObjectData) -> Option<&'static st
 
 pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
     match receiver {
-        Some(Value::Builtin(builtin)) => Value::String(format!("function {}() {{ [native code] }}", builtin_name(*builtin))),
+        Some(Value::Builtin(builtin)) => {
+            let name = crate::builtin_meta::constructor_name(*builtin).unwrap_or_else(|| builtin_name(*builtin));
+            Value::String(format!("function {name}() {{ [native code] }}"))
+        }
         Some(Value::Function(_)) | Some(Value::BoundFunction(_)) => Value::String("function () {{ [native code] }}".to_string()),
         _ => Value::String(String::new()),
     }
