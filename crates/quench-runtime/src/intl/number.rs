@@ -162,6 +162,19 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         if let Some(Value::Object(properties)) = options {
+            if let Some((_, value)) = properties.iter().find(|(key, _)| key == "numberingSystem") {
+                if !matches!(value, Value::Undefined) {
+                    let numbering = crate::conversion::to_string(value)?;
+                    if numbering.len() < 3
+                        || numbering.len() > 8
+                        || !numbering.chars().all(|character| character.is_ascii_alphanumeric())
+                    {
+                        return Err(crate::value::error::throw_range_error(
+                            "invalid numberingSystem",
+                        ));
+                    }
+                }
+            }
             if let Some((_, value)) = properties.iter().find(|(key, _)| key == "localeMatcher") {
                 if !matches!(value, Value::String(value) if value == "lookup" || value == "best fit") {
                     return Err(crate::value::error::throw_range_error(
