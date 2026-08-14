@@ -212,6 +212,9 @@ fn construct_builtin(
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         crate::ops::Builtin::DisposableStack => crate::disposable_stack::construct(),
         crate::ops::Builtin::AsyncDisposableStack => crate::disposable_stack::construct_async(),
+        crate::ops::Builtin::AbstractModuleSource => Err(crate::value::error::throw_type_error(
+            "AbstractModuleSource is abstract",
+        )),
         crate::ops::Builtin::FinalizationRegistry => {
             crate::finalization_registry::construct(arguments)
         }
@@ -495,6 +498,9 @@ fn construct_error(
     if *builtin == crate::ops::Builtin::SuppressedError {
         return crate::builtins::suppressed_error(arguments);
     }
+    if *builtin == crate::ops::Builtin::AggregateError {
+        return construct_aggregate_error(arguments);
+    }
 
     let name = match builtin {
         crate::ops::Builtin::RangeError => "RangeError",
@@ -536,6 +542,78 @@ fn construct_error(
     }
 
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
+}
+
+fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let mut properties = error_properties(
+        "AggregateError",
+        crate::ops::Builtin::AggregateErrorPrototype,
+    );
+    properties
+        .retain(|(key, _)| key != "message" && key != &crate::builtins::descriptor_key("message"));
+    let message = arguments
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(crate::conversion::to_string)
+        .transpose()?
+        .map(Value::String);
+    if let Some(message) = message {
+        push_error_property(&mut properties, "message", message);
+    }
+    let errors = arguments
+        .first()
+        .ok_or_else(|| crate::value::error::throw_type_error("value is not iterable"))?;
+    let iterator_method = crate::execute::get_property_result(errors, "Symbol.iterator")?;
+    if matches!(iterator_method, Value::Undefined) && !matches!(errors, Value::Array(_)) {
+        return Err(crate::value::error::throw_type_error(
+            "value is not iterable",
+        ));
+    }
+    let iterator = crate::collections::iterator::open(errors.clone())?;
+    let mut values = Vec::new();
+    while let Some(value) = crate::collections::iterator::step_value(&iterator)? {
+        values.push(value);
+    }
+    push_error_property(&mut properties, "errors", Value::array(values));
+    if let Some(options) = arguments
+        .get(2)
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
+        let options = to_object(options)?;
+        if crate::with_scope::has_property(&options, "cause")? {
+            push_error_property(
+                &mut properties,
+                "cause",
+                crate::execute::get_property_result(&options, "cause")?,
+            );
+        }
+    }
+    Ok(Value::Object(Rc::new(ObjectData::new(properties))))
+}
+
+fn push_error_property(properties: &mut Vec<(String, Value)>, name: &str, value: Value) {
+    properties.push((name.to_string(), value.clone()));
+    properties.push((
+        crate::builtins::descriptor_key(name),
+        Value::Object(Rc::new(ObjectData::new(vec![
+            ("value".to_string(), value),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]))),
+    ));
+}
+
+fn error_properties(name: &str, prototype: crate::ops::Builtin) -> Vec<(String, Value)> {
+    vec![
+        ("name".to_string(), Value::String(name.to_string())),
+        ("message".to_string(), Value::String(String::new())),
+        (
+            crate::builtins::ERROR_SLOT.to_string(),
+            Value::Boolean(true),
+        ),
+        ("\0prototype".to_string(), Value::Builtin(prototype)),
+    ]
 }
 
 fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
