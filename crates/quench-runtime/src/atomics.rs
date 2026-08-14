@@ -182,6 +182,7 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
     if !same_atomic(&current, &expected) {
         return Ok(Value::String("not-equal".into()));
     }
+    let _ = crate::conversion::to_number(arguments.get(3).unwrap_or(&Value::Undefined))?;
     if builtin == Builtin::AtomicsWaitAsync {
         return Ok(Value::object(vec![
             ("async".into(), Value::Boolean(false)),
