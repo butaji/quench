@@ -359,7 +359,9 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             Value::Undefined => None,
             value => Some(value),
         })?;
-    let writable = !(builtin == Builtin::AsyncGeneratorFunctionPrototype && key == "constructor")
+    let writable = !((builtin == Builtin::AsyncGeneratorFunctionPrototype
+        || builtin == Builtin::AsyncGeneratorPrototype)
+        && key == "constructor")
         && !matches!(
         key,
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
