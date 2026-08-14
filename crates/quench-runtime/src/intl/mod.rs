@@ -284,12 +284,28 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
-                out.push(canonicalize(&to_string_value(value))?);
+                out.push(canonicalize(&crate::conversion::to_string(value)?)?);
             }
             Ok(dedupe(out))
         }
+        Value::Object(_) => resolve_array_like_locales(locales),
         _ => Ok(vec![default_locale()]),
     }
+}
+
+fn resolve_array_like_locales(locales: &Value) -> Result<Vec<String>, VmError> {
+    let length = crate::execute::get_property_result(locales, "length")?;
+    let length = crate::conversion::to_number(&length)?;
+    if !length.is_finite() || length <= 0.0 {
+        return Ok(Vec::new());
+    }
+    let length = length.floor().min(100_000.0) as usize;
+    let mut result = Vec::with_capacity(length);
+    for index in 0..length {
+        let value = crate::execute::get_property_result(locales, &index.to_string())?;
+        result.push(canonicalize(&crate::conversion::to_string(&value)?)?);
+    }
+    Ok(dedupe(result))
 }
 
 pub(crate) fn default_locale() -> String {
