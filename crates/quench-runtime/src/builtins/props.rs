@@ -72,6 +72,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             collections_prop(builtin, k)
         }
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
+        (IntlCollatorPrototype, "constructor") => Some(Value::Builtin(IntlCollator)),
+        (IntlCollatorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.Collator".to_string()))
+        }
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
         (FinalizationRegistry, "prototype") => Some(Value::Builtin(FinalizationRegistryPrototype)),
         (FinalizationRegistryPrototype, "Symbol.toStringTag") => {
