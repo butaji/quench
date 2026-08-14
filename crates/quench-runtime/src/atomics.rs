@@ -204,6 +204,12 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
     let current = crate::execute::get_property_result(view, &index.to_string())?;
     let expected = atomic_value(view, arguments.get(2))?;
     if !same_atomic(&current, &expected) {
+        if builtin == Builtin::AtomicsWaitAsync {
+            return Ok(Value::object(vec![
+                ("async".into(), Value::Boolean(false)),
+                ("value".into(), Value::String("not-equal".into())),
+            ]));
+        }
         return Ok(Value::String("not-equal".into()));
     }
     let _ = crate::conversion::to_number(arguments.get(3).unwrap_or(&Value::Undefined))?;
