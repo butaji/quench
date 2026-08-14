@@ -80,6 +80,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (AsyncGeneratorFunctionPrototype, "Symbol.toStringTag") => {
             Some(Value::String("AsyncGeneratorFunction".into()))
         }
+        (AsyncGeneratorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("AsyncGenerator".into()))
+        }
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
@@ -261,7 +264,11 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (AsyncGeneratorFunction, "prototype") => Some(AsyncGeneratorFunctionPrototype),
         (GeneratorFunctionPrototype, "constructor") => Some(GeneratorFunction),
         (AsyncGeneratorFunctionPrototype, "constructor") => Some(AsyncGeneratorFunction),
-        (AsyncGeneratorFunctionPrototype, "prototype") => Some(AsyncIteratorPrototype),
+        (AsyncGeneratorFunctionPrototype, "prototype") => Some(AsyncGeneratorPrototype),
+        (AsyncGeneratorPrototype, "constructor") => Some(AsyncGeneratorFunctionPrototype),
+        (AsyncGeneratorPrototype, "next") => Some(GeneratorNext),
+        (AsyncGeneratorPrototype, "return") => Some(GeneratorReturn),
+        (AsyncGeneratorPrototype, "throw") => Some(GeneratorThrow),
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
