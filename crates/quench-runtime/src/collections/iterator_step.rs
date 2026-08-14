@@ -30,6 +30,9 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
             index,
             done,
         } => StepTarget::Value(native_step(values, index, done)),
+        IteratorState::String { input, index, done } => {
+            StepTarget::Value(string_step(input, index, done))
+        }
         IteratorState::Set {
             data,
             index,
@@ -59,6 +62,23 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
             StepTarget::Protocol(iterator.clone(), next.clone())
         }
     })
+}
+
+fn string_step(input: &[u16], index: &mut usize, done: &mut bool) -> Option<Value> {
+    if *done || *index >= input.len() {
+        *done = true;
+        return None;
+    }
+    let start = *index;
+    *index += if *index + 1 < input.len()
+        && (0xD800..0xDC00).contains(&input[*index])
+        && (0xDC00..0xE000).contains(&input[*index + 1])
+    {
+        2
+    } else {
+        1
+    };
+    Some(crate::strings::from_units(input[start..*index].to_vec()))
 }
 
 fn resolve_next(
