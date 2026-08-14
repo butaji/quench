@@ -317,6 +317,15 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
             Builtin::IntlNumberFormatFormatToParts
                 | Builtin::IntlNumberFormatFormatRange
                 | Builtin::IntlNumberFormatFormatRangeToParts
+                | Builtin::IntlCollator
+                | Builtin::IntlDateTimeFormat
+                | Builtin::IntlDisplayNames
+                | Builtin::IntlListFormat
+                | Builtin::IntlLocale
+                | Builtin::IntlNumberFormat
+                | Builtin::IntlPluralRules
+                | Builtin::IntlRelativeTimeFormat
+                | Builtin::IntlSegmenter
                 | Builtin::IntlPluralRulesSelect
                 | Builtin::IntlPluralRulesSelectRange
                 | Builtin::IntlPluralRulesResolvedOptions
