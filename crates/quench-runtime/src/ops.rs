@@ -225,6 +225,7 @@ pub enum Builtin {
     FunctionPrototype,
     GeneratorFunctionPrototype,
     AsyncGeneratorFunctionPrototype,
+    AsyncIteratorPrototype,
     FunctionBind,
     ArrayJoin,
     TypeError,

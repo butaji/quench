@@ -74,9 +74,15 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         | (Value::BigUint64Array(_), Builtin::BigUint64Array)
         | (Value::Promise(_), Builtin::Promise) => true,
         (Value::Object(properties), Builtin::Date)
-            if properties.iter().any(|(name, _)| name == "timeValue") => true,
+            if properties.iter().any(|(name, _)| name == "timeValue") =>
+        {
+            true
+        }
         (Value::Object(properties), Builtin::RegExp)
-            if properties.iter().any(|(name, _)| name == "source") => true,
+            if properties.iter().any(|(name, _)| name == "source") =>
+        {
+            true
+        }
         (Value::Map(data), Builtin::Map) if !data.weak => true,
         (Value::Map(data), Builtin::WeakMap) if data.weak => true,
         (Value::ArrayBuffer(data), Builtin::SharedArrayBuffer) if data.shared => true,
@@ -197,9 +203,7 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::Iterator(_) => Some(crate::collections::iterator::prototype_of(value)),
         Value::Builtin(builtin) => builtin_prototype_parent(*builtin),
         Value::Function(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
-        Value::BoundFunction(_) => {
-            Some(Value::Builtin(Builtin::FunctionPrototype))
-        }
+        Value::BoundFunction(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
         _ => None,
     }
 }
@@ -224,6 +228,7 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
         builtin,
         Builtin::GeneratorFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype
+            | Builtin::AsyncIteratorPrototype
     ) {
         return Some(Value::Builtin(Builtin::FunctionPrototype));
     }
@@ -232,6 +237,7 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
         Builtin::ArrayIteratorPrototype
             | Builtin::SetIteratorPrototype
             | Builtin::MapIteratorPrototype
+            | Builtin::AsyncIteratorPrototype
     ) {
         return Some(Value::Builtin(Builtin::IteratorPrototype));
     }
