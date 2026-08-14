@@ -32,6 +32,7 @@ fn prototype_for_value(value: &Value) -> Value {
         }
         Value::Builtin(
             builtin @ (Builtin::ArrayIteratorPrototype
+            | Builtin::StringIteratorPrototype
             | Builtin::RegExpStringIteratorPrototype
             | Builtin::SetIteratorPrototype
             | Builtin::MapIteratorPrototype
