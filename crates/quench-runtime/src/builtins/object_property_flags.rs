@@ -1,4 +1,10 @@
 pub(crate) fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
+    if matches!(
+        (builtin, key),
+        (Builtin::GeneratorFunctionPrototype, "prototype" | "constructor")
+    ) {
+        return false;
+    }
     if builtin == Builtin::DatePrototype && key == "Symbol.toPrimitive" {
         return false;
     }
