@@ -9,26 +9,30 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let properties = match arguments.get(1) {
-        Some(Value::Object(properties)) => properties,
-        _ => return Err(runtime_error("TypeError: options.type is required")),
-    };
-    let display_type = option_string(properties, "type", "TypeError: options.type is required")?;
+    let options = arguments
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
+        .ok_or_else(|| runtime_error("TypeError: options.type is required"))?;
+    let matcher = option_string(options, "localeMatcher", "best fit")?;
+    if !matches!(matcher.as_str(), "lookup" | "best fit") {
+        return Err(runtime_error("RangeError: invalid localeMatcher"));
+    }
+    let style = option_string(options, "style", "long")?;
+    let display_type = option_string(options, "type", "language")?;
     if !matches!(
         display_type.as_str(),
         "language" | "region" | "currency" | "script" | "calendar" | "dateTimeField"
     ) {
         return Err(runtime_error("RangeError: invalid type"));
     }
-    let style = option_string(properties, "style", "")?;
     if !matches!(style.as_str(), "long" | "short" | "narrow") {
         return Err(runtime_error("RangeError: invalid style"));
     }
-    let fallback = option_string(properties, "fallback", "")?;
+    let fallback = option_string(options, "fallback", "code")?;
     if !matches!(fallback.as_str(), "code" | "none") {
         return Err(runtime_error("RangeError: invalid fallback"));
     }
-    let language_display = option_string(properties, "languageDisplay", "")?;
+    let language_display = option_string(options, "languageDisplay", "dialect")?;
     if !matches!(language_display.as_str(), "dialect" | "standard") {
         return Err(runtime_error("RangeError: invalid languageDisplay"));
     }
@@ -191,25 +195,12 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
     super::intl_slots(receiver)
 }
 
-fn option_string(
-    properties: &[(String, Value)],
-    name: &str,
-    missing: &str,
-) -> Result<String, VmError> {
-    properties
-        .iter()
-        .find(|(key, _)| key == name)
-        .and_then(|(_, value)| match value {
-            Value::Undefined if name == "style" => Some("long".to_string()),
-            Value::Undefined if name == "fallback" => Some("code".to_string()),
-            Value::Undefined if name == "languageDisplay" => Some("dialect".to_string()),
-            Value::Undefined => None,
-            value => Some(to_string_value(value)),
-        })
-        .or_else(|| (name == "style").then(|| "long".to_string()))
-        .or_else(|| (name == "fallback").then(|| "code".to_string()))
-        .or_else(|| (name == "languageDisplay").then(|| "dialect".to_string()))
-        .ok_or_else(|| runtime_error(missing))
+fn option_string(options: &Value, name: &str, default: &str) -> Result<String, VmError> {
+    let value = crate::execute::get_property_result(options, name)?;
+    if matches!(value, Value::Undefined) {
+        return Ok(default.to_string());
+    }
+    crate::conversion::to_string(&value)
 }
 
 fn display_name(
