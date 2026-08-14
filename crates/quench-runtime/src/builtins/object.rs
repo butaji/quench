@@ -310,8 +310,10 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
-    if matches!(builtin, Builtin::ErrorPrototype | Builtin::SuppressedErrorPrototype)
-        && key == "name"
+    if matches!(
+        builtin,
+        Builtin::ErrorPrototype | Builtin::SuppressedErrorPrototype
+    ) && key == "name"
     {
         let value = if builtin == Builtin::ErrorPrototype {
             "Error"
@@ -364,7 +366,10 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         key,
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
     ) || (key == "name"
-        && matches!(builtin, Builtin::ErrorPrototype | Builtin::SuppressedErrorPrototype)))
+        && matches!(
+            builtin,
+            Builtin::ErrorPrototype | Builtin::SuppressedErrorPrototype
+        )))
         && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);
     let configurable = !matches!(key, "prototype" | "unscopables")
