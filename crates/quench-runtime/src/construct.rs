@@ -94,11 +94,14 @@ fn construct_with_new_target(
             {
                 let prototype = crate::execute::get_property_result(new_target, "prototype")?;
                 let value = construct_builtin(*builtin, arguments)?;
-                let value = if crate::value::is_object(&prototype) {
-                    crate::builtins::set_property(value, "\0prototype", prototype)
+                let prototype = if crate::value::is_object(&prototype) {
+                    Some(prototype)
                 } else {
-                    value
+                    realm_default_prototype(target, new_target)
                 };
+                let value = prototype.map_or(value.clone(), |prototype| {
+                    crate::builtins::set_property(value, "\0prototype", prototype)
+                });
                 return Ok(value);
             }
             let value = construct_builtin(*builtin, arguments)?;
