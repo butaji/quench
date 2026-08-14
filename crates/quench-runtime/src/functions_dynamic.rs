@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use oxc::{allocator::Allocator, parser::Parser, span::SourceType};
+use oxc::{allocator::Allocator, ast::visit::Visit, parser::Parser, span::SourceType};
 
 use crate::{execute::VmError, facts::ProgramDb, ops::FunctionKind, value::Value};
 
@@ -56,6 +56,15 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     let (parameters, count) = crate::functions::function_parameters(function)
         .map_err(|_| syntax_error("Invalid function parameters"))?;
     let strictness = crate::reduce_support::function_strictness(body, false);
+    if matches!(strictness, crate::ops::FunctionStrictness::Strict)
+        && has_duplicate_parameters(&function.params)
+    {
+        return Err(syntax_error("duplicate parameter in strict function"));
+    }
+    if matches!(strictness, crate::ops::FunctionStrictness::Strict) && contains_with_statement(body)
+    {
+        return Err(syntax_error("with statement not permitted in strict mode"));
+    }
     let mut facts = ProgramDb {
         strict: matches!(strictness, crate::ops::FunctionStrictness::Strict),
         ..ProgramDb::default()
@@ -78,6 +87,34 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     let value = dynamic_value(ops, count, length, strictness, kind, is_async);
     mark_dynamic(&value);
     Ok(value)
+}
+
+fn contains_with_statement(body: &oxc::ast::ast::FunctionBody<'_>) -> bool {
+    let mut visitor = WithStatementFinder { found: false };
+    visitor.visit_function_body(body);
+    visitor.found
+}
+
+struct WithStatementFinder {
+    found: bool,
+}
+
+fn has_duplicate_parameters(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    let mut names = HashSet::new();
+    parameters.items.iter().any(|parameter| {
+        let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+            &parameter.pattern.kind
+        else {
+            return false;
+        };
+        !names.insert(identifier.name.as_str())
+    })
+}
+
+impl<'a> oxc::ast::visit::Visit<'a> for WithStatementFinder {
+    fn visit_with_statement(&mut self, _statement: &oxc::ast::ast::WithStatement<'a>) {
+        self.found = true;
+    }
 }
 
 fn dynamic_value(
@@ -105,8 +142,11 @@ fn dynamic_value(
     )
 }
 
-fn function_source(arguments: &[Value], kind: FunctionKind, is_async: bool) -> Result<String, VmError> {
-    let body = arguments.last().map_or_else(|| Ok(String::new()), |value| to_string(value))?;
+fn function_source(
+    arguments: &[Value],
+    kind: FunctionKind,
+    is_async: bool,
+) -> Result<String, VmError> {
     let parameters = arguments
         .get(..arguments.len().saturating_sub(1))
         .unwrap_or_default()
@@ -114,6 +154,9 @@ fn function_source(arguments: &[Value], kind: FunctionKind, is_async: bool) -> R
         .map(to_string)
         .collect::<Result<Vec<_>, _>>()?
         .join(",");
+    let body = arguments
+        .last()
+        .map_or_else(|| Ok(String::new()), |value| to_string(value))?;
     let prefix = match (kind, is_async) {
         (FunctionKind::Generator, true) => "async function*",
         (FunctionKind::Generator, false) => "function*",
