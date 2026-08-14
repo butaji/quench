@@ -1,5 +1,11 @@
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::IntlCollator => &[
+            "length", "name", "prototype", "supportedLocalesOf",
+        ],
+        Builtin::IntlCollatorPrototype => &[
+            "constructor", "compare", "resolvedOptions", "Symbol.toStringTag",
+        ],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => {
             &["constructor", "toString", "valueOf", "Symbol.toStringTag"]
