@@ -301,11 +301,19 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
     let Some(locales) = arguments.first() else {
         return Ok(vec![default_locale()]);
     };
+    if matches!(locales, Value::Null) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert null to object",
+        ));
+    }
     match locales {
         Value::String(_) => Ok(vec![canonicalize(&to_string_value(locales))?]),
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
+                if matches!(value, Value::Number(_)) {
+                    return Err(runtime_error("RangeError: invalid language tag"));
+                }
                 out.push(canonicalize(&crate::conversion::to_string(value)?)?);
             }
             Ok(dedupe(out))
