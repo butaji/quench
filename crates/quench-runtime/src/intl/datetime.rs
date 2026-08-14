@@ -150,7 +150,7 @@ impl DateTimeOptions {
         }
         match key {
             "timeZone" => {
-                if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
+                if text.starts_with(['+', '-', '\u{2212}']) && normalize_offset(&text).is_none() {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
                 self.time_zone = canonicalize_time_zone(&text);
