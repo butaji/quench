@@ -3,8 +3,7 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string,
-    to_string_value, SLOT,
+    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string, SLOT,
 };
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -109,8 +108,28 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 fn iterable_items(value: Option<&Value>) -> Result<Vec<String>, VmError> {
     let value = value.unwrap_or(&Value::Undefined);
     let iterator = crate::collections::iterator::open(value.clone())?;
-    crate::collections::iterator::collect(&iterator)
-        .map(|values| values.iter().map(to_string_value).collect())
+    let mut items = Vec::new();
+    loop {
+        let Some(value) = crate::collections::iterator::step_value(&iterator)? else {
+            return Ok(items);
+        };
+        let Value::String(value) = value else {
+            return reject_iterator_item(&iterator);
+        };
+        items.push(value);
+    }
+}
+
+fn reject_iterator_item(iterator: &Value) -> Result<Vec<String>, VmError> {
+    let error =
+        crate::value::error::throw_type_error("ListFormat iterable elements must be strings");
+    if let VmError::Thrown(reason) = &error {
+        let _ = crate::collections::iterator::close(
+            iterator.clone(),
+            crate::completion::Completion::Throw(reason.clone()),
+        );
+    }
+    Err(error)
 }
 
 fn format_parts(items: &[String], locale: &str, style: &str, list_type: &str) -> Vec<Value> {
