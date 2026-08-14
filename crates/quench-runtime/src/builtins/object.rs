@@ -397,6 +397,7 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
                 | Builtin::TypeErrorPrototype
                 | Builtin::URIErrorPrototype
                 | Builtin::AggregateErrorPrototype
+                | Builtin::SuppressedErrorPrototype
          )))
         && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);

@@ -66,6 +66,15 @@ pub(crate) fn object_property(
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
     }
+    if key == "constructor"
+        && properties
+            .iter()
+            .any(|(name, _)| name == crate::builtins::ERROR_SLOT)
+    {
+        if let Some(constructor) = error_constructor(properties) {
+            return Value::Builtin(constructor);
+        }
+    }
     if let Some(realm) = realm::id_for_global(properties) {
         return global_property(properties, key, Some(realm));
     }
@@ -95,6 +104,26 @@ pub(crate) fn object_property(
         return crate::builtins::property(prototype, key);
     }
     crate::builtins::property(prototype, key)
+}
+
+fn error_constructor(properties: &[(String, Value)]) -> Option<Builtin> {
+    let name = properties.iter().rev().find_map(|(key, value)| {
+        (key == "name").then(|| match value {
+            Value::String(name) => name.as_str(),
+            _ => "Error",
+        })
+    })?;
+    Some(match name {
+        "EvalError" => Builtin::EvalError,
+        "RangeError" => Builtin::RangeError,
+        "ReferenceError" => Builtin::ReferenceError,
+        "SyntaxError" => Builtin::SyntaxError,
+        "TypeError" => Builtin::TypeError,
+        "URIError" => Builtin::URIError,
+        "AggregateError" => Builtin::AggregateError,
+        "SuppressedError" => Builtin::SuppressedError,
+        _ => Builtin::Error,
+    })
 }
 
 fn boxed_string_property(
