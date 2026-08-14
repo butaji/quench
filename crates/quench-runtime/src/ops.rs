@@ -228,6 +228,7 @@ pub enum Builtin {
     FunctionBind,
     ArrayJoin,
     TypeError,
+    ThrowTypeError,
     Date,
     DatePrototype,
     DateNow,
