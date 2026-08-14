@@ -132,7 +132,41 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
+        if let Some(Value::Object(properties)) = options {
+            if let Some((_, value)) = properties.iter().find(|(key, _)| key == "localeMatcher") {
+                if !matches!(value, Value::String(value) if value == "lookup" || value == "best fit") {
+                    return Err(crate::value::error::throw_range_error(
+                        "invalid localeMatcher",
+                    ));
+                }
+            }
+            if let Some((_, value)) = properties.iter().find(|(key, _)| key == "style") {
+                let style = to_string_value(value);
+                if !matches!(style.as_str(), "decimal" | "percent" | "currency" | "unit") {
+                    return Err(crate::value::error::throw_range_error("invalid style"));
+                }
+            }
+            if let Some((_, value)) = properties
+                .iter()
+                .find(|(key, _)| key == "maximumSignificantDigits")
+            {
+                let digits = crate::conversion::to_number(value)?;
+                if !digits.is_finite() || digits.fract() != 0.0 || !(1.0..=21.0).contains(&digits) {
+                    return Err(crate::value::error::throw_range_error(
+                        "invalid significant digits",
+                    ));
+                }
+            }
+        }
         let raw = RawOptions::from_value(options);
+        if raw.style == "currency" {
+            let Some(currency) = raw.currency.as_deref() else {
+                return Err(crate::value::error::throw_type_error("currency is required"));
+            };
+            if currency.len() != 3 || !currency.chars().all(|character| character.is_ascii_alphabetic()) {
+                return Err(crate::value::error::throw_range_error("invalid currency"));
+            }
+        }
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),

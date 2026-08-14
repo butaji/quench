@@ -445,14 +445,68 @@ pub(crate) fn number_to_locale_string(
 ) -> Result<Value, VmError> {
     let number = match receiver {
         Some(Value::Number(number)) => *number,
+        Some(Value::Object(properties)) => match properties
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == "_value").then_some(value))
+        {
+            Some(Value::Number(number)) => *number,
+            _ => return Err(runtime_error("TypeError: Number.prototype.toLocaleString")),
+        },
         _ => return Err(runtime_error("TypeError: Number.prototype.toLocaleString")),
     };
     let locales = resolve_locales(arguments)?;
+    validate_number_options(arguments.get(1))?;
     Ok(Value::String(format_number(
         number,
         &locales,
         arguments.get(1),
     )))
+}
+
+fn validate_number_options(options: Option<&Value>) -> Result<(), VmError> {
+    let Some(Value::Object(properties)) = options else {
+        if matches!(options, Some(Value::Null)) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot convert null to object",
+            ));
+        }
+        return Ok(());
+    };
+    let mut style = "decimal";
+    let mut currency = None;
+    for (key, value) in properties.iter() {
+        if matches!(value, Value::Undefined) {
+            continue;
+        }
+        let text = to_string_value(value);
+        match key.as_str() {
+            "localeMatcher" if !matches!(value, Value::String(_)) => {
+                return Err(runtime_error("RangeError: invalid localeMatcher"));
+            }
+            "style" => style = Box::leak(text.into_boxed_str()),
+            "currency" => currency = Some(text),
+            "maximumSignificantDigits" => {
+                let valid = text.parse::<f64>().is_ok_and(|number| (1.0..=21.0).contains(&number));
+                if !valid {
+                    return Err(runtime_error("RangeError: invalid significant digits"));
+                }
+            }
+            _ => {}
+        }
+    }
+    if !matches!(style, "decimal" | "percent" | "currency" | "unit") {
+        return Err(runtime_error("RangeError: invalid style"));
+    }
+    if style == "currency" {
+        let Some(currency) = currency else {
+            return Err(crate::value::error::throw_type_error("currency is required"));
+        };
+        if currency.len() != 3 || !currency.chars().all(|character| character.is_ascii_alphabetic()) {
+            return Err(runtime_error("RangeError: invalid currency"));
+        }
+    }
+    Ok(())
 }
 fn format_number(number: f64, locales: &[String], options: Option<&Value>) -> String {
     let locale = locales.first().cloned().unwrap_or_else(|| "en".to_string());
@@ -460,28 +514,71 @@ fn format_number(number: f64, locales: &[String], options: Option<&Value>) -> St
     number::format_resolved(number, &resolved)
 }
 fn number_resolved(locale: String, options: Option<&Value>) -> Vec<(String, Value)> {
+    let style = options
+        .and_then(|value| match value {
+            Value::Object(properties) => properties
+                .iter()
+                .find(|(key, value)| key == "style" && !matches!(value, Value::Undefined))
+                .map(|(_, value)| to_string_value(value)),
+            _ => None,
+        })
+        .unwrap_or_else(|| "decimal".to_string());
+    let currency = options.and_then(|value| match value {
+        Value::Object(properties) => properties
+            .iter()
+            .find(|(key, value)| key == "currency" && !matches!(value, Value::Undefined))
+            .map(|(_, value)| Value::String(to_string_value(value).to_ascii_uppercase())),
+        _ => None,
+    });
     let mut properties = vec![
         ("locale".to_string(), Value::String(locale)),
-        ("style".to_string(), Value::String("decimal".to_string())),
+        ("style".to_string(), Value::String(style.clone())),
         ("useGrouping".to_string(), Value::Boolean(true)),
         ("minimumIntegerDigits".to_string(), Value::Number(1.0)),
-        ("minimumFractionDigits".to_string(), Value::Number(0.0)),
-        ("maximumFractionDigits".to_string(), Value::Number(3.0)),
+        (
+            "minimumFractionDigits".to_string(),
+            Value::Number(if style == "currency" { 2.0 } else { 0.0 }),
+        ),
+        (
+            "maximumFractionDigits".to_string(),
+            Value::Number(if style == "currency" { 2.0 } else { 3.0 }),
+        ),
     ];
+    if let Some(currency) = currency {
+        properties.push(("currency".to_string(), currency));
+        properties.push(("currencyDisplay".to_string(), Value::String("symbol".to_string())));
+    }
     if let Some(Value::Object(option_map)) = options {
         for (key, value) in option_map.iter() {
+            if matches!(value, Value::Undefined) {
+                continue;
+            }
             let value = to_string_value(value);
             match key.as_str() {
+                "useGrouping" => {
+                    if let Some((_, current)) = properties.iter_mut().find(|(name, _)| name == "useGrouping") {
+                        *current = Value::Boolean(value != "false");
+                    }
+                }
+                "minimumIntegerDigits" => {
+                    if let Ok(number) = value.parse() {
+                        if let Some((_, current)) = properties.iter_mut().find(|(name, _)| name == "minimumIntegerDigits") {
+                            *current = Value::Number(number);
+                        }
+                    }
+                }
                 "minimumFractionDigits" => {
                     if let Ok(number) = value.parse() {
-                        properties
-                            .push(("minimumFractionDigits".to_string(), Value::Number(number)));
+                        if let Some((_, current)) = properties.iter_mut().find(|(name, _)| name == "minimumFractionDigits") {
+                            *current = Value::Number(number);
+                        }
                     }
                 }
                 "maximumFractionDigits" => {
                     if let Ok(number) = value.parse() {
-                        properties
-                            .push(("maximumFractionDigits".to_string(), Value::Number(number)));
+                        if let Some((_, current)) = properties.iter_mut().find(|(name, _)| name == "maximumFractionDigits") {
+                            *current = Value::Number(number);
+                        }
                     }
                 }
                 _ => {}
