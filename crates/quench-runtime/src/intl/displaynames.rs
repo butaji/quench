@@ -13,12 +13,18 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined))
         .ok_or_else(|| runtime_error("TypeError: options.type is required"))?;
+    if !matches!(options, Value::Object(_) | Value::Proxy(_)) {
+        return Err(runtime_error("TypeError: options must be an object"));
+    }
     let matcher = option_string(options, "localeMatcher", "best fit")?;
     if !matches!(matcher.as_str(), "lookup" | "best fit") {
         return Err(runtime_error("RangeError: invalid localeMatcher"));
     }
     let style = option_string(options, "style", "long")?;
-    let display_type = option_string(options, "type", "language")?;
+    let display_type = option_string(options, "type", "\0missing")?;
+    if display_type == "\0missing" {
+        return Err(runtime_error("TypeError: options.type is required"));
+    }
     if !matches!(
         display_type.as_str(),
         "language" | "region" | "currency" | "script" | "calendar" | "dateTimeField"
