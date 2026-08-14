@@ -59,6 +59,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
+        (SharedArrayBufferPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("SharedArrayBuffer".into()))
+        }
         (StringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("String Iterator".into()))
         }
@@ -225,6 +228,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
         (ArrayBufferPrototype, "resize") => Some(ArrayBufferResize),
         (ArrayBufferPrototype, "transferToImmutable") => Some(ArrayBufferTransferToImmutable),
+        (SharedArrayBufferPrototype, "constructor") => Some(SharedArrayBuffer),
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),
         (Function, "prototype") => Some(FunctionPrototype),
