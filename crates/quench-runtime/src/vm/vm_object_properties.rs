@@ -64,6 +64,9 @@ pub(crate) fn object_property(
             .iter()
             .any(|(name, _)| name == crate::builtins::ERROR_SLOT)
     {
+        if let Some(constructor) = error_prototype_constructor(properties) {
+            return constructor;
+        }
         if let Some(constructor) = error_constructor(properties) {
             if let Some(realm) = error_realm(properties) {
                 return crate::vm::intrinsic_for_realm(realm, constructor);
@@ -100,6 +103,21 @@ pub(crate) fn object_property(
         return crate::builtins::property(prototype, key);
     }
     crate::builtins::property(prototype, key)
+}
+
+fn error_prototype_constructor(properties: &[(String, Value)]) -> Option<Value> {
+    let prototype = properties.iter().rev().find_map(|(key, value)| {
+        (key == "\0prototype").then_some(value)
+    })?;
+    if matches!(
+        prototype,
+        Value::Builtin(crate::ops::Builtin::ErrorPrototype)
+            | Value::Builtin(crate::ops::Builtin::SuppressedErrorPrototype)
+    ) {
+        return None;
+    }
+    let constructor = crate::execute::get_property(prototype, "constructor");
+    (!matches!(constructor, Value::Undefined)).then_some(constructor)
 }
 
 fn error_constructor(properties: &[(String, Value)]) -> Option<Builtin> {
