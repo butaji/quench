@@ -231,6 +231,7 @@ pub struct GeneratorData {
     pub done: RefCell<bool>,
     pub state: RefCell<Option<GeneratorState>>,
     pub pending_yield: RefCell<bool>,
+    pub async_queue: RefCell<VecDeque<(Value, Rc<PromiseData>)>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

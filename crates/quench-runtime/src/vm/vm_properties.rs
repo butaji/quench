@@ -159,10 +159,14 @@ fn primitive_prototype_property(value: &Value, key: &str) -> Value {
 }
 
 fn generator_property(value: &Value, key: &str) -> Value {
-    let builtin = match key {
-        "next" => crate::ops::Builtin::GeneratorNext,
-        "return" => crate::ops::Builtin::GeneratorReturn,
-        "throw" => crate::ops::Builtin::GeneratorThrow,
+    let is_async = matches!(value, Value::Generator(generator) if generator.function.is_async);
+    let builtin = match (is_async, key) {
+        (true, "next") => crate::ops::Builtin::AsyncGeneratorNext,
+        (true, "return") => crate::ops::Builtin::AsyncGeneratorReturn,
+        (true, "throw") => crate::ops::Builtin::AsyncGeneratorThrow,
+        (false, "next") => crate::ops::Builtin::GeneratorNext,
+        (false, "return") => crate::ops::Builtin::GeneratorReturn,
+        (false, "throw") => crate::ops::Builtin::GeneratorThrow,
         _ => return Value::Undefined,
     };
     bind_method(value, Value::Builtin(builtin))

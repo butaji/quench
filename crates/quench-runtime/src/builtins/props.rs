@@ -266,9 +266,9 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (AsyncGeneratorFunctionPrototype, "constructor") => Some(AsyncGeneratorFunction),
         (AsyncGeneratorFunctionPrototype, "prototype") => Some(AsyncGeneratorPrototype),
         (AsyncGeneratorPrototype, "constructor") => Some(AsyncGeneratorFunctionPrototype),
-        (AsyncGeneratorPrototype, "next") => Some(GeneratorNext),
-        (AsyncGeneratorPrototype, "return") => Some(GeneratorReturn),
-        (AsyncGeneratorPrototype, "throw") => Some(GeneratorThrow),
+        (AsyncGeneratorPrototype, "next") => Some(AsyncGeneratorNext),
+        (AsyncGeneratorPrototype, "return") => Some(AsyncGeneratorReturn),
+        (AsyncGeneratorPrototype, "throw") => Some(AsyncGeneratorThrow),
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
@@ -576,7 +576,13 @@ fn builtin_length(builtin: Builtin) -> f64 {
     }
     match builtin {
         Escape | Unescape | EncodeURI | EncodeURIComponent | DecodeURI | DecodeURIComponent
-        | DateSetYear | GeneratorNext | GeneratorReturn | GeneratorThrow => 1.0,
+        | DateSetYear
+        | GeneratorNext
+        | GeneratorReturn
+        | GeneratorThrow
+        | AsyncGeneratorNext
+        | AsyncGeneratorReturn
+        | AsyncGeneratorThrow => 1.0,
         ArrayBuffer => 1.0,
         Object => 1.0,
         Float64Array => 3.0,

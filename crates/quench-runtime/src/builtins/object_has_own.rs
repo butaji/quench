@@ -124,6 +124,11 @@ fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if builtin == Builtin::AsyncGeneratorFunctionPrototype && matches!(key, "length" | "name") {
         return false;
     }
+    if builtin == Builtin::AsyncGeneratorPrototype
+        && matches!(key, "constructor" | "next" | "return" | "throw" | "Symbol.toStringTag")
+    {
+        return true;
+    }
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return false;
     }
