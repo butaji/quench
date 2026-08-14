@@ -175,6 +175,23 @@ fn resize_buffer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
 
 fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(crate::vm::not_callable)?;
+    if matches!(receiver, Value::BigInt64Array(_) | Value::BigUint64Array(_)) {
+        let bits = crate::construct::bigint_bits(arguments.first().unwrap_or(&Value::Undefined))?;
+        match receiver {
+            Value::BigInt64Array(view) => {
+                for index in 0..view.logical_len() {
+                    view.set(index, bits as i64);
+                }
+            }
+            Value::BigUint64Array(view) => {
+                for index in 0..view.logical_len() {
+                    view.set(index, bits);
+                }
+            }
+            _ => unreachable!(),
+        }
+        return Ok(receiver.clone());
+    }
     let number = crate::intl::tolocale::value::to_number_result(arguments.first())?;
     match receiver {
         Value::Float64Array(view) => fill_view!(view, number, |value| value),
