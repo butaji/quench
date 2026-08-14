@@ -377,10 +377,18 @@ pub(crate) fn array_to_locale_string(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(Value::Array(values)) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.toLocaleString called on non-array",
-        ));
+    let values = match receiver {
+        Some(Value::Array(values)) => values.iter().cloned().collect(),
+        Some(value) => typed_array_values(value).ok_or_else(|| {
+            crate::value::error::throw_type_error(
+                "Array.prototype.toLocaleString called on non-array",
+            )
+        })?,
+        None => {
+            return Err(crate::value::error::throw_type_error(
+                "called on null or undefined",
+            ))
+        }
     };
     let locales = resolve_locales(arguments)?;
     let options = arguments.get(1);
@@ -389,6 +397,28 @@ pub(crate) fn array_to_locale_string(
         parts.push(element_to_locale_string(value, &locales, options)?);
     }
     Ok(Value::String(parts.join(",")))
+}
+
+fn typed_array_values(value: &Value) -> Option<Vec<Value>> {
+    macro_rules! values {
+        ($data:expr) => {
+            (0..$data.logical_len())
+                .filter_map(|index| $data.get(index).map(|value| Value::Number(value as f64)))
+                .collect()
+        };
+    }
+    match value {
+        Value::Float64Array(data) => Some(values!(data)),
+        Value::Float32Array(data) => Some(values!(data)),
+        Value::Int8Array(data) => Some(values!(data)),
+        Value::Int16Array(data) => Some(values!(data)),
+        Value::Int32Array(data) => Some(values!(data)),
+        Value::Uint8Array(data) => Some(values!(data)),
+        Value::Uint8ClampedArray(data) => Some(values!(data)),
+        Value::Uint16Array(data) => Some(values!(data)),
+        Value::Uint32Array(data) => Some(values!(data)),
+        _ => None,
+    }
 }
 
 pub(crate) fn dispatch(

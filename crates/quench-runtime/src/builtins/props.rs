@@ -311,7 +311,14 @@ fn reflect_method(key: &str) -> Option<Builtin> {
 fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_constructor_property(builtin, key)
         .or_else(|| {
-            (is_typed_array_prototype(builtin) && key == "fill").then_some(Builtin::TypedArrayFill)
+            if !is_typed_array_prototype(builtin) {
+                return None;
+            }
+            Some(match key {
+                "fill" => Builtin::TypedArrayFill,
+                "toLocaleString" => Builtin::ArrayToLocaleString,
+                _ => return None,
+            })
         })
         .or_else(|| uint8_array_base64_method(builtin, key))
 }
