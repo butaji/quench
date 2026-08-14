@@ -390,8 +390,16 @@ fn resizable_array_buffer(
     if maximum < length {
         return Err(range_error("maxByteLength is smaller than byteLength"));
     }
+    if !allocation_possible(maximum) {
+        return Err(range_error("ArrayBuffer maxByteLength is too large"));
+    }
     crate::value::ArrayBufferData::try_new_resizable(length, maximum)
         .ok_or_else(|| range_error("ArrayBuffer length is too large"))
+}
+
+fn allocation_possible(length: usize) -> bool {
+    let mut bytes: Vec<u8> = Vec::new();
+    bytes.try_reserve_exact(length).is_ok()
 }
 
 fn view_length(buffer: &crate::value::ArrayBufferData, fixed_length: usize) -> usize {
