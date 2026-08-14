@@ -82,7 +82,17 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 
 fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
+        (Builtin::IntlCollatorPrototype, "constructor") => Builtin::IntlCollator,
+        (Builtin::IntlDateTimeFormatPrototype, "constructor") => Builtin::IntlDateTimeFormat,
+        (Builtin::IntlDisplayNamesPrototype, "constructor") => Builtin::IntlDisplayNames,
+        (Builtin::IntlListFormatPrototype, "constructor") => Builtin::IntlListFormat,
+        (Builtin::IntlLocalePrototype, "constructor") => Builtin::IntlLocale,
+        (Builtin::IntlNumberFormatPrototype, "constructor") => Builtin::IntlNumberFormat,
         (Builtin::IntlPluralRulesPrototype, "constructor") => Builtin::IntlPluralRules,
+        (Builtin::IntlRelativeTimeFormatPrototype, "constructor") => {
+            Builtin::IntlRelativeTimeFormat
+        }
+        (Builtin::IntlSegmenterPrototype, "constructor") => Builtin::IntlSegmenter,
         (Builtin::IntlLocalePrototype, "toString") => Builtin::IntlLocaleToString,
         (Builtin::IntlLocalePrototype, "maximize") => Builtin::IntlLocaleMaximize,
         (Builtin::IntlLocalePrototype, "minimize") => Builtin::IntlLocaleMinimize,
