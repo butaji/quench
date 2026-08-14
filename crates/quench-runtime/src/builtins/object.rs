@@ -313,6 +313,11 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::AsyncGeneratorPrototype {
+        let property = super::special_property(builtin, key)?;
+        let writable = !matches!(key, "constructor" | "Symbol.toStringTag");
+        return Some(descriptor_object_with_flags(property, writable, false, true));
+    }
     if builtin == Builtin::Object && key == "hasOwn" {
         return Some(descriptor_object_with_flags(
             Value::Builtin(Builtin::ObjectHasOwn),
