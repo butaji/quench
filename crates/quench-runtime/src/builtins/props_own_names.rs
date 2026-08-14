@@ -18,6 +18,12 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
         Builtin::IntlCollatorPrototype => &[
             "constructor", "compare", "resolvedOptions", "Symbol.toStringTag",
         ],
+        Builtin::IntlDurationFormat => &[
+            "length", "name", "prototype", "supportedLocalesOf",
+        ],
+        Builtin::IntlDurationFormatPrototype => &[
+            "constructor", "format", "formatToParts", "resolvedOptions", "Symbol.toStringTag",
+        ],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => {
             &[
