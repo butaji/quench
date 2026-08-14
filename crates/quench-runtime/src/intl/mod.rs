@@ -190,7 +190,13 @@ fn supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
 fn duration_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = requested_locales(arguments)?;
     validate_supported_options(arguments.get(1))?;
-    Ok(make_array(locales.into_iter().map(Value::String).collect()))
+    Ok(make_array(
+        locales
+            .into_iter()
+            .filter(|locale| locale != "zxx")
+            .map(Value::String)
+            .collect(),
+    ))
 }
 
 fn segmenter_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
