@@ -59,6 +59,7 @@ pub(crate) fn create(
         done: RefCell::new(false),
         state: RefCell::new(state),
         pending_yield: RefCell::new(false),
+        executing: RefCell::new(false),
     })))
 }
 
@@ -168,6 +169,12 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     if *generator.done.borrow() {
         return completed_resume(resume);
     }
+    if *generator.executing.borrow() {
+        *generator.done.borrow_mut() = true;
+        return Err(crate::value::error::throw_type_error(
+            "Generator is already executing",
+        ));
+    }
     initialize_state(generator);
     let mut state = current_state(generator)?;
     if !is_suspended(generator, &state) {
@@ -178,17 +185,29 @@ fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
         }
     }
     let completion = resume.completion();
-    let direct_suspension = state.suspension.is_some();
-    if let Resume::Next(input) = resume {
-        install_resume_input(generator, &mut state, input);
+    if let Resume::Next(input) = &resume {
+        install_resume_input(generator, &mut state, input.clone());
     }
-    if !direct_suspension {
-        if let Some(result) = resume_suspended_contexts(generator, &mut state, &completion)? {
-            generator.state.replace(Some(state));
-            return Ok(result);
+    if let Some(result) = resume_suspended_contexts(generator, &mut state, &completion)? {
+        generator.state.replace(Some(state));
+        return Ok(result);
+    }
+    if generator.machine.borrow().frame_count() == 0
+        && matches!(
+            suspended_context(generator, &state),
+            Some(SuspendedContext::Yield)
+        )
+    {
+        match resume {
+            Resume::Return(value) => return finish(generator, value),
+            Resume::Throw(value) => return throw_and_finish(generator, value),
+            Resume::Next(_) => {}
         }
     }
-    let step = execute_generator_step(generator, &mut state, completion)?;
+    *generator.executing.borrow_mut() = true;
+    let step = execute_generator_step(generator, &mut state, completion);
+    *generator.executing.borrow_mut() = false;
+    let step = step?;
     set_machine_pc(generator, step.pc);
     state.suspension = step.suspension;
     capture_suspended_private_environment(generator, &mut state, &step.completion);

@@ -231,6 +231,7 @@ pub struct GeneratorData {
     pub done: RefCell<bool>,
     pub state: RefCell<Option<GeneratorState>>,
     pub pending_yield: RefCell<bool>,
+    pub executing: RefCell<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
