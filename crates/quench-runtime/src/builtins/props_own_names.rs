@@ -1,5 +1,7 @@
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::AbstractModuleSource => &["length", "name", "prototype"],
+        Builtin::AbstractModuleSourcePrototype => &["constructor", "Symbol.toStringTag"],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => {
             &["constructor", "toString", "valueOf", "Symbol.toStringTag"]

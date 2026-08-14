@@ -312,6 +312,9 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     if matches!(value, Value::Object(_)) && crate::vm::is_global_object(value) {
         return property;
     }
+    if matches!(value, Value::HostCapability(_)) && key == "AbstractModuleSource" {
+        return property;
+    }
     if matches!(
         property,
         Value::Builtin(
@@ -374,6 +377,10 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         .find_map(|(name, value)| (name == field).then(|| value.clone()))
 }
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "AbstractModuleSource"
+    {
+        return Value::Builtin(Builtin::AbstractModuleSource);
+    }
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
     if matches!(property, Value::Builtin(_)) {

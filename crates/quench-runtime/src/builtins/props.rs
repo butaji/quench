@@ -56,6 +56,11 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
+        (AbstractModuleSource, "prototype") => Some(Value::Builtin(AbstractModuleSourcePrototype)),
+        (AbstractModuleSourcePrototype, "constructor") => {
+            Some(Value::Builtin(AbstractModuleSource))
+        }
+        (AbstractModuleSourcePrototype, "Symbol.toStringTag") => Some(Value::Undefined),
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
@@ -101,7 +106,13 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (ErrorPrototype, "message") => Some(Value::String("".to_string())),
         (ErrorPrototype, "cause") => Some(Value::Undefined),
         (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
+        (AggregateErrorPrototype, "constructor") => Some(Value::Builtin(AggregateError)),
+        (AggregateErrorPrototype, "name") => Some(Value::String("AggregateError".into())),
+        (AggregateErrorPrototype, "message") => Some(Value::String("".into())),
+        (AggregateErrorPrototype, "cause") => Some(Value::Undefined),
+        (AggregateErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
         (SuppressedError, "prototype") => Some(Value::Builtin(SuppressedErrorPrototype)),
+        (AggregateError, "prototype") => Some(Value::Builtin(AggregateErrorPrototype)),
         (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
         (SuppressedErrorPrototype, "message") => Some(Value::String("".to_string())),
         (SuppressedErrorPrototype, "constructor") => Some(Value::Builtin(SuppressedError)),
