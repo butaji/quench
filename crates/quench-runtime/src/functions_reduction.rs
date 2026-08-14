@@ -408,11 +408,17 @@ pub(super) fn make(
     captures: std::rc::Rc<crate::environment::Environment>,
     metadata: FunctionMetadata,
 ) -> crate::value::Value {
-    let has_prototype = matches!(
-        metadata.kind,
-        FunctionKind::Ordinary | FunctionKind::Generator
-    );
+    let has_prototype = matches!(metadata.kind, FunctionKind::Generator)
+        || (metadata.kind == FunctionKind::Ordinary && !metadata.is_async);
     let value = make_function_value(code, params, captures, length, metadata);
+    if metadata.is_async && metadata.kind == FunctionKind::Ordinary {
+        if let crate::value::Value::Function(function) = &value {
+            function.properties.borrow_mut().push((
+                "\0prototype".to_string(),
+                crate::value::Value::Builtin(crate::ops::Builtin::AsyncFunctionPrototype),
+            ));
+        }
+    }
     attach_lexical_super(&value, metadata.kind);
     if has_prototype {
         attach_prototype(&value);

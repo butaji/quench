@@ -202,7 +202,13 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::Generator(generator) => generator_instance_prototype(generator),
         Value::Iterator(_) => Some(crate::collections::iterator::prototype_of(value)),
         Value::Builtin(builtin) => builtin_prototype_parent(*builtin),
-        Value::Function(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
+        Value::Function(function) => function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+            .or(Some(Value::Builtin(Builtin::FunctionPrototype))),
         Value::BoundFunction(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
         _ => None,
     }
@@ -228,9 +234,16 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
         builtin,
         Builtin::GeneratorFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype
+            | Builtin::AsyncFunctionPrototype
             | Builtin::AsyncIteratorPrototype
     ) {
         return Some(Value::Builtin(Builtin::FunctionPrototype));
+    }
+    if matches!(
+        builtin,
+        Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction
+    ) {
+        return Some(Value::Builtin(Builtin::Function));
     }
     if matches!(
         builtin,

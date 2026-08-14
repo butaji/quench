@@ -223,6 +223,7 @@ pub enum Builtin {
     GeneratorFunction,
     AsyncGeneratorFunction,
     FunctionPrototype,
+    AsyncFunctionPrototype,
     GeneratorFunctionPrototype,
     AsyncGeneratorFunctionPrototype,
     AsyncIteratorPrototype,
