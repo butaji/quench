@@ -63,6 +63,7 @@ fn bigint_to_locale_string(
         .is_some_and(|option| !matches!(option, Value::Undefined))
         || value.trim_start_matches('-').len() <= 15
     {
+        crate::intl::number::construct(arguments)?;
         let number = value.parse::<f64>().map_err(|_| {
             crate::value::error::throw_type_error("Cannot convert BigInt to number")
         })?;
