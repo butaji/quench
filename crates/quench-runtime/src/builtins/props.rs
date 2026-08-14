@@ -56,6 +56,31 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
+        (IntlCollatorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.Collator".into()))
+        }
+        (IntlDateTimeFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DateTimeFormat".into()))
+        }
+        (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DisplayNames".into()))
+        }
+        (IntlListFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.ListFormat".into()))
+        }
+        (IntlLocalePrototype, "Symbol.toStringTag") => Some(Value::String("Intl.Locale".into())),
+        (IntlNumberFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.NumberFormat".into()))
+        }
+        (IntlPluralRulesPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.PluralRules".into()))
+        }
+        (IntlRelativeTimeFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.RelativeTimeFormat".into()))
+        }
+        (IntlSegmenterPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.Segmenter".into()))
+        }
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
