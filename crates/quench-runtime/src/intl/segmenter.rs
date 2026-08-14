@@ -7,7 +7,9 @@ use crate::{
     value::{IteratorData, IteratorState, Value},
 };
 
-use super::{default_locale, make_object, resolve_locales, runtime_error, slot_string, SLOT};
+use super::{
+    default_locale, make_instance, make_object, resolve_locales, runtime_error, slot_string, SLOT,
+};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
@@ -38,23 +40,26 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             }
         }
     }
-    Ok(make_object(vec![
-        (
-            "segment".to_string(),
-            Value::Builtin(crate::ops::Builtin::IntlSegmenterSegment),
-        ),
-        (
-            "resolvedOptions".to_string(),
-            Value::Builtin(crate::ops::Builtin::IntlSegmenterResolvedOptions),
-        ),
-        (
-            SLOT.to_string(),
-            make_object(vec![
-                ("locale".to_string(), Value::String(locale)),
-                ("granularity".to_string(), Value::String(granularity)),
-            ]),
-        ),
-    ]))
+    Ok(make_instance(
+        crate::ops::Builtin::IntlSegmenter,
+        vec![
+            (
+                "segment".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlSegmenterSegment),
+            ),
+            (
+                "resolvedOptions".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlSegmenterResolvedOptions),
+            ),
+            (
+                SLOT.to_string(),
+                make_object(vec![
+                    ("locale".to_string(), Value::String(locale)),
+                    ("granularity".to_string(), Value::String(granularity)),
+                ]),
+            ),
+        ],
+    ))
 }
 
 pub(crate) fn prototype_method(

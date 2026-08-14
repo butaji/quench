@@ -2,7 +2,9 @@
 
 use crate::{execute::VmError, value::Value};
 
-use super::{default_locale, make_object, resolve_locales, runtime_error, slot_string, SLOT};
+use super::{
+    default_locale, make_instance, make_object, resolve_locales, runtime_error, slot_string, SLOT,
+};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
@@ -76,44 +78,47 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     if !matches!(plural_type.as_str(), "cardinal" | "ordinal") {
         return Err(runtime_error("RangeError: invalid type"));
     }
-    Ok(make_object(vec![
-        (
-            "select".to_string(),
-            Value::Builtin(crate::ops::Builtin::IntlPluralRulesSelect),
-        ),
-        (
-            "selectRange".to_string(),
-            Value::Builtin(crate::ops::Builtin::IntlPluralRulesSelectRange),
-        ),
-        (
-            "resolvedOptions".to_string(),
-            Value::Builtin(crate::ops::Builtin::IntlPluralRulesResolvedOptions),
-        ),
-        (
-            SLOT.to_string(),
-            make_object(vec![
-                ("locale".to_string(), Value::String(locale.clone())),
-                ("type".to_string(), Value::String(plural_type)),
-                ("notation".to_string(), Value::String(notation)),
-                (
-                    "minimumIntegerDigits".to_string(),
-                    Value::Number(minimum_integer_digits),
-                ),
-                (
-                    "minimumFractionDigits".to_string(),
-                    Value::Number(minimum_fraction_digits),
-                ),
-                (
-                    "maximumFractionDigits".to_string(),
-                    Value::Number(maximum_fraction_digits),
-                ),
-                (
-                    "compactDisplay".to_string(),
-                    Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
-                ),
-            ]),
-        ),
-    ]))
+    Ok(make_instance(
+        crate::ops::Builtin::IntlPluralRules,
+        vec![
+            (
+                "select".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlPluralRulesSelect),
+            ),
+            (
+                "selectRange".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlPluralRulesSelectRange),
+            ),
+            (
+                "resolvedOptions".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlPluralRulesResolvedOptions),
+            ),
+            (
+                SLOT.to_string(),
+                make_object(vec![
+                    ("locale".to_string(), Value::String(locale.clone())),
+                    ("type".to_string(), Value::String(plural_type)),
+                    ("notation".to_string(), Value::String(notation)),
+                    (
+                        "minimumIntegerDigits".to_string(),
+                        Value::Number(minimum_integer_digits),
+                    ),
+                    (
+                        "minimumFractionDigits".to_string(),
+                        Value::Number(minimum_fraction_digits),
+                    ),
+                    (
+                        "maximumFractionDigits".to_string(),
+                        Value::Number(maximum_fraction_digits),
+                    ),
+                    (
+                        "compactDisplay".to_string(),
+                        Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
+                    ),
+                ]),
+            ),
+        ],
+    ))
 }
 
 pub(crate) fn prototype_method(
