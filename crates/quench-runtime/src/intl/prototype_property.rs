@@ -1,7 +1,5 @@
 fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
-    Some(match (builtin, key) {
-        _ => return prototype_locale_property(builtin, key),
-    })
+    prototype_locale_property(builtin, key)
 }
 
 fn prototype_locale_property(builtin: Builtin, key: &str) -> Option<Builtin> {
