@@ -223,9 +223,23 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = special_property(value, key, receiver) {
         return result;
     }
-    if let Ok(descriptor) =
-        crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))
+    let own_descriptor = crate::builtins::object::descriptor(
+        Some(value),
+        Some(&Value::String(key.to_string())),
+    )
+    .ok();
+    if key == "stack"
+        && matches!(own_descriptor, Some(Value::Undefined))
+        && crate::vm::has_error_slot(value)
+        && crate::properties::inherits_error_prototype(value)
     {
+        return crate::vm::execute_builtin_with_receiver(
+            Builtin::ErrorPrototypeStackGetter,
+            &[],
+            Some(receiver),
+        );
+    }
+    if let Some(descriptor) = own_descriptor {
         if !matches!(descriptor, Value::Undefined) {
             if let Value::Object(descriptor) = descriptor {
                 if let Some((_, getter)) = descriptor
@@ -260,16 +274,6 @@ pub(crate) fn get_property_with_receiver(
     {
         return crate::vm::execute_builtin_with_receiver(
             Builtin::ErrorPrototypeStackGetter,
-            &[],
-            Some(receiver),
-        );
-    }
-    if key == "stack"
-        && crate::vm::has_error_slot(value)
-        && crate::properties::inherits_error_prototype(value)
-    {
-        return crate::vm::execute_builtin_with_receiver(
-            crate::ops::Builtin::ErrorPrototypeStackGetter,
             &[],
             Some(receiver),
         );
