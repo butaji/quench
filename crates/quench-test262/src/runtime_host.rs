@@ -35,6 +35,7 @@ pub struct LinkedModule {
     deferred_namespace: RefCell<Option<ModuleBindingCell>>,
     executed: Cell<bool>,
     evaluating: Cell<bool>,
+    error: RefCell<Option<Value>>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -103,16 +104,32 @@ impl LinkedModuleGraph {
                     ),
                 ));
             }
-            unsafe { (&*graph_ptr).execute(&*module_graph_ptr, target) }
-                .map(|_| {
+            if let Some(unit) = unit {
+                if let Some(reason) = unit.error_value() {
+                    unit.restore_deferred_markers(target.0);
+                    return Err(quench_runtime::execute::VmError::Thrown(reason));
+                }
+            }
+            match unsafe { (&*graph_ptr).execute(&*module_graph_ptr, target) } {
+                Ok(()) => {
                     if let Some(unit) = unsafe { (&*graph_ptr).units.get(&target) }
                         .filter(|unit| unit.is_executed())
                     {
                         unit.complete_deferred_namespace();
                     }
-                    Value::Undefined
-                })
-                .map_err(quench_runtime::execute::VmError::EvalError)
+                    Ok(Value::Undefined)
+                }
+                Err(error) => {
+                    let Some(unit) = (unsafe { (&*graph_ptr).units.get(&target) }) else {
+                        return Err(quench_runtime::execute::VmError::EvalError(error));
+                    };
+                    unit.restore_deferred_markers(target.0);
+                    match unit.error_value() {
+                        Some(reason) => Err(quench_runtime::execute::VmError::Thrown(reason)),
+                        None => Err(quench_runtime::execute::VmError::EvalError(error)),
+                    }
+                }
+            }
         }));
         let graph_ptr = self as *const Self;
         let module_graph_ptr = graph as *const ModuleGraph;
@@ -616,6 +633,7 @@ impl LinkedModule {
             deferred_namespace: RefCell::new(None),
             executed: Cell::new(false),
             evaluating: Cell::new(false),
+            error: RefCell::new(None),
         })
     }
 
@@ -632,6 +650,7 @@ impl LinkedModule {
             deferred_namespace: RefCell::new(None),
             executed: Cell::new(false),
             evaluating: Cell::new(false),
+            error: RefCell::new(None),
         })
     }
 
@@ -909,6 +928,32 @@ impl LinkedModule {
         self.executed.get()
     }
 
+    fn error_value(&self) -> Option<Value> {
+        self.error.borrow().clone()
+    }
+
+    fn restore_deferred_markers(&self, id: u32) {
+        let namespaces = [
+            self.deferred_namespace.borrow().as_ref().cloned(),
+            self.namespace.borrow().as_ref().cloned(),
+        ];
+        for namespace in namespaces.into_iter().flatten() {
+            let Value::Object(properties) = namespace.get() else {
+                continue;
+            };
+            for (key, value) in properties.iter() {
+                if !key.starts_with("\0quench:deferred:") && key != "\0quench:deferred-module" {
+                    continue;
+                }
+                if let Value::BindingCell(cell) = value {
+                    if matches!(*cell.borrow(), Value::Undefined) {
+                        cell.replace(Value::Number(f64::from(id)));
+                    }
+                }
+            }
+        }
+    }
+
     fn execute_inner(&self) -> Result<quench_runtime::value::Value, String> {
         let start = self
             .program
@@ -920,7 +965,7 @@ impl LinkedModule {
         let result = self
             .scope
             .execute(&self.program.ops()[start..], &mut registers, host_context())
-            .map_err(|error| format!("residual VM error: {}", error.render()))?;
+            .map_err(|error| self.record_error(error))?;
         for (name, value) in &self.fixed_exports {
             let cell = self
                 .export_cell(name)
@@ -930,6 +975,13 @@ impl LinkedModule {
         self.executed.set(true);
         self.clear_namespace_tdz();
         Ok(result)
+    }
+
+    fn record_error(&self, error: quench_runtime::execute::VmError) -> String {
+        if let quench_runtime::execute::VmError::Thrown(reason) = &error {
+            self.error.replace(Some(reason.clone()));
+        }
+        format!("residual VM error: {}", error.render())
     }
 
     fn clear_namespace_tdz(&self) {
