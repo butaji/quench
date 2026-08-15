@@ -8,7 +8,7 @@ pub enum IteratorState {
     Native { values: Vec<Value>, index: usize, done: bool },
     Set { data: Rc<SetData>, index: usize, kind: u8, done: bool },
     Map { data: Rc<MapData>, index: usize, kind: u8, done: bool },
-    Protocol { iterator: Value, next: Value, done: bool },
+    Protocol { iterator: Value, next: Value, done: bool, executing: bool },
     Concat { items: Vec<(Value, Value)>, index: usize, current: Option<Value>, done: bool },
     RegExpString { regexp: Value, input: String, global: bool, unicode: bool, done: bool },
 }

@@ -102,6 +102,7 @@ fn iterator_from(arguments: &[Value]) -> Result<Value, VmError> {
                 iterator: value.clone(),
                 next,
                 done: false,
+                executing: false,
             }),
         },
     )))
