@@ -1,3 +1,7 @@
 [submodule "tests/node"]
 	path = tests/node
 	url = https://github.com/nodejs/node.git
+[submodule "quench-runtime"]
+	path = quench-runtime
+	url = https://github.com/butaji/quench.git
+	branch = qjs
