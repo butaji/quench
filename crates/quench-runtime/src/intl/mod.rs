@@ -338,6 +338,11 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
+                if !matches!(value, Value::String(_)) {
+                    return Err(crate::value::error::throw_type_error(
+                        "locale list elements must be strings",
+                    ));
+                }
                 out.push(canonicalize(&to_string_value(value))?);
             }
             Ok(dedupe(out))
@@ -419,6 +424,14 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
+    if language.len() == 4
+        && parts
+            .clone()
+            .next()
+            .is_some_and(|part| part.len() == 3 && part.chars().all(|c| c.is_ascii_alphabetic()))
+    {
+        return Err(runtime_error("RangeError: invalid language tag"));
+    }
     let mut out = Vec::new();
     let mut script_done = false;
     if language.eq_ignore_ascii_case("sh") {
@@ -436,6 +449,7 @@ fn canonicalize_subtags(
     mut out: Vec<String>,
     mut script_done: bool,
 ) -> Result<Vec<String>, VmError> {
+    validate_subtag_sequence(&parts)?;
     let mut region_done = false;
     let mut variant_done = false;
     let mut extension_mode = false;
@@ -465,6 +479,30 @@ fn canonicalize_subtags(
         }
     }
     Ok(out)
+}
+
+fn validate_subtag_sequence(parts: &[&str]) -> Result<(), VmError> {
+    let mut singletons = std::collections::HashSet::new();
+    let mut variants = std::collections::HashSet::new();
+    let mut extension = false;
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        if part.len() == 1 {
+            let key = part.to_ascii_lowercase();
+            if index + 1 == parts.len() || !singletons.insert(key) {
+                return Err(runtime_error("RangeError: invalid language tag"));
+            }
+            extension = true;
+        } else if !extension && (part.len() == 4 || part.len() >= 5) {
+            let key = part.to_ascii_lowercase();
+            if !variants.insert(key) {
+                return Err(runtime_error("RangeError: invalid language tag"));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn titlecase_script(part: &str) -> String {
