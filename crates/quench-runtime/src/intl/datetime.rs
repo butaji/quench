@@ -464,7 +464,13 @@ fn grouped_year(year: i64) -> String {
 }
 
 fn range_number(value: &Value) -> Result<f64, VmError> {
-    let number = conversion::to_number(value)?;
+    let number = match value {
+        Value::BigInt(value) => value
+            .parse::<i128>()
+            .map(|value| value as f64 / 1_000_000.0)
+            .map_err(|_| runtime_error("RangeError: date value is not finite"))?,
+        _ => conversion::to_number(value)?,
+    };
     if !number.is_finite() || number.abs() > 8_640_000_000_000_000.0 {
         return Err(runtime_error("RangeError: date value is not finite"));
     }
