@@ -262,25 +262,23 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = data_view_instance_accessor(value, key) {
         return result;
     }
-    if let Ok(descriptor) =
-        crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))
-    {
-        if !matches!(descriptor, Value::Undefined) {
-            if let Value::Object(descriptor) = descriptor {
-                if let Some((_, getter)) = descriptor
-                    .iter()
-                    .rev()
-                    .find_map(|(name, value)| (name == "get").then_some((name, value)))
-                {
-                    return if matches!(getter, Value::Undefined) {
-                        Ok(Value::Undefined)
-                    } else {
-                        invoke_accessor(getter, receiver)
-                    };
-                }
+    let descriptor =
+        crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))?;
+    if !matches!(descriptor, Value::Undefined) {
+        if let Value::Object(descriptor) = descriptor {
+            if let Some((_, getter)) = descriptor
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == "get").then_some((name, value)))
+            {
+                return if matches!(getter, Value::Undefined) {
+                    Ok(Value::Undefined)
+                } else {
+                    invoke_accessor(getter, receiver)
+                };
             }
-            return Ok(receiver_property(value, key, receiver));
         }
+        return Ok(receiver_property(value, key, receiver));
     }
     let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
