@@ -614,6 +614,7 @@ pub(crate) fn define_own_property(
     key: &str,
     descriptor: &[(String, Value)],
 ) -> Result<Value, crate::execute::VmError> {
+    validate_descriptor_kind(descriptor)?;
     let key_value = Value::String(key.to_string());
     let current = crate::builtins::object::descriptor(Some(target), Some(&key_value))?;
     if matches!(current, Value::Undefined) && crate::properties::rejects_new_property(target, key) {
@@ -639,6 +640,21 @@ pub(crate) fn define_own_property(
     store_descriptor_metadata(&mut result, key, &descriptor);
     define_array_descriptor(&mut result, key, descriptor);
     Ok(result)
+}
+
+fn validate_descriptor_kind(descriptor: &[(String, Value)]) -> Result<(), crate::execute::VmError> {
+    let accessor = descriptor
+        .iter()
+        .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
+    let data = descriptor
+        .iter()
+        .any(|(name, _)| matches!(name.as_str(), "value" | "writable"));
+    if accessor && data {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid property descriptor",
+        ));
+    }
+    Ok(())
 }
 fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(String, Value)]) {
     let metadata = Value::Object(Rc::new(ObjectData::new(descriptor.to_vec())));
