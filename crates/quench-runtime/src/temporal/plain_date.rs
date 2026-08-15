@@ -4,7 +4,26 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
     let month = number(arguments.get(1))?;
     let day = number(arguments.get(2))?;
+    if !(-271_821.0..=275_760.0).contains(&year)
+        || !(1.0..=12.0).contains(&month)
+        || !(1.0..=days_in_month(year, month)).contains(&day)
+    {
+        return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+    }
     Ok(date_object(year, month, day))
+}
+
+fn days_in_month(year: f64, month: f64) -> f64 {
+    match month as u32 {
+        2 if is_leap_year(year as i32) => 29.0,
+        2 => 28.0,
+        4 | 6 | 9 | 11 => 30.0,
+        _ => 31.0,
+    }
+}
+
+fn is_leap_year(year: i32) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
 pub(crate) fn execute(
@@ -49,10 +68,11 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn number(value: Option<&Value>) -> Result<f64, VmError> {
-    match value {
-        Some(Value::Number(value)) => Ok(*value),
-        _ => Err(crate::value::error::throw_type_error("Invalid PlainDate")),
+    let value = crate::conversion::to_number(value.unwrap_or(&Value::Undefined))?;
+    if !value.is_finite() {
+        return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
+    Ok(value.trunc())
 }
 
 fn date_object(year: f64, month: f64, day: f64) -> Value {
