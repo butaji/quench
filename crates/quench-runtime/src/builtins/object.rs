@@ -399,6 +399,10 @@ fn builtin_descriptor_special(builtin: Builtin, key: &str) -> Option<Value> {
         return super::special_property(builtin, key)
             .map(|property| descriptor_object_with_flags(property, false, false, false));
     }
+    builtin_descriptor_general(builtin, key)
+}
+
+fn builtin_descriptor_general(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, key) {
         return Some(public_descriptor(&descriptor));
     }
