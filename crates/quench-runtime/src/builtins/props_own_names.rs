@@ -42,11 +42,28 @@ const TEMPORAL_PLAIN_DATE_PROTOTYPE_NAMES: &[&str] = &[
 
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::Temporal
+        | Builtin::TemporalDuration
+        | Builtin::TemporalDurationPrototype
+        | Builtin::TemporalPlainDate
+        | Builtin::TemporalPlainDatePrototype => own_property_names_temporal(builtin),
+        _ => own_property_names_standard(builtin),
+    }
+}
+
+fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
+    match builtin {
         Builtin::Temporal => &["Duration", "PlainDate"],
         Builtin::TemporalDuration => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalDurationPrototype => TEMPORAL_DURATION_PROTOTYPE_NAMES,
         Builtin::TemporalPlainDate => &["length", "name", "prototype", "from"],
         Builtin::TemporalPlainDatePrototype => TEMPORAL_PLAIN_DATE_PROTOTYPE_NAMES,
+        _ => &[],
+    }
+}
+
+fn own_property_names_standard(builtin: Builtin) -> &'static [&'static str] {
+    match builtin {
         Builtin::ShadowRealm => &["length", "name", "prototype"],
         Builtin::ShadowRealmPrototype => &[
             "constructor",
