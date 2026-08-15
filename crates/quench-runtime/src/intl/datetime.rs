@@ -1,6 +1,6 @@
 //! `Intl.DateTimeFormat`.
 
-use chrono::{DateTime, Datelike, Local, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDateTime, TimeZone, Timelike, Utc};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{conversion, execute::VmError, value::Value};
@@ -82,6 +82,7 @@ pub(crate) struct DateTimeOptions {
     components: Vec<(String, String)>,
     fractional_second_digits: Option<u32>,
     hour12: Option<bool>,
+    local_time_zone: bool,
 }
 
 static LEGACY_SYMBOL_ID: AtomicU64 = AtomicU64::new(1);
@@ -242,6 +243,7 @@ impl DateTimeOptions {
             components: Vec::new(),
             fractional_second_digits: None,
             hour12: None,
+            local_time_zone: true,
         };
         if let Some(calendar) = locale_calendar(&formatter.locale) {
             formatter.calendar = calendar.to_string();
@@ -310,6 +312,7 @@ impl DateTimeOptions {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
                 self.time_zone = canonicalize_time_zone(&text);
+                self.local_time_zone = false;
             }
             "calendar" => {
                 if !valid_identifier_shape(&text) {
@@ -456,7 +459,12 @@ impl DateTimeOptions {
     }
 
     fn slot(&self) -> Value {
-        make_object(self.resolved_properties())
+        let mut properties = self.resolved_properties();
+        properties.push((
+            "__localTimeZone".to_string(),
+            Value::Boolean(self.local_time_zone),
+        ));
+        make_object(properties)
     }
 
     fn resolved_properties(&self) -> Vec<(String, Value)> {
@@ -637,12 +645,22 @@ pub(crate) fn prototype_method(
                 literal_part(&end),
             ]))
         }
-        crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots)),
+        crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(
+            slots
+                .into_iter()
+                .filter(|(key, _)| !key.starts_with("__"))
+                .collect(),
+        )),
         _ => Err(runtime_error("TypeError: method not found")),
     }
 }
 
 fn format_number(slots: &[(String, Value)], number: f64) -> String {
+    let value = raw_format_number(slots, number);
+    localize_number(slots, &value)
+}
+
+fn raw_format_number(slots: &[(String, Value)], number: f64) -> String {
     if let Some(value) = day_period_format(slots, number) {
         return value;
     }
@@ -658,6 +676,46 @@ fn format_number(slots: &[(String, Value)], number: f64) -> String {
     range_text(number)
 }
 
+fn localize_number(slots: &[(String, Value)], value: &str) -> String {
+    let Some(system) = slot_string(slots, "numberingSystem") else {
+        return value.to_string();
+    };
+    let digits = match system.as_str() {
+        "arab" => "٠١٢٣٤٥٦٧٨٩",
+        "deva" => "०१२३४५६७८९",
+        "hanidec" => "〇一二三四五六七八九",
+        "thai" => "๐๑๒๓๔๕๖๗๘๙",
+        _ => return value.to_string(),
+    };
+    let value = if system == "arab" {
+        value.replace('.', "٫")
+    } else {
+        value.to_string()
+    };
+    value
+        .chars()
+        .map(|character| {
+            character.to_digit(10).map_or(character, |digit| {
+                digits.chars().nth(digit as usize).unwrap_or(character)
+            })
+        })
+        .collect()
+}
+
+fn date_time(slots: &[(String, Value)], number: f64) -> Option<NaiveDateTime> {
+    let millis = number.trunc() as i64;
+    if super::slot_bool(slots, "__localTimeZone").unwrap_or(false) {
+        Local
+            .timestamp_millis_opt(millis)
+            .single()
+            .map(|date| date.naive_local())
+    } else {
+        Utc.timestamp_millis_opt(millis)
+            .single()
+            .map(|date| date.naive_utc())
+    }
+}
+
 fn date_component_format(slots: &[(String, Value)], number: f64) -> Option<String> {
     if !slot_string(slots, "year").is_some()
         && !slot_string(slots, "month").is_some()
@@ -665,7 +723,7 @@ fn date_component_format(slots: &[(String, Value)], number: f64) -> Option<Strin
     {
         return None;
     }
-    let date = Utc.timestamp_millis_opt(number.trunc() as i64).single()?;
+    let date = date_time(slots, number)?;
     let mut parts = Vec::new();
     if slot_string(slots, "year").is_some() {
         parts.push(format!("{:04}", date.year()));
@@ -681,10 +739,7 @@ fn date_component_format(slots: &[(String, Value)], number: f64) -> Option<Strin
 
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
     let style = slot_string(slots, "dayPeriod")?;
-    let hour = Local
-        .timestamp_opt((number / 1_000.0).trunc() as i64, 0)
-        .single()?
-        .hour();
+    let hour = date_time(slots, number)?.hour();
     let name = match style.as_str() {
         "narrow" => day_period_name(hour, true),
         _ => day_period_name(hour, false),
@@ -766,14 +821,49 @@ fn nearly_equal_range(arguments: &[Value]) -> Result<bool, VmError> {
 }
 
 fn fractional_format(slots: &[(String, Value)], number: f64) -> Option<String> {
+    let date = date_time(slots, number)?;
+    if slot_string(slots, "second").is_some() && slot_string(slots, "minute").is_none() {
+        return Some(date.second().to_string());
+    }
+    if slot_string(slots, "minute").is_some() && slot_string(slots, "second").is_none() {
+        return Some(date.minute().to_string());
+    }
     if slot_string(slots, "minute").is_none() || slot_string(slots, "second").is_none() {
         return None;
     }
     let digits = slot_number(slots, "fractionalSecondDigits").unwrap_or(0.0) as u32;
-    let seconds = (number / 1_000.0).trunc() as i64;
-    let date = DateTime::<Utc>::from_timestamp(seconds, 0)?;
+    let hour = if super::slot_bool(slots, "hour12").unwrap_or(false) {
+        match date.hour() % 12 {
+            0 => 12,
+            value => value,
+        }
+    } else {
+        date.hour()
+    };
+    let prefix = if slot_string(slots, "hour").is_some() {
+        if slot_string(slots, "hour") == Some("2-digit".to_string()) {
+            format!("{hour:02}:")
+        } else {
+            format!("{hour}:")
+        }
+    } else {
+        String::new()
+    };
+    let period = if super::slot_bool(slots, "hour12").unwrap_or(false) {
+        if date.hour() < 12 {
+            " AM"
+        } else {
+            " PM"
+        }
+    } else {
+        ""
+    };
     if digits == 0 {
-        return Some(format!("{:02}:{:02}", date.minute(), date.second()));
+        return Some(format!(
+            "{prefix}{:02}:{:02}{period}",
+            date.minute(),
+            date.second()
+        ));
     }
     let millis = number.rem_euclid(1_000.0) as u32;
     let fraction = if digits <= 3 {
@@ -782,7 +872,7 @@ fn fractional_format(slots: &[(String, Value)], number: f64) -> Option<String> {
         millis * 10_u32.pow(digits - 3)
     };
     Some(format!(
-        "{:02}:{:02}.{:0width$}",
+        "{prefix}{:02}:{:02}.{:0width$}{period}",
         date.minute(),
         date.second(),
         fraction,
