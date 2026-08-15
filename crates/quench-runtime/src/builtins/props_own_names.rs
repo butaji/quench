@@ -3,7 +3,7 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::Temporal => &[
             "Instant", "PlainDate", "PlainTime", "PlainDateTime", "ZonedDateTime",
-            "PlainYearMonth", "PlainMonthDay", "Duration", "Now",
+            "PlainYearMonth", "PlainMonthDay", "Duration", "Now", "Symbol.toStringTag",
         ],
         Builtin::TemporalDuration => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalDurationPrototype => &[
