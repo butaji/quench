@@ -4,12 +4,7 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         Value::ObjectAlias(alias) => delete_object_alias_property(alias, key),
         Value::Array(values) => delete_array_property(values, key),
         Value::Function(function) => delete_function_property(function, key),
-        Value::BoundFunction(bound) => {
-            let mut properties = bound.properties.borrow_mut();
-            let metadata = descriptor_key(key);
-            properties.retain(|(name, _)| name != key && name != &metadata);
-            (Value::BoundFunction(std::rc::Rc::clone(&bound)), true)
-        }
+        Value::BoundFunction(bound) => delete_bound_function_property(bound, key),
         Value::Builtin(builtin) => {
             let deletable = crate::builtins::props::is_builtin_deletable(builtin, key);
             if deletable {
@@ -24,6 +19,28 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         }
         value => (value, true),
     }
+}
+
+fn delete_bound_function_property(
+    bound: std::rc::Rc<crate::value::BoundFunctionValue>,
+    key: &str,
+) -> (Value, bool) {
+    if bound.target == Value::Builtin(crate::ops::Builtin::AbstractModuleSource)
+        && key == "prototype"
+    {
+        return (Value::BoundFunction(bound), false);
+    }
+    {
+        let mut properties = bound.properties.borrow_mut();
+        let metadata = descriptor_key(key);
+        properties.retain(|(name, _)| name != key && name != &metadata);
+        if bound.target == Value::Builtin(crate::ops::Builtin::AbstractModuleSource)
+            && matches!(key, "length" | "name")
+        {
+            properties.push((crate::builtins::deleted_key(key), Value::Boolean(true)));
+        }
+    }
+    (Value::BoundFunction(bound), true)
 }
 
 fn delete_object_property_value(
@@ -135,6 +152,17 @@ fn define_property_value(target: Value, key: &str, value: Value) -> Value {
                 }
             }
             Value::Function(function)
+        }
+        Value::BoundFunction(bound)
+            if bound.target == Value::Builtin(crate::ops::Builtin::AbstractModuleSource) =>
+        {
+            {
+                let mut properties = bound.properties.borrow_mut();
+                let deleted = crate::builtins::deleted_key(key);
+                properties.retain(|(name, _)| name != key && name != &deleted);
+                properties.push((key.to_string(), value));
+            }
+            Value::BoundFunction(bound)
         }
         target => set_property(target, key, value),
     }
