@@ -92,6 +92,9 @@ fn make_date_unclipped(
     let second = second.trunc();
     let ms = ms.trunc();
     let year_of = year + (month / 12.0).floor();
+    if !year_of.is_finite() || year_of.abs() > 1_000_000.0 || day.abs() > 9_000_000_000_000_000.0 {
+        return f64::NAN;
+    }
     let month_of = month.rem_euclid(12.0) + 1.0;
     let first_day = days_from_civil(year_of as i64, month_of as i64, 1);
     let day_ms = (first_day + day as i64 - 1) as f64 * MS_PER_DAY;
