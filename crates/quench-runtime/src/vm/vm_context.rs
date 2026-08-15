@@ -49,6 +49,14 @@ pub(crate) fn realm_intrinsic(builtin: Builtin) -> Value {
     let realm = current_context_or_default().realm();
     realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
 }
+
+pub(crate) fn realm_intrinsic_for(realm: RealmId, builtin: Builtin) -> Value {
+    realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
+}
+
+pub(crate) fn is_intrinsic_bound(bound: &crate::value::BoundFunctionValue) -> bool {
+    realm::is_intrinsic(bound)
+}
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
