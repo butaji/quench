@@ -96,6 +96,7 @@ pub enum Builtin {
     StringToWellFormed,
     StringStartsWith,
     StringEndsWith,
+    StringAt,
     StringRepeat,
     StringTrim,
     StringToLowerCase,
