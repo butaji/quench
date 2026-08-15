@@ -33,6 +33,13 @@ pub(crate) fn execute_host_capability(
             run_eval_script(arguments)
         })
         .ok_or(VmError::NotCallable)?,
+        HostCapabilityKind::Custom(_) => CURRENT_CONTEXT.with(|context| {
+            context
+                .borrow()
+                .as_ref()
+                .and_then(|context| context.call_host(descriptor, arguments))
+                .unwrap_or(Err(VmError::NotCallable))
+        }),
     }
 }
 
