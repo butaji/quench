@@ -329,20 +329,52 @@ fn set_builtin_property(
 }
 
 pub(crate) fn rejects_new_property(target: &crate::value::Value, key: &str) -> bool {
-    let crate::value::Value::Object(properties) = target else {
-        return false;
-    };
+    match target {
+        crate::value::Value::Object(properties) => marked_without_key(properties, key),
+        crate::value::Value::Function(function) => {
+            let properties = function.properties.borrow();
+            marked_without_key(&properties, key)
+        }
+        crate::value::Value::BoundFunction(bound) => {
+            let properties = bound.properties.borrow();
+            marked_without_key(&properties, key)
+        }
+        crate::value::Value::Array(values) => {
+            let own = key == "length"
+                || crate::arrays::array_index(key)
+                    .is_some_and(|index| values.has_index(index as usize))
+                || values.property(key).is_some();
+            values.property(NON_EXTENSIBLE).is_some() && !own
+        }
+        _ => false,
+    }
+}
+
+fn marked_without_key(properties: &[(String, crate::value::Value)], key: &str) -> bool {
     properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
         && !properties.iter().any(|(name, _)| name == key)
 }
 
 pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
+    if let crate::value::Value::BindingCell(cell) = target {
+        return object_is_extensible(&cell.borrow());
+    }
     match target {
         crate::value::Value::Builtin(crate::ops::Builtin::ThrowTypeError) => false,
         crate::value::Value::Object(properties) => {
             !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
         }
         crate::value::Value::Array(values) => values.property(NON_EXTENSIBLE).is_none(),
+        crate::value::Value::Function(function) => !function
+            .properties
+            .borrow()
+            .iter()
+            .any(|(name, _)| name == NON_EXTENSIBLE),
+        crate::value::Value::BoundFunction(bound) => !bound
+            .properties
+            .borrow()
+            .iter()
+            .any(|(name, _)| name == NON_EXTENSIBLE),
         value => crate::value::is_object(value),
     }
 }
@@ -365,26 +397,56 @@ pub(crate) fn prevent_extensions(
     let Some(target) = target else {
         return Err(crate::value::error::throw_type_error("Object expected"));
     };
+    if let crate::value::Value::BindingCell(cell) = target {
+        let current = cell.borrow().clone();
+        let updated = prevent_extensions(Some(&current))?;
+        *cell.borrow_mut() = updated;
+        return Ok(target.clone());
+    }
     if matches!(target, crate::value::Value::Proxy(_)) {
         return crate::proxy::proxy_prevent_extensions(target);
     }
-    let crate::value::Value::Object(properties) = target else {
-        return Ok(target.clone());
-    };
-    let mut sealed = properties.as_ref().clone();
-    if !sealed.iter().any(|(name, _)| name == NON_EXTENSIBLE) {
-        sealed.push((
-            NON_EXTENSIBLE.to_string(),
-            crate::value::Value::Boolean(true),
-        ));
-    }
-    let result = crate::value::Value::Object(std::rc::Rc::new(sealed));
+    let result = mark_non_extensible(target);
     crate::locals::replace_value(target, &result);
     if crate::vm::is_global_object(target) {
         let mut registers = Vec::new();
         crate::vm::synchronize_global_object(&mut registers, target, &result);
     }
     Ok(result)
+}
+
+fn mark_non_extensible(target: &crate::value::Value) -> crate::value::Value {
+    match target {
+        crate::value::Value::Object(properties) => {
+            let mut sealed = properties.as_ref().clone();
+            push_non_extensible(&mut sealed);
+            crate::value::Value::Object(std::rc::Rc::new(sealed))
+        }
+        crate::value::Value::Array(values) => {
+            let mut values = std::rc::Rc::clone(values);
+            std::rc::Rc::make_mut(&mut values)
+                .set_property(NON_EXTENSIBLE, crate::value::Value::Boolean(true));
+            crate::value::Value::Array(values)
+        }
+        crate::value::Value::Function(function) => {
+            mark_properties(&mut function.properties.borrow_mut());
+            target.clone()
+        }
+        crate::value::Value::BoundFunction(bound) => {
+            mark_properties(&mut bound.properties.borrow_mut());
+            target.clone()
+        }
+        _ => target.clone(),
+    }
+}
+
+fn mark_properties(properties: &mut Vec<(String, crate::value::Value)>) {
+    if !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE) {
+        properties.push((
+            NON_EXTENSIBLE.to_string(),
+            crate::value::Value::Boolean(true),
+        ));
+    }
 }
 
 fn reject_restricted_property_write(
