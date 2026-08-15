@@ -69,6 +69,11 @@ impl LinkedModuleGraph {
         link_reexports(graph, &units)?;
         link_reexports(graph, &units)?;
         bind_imports(graph, &units, false)?;
+        for unit in units.values() {
+            for name in unit.export_names() {
+                unit.refresh_namespace_export(&name);
+            }
+        }
         Ok(Self { units })
     }
 
@@ -452,7 +457,13 @@ impl LinkedModule {
         let Some(namespace) = self.namespace.borrow().as_ref().cloned() else {
             return;
         };
-        let Some(cell) = self.linked_exports.borrow().get(name).cloned() else {
+        let Some(cell) = self
+            .linked_exports
+            .borrow()
+            .get(name)
+            .cloned()
+            .or_else(|| self.export_cell(name))
+        else {
             return;
         };
         let Value::Object(properties) = namespace.get() else {
