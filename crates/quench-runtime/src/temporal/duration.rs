@@ -233,6 +233,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         .unwrap_or_else(|| "halfExpand".into());
     let relative_to =
         options.and_then(|value| crate::execute::get_property_result(value, "relativeTo").ok());
+    validate_relative_era_year(relative_to.as_ref())?;
     let largest = options
         .and_then(|value| crate::execute::get_property_result(value, "largestUnit").ok())
         .and_then(|value| match value {
@@ -300,6 +301,22 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         return construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>());
     }
     Ok(Value::Object(object.clone()))
+}
+
+fn validate_relative_era_year(relative_to: Option<&Value>) -> Result<(), VmError> {
+    let Some(relative_to) = relative_to else {
+        return Ok(());
+    };
+    let Some(value) = crate::execute::get_property_result(relative_to, "eraYear").ok() else {
+        return Ok(());
+    };
+    let number = crate::conversion::to_number(&value)?;
+    if !number.is_finite() {
+        return Err(crate::value::error::throw_range_error(
+            "eraYear must be finite",
+        ));
+    }
+    Ok(())
 }
 
 fn relative_skipped_hours(relative_to: Option<&Value>) -> f64 {
