@@ -42,6 +42,11 @@ pub(crate) fn integrity_apply(
     let Some(target) = target else {
         return Err(crate::value::error::throw_type_error("Object expected"));
     };
+    if frozen && crate::builtins::is_module_namespace(target) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot freeze a module namespace object",
+        ));
+    }
     if matches!(target, crate::value::Value::Proxy(_)) {
         return crate::proxy::proxy_prevent_extensions(target);
     }
@@ -203,4 +208,3 @@ fn integrity_array_descriptor(
     ));
     descriptor_object(fields)
 }
-
