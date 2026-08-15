@@ -90,9 +90,15 @@ fn descriptor_flag_in(properties: &[(String, Value)], key: &str, field: &str) ->
 }
 
 fn complete_descriptor(descriptor: &[(String, Value)], current: &Value) -> Vec<(String, Value)> {
-    let accessor = descriptor
+    let requested_accessor = descriptor
         .iter()
         .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
+    let requested_data = descriptor
+        .iter()
+        .any(|(name, _)| matches!(name.as_str(), "value" | "writable"));
+    let current_accessor = descriptor_value(current, "get").is_some()
+        || descriptor_value(current, "set").is_some();
+    let accessor = requested_accessor || (!requested_data && current_accessor);
     let fields = if accessor {
         ["get", "set", "enumerable", "configurable"]
     } else {
