@@ -94,6 +94,23 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
         return checked_date_object(year, month, day);
     }
+    if parts.len() == 1 && date.len() == 11 && matches!(date.as_bytes()[0], b'+' | b'-') {
+        let year = date[1..7]
+            .parse::<i32>()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+        let year = if date.as_bytes()[0] == b'-' {
+            -year
+        } else {
+            year
+        };
+        let month = date[7..9]
+            .parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+        let day = date[9..]
+            .parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+        return checked_date_object(year, month, day);
+    }
     let (year, month, day) = parse_date_parts(&parts)?;
     checked_date_object(year, month, day)
 }
