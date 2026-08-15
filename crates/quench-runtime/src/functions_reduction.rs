@@ -409,8 +409,16 @@ pub(super) fn make(
     metadata: FunctionMetadata,
 ) -> crate::value::Value {
     let has_prototype = matches!(metadata.kind, FunctionKind::Generator)
-        || matches!(metadata.kind, FunctionKind::Ordinary) && !metadata.is_async;
+        || (metadata.kind == FunctionKind::Ordinary && !metadata.is_async);
     let value = make_function_value(code, params, captures, length, metadata);
+    if metadata.is_async && metadata.kind == FunctionKind::Ordinary {
+        if let crate::value::Value::Function(function) = &value {
+            function.properties.borrow_mut().push((
+                "\0prototype".to_string(),
+                crate::value::Value::Builtin(crate::ops::Builtin::AsyncFunctionPrototype),
+            ));
+        }
+    }
     attach_lexical_super(&value, metadata.kind);
     if has_prototype {
         attach_prototype(&value);
@@ -475,38 +483,70 @@ fn attach_prototype(value: &crate::value::Value) {
 }
 
 fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue>) {
-    let function_prototype = if function.is_async {
-        crate::ops::Builtin::AsyncGeneratorFunctionPrototype
+    let generator_parent = if function.is_async {
+        crate::ops::Builtin::AsyncGeneratorPrototype
     } else {
-        crate::ops::Builtin::GeneratorFunctionPrototype
+        crate::ops::Builtin::ObjectPrototype
     };
-    let instance =
-        crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![(
-            "\0prototype".to_string(),
-            crate::vm::current_realm_intrinsic(if function.is_async {
-                crate::ops::Builtin::AsyncGeneratorPrototype
-            } else {
-                crate::ops::Builtin::GeneratorPrototype
-            })
-            .unwrap_or_else(|| {
-                crate::value::Value::Builtin(if function.is_async {
-                    crate::ops::Builtin::AsyncGeneratorPrototype
-                } else {
-                    crate::ops::Builtin::GeneratorPrototype
-                })
-            }),
-        )])));
+    let mut generator_properties = vec![(
+        "\0prototype".to_string(),
+        crate::value::Value::Builtin(generator_parent),
+    )];
+    if function.is_async {
+        generator_properties.extend(async_generator_property("constructor", crate::value::Value::Builtin(crate::ops::Builtin::AsyncGeneratorFunctionPrototype), false));
+        generator_properties.extend(async_generator_property("next", crate::value::Value::Builtin(crate::ops::Builtin::AsyncGeneratorNext), true));
+        generator_properties.extend(async_generator_property("return", crate::value::Value::Builtin(crate::ops::Builtin::AsyncGeneratorReturn), true));
+        generator_properties.extend(async_generator_property("throw", crate::value::Value::Builtin(crate::ops::Builtin::AsyncGeneratorThrow), true));
+        generator_properties.extend(async_generator_property("Symbol.toStringTag", crate::value::Value::String("AsyncGenerator".into()), false));
+    }
+    let generator = crate::value::Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(generator_properties),
+    ));
+    let function_prototype =
+        crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+            ("prototype".to_string(), generator.clone()),
+            (
+                "\0prototype".to_string(),
+                crate::value::Value::Builtin(crate::ops::Builtin::FunctionPrototype),
+            ),
+        ])));
+    let instance_parent = if function.is_async {
+        crate::value::Value::Builtin(crate::ops::Builtin::AsyncGeneratorPrototype)
+    } else {
+        generator
+    };
+    let instance = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+        vec![("\0prototype".to_string(), instance_parent)],
+    )));
+    let internal_prototype = if function.is_async {
+        crate::value::Value::Builtin(crate::ops::Builtin::AsyncGeneratorFunctionPrototype)
+    } else {
+        function_prototype
+    };
     function.properties.borrow_mut().extend([
-        (
-            "\0prototype".to_string(),
-            crate::value::Value::Builtin(function_prototype),
-        ),
+        ("\0prototype".to_string(), internal_prototype),
         ("prototype".to_string(), instance.clone()),
         (
             crate::builtins::descriptor_key("prototype"),
             prototype_descriptor(instance),
         ),
     ]);
+}
+
+fn async_generator_property(
+    name: &str,
+    value: crate::value::Value,
+    writable: bool,
+) -> Vec<(String, crate::value::Value)> {
+    let descriptor = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+        vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), crate::value::Value::Boolean(writable)),
+            ("enumerable".to_string(), crate::value::Value::Boolean(false)),
+            ("configurable".to_string(), crate::value::Value::Boolean(true)),
+        ],
+    )));
+    vec![(name.to_string(), value), (crate::builtins::descriptor_key(name), descriptor)]
 }
 
 fn prototype_descriptor(value: crate::value::Value) -> crate::value::Value {

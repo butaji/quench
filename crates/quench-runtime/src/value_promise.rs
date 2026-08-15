@@ -8,6 +8,9 @@ pub(crate) enum PromiseContinuation {
         generator: Rc<GeneratorData>,
         result: Rc<PromiseData>,
     },
+    AsyncGeneratorQueue {
+        generator: Rc<GeneratorData>,
+    },
     Aggregate {
         aggregate: Rc<PromiseAggregate>,
         index: usize,

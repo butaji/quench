@@ -50,7 +50,10 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::BigInt(_)) => "BigInt",
         Some(Value::Array(_)) => "Array",
         Some(Value::Object(properties)) => {
-            if properties.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT) {
+            if properties
+                .iter()
+                .any(|(key, _)| key == crate::builtins::ERROR_SLOT)
+            {
                 return "Error";
             }
             boxed_object_tag(properties).unwrap_or("Object")
@@ -75,9 +78,11 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::Builtin(Builtin::StringPrototype)) => "String",
         Some(Value::Builtin(Builtin::SymbolPrototype)) => "Symbol",
         Some(Value::Builtin(Builtin::BigIntPrototype)) => "BigInt",
-        Some(Value::Builtin(Builtin::ErrorPrototype | Builtin::SuppressedErrorPrototype)) => {
-            "Object"
-        }
+        Some(Value::Builtin(
+            Builtin::ErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::SuppressedErrorPrototype,
+        )) => "Object",
         Some(Value::Builtin(_)) => "Function",
         Some(Value::Proxy(_)) => "Object",
         Some(Value::Promise(_)) => "Promise",
@@ -114,11 +119,15 @@ fn boxed_object_tag(properties: &crate::value::ObjectData) -> Option<&'static st
 
 pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
     match receiver {
-        Some(Value::Builtin(builtin)) => Value::String(format!("function {}() {{ [native code] }}", builtin_name(*builtin))),
+        Some(Value::Builtin(builtin)) => Value::String(format!(
+            "function {}() {{ [native code] }}",
+            builtin_name(*builtin)
+        )),
         Some(Value::BoundFunction(bound)) => match &bound.target {
-            Value::Builtin(builtin) => {
-                Value::String(format!("function {}() {{ [native code] }}", builtin_name(*builtin)))
-            }
+            Value::Builtin(builtin) => Value::String(format!(
+                "function {}() {{ [native code] }}",
+                builtin_name(*builtin)
+            )),
             _ => Value::String("function () { [native code] }".to_string()),
         },
         Some(Value::Function(_)) => Value::String("function () { [native code] }".to_string()),

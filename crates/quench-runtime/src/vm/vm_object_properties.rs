@@ -1,7 +1,7 @@
 fn object_alias_property(
     alias: &crate::value::ObjectAliasValue,
-    receiver: &Value,
     key: &str,
+    receiver: &Value,
 ) -> Value {
     alias
         .0

@@ -224,12 +224,48 @@ fn polish_number(value: f64) -> String {
 
 fn polish_word(unit: &str, style: &str, value: f64) -> String {
     if value.fract() != 0.0 {
-        return polish_fractional_word(unit, style);
+        return polish_fractional(unit, style).to_string();
     }
     let plural = polish_plural(value);
     if style != "long" {
         return polish_short_word(unit, style, plural);
     }
+    polish_long_word(unit, plural).to_string()
+}
+
+fn polish_fractional(unit: &str, style: &str) -> &'static str {
+    if style != "long" {
+        return polish_fractional_short(unit, style);
+    }
+    match unit {
+        "day" => "dnia",
+        "week" => "tygodnia",
+        "month" => "miesiąca",
+        "quarter" => "kwartału",
+        "year" => "roku",
+        "second" => "sekundy",
+        "minute" => "minuty",
+        "hour" => "godziny",
+        _ => "lat",
+    }
+}
+
+fn polish_fractional_short(unit: &str, style: &str) -> &'static str {
+    match unit {
+        "second" if style == "narrow" => "s",
+        "second" => "sek.",
+        "minute" => "min",
+        "hour" if style == "narrow" => "g.",
+        "hour" => "godz.",
+        "day" => "dnia",
+        "week" => "tyg.",
+        "month" => "mies.",
+        "quarter" => "kw.",
+        _ => "roku",
+    }
+}
+
+fn polish_long_word(unit: &str, plural: usize) -> &'static str {
     let words = match unit {
         "second" => ["sekundę", "sekundy", "sekund"],
         "minute" => ["minutę", "minuty", "minut"],
@@ -240,7 +276,7 @@ fn polish_word(unit: &str, style: &str, value: f64) -> String {
         "quarter" => ["kwartał", "kwartały", "kwartałów"],
         _ => ["rok", "lata", "lat"],
     };
-    words[plural].to_string()
+    words[plural]
 }
 
 fn polish_fractional_word(unit: &str, style: &str) -> String {

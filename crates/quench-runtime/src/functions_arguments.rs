@@ -218,18 +218,18 @@ pub(crate) fn execute_target(
                     crate::ops::Builtin::ErrorPrototypeStackGetter
                         | crate::ops::Builtin::ErrorPrototypeStackSetter
                 )
-            ) => match bound.target {
-                crate::value::Value::Builtin(builtin) => {
-                    let execute = || execute_builtin_target(builtin, Some(receiver), arguments);
-                    if let crate::value::Value::HostCapability(token) = &bound.receiver {
-                        crate::vm::with_realm(token.realm(), execute)
-                            .unwrap_or_else(|| Err(crate::vm::not_callable()))
-                    } else {
-                        execute()
-                    }
+            ) => {
+                let crate::value::Value::Builtin(builtin) = bound.target else {
+                    unreachable!()
+                };
+                let execute = || execute_builtin_target(builtin, Some(receiver), arguments);
+                if let crate::value::Value::HostCapability(token) = &bound.receiver {
+                    crate::vm::with_realm(token.realm(), execute)
+                        .unwrap_or_else(|| Err(crate::vm::not_callable()))
+                } else {
+                    execute()
                 }
-                _ => unreachable!(),
-            },
+            }
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(target, receiver, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
@@ -341,11 +341,7 @@ fn to_integer_or_infinity(value: f64) -> f64 {
     if value.is_infinite() {
         return f64::INFINITY;
     }
-    if value == -0.0 {
-        0.0
-    } else {
-        value.trunc()
-    }
+    if value == -0.0 { 0.0 } else { value.trunc() }
 }
 
 fn length_descriptor(length: f64) -> crate::value::Value {

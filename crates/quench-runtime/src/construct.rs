@@ -239,6 +239,9 @@ fn construct_builtin(
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         crate::ops::Builtin::DisposableStack => crate::disposable_stack::construct(),
         crate::ops::Builtin::AsyncDisposableStack => crate::disposable_stack::construct_async(),
+        crate::ops::Builtin::AbstractModuleSource => Err(crate::value::error::throw_type_error(
+            "AbstractModuleSource is abstract",
+        )),
         crate::ops::Builtin::FinalizationRegistry => {
             crate::finalization_registry::construct(arguments)
         }
@@ -542,19 +545,20 @@ fn construct_error(
         _ => "Error",
     };
 
+    let constructor =
+        crate::vm::intrinsic_for_realm(crate::vm::current_context_or_default().realm(), *builtin);
+    let prototype = crate::execute::get_property(&constructor, "prototype");
     let mut properties = vec![
+        (
+            crate::builtins::descriptor_key("name"),
+            error_data_descriptor(Value::String(name.to_string())),
+        ),
         ("name".to_string(), Value::String(name.to_string())),
         (
             crate::builtins::ERROR_SLOT.to_string(),
             Value::Boolean(true),
         ),
-        (
-            "\0prototype".to_string(),
-            Value::Builtin(
-                crate::builtin_meta::instance_prototype(*builtin)
-                    .unwrap_or(crate::ops::Builtin::ErrorPrototype),
-            ),
-        ),
+        ("\0prototype".to_string(), prototype),
     ];
     if let Some(message) = arguments
         .first()
@@ -564,6 +568,18 @@ fn construct_error(
             "message".to_string(),
             Value::String(crate::conversion::to_string(message)?),
         ));
+    }
+
+    if let Some(message) = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
+        let message = crate::conversion::to_string(message)?;
+        properties.push((
+            crate::builtins::descriptor_key("message"),
+            error_data_descriptor(Value::String(message.clone())),
+        ));
+        properties.push(("message".to_string(), Value::String(message)));
     }
 
     if let Some(cause_source) = arguments
@@ -584,18 +600,96 @@ fn construct_error(
                 non_enumerable_descriptor(value),
             ));
         }
+        let cause = crate::execute::get_property_result(&options, "cause")?;
+        properties.push((
+            crate::builtins::descriptor_key("cause"),
+            error_data_descriptor(cause.clone()),
+        ));
+        properties.push(("cause".to_string(), cause));
     }
 
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
 }
 
-fn non_enumerable_descriptor(value: &Value) -> Value {
+fn error_data_descriptor(value: Value) -> Value {
     Value::Object(std::rc::Rc::new(ObjectData::new(vec![
-        ("value".to_string(), value.clone()),
+        ("value".to_string(), value),
         ("writable".to_string(), Value::Boolean(true)),
         ("enumerable".to_string(), Value::Boolean(false)),
         ("configurable".to_string(), Value::Boolean(true)),
     ])))
+}
+
+fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let mut properties = error_properties(
+        "AggregateError",
+        crate::ops::Builtin::AggregateErrorPrototype,
+    );
+    properties
+        .retain(|(key, _)| key != "message" && key != &crate::builtins::descriptor_key("message"));
+    let message = arguments
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(crate::conversion::to_string)
+        .transpose()?
+        .map(Value::String);
+    if let Some(message) = message {
+        push_error_property(&mut properties, "message", message);
+    }
+    let errors = arguments
+        .first()
+        .ok_or_else(|| crate::value::error::throw_type_error("value is not iterable"))?;
+    let iterator_method = crate::execute::get_property_result(errors, "Symbol.iterator")?;
+    if matches!(iterator_method, Value::Undefined) && !matches!(errors, Value::Array(_)) {
+        return Err(crate::value::error::throw_type_error(
+            "value is not iterable",
+        ));
+    }
+    let iterator = crate::collections::iterator::open(errors.clone())?;
+    let mut values = Vec::new();
+    while let Some(value) = crate::collections::iterator::step_value(&iterator)? {
+        values.push(value);
+    }
+    push_error_property(&mut properties, "errors", Value::array(values));
+    if let Some(options) = arguments
+        .get(2)
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
+        let options = to_object(options)?;
+        if crate::with_scope::has_property(&options, "cause")? {
+            push_error_property(
+                &mut properties,
+                "cause",
+                crate::execute::get_property_result(&options, "cause")?,
+            );
+        }
+    }
+    Ok(Value::Object(Rc::new(ObjectData::new(properties))))
+}
+
+fn push_error_property(properties: &mut Vec<(String, Value)>, name: &str, value: Value) {
+    properties.push((name.to_string(), value.clone()));
+    properties.push((
+        crate::builtins::descriptor_key(name),
+        Value::Object(Rc::new(ObjectData::new(vec![
+            ("value".to_string(), value),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]))),
+    ));
+}
+
+fn error_properties(name: &str, prototype: crate::ops::Builtin) -> Vec<(String, Value)> {
+    let mut properties = Vec::new();
+    push_error_property(&mut properties, "name", Value::String(name.to_string()));
+    push_error_property(&mut properties, "message", Value::String(String::new()));
+    properties.push((
+        crate::builtins::ERROR_SLOT.to_string(),
+        Value::Boolean(true),
+    ));
+    properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
+    properties
 }
 
 fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {

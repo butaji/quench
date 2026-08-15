@@ -412,9 +412,13 @@ fn boxed_object(value: &Value) -> Value {
     Value::Object(Rc::new(ObjectData::new(properties)))
 }
 
-pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
-    let (name, constructor, prototype) = match builtin {
-        Builtin::RangeError => ("RangeError", Builtin::RangeError, Builtin::ErrorPrototype),
+pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
+    let (name, constructor, _prototype) = match builtin {
+        Builtin::RangeError => (
+            "RangeError",
+            Builtin::RangeError,
+            Builtin::RangeErrorPrototype,
+        ),
         Builtin::ReferenceError => (
             "ReferenceError",
             Builtin::ReferenceError,
@@ -442,15 +446,15 @@ pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         _ => ("Error", Builtin::Error, Builtin::ErrorPrototype),
     };
     let message = arguments.first().map_or_else(String::new, value_to_string);
-    let intrinsic = crate::vm::intrinsic_for_realm(
+    let constructor_value = crate::vm::intrinsic_for_realm(
         crate::vm::current_context_or_default().realm(),
         constructor,
     );
-    let prototype = crate::execute::get_property(&intrinsic, "prototype");
+    let prototype = crate::execute::get_property(&constructor_value, "prototype");
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
         ("message".to_string(), Value::String(message)),
-        ("constructor".to_string(), intrinsic),
+        ("constructor".to_string(), constructor_value),
         (ERROR_SLOT.to_string(), Value::Boolean(true)),
         ("\0prototype".to_string(), prototype),
     ];

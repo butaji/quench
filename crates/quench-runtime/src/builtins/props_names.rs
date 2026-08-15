@@ -20,12 +20,10 @@ fn typed_array_name(builtin: Builtin) -> Option<&'static str> {
 
 fn generator_name(builtin: Builtin) -> Option<&'static str> {
     Some(match builtin {
-        Builtin::GeneratorNext | Builtin::AsyncGeneratorNext => "next",
-        Builtin::GeneratorReturn | Builtin::AsyncGeneratorReturn => "return",
+        Builtin::GeneratorNext => "next", Builtin::GeneratorReturn => "return",
         Builtin::GeneratorThrow | Builtin::AsyncGeneratorThrow => "throw",
-        Builtin::AsyncIteratorDispose => "[Symbol.asyncDispose]",
-        Builtin::AsyncIteratorMethod => "[Symbol.asyncIterator]",
-        _ => return None,
+        Builtin::AsyncGeneratorNext => "next",
+        Builtin::AsyncGeneratorReturn => "return", _ => return None,
     })
 }
 

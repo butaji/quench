@@ -149,6 +149,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::NumberToExponential
             | Builtin::Object
             | Builtin::Date
+            | Builtin::ErrorPrototype
             | Builtin::Error
             | Builtin::RangeError
             | Builtin::ReferenceError
@@ -165,6 +166,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::ErrorPrototypeCauseGetter
             | Builtin::ErrorPrototypeStackGetter
             | Builtin::ErrorPrototypeStackSetter
+            | Builtin::AbstractModuleSourceToStringTagGetter
             | Builtin::WeakRefDeref
     )
 }
@@ -215,6 +217,9 @@ fn execute_simple_builtin(
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
             crate::number_fmt::number_format(receiver, arguments.first(), builtin)
         }
+        Builtin::ErrorPrototype => Err(crate::value::error::throw_type_error(
+            "Error.prototype is not callable",
+        )),
         Builtin::Error
         | Builtin::RangeError
         | Builtin::ReferenceError
@@ -259,6 +264,7 @@ fn error_builtin(
         Builtin::ErrorPrototypeNameGetter => Ok(error_name_getter(receiver)?),
         Builtin::ErrorPrototypeMessageGetter => Ok(error_message_getter(receiver)?),
         Builtin::ErrorPrototypeCauseGetter => Ok(error_cause_getter(receiver)?),
+        Builtin::AbstractModuleSourceToStringTagGetter => Ok(Value::Undefined),
         Builtin::ErrorPrototypeStackGetter => error_stack_getter(receiver),
         Builtin::ErrorPrototypeStackSetter => error_stack_setter(receiver, arguments),
         _ => Ok(Value::Undefined),
@@ -317,20 +323,9 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
             "Stack value must be a string",
         ));
     }
-    if !matches!(value, Value::Proxy(_)) {
-        if let Some(setter) = own_stack_setter(value)? {
+    if let Some(setter) = own_stack_setter(value)? {
         let argument = stack.clone();
         crate::functions::execute_target(&setter, value, std::slice::from_ref(&argument))?;
-        return Ok(Value::Undefined);
-        }
-    }
-    if matches!(value, Value::Proxy(_)) && proxy_has_own_stack(value)? {
-        let result = crate::proxy::proxy_set(value, "stack", stack, Some(value))?;
-        if matches!(result, Value::Boolean(false)) {
-            return Err(crate::value::error::throw_type_error(
-                "Proxy set trap returned false",
-            ));
-        }
         return Ok(Value::Undefined);
     }
     if matches!(value, Value::Proxy(_)) {
@@ -341,30 +336,18 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
     Ok(Value::Undefined)
 }
 
-fn proxy_has_own_stack(value: &Value) -> Result<bool, VmError> {
-    Ok(!matches!(
-        crate::proxy::proxy_get_own_property_descriptor(value, "stack")?,
-        Value::Undefined
-    ))
-}
-
 fn own_stack_setter(value: &Value) -> Result<Option<Value>, VmError> {
-    let descriptor = if matches!(value, Value::Proxy(_)) {
-        crate::proxy::proxy_get_own_property_descriptor(value, "stack")?
-    } else {
-        crate::builtins::object::descriptor(
-            Some(value),
-            Some(&Value::String("stack".to_string())),
-        )?
-    };
+    let descriptor = crate::builtins::object::descriptor(
+        Some(value),
+        Some(&Value::String("stack".to_string())),
+    )?;
     Ok(descriptor_field(&descriptor, "set"))
 }
 
 fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
     let key = Value::String("stack".to_string());
-    let current = crate::builtins::object::descriptor(Some(value), Some(&key))?;
-    let updated = if !matches!(current, Value::Undefined) {
-        let descriptor = current;
+    let descriptor = crate::builtins::object::descriptor(Some(value), Some(&key))?;
+    let updated = if !matches!(descriptor, Value::Undefined) {
         if let Some(setter) = descriptor_field(&descriptor, "set") {
             if matches!(setter, Value::Undefined) {
                 return Err(crate::value::error::throw_type_error(
@@ -380,33 +363,36 @@ fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
                 "Cannot assign to read only property 'stack'",
             ));
         }
-        if matches!(value, Value::Proxy(_)) {
-            let result = crate::proxy::proxy_set(value, "stack", &stack, Some(value))?;
-            if matches!(result, Value::Boolean(false)) {
-                return Err(crate::value::error::throw_type_error(
-                    "Proxy set trap returned false",
-                ));
-            }
-            return Ok(());
-        }
-        let descriptor = [("value".to_string(), stack)];
-        crate::builtins::define_own_property(value, "stack", &descriptor)?
+        crate::builtins::define_own_property(value, "stack", &[("value".to_string(), stack)])?
     } else {
         if !crate::properties::object_is_extensible(value) {
             return Err(crate::value::error::throw_type_error(
                 "Cannot add property 'stack'",
             ));
         }
-        let descriptor = [
-            ("value".to_string(), stack),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(true)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ];
-        crate::builtins::define_own_property(value, "stack", &descriptor)?
+        crate::builtins::define_own_property(
+            value,
+            "stack",
+            &[
+                ("value".to_string(), stack),
+                ("writable".to_string(), Value::Boolean(true)),
+                ("enumerable".to_string(), Value::Boolean(true)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ],
+        )?
     };
     crate::locals::replace_value(value, &updated);
     Ok(())
+}
+
+fn descriptor_field(descriptor: &Value, field: &str) -> Option<Value> {
+    let Value::Object(properties) = descriptor else {
+        return None;
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == field).then_some(value.clone()))
 }
 
 fn descriptor_field_is_false(descriptor: &Value, field: &str) -> bool {
@@ -419,16 +405,6 @@ fn descriptor_field_is_false(descriptor: &Value, field: &str) -> bool {
                 .find(|(name, _)| name == field)
                 .is_some_and(|(_, value)| matches!(value, Value::Boolean(false)))
     )
-}
-
-fn descriptor_field(descriptor: &Value, field: &str) -> Option<Value> {
-    let Value::Object(properties) = descriptor else {
-        return None;
-    };
-    properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == field).then_some(value.clone()))
 }
 
 fn define_proxy_stack(value: &Value, stack: Value) -> Result<Value, VmError> {
@@ -446,6 +422,8 @@ fn define_proxy_stack(value: &Value, stack: Value) -> Result<Value, VmError> {
     }
     Ok(result)
 }
+
+
 
 fn set_error_stack_home() -> Option<Value> {
     let value = crate::execute::get_property(&crate::vm::current_global_object(), "Error");
@@ -506,7 +484,7 @@ fn error_to_string_property(value: &Value, key: &str) -> Result<Value, VmError> 
         return Ok(result);
     }
     let prototype = crate::builtins::object::get_prototype_of(Some(value))?;
-    if matches!(prototype, Value::Builtin(crate::ops::Builtin::ObjectPrototype)) {
+    if matches!(prototype, Value::Builtin(Builtin::ObjectPrototype)) {
         return Ok(Value::Undefined);
     }
     Ok(result)
