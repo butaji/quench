@@ -219,10 +219,14 @@ fn view_uint16_array(
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
+        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
         Some(value) => to_index(crate::conversion::to_number(value)?)?,
-        None => view_length(buffer, available / element_size),
     };
-    if arguments.get(2).is_some() && length > available / element_size {
+    if arguments
+        .get(2)
+        .is_some_and(|value| !matches!(value, Value::Undefined))
+        && length > available / element_size
+    {
         return Err(range_error("Invalid Uint16Array length"));
     }
     Ok(Value::Uint16Array(Rc::new(
@@ -275,10 +279,14 @@ fn view_uint32_array(
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
+        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
         Some(value) => to_index(crate::conversion::to_number(value)?)?,
-        None => view_length(buffer, available / element_size),
     };
-    if arguments.get(2).is_some() && length > available / element_size {
+    if arguments
+        .get(2)
+        .is_some_and(|value| !matches!(value, Value::Undefined))
+        && length > available / element_size
+    {
         return Err(range_error("Invalid Uint32Array length"));
     }
     Ok(Value::Uint32Array(Rc::new(
@@ -367,10 +375,14 @@ fn view_uint8_clamped_array(
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
+        None | Some(Value::Undefined) => view_length(buffer, available),
         Some(value) => to_index(crate::conversion::to_number(value)?)?,
-        None => view_length(buffer, available),
     };
-    if arguments.get(2).is_some() && length > available {
+    if arguments
+        .get(2)
+        .is_some_and(|value| !matches!(value, Value::Undefined))
+        && length > available
+    {
         return Err(range_error("Invalid Uint8ClampedArray length"));
     }
     Ok(Value::Uint8ClampedArray(Rc::new(
@@ -403,10 +415,14 @@ fn view_uint8_array(
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
+        None | Some(Value::Undefined) => view_length(buffer, available),
         Some(value) => to_index(crate::conversion::to_number(value)?)?,
-        None => view_length(buffer, available),
     };
-    if arguments.get(2).is_some() && length > available {
+    if arguments
+        .get(2)
+        .is_some_and(|value| !matches!(value, Value::Undefined))
+        && length > available
+    {
         return Err(range_error("Invalid Uint8Array length"));
     }
     Ok(Value::Uint8Array(Rc::new(
