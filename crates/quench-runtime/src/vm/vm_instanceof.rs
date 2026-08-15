@@ -72,6 +72,7 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         (Value::Array(values), Builtin::Array) if !values.is_arguments() => true,
         (Value::BigInt64Array(_), Builtin::BigInt64Array)
         | (Value::BigUint64Array(_), Builtin::BigUint64Array)
+        | (Value::Uint8Array(_), Builtin::Uint8Array)
         | (Value::Promise(_), Builtin::Promise) => true,
         (Value::Object(properties), Builtin::Date)
             if properties.iter().any(|(name, _)| name == "timeValue") =>
@@ -86,6 +87,7 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         (Value::Map(data), Builtin::Map) if !data.weak => true,
         (Value::Map(data), Builtin::WeakMap) if data.weak => true,
         (Value::ArrayBuffer(data), Builtin::SharedArrayBuffer) if data.shared => true,
+        (Value::ArrayBuffer(data), Builtin::ArrayBuffer) if !data.shared => true,
         (Value::Set(_), Builtin::Set) => true,
         (Value::Set(data), Builtin::WeakSet) if data.weak => true,
         (Value::Object(properties), Builtin::WeakRef) => {
