@@ -46,6 +46,8 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateUntil => Some("Temporal.PlainDate.prototype.until"),
         Builtin::TemporalPlainDateSince => Some("Temporal.PlainDate.prototype.since"),
         Builtin::TemporalPlainTime => Some("Temporal.PlainTime"),
+        Builtin::TemporalPlainTimeFrom => Some("Temporal.PlainTime.from"),
+        Builtin::TemporalPlainTimeCompare => Some("Temporal.PlainTime.compare"),
         _ => None,
     }
 }
@@ -82,6 +84,8 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateUntil => Some("until"),
         Builtin::TemporalPlainDateSince => Some("since"),
         Builtin::TemporalPlainTime => Some("PlainTime"),
+        Builtin::TemporalPlainTimeFrom => Some("from"),
+        Builtin::TemporalPlainTimeCompare => Some("compare"),
         _ => None,
     }
 }
@@ -92,6 +96,8 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalDurationCompare => Some(2.0),
         Builtin::TemporalPlainDateFrom => Some(1.0),
         Builtin::TemporalPlainDateCompare => Some(2.0),
+        Builtin::TemporalPlainTimeFrom => Some(1.0),
+        Builtin::TemporalPlainTimeCompare => Some(2.0),
         Builtin::TemporalPlainDateToString | Builtin::TemporalPlainDateToJSON => Some(0.0),
         _ => None,
     }
