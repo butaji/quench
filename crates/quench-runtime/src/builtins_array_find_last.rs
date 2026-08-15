@@ -20,18 +20,22 @@ fn find_last(
     let Some(Value::Array(values)) = receiver else {
         return Err(crate::value::error::throw_type_error("Array method called on incompatible receiver"));
     };
+    let length = values.logical_len();
     let Some(callback) = arguments.first() else {
         return Err(crate::value::error::throw_type_error("predicate must be callable"));
     };
     if !crate::conversion::is_callable(callback) {
         return Err(crate::value::error::throw_type_error("predicate must be callable"));
     }
-    for index in (0..values.len()).rev() {
-        let value = values.get_index(index).unwrap_or(Value::Undefined);
+    for index in (0..length).rev() {
+        let current = crate::locals::resolved_replacement(
+            receiver.cloned().unwrap_or(Value::Undefined),
+        );
+        let value = crate::execute::get_property_result(&current, &index.to_string())?;
         let args = [
             value.clone(),
             Value::Number(index as f64),
-            receiver.cloned().unwrap_or(Value::Undefined),
+            current,
         ];
         if crate::execute::is_truthy(&crate::functions::execute_target(
             callback,

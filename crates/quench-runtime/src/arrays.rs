@@ -4,7 +4,7 @@ use crate::{
     value::Value,
 };
 use oxc::ast::ast::{ArrayExpression, ArrayExpressionElement};
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 type BuiltinResult = Option<Result<Value, crate::execute::VmError>>;
 
 pub(crate) fn execute_builtin(
@@ -24,8 +24,11 @@ pub(crate) fn execute_builtin(
     if let Some(result) = array_mutation_builtin(builtin, receiver, arguments) {
         return Some(result);
     }
+    if builtin == crate::ops::Builtin::ArrayFlat {
+        return Some(flat(receiver, arguments));
+    }
     use crate::ops::Builtin::*;
-    let result = match builtin {
+    match builtin {
         Array => return Some(Ok(crate::builtins::array(arguments))),
         ArrayIsArray => return Some(Ok(crate::builtins::is_array(arguments.first()))),
         ArrayFrom => return Some(from(receiver, arguments)),
@@ -39,19 +42,17 @@ pub(crate) fn execute_builtin(
         ArrayLastIndexOf => return Some(last_index_of(receiver, arguments)),
         ArraySlice => return Some(slice(receiver, arguments)),
         ArrayConcat => return Some(concat(receiver, arguments)),
-        ArrayFlat => flat(receiver, arguments),
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
-        ArrayAt => return Some(Ok(at(receiver, arguments))),
-        ArraySort => return Some(Ok(sort(receiver))),
-        ArrayToReversed => return Some(Ok(to_reversed(receiver))),
+        ArrayAt => return Some(at(receiver, arguments)),
+        ArraySort => return Some(sort(receiver, arguments)),
+        ArrayToReversed => return Some(to_reversed(receiver)),
         ArraySplice => return Some(Ok(splice(receiver, arguments))),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
         ArrayForEach => return Some(crate::builtins::array_for_each(receiver, arguments)),
         ArrayToLocaleString => return Some(array_to_locale_string(receiver, arguments)),
         _ => return None,
-    };
-    Some(Ok(result))
+    }
 }
 
 fn map_argument_error(
@@ -314,15 +315,24 @@ fn iterator_symbol_removed(key: &str) -> bool {
 
 include!("arrays_iterator.rs");
 
-fn sort(receiver: Option<&Value>) -> Value {
+fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    if let Some(comparefn) = arguments.first() {
+        if !matches!(comparefn, Value::Undefined) && !crate::conversion::is_callable(comparefn) {
+            return Err(crate::vm::not_callable());
+        }
+    }
     let Some(receiver @ Value::Array(values)) = receiver else {
-        return Value::Undefined;
+        return Ok(Value::Undefined);
     };
+    let length = values.logical_len();
     let mut sorted = values.to_vec();
     sorted.sort_by_key(|value| crate::intl::tolocale::value::to_string(Some(value)));
-    let result = Value::array(sorted);
+    let mut result = Value::array(sorted);
+    if let Value::Array(data) = &mut result {
+        Rc::make_mut(data).set_length(length);
+    }
     crate::locals::replace_value(receiver, &result);
-    result
+    Ok(result)
 }
 
 fn index(values: &crate::value::ArrayData, key: &str) -> Value {
@@ -332,10 +342,12 @@ fn index(values: &crate::value::ArrayData, key: &str) -> Value {
 }
 
 include!("arrays_iteration.rs");
-pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::Array(values)) = receiver else {
-        return Value::array(Vec::new());
-    };
+pub(crate) fn flat(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let source = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
+    let length = array_like_length(&source)?;
     let depth = arguments
         .first()
         .and_then(|value| match value {
@@ -343,53 +355,87 @@ pub(crate) fn flat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
             _ => None,
         })
         .unwrap_or(1);
-    Value::array(flatten(values, depth))
-}
-fn flatten(values: &[Value], depth: usize) -> Vec<Value> {
-    let mut result = Vec::new();
-    for value in values {
-        if depth > 0 {
-            if let Value::Array(nested) = value {
-                result.extend(flatten(nested, depth - 1));
-                continue;
-            }
-        }
-        result.push(value.clone());
-    }
-    result
+    let target = if matches!(source, Value::Array(_)) {
+        concat_species(&source)?.unwrap_or_else(|| Value::array(Vec::new()))
+    } else {
+        Value::array(Vec::new())
+    };
+    let (target, length) = flatten_into(target, &source, length, depth, None, 0)?;
+    crate::properties::assign_set_property(&target, "length", Value::Number(length as f64))
 }
 pub(crate) fn flat_map(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Array(values)) = receiver else {
+    if !arguments
+        .first()
+        .is_some_and(crate::conversion::is_callable)
+    {
+        return Err(crate::vm::not_callable());
+    }
+    let source = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
+    let length = array_like_length(&source)?;
+    let Some(callback) = arguments.first() else {
         return Ok(Value::array(Vec::new()));
     };
-    let Some(callback) = arguments.first() else {
-        return Ok(Value::Array(values.clone()));
+    let target = if matches!(source, Value::Array(_)) {
+        concat_species(&source)?.unwrap_or_else(|| Value::array(Vec::new()))
+    } else {
+        Value::array(Vec::new())
     };
-    let mut mapped = Vec::new();
-    for (index, value) in values.iter().enumerate() {
-        let args = [
-            value.clone(),
-            Value::Number(index as f64),
-            receiver.cloned().unwrap_or(Value::Undefined),
-        ];
-        let result = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
-        match result {
-            Value::Array(nested) => mapped.extend(nested.iter().cloned()),
-            value => mapped.push(value),
+    let (target, length) = flatten_into(target, &source, length, 0, Some(callback), 0)?;
+    crate::properties::assign_set_property(&target, "length", Value::Number(length as f64))
+}
+
+fn flatten_into(
+    mut target: Value,
+    source: &Value,
+    length: usize,
+    depth: usize,
+    mapper: Option<&Value>,
+    mut target_index: usize,
+) -> Result<(Value, usize), crate::execute::VmError> {
+    for source_index in 0..length {
+        let key = source_index.to_string();
+        if !crate::with_scope::has_property(source, &key)? {
+            continue;
+        }
+        let mut value = crate::execute::get_property_result(source, &key)?;
+        if let Some(mapper) = mapper {
+            value = crate::functions::execute_target(
+                mapper,
+                &Value::Undefined,
+                &[value, Value::Number(source_index as f64), source.clone()],
+            )?;
+        }
+        if depth > 0 && matches!(value, Value::Array(_)) {
+            let nested_length = array_like_length(&value)?;
+            (target, target_index) =
+                flatten_into(target, &value, nested_length, depth - 1, None, target_index)?;
+        } else {
+            target = write_result_element(target, target_index, value)?;
+            target_index += 1;
         }
     }
-    Ok(Value::array(mapped))
+    Ok((target, target_index))
 }
-pub(crate) fn at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+pub(crate) fn at(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    if receiver.is_none_or(|value| matches!(value, Value::Null | Value::Undefined)) {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.at called on null or undefined",
+        ));
+    }
     let Some(Value::Array(values)) = receiver else {
-        return Value::Undefined;
+        return Ok(Value::Undefined);
     };
-    let Some(Value::Number(number)) = arguments.first() else {
-        return Value::Undefined;
-    };
+    let number = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
     let index = number.trunc() as isize;
     let index = if index < 0 {
         values.len() as isize + index
@@ -397,18 +443,25 @@ pub(crate) fn at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         index
     };
     if index < 0 {
-        return Value::Undefined;
+        return Ok(Value::Undefined);
     }
-    values
+    Ok(values
         .get(index as usize)
         .cloned()
-        .unwrap_or(Value::Undefined)
+        .unwrap_or(Value::Undefined))
 }
-pub(crate) fn to_reversed(receiver: Option<&Value>) -> Value {
-    let Some(Value::Array(values)) = receiver else {
-        return Value::array(Vec::new());
-    };
-    Value::array(values.iter().rev().cloned().collect())
+pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let source = crate::construct::to_object(receiver.unwrap_or(&Value::Undefined))?;
+    let length = array_like_length(&source)?;
+    let mut reversed = Vec::with_capacity(length);
+    for index in (0..length).rev() {
+        let current = crate::locals::resolved_replacement(source.clone());
+        reversed.push(crate::execute::get_property_result(
+            &current,
+            &index.to_string(),
+        )?);
+    }
+    Ok(Value::array(reversed))
 }
 pub(crate) fn reduce_values(
     receiver: Option<&Value>,

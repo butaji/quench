@@ -168,6 +168,7 @@ pub(crate) fn execute_set_property(
         return write_failure(strict);
     }
     let value = crate::execute::read_register(registers, src)?.clone();
+    validate_array_length_write(&target, &key, &value)?;
     if matches!(target, crate::value::Value::Proxy(_)) {
         return assign_proxy_set(registers, object, &target, &key, value);
     }
@@ -192,17 +193,10 @@ pub(crate) fn execute_set_property(
         }
         return Ok(());
     }
-    if inherited_write_blocked(&target, &key) {
-        return write_failure(strict);
+    if is_primitive_property_target(&target) {
+        return set_primitive_property(registers, object, &target, &key, value, strict);
     }
-    if matches!(
-        target,
-        crate::value::Value::String(_)
-            | crate::value::Value::StringUnits(_)
-            | crate::value::Value::Number(_)
-            | crate::value::Value::Boolean(_)
-            | crate::value::Value::BigInt(_)
-    ) {
+    if inherited_write_blocked(&target, &key) {
         return write_failure(strict);
     }
     if let crate::value::Value::Builtin(builtin) = &target {
@@ -212,6 +206,58 @@ pub(crate) fn execute_set_property(
         return set_builtin_property(registers, object, &target, &key, value);
     }
     finish_property_write(registers, object, &target, &key, value);
+    Ok(())
+}
+
+fn validate_array_length_write(
+    target: &crate::value::Value,
+    key: &str,
+    value: &crate::value::Value,
+) -> Result<(), crate::execute::VmError> {
+    if !matches!(target, crate::value::Value::Array(values) if !values.is_arguments())
+        || key != "length"
+    {
+        return Ok(());
+    }
+    let length = crate::conversion::to_number(value)?;
+    if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > 4_294_967_295.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
+    }
+    Ok(())
+}
+
+fn is_primitive_property_target(target: &crate::value::Value) -> bool {
+    matches!(
+        target,
+        crate::value::Value::String(_)
+            | crate::value::Value::StringUnits(_)
+            | crate::value::Value::Number(_)
+            | crate::value::Value::Boolean(_)
+            | crate::value::Value::BigInt(_)
+    )
+}
+
+fn set_primitive_property(
+    registers: &mut Vec<crate::value::Value>,
+    object: u16,
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+    strict: bool,
+) -> Result<(), crate::execute::VmError> {
+    let boxed = crate::vm::to_object_value(target);
+    let constructor = crate::execute::get_property_result(&boxed, "constructor")?;
+    let prototype = crate::execute::get_property_result(&constructor, "prototype")?;
+    if !matches!(prototype, crate::value::Value::Proxy(_)) {
+        return write_failure(strict);
+    }
+    let result = crate::proxy::proxy_set(&prototype, key, &value, Some(&boxed))?;
+    if matches!(result, crate::value::Value::Boolean(false)) {
+        return write_failure(strict);
+    }
+    crate::execute::write_value(registers, object, target.clone());
     Ok(())
 }
 
@@ -392,10 +438,10 @@ fn reject_restricted_property_write(
 }
 
 fn inherited_write_blocked(target: &crate::value::Value, key: &str) -> bool {
-    // Prototype objects do not truly own `length`/`name`; assigning them
-    // creates an own property that shadows the callable metadata.
+    // Prototype and namespace objects do not truly own `length`/`name`;
+    // assigning them creates an own property that shadows callable metadata.
     let prototype_meta_key = matches!(key, "length" | "name")
-        && matches!(target, crate::value::Value::Builtin(builtin) if crate::builtin_meta::is_prototype(*builtin));
+        && matches!(&target, crate::value::Value::Builtin(_) if !crate::conversion::is_callable(target));
     if !prototype_meta_key
         && crate::builtins::descriptor_flag(target, key, "writable") == Some(false)
     {
