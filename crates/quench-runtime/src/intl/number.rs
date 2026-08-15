@@ -589,6 +589,14 @@ pub(crate) fn prototype_method(
 }
 
 fn validate_basic_options(raw: &RawOptions) -> Result<(), VmError> {
+    if !matches!(
+        raw.currency_display.as_str(),
+        "code" | "symbol" | "name" | "narrowSymbol"
+    ) {
+        return Err(crate::value::error::throw_range_error(
+            "invalid currencyDisplay",
+        ));
+    }
     if raw.grouping_invalid {
         return Err(crate::value::error::throw_range_error(
             "invalid useGrouping",
