@@ -170,7 +170,6 @@ fn dynamic_value(
 }
 
 fn function_source(arguments: &[Value], kind: FunctionKind, is_async: bool) -> String {
-    let body = arguments.last().map_or_else(String::new, to_string);
     let parameters = arguments
         .get(..arguments.len().saturating_sub(1))
         .unwrap_or_default()
@@ -178,6 +177,7 @@ fn function_source(arguments: &[Value], kind: FunctionKind, is_async: bool) -> S
         .map(to_string)
         .collect::<Vec<_>>()
         .join(",");
+    let body = arguments.last().map_or_else(String::new, to_string);
     let prefix = match (kind, is_async) {
         (FunctionKind::Generator, true) => "async function*",
         (FunctionKind::Generator, false) => "function*",
