@@ -38,6 +38,32 @@ fn named_default_function_has_a_default_export_cell() {
 }
 
 #[test]
+fn imported_named_default_function_is_callable() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import f from './entry.js'; export default function fName() { return 1; }"
+            .to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("entry.js"),
+        "import f from './entry.js'; export default function fName() { return 1; }"
+            .to_string(),
+    );
+    let linked = LinkedModuleGraph::compile_with_entry_prefix(
+        &mut graph,
+        Some(entry),
+        &[include_str!("../../../tests/test262/harness/assert.js")],
+    )
+    .expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    let cell = linked
+        .export_cell(entry, "default")
+        .expect("entry export");
+    assert!(matches!(cell.get(), Value::Function(_)));
+}
+
+#[test]
 fn json_module_exports_recursive_runtime_values() {
     let module =
         LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
