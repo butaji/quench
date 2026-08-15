@@ -104,6 +104,17 @@ impl ArrayData {
         self.length = self.length.max(index.saturating_add(1));
     }
 
+    pub(crate) fn append_live(&self, values: &[Value]) {
+        let Some(live) = &self.argument_live else {
+            return;
+        };
+        let mut live = live.borrow_mut();
+        for value in values {
+            let index = live.length;
+            set_live_index(&mut live, index, value.clone());
+        }
+    }
+
     pub(crate) fn values_mut(&mut self) -> &mut [Value] {
         &mut self.values
     }
