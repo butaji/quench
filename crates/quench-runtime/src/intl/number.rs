@@ -267,7 +267,8 @@ impl NumberOptions {
             rounding_increment: raw.rounding_increment.max(1.0) as u32,
             trailing_zero_display: raw.trailing_zero_display,
             sign_display: raw.sign_display,
-            minimum_significant_digits: significant_digits(raw.minimum_significant_digits),
+            minimum_significant_digits: significant_digits(raw.minimum_significant_digits)
+                .or_else(|| significant_digits(raw.maximum_significant_digits).map(|_| 1)),
             maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
                 .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
             rounding_priority: raw.rounding_priority,
@@ -931,6 +932,18 @@ impl NumberOptions {
             properties.push((
                 "unitDisplay".to_string(),
                 Value::String(self.unit_display.clone()),
+            ));
+        }
+        if let Some(value) = self.minimum_significant_digits {
+            properties.push((
+                "minimumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
+        if let Some(value) = self.maximum_significant_digits {
+            properties.push((
+                "maximumSignificantDigits".to_string(),
+                Value::Number(value as f64),
             ));
         }
         if self.notation == "compact" {
