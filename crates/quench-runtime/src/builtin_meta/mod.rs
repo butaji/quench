@@ -25,6 +25,7 @@ pub mod reflect;
 pub mod regexp;
 pub mod string;
 pub mod symbol;
+pub mod temporal;
 
 /// Returns the constructor name for a builtin.
 ///
