@@ -132,38 +132,30 @@ pub(crate) fn compact_scale(value: f64, locale: &str, display: &str) -> i32 {
 
 fn regional_scale(magnitude: i32, locale: &str, display: &str) -> i32 {
     if locale.starts_with("en-IN") {
-        return threshold_scale(magnitude, &[5, 3]);
+        return scale_from_thresholds(magnitude, &[(5, 5), (3, 3)]);
     }
     if locale.starts_with("ja") || locale.starts_with("zh") {
-        return threshold_scale(magnitude, &[8, 4]);
+        return scale_from_thresholds(magnitude, &[(8, 8), (4, 4)]);
     }
     if locale.starts_with("ko") {
-        return threshold_scale(magnitude, &[8, 4, 3]);
+        return scale_from_thresholds(magnitude, &[(8, 8), (4, 4), (3, 3)]);
     }
     if locale.starts_with("de") {
-        return if display == "long" {
-            threshold(magnitude, &[(6, 6), (3, 3)])
+        let thresholds: &[(i32, i32)] = if display == "long" {
+            &[(6, 6), (3, 3)]
         } else {
-            threshold(magnitude, &[(6, 6)])
+            &[(6, 6)]
         };
+        return scale_from_thresholds(magnitude, thresholds);
     }
-    threshold(magnitude, &[9, 6, 3])
+    scale_from_thresholds(magnitude, &[(9, 9), (6, 6), (3, 3)])
 }
 
-fn threshold(magnitude: i32, values: &[i32]) -> i32 {
-    values
-        .iter()
-        .copied()
-        .find(|threshold| magnitude >= *threshold)
-        .unwrap_or(0)
-}
-
-fn threshold_scale(magnitude: i32, thresholds: &[i32]) -> i32 {
+fn scale_from_thresholds(magnitude: i32, thresholds: &[(i32, i32)]) -> i32 {
     thresholds
         .iter()
-        .copied()
-        .find(|threshold| magnitude >= *threshold)
-        .unwrap_or(0)
+        .find(|(threshold, _)| magnitude >= *threshold)
+        .map_or(0, |(_, scale)| *scale)
 }
 
 pub(crate) fn compact_fraction_digits(value: f64) -> u32 {
@@ -211,6 +203,15 @@ fn korean_suffix(magnitude: i32) -> &'static str {
         8 => "억",
         4 => "만",
         3 => "천",
+        _ => "",
+    }
+}
+
+fn german_suffix(magnitude: i32, display: &str) -> &'static str {
+    match (magnitude, display) {
+        (6, "long") => " Millionen",
+        (3, "long") => " Tausend",
+        (6, _) => "\u{a0}Mio.",
         _ => "",
     }
 }

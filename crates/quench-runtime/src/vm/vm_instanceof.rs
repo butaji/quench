@@ -197,14 +197,41 @@ fn instanceof_callable(value: &Value) -> bool {
     }
 }
 
-fn prototype_chain_contains(value: &Value, expected: &Value) -> Result<bool, VmError> {
-    let mut current = crate::builtins::object::get_prototype_of(Some(value))?;
+fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
+    let mut current = internal_prototype(value).map(resolve_object_alias);
     for _ in 0..1_024 {
         if matches!(current, Value::Null) {
             return Ok(false);
         }
-        if crate::builtins::same_value(Some(&current), Some(expected)) {
-            return Ok(true);
+        current = internal_prototype(&prototype).map(resolve_object_alias);
+    }
+    false
+}
+
+fn resolve_object_alias(value: Value) -> Value {
+    let Value::ObjectAlias(alias) = value else {
+        return value;
+    };
+    let object = alias
+        .0
+        .borrow()
+        .upgrade()
+        .map(Value::Object)
+        .unwrap_or(Value::Null);
+    object
+}
+
+fn internal_prototype(value: &Value) -> Option<Value> {
+    if let Some(prototype) = crate::typed_array_prototype::get(value) {
+        return Some(prototype);
+    }
+    if let Some(prototype) = custom_object_prototype(value) {
+        return Some(prototype);
+    }
+    match value {
+        Value::Object(_) => Some(Value::Builtin(Builtin::ObjectPrototype)),
+        Value::Array(values) if values.is_arguments() => {
+            Some(Value::Builtin(Builtin::ObjectPrototype))
         }
         current = crate::builtins::object::get_prototype_of(Some(&current))?;
     }
