@@ -21,8 +21,6 @@ pub(crate) fn format_unit(text: &str, unit: Option<&str>, display: &str) -> Stri
     }
 }
 
-use crate::{intl::make_object, value::Value};
-
 fn part(kind: &str, value: &str) -> Value {
     make_object(vec![
         ("type".to_string(), Value::String(kind.to_string())),
