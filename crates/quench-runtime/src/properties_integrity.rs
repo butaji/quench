@@ -14,6 +14,12 @@ pub(crate) fn integrity_level(
     if object_is_extensible(target) {
         return Ok(crate::value::Value::Boolean(false));
     }
+    if matches!(
+        target,
+        crate::value::Value::Function(_) | crate::value::Value::BoundFunction(_)
+    ) {
+        return Ok(crate::value::Value::Boolean(true));
+    }
     Ok(crate::value::Value::Boolean(integrity_props(
         target, frozen,
     )))
@@ -51,7 +57,37 @@ pub(crate) fn integrity_apply(
             Ok(replace_object(target, sealed))
         }
         crate::value::Value::Array(values) => Ok(integrity_array(values, target, frozen)),
+        crate::value::Value::Function(function) => {
+            let mut properties = function.properties.borrow_mut();
+            integrity_function(&mut properties, frozen);
+            Ok(target.clone())
+        }
+        crate::value::Value::BoundFunction(bound) => {
+            let mut properties = bound.properties.borrow_mut();
+            integrity_function(&mut properties, frozen);
+            Ok(target.clone())
+        }
         _ => Ok(target.clone()),
+    }
+}
+
+fn integrity_function(properties: &mut crate::value::ObjectProperties, frozen: bool) {
+    let keys: Vec<String> = properties
+        .iter()
+        .map(|(name, _)| name.clone())
+        .filter(|name| !name.starts_with('\0') && !crate::builtins::is_descriptor_key(name))
+        .collect();
+    for key in keys {
+        let metadata_key = crate::builtins::descriptor_key(&key);
+        let metadata = integrity_descriptor(properties, &metadata_key, frozen);
+        properties.retain(|(name, _)| name != &metadata_key);
+        properties.push((metadata_key, metadata));
+    }
+    if !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE) {
+        properties.push((
+            NON_EXTENSIBLE.to_string(),
+            crate::value::Value::Boolean(true),
+        ));
     }
 }
 
