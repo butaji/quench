@@ -37,6 +37,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringReplace => Some("String.prototype.replace"),
         Builtin::StringReplaceAll => Some("String.prototype.replaceAll"),
         Builtin::StringSearch => Some("String.prototype.search"),
+        Builtin::StringLocaleCompare => Some("String.prototype.localeCompare"),
         Builtin::StringMatch => Some("String.prototype.match"),
         Builtin::StringToLocaleLowerCase => Some("String.prototype.toLocaleLowerCase"),
         Builtin::StringToLocaleUpperCase => Some("String.prototype.toLocaleUpperCase"),
