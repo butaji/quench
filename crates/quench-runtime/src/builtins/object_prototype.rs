@@ -63,7 +63,18 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::BigInt64Array(_) => Value::Builtin(Builtin::BigInt64ArrayPrototype),
         Value::BigUint64Array(_) => Value::Builtin(Builtin::BigUint64ArrayPrototype),
         _ => Value::Null,
-    }
+    };
+    result
+}
+
+fn function_prototype(function: &crate::value::FunctionValue) -> Value {
+    let builtin = match (function.kind, function.is_async) {
+        (crate::ops::FunctionKind::Generator, true) => Builtin::AsyncGeneratorFunctionPrototype,
+        (crate::ops::FunctionKind::Generator, false) => Builtin::GeneratorFunctionPrototype,
+        (_, true) => Builtin::AsyncFunctionPrototype,
+        (_, false) => Builtin::FunctionPrototype,
+    };
+    internal_prototype(&function.properties.borrow(), builtin)
 }
 
 fn slot_prototype(value: &Value) -> Option<Value> {

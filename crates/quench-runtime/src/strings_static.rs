@@ -2,7 +2,10 @@ fn from_code_point(arguments: &[Value]) -> Result<Value, crate::execute::VmError
     let mut result = String::new();
     for value in arguments {
         let number = crate::intl::tolocale::value::to_number_result(Some(value))?;
-        if !number.is_finite() || number.fract() != 0.0 || !(0.0..=0x10ffff as f64).contains(&number) {
+        if !number.is_finite()
+            || number.fract() != 0.0
+            || !(0.0..=0x10ffff as f64).contains(&number)
+        {
             return Err(crate::value::error::throw_range_error("Invalid code point"));
         }
         let character = char::from_u32(number as u32)
@@ -13,12 +16,17 @@ fn from_code_point(arguments: &[Value]) -> Result<Value, crate::execute::VmError
 }
 
 fn raw(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let template = arguments.first().ok_or_else(|| {
-        crate::value::error::throw_type_error("String.raw requires a template")
-    })?;
+    let template = arguments
+        .first()
+        .ok_or_else(|| crate::value::error::throw_type_error("String.raw requires a template"))?;
     let raw = crate::execute::get_property_result(template, "raw")?;
-    let length = crate::conversion::to_number(&crate::execute::get_property_result(&raw, "length")?)?;
-    let length = if !length.is_finite() || length <= 0.0 { 0 } else { length.floor() as usize };
+    let length =
+        crate::conversion::to_number(&crate::execute::get_property_result(&raw, "length")?)?;
+    let length = if !length.is_finite() || length <= 0.0 {
+        0
+    } else {
+        length.floor() as usize
+    };
     let mut result = String::new();
     for index in 0..length {
         if index > 0 {

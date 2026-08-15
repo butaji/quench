@@ -45,6 +45,64 @@ pub(crate) fn read_descriptor_value(builtin: Builtin, key: &str) -> Option<Value
         .map(|(_, value)| value.clone())
 }
 
+pub(crate) fn aggregate_error_prototype() -> Value {
+    if let Some(value) = read_descriptor_value(Builtin::AggregateError, "prototype") {
+        return value;
+    }
+    let constructor = crate::vm::current_realm_intrinsic(Builtin::AggregateError)
+        .unwrap_or(Value::Builtin(Builtin::AggregateError));
+    let value = Value::Object(Rc::new(ObjectData::new(vec![
+        ("constructor".to_string(), constructor.clone()),
+        (
+            descriptor_key("constructor"),
+            Value::Object(Rc::new(ObjectData::new(vec![
+                ("value".to_string(), constructor),
+                ("writable".to_string(), Value::Boolean(true)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]))),
+        ),
+        (
+            "name".to_string(),
+            Value::String("AggregateError".to_string()),
+        ),
+        (
+            descriptor_key("name"),
+            Value::Object(Rc::new(ObjectData::new(vec![
+                (
+                    "value".to_string(),
+                    Value::String("AggregateError".to_string()),
+                ),
+                ("writable".to_string(), Value::Boolean(true)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]))),
+        ),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(Builtin::ErrorPrototype),
+        ),
+        ("message".to_string(), Value::String(String::new())),
+        (
+            descriptor_key("message"),
+            Value::Object(Rc::new(ObjectData::new(vec![
+                ("value".to_string(), Value::String(String::new())),
+                ("writable".to_string(), Value::Boolean(true)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]))),
+        ),
+    ])));
+    let descriptor = Value::Object(Rc::new(ObjectData::new(vec![
+        ("value".to_string(), value.clone()),
+        ("writable".to_string(), Value::Boolean(false)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(false)),
+    ])));
+    write_intrinsic_override(Builtin::AggregateError, "prototype", descriptor);
+    value
+}
+
 pub(crate) fn write_intrinsic_override(builtin: Builtin, key: &str, descriptor: Value) {
     overrides::write(builtin, key, descriptor)
 }

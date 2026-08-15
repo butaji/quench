@@ -2,7 +2,7 @@
 
 use crate::{execute::VmError, value::Value};
 
-use super::{canonicalize, make_array, make_object, runtime_error, slot_string, to_string_value};
+use super::{canonicalize, make_array, make_object, runtime_error, slot_string};
 
 pub(crate) struct Locale {
     pub language: String,
@@ -116,7 +116,7 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
     }
 }
 
-fn calendar_alias(value: &str) -> String {
+pub(crate) fn calendar_alias(value: &str) -> String {
     match value {
         "islamicc" => "islamic-civil".to_string(),
         other => canonicalize(other).unwrap_or_else(|_| other.to_string()),
