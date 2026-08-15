@@ -60,6 +60,17 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::RegExp => Some("RegExp"),
         Builtin::String => Some("String"),
         Builtin::Symbol => Some("Symbol"),
+        Builtin::Float64Array => Some("Float64Array"),
+        Builtin::Float32Array => Some("Float32Array"),
+        Builtin::Int8Array => Some("Int8Array"),
+        Builtin::Int16Array => Some("Int16Array"),
+        Builtin::Int32Array => Some("Int32Array"),
+        Builtin::Uint8Array => Some("Uint8Array"),
+        Builtin::Uint8ClampedArray => Some("Uint8ClampedArray"),
+        Builtin::Uint16Array => Some("Uint16Array"),
+        Builtin::Uint32Array => Some("Uint32Array"),
+        Builtin::BigInt64Array => Some("BigInt64Array"),
+        Builtin::BigUint64Array => Some("BigUint64Array"),
         Builtin::ShadowRealm => Some("ShadowRealm"),
         Builtin::TypeError
         | Builtin::Error
