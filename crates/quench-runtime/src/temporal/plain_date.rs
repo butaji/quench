@@ -579,6 +579,11 @@ fn make_date_reject(year: f64, month: f64, day: f64) -> Result<Value, VmError> {
 
 fn make_date(year: f64, month: f64, day: f64, options: Option<&Value>) -> Result<Value, VmError> {
     let max = days_in_month(year, month)?;
+    let outside_temporal_range = (year == -271821.0 && (month < 4.0 || month == 4.0 && day < 19.0))
+        || (year == 275760.0 && (month > 9.0 || month == 9.0 && day > 13.0));
+    if outside_temporal_range {
+        return Err(crate::value::error::throw_range_error("Invalid date"));
+    }
     if day <= 0.0
         || day > max
         || (year == -271821.0 && (month < 4.0 || (month == 4.0 && day < 19.0)))
