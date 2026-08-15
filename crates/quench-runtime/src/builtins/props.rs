@@ -70,6 +70,22 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainTime, "from") => Some(Value::Builtin(TemporalPlainTimeFrom)),
         (TemporalPlainTime, "compare") => Some(Value::Builtin(TemporalPlainTimeCompare)),
         (TemporalPlainTimePrototype, "constructor") => Some(Value::Builtin(TemporalPlainTime)),
+        (TemporalPlainTimePrototype, "hour") => Some(Value::Builtin(TemporalPlainTimeHourGetter)),
+        (TemporalPlainTimePrototype, "minute") => {
+            Some(Value::Builtin(TemporalPlainTimeMinuteGetter))
+        }
+        (TemporalPlainTimePrototype, "second") => {
+            Some(Value::Builtin(TemporalPlainTimeSecondGetter))
+        }
+        (TemporalPlainTimePrototype, "millisecond") => {
+            Some(Value::Builtin(TemporalPlainTimeMillisecondGetter))
+        }
+        (TemporalPlainTimePrototype, "microsecond") => {
+            Some(Value::Builtin(TemporalPlainTimeMicrosecondGetter))
+        }
+        (TemporalPlainTimePrototype, "nanosecond") => {
+            Some(Value::Builtin(TemporalPlainTimeNanosecondGetter))
+        }
         (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
         (TemporalPlainDatePrototype, "toString") => Some(Value::Builtin(TemporalPlainDateToString)),
         (TemporalPlainDatePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainDateToJSON)),
