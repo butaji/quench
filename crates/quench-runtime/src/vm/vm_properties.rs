@@ -223,6 +223,12 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = special_property(value, key, receiver) {
         return result;
     }
+    if key == "stack"
+        && crate::vm::has_error_slot(value)
+        && !crate::vm::has_error_slot(receiver)
+    {
+        return Ok(Value::Undefined);
+    }
     let own_descriptor = crate::builtins::object::descriptor(
         Some(value),
         Some(&Value::String(key.to_string())),
