@@ -98,6 +98,7 @@ pub enum Op {
     CheckGlobalVar {
         name: String,
         is_lexical: bool,
+        is_eval: bool,
     },
     CreateGlobalFunction {
         name: String,
