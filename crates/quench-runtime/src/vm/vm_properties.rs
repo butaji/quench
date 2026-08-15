@@ -441,7 +441,7 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
         return bind_function_property(value, key);
     }
-    if crate::builtin_meta::is_prototype(builtin) {
+    if crate::builtin_meta::is_prototype(builtin) || builtin == Builtin::Intl {
         return crate::builtins::property(Builtin::ObjectPrototype, key);
     }
     let inherited = crate::builtins::property(Builtin::FunctionPrototype, key);
