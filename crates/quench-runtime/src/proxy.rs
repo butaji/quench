@@ -320,6 +320,7 @@ pub(crate) fn proxy_prevent_extensions(target: &Value) -> Result<Value, VmError>
             let result = call_trap(&trap, slice::from_ref(&proxy.target), None)?;
             return Ok(Value::Boolean(crate::execute::is_truthy(&result)));
         }
+        crate::properties::prevent_extensions(Some(&proxy.target))?;
         return Ok(Value::Boolean(true));
     }
     require_reflect_object(target)?;
