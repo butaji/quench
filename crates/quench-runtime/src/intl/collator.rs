@@ -71,7 +71,11 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ) {
                 return Err(runtime_error("RangeError: invalid collation"));
             }
-            if requested != "pinyin" {
+            if requested == "pinyin" {
+                if locale.starts_with("zh") {
+                    collation = requested;
+                }
+            } else {
                 collation = requested;
                 if matches!(collation.as_str(), "eor" | "default") {
                     locale = strip_unicode_key(&locale, "co");
