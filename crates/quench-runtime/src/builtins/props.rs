@@ -83,8 +83,12 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (AsyncGeneratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("AsyncGenerator".into()))
         }
-        (AsyncGeneratorPrototype, "Symbol.asyncIterator") => Some(Value::Builtin(AsyncIteratorSelf)),
-        (AsyncGeneratorPrototype, "Symbol.asyncDispose") => Some(Value::Builtin(AsyncIteratorDispose)),
+        (AsyncGeneratorPrototype, "Symbol.asyncIterator") => {
+            Some(Value::Builtin(AsyncIteratorSelf))
+        }
+        (AsyncGeneratorPrototype, "Symbol.asyncDispose") => {
+            Some(Value::Builtin(AsyncIteratorDispose))
+        }
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
@@ -548,7 +552,7 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     }
 }
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
-    if key == "prototype" {
+    if key == "prototype" && !matches!(_builtin, Builtin::AsyncGeneratorFunctionPrototype) {
         return false;
     }
     if crate::builtins::object::is_well_known_symbol_property(_builtin, key) {
@@ -578,13 +582,8 @@ fn builtin_length(builtin: Builtin) -> f64 {
     }
     match builtin {
         Escape | Unescape | EncodeURI | EncodeURIComponent | DecodeURI | DecodeURIComponent
-        | DateSetYear
-        | GeneratorNext
-        | GeneratorReturn
-        | GeneratorThrow
-        | AsyncGeneratorNext
-        | AsyncGeneratorReturn
-        | AsyncGeneratorThrow => 1.0,
+        | DateSetYear | GeneratorNext | GeneratorReturn | GeneratorThrow | AsyncGeneratorNext
+        | AsyncGeneratorReturn | AsyncGeneratorThrow => 1.0,
         ArrayBuffer => 1.0,
         Object => 1.0,
         Float64Array => 3.0,
