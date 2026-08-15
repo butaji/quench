@@ -7,7 +7,7 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
         ],
         Builtin::TemporalDuration => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalInstant => &["length", "name", "prototype", "from"],
-        Builtin::TemporalInstantPrototype => &["constructor", "epochNanoseconds", "toString", "toJSON", "equals"],
+        Builtin::TemporalInstantPrototype => &["constructor", "epochNanoseconds", "toString", "toJSON", "equals", "add", "subtract"],
         Builtin::TemporalZonedDateTime => &["length", "name", "prototype"],
         Builtin::TemporalZonedDateTimePrototype => &["constructor"],
         Builtin::TemporalDurationPrototype => &[
