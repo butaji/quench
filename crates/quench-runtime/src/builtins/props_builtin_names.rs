@@ -10,7 +10,6 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         RegExp => "RegExp", RegExpTest => "test", RegExpExec => "exec", _ => "",
     }
 }
-
 fn metadata_builtin_name(builtin: Builtin) -> Option<&'static str> {
     crate::builtin_meta::methods::short_name(builtin)
         .or_else(|| crate::builtin_meta::methods::function_name(builtin))

@@ -31,7 +31,7 @@ thread_local! {
 }
 
 /// Drains all queued microtasks.
-pub(crate) fn drain_microtasks() {
+pub fn drain_microtasks() {
     while let Some(promise) = MICROTASK_QUEUE.with(|q| q.borrow_mut().pop_front()) {
         process_promise(&promise);
     }
@@ -270,6 +270,10 @@ fn resolve_value(value: Value) -> Value {
         return value;
     }
     let promise = Rc::new(PromiseData::default());
+    if !crate::value::is_object(&value) {
+        resolve_promise(&promise, value);
+        return Value::Promise(promise);
+    }
     let then = match crate::execute::get_property_result(&value, "then") {
         Ok(then) => then,
         Err(VmError::Thrown(reason)) => {
