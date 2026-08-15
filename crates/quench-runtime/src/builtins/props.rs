@@ -58,6 +58,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     match (builtin, key) {
         (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
+        (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
+        (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
         (TemporalDurationPrototype, "constructor") => Some(Value::Builtin(TemporalDuration)),
         (IntlCollatorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.Collator".into()))
