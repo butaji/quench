@@ -56,6 +56,9 @@ fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "Symbol.iterator" {
         return Some(Value::Builtin(IteratorSelf));
     }
+    if builtin == IteratorPrototype && key == "toArray" {
+        return Some(Value::Builtin(IteratorToArray));
+    }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);
     }

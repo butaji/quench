@@ -56,6 +56,16 @@ pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError
     open(value)
 }
 
+pub(crate) fn to_array(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let receiver = receiver.ok_or_else(not_iterable)?;
+    let iterator = if matches!(receiver, Value::Generator(_)) {
+        open(receiver.clone())?
+    } else {
+        from(std::slice::from_ref(receiver))?
+    };
+    Ok(Value::array(collect_rest(&iterator)?))
+}
+
 pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let branded = matches!(receiver, Some(Value::Iterator(data)) if matches!(
         &*data.state.borrow(), IteratorState::String { .. }
