@@ -109,7 +109,17 @@ fn bound_function_fallback(
     if let Value::Builtin(builtin) = bound.target {
         let intrinsic = match (builtin, key) {
             (Builtin::AsyncFunction, "prototype") => Some(Builtin::AsyncFunctionPrototype),
+            (Builtin::GeneratorFunction, "prototype") => Some(Builtin::GeneratorFunctionPrototype),
+            (Builtin::AsyncGeneratorFunction, "prototype") => {
+                Some(Builtin::AsyncGeneratorFunctionPrototype)
+            }
             (Builtin::AsyncFunctionPrototype, "constructor") => Some(Builtin::AsyncFunction),
+            (Builtin::GeneratorFunctionPrototype, "constructor") => {
+                Some(Builtin::GeneratorFunction)
+            }
+            (Builtin::AsyncGeneratorFunctionPrototype, "constructor") => {
+                Some(Builtin::AsyncGeneratorFunction)
+            }
             _ => None,
         };
         if let Some(intrinsic) = intrinsic {
