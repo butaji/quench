@@ -439,6 +439,9 @@ fn reduce_this_atom(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> u16 {
+    if locals.contains_key(super::reduce_statements::MODULE_THIS_SLOT) {
+        return crate::reduce_support::emit_undefined(ops, next_register);
+    }
     if let Some(slot) = locals
         .get("this")
         .or_else(|| locals.get(SCRIPT_THIS_SLOT))

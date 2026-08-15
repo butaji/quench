@@ -84,6 +84,7 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
         };
         facts.install_reduction_source(source);
         facts.install_fact_sites(analysis.fact_sites);
+        state.set_source_type(unit.source_type);
         last = state.append(&parsed.program.body, &mut facts, unit.program_scope)?;
         facts.finish_reduction();
         merge_facts(&mut facts_out, facts);
