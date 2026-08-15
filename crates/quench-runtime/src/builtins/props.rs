@@ -104,6 +104,8 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ArrayBufferPrototype, "resizable") => Some(ArrayBufferResizableGetter),
         (ArrayBufferPrototype, "slice") => Some(ArrayBufferSlice),
         (ArrayBufferPrototype, "resize") => Some(ArrayBufferResize),
+        (ArrayBufferPrototype, "transfer") => Some(ArrayBufferTransfer),
+        (ArrayBufferPrototype, "transferToFixedLength") => Some(ArrayBufferTransferToFixedLength),
         (ArrayBufferPrototype, "transferToImmutable") => Some(ArrayBufferTransferToImmutable),
         (ArrayBufferPrototype, "sliceToImmutable") => Some(ArrayBufferSliceToImmutable),
         (SharedArrayBufferPrototype, "constructor") => Some(SharedArrayBuffer),

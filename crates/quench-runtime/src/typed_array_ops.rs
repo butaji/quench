@@ -161,6 +161,8 @@ pub(crate) fn execute(
         | Builtin::Uint8ArraySubarray => {
             crate::typed_array_base64::execute(builtin, receiver, arguments)
         }
+        Builtin::ArrayBufferTransfer => Some(transfer(receiver, arguments, false)),
+        Builtin::ArrayBufferTransferToFixedLength => Some(transfer(receiver, arguments, true)),
         Builtin::ArrayBufferTransferToImmutable => Some(transfer_to_immutable(receiver)),
         Builtin::ArrayBufferSliceToImmutable => {
             Some(crate::vm::slice_to_immutable(receiver, arguments))
@@ -178,6 +180,39 @@ fn transfer_to_immutable(receiver: Option<&Value>) -> Result<Value, VmError> {
     Ok(Value::ArrayBuffer(std::rc::Rc::new(
         buffer.transfer_to_immutable(),
     )))
+}
+
+fn transfer(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    fixed_length: bool,
+) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "transfer requires an ArrayBuffer",
+        ));
+    };
+    if buffer.shared || buffer.immutable || *buffer.detached.borrow() {
+        return Err(crate::value::error::throw_type_error(
+            "ArrayBuffer is not transferable",
+        ));
+    }
+    let old_length = buffer.byte_length();
+    let new_length = match arguments.first() {
+        None | Some(Value::Undefined) => old_length,
+        Some(value) => {
+            crate::construct::to_index(crate::intl::tolocale::value::to_number_result(value)?)?
+        }
+    };
+    let bytes = buffer.bytes.borrow().clone();
+    let mut result = crate::value::ArrayBufferData::new(new_length);
+    let copy_length = bytes.len().min(new_length);
+    result.bytes.borrow_mut()[..copy_length].copy_from_slice(&bytes[..copy_length]);
+    if !fixed_length {
+        result.max_byte_length = buffer.max_byte_length;
+    }
+    buffer.detach();
+    Ok(Value::ArrayBuffer(std::rc::Rc::new(result)))
 }
 
 fn resize_buffer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
