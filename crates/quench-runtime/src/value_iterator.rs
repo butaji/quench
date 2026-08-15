@@ -5,6 +5,12 @@ pub struct IteratorData {
 
 #[derive(Debug, PartialEq)]
 pub enum IteratorState {
+    Concat {
+        items: Vec<(Value, Value)>,
+        index: usize,
+        current: Option<Value>,
+        done: bool,
+    },
     Mapped {
         iterator: Value,
         mapper: Value,
