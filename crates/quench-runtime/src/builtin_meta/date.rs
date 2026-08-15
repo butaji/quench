@@ -193,6 +193,13 @@ const fn fn_len_get_or_set(b: Builtin) -> Option<f64> {
         | DateSetMilliseconds
         | DateSetYear
         | DateSetUTCMilliseconds => Some(1.0),
+        _ => fn_len_setters(b),
+    }
+}
+
+const fn fn_len_setters(b: Builtin) -> Option<f64> {
+    use Builtin::*;
+    match b {
         DateSetMonth | DateSetUTCMonth => Some(2.0),
         DateSetFullYear | DateSetUTCFullYear => Some(3.0),
         DateSetHours | DateSetUTCHours => Some(4.0),

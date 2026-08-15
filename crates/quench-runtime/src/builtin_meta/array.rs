@@ -105,6 +105,12 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayToReversed
         | Builtin::ArrayJoin
         | Builtin::ArrayToLocaleString => Some(0.0),
+        _ => fn_len_tail(builtin),
+    }
+}
+
+const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
+    match builtin {
         Builtin::ArrayCopyWithin => Some(2.0),
         Builtin::ArraySlice | Builtin::ArraySplice => Some(2.0),
         Builtin::ArrayConcat => Some(1.0),
