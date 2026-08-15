@@ -46,6 +46,12 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "Symbol.iterator" {
         return Some(Value::Builtin(IteratorSelf));
     }
+    if builtin == IteratorPrototype && key == "constructor" {
+        return Some(Value::Builtin(IteratorPrototypeConstructorGetter));
+    }
+    if builtin == IteratorPrototype && key == "Symbol.toStringTag" {
+        return Some(Value::Builtin(IteratorPrototypeToStringTagGetter));
+    }
     if builtin == IteratorPrototype && key == "toArray" {
         return Some(Value::Builtin(IteratorToArray));
     }
@@ -188,8 +194,8 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
     match key {
         "Symbol.iterator" => Some(Value::Builtin(Builtin::IteratorSelf)),
         "toArray" => Some(Value::Builtin(Builtin::IteratorToArray)),
-        "Symbol.toStringTag" => Some(Value::String("Iterator".into())),
-        "constructor" => Some(Value::Builtin(Builtin::Iterator)),
+        "Symbol.toStringTag" => Some(Value::Builtin(Builtin::IteratorPrototypeToStringTagGetter)),
+        "constructor" => Some(Value::Builtin(Builtin::IteratorPrototypeConstructorGetter)),
         _ => None,
     }
 }
