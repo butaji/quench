@@ -1,12 +1,20 @@
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn names(target: Option<&Value>) -> Result<Value, VmError> {
-    let keys = keys(require_object(target)?, false);
+    let target = require_object(target)?;
+    if let Some(id) = crate::vm::deferred_namespace_operation(target) {
+        crate::vm::execute_deferred_module(id)?;
+    }
+    let keys = keys(target, false);
     Ok(Value::array(keys.into_iter().map(Value::String).collect()))
 }
 
 pub(crate) fn symbols(target: Option<&Value>) -> Result<Value, VmError> {
-    let keys = keys(require_object(target)?, true);
+    let target = require_object(target)?;
+    if let Some(id) = crate::vm::deferred_namespace_operation(target) {
+        crate::vm::execute_deferred_module(id)?;
+    }
+    let keys = keys(target, true);
     Ok(Value::array(keys.into_iter().map(Value::String).collect()))
 }
 
@@ -15,6 +23,9 @@ pub(crate) fn all(target: &Value) -> Result<Value, VmError> {
         return Err(crate::value::error::throw_type_error(
             "Reflect.ownKeys target must be an object",
         ));
+    }
+    if let Some(id) = crate::vm::deferred_namespace_operation(target) {
+        crate::vm::execute_deferred_module(id)?;
     }
     let mut values = keys(target, false);
     values.extend(keys(target, true));
@@ -25,6 +36,9 @@ pub(crate) fn all(target: &Value) -> Result<Value, VmError> {
 
 pub(crate) fn keys_result(target: Option<&Value>) -> Result<Value, VmError> {
     let target = require_object(target)?;
+    if let Some(id) = crate::vm::deferred_namespace_operation(target) {
+        crate::vm::execute_deferred_module(id)?;
+    }
     Ok(Value::array(
         own_enumerable_string_keys(target)
             .into_iter()
