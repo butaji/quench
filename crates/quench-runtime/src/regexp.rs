@@ -237,7 +237,6 @@ pub fn execute_builtin(
         Builtin::RegExpSymbolSplit => Some(symbol_split(receiver, arguments)),
         Builtin::RegExpSymbolMatchAll => Some(symbol_match_all(receiver, arguments)),
         Builtin::RegExpStringIteratorNext => Some(crate::collections::iterator::next(receiver)),
-        Builtin::StringIteratorNext => Some(crate::collections::iterator::next_string(receiver)),
         _ => None,
     }
 }

@@ -137,11 +137,6 @@ fn global_property(
     if key == "globalThis" {
         return Value::Object(properties.clone());
     }
-    if key == "constructor" {
-        return realm
-            .map(|realm| realm::intrinsic(realm, Builtin::Object).unwrap_or(Value::Builtin(Builtin::Object)))
-            .unwrap_or_else(|| crate::builtins::property(Builtin::ObjectPrototype, key));
-    }
     if realm.is_none() {
         if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
             return Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(binding)));
