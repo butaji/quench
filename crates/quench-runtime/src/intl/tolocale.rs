@@ -358,6 +358,9 @@ pub(crate) mod symbol {
                 "Symbol.keyFor requires a symbol",
             ));
         };
+        if value.starts_with("Symbol.") && !value.starts_with("Symbol.for.") {
+            return Ok(Value::Undefined);
+        }
         let Some(value) = value.strip_prefix("Symbol.for.") else {
             return if crate::conversion::is_symbol_string(value) {
                 Ok(Value::Undefined)

@@ -184,6 +184,7 @@ fn is_surrogate(code: u32) -> bool {
 
 pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
     match key {
+        "Symbol.iterator" => Some(crate::ops::Builtin::ArrayIterator),
         "includes" => Some(crate::ops::Builtin::StringIncludes),
         "isWellFormed" => Some(crate::ops::Builtin::StringIsWellFormed),
         "toWellFormed" => Some(crate::ops::Builtin::StringToWellFormed),

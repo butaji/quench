@@ -135,6 +135,11 @@ fn map_property(data: &crate::value::MapData, key: &str) -> Value {
 /// `Undefined`. Used to surface `constructor` and prototype methods for
 /// primitive values like `1`, `true`, and `null`-shaped access.
 fn primitive_prototype_property(value: &Value, key: &str) -> Value {
+    if let Value::String(symbol) = value {
+        if symbol.starts_with("Symbol.") && key == "description" {
+            return Value::String(symbol.clone());
+        }
+    }
     let prototype = match value {
         Value::Number(_) => Some(Value::Builtin(Builtin::NumberPrototype)),
         Value::Boolean(_) => Some(Value::Builtin(Builtin::BooleanPrototype)),
@@ -179,6 +184,14 @@ fn generator_property(value: &Value, key: &str) -> Value {
         "next" => crate::ops::Builtin::GeneratorNext,
         "return" => crate::ops::Builtin::GeneratorReturn,
         "throw" => crate::ops::Builtin::GeneratorThrow,
+        "toArray" => crate::ops::Builtin::IteratorToArray,
+        "drop" => crate::ops::Builtin::IteratorDrop,
+        "map" => crate::ops::Builtin::IteratorMap,
+        "every" => crate::ops::Builtin::IteratorEvery,
+        "some" => crate::ops::Builtin::IteratorSome,
+        "find" => crate::ops::Builtin::IteratorFind,
+        "filter" => crate::ops::Builtin::IteratorFilter,
+        "take" => crate::ops::Builtin::IteratorTake,
         _ => return Value::Undefined,
     };
     bind_method(value, Value::Builtin(builtin))
@@ -501,6 +514,12 @@ fn receiver_property(value: &Value, key: &str, _receiver: &Value) -> Value {
         return property;
     }
     property
+}
+fn is_iterator_next_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::RegExpStringIteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext
+    )
 }
 /// Accessor getters/setters carry their `this` at invocation time; binding
 /// them to the object they were read from (e.g. a property descriptor's

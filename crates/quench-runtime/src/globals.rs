@@ -45,6 +45,10 @@ pub(crate) fn immutable_value(name: &str) -> Option<crate::value::Value> {
     })
 }
 
+pub(crate) fn is_global_constant(name: &str) -> bool {
+    global_constant(name).is_some()
+}
+
 pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> Vec<(String, u16)> {
     let names = [
         "undefined",

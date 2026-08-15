@@ -21,7 +21,7 @@ impl ArrayData {
             arguments: false,
             strict_arguments: false,
             mapped: Vec::new(),
-            deleted: Vec::new(),
+            deleted: vec![false; length],
         }
     }
 
@@ -63,7 +63,7 @@ impl ArrayData {
         }
         self.values[index] = value;
         if self.deleted.len() <= index {
-            self.deleted.resize(index.saturating_add(1), false);
+            self.deleted.resize(index.saturating_add(1), true);
         }
         self.deleted[index] = false;
         self.length = self.length.max(index.saturating_add(1));
@@ -88,11 +88,7 @@ impl ArrayData {
         index < self.length
             && self.deleted.get(index) != Some(&true)
             && (index < self.values.len()
-                || self
-                    .mapped
-                    .get(index)
-                    .and_then(Option::as_ref)
-                    .is_some())
+                || self.mapped.get(index).and_then(Option::as_ref).is_some())
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
@@ -125,7 +121,10 @@ impl ArrayData {
     }
 
     pub(crate) fn descriptor_keys(&self) -> Vec<String> {
-        self.descriptors.iter().map(|(key, _)| key.clone()).collect()
+        self.descriptors
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect()
     }
 
     pub(crate) fn property(&self, key: &str) -> Option<Value> {

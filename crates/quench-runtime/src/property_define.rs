@@ -257,7 +257,13 @@ fn accessor_field(properties: &[(String, Value)], key: &str, field: &str) -> Opt
     let descriptor = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == key).then_some(value));
+        .find_map(|(name, value)| (name == &crate::builtins::descriptor_key(key)).then_some(value))
+        .or_else(|| {
+            properties
+                .iter()
+                .rev()
+                .find_map(|(name, value)| (name == key).then_some(value))
+        });
     if let Some(Value::Object(descriptor)) = descriptor {
         return descriptor
             .iter()

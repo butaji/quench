@@ -89,6 +89,7 @@ fn construct_with_new_target(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let result = match target {
+        Value::Proxy(_) => crate::proxy::proxy_construct(target, arguments, Some(new_target)),
         Value::Builtin(builtin) => {
             let prefetched = prefetch_buffer_prototype(*builtin, target, new_target)?;
             let value = construct_builtin(*builtin, arguments)?;

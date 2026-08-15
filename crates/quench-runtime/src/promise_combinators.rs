@@ -21,17 +21,21 @@ pub(crate) fn promise_combinator(
     let aggregate = Rc::new(PromiseAggregate {
         kind,
         result: Rc::clone(&result),
+        resolve,
+        reject,
         remaining: RefCell::new(values.len()),
         values: RefCell::new(vec![Value::Undefined; values.len()]),
         settled: RefCell::new(false),
     });
+    let empty = values.is_empty();
     for (index, value) in values.into_iter().enumerate() {
         register_aggregate_value(&aggregate, index, value);
     }
-    if *aggregate.remaining.borrow() == 0 {
+    if empty {
         finish_empty_aggregate(&aggregate);
     }
-    Ok(Value::Promise(result))
+    crate::promise::drain_microtasks();
+    Ok(constructed.unwrap_or(Value::Promise(result)))
 }
 
 fn validate_resolve(constructor: &Value) -> Result<(), VmError> {
@@ -68,6 +72,8 @@ fn collect_resolved(source: Value, receiver: Option<&Value>) -> Result<Vec<Value
         let Some(item) = item else { return Ok(values) };
         let resolved = crate::functions::execute_target(&resolve, &constructor, &[item])
             .map_err(|error| close_reason(&iterator, error))?;
+        let resolved = crate::promise::promise_resolve(&[resolved]);
+        crate::promise::drain_microtasks();
         values.push(resolved);
     }
 }
@@ -192,12 +198,12 @@ fn finish_empty_aggregate(aggregate: &PromiseAggregate) {
 
 fn resolve_aggregate(aggregate: &PromiseAggregate, value: Value) {
     *aggregate.settled.borrow_mut() = true;
-    resolve_promise(&aggregate.result, value);
+    let _ = crate::functions::execute_target(&aggregate.resolve, &Value::Undefined, &[value]);
 }
 
 fn reject_aggregate(aggregate: &PromiseAggregate, value: Value) {
     *aggregate.settled.borrow_mut() = true;
-    reject_promise(&aggregate.result, value);
+    let _ = crate::functions::execute_target(&aggregate.reject, &Value::Undefined, &[value]);
 }
 
 fn settled_record(status: &str, value: Value) -> Value {
