@@ -183,17 +183,17 @@ pub(crate) fn load_binding(
     name: &str,
     dynamic: bool,
 ) -> Result<(), VmError> {
-    if let Some(value) = crate::with_scope::resolve_binding(name)? {
-        crate::execute::write_value(registers, dst, value);
-        return Ok(());
-    }
-    ensure_initialized(slot, name)?;
     if dynamic {
         if let Some(value) = resolve_eval_name(name) {
             crate::execute::write_value(registers, dst, value);
             return Ok(());
         }
     }
+    if let Some(value) = crate::with_scope::resolve_binding(name)? {
+        crate::execute::write_value(registers, dst, value);
+        return Ok(());
+    }
+    ensure_initialized(slot, name)?;
     crate::execute::write_value(registers, dst, current().get(slot));
     Ok(())
 }
