@@ -28,10 +28,7 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
 }
 
 fn descriptor_object(value: Value) -> Option<Value> {
-    match value {
-        Value::Object(_) | Value::ObjectAlias(_) => Some(value),
-        _ => None,
-    }
+    crate::value::is_object(&value).then_some(value)
 }
 
 fn descriptor_fields(
