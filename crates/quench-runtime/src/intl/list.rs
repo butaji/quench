@@ -3,13 +3,37 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string, SLOT,
+    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string,
+    to_string_value, SLOT,
 };
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let (style, list_type) = parse_options(arguments.get(1))?;
+    let mut style = "long".to_string();
+    let mut list_type = "conjunction".to_string();
+    if let Some(options) = arguments.get(1) {
+        if matches!(options, Value::Null) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot convert null or undefined to object",
+            ));
+        }
+        let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
+        if !matches!(matcher, Value::Undefined) {
+            let matcher = crate::conversion::to_string(&matcher)?;
+            if !matches!(matcher.as_str(), "lookup" | "best fit") {
+                return Err(runtime_error("RangeError: invalid localeMatcher"));
+            }
+        }
+        let type_value = crate::execute::get_property_result(options, "type")?;
+        if !matches!(type_value, Value::Undefined) {
+            list_type = crate::conversion::to_string(&type_value)?;
+        }
+        let style_value = crate::execute::get_property_result(options, "style")?;
+        if !matches!(style_value, Value::Undefined) {
+            style = crate::conversion::to_string(&style_value)?;
+        }
+    }
     if !matches!(style.as_str(), "long" | "short" | "narrow") {
         return Err(runtime_error("RangeError: invalid style"));
     }
@@ -37,39 +61,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 ("type".to_string(), Value::String(list_type)),
             ]),
         ),
-        (
-            "\0prototype".to_string(),
-            Value::Builtin(crate::ops::Builtin::IntlListFormatPrototype),
-        ),
     ]))
-}
-
-fn parse_options(options: Option<&Value>) -> Result<(String, String), VmError> {
-    let mut style = "long".to_string();
-    let mut list_type = "conjunction".to_string();
-    if let Some(options) = options {
-        if matches!(options, Value::Null) {
-            return Err(crate::value::error::throw_type_error(
-                "Cannot convert null or undefined to object",
-            ));
-        }
-        let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
-        if !matches!(matcher, Value::Undefined) {
-            let matcher = crate::conversion::to_string(&matcher)?;
-            if !matches!(matcher.as_str(), "lookup" | "best fit") {
-                return Err(runtime_error("RangeError: invalid localeMatcher"));
-            }
-        }
-        let type_value = crate::execute::get_property_result(options, "type")?;
-        if !matches!(type_value, Value::Undefined) {
-            list_type = crate::conversion::to_string(&type_value)?;
-        }
-        let style_value = crate::execute::get_property_result(options, "style")?;
-        if !matches!(style_value, Value::Undefined) {
-            style = crate::conversion::to_string(&style_value)?;
-        }
-    }
-    Ok((style, list_type))
 }
 
 pub(crate) fn prototype_method(
@@ -109,20 +101,9 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 
 fn iterable_items(value: Option<&Value>) -> Result<Vec<String>, VmError> {
     let value = value.unwrap_or(&Value::Undefined);
-    if matches!(value, Value::Undefined) {
-        return Ok(Vec::new());
-    }
     let iterator = crate::collections::iterator::open(value.clone())?;
-    let mut items = Vec::new();
-    loop {
-        let Some(value) = crate::collections::iterator::step_value(&iterator)? else {
-            return Ok(items);
-        };
-        let Value::String(value) = value else {
-            return reject_iterator_item(&iterator);
-        };
-        items.push(value);
-    }
+    crate::collections::iterator::collect(&iterator)
+        .map(|values| values.iter().map(to_string_value).collect())
 }
 
 fn reject_iterator_item(iterator: &Value) -> Result<Vec<String>, VmError> {
@@ -241,9 +222,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlListFormat => Some(Err(crate::value::error::throw_type_error(
-            "Intl.ListFormat requires 'new'",
-        ))),
+        crate::ops::Builtin::IntlListFormat => Some(construct(arguments)),
         crate::ops::Builtin::IntlListFormatFormat
         | crate::ops::Builtin::IntlListFormatFormatToParts
         | crate::ops::Builtin::IntlListFormatResolvedOptions => {

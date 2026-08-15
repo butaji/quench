@@ -98,3 +98,20 @@ pub(crate) fn own_property(value: &Value, key: &str) -> Option<Value> {
         Uint8ClampedArray
     )
 }
+
+pub(crate) fn get(value: &Value) -> Option<Value> {
+    match value {
+        Value::Float64Array(data) => data.prototype(),
+        Value::Float32Array(data) => data.prototype(),
+        Value::Int8Array(data) => data.prototype(),
+        Value::Int16Array(data) => data.prototype(),
+        Value::Uint16Array(data) => data.prototype(),
+        Value::Int32Array(data) => data.prototype(),
+        Value::Uint32Array(data) => data.prototype(),
+        Value::BigInt64Array(data) => data.prototype(),
+        Value::BigUint64Array(data) => data.prototype(),
+        Value::Uint8Array(data) => data.prototype(),
+        Value::Uint8ClampedArray(data) => data.prototype(),
+        _ => None,
+    }
+}

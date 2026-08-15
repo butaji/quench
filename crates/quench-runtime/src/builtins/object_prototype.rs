@@ -23,9 +23,13 @@ fn prototype_for_value(value: &Value) -> Value {
     }
     match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
-        Value::Builtin(Builtin::Intl | Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype) => {
-            Value::Builtin(Builtin::ObjectPrototype)
-        }
+        Value::Builtin(
+            Builtin::Math
+            | Builtin::Reflect
+            | Builtin::Json
+            | Builtin::DisposableStackPrototype
+            | Builtin::AsyncDisposableStackPrototype,
+        ) => Value::Builtin(Builtin::ObjectPrototype),
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
             Value::Builtin(Builtin::TypedArray)
         }
@@ -45,17 +49,13 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::ErrorPrototype)
         }
         Value::Builtin(
-            Builtin::RangeErrorPrototype
-            | Builtin::ReferenceErrorPrototype
-            | Builtin::SyntaxErrorPrototype
-            | Builtin::EvalErrorPrototype
-            | Builtin::URIErrorPrototype
-            | Builtin::TypeErrorPrototype,
-        ) => Value::Builtin(Builtin::ErrorPrototype),
-        Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::SetIteratorPrototype | Builtin::MapIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
-        Value::Function(function) if function.kind == crate::ops::FunctionKind::Generator => {
-            Value::Builtin(Builtin::GeneratorFunctionPrototype)
-        }
+            builtin @ (Builtin::ArrayIteratorPrototype
+            | Builtin::StringIteratorPrototype
+            | Builtin::RegExpStringIteratorPrototype
+            | Builtin::SetIteratorPrototype
+            | Builtin::MapIteratorPrototype
+            | Builtin::IteratorPrototype),
+        ) => iterator_prototype(*builtin),
         Value::Function(function) => {
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
         }
@@ -104,9 +104,11 @@ fn function_prototype(function: &crate::value::FunctionValue) -> Value {
 
 fn slot_prototype(value: &Value) -> Option<Value> {
     Some(match value {
-        Value::ArrayBuffer(buffer) => buffer
-            .prototype()
-            .unwrap_or(Value::Builtin(Builtin::ArrayBufferPrototype)),
+        Value::ArrayBuffer(buffer) => buffer.prototype().unwrap_or(Value::Builtin(if buffer.shared {
+            Builtin::SharedArrayBufferPrototype
+        } else {
+            Builtin::ArrayBufferPrototype
+        })),
         Value::DataView(view) => view
             .prototype()
             .unwrap_or(Value::Builtin(Builtin::DataViewPrototype)),
@@ -154,6 +156,7 @@ fn iterator_prototype(builtin: Builtin) -> Value {
     if matches!(
         builtin,
         Builtin::ArrayIteratorPrototype
+            | Builtin::StringIteratorPrototype
             | Builtin::RegExpStringIteratorPrototype
             | Builtin::SetIteratorPrototype
             | Builtin::MapIteratorPrototype
@@ -338,17 +341,7 @@ fn add_group_value(
 pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::ObjectPrototype
-            | Builtin::ArrayPrototype
-            | Builtin::NumberPrototype
-            | Builtin::RegExpPrototype
-            | Builtin::DatePrototype
-            | Builtin::IteratorPrototype
-            | Builtin::ArrayIteratorPrototype
-            | Builtin::SetIteratorPrototype
-            | Builtin::MapIteratorPrototype
-            | Builtin::RegExpStringIteratorPrototype
-            | Builtin::PromisePrototype
+        Builtin::NumberPrototype
             | Builtin::BooleanPrototype
             | Builtin::StringPrototype
             | Builtin::MapPrototype
@@ -359,17 +352,7 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
-            | Builtin::TemporalInstantPrototype
-            | Builtin::TemporalZonedDateTimePrototype
-            | Builtin::IntlCollatorPrototype
-            | Builtin::IntlDateTimeFormatPrototype
-            | Builtin::IntlDisplayNamesPrototype
-            | Builtin::IntlListFormatPrototype
-            | Builtin::IntlLocalePrototype
-            | Builtin::IntlNumberFormatPrototype
-            | Builtin::IntlPluralRulesPrototype
-            | Builtin::IntlRelativeTimeFormatPrototype
-            | Builtin::IntlSegmenterPrototype
+            | Builtin::ShadowRealmPrototype
     )
 }
 

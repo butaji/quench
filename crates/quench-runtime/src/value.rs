@@ -142,6 +142,10 @@ pub(crate) struct TypedArrayMeta {
 }
 
 impl TypedArrayMeta {
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+
     pub(crate) fn set_prototype(&self, value: Value) {
         self.prototype.replace(Some(value));
     }
@@ -273,7 +277,6 @@ pub struct GeneratorData {
     pub done: RefCell<bool>,
     pub state: RefCell<Option<GeneratorState>>,
     pub pending_yield: RefCell<bool>,
-    pub executing: RefCell<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -382,6 +385,7 @@ include!("value_typed_large.rs");
 macro_rules! typed_array_prototype_methods {
     ($($name:ident),+ $(,)?) => {
         $(impl $name {
+            pub(crate) fn prototype(&self) -> Option<Value> { self.meta.prototype() }
             pub(crate) fn set_prototype(&self, value: Value) { self.meta.set_prototype(value); }
         })+
     };
@@ -507,7 +511,6 @@ pub enum PrivateSlot {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionValue {
-    pub(crate) realm: crate::ops::RealmId,
     pub(crate) code: crate::machine::FunctionCode,
     pub params: u16,
     pub captures: Rc<crate::environment::Environment>,

@@ -20,7 +20,7 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
             fact: FactConstant::Boolean(boolean.value),
             op: Constant::Boolean(boolean.value),
         }),
-        Expression::StringLiteral(string) => string_literal(string.span, string.value.as_str()),
+        Expression::StringLiteral(string) => string_literal(string),
         Expression::NullLiteral(null) => Some(Literal {
             span: null.span,
             fact: FactConstant::Null,
@@ -41,48 +41,38 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
     }
 }
 
-fn string_literal(span: Span, value: &str) -> Option<Literal> {
-    let op = unicode_escape_constant(value).unwrap_or_else(|| Constant::String(value.to_string()));
+fn string_literal(string: &oxc::ast::ast::StringLiteral<'_>) -> Option<Literal> {
+    let value = string.value.to_string();
+    let op = decode_unicode_escapes(&value)
+        .map_or_else(|| Constant::String(value.clone()), Constant::StringUnits);
     Some(Literal {
-        span,
-        fact: FactConstant::String(value.to_string()),
+        span: string.span,
+        fact: FactConstant::String(value),
         op,
     })
 }
 
-fn unicode_escape_constant(value: &str) -> Option<Constant> {
+fn decode_unicode_escapes(value: &str) -> Option<Vec<u16>> {
     if !value.contains("\\u") {
         return None;
     }
     let mut units = Vec::new();
     let mut chars = value.chars().peekable();
-    let mut changed = false;
     while let Some(character) = chars.next() {
-        if character == '\\' && chars.peek() == Some(&'u') {
-            chars.next();
-            let digits: String = chars.by_ref().take(4).collect();
-            if let Ok(code) = u16::from_str_radix(&digits, 16) {
-                if (0xd800..=0xdfff).contains(&code) && units.last() == Some(&('\\' as u16)) {
-                    units.pop();
-                }
-                units.push(code);
-                changed = true;
-                continue;
-            }
-            units.extend("\\u".encode_utf16());
-            units.extend(digits.encode_utf16());
-        } else {
-            units.extend(character.to_string().encode_utf16());
+        if character != '\\' || chars.next_if_eq(&'u').is_none() {
+            let mut encoded = [0; 2];
+            let count = character.encode_utf16(&mut encoded).len();
+            units.extend_from_slice(&encoded[..count]);
+            continue;
         }
+        let digits: String = chars.by_ref().take(4).collect();
+        if digits.len() != 4 {
+            return None;
+        }
+        let unit = u16::from_str_radix(&digits, 16).ok()?;
+        units.push(unit);
     }
-    if !changed {
-        return None;
-    }
-    Some(
-        String::from_utf16(&units)
-            .map(Constant::String)
-            .unwrap_or(Constant::StringUnits(units)),
-    )
+    Some(units)
 }
 
 fn reduce_template_literal(template: &oxc::ast::ast::TemplateLiteral<'_>) -> Option<Literal> {

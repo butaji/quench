@@ -1,8 +1,5 @@
 pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
     use Builtin::*;
-    if let Some(name) = intl_constructor_short_name(builtin) {
-        return name;
-    }
     if let Some(name) = metadata_builtin_name(builtin) {
         return name.strip_prefix("Intl.").unwrap_or(name);
     }
@@ -12,22 +9,6 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         Number => "Number", Date => "Date", DateGetYear => "getYear", DateSetYear => "setYear",
         RegExp => "RegExp", RegExpTest => "test", RegExpExec => "exec", _ => "",
     }
-}
-
-fn intl_constructor_short_name(builtin: Builtin) -> Option<&'static str> {
-    Some(match builtin {
-        Builtin::IntlCollator => "Collator",
-        Builtin::IntlDateTimeFormat => "DateTimeFormat",
-        Builtin::IntlDisplayNames => "DisplayNames",
-        Builtin::IntlDurationFormat => "DurationFormat",
-        Builtin::IntlListFormat => "ListFormat",
-        Builtin::IntlLocale => "Locale",
-        Builtin::IntlNumberFormat => "NumberFormat",
-        Builtin::IntlPluralRules => "PluralRules",
-        Builtin::IntlRelativeTimeFormat => "RelativeTimeFormat",
-        Builtin::IntlSegmenter => "Segmenter",
-        _ => return None,
-    })
 }
 
 fn metadata_builtin_name(builtin: Builtin) -> Option<&'static str> {

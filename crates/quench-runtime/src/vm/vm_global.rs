@@ -1,13 +1,6 @@
 use crate::value::ObjectData;
 
-thread_local! {
-    static FUNCTION_GLOBAL: RefCell<Option<Value>> = const { RefCell::new(None) };
-}
-
 pub(crate) fn current_global_object() -> Value {
-    if let Some(global) = FUNCTION_GLOBAL.with(|slot| slot.borrow().clone()) {
-        return global;
-    }
     if let Some(global) = batched_global_object() {
         return Value::Object(global);
     }
@@ -21,13 +14,6 @@ pub(crate) fn current_global_object() -> Value {
     GLOBAL_OBJECT.with(|slot| slot.replace(Some(global.clone())));
     realm::initialize_current_global(global.clone());
     Value::Object(global)
-}
-
-pub(crate) fn with_function_global<T>(global: &Value, callback: impl FnOnce() -> T) -> T {
-    let previous = FUNCTION_GLOBAL.with(|slot| slot.replace(Some(global.clone())));
-    let result = callback();
-    FUNCTION_GLOBAL.with(|slot| slot.replace(previous));
-    result
 }
 
 pub(crate) fn initialize_global_object(value: &Value) {
@@ -46,6 +32,10 @@ pub(crate) fn is_global_object(value: &Value) -> bool {
         return false;
     };
     matches!(current_global_object(), Value::Object(global) if Rc::ptr_eq(&global, object))
+}
+
+pub(crate) fn is_child_global_object(value: &Value) -> bool {
+    is_global_object(value) && current_context_or_default().realm() != crate::ops::RealmId::ROOT
 }
 
 pub(crate) fn begin_global_declaration_batch() {
