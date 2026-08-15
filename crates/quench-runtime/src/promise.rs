@@ -347,6 +347,7 @@ fn resolve_value(value: Value) -> Value {
 
 fn bound_settler(target: Builtin, promise: &Rc<PromiseData>) -> Value {
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(target),
         receiver: Value::Promise(Rc::clone(promise)),
         arguments: Vec::new(),
@@ -416,12 +417,14 @@ fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
 pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
     let promise = new_promise();
     let resolve = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(Builtin::PromiseResolve),
         receiver: promise.clone(),
         arguments: Vec::new(),
         properties: RefCell::new(Vec::new()),
     }));
     let reject = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(Builtin::PromiseReject),
         receiver: promise.clone(),
         arguments: Vec::new(),

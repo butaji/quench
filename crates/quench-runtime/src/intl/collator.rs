@@ -10,7 +10,22 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let options = CollatorOptions::read(arguments.get(1), &mut locale)?;
+    let mut usage = "sort".to_string();
+    let mut sensitivity = "variant".to_string();
+    let mut ignore_punctuation = locale.starts_with("th");
+    let mut numeric = false;
+    let mut case_first = "false".to_string();
+    if let Some(Value::Object(properties)) = arguments.get(1) {
+        apply_options(
+            properties,
+            &mut locale,
+            &mut usage,
+            &mut sensitivity,
+            &mut ignore_punctuation,
+            &mut numeric,
+            &mut case_first,
+        )?;
+    }
     Ok(make_object(vec![
         (
             "compare".to_string(),
@@ -40,65 +55,67 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     ]))
 }
 
-struct CollatorOptions {
-    usage: String,
-    sensitivity: String,
-    ignore_punctuation: bool,
-    numeric: bool,
-    case_first: String,
+fn apply_options(
+    properties: &crate::value::ObjectData,
+    locale: &mut String,
+    usage: &mut String,
+    sensitivity: &mut String,
+    ignore_punctuation: &mut bool,
+    numeric: &mut bool,
+    case_first: &mut String,
+) -> Result<(), VmError> {
+    apply_string_options(properties, usage, sensitivity, case_first)?;
+    apply_boolean_options(properties, numeric, ignore_punctuation);
+    if *case_first != "false" {
+        *locale = remove_conflicting_extension(locale, "kf", case_first);
+    }
+    if *numeric {
+        *locale = remove_conflicting_extension(locale, "kn", "true");
+    }
+    Ok(())
 }
 
-impl CollatorOptions {
-    fn read(value: Option<&Value>, locale: &mut String) -> Result<Self, VmError> {
-        let mut options = Self {
-            usage: "sort".to_string(),
-            sensitivity: "variant".to_string(),
-            ignore_punctuation: locale.starts_with("th"),
-            numeric: false,
-            case_first: "false".to_string(),
-        };
-        let Some(Value::Object(properties)) = value else {
-            return Ok(options);
-        };
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
-            options.usage = to_string_value(value);
-            if !matches!(options.usage.as_str(), "sort" | "search") {
-                return Err(runtime_error("RangeError: invalid usage"));
-            }
+fn apply_string_options(
+    properties: &crate::value::ObjectData,
+    usage: &mut String,
+    sensitivity: &mut String,
+    case_first: &mut String,
+) -> Result<(), VmError> {
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
+        *usage = to_string_value(value);
+        if !matches!(usage.as_str(), "sort" | "search") {
+            return Err(runtime_error("RangeError: invalid usage"));
         }
-        if let Some((_, Value::Boolean(value))) =
-            properties.iter().find(|(name, _)| name == "numeric")
-        {
-            options.numeric = *value;
+    }
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
+        *case_first = to_string_value(value);
+        if !matches!(case_first.as_str(), "upper" | "lower" | "false") {
+            return Err(runtime_error("RangeError: invalid caseFirst"));
         }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
-            options.case_first = to_string_value(value);
-            if !matches!(options.case_first.as_str(), "upper" | "lower" | "false") {
-                return Err(runtime_error("RangeError: invalid caseFirst"));
-            }
+    }
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
+        *sensitivity = to_string_value(value);
+        if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
+            return Err(runtime_error("RangeError: invalid sensitivity"));
         }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
-            options.sensitivity = to_string_value(value);
-            if !matches!(
-                options.sensitivity.as_str(),
-                "base" | "accent" | "case" | "variant"
-            ) {
-                return Err(runtime_error("RangeError: invalid sensitivity"));
-            }
-        }
-        if options.case_first != "false" {
-            *locale = remove_conflicting_extension(locale, "kf", &options.case_first);
-        }
-        if options.numeric {
-            *locale = remove_conflicting_extension(locale, "kn", "true");
-        }
-        if let Some((_, Value::Boolean(value))) = properties
-            .iter()
-            .find(|(name, _)| name == "ignorePunctuation")
-        {
-            options.ignore_punctuation = *value;
-        }
-        Ok(options)
+    }
+    Ok(())
+}
+
+fn apply_boolean_options(
+    properties: &crate::value::ObjectData,
+    numeric: &mut bool,
+    ignore_punctuation: &mut bool,
+) {
+    if let Some((_, Value::Boolean(value))) = properties.iter().find(|(name, _)| name == "numeric")
+    {
+        *numeric = *value;
+    }
+    if let Some((_, Value::Boolean(value))) = properties
+        .iter()
+        .find(|(name, _)| name == "ignorePunctuation")
+    {
+        *ignore_punctuation = *value;
     }
 }
 
