@@ -220,7 +220,7 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
             let global = Value::Object(properties.clone());
             let deleted = properties
                 .iter()
-                .any(|(name, _)| name == crate::builtins::deleted_key(key));
+                .any(|(name, _)| name == &crate::builtins::deleted_key(key));
             if !deleted
                 && crate::vm::is_global_object(&global)
                 && crate::vm::global_builtin_exists(key)
