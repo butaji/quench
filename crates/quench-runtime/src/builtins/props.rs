@@ -384,6 +384,10 @@ fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> O
         "getReport" => AgentGetReport,
         "leaving" => AgentLeaving,
         "receiveBroadcast" => AgentReceiveBroadcast,
+        "sleep" => AgentSleep,
+        "tryYield" => AgentTryYield,
+        "trySleep" => AgentTrySleep,
+        "setTimeout" => AgentSetTimeout,
         _ => return None,
     };
     Some(Builtin::HostCapability(kind))
