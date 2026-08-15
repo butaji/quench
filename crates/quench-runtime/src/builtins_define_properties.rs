@@ -38,6 +38,11 @@ fn descriptor_fields(
     for field in ["get", "set", "value", "writable", "enumerable", "configurable"] {
         let value = crate::execute::get_property_result(descriptor, field)?;
         if !matches!(value, Value::Undefined) {
+            let value = if matches!(field, "writable" | "enumerable" | "configurable") {
+                Value::Boolean(crate::execute::is_truthy(&value))
+            } else {
+                value
+            };
             fields.push((field.to_string(), value));
         }
     }
