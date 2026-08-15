@@ -40,6 +40,24 @@ impl StatementReducer {
             ) {
                 self.ops.push(Op::MarkUninitialized { slot });
             }
+            for statement in statements {
+                if let Statement::ImportDeclaration(import) = statement {
+                    if let Some(specifiers) = &import.specifiers {
+                        for specifier in specifiers {
+                            let name = match specifier {
+                                oxc::ast::ast::ImportDeclarationSpecifier::ImportSpecifier(value) => value.local.name.to_string(),
+                                oxc::ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(value) => value.local.name.to_string(),
+                                oxc::ast::ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(value) => value.local.name.to_string(),
+                            };
+                            crate::reduce_support::reserve_names(
+                                &[name],
+                                &mut self.locals,
+                                &mut self.next_slot,
+                            );
+                        }
+                    }
+                }
+            }
             crate::reduce_support::predeclare_functions(
                 statements,
                 &mut self.locals,
