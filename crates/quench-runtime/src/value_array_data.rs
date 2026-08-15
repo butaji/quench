@@ -8,6 +8,15 @@ pub struct ArrayData {
     strict_arguments: bool,
     mapped: Vec<Option<Rc<RefCell<Value>>>>,
     deleted: Vec<bool>,
+    argument_live: Option<Rc<RefCell<ArgumentLive>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ArgumentLive {
+    values: Vec<Value>,
+    length: usize,
+    mapped: Vec<Option<Rc<RefCell<Value>>>>,
+    deleted: Vec<bool>,
 }
 
 impl ArrayData {
@@ -22,6 +31,7 @@ impl ArrayData {
             strict_arguments: false,
             mapped: Vec::new(),
             deleted: Vec::new(),
+            argument_live: None,
         }
     }
 
@@ -29,6 +39,12 @@ impl ArrayData {
         let mut data = Self::new(values);
         data.arguments = true;
         data.strict_arguments = strict;
+        data.argument_live = Some(Rc::new(RefCell::new(ArgumentLive {
+            values: data.values.clone(),
+            length: data.length,
+            mapped: data.mapped.clone(),
+            deleted: data.deleted.clone(),
+        })));
         data
     }
 
@@ -41,10 +57,19 @@ impl ArrayData {
     }
 
     pub fn logical_len(&self) -> usize {
-        self.length
+        self.argument_live
+            .as_ref()
+            .map_or(self.length, |live| live.borrow().length)
     }
 
     pub fn set_length(&mut self, length: usize) {
+        if let Some(live) = &self.argument_live {
+            let mut live = live.borrow_mut();
+            live.values.truncate(length);
+            live.deleted.truncate(length);
+            live.mapped.truncate(length);
+            live.length = length;
+        }
         if length < self.length {
             self.values.truncate(length);
             self.deleted.truncate(length);
@@ -54,6 +79,10 @@ impl ArrayData {
     }
 
     pub fn set_index(&mut self, index: usize, value: Value) {
+        if let Some(live) = &self.argument_live {
+            let mut live = live.borrow_mut();
+            set_live_index(&mut live, index, value.clone());
+        }
         if let Some(Some(binding)) = self.mapped.get(index) {
             *binding.borrow_mut() = value.clone();
         }
@@ -74,6 +103,9 @@ impl ArrayData {
     }
 
     pub(crate) fn get_index(&self, index: usize) -> Option<Value> {
+        if let Some(live) = &self.argument_live {
+            return live_index(&live.borrow(), index);
+        }
         if self.deleted.get(index) == Some(&true) {
             return None;
         }
@@ -85,6 +117,13 @@ impl ArrayData {
     }
 
     pub(crate) fn has_index(&self, index: usize) -> bool {
+        if let Some(live) = &self.argument_live {
+            let live = live.borrow();
+            return index < live.length
+                && live.deleted.get(index) != Some(&true)
+                && (index < live.values.len()
+                    || live.mapped.get(index).and_then(Option::as_ref).is_some());
+        }
         index < self.length
             && self.deleted.get(index) != Some(&true)
             && (index < self.values.len()
@@ -102,11 +141,21 @@ impl ArrayData {
     }
 
     pub(crate) fn map_index(&mut self, index: usize, binding: Rc<RefCell<Value>>) {
+        if let Some(live) = &self.argument_live {
+            let mut live = live.borrow_mut();
+            live.mapped.resize(index.saturating_add(1), None);
+            live.mapped[index] = Some(Rc::clone(&binding));
+        }
         self.mapped.resize(index.saturating_add(1), None);
         self.mapped[index] = Some(binding);
     }
 
     pub(crate) fn disconnect_index(&mut self, index: usize) {
+        if let Some(live) = &self.argument_live {
+            if let Some(mapping) = live.borrow_mut().mapped.get_mut(index) {
+                *mapping = None;
+            }
+        }
         if let Some(mapping) = self.mapped.get_mut(index) {
             *mapping = None;
         }
@@ -179,8 +228,39 @@ impl ArrayData {
             self.disconnect_index(index);
             self.deleted.resize(index.saturating_add(1), false);
             self.deleted[index] = true;
+            if let Some(live) = &self.argument_live {
+                let mut live = live.borrow_mut();
+                live.deleted.resize(index.saturating_add(1), false);
+                live.deleted[index] = true;
+            }
         }
     }
+}
+
+fn set_live_index(live: &mut ArgumentLive, index: usize, value: Value) {
+    if let Some(Some(binding)) = live.mapped.get(index) {
+        *binding.borrow_mut() = value.clone();
+    }
+    if live.values.len() <= index {
+        live.values.resize(index.saturating_add(1), Value::Undefined);
+    }
+    live.values[index] = value;
+    if live.deleted.len() <= index {
+        live.deleted.resize(index.saturating_add(1), false);
+    }
+    live.deleted[index] = false;
+    live.length = live.length.max(index.saturating_add(1));
+}
+
+fn live_index(live: &ArgumentLive, index: usize) -> Option<Value> {
+    if live.deleted.get(index) == Some(&true) {
+        return None;
+    }
+    live.mapped
+        .get(index)
+        .and_then(Option::as_ref)
+        .map(|binding| binding.borrow().clone())
+        .or_else(|| live.values.get(index).cloned())
 }
 
 impl std::ops::Deref for ArrayData {
