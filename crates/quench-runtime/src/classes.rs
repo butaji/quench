@@ -120,6 +120,18 @@ fn reduce_elements(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<Vec<Op>> {
+    reduce_element_list(class, prototype, constructor, ops, facts, next, locals)
+}
+
+fn reduce_element_list(
+    class: &Class<'_>,
+    prototype: u16,
+    constructor: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<Vec<Op>> {
     let mut static_fields = Vec::new();
     for element in &class.body.body {
         match element {

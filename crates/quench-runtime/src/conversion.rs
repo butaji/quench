@@ -114,40 +114,48 @@ pub(crate) fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, 
         ["valueOf", "toString"]
     };
     for name in methods {
-        let method = crate::execute::get_property_result(value, name)?;
-        let owns_method = crate::builtins::object::has_own_property(
-            Some(value),
-            Some(&Value::String(name.to_string())),
-        ) == Value::Boolean(true);
-        if matches!(method, Value::Undefined) && !owns_method {
-            let present = crate::with_scope::has_property(value, name)?;
-            if name == "valueOf" && !present {
-                if let Some(boxed) = boxed_primitive(value) {
-                    return Ok(boxed);
-                }
-            }
-            if name == "toString"
-                && !present
-                && !matches!(
-                    crate::builtins::object::get_prototype_of(Some(value)),
-                    Ok(Value::Null)
-                )
-            {
-                return Ok(crate::builtins::prototype_to_string(Some(value)));
-            }
-            continue;
-        }
-        if !is_callable(&method) {
-            continue;
-        }
-        let result = crate::functions::execute_target(&method, value, &[])?;
-        if !crate::value::is_object(&result) {
+        if let Some(result) = try_primitive_method(value, name)? {
             return Ok(result);
         }
     }
     Err(crate::value::error::throw_type_error(
         "Cannot convert object to primitive value",
     ))
+}
+
+fn try_primitive_method(value: &Value, name: &str) -> Result<Option<Value>, VmError> {
+    let method = crate::execute::get_property_result(value, name)?;
+    let owns_method = crate::builtins::object::has_own_property(
+        Some(value),
+        Some(&Value::String(name.to_string())),
+    ) == Value::Boolean(true);
+    if matches!(method, Value::Undefined) && !owns_method {
+        return fallback_primitive(value, name);
+    }
+    if !is_callable(&method) {
+        return Ok(None);
+    }
+    let result = crate::functions::execute_target(&method, value, &[])?;
+    Ok((!crate::value::is_object(&result)).then_some(result))
+}
+
+fn fallback_primitive(value: &Value, name: &str) -> Result<Option<Value>, VmError> {
+    let present = crate::with_scope::has_property(value, name)?;
+    if name == "valueOf" && !present {
+        if let Some(boxed) = boxed_primitive(value) {
+            return Ok(Some(boxed));
+        }
+    }
+    if name == "toString"
+        && !present
+        && !matches!(
+            crate::builtins::object::get_prototype_of(Some(value)),
+            Ok(Value::Null)
+        )
+    {
+        return Ok(Some(crate::builtins::prototype_to_string(Some(value))));
+    }
+    Ok(None)
 }
 
 fn is_date_object(value: &Value) -> bool {

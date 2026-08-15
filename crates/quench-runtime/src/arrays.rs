@@ -24,6 +24,14 @@ pub(crate) fn execute_builtin(
     if let Some(result) = array_mutation_builtin(builtin, receiver, arguments) {
         return Some(result);
     }
+    execute_builtin_match(builtin, receiver, arguments)
+}
+
+fn execute_builtin_match(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> BuiltinResult {
     use crate::ops::Builtin::*;
     let result = match builtin {
         Array => return Some(Ok(crate::builtins::array(arguments))),
