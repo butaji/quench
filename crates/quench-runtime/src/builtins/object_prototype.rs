@@ -41,6 +41,12 @@ fn prototype_for_value(value: &Value) -> Value {
             | Builtin::MapIteratorPrototype
             | Builtin::IteratorPrototype),
         ) => iterator_prototype(*builtin),
+        _ => prototype_for_value_tail(value),
+    }
+}
+
+fn prototype_for_value_tail(value: &Value) -> Value {
+    match value {
         Value::Function(function) => {
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
         }
