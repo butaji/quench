@@ -71,6 +71,7 @@ fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
 fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
     match (builtin, key) {
+        (ArrayBufferPrototype, "Symbol.toStringTag") => Some(Value::String("ArrayBuffer".into())),
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
