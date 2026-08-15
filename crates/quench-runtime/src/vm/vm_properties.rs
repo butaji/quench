@@ -241,7 +241,8 @@ pub(crate) fn get_property_with_receiver(
     }
     if let Value::Array(values) = value {
         let has_own = key == "length"
-            || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+            || crate::arrays::array_index(key)
+                .is_some_and(|index| values.has_index(index as usize))
             || values.descriptor(key).is_some()
             || values.property(key).is_some();
         if !has_own {
@@ -506,6 +507,7 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
             Value::Number(buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64)
         }
         "resizable" => Value::Boolean(buffer.max_byte_length.is_some()),
+        "immutable" => Value::Boolean(buffer.immutable),
         "resize" => Value::Builtin(Builtin::ArrayBufferResize),
         "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
