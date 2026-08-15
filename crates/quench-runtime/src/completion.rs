@@ -63,7 +63,7 @@ impl Completion {
         })
     }
 
-    pub(crate) fn into_vm_error(self) -> Result<Value, crate::execute::VmError> {
+    pub fn into_vm_error(self) -> Result<Value, crate::execute::VmError> {
         use crate::execute::VmError;
         match self {
             Self::Normal => Err(VmError::MissingReturn),
