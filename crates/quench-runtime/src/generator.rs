@@ -163,11 +163,17 @@ pub(crate) fn async_dispose(receiver: Option<&Value>) -> Result<Value, VmError> 
     let receiver = receiver.ok_or_else(|| {
         crate::value::error::throw_type_error("AsyncIterator.prototype[@@asyncDispose]")
     })?;
-    let method = crate::execute::get_property_result(receiver, "return")?;
+    let method = match crate::execute::get_property_result(receiver, "return") {
+        Ok(method) => method,
+        Err(error) => return Ok(crate::promise::from_async_completion(Err(error))),
+    };
     if !crate::conversion::is_callable(&method) {
         return Ok(crate::promise::promise_resolve(&[Value::Undefined]));
     }
-    let result = crate::functions::execute_target(&method, receiver, &[Value::Undefined])?;
+    let result = match crate::functions::execute_target(&method, receiver, &[Value::Undefined]) {
+        Ok(result) => result,
+        Err(error) => return Ok(crate::promise::from_async_completion(Err(error))),
+    };
     let promise = crate::promise::promise_resolve(&[result]);
     crate::promise::promise_then(
         Some(&promise),
