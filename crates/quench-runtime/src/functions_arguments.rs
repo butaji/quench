@@ -215,6 +215,14 @@ fn execute_function_call(
         .first()
         .cloned()
         .unwrap_or(crate::value::Value::Undefined);
+    if let crate::value::Value::BoundFunction(bound) = receiver {
+        if matches!(
+            bound.target,
+            crate::value::Value::Builtin(crate::ops::Builtin::ShadowRealmEvaluate)
+        ) {
+            return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
+        }
+    }
     execute_target(receiver, &this, arguments.get(1..).unwrap_or_default())
 }
 
