@@ -156,6 +156,7 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "Array" => Array,
         "Iterator" => Iterator,
         "ArrayBuffer" => ArrayBuffer,
+        "SharedArrayBuffer" => SharedArrayBuffer,
         "DataView" => DataView,
         "Float32Array" => Float32Array,
         "Float64Array" => Float64Array,
