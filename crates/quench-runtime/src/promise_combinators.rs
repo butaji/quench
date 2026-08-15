@@ -43,6 +43,20 @@ fn promise_combinator(
     Ok(Value::Promise(result))
 }
 
+fn promise_keyed_combinator(
+    kind: PromiseAggregateKind,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let source = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let keys = crate::own_keys::enumerable_key_strings(Some(&source));
+    let values = keys
+        .into_iter()
+        .map(|key: String| crate::execute::get_property_result(&source, &key))
+        .collect::<Result<Vec<_>, _>>()?;
+    promise_combinator(kind, receiver, &[Value::array(values)])
+}
+
 fn get_promise_resolve(receiver: Option<&Value>) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
     crate::execute::get_property_result(receiver, "resolve")
