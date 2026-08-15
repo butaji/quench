@@ -195,6 +195,7 @@ pub(crate) fn execute_set_property(
     if inherited_write_blocked(&target, &key) {
         return write_failure(strict);
     }
+    validate_array_length_write(&target, &key, &value)?;
     if matches!(
         target,
         crate::value::Value::String(_)
@@ -212,6 +213,23 @@ pub(crate) fn execute_set_property(
         return set_builtin_property(registers, object, &target, &key, value);
     }
     finish_property_write(registers, object, &target, &key, value);
+    Ok(())
+}
+
+fn validate_array_length_write(
+    target: &crate::value::Value,
+    key: &str,
+    value: &crate::value::Value,
+) -> Result<(), crate::execute::VmError> {
+    if !matches!(target, crate::value::Value::Array(_)) || key != "length" {
+        return Ok(());
+    }
+    let length = crate::conversion::to_number(value)?;
+    if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > 4_294_967_295.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
+    }
     Ok(())
 }
 
@@ -325,7 +343,6 @@ pub(crate) fn rejects_new_property(target: &crate::value::Value, key: &str) -> b
 
 pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
     match target {
-        crate::value::Value::Builtin(crate::ops::Builtin::ThrowTypeError) => false,
         crate::value::Value::Object(properties) => {
             !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
         }

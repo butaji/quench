@@ -6,7 +6,7 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
     let object = Rc::new_cyclic(|weak| {
         let mut values = properties.properties.clone();
         for (name, value) in &mut values {
-            if !super::is_descriptor_key(name) {
+            if !super::is_descriptor_key(name) && name != crate::intl::SLOT {
                 retarget(value, &properties, weak);
             }
         }
@@ -107,7 +107,7 @@ fn retarget(value: &mut Value, old: &Rc<ObjectData>, new: &WeakObject) {
     }
 }
 
-pub(crate) fn alias(object: &Rc<ObjectData>) -> Value {
+fn alias(object: &Rc<ObjectData>) -> Value {
     Value::ObjectAlias(ObjectAliasValue(Rc::new(RefCell::new(Rc::downgrade(
         object,
     )))))
