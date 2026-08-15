@@ -101,7 +101,10 @@ fn bound_function_fallback(
     key: &str,
 ) -> Value {
     if shadow_wrapper {
-        return function_prototype_property(key);
+        return function_prototype_property_for_builtin(
+            Builtin::FunctionPrototype,
+            key,
+        );
     }
     if let Value::Builtin(builtin) = bound.target {
         let intrinsic = match (builtin, key) {
@@ -115,7 +118,10 @@ fn bound_function_fallback(
     }
     let result = get_property(&bound.target, key);
     if matches!(result, Value::Undefined) {
-        function_prototype_property(key)
+        function_prototype_property_for_builtin(
+            Builtin::FunctionPrototype,
+            key,
+        )
     } else {
         result
     }
