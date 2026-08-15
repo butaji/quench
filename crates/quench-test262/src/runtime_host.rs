@@ -223,12 +223,19 @@ impl LinkedModuleGraph {
         if !seen.insert(id) {
             return true;
         }
-        graph.dependencies(id).into_iter().all(|dependency| {
-            self.units
-                .get(&dependency)
-                .map_or(true, |unit| unit.async_next.get().is_none())
-                && self.dependencies_settled(graph, dependency, seen)
-        })
+        graph
+            .dependencies(id)
+            .into_iter()
+            .filter(|dependency| {
+                !graph.is_deferred_edge(id, *dependency)
+                    || graph.has_async_dependency(*dependency).unwrap_or(true)
+            })
+            .all(|dependency| {
+                self.units
+                    .get(&dependency)
+                    .map_or(true, |unit| unit.async_next.get().is_none())
+                    && self.dependencies_settled(graph, dependency, seen)
+            })
     }
 
     fn resume_async_modules_once(&self, order: &[ModuleId]) -> Result<(), String> {
