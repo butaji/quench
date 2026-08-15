@@ -113,7 +113,7 @@ pub enum Builtin {
     Unescape, EncodeURI,
     EncodeURIComponent, DecodeURI,
     DecodeURIComponent, Math, Atomics, AtomicsAdd, AtomicsAnd, AtomicsOr, AtomicsSub, AtomicsXor,
-    AtomicsCompareExchange, AtomicsIsLockFree,
+    AtomicsCompareExchange, AtomicsIsLockFree, AtomicsNotify,
     MathPow, Function,
     AsyncFunction, GeneratorFunction,
     AsyncGeneratorFunction, FunctionPrototype, AsyncFunctionPrototype,
