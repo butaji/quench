@@ -4,7 +4,7 @@ use crate::ops::Builtin;
 
 use super::{
     array, bigint, collections, dataview, date, disposable, error, finalization_registry, function,
-    intl, json, math, number, object, promise, reflect, regexp, string, symbol, temporal,
+    intl, json, math, number, object, promise, reflect, regexp, string, symbol,
 };
 
 pub fn function_name(builtin: Builtin) -> Option<&'static str> {
@@ -46,15 +46,6 @@ pub fn function_name(builtin: Builtin) -> Option<&'static str> {
     }
     if let Some(v) = intl::fn_name(builtin) {
         return Some(v);
-    }
-    if let Some(v) = temporal::fn_name(builtin) {
-        return Some(v);
-    }
-    if builtin == Builtin::ShadowRealmEvaluate {
-        return Some("ShadowRealm.prototype.evaluate");
-    }
-    if builtin == Builtin::ShadowRealmImportValue {
-        return Some("ShadowRealm.prototype.importValue");
     }
     if let Some(v) = reflect::fn_name(builtin) {
         return Some(v);
@@ -109,15 +100,6 @@ pub fn function_length(builtin: Builtin) -> Option<f64> {
     if let Some(v) = intl::fn_len(builtin) {
         return Some(v);
     }
-    if let Some(v) = temporal::fn_len(builtin) {
-        return Some(v);
-    }
-    if builtin == Builtin::ShadowRealmEvaluate {
-        return Some(1.0);
-    }
-    if builtin == Builtin::ShadowRealmImportValue {
-        return Some(2.0);
-    }
     if let Some(v) = reflect::fn_len(builtin) {
         return Some(v);
     }
@@ -169,15 +151,6 @@ pub fn short_name(builtin: Builtin) -> Option<&'static str> {
     }
     if let Some(v) = intl::short_name(builtin) {
         return Some(v);
-    }
-    if let Some(v) = temporal::short_name(builtin) {
-        return Some(v);
-    }
-    if builtin == Builtin::ShadowRealmEvaluate {
-        return Some("evaluate");
-    }
-    if builtin == Builtin::ShadowRealmImportValue {
-        return Some("importValue");
     }
     if let Some(v) = reflect::short_name(builtin) {
         return Some(v);

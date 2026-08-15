@@ -1,3 +1,5 @@
+
+
 fn construct_float64_array(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     match arguments.first() {
         None | Some(Value::Undefined) => empty_float64_array(),
@@ -6,13 +8,12 @@ fn construct_float64_array(arguments: &[Value]) -> Result<Value, crate::execute:
         Some(Value::Array(values)) => values_float64_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = object_array_like(properties).or_else(|| {
+                crate::collections::iterator::collect_iterable(object).ok()
+            });
             match values {
                 Some(values) => values_float64_array(&values),
-                None => Err(type_error(
-                    "Float64Array source must be iterable or a buffer",
-                )),
+                None => Err(type_error("Float64Array source must be iterable or a buffer")),
             }
         }
         Some(Value::Number(length)) => length_float64_array(*length),
@@ -30,13 +31,12 @@ fn construct_float32_array(arguments: &[Value]) -> Result<Value, crate::execute:
         Some(Value::Array(values)) => values_float32_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = object_array_like(properties).or_else(|| {
+                crate::collections::iterator::collect_iterable(object).ok()
+            });
             match values {
                 Some(values) => values_float32_array(&values),
-                None => Err(type_error(
-                    "Float32Array source must be iterable or a buffer",
-                )),
+                None => Err(type_error("Float32Array source must be iterable or a buffer")),
             }
         }
         Some(Value::Number(length)) => length_float32_array(*length),
@@ -54,8 +54,9 @@ fn construct_int8_array(arguments: &[Value]) -> Result<Value, crate::execute::Vm
         Some(Value::Array(values)) => values_int8_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = object_array_like(properties).or_else(|| {
+                crate::collections::iterator::collect_iterable(object).ok()
+            });
             match values {
                 Some(values) => values_int8_array(&values),
                 None => Err(type_error("Int8Array source must be iterable or a buffer")),
@@ -74,8 +75,9 @@ fn construct_int16_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         Some(Value::Array(values)) => values_int16_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = object_array_like(properties).or_else(|| {
+                crate::collections::iterator::collect_iterable(object).ok()
+            });
             match values {
                 Some(values) => values_int16_array(&values),
                 None => Err(type_error("Int16Array source must be iterable or a buffer")),
@@ -94,8 +96,9 @@ fn construct_int32_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         Some(Value::Array(values)) => values_int32_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = object_array_like(properties).or_else(|| {
+                crate::collections::iterator::collect_iterable(object).ok()
+            });
             match values {
                 Some(values) => values_int32_array(&values),
                 None => Err(type_error("Int32Array source must be iterable or a buffer")),
@@ -114,8 +117,9 @@ fn construct_uint8_array(arguments: &[Value]) -> Result<Value, crate::execute::V
         Some(Value::Array(values)) => values_uint8_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = object_array_like(properties).or_else(|| {
+                crate::collections::iterator::collect_iterable(object).ok()
+            });
             match values {
                 Some(values) => values_uint8_array(&values),
                 None => Err(type_error("Uint8Array source must be iterable or a buffer")),
@@ -126,6 +130,7 @@ fn construct_uint8_array(arguments: &[Value]) -> Result<Value, crate::execute::V
     }
 }
 
+
 fn construct_uint32_array(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     match arguments.first() {
         None | Some(Value::Undefined) => empty_uint32_array(),
@@ -134,13 +139,12 @@ fn construct_uint32_array(arguments: &[Value]) -> Result<Value, crate::execute::
         Some(Value::Array(values)) => values_uint32_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = object_array_like(properties).or_else(|| {
+                crate::collections::iterator::collect_iterable(object).ok()
+            });
             match values {
                 Some(values) => values_uint32_array(&values),
-                None => Err(type_error(
-                    "Uint32Array source must be iterable or a buffer",
-                )),
+                None => Err(type_error("Uint32Array source must be iterable or a buffer")),
             }
         }
         Some(Value::Number(length)) => length_uint32_array(*length),
@@ -158,13 +162,12 @@ fn construct_uint16_array(arguments: &[Value]) -> Result<Value, crate::execute::
         Some(Value::Array(values)) => values_uint16_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = object_array_like(properties).or_else(|| {
+                crate::collections::iterator::collect_iterable(object).ok()
+            });
             match values {
                 Some(values) => values_uint16_array(&values),
-                None => Err(type_error(
-                    "Uint16Array source must be iterable or a buffer",
-                )),
+                None => Err(type_error("Uint16Array source must be iterable or a buffer")),
             }
         }
         Some(Value::Number(length)) => length_uint16_array(*length),
@@ -188,7 +191,10 @@ fn values_uint16_array(values: &[Value]) -> Result<Value, crate::execute::VmErro
     ));
     let view = crate::value::Uint16ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_uint16(crate::conversion::to_number(value)?));
+        view.set(
+            index,
+            to_uint16(crate::conversion::to_number(value)?),
+        );
     }
     Ok(Value::Uint16Array(Rc::new(view)))
 }
@@ -244,7 +250,10 @@ fn values_uint32_array(values: &[Value]) -> Result<Value, crate::execute::VmErro
     ));
     let view = crate::value::Uint32ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_uint32(crate::conversion::to_number(value)?));
+        view.set(
+            index,
+            to_uint32(crate::conversion::to_number(value)?),
+        );
     }
     Ok(Value::Uint32Array(Rc::new(view)))
 }
@@ -294,13 +303,12 @@ fn construct_uint8_clamped_array(arguments: &[Value]) -> Result<Value, crate::ex
         Some(Value::Array(values)) => values_uint8_clamped_array(values),
         Some(Value::Object(properties)) => {
             let object = Value::Object(properties.clone());
-            let values = object_array_like(properties)?
-                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            let values = object_array_like(properties).or_else(|| {
+                crate::collections::iterator::collect_iterable(object).ok()
+            });
             match values {
                 Some(values) => values_uint8_clamped_array(&values),
-                None => Err(type_error(
-                    "Uint8ClampedArray source must be iterable or a buffer",
-                )),
+                None => Err(type_error("Uint8ClampedArray source must be iterable or a buffer")),
             }
         }
         Some(Value::Number(length)) => length_uint8_clamped_array(*length),
@@ -321,7 +329,10 @@ fn values_uint8_array(values: &[Value]) -> Result<Value, crate::execute::VmError
     let buffer = Rc::new(crate::value::ArrayBufferData::new(values.len()));
     let view = crate::value::Uint8ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(index, to_uint8(crate::conversion::to_number(value)?));
+        view.set(
+            index,
+            to_uint8(crate::conversion::to_number(value)?),
+        );
     }
     Ok(Value::Uint8Array(Rc::new(view)))
 }
@@ -413,3 +424,4 @@ fn view_uint8_array(
         crate::value::Uint8ArrayData::new(buffer.clone(), offset, length),
     )))
 }
+
