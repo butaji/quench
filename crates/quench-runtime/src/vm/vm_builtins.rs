@@ -291,6 +291,16 @@ fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
     let own = crate::builtins::object::has_own_property(Some(value), Some(&key));
     let updated = if matches!(own, Value::Boolean(true)) {
         let descriptor = crate::builtins::object::descriptor(Some(value), Some(&key))?;
+        if let Some(setter) = descriptor_field(&descriptor, "set") {
+            if matches!(setter, Value::Undefined) {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot set property 'stack'",
+                ));
+            }
+            let argument = stack.clone();
+            crate::functions::execute_target(&setter, value, std::slice::from_ref(&argument))?;
+            return Ok(());
+        }
         if descriptor_field_is_false(&descriptor, "writable") {
             return Err(crate::value::error::throw_type_error(
                 "Cannot assign to read only property 'stack'",
@@ -299,6 +309,11 @@ fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
         let descriptor = [("value".to_string(), stack)];
         crate::builtins::define_own_property(value, "stack", &descriptor)?
     } else {
+        if !crate::properties::object_is_extensible(value) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot add property 'stack'",
+            ));
+        }
         crate::builtins::set_property(value.clone(), "stack", stack)
     };
     crate::locals::replace_value(value, &updated);
@@ -315,6 +330,16 @@ fn descriptor_field_is_false(descriptor: &Value, field: &str) -> bool {
                 .find(|(name, _)| name == field)
                 .is_some_and(|(_, value)| matches!(value, Value::Boolean(false)))
     )
+}
+
+fn descriptor_field(descriptor: &Value, field: &str) -> Option<Value> {
+    let Value::Object(properties) = descriptor else {
+        return None;
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == field).then_some(value.clone()))
 }
 
 fn define_proxy_stack(value: &Value, stack: Value) -> Result<Value, VmError> {
