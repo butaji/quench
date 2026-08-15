@@ -36,7 +36,10 @@ fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
-    ) && own_constructor(value) == Some(Value::Builtin(constructor))
+    ) && own_constructor(value)
+        .as_ref()
+        .and_then(intrinsic_builtin)
+        == Some(constructor)
 }
 
 fn intrinsic_builtin(value: &Value) -> Option<Builtin> {
