@@ -40,8 +40,11 @@ pub(crate) fn execute_shared_array_buffer_builtin(
             Builtin::ArrayBufferByteLengthGetter
                 | Builtin::ArrayBufferDetachedGetter
                 | Builtin::ArrayBufferImmutableGetter
-                | Builtin::ArrayBufferMaxByteLengthGetter
-                | Builtin::ArrayBufferResizableGetter
+            | Builtin::ArrayBufferMaxByteLengthGetter
+            | Builtin::ArrayBufferResizableGetter
+            | Builtin::SharedArrayBufferByteLengthGetter
+            | Builtin::SharedArrayBufferGrowableGetter
+            | Builtin::SharedArrayBufferMaxByteLengthGetter
         )) || (builtin == Builtin::ArrayBufferByteLengthGetter
             && matches!(value, Value::ArrayBuffer(data) if !data.shared))
             || (builtin == Builtin::ArrayBufferDetachedGetter
@@ -52,6 +55,12 @@ pub(crate) fn execute_shared_array_buffer_builtin(
                 && matches!(value, Value::ArrayBuffer(data) if !data.shared))
             || (builtin == Builtin::ArrayBufferResizableGetter
                 && matches!(value, Value::ArrayBuffer(data) if !data.shared))
+            || (matches!(
+                builtin,
+                Builtin::SharedArrayBufferByteLengthGetter
+                    | Builtin::SharedArrayBufferGrowableGetter
+                    | Builtin::SharedArrayBufferMaxByteLengthGetter
+            ) && matches!(value, Value::ArrayBuffer(data) if data.shared))
     }) else {
         return Err(type_error(
             "SharedArrayBuffer method called on incompatible receiver",
