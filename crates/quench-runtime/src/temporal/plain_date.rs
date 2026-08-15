@@ -61,6 +61,11 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
     let calendar_count = text.matches("[u-ca=").count();
+    if has_uppercase_annotation_key(text) {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid annotation key",
+        ));
+    }
     if text.contains("[!") && !text.contains("[!u-ca=") {
         return Err(crate::value::error::throw_range_error(
             "Unknown critical annotation",
@@ -96,6 +101,18 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         .parse()
         .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
     checked_date_object(year, month, day)
+}
+
+fn has_uppercase_annotation_key(text: &str) -> bool {
+    text.split('[')
+        .skip(1)
+        .filter(|annotation| annotation.contains('='))
+        .any(|annotation| {
+            annotation
+                .split('=')
+                .next()
+                .is_some_and(|key| key.chars().any(|character| character.is_ascii_uppercase()))
+        })
 }
 
 fn date_part(text: &str) -> &str {
