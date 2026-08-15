@@ -24,6 +24,18 @@ fn buffer_descriptor(buffer: &crate::value::ArrayBufferData, key: &str) -> Optio
         .map(|descriptor| public_descriptor(&descriptor))
 }
 fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Option<Value> {
+    if key == "prototype"
+        && function.kind == crate::ops::FunctionKind::Generator
+        && function.is_async
+    {
+        let value = function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == key).then(|| value.clone()))?;
+        return Some(descriptor_object_with_flags(value, false, false, true));
+    }
     if let Some((_, metadata)) = function
         .properties
         .borrow()
