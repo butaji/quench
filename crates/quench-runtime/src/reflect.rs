@@ -52,7 +52,7 @@ pub(crate) fn builtin(
     Ok(result)
 }
 
-fn wrap_shadow_function(
+pub(crate) fn wrap_shadow_function(
     target: &Value,
     realm: Option<crate::ops::RealmId>,
 ) -> Result<Value, VmError> {
