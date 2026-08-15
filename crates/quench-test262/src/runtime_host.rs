@@ -1,7 +1,7 @@
 //! Adapter from the runner contract to the residual runtime.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     path::Path,
     rc::Rc,
@@ -32,6 +32,7 @@ pub struct LinkedModule {
     export_candidates: RefCell<HashMap<String, Vec<ModuleBindingCell>>>,
     ambiguous_exports: RefCell<HashSet<String>>,
     namespace: RefCell<Option<ModuleBindingCell>>,
+    executed: Cell<bool>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -295,6 +296,7 @@ impl LinkedModule {
             export_candidates: RefCell::new(HashMap::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace: RefCell::new(None),
+            executed: Cell::new(false),
         })
     }
 
@@ -308,6 +310,7 @@ impl LinkedModule {
             export_candidates: RefCell::new(HashMap::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace: RefCell::new(None),
+            executed: Cell::new(false),
         })
     }
 
@@ -349,11 +352,25 @@ impl LinkedModule {
             .find(|binding| binding.exported == name)?
             .local
             .as_str();
-        self.program
+        let cell = self
+            .program
             .local_slots
             .get(local)
             .copied()
-            .map(|slot| self.scope.module_cell_slot(slot))
+            .map(|slot| self.scope.module_cell_slot(slot));
+        if !self.executed.get() {
+            if let (Some(slot), Some(cell)) = (self.export_slot(name), cell.as_ref()) {
+                if self
+                .program
+                .ops()
+                .iter()
+                .any(|op| matches!(op, quench_runtime::ops::Op::MarkUninitialized { slot: found } if *found == slot))
+            {
+                cell.mark_uninitialized();
+            }
+            }
+        }
+        cell
     }
 
     fn export_slot(&self, name: &str) -> Option<u16> {
@@ -464,6 +481,7 @@ impl LinkedModule {
                 .ok_or_else(|| format!("fixed export {name} missing"))?;
             cell.set(value.clone());
         }
+        self.executed.set(true);
         self.clear_namespace_tdz();
         Ok(result)
     }
