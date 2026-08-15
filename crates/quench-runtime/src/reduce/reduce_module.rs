@@ -388,7 +388,7 @@ fn reduce_default_function_declaration<'a>(
     );
     if let Some(identifier) = function.id.as_ref() {
         if let Some(&src_slot) = locals.get(identifier.name.as_str()) {
-            alias_default(src_slot, ops, next_register, next_slot, locals);
+            alias_default(src_slot, ops, next_slot, locals);
         }
     }
     result
@@ -417,7 +417,7 @@ fn reduce_default_class_declaration<'a>(
     );
     if let Some(identifier) = class.id.as_ref() {
         if let Some(&src_slot) = locals.get(identifier.name.as_str()) {
-            alias_default(src_slot, ops, next_register, next_slot, locals);
+            alias_default(src_slot, ops, next_slot, locals);
         }
     }
     result
@@ -426,24 +426,17 @@ fn reduce_default_class_declaration<'a>(
 fn alias_default(
     src_slot: u16,
     ops: &mut Vec<Op>,
-    next_register: &mut u16,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) {
     let slot = default_slot(next_slot, locals);
-    let register = *next_register;
-    *next_register = next_register.saturating_add(1);
     ops.push(Op::DeclareEvalBinding {
         name: "default".to_string(),
         slot,
     });
-    ops.push(Op::LoadLocal {
-        dst: register,
-        slot: src_slot,
-    });
-    ops.push(Op::StoreLocal {
+    ops.push(Op::AliasLocal {
         slot,
-        src: register,
+        source: src_slot,
     });
 }
 
