@@ -111,9 +111,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (GeneratorFunction, "prototype") => Some(GeneratorFunctionPrototype),
         (AsyncGeneratorFunction, "prototype") => Some(AsyncGeneratorFunctionPrototype),
         (GeneratorFunctionPrototype, "constructor") => Some(GeneratorFunction),
-        (AsyncGeneratorFunctionPrototype, "constructor") => {
-            Some(crate::vm::realm_intrinsic(AsyncGeneratorFunction))
-        }
+        (AsyncGeneratorFunctionPrototype, "constructor") => Some(AsyncGeneratorFunction),
         (AsyncFunctionPrototype, "constructor") => Some(AsyncFunction),
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
