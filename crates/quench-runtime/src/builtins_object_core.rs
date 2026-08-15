@@ -81,10 +81,7 @@ pub(crate) fn object(arguments: &[Value]) -> Value {
         Some(
             value @ (Value::String(_) | Value::Number(_) | Value::Boolean(_) | Value::BigInt(_)),
         ) => boxed_object(value),
-        _ => Value::Object(Rc::new(ObjectData::new(vec![(
-            "constructor".to_string(),
-            Value::Builtin(Builtin::Object),
-        )]))),
+        _ => Value::Object(Rc::new(ObjectData::new(Vec::new()))),
     }
 }
 
