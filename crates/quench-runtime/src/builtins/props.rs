@@ -361,7 +361,8 @@ fn is_typed_array_prototype(builtin: Builtin) -> bool {
     use Builtin::*;
     matches!(
         builtin,
-        Float64ArrayPrototype
+        TypedArray
+            | Float64ArrayPrototype
             | Float32ArrayPrototype
             | Int8ArrayPrototype
             | Int16ArrayPrototype
