@@ -165,7 +165,11 @@ fn validate_set_prototype_target(target: &Value) -> Result<(), VmError> {
 fn validate_set_prototype_value(prototype: &Value) -> Result<(), VmError> {
     if matches!(
         prototype,
-        Value::Object(_) | Value::ObjectAlias(_) | Value::Builtin(_) | Value::Null
+        Value::Object(_)
+            | Value::ObjectAlias(_)
+            | Value::Proxy(_)
+            | Value::Builtin(_)
+            | Value::Null
     ) {
         return Ok(());
     }
