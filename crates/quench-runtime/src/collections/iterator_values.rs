@@ -98,9 +98,13 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
         IteratorState::RegExpString { .. } => crate::ops::Builtin::RegExpStringIteratorPrototype,
         IteratorState::Set { .. } => crate::ops::Builtin::SetIteratorPrototype,
         IteratorState::Map { .. } => crate::ops::Builtin::MapIteratorPrototype,
-        IteratorState::Native { .. } | IteratorState::Protocol { .. } => {
-            crate::ops::Builtin::ArrayIteratorPrototype
-        }
+        IteratorState::Native { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::Protocol { iterator, .. } => match iterator {
+            Value::Generator(generator) => {
+                return crate::builtins::object::generator_prototype(generator);
+            }
+            _ => crate::ops::Builtin::ArrayIteratorPrototype,
+        },
         IteratorState::Concat { .. } => crate::ops::Builtin::IteratorPrototype,
     };
     Value::Builtin(builtin)
