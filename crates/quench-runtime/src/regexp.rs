@@ -330,6 +330,15 @@ pub(crate) fn compile_method_for_vm(
     Ok(receiver.clone())
 }
 
+pub(crate) fn legacy_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
+    if matches!(receiver, Some(Value::Builtin(Builtin::RegExp))) {
+        return Ok(Value::String(String::new()));
+    }
+    Err(crate::value::error::throw_type_error(
+        "RegExp legacy accessor requires RegExp constructor",
+    ))
+}
+
 fn escape(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(text)) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
