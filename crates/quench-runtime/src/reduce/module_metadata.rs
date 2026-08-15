@@ -1,6 +1,6 @@
 use oxc::ast::ast::{
     BindingPattern, BindingPatternKind, Declaration, ExportDefaultDeclaration,
-    ExportNamedDeclaration, ModuleExportName, Statement,
+    ExportNamedDeclaration, ImportPhase, ModuleExportName, Statement,
 };
 
 /// Static module edges and names discovered directly from OXC's module AST.
@@ -12,6 +12,7 @@ pub struct ModuleMetadata {
     pub import_specifiers: Vec<String>,
     pub imports: Vec<ImportBinding>,
     pub import_attributes: Vec<(String, String)>,
+    pub deferred_imports: Vec<String>,
     pub exports: Vec<ExportBinding>,
     pub reexports: Vec<ReexportBinding>,
     pub exported_names: Vec<String>,
@@ -53,6 +54,9 @@ impl ModuleMetadata {
             Statement::ImportDeclaration(import) => {
                 let source = import.source.value.to_string();
                 push_unique(&mut self.import_specifiers, &source);
+                if matches!(import.phase, Some(ImportPhase::Defer)) {
+                    push_unique(&mut self.deferred_imports, &source);
+                }
                 if let Some(specifiers) = &import.specifiers {
                     for specifier in specifiers {
                         let (imported, local) = match specifier {
