@@ -22,8 +22,7 @@ pub(crate) fn global_builtin_exists_for_object(
 pub(crate) fn is_legacy_global(key: &str) -> bool {
     matches!(
         key,
-        "parseFloat"
-            | "parseInt"
+        "parseInt"
             | "decodeURI"
             | "encodeURIComponent"
     )
