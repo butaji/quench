@@ -810,17 +810,7 @@ fn format_localized_unit(text: &str, unit: Option<&str>, display: &str, locale: 
     if unit != Some("kilometer-per-hour") {
         return format_unit(text, unit, display);
     }
-    let (prefix, suffix) = match (locale, display) {
-        (locale, "long") if locale.starts_with("ja") => ("時速 ", " キロメートル"),
-        (locale, "long") if locale.starts_with("ko") => ("시속 ", "킬로미터"),
-        (locale, "long") if locale.starts_with("zh-TW") => ("每小時 ", " 公里"),
-        (locale, "narrow") if locale.starts_with("zh-TW") => ("", "公里/小時"),
-        (locale, _) if locale.starts_with("zh-TW") => ("", " 公里/小時"),
-        (locale, "long") if locale.starts_with("de") => ("", " Kilometer pro Stunde"),
-        (locale, "long") if locale.starts_with("en") => ("", " kilometers per hour"),
-        (locale, _) if locale.starts_with("ko") => ("", "km/h"),
-        _ => ("", " km/h"),
-    };
+    let (prefix, suffix) = localized_unit_affixes(locale, display);
     let text = if locale.starts_with("de") {
         text.replace('.', ",")
     } else {
@@ -830,6 +820,20 @@ fn format_localized_unit(text: &str, unit: Option<&str>, display: &str, locale: 
         format!("{prefix}{text}{}", suffix.trim_start())
     } else {
         format!("{prefix}{text}{suffix}")
+    }
+}
+
+fn localized_unit_affixes(locale: &str, display: &str) -> (&'static str, &'static str) {
+    match (locale, display) {
+        (locale, "long") if locale.starts_with("ja") => ("時速 ", " キロメートル"),
+        (locale, "long") if locale.starts_with("ko") => ("시속 ", "킬로미터"),
+        (locale, "long") if locale.starts_with("zh-TW") => ("每小時 ", " 公里"),
+        (locale, "narrow") if locale.starts_with("zh-TW") => ("", "公里/小時"),
+        (locale, _) if locale.starts_with("zh-TW") => ("", " 公里/小時"),
+        (locale, "long") if locale.starts_with("de") => ("", " Kilometer pro Stunde"),
+        (locale, "long") if locale.starts_with("en") => ("", " kilometers per hour"),
+        (locale, _) if locale.starts_with("ko") => ("", "km/h"),
+        _ => ("", " km/h"),
     }
 }
 
