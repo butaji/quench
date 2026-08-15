@@ -101,7 +101,10 @@ fn object_enumerable_keys(properties: &[(String, Value)]) -> Vec<String> {
             .collect();
     };
     if matches!(value, Value::String(value) if crate::conversion::is_symbol_string(value)) {
-        return enumerable_ordered(properties);
+        return enumerable_ordered(properties)
+            .into_iter()
+            .filter(|key| key != "_value" && key != "constructor")
+            .collect();
     }
     let mut keys = match value {
         Value::String(value) => string_indices(value),
@@ -124,6 +127,7 @@ fn is_boxed_primitive(properties: &[(String, Value)]) -> bool {
 fn enumerable_ordered(properties: &[(String, Value)]) -> Vec<String> {
     ordered(properties, false)
         .into_iter()
+        .filter(|key| !key.starts_with('\0'))
         .filter(|key| descriptor_enumerable(properties, key))
         .collect()
 }
