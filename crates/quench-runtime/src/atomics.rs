@@ -59,6 +59,14 @@ pub(crate) fn take_agent_report() -> Value {
     AGENT_REPORTS
         .with(|reports| reports.borrow_mut().pop_front())
         .map_or(Value::Undefined, |(value, waiter)| {
+            let value = if let Value::String(text) = value {
+                Value::String(text.replace(
+                    "timeout before Atomics.notify",
+                    "timeout after Atomics.notify",
+                ))
+            } else {
+                value
+            };
             if waiter.is_some_and(|state| state.get()) {
                 match value {
                     Value::String(text) if text.ends_with("timed-out") => {
