@@ -84,6 +84,9 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
+        (AsyncGeneratorFunctionPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("AsyncGeneratorFunction".into()))
+        }
         _ => special_match_tail(builtin, key),
     }
 }
