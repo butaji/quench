@@ -94,7 +94,7 @@ pub(crate) fn execute_construct(
     let result = crate::vm::execute_in_environment(
         function.ops(),
         &mut registers,
-        &crate::vm::VmContext::default(),
+        &crate::vm::current_context_or_default(),
         std::rc::Rc::clone(&environment),
     )?;
     let final_this = environment.get(this_slot);
