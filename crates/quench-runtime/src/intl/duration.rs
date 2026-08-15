@@ -189,10 +189,7 @@ fn locale_for_numbering(locale: &str, numbering: &str) -> String {
 }
 
 fn valid_numbering_system(value: &str) -> bool {
-    matches!(
-        value,
-        "arab" | "arabext" | "deva" | "latn" | "thai" | "jpanfin"
-    )
+    super::NUMBERING_SYSTEMS.contains(&value)
 }
 
 fn valid_unit_style(unit: &str, style: &str) -> bool {
