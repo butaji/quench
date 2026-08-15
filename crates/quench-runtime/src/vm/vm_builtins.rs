@@ -611,7 +611,11 @@ fn shared_array_buffer_slice(
         receiver.ok_or_else(|| type_error("Missing SharedArrayBuffer receiver"))?,
         "constructor",
     )?;
-    let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
+    let species = if matches!(constructor, Value::Undefined | Value::Null) {
+        Value::Builtin(Builtin::SharedArrayBuffer)
+    } else {
+        crate::execute::get_property_result(&constructor, "Symbol.species")?
+    };
     let species = if matches!(species, Value::Undefined | Value::Null) {
         Value::Builtin(Builtin::SharedArrayBuffer)
     } else {
@@ -621,7 +625,12 @@ fn shared_array_buffer_slice(
     let Value::ArrayBuffer(result) = result else {
         return Err(type_error("SharedArrayBuffer species must return a buffer"));
     };
-    result.bytes.borrow_mut().copy_from_slice(&bytes);
+    let same_buffer = matches!(receiver, Some(Value::ArrayBuffer(source)) if std::rc::Rc::ptr_eq(source, &result));
+    if same_buffer || result.bytes.borrow().len() < bytes.len() {
+        return Err(type_error("SharedArrayBuffer species returned an invalid buffer"));
+    }
+    let copy_length = result.bytes.borrow().len().min(bytes.len());
+    result.bytes.borrow_mut()[..copy_length].copy_from_slice(&bytes[..copy_length]);
     Ok(Value::ArrayBuffer(result))
 }
 

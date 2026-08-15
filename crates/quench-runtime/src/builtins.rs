@@ -519,6 +519,10 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             view.set_own_property(key, value);
             Value::DataView(view)
         }
+        Value::ArrayBuffer(buffer) => {
+            buffer.set_own_property(key, value);
+            Value::ArrayBuffer(buffer)
+        }
         other => other,
     }
 }
