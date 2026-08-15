@@ -133,7 +133,7 @@ fn shadow_function_properties(_target: &Value, name: &str, length: f64) -> Vec<(
         ("name".to_string(), Value::String(name.to_string())),
         (
             crate::builtins::descriptor_key("name"),
-            name_descriptor(&name),
+            name_descriptor(name),
         ),
         ("length".to_string(), Value::Number(length)),
         (

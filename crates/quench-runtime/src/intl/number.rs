@@ -105,7 +105,7 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
         "minimumIntegerDigits" => raw.minimum_integer_digits = value.parse().unwrap_or(1.0),
         "maximumFractionDigits" => raw.maximum_fraction_digits = value.parse().unwrap_or(3.0),
         "useGrouping" => {
-            raw.use_grouping = grouping_enabled(&value);
+            raw.use_grouping = grouping_enabled(value);
             raw.grouping_min2 = value == "min2";
         }
         "notation" => raw.notation = value.to_string(),
