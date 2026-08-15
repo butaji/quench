@@ -580,6 +580,7 @@ impl LinkedModule {
                 }
             }
         }
+        self.clear_namespace_tdz();
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
