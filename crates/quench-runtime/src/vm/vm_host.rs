@@ -69,6 +69,9 @@ fn create_realm_value() -> Value {
     let Some(token) = realm::token(context.realm()) else {
         return Value::Undefined;
     };
+    let creation_realm = realm::token(crate::vm::current_context_or_default().realm())
+        .map(Value::HostCapability)
+        .unwrap_or(Value::Undefined);
     let Some(constructor) = realm::intrinsic(realm, Builtin::TypeError) else {
         return Value::Undefined;
     };
@@ -83,6 +86,7 @@ fn create_realm_value() -> Value {
     Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("global".to_string(), global),
         ("\0realm".to_string(), Value::HostCapability(token)),
+        ("\0creation_realm".to_string(), creation_realm),
     ])))
 }
 
