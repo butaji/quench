@@ -313,19 +313,8 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
-    if builtin == Builtin::AsyncGeneratorPrototype {
-        let property = super::special_property(builtin, key)?;
-        let writable = !matches!(key, "constructor" | "Symbol.toStringTag");
-        return Some(descriptor_object_with_flags(
-            property, writable, false, true,
-        ));
-    }
-    if builtin == Builtin::AsyncGeneratorFunctionPrototype && key == "prototype" {
-        let property = match super::property(builtin, key) {
-            Value::Undefined => return None,
-            value => value,
-        };
-        return Some(descriptor_object_with_flags(property, false, false, true));
+    if let Some(descriptor) = async_generator_descriptor(builtin, key) {
+        return descriptor;
     }
     if builtin == Builtin::Object && key == "hasOwn" {
         return Some(descriptor_object_with_flags(
@@ -393,6 +382,26 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         false,
         configurable,
     ))
+}
+
+fn async_generator_descriptor(builtin: Builtin, key: &str) -> Option<Option<Value>> {
+    if builtin == Builtin::AsyncGeneratorPrototype {
+        let property = super::special_property(builtin, key)?;
+        let writable = !matches!(key, "constructor" | "Symbol.toStringTag");
+        return Some(Some(descriptor_object_with_flags(
+            property, writable, false, true,
+        )));
+    }
+    if builtin == Builtin::AsyncGeneratorFunctionPrototype && key == "prototype" {
+        let property = match super::property(builtin, key) {
+            Value::Undefined => return Some(None),
+            value => value,
+        };
+        return Some(Some(descriptor_object_with_flags(
+            property, false, false, true,
+        )));
+    }
+    None
 }
 fn accessor_descriptor(getter: Builtin) -> Value {
     Value::Object(Rc::new(ObjectData::new(vec![
