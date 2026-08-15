@@ -113,6 +113,22 @@ pub(crate) fn end_agent_callback() {
     IN_AGENT_CALLBACK.with(|active| active.set(false));
 }
 
+fn promote_report(state: &WaitHandle) {
+    AGENT_REPORTS.with(|reports| {
+        let mut reports = reports.borrow_mut();
+        let Some(index) = reports.iter().position(|(_, candidate)| {
+            candidate
+                .as_ref()
+                .is_some_and(|candidate| Rc::ptr_eq(candidate, state))
+        }) else {
+            return;
+        };
+        if let Some(report) = reports.remove(index) {
+            reports.push_front(report);
+        }
+    });
+}
+
 fn is_operation(builtin: Builtin) -> bool {
     matches!(
         builtin,
@@ -422,6 +438,7 @@ fn wake_sync_waiters(
                 let matches = same_buffer(candidate, buffer) && *position == index;
                 if matches && woken < count {
                     result.woken.set(true);
+                    promote_report(result);
                     woken += 1;
                     false
                 } else {
