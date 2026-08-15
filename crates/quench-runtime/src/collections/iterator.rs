@@ -19,6 +19,7 @@ pub(crate) use iterator_values::{
 };
 
 pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let mut items = Vec::new();
     for argument in arguments {
         if !crate::value::is_object(argument) {
             return Err(crate::value::error::throw_type_error(
@@ -31,8 +32,16 @@ pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
                 "Iterator.concat iterator method is not callable",
             ));
         }
+        items.push((argument.clone(), method));
     }
-    Ok(make(Vec::new()))
+    Ok(Value::Iterator(Rc::new(IteratorData {
+        state: RefCell::new(IteratorState::Concat {
+            items,
+            index: 0,
+            current: None,
+            done: false,
+        }),
+    })))
 }
 
 pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -168,6 +177,8 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
         IteratorState::RegExpString { .. } => Ok(None),
         IteratorState::Protocol { iterator, .. } => Ok(Some(iterator.clone())),
         IteratorState::Mapped { iterator, .. } => Ok(Some(iterator.clone())),
+        IteratorState::Concat { current, done, .. } if !*done => Ok(current.clone()),
+        IteratorState::Concat { .. } => Ok(None),
     }
 }
 fn get_return_method(iterator: &Value) -> Result<Option<Value>, crate::execute::VmError> {
@@ -378,6 +389,7 @@ pub fn delegate_next(
             IteratorState::Protocol { iterator, done, .. } if !*done => Some(iterator.clone()),
             IteratorState::Protocol { .. } => None,
             IteratorState::Mapped { .. } => None,
+            IteratorState::Concat { .. } => None,
         }
     };
     let Some(iterator) = protocol else {
@@ -461,6 +473,7 @@ fn delegation_target(
         | IteratorState::String { .. }
         | IteratorState::RegExpString { .. } => None,
         IteratorState::Mapped { .. } => None,
+        IteratorState::Concat { .. } => None,
     };
     Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
 }
@@ -543,6 +556,7 @@ pub(super) fn mark_done(data: &IteratorData) {
         | IteratorState::Protocol { done, .. }
         | IteratorState::RegExpString { done, .. } => *done = true,
         IteratorState::Mapped { done, .. } => *done = true,
+        IteratorState::Concat { done, .. } => *done = true,
     }
 }
 fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {

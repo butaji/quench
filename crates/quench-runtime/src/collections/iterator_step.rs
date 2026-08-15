@@ -23,8 +23,67 @@ enum StepTarget {
 }
 
 fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
+    if matches!(&*data.state.borrow(), IteratorState::Concat { .. }) {
+        return concat_target(data);
+    }
     let mut state = data.state.borrow_mut();
     step_target_state(data, &mut state)
+}
+
+fn concat_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
+    let (items, mut index, mut current, done) = {
+        let state = data.state.borrow();
+        let IteratorState::Concat {
+            items,
+            index,
+            current,
+            done,
+        } = &*state
+        else {
+            return Ok(StepTarget::Value(None));
+        };
+        (items.clone(), *index, current.clone(), *done)
+    };
+    if done {
+        return Ok(StepTarget::Value(None));
+    }
+    loop {
+        if let Some(iterator) = current.clone() {
+            if let Some(value) = super::step_value(&iterator)? {
+                update_concat(data, index, current, done);
+                return Ok(StepTarget::Value(Some(value)));
+            }
+            current = None;
+            index += 1;
+        }
+        let Some((receiver, method)) = items.get(index).cloned() else {
+            update_concat(data, index, current, true);
+            return Ok(StepTarget::Value(None));
+        };
+        let iterator = crate::functions::execute_target(&method, &receiver, &[])?;
+        if !crate::value::is_object(&iterator) {
+            return Err(not_iterable());
+        }
+        current = Some(if matches!(iterator, Value::Iterator(_)) {
+            iterator
+        } else {
+            super::make_protocol(iterator)
+        });
+    }
+}
+
+fn update_concat(data: &IteratorData, index: usize, current: Option<Value>, done: bool) {
+    if let IteratorState::Concat {
+        index: state_index,
+        current: state_current,
+        done: state_done,
+        ..
+    } = &mut *data.state.borrow_mut()
+    {
+        *state_index = index;
+        *state_current = current;
+        *state_done = done;
+    }
 }
 
 fn step_target_state(
