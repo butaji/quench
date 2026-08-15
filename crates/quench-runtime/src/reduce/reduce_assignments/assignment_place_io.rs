@@ -99,14 +99,21 @@ pub(crate) fn put(place: Place, value: u16, ops: &mut Vec<Op>) -> Option<()> {
             key,
             strict,
         } => emit_property_put(ops, object, key, value, strict),
+        place => put_tail(place, value, ops),
+    }
+    Some(())
+}
+
+fn put_tail(place: Place, value: u16, ops: &mut Vec<Op>) {
+    match place {
         Place::Private { object, name } => ops.push(Op::SetPrivate {
             object,
             name,
             src: value,
         }),
         Place::Super { key } => emit_super_put(ops, key, value),
+        _ => {}
     }
-    Some(())
 }
 
 fn put_local(ops: &mut Vec<Op>, slot: u16, value: u16) {
