@@ -153,6 +153,7 @@ pub(crate) fn load_binding(
     dynamic: bool,
 ) -> Result<(), VmError> {
     if let Some(value) = crate::with_scope::resolve_binding(name)? {
+        ensure_module_binding_initialized(&value, name)?;
         crate::execute::write_value(registers, dst, value);
         return Ok(());
     }
@@ -163,7 +164,9 @@ pub(crate) fn load_binding(
             return Ok(());
         }
     }
-    crate::execute::write_value(registers, dst, current().get(slot));
+    let value = resolved_module_value(current().get(slot));
+    ensure_module_binding_initialized(&value, name)?;
+    crate::execute::write_value(registers, dst, value);
     Ok(())
 }
 
@@ -243,16 +246,45 @@ pub(crate) fn load_resolved_local(
 
 pub(crate) fn load(registers: &mut Vec<Value>, dst: u16, slot: u16) -> Result<(), VmError> {
     ensure_initialized(slot, "binding")?;
-    crate::execute::write_value(registers, dst, current().get(slot));
+    let value = resolved_module_value(current().get(slot));
+    ensure_module_binding_initialized(&value, "binding")?;
+    crate::execute::write_value(registers, dst, value);
     Ok(())
+}
+
+fn ensure_module_binding_initialized(value: &Value, name: &str) -> Result<(), VmError> {
+    if crate::module_bindings::ModuleBindingCell::is_uninitialized(value) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access an uninitialized module binding: {name}"
+        )));
+    }
+    Ok(())
+}
+
+fn resolved_module_value(value: Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => {
+            crate::module_bindings::ModuleBindingCell::from_shared(cell).get()
+        }
+        value => value,
+    }
 }
 
 pub(crate) fn write(slot: u16, value: Value) {
     current().set(slot, value);
 }
 
+pub(crate) fn alias_slot(slot: u16, source: u16) {
+    let cell = current().slot_cell(source);
+    current().set(slot, Value::BindingCell(cell));
+}
+
 pub(crate) fn mark_uninitialized(slot: u16) {
     current().mark_uninitialized(slot);
+}
+
+pub(crate) fn mark_immutable(slot: u16) {
+    current().mark_immutable_slot(slot);
 }
 
 pub(crate) fn check_initialized(slot: u16, name: &str) -> Result<(), VmError> {

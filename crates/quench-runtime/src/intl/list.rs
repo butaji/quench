@@ -183,19 +183,7 @@ fn comma_joiners() -> (String, String, String) {
 
 fn standard_joiners(style: &str, list_type: &str, spanish: bool) -> (String, String, String) {
     let disjunction = list_type == "disjunction";
-    let word = if style == "short" && !spanish && !disjunction {
-        " & "
-    } else if disjunction {
-        if spanish {
-            " o "
-        } else {
-            " or "
-        }
-    } else if spanish {
-        " y "
-    } else {
-        " and "
-    };
+    let word = join_word(style, spanish, disjunction);
     if list_type == "unit" && spanish && style == "short" {
         return (", ".to_string(), word.to_string(), ", ".to_string());
     }
@@ -211,6 +199,30 @@ fn standard_joiners(style: &str, list_type: &str, spanish: bool) -> (String, Str
         format!(",{}", word)
     };
     (", ".to_string(), word.to_string(), final_joiner)
+}
+
+fn repeated_joiner(separator: &str) -> (String, String, String) {
+    (
+        separator.to_string(),
+        separator.to_string(),
+        separator.to_string(),
+    )
+}
+
+fn join_word(style: &str, spanish: bool, disjunction: bool) -> &'static str {
+    if style == "short" && !spanish && !disjunction {
+        " & "
+    } else if disjunction {
+        if spanish {
+            " o "
+        } else {
+            " or "
+        }
+    } else if spanish {
+        " y "
+    } else {
+        " and "
+    }
 }
 
 fn format_list(items: &[String], locale: &str, style: &str, list_type: &str) -> String {

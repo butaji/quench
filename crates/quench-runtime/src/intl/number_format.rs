@@ -141,12 +141,10 @@ fn compact_locale_scale(magnitude: i32, locale: &str, display: &str) -> i32 {
         return threshold_scale(magnitude, &[8, 4, 3]);
     }
     if locale.starts_with("de") {
-        return if magnitude >= 6 {
-            6
-        } else if display == "long" && magnitude >= 3 {
-            3
+        return if display == "long" {
+            threshold(magnitude, &[(6, 6), (3, 3)])
         } else {
-            0
+            threshold(magnitude, &[(6, 6)])
         };
     }
     threshold_scale(magnitude, &[9, 6, 3])

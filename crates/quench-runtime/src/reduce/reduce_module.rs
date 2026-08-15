@@ -128,13 +128,17 @@ fn reduce_import(
             ImportDeclarationSpecifier::ImportDefaultSpecifier(value) => &value.local,
             ImportDeclarationSpecifier::ImportNamespaceSpecifier(value) => &value.local,
         };
-        let slot = *next_slot;
-        *next_slot = next_slot.saturating_add(1);
-        locals.insert(local.name.to_string(), slot);
+        let slot = locals.get(local.name.as_str()).copied().unwrap_or_else(|| {
+            let slot = *next_slot;
+            *next_slot = next_slot.saturating_add(1);
+            locals.insert(local.name.to_string(), slot);
+            slot
+        });
         ops.push(Op::DeclareEvalBinding {
             name: local.name.to_string(),
             slot,
         });
+        ops.push(Op::MarkImmutable { slot });
     }
     Ok(None)
 }
@@ -283,13 +287,55 @@ fn reduce_default_expression(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    reduce_exported_default!(
-        expression expression,
-        ops,
-        facts,
-        next_register,
-        next_slot,
-        locals
+    let result = crate::reduce::reduce_expression(expression, ops, facts, next_register, locals);
+    if let Some(src) = result {
+        if anonymous_default_definition(expression) && !class_has_own_name(expression) {
+            ops.push(Op::SetFunctionName {
+                function: src,
+                name: "default".to_string(),
+            });
+        }
+        let slot = default_slot(next_slot, locals);
+        ops.push(Op::DeclareEvalBinding {
+            name: "default".to_string(),
+            slot,
+        });
+        ops.push(Op::StoreLocal { slot, src });
+    }
+    Ok(None)
+}
+
+fn class_has_own_name(expression: &oxc::ast::ast::Expression<'_>) -> bool {
+    let mut expression = expression;
+    while let oxc::ast::ast::Expression::ParenthesizedExpression(parenthesized) = expression {
+        expression = &parenthesized.expression;
+    }
+    let oxc::ast::ast::Expression::ClassExpression(class) = expression else {
+        return false;
+    };
+    class.body.body.iter().any(|element| {
+        matches!(
+            element,
+            oxc::ast::ast::ClassElement::MethodDefinition(method)
+                if method.r#static && matches!(&method.key, oxc::ast::ast::PropertyKey::StaticIdentifier(identifier) if identifier.name == "name")
+        )
+    })
+}
+
+fn anonymous_default_definition(expression: &oxc::ast::ast::Expression<'_>) -> bool {
+    let mut expression = expression;
+    while let oxc::ast::ast::Expression::ParenthesizedExpression(parenthesized) = expression {
+        expression = &parenthesized.expression;
+    }
+    matches!(
+        expression,
+        oxc::ast::ast::Expression::ArrowFunctionExpression(_)
+    ) || matches!(
+        expression,
+        oxc::ast::ast::Expression::FunctionExpression(function) if function.id.is_none()
+    ) || matches!(
+        expression,
+        oxc::ast::ast::Expression::ClassExpression(class) if class.id.is_none()
     )
 }
 
@@ -327,14 +373,25 @@ fn reduce_default_function_declaration<'a>(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    reduce_exported_default!(
+    if function.id.is_none() {
+        let src = crate::functions::reduce_expression(function, ops, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported default declaration".to_string()])?;
+        return store_default(src, ops, next_slot, locals, true);
+    }
+    let result = reduce_exported_default!(
         function function,
         ops,
         facts,
         next_register,
         next_slot,
         locals
-    )
+    );
+    if let Some(identifier) = function.id.as_ref() {
+        if let Some(&src_slot) = locals.get(identifier.name.as_str()) {
+            alias_default(src_slot, ops, next_slot, locals);
+        }
+    }
+    result
 }
 
 fn reduce_default_class_declaration<'a>(
@@ -345,14 +402,89 @@ fn reduce_default_class_declaration<'a>(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    reduce_module_exported_decl!(
+    if class.id.is_none() {
+        let src = crate::classes::reduce_expression(class, ops, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported default declaration".to_string()])?;
+        return store_default(src, ops, next_slot, locals, !class_has_static_name(class));
+    }
+    let result = reduce_module_exported_decl!(
         class class,
         ops,
         facts,
         next_register,
         next_slot,
         locals
-    )
+    );
+    if let Some(identifier) = class.id.as_ref() {
+        if let Some(&src_slot) = locals.get(identifier.name.as_str()) {
+            alias_default(src_slot, ops, next_slot, locals);
+        }
+    }
+    result
+}
+
+fn alias_default(
+    src_slot: u16,
+    ops: &mut Vec<Op>,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) {
+    let slot = default_slot(next_slot, locals);
+    ops.push(Op::DeclareEvalBinding {
+        name: "default".to_string(),
+        slot,
+    });
+    ops.push(Op::AliasLocal {
+        slot,
+        source: src_slot,
+    });
+}
+
+fn default_slot(next_slot: &mut u16, locals: &mut HashMap<String, u16>) -> u16 {
+    if let Some(slot) = locals.get("default").copied() {
+        return slot;
+    }
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    locals.insert("default".to_string(), slot);
+    slot
+}
+
+fn store_default(
+    src: u16,
+    ops: &mut Vec<Op>,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+    set_name: bool,
+) -> Result<Option<u16>, Vec<String>> {
+    if set_name {
+        ops.push(Op::SetFunctionName {
+            function: src,
+            name: "default".to_string(),
+        });
+    }
+    let slot = default_slot(next_slot, locals);
+    ops.push(Op::DeclareEvalBinding {
+        name: "default".to_string(),
+        slot,
+    });
+    ops.push(Op::StoreLocal { slot, src });
+    Ok(None)
+}
+
+fn class_has_static_name(class: &oxc::ast::ast::Class<'_>) -> bool {
+    class.body.body.iter().any(|element| {
+        matches!(
+            element,
+            oxc::ast::ast::ClassElement::MethodDefinition(method)
+                if method.r#static
+                    && matches!(
+                        &method.key,
+                        oxc::ast::ast::PropertyKey::StaticIdentifier(identifier)
+                            if identifier.name == "name"
+                    )
+        )
+    })
 }
 
 fn reduce_class(
@@ -366,9 +498,14 @@ fn reduce_class(
     let Some(identifier) = class.id.as_ref() else {
         return Err(vec!["Anonymous class declaration".to_string()]);
     };
-    let slot = *next_slot;
-    *next_slot = next_slot.saturating_add(1);
-    locals.insert(identifier.name.to_string(), slot);
+    let slot = if let Some(slot) = locals.get(identifier.name.as_str()).copied() {
+        slot
+    } else {
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        locals.insert(identifier.name.to_string(), slot);
+        slot
+    };
     let register = crate::classes::reduce_expression(class, ops, facts, next_register, locals)
         .ok_or_else(|| vec!["Unsupported class body".to_string()])?;
     ops.push(Op::StoreLocal {

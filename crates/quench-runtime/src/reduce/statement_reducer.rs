@@ -3,9 +3,14 @@ impl StatementReducer {
         self.locals.clone()
     }
 
-    pub(super) fn new_with_global(source_type: SourceType, global: bool) -> Self {
+    pub(super) fn enter_module(&mut self) {
+        self.locals.remove(SCRIPT_THIS_SLOT);
+        self.script = false;
+    }
+
+    pub(super) fn new_with_global(source_type: SourceType, global: bool, shared: bool) -> Self {
         let locals = initialize_statement_locals(source_type);
-        let (mut ops, next_register) = initialize_statement_ops(global);
+        let (mut ops, next_register) = initialize_statement_ops(global || shared);
         ops.push(Op::StoreLocal {
             slot: 0,
             src: next_register,
@@ -25,13 +30,77 @@ impl StatementReducer {
         facts: &mut ProgramDb,
         program_scope: bool,
     ) -> Result<Option<u16>, Vec<String>> {
+        if !self.script {
+            self.prepare_module_scope(statements);
+        }
         let barrier_len = facts.eval_var_barrier.len();
         facts
             .eval_var_barrier
-            .extend(crate::semantic_early::lexically_declared_names_in(statements));
+            .extend(crate::semantic_early::lexically_declared_names_in(
+                statements,
+            ));
         let result = self.append_scoped(statements, facts, program_scope);
         facts.eval_var_barrier.truncate(barrier_len);
         result
+    }
+
+    fn prepare_module_scope(&mut self, statements: &[Statement<'_>]) {
+        let mut lexical = crate::semantic_early::lexically_declared_names_in(statements);
+        lexical.extend(exported_lexical_names(statements));
+        self.reserve_lexical_names(&lexical);
+        self.initialize_exported_vars(statements);
+        self.mark_imports_immutable(statements);
+        crate::reduce_support::predeclare_functions(
+            statements,
+            &mut self.locals,
+            &mut self.next_slot,
+        );
+        reserve_exported_functions(statements, &mut self.locals, &mut self.next_slot);
+    }
+
+    fn reserve_lexical_names(&mut self, names: &[String]) {
+        for (_, slot) in crate::reduce_support::reserve_names(
+            names,
+            &mut self.locals,
+            &mut self.next_slot,
+        ) {
+            self.ops.push(Op::MarkUninitialized { slot });
+        }
+        for name in names {
+            if let Some(slot) = self.locals.get(name).copied() {
+                self.locals.insert(format!("\0lexical-predeclared:{name}"), slot);
+            }
+        }
+    }
+
+    fn initialize_exported_vars(&mut self, statements: &[Statement<'_>]) {
+        for name in exported_var_names(statements) {
+            for (_, slot) in crate::reduce_support::reserve_names(
+                std::slice::from_ref(&name),
+                &mut self.locals,
+                &mut self.next_slot,
+            ) {
+                let register = self.next_register;
+                self.next_register = self.next_register.saturating_add(1);
+                self.ops.push(Op::Const { dst: register, value: crate::ops::Constant::Undefined });
+                self.ops.push(Op::StoreLocal { slot, src: register });
+            }
+        }
+    }
+
+    fn mark_imports_immutable(&mut self, statements: &[Statement<'_>]) {
+        for statement in statements {
+            let Statement::ImportDeclaration(import) = statement else { continue };
+            let Some(specifiers) = &import.specifiers else { continue };
+            for specifier in specifiers {
+                let name = import_local_name(specifier);
+                for (_, slot) in crate::reduce_support::reserve_names(
+                    &[name], &mut self.locals, &mut self.next_slot,
+                ) {
+                    self.ops.push(Op::MarkImmutable { slot });
+                }
+            }
+        }
     }
 
     fn append_scoped(
@@ -56,6 +125,117 @@ impl StatementReducer {
             .max(crate::reduce_support::register_base(&self.locals));
         append_scoped_statements(self, statements, facts, program_scope, global_script)
     }
+}
+
+fn import_local_name(
+    specifier: &oxc::ast::ast::ImportDeclarationSpecifier<'_>,
+) -> String {
+    match specifier {
+        oxc::ast::ast::ImportDeclarationSpecifier::ImportSpecifier(value) => {
+            value.local.name.to_string()
+        }
+        oxc::ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(value) => {
+            value.local.name.to_string()
+        }
+        oxc::ast::ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(value) => {
+            value.local.name.to_string()
+        }
+    }
+}
+
+fn reserve_exported_functions(
+    statements: &[Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    for statement in statements {
+        let function = exported_function(statement);
+        let Some(identifier) = function.and_then(|function| function.id.as_ref()) else {
+            continue;
+        };
+        crate::reduce_support::reserve_names(
+            &[identifier.name.to_string()],
+            locals,
+            next_slot,
+        );
+    }
+}
+
+fn exported_function<'a>(
+    statement: &'a Statement<'a>,
+) -> Option<&'a oxc::ast::ast::Function<'a>> {
+    match statement {
+        Statement::ExportNamedDeclaration(export) => match &export.declaration {
+            Some(oxc::ast::ast::Declaration::FunctionDeclaration(function)) => Some(function),
+            _ => None,
+        },
+        Statement::ExportDefaultDeclaration(export) => match &export.declaration {
+            oxc::ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
+                Some(function)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn exported_lexical_names(statements: &[Statement<'_>]) -> Vec<String> {
+    let mut names = Vec::new();
+    for statement in statements {
+        if matches!(statement, Statement::ExportDefaultDeclaration(_)) {
+            names.push("default".to_string());
+        }
+        let Statement::ExportNamedDeclaration(export) = statement else {
+            continue;
+        };
+        let Some(declaration) = &export.declaration else {
+            continue;
+        };
+        match declaration {
+            oxc::ast::ast::Declaration::ClassDeclaration(class) => {
+                if let Some(identifier) = &class.id {
+                    names.push(identifier.name.to_string());
+                }
+            }
+            oxc::ast::ast::Declaration::VariableDeclaration(variable)
+                if variable.kind != oxc::ast::ast::VariableDeclarationKind::Var =>
+            {
+                for declarator in &variable.declarations {
+                    if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+                        &declarator.id.kind
+                    {
+                        names.push(identifier.name.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn exported_var_names(statements: &[Statement<'_>]) -> Vec<String> {
+    let mut names = Vec::new();
+    for statement in statements {
+        let Statement::ExportNamedDeclaration(export) = statement else {
+            continue;
+        };
+        let Some(oxc::ast::ast::Declaration::VariableDeclaration(variable)) = &export.declaration
+        else {
+            continue;
+        };
+        if variable.kind != oxc::ast::ast::VariableDeclarationKind::Var {
+            continue;
+        }
+        for declarator in &variable.declarations {
+            if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+                &declarator.id.kind
+            {
+                names.push(identifier.name.to_string());
+            }
+        }
+    }
+    names
 }
 
 fn initialize_statement_locals(source_type: SourceType) -> HashMap<String, u16> {
@@ -133,7 +313,29 @@ fn append_scoped_statements(
     global_script: bool,
 ) -> Result<Option<u16>, Vec<String>> {
     let mut last = None;
-    for statement in statements {
+    let mut evaluation_started = state.script;
+    let order = if !state.script {
+        let mut order = Vec::with_capacity(statements.len());
+        for (index, statement) in statements.iter().enumerate() {
+            if is_function_declaration(statement) {
+                order.push(index);
+            }
+        }
+        for (index, statement) in statements.iter().enumerate() {
+            if !is_function_declaration(statement) {
+                order.push(index);
+            }
+        }
+        order
+    } else {
+        (0..statements.len()).collect()
+    };
+    for index in order {
+        let statement = &statements[index];
+        if !evaluation_started && !is_function_declaration(statement) {
+            state.ops.push(Op::ModuleEvaluationStart);
+            evaluation_started = true;
+        }
         if global_script && matches!(statement, Statement::FunctionDeclaration(_)) {
             continue;
         }
@@ -146,4 +348,24 @@ fn append_scoped_statements(
         last = next;
     }
     Ok(last)
+}
+
+fn is_function_declaration(statement: &Statement<'_>) -> bool {
+    matches!(statement, Statement::FunctionDeclaration(_))
+        || matches!(
+            statement,
+            Statement::ExportNamedDeclaration(export)
+                if matches!(
+                    &export.declaration,
+                    Some(oxc::ast::ast::Declaration::FunctionDeclaration(_))
+                )
+        )
+        || matches!(
+            statement,
+            Statement::ExportDefaultDeclaration(export)
+                if matches!(
+                    &export.declaration,
+                    oxc::ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(_)
+                )
+        )
 }
