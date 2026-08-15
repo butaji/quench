@@ -86,14 +86,24 @@ fn bound_function_property(
         }
     } else if key == "name" && !realm::is_intrinsic(bound) {
         Value::String(String::new())
-    } else if shadow_wrapper {
+    } else {
+        bound_function_fallback(bound, shadow_wrapper, key)
+    }
+}
+
+fn bound_function_fallback(
+    bound: &crate::value::BoundFunctionValue,
+    shadow_wrapper: bool,
+    key: &str,
+) -> Value {
+    if shadow_wrapper {
+        return function_prototype_property(key);
+    }
+    let result = get_property(&bound.target, key);
+    if matches!(result, Value::Undefined) {
         function_prototype_property(key)
     } else {
-        let result = get_property(&bound.target, key);
-        if !matches!(result, Value::Undefined) {
-            return result;
-        }
-        function_prototype_property(key)
+        result
     }
 }
 fn bind_method(receiver: &Value, property: Value) -> Value {
