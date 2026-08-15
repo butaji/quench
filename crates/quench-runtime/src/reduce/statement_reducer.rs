@@ -31,7 +31,98 @@ impl StatementReducer {
         program_scope: bool,
     ) -> Result<Option<u16>, Vec<String>> {
         if !self.script {
-            self.prepare_module_scope(statements);
+            let mut lexical = crate::semantic_early::lexically_declared_names_in(statements);
+            lexical.extend(exported_lexical_names(statements));
+            for (_, slot) in crate::reduce_support::reserve_names(
+                &lexical,
+                &mut self.locals,
+                &mut self.next_slot,
+            ) {
+                self.ops.push(Op::MarkUninitialized { slot });
+            }
+            for name in lexical {
+                if let Some(slot) = self.locals.get(&name).copied() {
+                    self.locals
+                        .insert(format!("\0lexical-predeclared:{name}"), slot);
+                }
+            }
+            let vars = exported_var_names(statements);
+            for name in vars {
+                let reserved = crate::reduce_support::reserve_names(
+                    std::slice::from_ref(&name),
+                    &mut self.locals,
+                    &mut self.next_slot,
+                );
+                for (_, slot) in reserved {
+                    let register = self.next_register;
+                    self.next_register = self.next_register.saturating_add(1);
+                    self.ops.push(Op::Const {
+                        dst: register,
+                        value: crate::ops::Constant::Undefined,
+                    });
+                    self.ops.push(Op::StoreLocal {
+                        slot,
+                        src: register,
+                    });
+                }
+            }
+            for statement in statements {
+                if let Statement::ImportDeclaration(import) = statement {
+                    if let Some(specifiers) = &import.specifiers {
+                        for specifier in specifiers {
+                            let name = match specifier {
+                                oxc::ast::ast::ImportDeclarationSpecifier::ImportSpecifier(value) => value.local.name.to_string(),
+                                oxc::ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(value) => value.local.name.to_string(),
+                                oxc::ast::ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(value) => value.local.name.to_string(),
+                            };
+                            let reserved = crate::reduce_support::reserve_names(
+                                &[name],
+                                &mut self.locals,
+                                &mut self.next_slot,
+                            );
+                            for (_, slot) in reserved {
+                                self.ops.push(Op::MarkImmutable { slot });
+                            }
+                        }
+                    }
+                }
+            }
+            for statement in statements {
+                if let Statement::ExportDefaultDeclaration(export) = statement {
+                    if let oxc::ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(
+                        function,
+                    ) = &export.declaration
+                    {
+                        if let Some(identifier) = &function.id {
+                            crate::reduce_support::reserve_names(
+                                &[identifier.name.to_string()],
+                                &mut self.locals,
+                                &mut self.next_slot,
+                            );
+                        }
+                    }
+                }
+            }
+            crate::reduce_support::predeclare_functions(
+                statements,
+                &mut self.locals,
+                &mut self.next_slot,
+            );
+            for statement in statements {
+                if let oxc::ast::ast::Statement::ExportNamedDeclaration(export) = statement {
+                    if let Some(oxc::ast::ast::Declaration::FunctionDeclaration(function)) =
+                        &export.declaration
+                    {
+                        if let Some(identifier) = &function.id {
+                            crate::reduce_support::reserve_names(
+                                &[identifier.name.to_string()],
+                                &mut self.locals,
+                                &mut self.next_slot,
+                            );
+                        }
+                    }
+                }
+            }
         }
         let barrier_len = facts.eval_var_barrier.len();
         facts
@@ -124,58 +215,6 @@ impl StatementReducer {
             .next_register
             .max(crate::reduce_support::register_base(&self.locals));
         append_scoped_statements(self, statements, facts, program_scope, global_script)
-    }
-}
-
-fn import_local_name(
-    specifier: &oxc::ast::ast::ImportDeclarationSpecifier<'_>,
-) -> String {
-    match specifier {
-        oxc::ast::ast::ImportDeclarationSpecifier::ImportSpecifier(value) => {
-            value.local.name.to_string()
-        }
-        oxc::ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(value) => {
-            value.local.name.to_string()
-        }
-        oxc::ast::ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(value) => {
-            value.local.name.to_string()
-        }
-    }
-}
-
-fn reserve_exported_functions(
-    statements: &[Statement<'_>],
-    locals: &mut HashMap<String, u16>,
-    next_slot: &mut u16,
-) {
-    for statement in statements {
-        let function = exported_function(statement);
-        let Some(identifier) = function.and_then(|function| function.id.as_ref()) else {
-            continue;
-        };
-        crate::reduce_support::reserve_names(
-            &[identifier.name.to_string()],
-            locals,
-            next_slot,
-        );
-    }
-}
-
-fn exported_function<'a>(
-    statement: &'a Statement<'a>,
-) -> Option<&'a oxc::ast::ast::Function<'a>> {
-    match statement {
-        Statement::ExportNamedDeclaration(export) => match &export.declaration {
-            Some(oxc::ast::ast::Declaration::FunctionDeclaration(function)) => Some(function),
-            _ => None,
-        },
-        Statement::ExportDefaultDeclaration(export) => match &export.declaration {
-            oxc::ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(function) => {
-                Some(function)
-            }
-            _ => None,
-        },
-        _ => None,
     }
 }
 
@@ -313,7 +352,6 @@ fn append_scoped_statements(
     global_script: bool,
 ) -> Result<Option<u16>, Vec<String>> {
     let mut last = None;
-    let mut evaluation_started = state.script;
     let order = if !state.script {
         let mut order = Vec::with_capacity(statements.len());
         for (index, statement) in statements.iter().enumerate() {
@@ -332,10 +370,6 @@ fn append_scoped_statements(
     };
     for index in order {
         let statement = &statements[index];
-        if !evaluation_started && !is_function_declaration(statement) {
-            state.ops.push(Op::ModuleEvaluationStart);
-            evaluation_started = true;
-        }
         if global_script && matches!(statement, Statement::FunctionDeclaration(_)) {
             continue;
         }
@@ -356,7 +390,7 @@ fn is_function_declaration(statement: &Statement<'_>) -> bool {
             statement,
             Statement::ExportNamedDeclaration(export)
                 if matches!(
-                    &export.declaration,
+                    export.declaration,
                     Some(oxc::ast::ast::Declaration::FunctionDeclaration(_))
                 )
         )

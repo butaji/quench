@@ -37,6 +37,7 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         return Some(name);
     }
     match builtin {
+        Builtin::AbstractModuleSource => Some("AbstractModuleSource"),
         Builtin::Array => Some("Array"),
         Builtin::Iterator => Some("Iterator"),
         Builtin::ArrayBuffer => Some("ArrayBuffer"),
@@ -119,6 +120,7 @@ fn error_constructor_name(builtin: Builtin) -> Option<&'static str> {
 /// Returns `None` for builtins that are not constructors with prototypes.
 pub fn prototype(builtin: Builtin) -> Option<Builtin> {
     match builtin {
+        Builtin::AbstractModuleSource => Some(Builtin::AbstractModuleSourcePrototype),
         Builtin::Array => Some(Builtin::ArrayPrototype),
         Builtin::Boolean => Some(Builtin::ObjectPrototype),
         Builtin::Promise => Some(Builtin::PromisePrototype),
@@ -150,12 +152,11 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::SharedArrayBuffer => Some(Builtin::SharedArrayBufferPrototype),
         Builtin::WeakSet => Some(Builtin::WeakSetPrototype),
         Builtin::WeakRef => Some(Builtin::WeakRefPrototype),
-        Builtin::Error => Some(Builtin::ErrorPrototype),
-        Builtin::RangeError => Some(Builtin::RangeErrorPrototype),
-        Builtin::ReferenceError => Some(Builtin::ReferenceErrorPrototype),
-        Builtin::SyntaxError => Some(Builtin::SyntaxErrorPrototype),
-        Builtin::EvalError => Some(Builtin::EvalErrorPrototype),
-        Builtin::URIError => Some(Builtin::URIErrorPrototype),
+        Builtin::Error | Builtin::RangeError => Some(Builtin::ErrorPrototype),
+        Builtin::ReferenceError => Some(Builtin::ErrorPrototype),
+        Builtin::SyntaxError => Some(Builtin::ErrorPrototype),
+        Builtin::EvalError => Some(Builtin::ErrorPrototype),
+        Builtin::URIError => Some(Builtin::ErrorPrototype),
         Builtin::AggregateError => Some(Builtin::AggregateErrorPrototype),
         Builtin::SuppressedError => Some(Builtin::SuppressedErrorPrototype),
         Builtin::TypeError => Some(Builtin::TypeErrorPrototype),
@@ -174,13 +175,7 @@ pub fn is_prototype(builtin: Builtin) -> bool {
                 | Builtin::WeakSetPrototype
                 | Builtin::WeakRefPrototype
                 | Builtin::ErrorPrototype
-                | Builtin::RangeErrorPrototype
-                | Builtin::ReferenceErrorPrototype
-                | Builtin::SyntaxErrorPrototype
-                | Builtin::EvalErrorPrototype
-                | Builtin::URIErrorPrototype
                 | Builtin::AggregateErrorPrototype
-                | Builtin::TypeErrorPrototype
                 | Builtin::SuppressedErrorPrototype
                 | Builtin::PromisePrototype
         )
@@ -190,6 +185,7 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
         Builtin::IteratorPrototype
+            | Builtin::AbstractModuleSourcePrototype
             | Builtin::ArrayBufferPrototype
             | Builtin::SharedArrayBufferPrototype
             | Builtin::Float64ArrayPrototype
@@ -265,6 +261,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         return Some(length);
     }
     match builtin {
+        Builtin::AbstractModuleSource => Some(0.0),
         Builtin::Array => Some(1.0),
         Builtin::Iterator => Some(0.0),
         Builtin::ArrayBuffer => Some(1.0),
@@ -294,8 +291,8 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         | Builtin::ReferenceError
         | Builtin::SyntaxError
         | Builtin::EvalError
-        | Builtin::URIError => Some(1.0),
-        Builtin::AggregateError => Some(2.0),
+        | Builtin::URIError
+        | Builtin::AggregateError => Some(2.0),
         Builtin::SuppressedError => Some(3.0),
         _ => None,
     }
