@@ -516,6 +516,8 @@ fn canonical_tag_alias(tag: &str) -> Option<&'static str> {
     match tag.to_ascii_lowercase().as_str() {
         "ja-latn-hepburn-heploc" => Some("ja-Latn-alalc97"),
         "sr-latn-cyrl" => Some("sr-Cyrl"),
+        "hy-arevela" => Some("hy"),
+        "hy-arevmda" => Some("hyw"),
         "ru-su" | "ru-810" => Some("ru-RU"),
         "en-su" | "en-810" => Some("en-RU"),
         "und-su" | "und-810" => Some("und-RU"),
@@ -632,6 +634,11 @@ fn language_alias(language: String) -> String {
         "ji" => "yi".to_string(),
         "tl" => "fil".to_string(),
         "mo" => "ro".to_string(),
+        "aar" => "aa".to_string(),
+        "heb" => "he".to_string(),
+        "ces" => "cs".to_string(),
+        "cmn" => "zh".to_string(),
+        "sgn" => "gss".to_string(),
         other => other.to_string(),
     }
 }
