@@ -325,7 +325,8 @@ fn function_constructor(function: &crate::value::FunctionValue) -> Builtin {
     }
 }
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
-    get_property_with_receiver(value, key, value)
+    let value = crate::locals::resolved_replacement(value.clone());
+    get_property_with_receiver(&value, key, &value)
 }
 
 pub(crate) fn get_property_with_receiver(
