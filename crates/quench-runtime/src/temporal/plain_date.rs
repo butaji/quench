@@ -61,8 +61,8 @@ pub(crate) fn execute(
 }
 
 fn compare(left: Option<&Value>, right: Option<&Value>) -> Result<Value, VmError> {
-    let left = date_fields(left)?;
-    let right = date_fields(right)?;
+    let left = date_like_fields(left)?;
+    let right = date_like_fields(right)?;
     let left = date_serial(left.0, left.1, left.2);
     let right = date_serial(right.0, right.1, right.2);
     Ok(Value::Number((left.cmp(&right) as i8) as f64))
