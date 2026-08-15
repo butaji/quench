@@ -70,7 +70,10 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
 
 fn bound_function_owns_property(bound: &crate::value::BoundFunctionValue, key: &str) -> bool {
     if bound.target == Value::Builtin(Builtin::AbstractModuleSource) {
-        return builtin_owns_property(Builtin::AbstractModuleSource, key);
+        let properties = bound.properties.borrow();
+        let deleted = crate::builtins::deleted_key(key);
+        return !properties.iter().any(|(name, _)| name == &deleted)
+            && builtin_owns_property(Builtin::AbstractModuleSource, key);
     }
     bound
         .properties
