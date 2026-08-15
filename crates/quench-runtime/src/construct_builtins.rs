@@ -167,8 +167,8 @@ fn regexp_source_and_flags(
     let flags = regexp_constructor_flags(arguments)?;
     let source_value = regexp_constructor_source(&source_value)?;
     let source = crate::strings::source_text(&source_value)
-        .or_else(|| crate::conversion::to_string(&source_value).ok())
-        .unwrap_or_default();
+        .map(Ok)
+        .unwrap_or_else(|| crate::conversion::to_string(&source_value))?;
     let observable_source = crate::strings::source_value(&source);
     Ok((source, observable_source, flags))
 }
