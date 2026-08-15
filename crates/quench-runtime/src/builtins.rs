@@ -482,6 +482,7 @@ pub(crate) fn same_value_zero(left: &Value, right: &Value) -> bool {
     same_value(Some(left), Some(right))
 }
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
+    let target = crate::vm::current_global_for(&target).unwrap_or(target);
     if let Some(result) = crate::typed_array_prototype::set(&target, key, value.clone()) {
         return result;
     }
