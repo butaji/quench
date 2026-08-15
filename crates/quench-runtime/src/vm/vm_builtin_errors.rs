@@ -96,7 +96,12 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
     let key = Value::String("stack".to_string());
     let owns_stack = crate::builtins::object::has_own_property(Some(value), Some(&key));
     if matches!(owns_stack, Value::Boolean(true)) {
-        crate::builtins::set_property(value.clone(), "stack", stack.clone());
+        let updated = crate::properties::set_with_receiver(value, "stack", stack, value)?;
+        if !updated {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot set property 'stack' of error",
+            ));
+        }
     } else {
         define_own_stack(value, stack.clone())?;
     }
