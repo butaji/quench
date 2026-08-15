@@ -24,7 +24,14 @@ enum StepTarget {
 
 fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
     let mut state = data.state.borrow_mut();
-    Ok(match &mut *state {
+    step_target_state(data, &mut state)
+}
+
+fn step_target_state(
+    data: &IteratorData,
+    state: &mut IteratorState,
+) -> Result<StepTarget, crate::execute::VmError> {
+    Ok(match state {
         IteratorState::Native {
             values,
             index,
