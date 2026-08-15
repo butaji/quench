@@ -106,9 +106,10 @@ fn constructor_receiver(target: &crate::value::Value) -> crate::value::Value {
     } else {
         constructor_receiver_default(target)
     };
-    crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-        ("\0prototype".to_string(), prototype),
-    ])))
+    crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![(
+        "\0prototype".to_string(),
+        prototype,
+    )])))
 }
 
 fn constructor_receiver_default(target: &crate::value::Value) -> crate::value::Value {
@@ -127,5 +128,9 @@ fn builtin_default_prototype(target: &crate::value::Value) -> Option<crate::valu
     let crate::value::Value::Builtin(builtin) = target else {
         return None;
     };
-    crate::builtin_meta::prototype(*builtin).map(crate::value::Value::Builtin)
+    let prototype = match builtin {
+        crate::ops::Builtin::AsyncFunction => crate::ops::Builtin::AsyncFunctionPrototype,
+        _ => crate::builtin_meta::prototype(*builtin)?,
+    };
+    Some(crate::value::Value::Builtin(prototype))
 }
