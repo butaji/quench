@@ -172,11 +172,22 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "firstDayOfWeek" => {
                 let _ = option_value(&text, "firstDayOfWeek")?;
             }
-            "language" | "region" | "script" | "variants" => {
+            "language" | "region" | "script" => {
                 let _ = option_value(&text, key)?;
+            }
+            "variants" => {
+                let value = option_value(&text, key)?;
+                locale.variants = value
+                    .split('-')
+                    .map(|variant| variant.to_ascii_lowercase())
+                    .collect();
             }
             _ => {}
         }
+    }
+    if locale.language == "cel" && locale.variants == ["gaulish"] {
+        locale.language = "xtg".to_string();
+        locale.variants.clear();
     }
     Ok(locale)
 }
