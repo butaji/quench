@@ -270,6 +270,10 @@ fn namespace_cell(
         quench_runtime::value::Value::Null,
     ));
     properties.push((
+        "\0quench:non_extensible".to_string(),
+        quench_runtime::value::Value::Boolean(true),
+    ));
+    properties.push((
         "Symbol.toStringTag".to_string(),
         quench_runtime::value::Value::String("Module".to_string()),
     ));
@@ -407,6 +411,10 @@ impl LinkedModule {
         properties.push((
             "\0prototype".to_string(),
             quench_runtime::value::Value::Null,
+        ));
+        properties.push((
+            "\0quench:non_extensible".to_string(),
+            quench_runtime::value::Value::Boolean(true),
         ));
         properties.push((
             "Symbol.toStringTag".to_string(),
