@@ -226,6 +226,8 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
             Value::Number(buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64)
         }
         "resizable" => Value::Boolean(buffer.max_byte_length.is_some()),
+        "detached" => Value::Boolean(*buffer.detached.borrow()),
+        "immutable" => Value::Boolean(buffer.immutable),
         "growable" => Value::Boolean(buffer.shared && buffer.max_byte_length.is_some()),
         "resize" => Value::Builtin(Builtin::ArrayBufferResize),
         "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
