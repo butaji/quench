@@ -456,6 +456,20 @@ pub(crate) fn format_currency(
     } else {
         text.to_string()
     };
+    let symbol = currency_symbol(currency, display, locale);
+    let formatted = if locale.starts_with("de") || locale.starts_with("pt") {
+        format!("{text}\u{a0}{symbol}")
+    } else {
+        format!("{symbol}{text}")
+    };
+    if sign == "-" && currency_sign == "accounting" && !locale.starts_with("de") {
+        format!("({formatted})")
+    } else {
+        format!("{sign}{formatted}")
+    }
+}
+
+fn currency_symbol<'a>(currency: Option<&'a str>, display: &str, locale: &str) -> &'a str {
     let symbol = match display {
         "code" | "name" => currency.unwrap_or("USD"),
         _ => match currency {
@@ -470,20 +484,9 @@ pub(crate) fn format_currency(
             _ => currency.unwrap_or("USD"),
         },
     };
-    let symbol =
-        if (locale.starts_with("ko") || locale.starts_with("zh")) && currency == Some("USD") {
-            "US$"
-        } else {
-            symbol
-        };
-    let formatted = if locale.starts_with("de") || locale.starts_with("pt") {
-        format!("{text}\u{a0}{symbol}")
+    if (locale.starts_with("ko") || locale.starts_with("zh")) && currency == Some("USD") {
+        "US$"
     } else {
-        format!("{symbol}{text}")
-    };
-    if sign == "-" && currency_sign == "accounting" && !locale.starts_with("de") {
-        format!("({formatted})")
-    } else {
-        format!("{sign}{formatted}")
+        symbol
     }
 }
