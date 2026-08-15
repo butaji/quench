@@ -133,6 +133,12 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringReplaceAll => Some("replaceAll"),
         Builtin::StringSearch => Some("search"),
         Builtin::StringLocaleCompare => Some("localeCompare"),
+        _ => short_name_tail(builtin),
+    }
+}
+
+const fn short_name_tail(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
         Builtin::StringMatch => Some("match"),
         Builtin::StringMatchAll => Some("matchAll"),
         Builtin::StringToLocaleLowerCase => Some("toLocaleLowerCase"),
