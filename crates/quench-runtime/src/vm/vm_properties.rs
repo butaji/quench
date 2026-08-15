@@ -223,6 +223,22 @@ pub(crate) fn get_property_with_receiver(
     if matches!(value, Value::Proxy(_)) {
         return crate::proxy::proxy_get(value, key, Some(receiver));
     }
+    if key == "format"
+        && matches!(
+            crate::builtins::object::get_prototype_of(Some(value))?,
+            Value::Builtin(Builtin::IntlNumberFormatPrototype)
+        )
+    {
+        if is_number_format_receiver(receiver) {
+            return Ok(bind_method(
+                receiver,
+                Value::Builtin(Builtin::IntlNumberFormatFormat),
+            ));
+        }
+        return Err(crate::value::error::throw_type_error(
+            "Intl.NumberFormat format requires an initialized object",
+        ));
+    }
     if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
         return Err(crate::value::error::throw_type_error(
             "'callee' is unavailable on strict arguments",
@@ -297,6 +313,11 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
         Value::Function(function) => crate::functions::execute(function, receiver, &[]),
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &[]),
         Value::Builtin(builtin) => {
+            if *builtin == Builtin::IntlNumberFormatFormat {
+                if is_number_format_receiver(receiver) {
+                    return Ok(bind_method(receiver, Value::Builtin(*builtin)));
+                }
+            }
             crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
         }
         _ => Err(crate::vm::not_callable()),
