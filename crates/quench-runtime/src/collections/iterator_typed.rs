@@ -4,7 +4,8 @@ macro_rules! number_values {
     ($data:expr) => {
         collect_typed(
             $data.logical_len(),
-            $data.is_detached() || $data.buffer.byte_length() < $data.byte_offset,
+            *$data.buffer.detached.borrow()
+                || $data.buffer.byte_length() < $data.byte_offset,
             |index| $data.get(index).map(|value| Value::Number(value.into())),
         )
     };
@@ -42,7 +43,12 @@ pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::V
 pub(crate) fn typed_length(value: &Value) -> Result<usize, crate::execute::VmError> {
     macro_rules! length {
         ($data:expr) => {
-            if $data.is_detached() || $data.is_out_of_bounds() {
+            let required = if $data.byte_length == usize::MAX {
+                $data.byte_offset
+            } else {
+                $data.byte_offset.saturating_add($data.byte_length)
+            };
+            if *$data.buffer.detached.borrow() || $data.buffer.byte_length() < required {
                 Err(crate::collections::iterator::not_iterable())
             } else {
                 Ok($data.logical_len())
