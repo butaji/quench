@@ -232,6 +232,9 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
     let hours = number(properties, "hours");
     let minutes = number(properties, "minutes");
     let seconds = number(properties, "seconds");
+    let milliseconds = number(properties, "milliseconds");
+    let microseconds = number(properties, "microseconds");
+    let nanoseconds = number(properties, "nanoseconds");
     let days = number(properties, "days");
     let negative = [days, hours, minutes, seconds]
         .iter()
@@ -264,7 +267,49 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
             })
         };
     }
-    Ok(format!("{hours} hr, {minutes} min, {seconds} sec"))
+    let mut parts = Vec::new();
+    if hours != 0 {
+        parts.push(format!("{hours} hr"));
+    }
+    if minutes != 0 {
+        parts.push(format!("{minutes} min"));
+    }
+    if seconds != 0 {
+        parts.push(format!("{seconds} sec"));
+    }
+    if slot_value(slots, "microseconds") == Some("numeric")
+        && (milliseconds != 0 || microseconds != 0 || nanoseconds != 0)
+    {
+        parts.push(format!(
+            "{:03}.{:03}{:03} ms",
+            milliseconds.abs(),
+            microseconds.abs(),
+            nanoseconds.abs()
+        ));
+    } else if slot_value(slots, "nanoseconds") == Some("numeric") {
+        if milliseconds != 0 {
+            parts.push(format!("{milliseconds} ms"));
+        }
+        if microseconds != 0 || nanoseconds != 0 {
+            parts.push(format!(
+                "{:02}.{:03} μs",
+                microseconds.abs(),
+                nanoseconds.abs()
+            ));
+        }
+    }
+    Ok(parts.join(", "))
+}
+
+fn slot_value<'a>(slots: &'a [(String, Value)], key: &str) -> Option<&'a str> {
+    slots.iter().find_map(|(name, value)| {
+        (name == key)
+            .then_some(value)
+            .and_then(|value| match value {
+                Value::String(value) => Some(value.as_str()),
+                _ => None,
+            })
+    })
 }
 
 fn number(properties: &[(String, Value)], key: &str) -> i64 {

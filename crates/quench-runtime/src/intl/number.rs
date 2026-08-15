@@ -316,7 +316,22 @@ fn validate_locale_matcher(options: Option<&Value>) -> Result<(), VmError> {
 fn valid_unit(unit: Option<&str>) -> bool {
     matches!(
         unit,
-        Some("percent" | "meter" | "kilometer" | "kilometer-per-hour")
+        Some(
+            "percent"
+                | "meter"
+                | "kilometer"
+                | "kilometer-per-hour"
+                | "year"
+                | "month"
+                | "week"
+                | "day"
+                | "hour"
+                | "minute"
+                | "second"
+                | "millisecond"
+                | "microsecond"
+                | "nanosecond"
+        )
     )
 }
 
