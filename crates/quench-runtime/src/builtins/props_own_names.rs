@@ -13,6 +13,7 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "equals",
             "toLocaleString",
             "add",
+            "subtract",
         ],
         Builtin::TemporalPlainDate => &["length", "name", "prototype", "from"],
         Builtin::TemporalPlainDatePrototype => &[

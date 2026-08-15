@@ -56,7 +56,10 @@ pub(crate) fn execute(
             crate::value::error::throw_type_error("Cannot convert PlainTime to a number"),
         )),
         crate::ops::Builtin::TemporalPlainTimeEquals => Some(equals(_receiver, arguments.first())),
-        crate::ops::Builtin::TemporalPlainTimeAdd => Some(add(_receiver, arguments.first())),
+        crate::ops::Builtin::TemporalPlainTimeAdd => Some(add(_receiver, arguments.first(), 1)),
+        crate::ops::Builtin::TemporalPlainTimeSubtract => {
+            Some(add(_receiver, arguments.first(), -1))
+        }
         _ => None,
     }
 }
@@ -254,7 +257,11 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
     Ok(Value::Boolean(left == right))
 }
 
-fn add(receiver: Option<&Value>, duration: Option<&Value>) -> Result<Value, VmError> {
+fn add(
+    receiver: Option<&Value>,
+    duration: Option<&Value>,
+    direction: i64,
+) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
     if duration.is_some_and(crate::conversion::is_symbol) {
@@ -280,7 +287,8 @@ fn add(receiver: Option<&Value>, duration: Option<&Value>) -> Result<Value, VmEr
     .map(|(name, scale)| duration_number(&duration, name).map(|value| value * scale))
     .collect::<Result<Vec<_>, _>>()?
     .into_iter()
-    .sum::<i64>();
+    .sum::<i64>()
+        * direction;
     let total = (time_fields(receiver)? + delta).rem_euclid(86_400_000_000_000);
     let hour = total / 3_600_000_000_000;
     let remainder = total % 3_600_000_000_000;
