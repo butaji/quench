@@ -513,9 +513,6 @@ fn construct_error(
         _ => "Error",
     };
 
-    let message = arguments
-        .first()
-        .map_or(Ok(String::new()), crate::conversion::to_string)?;
     let prototype = crate::builtin_meta::instance_prototype(*builtin)
         .map(Value::Builtin)
         .unwrap_or(Value::Builtin(crate::ops::Builtin::ErrorPrototype));
@@ -526,16 +523,23 @@ fn construct_error(
         ),
         ("name".to_string(), Value::String(name.to_string())),
         (
-            crate::builtins::descriptor_key("message"),
-            error_data_descriptor(Value::String(message.clone())),
-        ),
-        ("message".to_string(), Value::String(message)),
-        (
             crate::builtins::ERROR_SLOT.to_string(),
             Value::Boolean(true),
         ),
         ("\0prototype".to_string(), prototype),
     ];
+
+    if let Some(message) = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
+        let message = crate::conversion::to_string(message)?;
+        properties.push((
+            crate::builtins::descriptor_key("message"),
+            error_data_descriptor(Value::String(message.clone())),
+        ));
+        properties.push(("message".to_string(), Value::String(message)));
+    }
 
     if let Some(cause_source) = arguments
         .get(1)
