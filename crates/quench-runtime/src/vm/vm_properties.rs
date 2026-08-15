@@ -137,28 +137,30 @@ fn map_property(data: &crate::value::MapData, key: &str) -> Value {
 /// `Undefined`. Used to surface `constructor` and prototype methods for
 /// primitive values like `1`, `true`, and `null`-shaped access.
 fn primitive_prototype_property(value: &Value, key: &str) -> Value {
-    let prototype = match value {
-        Value::Number(_) => Some(Value::Builtin(Builtin::NumberPrototype)),
-        Value::Boolean(_) => Some(Value::Builtin(Builtin::BooleanPrototype)),
-        Value::String(value) if !crate::conversion::is_symbol_string(value) => {
-            Some(Value::Builtin(Builtin::StringPrototype))
-        }
-        Value::String(value) if crate::conversion::is_symbol_string(value) => {
-            Some(Value::Builtin(Builtin::SymbolPrototype))
-        }
-        Value::BigInt(_) => Some(Value::Builtin(Builtin::BigIntPrototype)),
-        _ => None,
-    };
-    let Some(prototype) = prototype else {
+    let Some(prototype) = primitive_prototype(value) else {
         return Value::Undefined;
     };
     if key == "constructor" {
-        let builtin = primitive_constructor(value);
-        if let Some(builtin) = builtin {
+        if let Some(builtin) = primitive_constructor(value) {
             return Value::Builtin(builtin);
         }
     }
     get_property(&prototype, key)
+}
+
+fn primitive_prototype(value: &Value) -> Option<Value> {
+    Some(match value {
+        Value::Number(_) => Value::Builtin(Builtin::NumberPrototype),
+        Value::Boolean(_) => Value::Builtin(Builtin::BooleanPrototype),
+        Value::String(value) if !crate::conversion::is_symbol_string(value) => {
+            Value::Builtin(Builtin::StringPrototype)
+        }
+        Value::String(value) if crate::conversion::is_symbol_string(value) => {
+            Value::Builtin(Builtin::SymbolPrototype)
+        }
+        Value::BigInt(_) => Value::Builtin(Builtin::BigIntPrototype),
+        _ => return None,
+    })
 }
 
 fn primitive_constructor(value: &Value) -> Option<Builtin> {
