@@ -71,6 +71,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalInstantPrototype, "epochNanoseconds") => {
             Some(Value::Builtin(TemporalInstantEpochNanosecondsGetter))
         }
+        (TemporalInstantPrototype, "toString") => Some(Value::Builtin(TemporalInstantToString)),
+        (TemporalInstantPrototype, "toJSON") => Some(Value::Builtin(TemporalInstantToJSON)),
+        (TemporalInstantPrototype, "equals") => Some(Value::Builtin(TemporalInstantEquals)),
         (TemporalZonedDateTime, "prototype") => {
             Some(Value::Builtin(TemporalZonedDateTimePrototype))
         }
