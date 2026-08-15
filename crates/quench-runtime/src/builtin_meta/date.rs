@@ -177,6 +177,21 @@ const fn fn_len_getters(b: Builtin) -> Option<f64> {
         | DateGetSeconds
         | DateGetMilliseconds
         | DateGetTimezoneOffset
+        | DateGetUTCFullYear => Some(0.0),
+        _ => fn_len_getters_tail(b),
+    }
+}
+
+const fn fn_len_getters_tail(b: Builtin) -> Option<f64> {
+    use Builtin::*;
+    match b {
+        DateGetUTCMonth
+        | DateGetUTCDate
+        | DateGetUTCDay
+        | DateGetUTCHours
+        | DateGetUTCMinutes
+        | DateGetUTCSeconds
+        | DateGetUTCMilliseconds
         | DateValueOf
         | DateGetYear
         | DateToLocaleString
@@ -191,21 +206,6 @@ const fn fn_len_getters(b: Builtin) -> Option<f64> {
         | DateSetMilliseconds
         | DateSetYear
         | DateSetUTCMilliseconds => Some(1.0),
-        _ => fn_len_getters_utc(b),
-    }
-}
-
-const fn fn_len_getters_utc(b: Builtin) -> Option<f64> {
-    use Builtin::*;
-    match b {
-        DateGetUTCFullYear
-        | DateGetUTCMonth
-        | DateGetUTCDate
-        | DateGetUTCDay
-        | DateGetUTCHours
-        | DateGetUTCMinutes
-        | DateGetUTCSeconds
-        | DateGetUTCMilliseconds => Some(0.0),
         _ => fn_len_setters(b),
     }
 }
