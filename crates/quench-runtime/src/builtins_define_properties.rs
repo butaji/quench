@@ -5,18 +5,14 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
             "Property descriptors must be an object",
         ));
     };
-    if !crate::value::is_object(properties) {
-        return Err(crate::value::error::throw_type_error(
-            "Property descriptors must be an object",
-        ));
-    }
-    let keys = crate::own_keys::keys_result(Some(properties))?;
+    let properties = crate::construct::to_object(properties)?;
+    let keys = crate::own_keys::keys_result(Some(&properties))?;
     let Value::Array(keys) = keys else {
         return Ok(target);
     };
     keys.iter().try_fold(target, |target, key| {
             let key = crate::conversion::to_property_key(key)?;
-            let descriptor = crate::execute::get_property_result(properties, &key)?;
+            let descriptor = crate::execute::get_property_result(&properties, &key)?;
             let Some(descriptor) = descriptor_object(descriptor) else {
                 return Err(crate::value::error::throw_type_error(
                     "Property descriptor must be an object",
