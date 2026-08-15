@@ -122,6 +122,7 @@ pub(crate) fn wrap_shadow_function_with_caller(
     }
     Ok(Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
+            realm: realm.unwrap_or(crate::ops::RealmId::ROOT),
             target: target.clone(),
             receiver: Value::Undefined,
             arguments: Vec::new(),
