@@ -94,6 +94,7 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         (Atomics, "wait") => Some(Value::Builtin(AtomicsWait)),
         (Atomics, "load") => Some(Value::Builtin(AtomicsLoad)),
         (Atomics, "store") => Some(Value::Builtin(AtomicsStore)),
+        (Atomics, "exchange") => Some(Value::Builtin(AtomicsExchange)),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
