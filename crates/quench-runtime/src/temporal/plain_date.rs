@@ -372,6 +372,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
     let invalid_annotation = text.split('[').skip(1).any(|part| {
+        if part.starts_with('!') && !part.starts_with("!u-ca=iso8601") {
+            return true;
+        }
         part.split_once('=')
             .is_some_and(|(key, _)| key.chars().any(|character| character.is_ascii_uppercase()))
     });
