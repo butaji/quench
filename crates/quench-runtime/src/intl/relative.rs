@@ -296,7 +296,7 @@ fn polish_fractional_long_word(unit: &str, style: &str) -> String {
         }
         _ => "lat",
     }
-    .to_string();
+    .to_string()
 }
 
 fn polish_long_word(unit: &str, plural: usize) -> String {
