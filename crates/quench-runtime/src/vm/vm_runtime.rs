@@ -165,6 +165,7 @@ fn is_shared_array_buffer_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
         Builtin::ArrayBufferByteLengthGetter
+            | Builtin::ArrayBufferDetachedGetter
             | Builtin::SharedArrayBufferByteLengthGetter
             | Builtin::SharedArrayBufferGrow
             | Builtin::SharedArrayBufferSlice
