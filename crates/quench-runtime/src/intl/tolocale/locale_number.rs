@@ -1,6 +1,7 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{number, resolve_locales, runtime_error, to_string_value};
+use crate::intl::number::validate_options;
 
 pub(super) fn to_locale_string(
     receiver: Option<&Value>,
@@ -11,6 +12,7 @@ pub(super) fn to_locale_string(
         _ => return Err(runtime_error("TypeError: Number.prototype.toLocaleString")),
     };
     let locales = resolve_locales(arguments)?;
+    validate_options(arguments.get(1))?;
     Ok(Value::String(format_number(
         number,
         &locales,
