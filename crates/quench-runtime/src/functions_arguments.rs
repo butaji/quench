@@ -73,7 +73,10 @@ pub(crate) fn build_registers(
         environment.mark_immutable_slot(arguments_slot.saturating_add(3));
     }
     let register_count = function.ops().len().max(32);
-    (vec![crate::value::Value::Undefined; register_count], environment)
+    (
+        vec![crate::value::Value::Undefined; register_count],
+        environment,
+    )
 }
 
 /// Execute a constructor and return its result plus the final `this` value.
@@ -308,17 +311,32 @@ fn length_descriptor(length: f64) -> crate::value::Value {
     crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
         ("value".to_string(), crate::value::Value::Number(length)),
         ("writable".to_string(), crate::value::Value::Boolean(false)),
-        ("enumerable".to_string(), crate::value::Value::Boolean(false)),
-        ("configurable".to_string(), crate::value::Value::Boolean(true)),
+        (
+            "enumerable".to_string(),
+            crate::value::Value::Boolean(false),
+        ),
+        (
+            "configurable".to_string(),
+            crate::value::Value::Boolean(true),
+        ),
     ])))
 }
 
 fn name_descriptor(value: &str) -> crate::value::Value {
     crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-        ("value".to_string(), crate::value::Value::String(value.to_string())),
+        (
+            "value".to_string(),
+            crate::value::Value::String(value.to_string()),
+        ),
         ("writable".to_string(), crate::value::Value::Boolean(false)),
-        ("enumerable".to_string(), crate::value::Value::Boolean(false)),
-        ("configurable".to_string(), crate::value::Value::Boolean(true)),
+        (
+            "enumerable".to_string(),
+            crate::value::Value::Boolean(false),
+        ),
+        (
+            "configurable".to_string(),
+            crate::value::Value::Boolean(true),
+        ),
     ])))
 }
 
@@ -338,14 +356,14 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayShift => Ok(crate::builtins::array_shift(receiver)),
         crate::ops::Builtin::ArrayReverse => Ok(crate::builtins::array_reverse(receiver)),
         crate::ops::Builtin::ArrayPop => Ok(crate::builtins::array_pop(receiver)),
-        crate::ops::Builtin::ArrayUnshift => Ok(crate::builtins::array_unshift(receiver, arguments)),
+        crate::ops::Builtin::ArrayUnshift => {
+            Ok(crate::builtins::array_unshift(receiver, arguments))
+        }
         crate::ops::Builtin::ArrayFill => Ok(crate::builtins::array_fill(receiver, arguments)),
         crate::ops::Builtin::ArrayCopyWithin => {
             Ok(crate::builtins::array_copy_within(receiver, arguments))
         }
-        crate::ops::Builtin::ArrayFindLast => {
-            crate::builtins::array_find_last(receiver, arguments)
-        }
+        crate::ops::Builtin::ArrayFindLast => crate::builtins::array_find_last(receiver, arguments),
         crate::ops::Builtin::ArrayFindLastIndex => {
             crate::builtins::array_find_last_index(receiver, arguments)
         }
@@ -364,6 +382,20 @@ pub(crate) fn execute(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    if function
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == "\0class_constructor")
+    {
+        let error = || {
+            Err(crate::value::error::throw_type_error(
+                "Class constructor cannot be invoked without 'new'",
+            ))
+        };
+        let global = function.captures.get(0);
+        return crate::vm::with_function_global(&global, error);
+    }
     let frame = CallFrame::new(
         std::rc::Rc::clone(function),
         this_value.clone(),
