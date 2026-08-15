@@ -388,6 +388,12 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
     if let Value::Object(object) = value {
+        if let Ok(value) = field(object, "eraYear") {
+            let era_year = crate::conversion::to_number(&value)?;
+            if !era_year.is_finite() {
+                return Err(crate::value::error::throw_range_error("Invalid eraYear"));
+            }
+        }
         if let Ok(Value::String(code)) = field(object, "monthCode") {
             if crate::conversion::is_symbol(&Value::String(code.clone())) {
                 return Err(crate::value::error::throw_type_error("Invalid monthCode"));
