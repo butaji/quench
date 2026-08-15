@@ -299,6 +299,7 @@ pub enum Builtin {
     RegExpUnicodeGetter,
     RegExpStickyGetter,
     RegExpHasIndicesGetter,
+    RegExpUnicodeSetsGetter,
     RegExpSymbolMatch,
     RegExpSymbolSearch,
     RegExpSymbolReplace,

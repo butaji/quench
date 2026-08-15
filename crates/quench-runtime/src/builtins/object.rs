@@ -278,6 +278,7 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::RegExpPrototype, "unicode") => Builtin::RegExpUnicodeGetter,
         (Builtin::RegExpPrototype, "sticky") => Builtin::RegExpStickyGetter,
         (Builtin::RegExpPrototype, "hasIndices") => Builtin::RegExpHasIndicesGetter,
+        (Builtin::RegExpPrototype, "unicodeSets") => Builtin::RegExpUnicodeSetsGetter,
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
         (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
         (
