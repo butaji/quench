@@ -1,6 +1,6 @@
 use oxc::ast::ast::{
     BindingPattern, BindingPatternKind, Declaration, ExportDefaultDeclaration,
-    ExportNamedDeclaration, ModuleExportName, Statement,
+    ExportNamedDeclaration, ImportPhase, ModuleExportName, Statement,
 };
 
 /// Static module edges and names discovered directly from OXC's module AST.
@@ -21,6 +21,7 @@ pub struct ImportBinding {
     pub source: String,
     pub imported: String,
     pub local: String,
+    pub source_phase: bool,
 }
 
 /// One local binding exposed under an exported module name.
@@ -70,6 +71,7 @@ impl ModuleMetadata {
                             source: source.clone(),
                             imported,
                             local,
+                            source_phase: matches!(import.phase, Some(ImportPhase::Source)),
                         });
                     }
                 }
