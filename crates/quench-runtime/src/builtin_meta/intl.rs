@@ -143,8 +143,8 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         Builtin::IntlDurationFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(1.0),
         Builtin::IntlListFormatSupportedLocalesOf => Some(1.0),
-        Builtin::IntlNumberFormatFormat => Some(1.0),
-        Builtin::IntlNumberFormatResolvedOptions
+        Builtin::IntlNumberFormatFormat
+        | Builtin::IntlNumberFormatResolvedOptions
         | Builtin::IntlPluralRulesSelect
         | Builtin::IntlPluralRulesResolvedOptions
         | Builtin::IntlDateTimeFormatFormat
@@ -173,6 +173,7 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlRelativeTimeFormatFormat
         | Builtin::IntlRelativeTimeFormatFormatToParts
         | Builtin::IntlRelativeTimeFormatResolvedOptions => Some(1.0),
+        Builtin::IntlListFormatResolvedOptions => Some(0.0),
         _ => None,
     }
 }
