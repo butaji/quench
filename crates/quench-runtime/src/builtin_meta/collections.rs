@@ -109,6 +109,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorSelf => Some("Iterator.prototype[Symbol.iterator]"),
         Builtin::IteratorNext => Some("ArrayIteratorPrototype.prototype.next"),
         Builtin::AsyncIteratorSelf => Some("[Symbol.asyncIterator]"),
+        Builtin::AsyncIteratorDispose => Some("[Symbol.asyncDispose]"),
         Builtin::SetIteratorNext => Some("SetIteratorPrototype.prototype.next"),
         Builtin::MapIteratorNext => Some("MapIteratorPrototype.prototype.next"),
         Builtin::MapSet => Some("Map.prototype.set"),
@@ -162,7 +163,9 @@ const fn set_fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
-        Builtin::IteratorSelf | Builtin::AsyncIteratorSelf => Some(0.0),
+        Builtin::IteratorSelf | Builtin::AsyncIteratorSelf | Builtin::AsyncIteratorDispose => {
+            Some(0.0)
+        }
         Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some(0.0),
         Builtin::MapSet => Some(2.0),
         Builtin::MapSizeGetter | Builtin::SetSizeGetter => Some(0.0),
@@ -205,6 +208,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IteratorSelf => Some("[Symbol.iterator]"),
         Builtin::AsyncIteratorSelf => Some("[Symbol.asyncIterator]"),
+        Builtin::AsyncIteratorDispose => Some("[Symbol.asyncDispose]"),
         Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some("next"),
         Builtin::MapSet => Some("set"),
         Builtin::MapGet => Some("get"),
