@@ -114,6 +114,13 @@ fn special_match_tail(builtin: Builtin, key: &str) -> Option<Value> {
         (DisposableStackPrototype, "Symbol.dispose") => {
             Some(Value::Builtin(DisposableStackDispose))
         }
+        _ => special_match_error_tail(builtin, key),
+    }
+}
+
+fn special_match_error_tail(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (ErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
         (ErrorPrototype, "name") => Some(Value::String("Error".to_string())),
         (ErrorPrototype, "message") => Some(Value::String("".to_string())),
