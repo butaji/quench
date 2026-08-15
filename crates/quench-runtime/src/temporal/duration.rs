@@ -175,5 +175,5 @@ fn number(value: Option<&Value>) -> Result<f64, VmError> {
             "Duration fields must be integral",
         ));
     }
-    Ok(value)
+    Ok(if value == 0.0 { 0.0 } else { value })
 }
