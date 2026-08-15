@@ -335,8 +335,11 @@ pub(crate) fn char_at(
     let units = text.encode_utf16().collect::<Vec<_>>();
     let index = arguments
         .first()
-        .map_or(Ok(0.0), crate::conversion::to_number)?
-        .max(0.0) as usize;
+        .map_or(Ok(0.0), crate::conversion::to_number)?;
+    if index.is_sign_negative() {
+        return Ok(Value::String(String::new()));
+    }
+    let index = index as usize;
     Ok(char_at_units(&units, index).unwrap_or_else(|| Value::String(String::new())))
 }
 
@@ -348,8 +351,11 @@ pub(crate) fn char_code_at(
     let units = text.encode_utf16().collect::<Vec<_>>();
     let index = arguments
         .first()
-        .map_or(Ok(0.0), crate::conversion::to_number)?
-        .max(0.0) as usize;
+        .map_or(Ok(0.0), crate::conversion::to_number)?;
+    if index.is_sign_negative() {
+        return Ok(Value::Number(f64::NAN));
+    }
+    let index = index as usize;
     Ok(units
         .get(index)
         .map_or(Value::Number(f64::NAN), |unit| Value::Number(*unit as f64)))
@@ -403,9 +409,9 @@ pub(crate) fn concat(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(mut units) = receiver.and_then(units_of) else {
-        return Ok(Value::String(String::new()));
-    };
+    let mut units = string_receiver(receiver)?
+        .encode_utf16()
+        .collect::<Vec<_>>();
     for argument in arguments {
         units.extend(crate::conversion::to_string(argument)?.encode_utf16());
     }
