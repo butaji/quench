@@ -134,35 +134,50 @@ fn reduce_element_list(
 ) -> Option<Vec<Op>> {
     let mut static_fields = Vec::new();
     for element in &class.body.body {
-        match element {
-            ClassElement::StaticBlock(block) => {
-                static_fields.push(reduce_static_block(block, constructor, facts, locals)?);
-            }
-            ClassElement::MethodDefinition(method) => {
-                reduce_class_method(method, prototype, constructor, ops, facts, next, locals)?
-            }
-            ClassElement::PropertyDefinition(field)
-                if !matches!(field.key, PropertyKey::PrivateIdentifier(_)) =>
-            {
-                reduce_public_field(
-                    field,
-                    constructor,
-                    ops,
-                    &mut static_fields,
-                    facts,
-                    next,
-                    locals,
-                )?
-            }
-            ClassElement::PropertyDefinition(field)
-                if matches!(field.key, PropertyKey::PrivateIdentifier(_)) =>
-            {
-                reduce_private_field(field, constructor, ops, &mut static_fields, facts, locals)?
-            }
-            _ => {}
-        }
+        reduce_class_element(
+            element,
+            prototype,
+            constructor,
+            ops,
+            facts,
+            next,
+            locals,
+            &mut static_fields,
+        )?;
     }
     Some(static_fields)
+}
+
+fn reduce_class_element(
+    element: &ClassElement<'_>,
+    prototype: u16,
+    constructor: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+    static_fields: &mut Vec<Op>,
+) -> Option<()> {
+    match element {
+        ClassElement::StaticBlock(block) => {
+            static_fields.push(reduce_static_block(block, constructor, facts, locals)?);
+        }
+        ClassElement::MethodDefinition(method) => {
+            reduce_class_method(method, prototype, constructor, ops, facts, next, locals)?;
+        }
+        ClassElement::PropertyDefinition(field)
+            if !matches!(field.key, PropertyKey::PrivateIdentifier(_)) =>
+        {
+            reduce_public_field(field, constructor, ops, static_fields, facts, next, locals)?;
+        }
+        ClassElement::PropertyDefinition(field)
+            if matches!(field.key, PropertyKey::PrivateIdentifier(_)) =>
+        {
+            reduce_private_field(field, constructor, ops, static_fields, facts, locals)?;
+        }
+        _ => {}
+    }
+    Some(())
 }
 
 fn reduce_static_block(
