@@ -1,0 +1,34 @@
+use crate::{execute::VmError, ops::Builtin, value::Value};
+
+use super::DateLocaleKind;
+
+pub(super) fn to_locale_string(
+    kind: DateLocaleKind,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let mut formatter_arguments = arguments.to_vec();
+    if formatter_arguments.len() < 2 {
+        formatter_arguments.push(Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(default_options(kind)),
+        )));
+    }
+    let formatter = crate::intl::datetime::construct(&formatter_arguments)?;
+    crate::intl::datetime::prototype_method(
+        Builtin::IntlDateTimeFormatFormat,
+        &[receiver.cloned().unwrap_or(Value::Undefined)],
+        Some(&formatter),
+    )
+}
+
+fn default_options(kind: DateLocaleKind) -> Vec<(String, Value)> {
+    let names = match kind {
+        DateLocaleKind::String => ["year", "month", "day", "hour", "minute", "second"].as_slice(),
+        DateLocaleKind::Date => ["year", "month", "day"].as_slice(),
+        DateLocaleKind::Time => ["hour", "minute", "second"].as_slice(),
+    };
+    names
+        .iter()
+        .map(|name| (name.to_string(), Value::String("numeric".into())))
+        .collect()
+}
