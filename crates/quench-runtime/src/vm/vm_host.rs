@@ -26,6 +26,15 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
         HostCapabilityKind::EvalScript => run_eval_script(arguments),
+        HostCapabilityKind::Agent
+        | HostCapabilityKind::AgentStart
+        | HostCapabilityKind::AgentBroadcast
+        | HostCapabilityKind::AgentReport
+        | HostCapabilityKind::AgentGetReport
+        | HostCapabilityKind::AgentLeaving
+        | HostCapabilityKind::AgentReceiveBroadcast => {
+            Err(type_error("$262.agent is not available"))
+        }
     }
 }
 
