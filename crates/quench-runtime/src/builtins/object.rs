@@ -312,13 +312,27 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if matches!(
         builtin,
-        Builtin::ErrorPrototype | Builtin::SuppressedErrorPrototype
+        Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::SuppressedErrorPrototype
     ) && key == "name"
     {
-        let value = if builtin == Builtin::ErrorPrototype {
-            "Error"
-        } else {
-            "SuppressedError"
+        let value = match builtin {
+            Builtin::RangeErrorPrototype => "RangeError",
+            Builtin::ReferenceErrorPrototype => "ReferenceError",
+            Builtin::SyntaxErrorPrototype => "SyntaxError",
+            Builtin::EvalErrorPrototype => "EvalError",
+            Builtin::URIErrorPrototype => "URIError",
+            Builtin::AggregateErrorPrototype => "AggregateError",
+            Builtin::TypeErrorPrototype => "TypeError",
+            Builtin::SuppressedErrorPrototype => "SuppressedError",
+            _ => "Error",
         };
         return Some(descriptor_object_with_flags(
             Value::String(value.to_string()),
@@ -368,7 +382,15 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     ) || (key == "name"
         && matches!(
             builtin,
-            Builtin::ErrorPrototype | Builtin::SuppressedErrorPrototype
+            Builtin::ErrorPrototype
+                | Builtin::RangeErrorPrototype
+                | Builtin::ReferenceErrorPrototype
+                | Builtin::SyntaxErrorPrototype
+                | Builtin::EvalErrorPrototype
+                | Builtin::URIErrorPrototype
+                | Builtin::AggregateErrorPrototype
+                | Builtin::TypeErrorPrototype
+                | Builtin::SuppressedErrorPrototype
         )))
         && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);
