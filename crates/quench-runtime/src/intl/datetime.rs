@@ -318,6 +318,9 @@ pub(crate) fn prototype_method(
     }
     if temporal_input
         && (slot_string(&slots, "hour").is_none() || slot_string(&slots, "timeStyle").is_some())
+        && !["year", "month", "day", "weekday", "era"]
+            .iter()
+            .any(|name| slot_string(&slots, name).is_some())
     {
         for name in ["hour", "minute", "second"] {
             slots.push((name.to_string(), Value::String("numeric".into())));

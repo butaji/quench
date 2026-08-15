@@ -432,9 +432,15 @@ pub(crate) fn dispatch(
         Builtin::NumberToLocaleString => number_to_locale_string(receiver, arguments),
         Builtin::StringToLocaleLowerCase => string_to_locale_case(receiver, arguments, false),
         Builtin::StringToLocaleUpperCase => string_to_locale_case(receiver, arguments, true),
-        Builtin::DateToLocaleString => date_to_locale_string(DateLocaleKind::String, arguments),
-        Builtin::DateToLocaleDateString => date_to_locale_string(DateLocaleKind::Date, arguments),
-        Builtin::DateToLocaleTimeString => date_to_locale_string(DateLocaleKind::Time, arguments),
+        Builtin::DateToLocaleString => {
+            date_to_locale_string(DateLocaleKind::String, receiver, arguments)
+        }
+        Builtin::DateToLocaleDateString => {
+            date_to_locale_string(DateLocaleKind::Date, receiver, arguments)
+        }
+        Builtin::DateToLocaleTimeString => {
+            date_to_locale_string(DateLocaleKind::Time, receiver, arguments)
+        }
         _ => return None,
     };
     Some(result)
@@ -643,8 +649,31 @@ fn case_turkish(value: &str, upper: bool) -> String {
 
 pub(crate) fn date_to_locale_string(
     kind: DateLocaleKind,
+    receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let _ = arguments;
-    Ok(Value::String(kind.default().to_string()))
+    let mut formatter_arguments = arguments.to_vec();
+    if formatter_arguments.len() < 2 {
+        formatter_arguments.push(Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(default_date_options(kind)),
+        )));
+    }
+    let formatter = crate::intl::datetime::construct(&formatter_arguments)?;
+    crate::intl::datetime::prototype_method(
+        Builtin::IntlDateTimeFormatFormat,
+        &[receiver.cloned().unwrap_or(Value::Undefined)],
+        Some(&formatter),
+    )
+}
+
+fn default_date_options(kind: DateLocaleKind) -> Vec<(String, Value)> {
+    let names = match kind {
+        DateLocaleKind::String => ["year", "month", "day", "hour", "minute", "second"].as_slice(),
+        DateLocaleKind::Date => ["year", "month", "day"].as_slice(),
+        DateLocaleKind::Time => ["hour", "minute", "second"].as_slice(),
+    };
+    names
+        .iter()
+        .map(|name| (name.to_string(), Value::String("numeric".into())))
+        .collect()
 }
