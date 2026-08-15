@@ -52,23 +52,9 @@ impl LinkedModuleGraph {
             units.insert(unit.id, module);
         }
         link_reexports(graph, &units)?;
-        let ids = units.keys().copied().collect::<Vec<_>>();
-        for id in ids {
-            let metadata = units
-                .get(&id)
-                .and_then(|unit| unit.program.module_metadata.as_ref())
-                .ok_or_else(|| "module metadata missing".to_string())?;
-            for binding in &metadata.imports {
-                let target = graph
-                    .resolve(id, &binding.source)
-                    .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-                let cell = import_cell(&units, target, &binding.imported)?;
-                units
-                    .get(&id)
-                    .ok_or_else(|| "module unit missing".to_string())?
-                    .bind_import(&binding.local, cell)?;
-            }
-        }
+        bind_imports(graph, &units)?;
+        link_reexports(graph, &units)?;
+        bind_imports(graph, &units)?;
         Ok(Self { units })
     }
 
@@ -87,15 +73,39 @@ impl LinkedModuleGraph {
     }
 }
 
+fn bind_imports(
+    graph: &ModuleGraph,
+    units: &HashMap<ModuleId, LinkedModule>,
+) -> Result<(), String> {
+    for id in units.keys().copied().collect::<Vec<_>>() {
+        let metadata = unit_metadata(units, id)?;
+        for binding in &metadata.imports {
+            let target = graph
+                .resolve(id, &binding.source)
+                .ok_or_else(|| format!("unresolved module {}", binding.source))?;
+            let cell = import_cell(units, target, &binding.imported)?;
+            units
+                .get(&id)
+                .ok_or_else(|| "module unit missing".to_string())?
+                .bind_import(&binding.local, cell)?;
+        }
+    }
+    Ok(())
+}
+
 fn link_reexports(
     graph: &ModuleGraph,
     units: &HashMap<ModuleId, LinkedModule>,
 ) -> Result<(), String> {
-    for unit in graph.units() {
-        let metadata = unit_metadata(units, unit.id)?;
+    let order = graph
+        .entry()
+        .and_then(|entry| graph.dependency_order(entry).ok())
+        .unwrap_or_else(|| graph.units().iter().map(|unit| unit.id).collect());
+    for id in order {
+        let metadata = unit_metadata(units, id)?;
         for binding in &metadata.reexports {
-            let target = resolve_reexport(graph, unit.id, &binding.source)?;
-            link_reexport(units, unit.id, target, binding)?;
+            let target = resolve_reexport(graph, id, &binding.source)?;
+            link_reexport(units, id, target, binding)?;
         }
     }
     Ok(())
