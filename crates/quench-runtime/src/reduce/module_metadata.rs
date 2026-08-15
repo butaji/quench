@@ -11,6 +11,7 @@ use oxc::ast::ast::{Expression, ImportExpression, Program};
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ModuleMetadata {
     pub import_specifiers: Vec<String>,
+    pub eager_imports: Vec<String>,
     pub imports: Vec<ImportBinding>,
     pub import_attributes: Vec<(String, String)>,
     pub deferred_imports: Vec<String>,
@@ -67,6 +68,8 @@ impl ModuleMetadata {
                 push_unique(&mut self.import_specifiers, &source);
                 if matches!(import.phase, Some(ImportPhase::Defer)) {
                     push_unique(&mut self.deferred_imports, &source);
+                } else {
+                    push_unique(&mut self.eager_imports, &source);
                 }
                 if let Some(specifiers) = &import.specifiers {
                     for specifier in specifiers {

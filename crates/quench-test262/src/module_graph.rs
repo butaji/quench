@@ -35,6 +35,15 @@ fn dynamic_kind(specifier: &str) -> ModuleKind {
     }
 }
 
+fn import_attribute_kind(value: &str) -> Option<ModuleKind> {
+    match value {
+        "type=json" => Some(ModuleKind::Json),
+        "type=text" => Some(ModuleKind::Text),
+        "type=bytes" => Some(ModuleKind::Bytes),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ModuleGraph {
     entry: Option<ModuleId>,
@@ -157,13 +166,39 @@ impl ModuleGraph {
             let target = self.resolve_kind(from, specifier, kind).ok_or_else(|| {
                 format!("unresolved module specifier {specifier:?} from {from:?}")
             })?;
-            self.link(from, target)?;
+            let is_deferred = metadata
+                .deferred_imports
+                .iter()
+                .any(|item| item == specifier);
+            if !is_deferred {
+                self.link(from, target)?;
+            }
+            let has_eager_request = metadata.eager_imports.iter().any(|item| item == specifier);
+            if metadata
+                .deferred_imports
+                .iter()
+                .any(|item| item == specifier)
+                && !has_eager_request
+            {
+                self.deferred_edges.insert((from, target));
+            }
+        }
+        for specifier in &metadata.eager_imports {
             if metadata
                 .deferred_imports
                 .iter()
                 .any(|item| item == specifier)
             {
-                self.deferred_edges.insert((from, target));
+                let kind = metadata
+                    .import_attributes
+                    .iter()
+                    .find(|(source, _)| source == specifier)
+                    .and_then(|(_, value)| import_attribute_kind(value))
+                    .unwrap_or(ModuleKind::JavaScript);
+                let target = self.resolve_kind(from, specifier, kind).ok_or_else(|| {
+                    format!("unresolved module specifier {specifier:?} from {from:?}")
+                })?;
+                self.link(from, target)?;
             }
         }
         for specifier in &metadata.dynamic_imports {
