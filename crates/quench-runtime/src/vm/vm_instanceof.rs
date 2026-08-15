@@ -89,12 +89,11 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
             name == "\0prototype"
                 && *value == Value::Builtin(Builtin::ShadowRealmPrototype)
         }),
-        (Value::Object(properties), Builtin::TemporalPlainDate) => properties.iter().any(
-            |(name, value)| {
-                name == "\0prototype"
-                    && *value == Value::Builtin(Builtin::TemporalPlainDatePrototype)
-            },
-        ),
+        (Value::Object(properties), Builtin::TemporalPlainDate) => {
+            has_property(properties, "year")
+                && has_property(properties, "month")
+                && has_property(properties, "day")
+        }
         _ => return None,
     })
 }
@@ -113,6 +112,10 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
         || own_constructor(value)
             .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
         || is_error_subclass(value, constructor))
+}
+
+fn has_property(properties: &crate::value::ObjectData, key: &str) -> bool {
+    properties.iter().any(|(name, _)| name == key)
 }
 
 fn is_error_subclass(value: &Value, constructor: &Value) -> bool {

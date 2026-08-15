@@ -8,6 +8,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         if !matches!(calendar, Value::Undefined | Value::String(_)) {
             return Err(crate::value::error::throw_type_error("Invalid calendar"));
         }
+        if matches!(calendar, Value::String(value) if crate::conversion::is_symbol_string(value)) {
+            return Err(crate::value::error::throw_type_error("Invalid calendar"));
+        }
         if matches!(calendar, Value::String(value) if !value.eq_ignore_ascii_case("iso8601")) {
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
