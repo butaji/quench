@@ -478,19 +478,4 @@ fn is_accessor_builtin(builtin: Builtin) -> bool {
     let name = crate::builtins::builtin_name(builtin);
     name.starts_with("get ") || name.starts_with("set ")
 }
-fn same_property_receiver(value: &Value, receiver: &Value) -> bool {
-    match (value, receiver) {
-        (Value::Builtin(left), Value::Builtin(right)) => left == right,
-        (Value::Map(left), Value::Map(right)) => std::rc::Rc::ptr_eq(left, right),
-        (Value::Set(left), Value::Set(right)) => std::rc::Rc::ptr_eq(left, right),
-        (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
-        (Value::Number(_), Value::Number(_))
-        | (Value::Boolean(_), Value::Boolean(_))
-        | (Value::BigInt(_), Value::BigInt(_))
-        | (Value::String(_), Value::String(_))
-        | (Value::StringUnits(_), Value::StringUnits(_)) => value == receiver,
-        _ => false,
-    }
-}
-
 include!("vm_properties_special.rs");
