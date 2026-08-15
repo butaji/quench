@@ -1,9 +1,9 @@
 fn array_descriptor(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
-    if let Some(descriptor) = values.descriptor(key) {
-        return Some(refresh_array_descriptor(values, key, descriptor));
-    }
     if values.is_strict_arguments() && key == "callee" {
         return Some(strict_callee_descriptor());
+    }
+    if let Some(descriptor) = values.descriptor(key) {
+        return Some(refresh_array_descriptor(values, key, descriptor));
     }
     if values.is_arguments() && matches!(key, "length" | "callee") {
         return values
