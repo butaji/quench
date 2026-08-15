@@ -124,16 +124,17 @@ fn construct_with_new_target(
     result
 }
 
-fn validate_shared_array_buffer_length(
-    arguments: &[Value],
-) -> Result<(), crate::execute::VmError> {
+fn validate_shared_array_buffer_length(arguments: &[Value]) -> Result<(), crate::execute::VmError> {
     let length = arguments
         .first()
         .map(crate::conversion::to_number)
         .transpose()?
         .unwrap_or(0.0);
     let length = to_index(length)?;
-    let Some(options) = arguments.get(1).filter(|value| crate::value::is_object(value)) else {
+    let Some(options) = arguments
+        .get(1)
+        .filter(|value| crate::value::is_object(value))
+    else {
         return Ok(());
     };
     let maximum = crate::execute::get_property_result(options, "maxByteLength")?;
@@ -413,7 +414,10 @@ fn construct_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::
         .transpose()?
         .unwrap_or(0.0);
     let length = to_index(length)?;
-    let buffer = match arguments.get(1).filter(|options| crate::value::is_object(options)) {
+    let buffer = match arguments
+        .get(1)
+        .filter(|options| crate::value::is_object(options))
+    {
         Some(options) => resizable_array_buffer(length, options)?,
         None => crate::value::ArrayBufferData::try_new(length)
             .ok_or_else(|| range_error("ArrayBuffer length is too large"))?,
