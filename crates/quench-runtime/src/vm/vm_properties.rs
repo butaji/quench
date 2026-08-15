@@ -71,7 +71,9 @@ fn property_for_value(value: &Value, key: &str) -> Value {
         {
             function_prototype_method(function.realm, key)
         }
-        Function(_) if matches!(key, "apply" | "call" | "bind") => bind_function_property(value, key),
+        Function(_) if matches!(key, "apply" | "call" | "bind") => {
+            bind_function_property(value, key)
+        }
         Function(function) => function_property(function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
         Map(data) => map_property(data, key),
@@ -303,11 +305,7 @@ fn array_early_access(
     })
 }
 
-fn property_from_descriptor(
-    value: &Value,
-    key: &str,
-    receiver: &Value,
-) -> Result<Value, VmError> {
+fn property_from_descriptor(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
     let descriptor =
         crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))?;
     descriptor_result(&descriptor, receiver, value, key)
@@ -431,6 +429,9 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         .find_map(|(name, value)| (name == field).then(|| value.clone()))
 }
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "IsHTMLDDA" {
+        return value.clone();
+    }
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
     if matches!(property, Value::Builtin(_)) {
