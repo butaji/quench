@@ -5,6 +5,7 @@ impl StatementReducer {
 
     pub(super) fn enter_module(&mut self) {
         self.locals.remove(SCRIPT_THIS_SLOT);
+        self.script = false;
     }
 
     pub(super) fn new_with_global(source_type: SourceType, global: bool, shared: bool) -> Self {
@@ -29,6 +30,28 @@ impl StatementReducer {
         facts: &mut ProgramDb,
         program_scope: bool,
     ) -> Result<Option<u16>, Vec<String>> {
+        if !self.script {
+            crate::reduce_support::predeclare_functions(
+                statements,
+                &mut self.locals,
+                &mut self.next_slot,
+            );
+            for statement in statements {
+                if let oxc::ast::ast::Statement::ExportNamedDeclaration(export) = statement {
+                    if let Some(oxc::ast::ast::Declaration::FunctionDeclaration(function)) =
+                        &export.declaration
+                    {
+                        if let Some(identifier) = &function.id {
+                            crate::reduce_support::reserve_names(
+                                &[identifier.name.to_string()],
+                                &mut self.locals,
+                                &mut self.next_slot,
+                            );
+                        }
+                    }
+                }
+            }
+        }
         let barrier_len = facts.eval_var_barrier.len();
         facts
             .eval_var_barrier
@@ -139,7 +162,24 @@ fn append_scoped_statements(
     global_script: bool,
 ) -> Result<Option<u16>, Vec<String>> {
     let mut last = None;
-    for statement in statements {
+    let order = if !state.script {
+        let mut order = Vec::with_capacity(statements.len());
+        for (index, statement) in statements.iter().enumerate() {
+            if is_function_declaration(statement) {
+                order.push(index);
+            }
+        }
+        for (index, statement) in statements.iter().enumerate() {
+            if !is_function_declaration(statement) {
+                order.push(index);
+            }
+        }
+        order
+    } else {
+        (0..statements.len()).collect()
+    };
+    for index in order {
+        let statement = &statements[index];
         if global_script && matches!(statement, Statement::FunctionDeclaration(_)) {
             continue;
         }
@@ -152,4 +192,16 @@ fn append_scoped_statements(
         last = next;
     }
     Ok(last)
+}
+
+fn is_function_declaration(statement: &Statement<'_>) -> bool {
+    matches!(statement, Statement::FunctionDeclaration(_))
+        || matches!(
+            statement,
+            Statement::ExportNamedDeclaration(export)
+                if matches!(
+                    export.declaration,
+                    Some(oxc::ast::ast::Declaration::FunctionDeclaration(_))
+                )
+        )
 }
