@@ -11,6 +11,9 @@ pub(crate) fn concat(
     let species = concat_species(&this)?;
     let mut items = vec![this];
     items.extend(arguments.iter().cloned());
+    if species.is_none() && sparse_array_items(&items)? {
+        return Ok(concat_sparse_arrays(&items)?);
+    }
     let mut elements = Vec::new();
     let mut holes = Vec::new();
     for item in &items {
@@ -36,6 +39,38 @@ pub(crate) fn concat(
         "length",
         Value::Number(length as f64),
     ))
+}
+
+fn sparse_array_items(items: &[Value]) -> Result<bool, crate::execute::VmError> {
+    items.iter().try_fold(true, |all_arrays, item| {
+        Ok(all_arrays && matches!(item, Value::Array(_)) && is_concat_spreadable(item)?)
+    })
+}
+
+fn concat_sparse_arrays(items: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let length = items.iter().try_fold(0usize, |total, item| {
+        let Value::Array(values) = item else {
+            return Ok(total);
+        };
+        total
+            .checked_add(values.logical_len())
+            .ok_or_else(|| crate::value::error::throw_type_error("Maximum array size exceeded"))
+    })?;
+    let mut result = crate::value::ArrayData::new(Vec::new());
+    result.set_length(length);
+    let mut offset = 0;
+    for item in items {
+        let Value::Array(values) = item else { continue };
+        let mut index = 0;
+        while let Some(current) = values.next_index(index, values.logical_len()) {
+            if let Some(value) = values.get_index(current) {
+                result.set_index(offset + current, value);
+            }
+            index = current.saturating_add(1);
+        }
+        offset += values.logical_len();
+    }
+    Ok(Value::Array(std::rc::Rc::new(result)))
 }
 
 /// `ArraySpeciesCreate`: the species-constructed result, or `None` for the
