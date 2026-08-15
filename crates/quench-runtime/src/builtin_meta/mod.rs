@@ -37,6 +37,7 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         return Some(name);
     }
     match builtin {
+        Builtin::AbstractModuleSource => Some("AbstractModuleSource"),
         Builtin::Array => Some("Array"),
         Builtin::Iterator => Some("Iterator"),
         Builtin::ArrayBuffer => Some("ArrayBuffer"),
@@ -119,6 +120,7 @@ fn error_constructor_name(builtin: Builtin) -> Option<&'static str> {
 /// Returns `None` for builtins that are not constructors with prototypes.
 pub fn prototype(builtin: Builtin) -> Option<Builtin> {
     match builtin {
+        Builtin::AbstractModuleSource => Some(Builtin::AbstractModuleSourcePrototype),
         Builtin::Array => Some(Builtin::ArrayPrototype),
         Builtin::Boolean => Some(Builtin::ObjectPrototype),
         Builtin::Promise => Some(Builtin::PromisePrototype),
@@ -190,6 +192,7 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
         Builtin::IteratorPrototype
+            | Builtin::AbstractModuleSourcePrototype
             | Builtin::ArrayBufferPrototype
             | Builtin::SharedArrayBufferPrototype
             | Builtin::Float64ArrayPrototype
@@ -265,6 +268,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         return Some(length);
     }
     match builtin {
+        Builtin::AbstractModuleSource => Some(0.0),
         Builtin::Array => Some(1.0),
         Builtin::Iterator => Some(0.0),
         Builtin::ArrayBuffer => Some(1.0),
