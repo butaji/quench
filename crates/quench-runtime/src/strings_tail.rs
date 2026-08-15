@@ -13,9 +13,36 @@ pub(crate) fn search(receiver: Option<&Value>, arguments: &[Value]) -> Value {
 }
 
 fn string_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::String(value)) = receiver else { return Ok(Value::Null) };
-    let Some(pattern) = arguments.first() else { return Ok(Value::array(vec![Value::String(value.clone())])) };
-    match pattern { Value::Object(_) => crate::regexp::exec(Some(pattern), &[Value::String(value.clone())]), _ => Ok(Value::Null) }
+    let input = string_receiver(receiver)?;
+    let pattern = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let matcher = if crate::value::is_object(&pattern) {
+        crate::execute::get_property_result(&pattern, "Symbol.match")?
+    } else {
+        Value::Undefined
+    };
+    let (target, this_arg) = if matches!(matcher, Value::Undefined | Value::Null) {
+        let regex = crate::construct::construct_value(
+            &Value::Builtin(crate::ops::Builtin::RegExp),
+            &[pattern],
+        )?;
+        (
+            crate::execute::get_property_result(&regex, "Symbol.match")?,
+            regex,
+        )
+    } else {
+        (matcher, pattern)
+    };
+    if !crate::conversion::is_callable(&target) {
+        return Err(crate::value::error::throw_type_error(
+            "String match method is not callable",
+        ));
+    }
+    crate::functions::execute_target_with_receiver(
+        &target,
+        &this_arg,
+        &[Value::String(input)],
+    )
+    .map(|(result, _)| result)
 }
 
 fn number(value: &Value) -> Option<f64> {
