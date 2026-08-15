@@ -376,6 +376,7 @@ pub enum Builtin {
     TemporalPlainDateDaysInYearGetter,
     TemporalPlainDateInLeapYearGetter,
     TemporalPlainDateMonthsInYearGetter,
+    TemporalPlainDateEquals,
     IntlGetCanonicalLocales,
     IntlSupportedValuesOf,
     IntlLocale,
