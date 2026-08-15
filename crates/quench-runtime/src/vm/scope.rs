@@ -23,6 +23,15 @@ impl ExecutionScope {
         super::execute_in_environment(ops, registers, context, Rc::clone(&self.0))
     }
 
+    pub fn execute_completion(
+        &self,
+        ops: &[Op],
+        registers: &mut Vec<Value>,
+        context: &VmContext,
+    ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+        super::execute_frame_completion(ops, registers, context, Rc::clone(&self.0))
+    }
+
     /// Install a live module binding before executing a residual unit.
     pub fn bind_module(&self, name: &str, cell: ModuleBindingCell) {
         self.0.alias_module_binding(name, cell);
