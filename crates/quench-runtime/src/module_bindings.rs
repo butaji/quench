@@ -29,6 +29,24 @@ impl ModuleBindingCell {
     pub fn shared(&self) -> Rc<RefCell<Value>> {
         Rc::clone(&self.0)
     }
+
+    pub fn mark_uninitialized(&self) {
+        self.set(Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+            (
+                "\0quench:uninitialized-module-binding".to_string(),
+                Value::Boolean(true),
+            ),
+        ]))));
+    }
+
+    pub fn is_uninitialized(value: &Value) -> bool {
+        let Value::Object(properties) = value else {
+            return false;
+        };
+        properties.iter().any(|(key, value)| {
+            key == "\0quench:uninitialized-module-binding" && matches!(value, Value::Boolean(true))
+        })
+    }
 }
 
 #[cfg(test)]
