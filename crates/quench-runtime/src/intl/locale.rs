@@ -43,6 +43,15 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(build_object(locale))
 }
 
+fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    if receiver.is_some() {
+        return Err(crate::value::error::throw_type_error(
+            "Intl.Locale requires new",
+        ));
+    }
+    construct(arguments)
+}
+
 fn locale_tag(value: &Value) -> Result<String, VmError> {
     match value {
         Value::String(_) | Value::Object(_) => Ok(to_string_value(value)),
@@ -529,7 +538,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlLocale => Some(construct(arguments)),
+        crate::ops::Builtin::IntlLocale => Some(construct_call(arguments, receiver)),
         crate::ops::Builtin::IntlLocaleToString
         | crate::ops::Builtin::IntlLocaleMaximize
         | crate::ops::Builtin::IntlLocaleMinimize
