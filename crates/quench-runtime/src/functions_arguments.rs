@@ -168,7 +168,7 @@ pub(crate) fn execute_bound(
     combined.extend_from_slice(arguments);
     match &bound.target {
         crate::value::Value::Builtin(builtin) => {
-            execute_builtin_target(*builtin, Some(&bound.receiver), &combined)
+            execute_bound_builtin(*builtin, bound, &combined)
         }
         crate::value::Value::Function(function) => execute(function, &bound.receiver, &combined),
         crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
@@ -177,6 +177,25 @@ pub(crate) fn execute_bound(
         }
         _ => Err(crate::execute::VmError::NotCallable),
     }
+}
+
+fn execute_bound_builtin(
+    builtin: crate::ops::Builtin,
+    bound: &crate::value::BoundFunctionValue,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let execute = || execute_builtin_target(builtin, Some(&bound.receiver), arguments);
+    if matches!(
+        builtin,
+        crate::ops::Builtin::ErrorPrototypeStackGetter
+            | crate::ops::Builtin::ErrorPrototypeStackSetter
+    ) {
+        if let crate::value::Value::HostCapability(token) = &bound.receiver {
+            return crate::vm::with_realm(token.realm(), execute)
+                .unwrap_or_else(|| Err(crate::vm::not_callable()));
+        }
+    }
+    execute()
 }
 
 pub(crate) fn execute_target(
