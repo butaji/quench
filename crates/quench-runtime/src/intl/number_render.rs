@@ -1,4 +1,3 @@
-use super::*;
 pub(crate) fn japanese_speed_parts(formatted: &str) -> Vec<Value> {
     let Some(number) = formatted
         .strip_prefix("時速 ")
