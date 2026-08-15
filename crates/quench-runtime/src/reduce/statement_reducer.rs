@@ -7,9 +7,9 @@ impl StatementReducer {
         self.locals.remove(SCRIPT_THIS_SLOT);
     }
 
-    pub(super) fn new_with_global(source_type: SourceType, global: bool) -> Self {
+    pub(super) fn new_with_global(source_type: SourceType, global: bool, shared: bool) -> Self {
         let locals = initialize_statement_locals(source_type);
-        let (mut ops, next_register) = initialize_statement_ops(global);
+        let (mut ops, next_register) = initialize_statement_ops(global || shared);
         ops.push(Op::StoreLocal {
             slot: 0,
             src: next_register,
