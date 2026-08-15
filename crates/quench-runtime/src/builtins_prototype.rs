@@ -50,7 +50,10 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::BigInt(_)) => "BigInt",
         Some(Value::Array(_)) => "Array",
         Some(Value::Object(properties)) => {
-            if properties.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT) {
+            if properties
+                .iter()
+                .any(|(key, _)| key == crate::builtins::ERROR_SLOT)
+            {
                 return "Error";
             }
             boxed_object_tag(properties).unwrap_or("Object")

@@ -13,8 +13,8 @@ mod iterator_values;
 pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpdateGuard};
 pub(crate) use iterator_step::step_value;
 pub(crate) use iterator_values::{
-    from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_regexp_string,
-    next, next_map, next_set, property_for, prototype_of,
+    from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_array_like,
+    make_regexp_string, next, next_map, next_set, property_for, prototype_of,
 };
 fn make_protocol(iterator: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
@@ -73,11 +73,13 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
     let state = data.state.borrow();
     match &*state {
         IteratorState::Native { done: true, .. }
+        | IteratorState::ArrayLike { done: true, .. }
         | IteratorState::Set { done: true, .. }
         | IteratorState::Map { done: true, .. }
         | IteratorState::Protocol { done: true, .. }
         | IteratorState::RegExpString { done: true, .. }
-        | IteratorState::Native { .. } => Ok(None),
+        | IteratorState::Native { .. }
+        | IteratorState::ArrayLike { .. } => Ok(None),
         IteratorState::Set { .. } => Ok(None),
         IteratorState::Map { .. } => Ok(None),
         IteratorState::RegExpString { .. } => Ok(None),
@@ -273,6 +275,9 @@ pub fn delegate_next(
             } => {
                 return Ok(native_delegation_step(values, index, done));
             }
+            IteratorState::ArrayLike { .. } => {
+                return Ok(DelegationResult::Done(Value::Undefined));
+            }
             IteratorState::Set { .. }
             | IteratorState::Map { .. }
             | IteratorState::RegExpString { .. } => {
@@ -354,6 +359,7 @@ fn delegation_target(
     let iterator = match &*data.state.borrow() {
         IteratorState::Protocol { iterator, .. } => Some(iterator.clone()),
         IteratorState::Native { .. }
+        | IteratorState::ArrayLike { .. }
         | IteratorState::Set { .. }
         | IteratorState::Map { .. }
         | IteratorState::RegExpString { .. } => None,
@@ -403,6 +409,7 @@ pub(super) fn native_step(values: &[Value], index: &mut usize, done: &mut bool) 
 pub(super) fn mark_done(data: &IteratorData) {
     match &mut *data.state.borrow_mut() {
         IteratorState::Native { done, .. }
+        | IteratorState::ArrayLike { done, .. }
         | IteratorState::Set { done, .. }
         | IteratorState::Map { done, .. }
         | IteratorState::Protocol { done, .. }

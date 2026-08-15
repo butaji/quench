@@ -200,6 +200,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::NumberToExponential
             | Builtin::Object
             | Builtin::Date
+            | Builtin::ErrorPrototype
             | Builtin::Error
             | Builtin::RangeError
             | Builtin::ReferenceError
@@ -216,6 +217,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::ErrorPrototypeCauseGetter
             | Builtin::ErrorPrototypeStackGetter
             | Builtin::ErrorPrototypeStackSetter
+            | Builtin::AbstractModuleSourceToStringTagGetter
             | Builtin::WeakRefDeref
     )
 }
@@ -266,6 +268,9 @@ fn execute_simple_builtin(
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
             crate::number_fmt::number_format(receiver, arguments.first(), builtin)
         }
+        Builtin::ErrorPrototype => Err(crate::value::error::throw_type_error(
+            "Error.prototype is not callable",
+        )),
         Builtin::Error
         | Builtin::RangeError
         | Builtin::ReferenceError
@@ -310,6 +315,7 @@ fn error_builtin(
         Builtin::ErrorPrototypeNameGetter => Ok(error_name_getter(receiver)?),
         Builtin::ErrorPrototypeMessageGetter => Ok(error_message_getter(receiver)?),
         Builtin::ErrorPrototypeCauseGetter => Ok(error_cause_getter(receiver)?),
+        Builtin::AbstractModuleSourceToStringTagGetter => Ok(Value::Undefined),
         Builtin::ErrorPrototypeStackGetter => error_stack_getter(receiver),
         Builtin::ErrorPrototypeStackSetter => error_stack_setter(receiver, arguments),
         _ => Ok(Value::Undefined),
@@ -497,6 +503,8 @@ fn define_proxy_stack(value: &Value, stack: Value) -> Result<Value, VmError> {
     }
     Ok(result)
 }
+
+
 
 fn set_error_stack_home() -> Option<Value> {
     let value = crate::execute::get_property(&crate::vm::current_global_object(), "Error");

@@ -6,6 +6,7 @@ pub struct IteratorData {
 #[derive(Debug, PartialEq)]
 pub enum IteratorState {
     Native { values: Vec<Value>, index: usize, done: bool },
+    ArrayLike { value: Value, index: usize, done: bool },
     Set { data: Rc<SetData>, index: usize, kind: u8, done: bool },
     Map { data: Rc<MapData>, index: usize, kind: u8, done: bool },
     Protocol { iterator: Value, next: Value, done: bool },

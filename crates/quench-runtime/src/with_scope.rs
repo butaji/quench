@@ -101,6 +101,12 @@ pub(crate) fn set_resolved(
         target = updated;
     }
     let value = crate::execute::read_register(registers, src)?;
+    let captured_global = crate::locals::current().get(0);
+    if has_property(&captured_global, key)? {
+        let updated = crate::proxy::proxy_set(&captured_global, key, &value, None)?;
+        crate::vm::replace_global_object(&captured_global, &updated);
+        return Ok(());
+    }
     if matches!(target, Value::Undefined) {
         return set_name_value(key, value, strict);
     }
@@ -192,7 +198,10 @@ fn delete_from_global(key: &str) -> Option<bool> {
 }
 
 fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), VmError> {
-    let global = crate::vm::current_global_object();
+    let global = match crate::locals::current().get(0) {
+        Value::Object(_) => crate::locals::current().get(0),
+        _ => crate::vm::current_global_object(),
+    };
     let binding = resolve_binding(key)?;
     let immutable = crate::globals::immutable_value(key);
     let eval = crate::locals::resolve_eval_name(key);
