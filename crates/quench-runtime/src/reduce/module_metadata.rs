@@ -29,6 +29,7 @@ pub struct ImportBinding {
 pub struct ExportBinding {
     pub local: String,
     pub exported: String,
+    pub source: bool,
 }
 
 /// A binding re-exposed from another module without a local runtime slot.
@@ -45,7 +46,17 @@ impl ModuleMetadata {
         for statement in statements {
             metadata.visit_statement(statement);
         }
+        metadata.mark_source_exports();
         metadata
+    }
+
+    fn mark_source_exports(&mut self) {
+        for export in &mut self.exports {
+            export.source = self
+                .imports
+                .iter()
+                .any(|import| import.local == export.local && import.imported == "source");
+        }
     }
 
     fn visit_statement(&mut self, statement: &Statement<'_>) {
@@ -111,6 +122,7 @@ impl ModuleMetadata {
             self.exports.push(ExportBinding {
                 local: module_export_name(&specifier.local),
                 exported: module_export_name(&specifier.exported),
+                source: false,
             });
         }
         if let Some(declaration) = &export.declaration {
@@ -157,6 +169,7 @@ impl ModuleMetadata {
         self.exports.push(ExportBinding {
             local: "default".to_string(),
             exported: "default".to_string(),
+            source: false,
         });
     }
 }
@@ -169,6 +182,7 @@ fn declaration_bindings(declaration: &Declaration<'_>) -> Vec<ExportBinding> {
         .map(|name| ExportBinding {
             local: name.clone(),
             exported: name,
+            source: false,
         })
         .collect()
 }
