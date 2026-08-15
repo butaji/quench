@@ -149,29 +149,12 @@ impl NumberOptions {
         if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
             return Err(crate::value::error::throw_range_error("invalid unit"));
         }
-        Ok(NumberOptions {
+        Ok(number_options(
             locale,
-            style: raw.style,
-            currency: raw.currency,
-            currency_display: raw.currency_display,
-            currency_sign: raw.currency_sign,
-            unit: raw.unit,
-            unit_display: raw.unit_display,
-            minimum_integer_digits: raw.minimum_integer_digits.max(1.0) as u32,
+            raw,
             minimum_fraction_digits,
             maximum_fraction_digits,
-            use_grouping: raw.use_grouping,
-            grouping_min2: raw.grouping_min2,
-            notation: raw.notation,
-            compact_display: raw.compact_display,
-            rounding_mode: raw.rounding_mode,
-            rounding_increment: raw.rounding_increment.max(1.0) as u32,
-            sign_display: raw.sign_display,
-            minimum_significant_digits: significant_digits(raw.minimum_significant_digits),
-            maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
-                .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
-            rounding_priority: raw.rounding_priority,
-        })
+        ))
     }
 
     fn build_object(&self) -> Value {
@@ -234,6 +217,37 @@ impl NumberOptions {
             ));
         }
         make_object(properties)
+    }
+}
+
+fn number_options(
+    locale: String,
+    raw: RawOptions,
+    minimum_fraction_digits: f64,
+    maximum_fraction_digits: f64,
+) -> NumberOptions {
+    NumberOptions {
+        locale,
+        style: raw.style,
+        currency: raw.currency,
+        currency_display: raw.currency_display,
+        currency_sign: raw.currency_sign,
+        unit: raw.unit,
+        unit_display: raw.unit_display,
+        minimum_integer_digits: raw.minimum_integer_digits.max(1.0) as u32,
+        minimum_fraction_digits,
+        maximum_fraction_digits,
+        use_grouping: raw.use_grouping,
+        grouping_min2: raw.grouping_min2,
+        notation: raw.notation,
+        compact_display: raw.compact_display,
+        rounding_mode: raw.rounding_mode,
+        rounding_increment: raw.rounding_increment.max(1.0) as u32,
+        sign_display: raw.sign_display,
+        minimum_significant_digits: significant_digits(raw.minimum_significant_digits),
+        maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
+            .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
+        rounding_priority: raw.rounding_priority,
     }
 }
 
