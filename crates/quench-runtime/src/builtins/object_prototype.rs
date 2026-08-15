@@ -25,6 +25,14 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => {
             Value::Builtin(Builtin::TypedArray)
         }
+        Value::Builtin(
+            Builtin::RangeErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::URIErrorPrototype,
+        ) => Value::Builtin(Builtin::ErrorPrototype),
         Value::Builtin(Builtin::AsyncFunctionPrototype) => {
             Value::Builtin(Builtin::FunctionPrototype)
         }
@@ -37,7 +45,9 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::Builtin(Builtin::SuppressedErrorPrototype) => {
             Value::Builtin(Builtin::ErrorPrototype)
         }
-        Value::Builtin(Builtin::AggregateErrorPrototype) => Value::Builtin(Builtin::ErrorPrototype),
+        Value::Builtin(
+            Builtin::AggregateErrorPrototype
+        ) => Value::Builtin(Builtin::ErrorPrototype),
         Value::Builtin(
             builtin @ (Builtin::ArrayIteratorPrototype
             | Builtin::StringIteratorPrototype
@@ -72,6 +82,17 @@ fn prototype_for_value_tail(value: &Value) -> Value {
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
         }
         Value::Builtin(Builtin::AsyncFunction) => Value::Builtin(Builtin::Function),
+        Value::Builtin(
+            Builtin::Error
+            | Builtin::RangeError
+            | Builtin::TypeError
+            | Builtin::EvalError
+            | Builtin::ReferenceError
+            | Builtin::SyntaxError
+            | Builtin::URIError
+            | Builtin::AggregateError
+            | Builtin::SuppressedError,
+        ) => Value::Builtin(Builtin::Error),
         Value::BoundFunction(bound)
             if crate::vm::is_intrinsic_bound(bound)
                 && matches!(bound.target, Value::Builtin(Builtin::AsyncFunction)) =>
@@ -399,6 +420,12 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
             | Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::URIErrorPrototype
             | Builtin::AsyncFunctionPrototype
             | Builtin::AbstractModuleSourcePrototype
             | Builtin::GeneratorFunctionPrototype
