@@ -200,7 +200,8 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
             *done = true;
             Ok(Some(iterator.clone()))
         }
-        IteratorState::MapHelper { iterator, done, .. } => {
+        IteratorState::MapHelper { iterator, done, .. }
+        | IteratorState::FilterHelper { iterator, done, .. } => {
             *done = true;
             Ok(Some(iterator.clone()))
         }
@@ -452,6 +453,7 @@ pub fn delegate_next(
             IteratorState::Concat { .. } => None,
             IteratorState::Drop { .. } => None,
             IteratorState::MapHelper { .. } => None,
+            IteratorState::FilterHelper { .. } => None,
         }
     };
     let Some(iterator) = protocol else {
@@ -532,6 +534,7 @@ fn delegation_target(
         IteratorState::Concat { .. } => None,
         IteratorState::Drop { iterator, .. } => Some(iterator.clone()),
         IteratorState::MapHelper { iterator, .. } => Some(iterator.clone()),
+        IteratorState::FilterHelper { iterator, .. } => Some(iterator.clone()),
     };
     Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
 }
@@ -585,6 +588,7 @@ pub(super) fn mark_done(data: &IteratorData) {
         IteratorState::Concat { done, .. } => *done = true,
         IteratorState::Drop { done, .. } => *done = true,
         IteratorState::MapHelper { done, .. } => *done = true,
+        IteratorState::FilterHelper { done, .. } => *done = true,
     }
 }
 fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {

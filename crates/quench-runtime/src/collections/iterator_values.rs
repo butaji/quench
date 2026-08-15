@@ -108,6 +108,7 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
         IteratorState::Concat { .. } => crate::ops::Builtin::IteratorPrototype,
         IteratorState::Drop { .. } => crate::ops::Builtin::IteratorPrototype,
         IteratorState::MapHelper { .. } => crate::ops::Builtin::IteratorPrototype,
+        IteratorState::FilterHelper { .. } => crate::ops::Builtin::IteratorPrototype,
     };
     Value::Builtin(builtin)
 }
@@ -122,6 +123,7 @@ pub(crate) fn property(key: &str) -> Value {
         "every" => Value::Builtin(crate::ops::Builtin::IteratorEvery),
         "some" => Value::Builtin(crate::ops::Builtin::IteratorSome),
         "find" => Value::Builtin(crate::ops::Builtin::IteratorFind),
+        "filter" => Value::Builtin(crate::ops::Builtin::IteratorFilter),
         "Symbol.iterator" => Value::Builtin(crate::ops::Builtin::IteratorSelf),
         _ => Value::Undefined,
     }
@@ -161,6 +163,7 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
         IteratorState::Concat { .. } => "Iterator",
         IteratorState::Drop { .. } => "Iterator",
         IteratorState::MapHelper { .. } => "Iterator",
+        IteratorState::FilterHelper { .. } => "Iterator",
     };
     Value::String(tag.to_string())
 }
@@ -178,6 +181,7 @@ fn next_for(value: &Value) -> Value {
         IteratorState::Concat { .. } => Builtin::IteratorNext,
         IteratorState::Drop { .. } => Builtin::IteratorNext,
         IteratorState::MapHelper { .. } => Builtin::IteratorNext,
+        IteratorState::FilterHelper { .. } => Builtin::IteratorNext,
     };
     Value::Builtin(builtin)
 }
