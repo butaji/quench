@@ -177,10 +177,11 @@ pub(crate) fn array_for_each(
         return Ok(Value::Undefined);
     };
     if let Some(callback) = arguments.first() {
+        let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
         for (index, value) in values.iter().enumerate() {
             crate::functions::execute_target(
                 callback,
-                &Value::Undefined,
+                this_arg,
                 &[value.clone(), Value::Number(index as f64), Value::Undefined],
             )?;
         }
@@ -198,9 +199,10 @@ pub(crate) fn array_filter(
         return Ok(Value::Array(values.clone()));
     };
     let mut filtered = Vec::new();
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
     for (index, value) in values.iter().enumerate() {
         let args = [value.clone(), Value::Number(index as f64), Value::Undefined];
-        let result = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
+        let result = crate::functions::execute_target(callback, this_arg, &args)?;
         if crate::execute::is_truthy(&result) {
             filtered.push(value.clone());
         }
