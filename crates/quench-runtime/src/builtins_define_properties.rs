@@ -46,5 +46,22 @@ fn descriptor_fields(
             fields.push((field.to_string(), value));
         }
     }
+    validate_accessor_fields(&fields)?;
     Ok(fields)
+}
+
+fn validate_accessor_fields(
+    fields: &[(String, Value)],
+) -> Result<(), crate::execute::VmError> {
+    for name in ["get", "set"] {
+        let Some((_, value)) = fields.iter().find(|(field, _)| field == name) else {
+            continue;
+        };
+        if !matches!(value, Value::Undefined) && !crate::conversion::is_callable(value) {
+            return Err(crate::value::error::throw_type_error(
+                "Accessor descriptor must be callable",
+            ));
+        }
+    }
+    Ok(())
 }
