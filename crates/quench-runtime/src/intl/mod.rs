@@ -9,6 +9,7 @@ use crate::{execute::VmError, ops::Builtin, value::Value};
 
 pub(crate) mod collator;
 pub(crate) mod datetime;
+mod digits;
 pub(crate) mod displaynames;
 pub(crate) mod list;
 pub(crate) mod locale;
@@ -309,13 +310,11 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         Value::Null => Err(crate::value::error::throw_type_error(
             "Cannot convert null to object",
         )),
-        Value::String(_) if crate::conversion::is_symbol(locales) => {
-            Ok(vec![default_locale()])
-        }
+        Value::String(_) if crate::conversion::is_symbol(locales) => Ok(vec![default_locale()]),
         Value::String(_) => Ok(vec![canonicalize(&to_string_value(locales))?]),
-        Value::Object(properties) if locale_slot(properties).is_some() => {
-            Ok(vec![canonicalize(&locale_slot(properties).unwrap_or_default())?])
-        }
+        Value::Object(properties) if locale_slot(properties).is_some() => Ok(vec![canonicalize(
+            &locale_slot(properties).unwrap_or_default(),
+        )?]),
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
@@ -359,9 +358,9 @@ fn require_locale_value(value: &Value) -> Result<(), VmError> {
 }
 
 fn locale_slot(properties: &crate::value::ObjectData) -> Option<String> {
-    let slot = properties.iter().find_map(|(name, value)| {
-        (name == SLOT).then_some(value)
-    });
+    let slot = properties
+        .iter()
+        .find_map(|(name, value)| (name == SLOT).then_some(value));
     let locale = slot.and_then(|value| match value {
         Value::Object(slots) => slots.iter().find_map(|(name, value)| {
             (name == "locale").then(|| match value {
@@ -374,14 +373,19 @@ fn locale_slot(properties: &crate::value::ObjectData) -> Option<String> {
     let is_locale = properties.iter().any(|(name, value)| {
         name == "toString" && *value == Value::Builtin(crate::ops::Builtin::IntlLocaleToString)
     });
-    locale.or_else(|| is_locale.then(|| {
-        properties.iter().find_map(|(name, value)| {
-            (name == "baseName").then(|| match value {
-                Value::String(value) => value.clone(),
-                _ => String::new(),
-            })
-        }).unwrap_or_default()
-    }))
+    locale.or_else(|| {
+        is_locale.then(|| {
+            properties
+                .iter()
+                .find_map(|(name, value)| {
+                    (name == "baseName").then(|| match value {
+                        Value::String(value) => value.clone(),
+                        _ => String::new(),
+                    })
+                })
+                .unwrap_or_default()
+        })
+    })
 }
 
 fn locale_string(value: &Value) -> Result<String, VmError> {
@@ -726,9 +730,7 @@ pub(crate) fn intl_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)
     object_slots(&fallback)
 }
 
-fn object_slots(
-    properties: &crate::value::ObjectData,
-) -> Result<Vec<(String, Value)>, VmError> {
+fn object_slots(properties: &crate::value::ObjectData) -> Result<Vec<(String, Value)>, VmError> {
     let Some((_, Value::Object(slots))) = properties.iter().find(|(name, _)| name == SLOT) else {
         return Err(runtime_error("TypeError: not an Intl object"));
     };
