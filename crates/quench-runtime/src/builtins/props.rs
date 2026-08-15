@@ -3,6 +3,13 @@ include!("props_modules.rs");
 include!("props_own_names.rs");
 include!("props_collections.rs");
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
+    if matches!(
+        builtin,
+        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype
+    ) && matches!(key, "length" | "name")
+    {
+        return Value::Undefined;
+    }
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return Value::Undefined;
     }
@@ -56,27 +63,12 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
-        (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
-        (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
-        (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
-        (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
-        (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
-        (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
-        (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
-        (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
-        (ShadowRealmPrototype, "constructor") => Some(Value::Builtin(ShadowRealm)),
-        (ShadowRealm, "prototype") => Some(Value::Builtin(ShadowRealmPrototype)),
-        (ShadowRealmPrototype, "evaluate") => Some(Value::Builtin(ShadowRealmEvaluate)),
-        (ShadowRealmPrototype, "importValue") => Some(Value::Builtin(ShadowRealmImportValue)),
-        (ShadowRealmPrototype, "Symbol.toStringTag") => Some(Value::String("ShadowRealm".into())),
+        (GeneratorFunctionPrototype, "prototype") => Some(crate::functions::generator_prototype()),
+        (GeneratorFunctionPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("GeneratorFunction".into()))
+        }
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
-        }
-        (SharedArrayBufferPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("SharedArrayBuffer".into()))
-        }
-        (StringIteratorPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("String Iterator".into()))
         }
         (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
@@ -120,6 +112,34 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (ErrorPrototype, "message") => Some(Value::String("".to_string())),
         (ErrorPrototype, "cause") => Some(Value::Undefined),
         (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
+        (EvalErrorPrototype, "name") => Some(Value::String("EvalError".to_string())),
+        (RangeErrorPrototype, "name") => Some(Value::String("RangeError".to_string())),
+        (ReferenceErrorPrototype, "name") => Some(Value::String("ReferenceError".to_string())),
+        (SyntaxErrorPrototype, "name") => Some(Value::String("SyntaxError".to_string())),
+        (TypeErrorPrototype, "name") => Some(Value::String("TypeError".to_string())),
+        (URIErrorPrototype, "name") => Some(Value::String("URIError".to_string())),
+        (AggregateErrorPrototype, "name") => Some(Value::String("AggregateError".to_string())),
+        (EvalErrorPrototype, "message")
+        | (RangeErrorPrototype, "message")
+        | (ReferenceErrorPrototype, "message")
+        | (SyntaxErrorPrototype, "message")
+        | (TypeErrorPrototype, "message")
+        | (URIErrorPrototype, "message")
+        | (AggregateErrorPrototype, "message") => Some(Value::String(std::string::String::new())),
+        (EvalErrorPrototype, "constructor") => Some(Value::Builtin(EvalError)),
+        (RangeErrorPrototype, "constructor") => Some(Value::Builtin(RangeError)),
+        (ReferenceErrorPrototype, "constructor") => Some(Value::Builtin(ReferenceError)),
+        (SyntaxErrorPrototype, "constructor") => Some(Value::Builtin(SyntaxError)),
+        (TypeErrorPrototype, "constructor") => Some(Value::Builtin(TypeError)),
+        (URIErrorPrototype, "constructor") => Some(Value::Builtin(URIError)),
+        (AggregateErrorPrototype, "constructor") => Some(Value::Builtin(AggregateError)),
+        (EvalErrorPrototype, "toString")
+        | (RangeErrorPrototype, "toString")
+        | (ReferenceErrorPrototype, "toString")
+        | (SyntaxErrorPrototype, "toString")
+        | (TypeErrorPrototype, "toString")
+        | (URIErrorPrototype, "toString")
+        | (AggregateErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
         (SuppressedError, "prototype") => Some(Value::Builtin(SuppressedErrorPrototype)),
         (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
         (SuppressedErrorPrototype, "message") => Some(Value::String("".to_string())),
@@ -241,23 +261,29 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
         (ArrayBufferPrototype, "resize") => Some(ArrayBufferResize),
         (ArrayBufferPrototype, "transferToImmutable") => Some(ArrayBufferTransferToImmutable),
-        (SharedArrayBufferPrototype, "constructor") => Some(SharedArrayBuffer),
-        (SharedArrayBufferPrototype, "byteLength") => Some(SharedArrayBufferByteLengthGetter),
-        (SharedArrayBufferPrototype, "growable") => Some(SharedArrayBufferGrowableGetter),
-        (SharedArrayBufferPrototype, "maxByteLength") => Some(SharedArrayBufferMaxByteLengthGetter),
-        (SharedArrayBufferPrototype, "grow") => Some(SharedArrayBufferGrow),
-        (SharedArrayBufferPrototype, "slice") => Some(SharedArrayBufferSlice),
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),
         (Function, "prototype") => Some(FunctionPrototype),
+        (FunctionPrototype, "constructor") => Some(Function),
         (AsyncFunction, "prototype") => Some(FunctionPrototype),
         (GeneratorFunction, "prototype") => Some(GeneratorFunctionPrototype),
         (AsyncGeneratorFunction, "prototype") => Some(AsyncGeneratorFunctionPrototype),
         (GeneratorFunctionPrototype, "constructor") => Some(GeneratorFunction),
+        (GeneratorFunctionPrototype, "toString" | "valueOf") => Some(if key == "toString" {
+            FunctionPrototypeToString
+        } else {
+            FunctionPrototypeValueOf
+        }),
         (AsyncGeneratorFunctionPrototype, "constructor") => Some(AsyncGeneratorFunction),
+        (AsyncGeneratorFunctionPrototype, "toString" | "valueOf") => Some(if key == "toString" {
+            FunctionPrototypeToString
+        } else {
+            FunctionPrototypeValueOf
+        }),
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
+        (FunctionPrototype, "Symbol.hasInstance") => Some(FunctionPrototypeHasInstance),
         (FunctionCall, "bind") => Some(FunctionBind),
         (Object, "prototype") => Some(ObjectPrototype),
         (Object, "fromEntries") => Some(ObjectFromEntries),
@@ -283,7 +309,6 @@ fn regexp_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "Symbol.split") => RegExpSymbolSplit,
         (RegExpPrototype, "Symbol.matchAll") => RegExpSymbolMatchAll,
         (RegExpStringIteratorPrototype, "next") => RegExpStringIteratorNext,
-        (StringIteratorPrototype, "next") => StringIteratorNext,
         _ => return None,
     })
 }
@@ -294,19 +319,20 @@ fn builtin_method_prefix(builtin: Builtin, key: &str) -> Option<Builtin> {
     specialized_method(builtin, key).or_else(|| error_prototype(builtin, key))
 }
 fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
-    (key == "prototype"
-        && matches!(
-            builtin,
-            Builtin::Error
-                | Builtin::RangeError
-                | Builtin::ReferenceError
-                | Builtin::SyntaxError
-                | Builtin::EvalError
-                | Builtin::URIError
-                | Builtin::AggregateError
-                | Builtin::TypeError
-        ))
-    .then_some(Builtin::ErrorPrototype)
+    if key != "prototype" {
+        return None;
+    }
+    Some(match builtin {
+        Builtin::Error => Builtin::ErrorPrototype,
+        Builtin::RangeError => Builtin::RangeErrorPrototype,
+        Builtin::ReferenceError => Builtin::ReferenceErrorPrototype,
+        Builtin::SyntaxError => Builtin::SyntaxErrorPrototype,
+        Builtin::EvalError => Builtin::EvalErrorPrototype,
+        Builtin::URIError => Builtin::URIErrorPrototype,
+        Builtin::AggregateError => Builtin::AggregateErrorPrototype,
+        Builtin::TypeError => Builtin::TypeErrorPrototype,
+        _ => return None,
+    })
 }
 fn specialized_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_property(builtin, key).or_else(|| {
@@ -477,7 +503,6 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Map, "prototype") => Some(MapPrototype),
         (Set, "prototype") => Some(SetPrototype),
         (FunctionPrototype, "toString") => Some(FunctionPrototypeToString),
-        (FunctionPrototype, "valueOf") => Some(FunctionPrototypeValueOf),
         (RegExpPrototype, "toString") => Some(RegExpPrototypeToString),
         _ => builtin_method3(builtin, key),
     }
@@ -525,6 +550,13 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
+    if matches!(
+        builtin,
+        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype
+    ) && matches!(key, "length" | "name")
+    {
+        return None;
+    }
     match key {
         "call" => Some(Value::Builtin(Builtin::FunctionCall)),
         "bind" => Some(Value::Builtin(Builtin::FunctionBind)),
@@ -533,21 +565,18 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
         _ => None,
     }
 }
-pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
-    if matches!(
-        (_builtin, key),
-        (Builtin::ThrowTypeError, "length" | "name")
-    ) {
+pub(crate) fn is_builtin_deletable(builtin: Builtin, key: &str) -> bool {
+    if builtin == Builtin::FunctionPrototype && key == "Symbol.hasInstance" {
         return false;
     }
-    if key == "prototype" {
+    if key == "prototype" && builtin != Builtin::GeneratorFunctionPrototype {
         return false;
     }
-    if crate::builtins::object::is_well_known_symbol_property(_builtin, key) {
+    if crate::builtins::object::is_well_known_symbol_property(builtin, key) {
         return false;
     }
     if matches!(
-        (_builtin, key),
+        (builtin, key),
         (
             Builtin::Math,
             "E" | "LN2" | "LN10" | "LOG2E" | "LOG10E" | "PI" | "SQRT1_2" | "SQRT2"

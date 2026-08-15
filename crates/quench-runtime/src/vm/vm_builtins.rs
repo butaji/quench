@@ -4,11 +4,6 @@ fn early_dispatch(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     crate::intl::tolocale::symbol::dispatch(builtin, arguments, receiver)
-        .or_else(|| {
-            (builtin == Builtin::ShadowRealmEvaluate
-                || builtin == Builtin::ShadowRealmImportValue)
-                .then(|| crate::reflect::builtin(builtin, arguments, receiver))
-        })
         .or_else(|| crate::json::execute(builtin, arguments))
         .or_else(|| crate::typed_array_ops::execute(builtin, receiver, arguments))
         .or_else(|| crate::arrays::execute_builtin(builtin, receiver, arguments))
@@ -17,7 +12,6 @@ fn early_dispatch(
         .or_else(|| crate::promise::execute_builtin(builtin, receiver, arguments))
         .or_else(|| crate::disposable_stack::execute(builtin, receiver, arguments))
         .or_else(|| crate::finalization_registry::execute(builtin, receiver, arguments))
-        .or_else(|| crate::temporal::execute(builtin, receiver, arguments))
         .or_else(|| {
             (builtin != Builtin::Date)
                 .then(|| crate::date::execute(builtin, receiver, arguments))?
@@ -46,13 +40,96 @@ pub(crate) fn execute_function_apply(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let target = receiver.filter(|value| crate::conversion::is_callable(value));
+    execute_function_apply_with_realm(receiver, arguments, None)
+}
+
+pub(crate) fn execute_function_apply_with_realm(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    realm: Option<crate::ops::RealmId>,
+) -> Result<Value, VmError> {
+    if let Some(realm) = realm {
+        return crate::vm::with_error_realm(realm, || {
+            crate::vm::with_realm(realm, || execute_function_apply_in_realm(receiver, arguments))
+                .unwrap_or_else(|| execute_function_apply_in_realm(receiver, arguments))
+        });
+    }
+    if let Some(result) = with_receiver_realm(receiver, arguments) {
+        return result;
+    }
+    execute_function_apply_in_realm(receiver, arguments)
+}
+
+fn with_receiver_realm(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    let receiver = receiver?;
+    match receiver {
+        Value::HostCapability(capability) => {
+            let realm = capability.realm();
+            Some(crate::vm::with_error_realm(realm, || {
+                crate::vm::with_realm(realm, || {
+                    execute_function_apply_in_realm(Some(receiver), arguments)
+                })
+                .unwrap_or_else(|| execute_function_apply_in_realm(Some(receiver), arguments))
+            }))
+        }
+        Value::BoundFunction(bound) => {
+            let realm = bound_receiver_realm(&bound.receiver)?;
+            Some(crate::vm::with_error_realm(realm, || {
+                crate::vm::with_realm(realm, || {
+                    execute_function_apply_in_realm(Some(receiver), arguments)
+                })
+                .unwrap_or_else(|| execute_function_apply_in_realm(Some(receiver), arguments))
+            }))
+        }
+        Value::Function(function) => {
+            let realm = crate::vm::realm_id_for_global(&function.captures.get(0))?;
+            Some(crate::vm::with_error_realm(realm, || {
+                crate::vm::with_realm(realm, || {
+                    execute_function_apply_in_realm(Some(receiver), arguments)
+                })
+                .unwrap_or_else(|| execute_function_apply_in_realm(Some(receiver), arguments))
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn bound_receiver_realm(value: &Value) -> Option<crate::ops::RealmId> {
+    match value {
+        Value::HostCapability(capability) => Some(capability.realm()),
+        Value::BoundFunction(bound) => bound_receiver_realm(&bound.receiver),
+        _ => None,
+    }
+}
+
+fn execute_function_apply_in_realm(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let target = receiver.filter(|value| {
+        !matches!(value, Value::HostCapability(_)) && crate::conversion::is_callable(value)
+    });
     let target = target.ok_or_else(|| {
-        crate::value::error::throw_type_error("Function.prototype.apply called on non-callable")
+        apply_type_error(receiver, "Function.prototype.apply called on non-callable")
     })?;
     let receiver = arguments.first().unwrap_or(&Value::Undefined);
     let list = create_list_from_array_like(arguments.get(1))?;
     crate::functions::execute_target(target, receiver, &list)
+}
+
+fn apply_type_error(receiver: Option<&Value>, message: &str) -> VmError {
+    let realm = match receiver {
+        Some(Value::HostCapability(capability)) => Some(capability.realm()),
+        Some(Value::BoundFunction(bound)) => Some(bound.realm),
+        _ => None,
+    };
+    realm.map_or_else(
+        || crate::value::error::throw_type_error(message),
+        |realm| VmError::Thrown(crate::builtins::type_error_in_realm(realm, message)),
+    )
 }
 pub(crate) fn create_list_from_array_like(value: Option<&Value>) -> Result<Vec<Value>, VmError> {
     let Some(value) = value.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
@@ -112,6 +189,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::ObjectPrototypeValueOf
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
+            | Builtin::FunctionPrototypeHasInstance
             | Builtin::RegExpPrototypeToString
             | Builtin::Function
             | Builtin::AsyncFunction
@@ -185,6 +263,9 @@ fn execute_simple_builtin(
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
             function_prototype_builtin(builtin, receiver)
         }
+        Builtin::FunctionPrototypeHasInstance => {
+            crate::vm::vm_arithmetic::function_has_instance(receiver, arguments)
+        }
         Builtin::RegExpPrototypeToString => regexp_prototype_to_string(receiver),
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
             crate::number_fmt::number_format(receiver, arguments.first(), builtin)
@@ -218,7 +299,9 @@ fn error_builtin(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     match builtin {
-        Builtin::ThrowTypeError => restricted_arguments_error(receiver),
+        Builtin::ThrowTypeError => Err(crate::value::error::throw_type_error(
+            "Restricted arguments property",
+        )),
         Builtin::Error
         | Builtin::RangeError
         | Builtin::ReferenceError
@@ -239,26 +322,6 @@ fn error_builtin(
         Builtin::ErrorPrototypeStackSetter => error_stack_setter(receiver, arguments),
         _ => Ok(Value::Undefined),
     }
-}
-
-fn restricted_arguments_error(receiver: Option<&Value>) -> Result<Value, VmError> {
-    let Some(realm) = crate::vm::realm_id_for_intrinsic_receiver(receiver) else {
-        return Err(crate::value::error::throw_type_error(
-            "Restricted arguments property",
-        ));
-    };
-    let error = crate::builtins::error(
-        Builtin::TypeError,
-        &[Value::String("Restricted arguments property".to_string())],
-    );
-    let error = if realm != crate::ops::RealmId::ROOT {
-        let constructor = crate::vm::with_realm(realm, || crate::vm::realm_intrinsic(Builtin::TypeError))
-            .unwrap_or(Value::Builtin(Builtin::TypeError));
-        crate::builtins::set_property(error, "constructor", constructor)
-    } else {
-        error
-    };
-    Err(VmError::Thrown(error))
 }
 
 fn error_name_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -470,14 +533,6 @@ fn boolean_receiver(receiver: Option<&Value>) -> Option<bool> {
         _ => None,
     }
 }
-
-fn realm_from_marker(receiver: Option<&Value>) -> Option<RealmId> {
-    let marker = crate::execute::get_property(receiver.unwrap_or(&Value::Undefined), "\0realm");
-    let Value::HostCapability(token) = marker else {
-        return None;
-    };
-    realm::id_for_token(&token)
-}
 fn boolean_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     let value = match receiver {
         Some(Value::Builtin(Builtin::BooleanPrototype)) => false,
@@ -514,15 +569,10 @@ fn weak_ref_deref(receiver: Option<&Value>) -> Result<Value, VmError> {
     Ok(target.clone())
 }
 pub(crate) fn realm_id_for_intrinsic_receiver(receiver: Option<&Value>) -> Option<RealmId> {
-    match receiver {
-        Some(Value::HostCapability(token)) => realm::id_for_token(token),
-        Some(Value::Object(properties)) => properties.iter().find_map(|(key, value)| {
-            (key == "\0realm").then(|| match value {
-                Value::HostCapability(token) => realm::id_for_token(token),
-                _ => None,
-            })?
-        }),
-        _ => realm_from_marker(receiver),
+    match receiver? {
+        Value::HostCapability(token) => realm::id_for_token(token),
+        Value::BoundFunction(bound) => realm_id_for_intrinsic_receiver(Some(&bound.receiver)),
+        _ => None,
     }
 }
 pub(crate) fn explicit_number(value: Option<&Value>) -> Result<f64, VmError> {
@@ -596,115 +646,6 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewByteLengthGetter
             | Builtin::DataViewByteOffsetGetter
     )
-}
-
-pub(crate) fn execute_shared_array_buffer_builtin(
-    builtin: Builtin,
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
-    let Some(Value::ArrayBuffer(buffer)) = receiver.filter(|value| {
-        matches!(value, Value::ArrayBuffer(data) if data.shared)
-    }) else {
-        return Err(type_error("SharedArrayBuffer method called on incompatible receiver"));
-    };
-    match builtin {
-        Builtin::SharedArrayBufferByteLengthGetter => {
-            Ok(Value::Number(buffer.byte_length() as f64))
-        }
-        Builtin::SharedArrayBufferGrowableGetter => {
-            Ok(Value::Boolean(buffer.max_byte_length.is_some()))
-        }
-        Builtin::SharedArrayBufferMaxByteLengthGetter => Ok(Value::Number(
-            buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64,
-        )),
-        Builtin::SharedArrayBufferGrow => {
-            if buffer.max_byte_length.is_none() {
-                return Err(type_error("SharedArrayBuffer is not growable"));
-            }
-            let length = arguments.first().ok_or_else(|| type_error("Missing length"))?;
-            let length = crate::construct::to_index(crate::conversion::to_number(length)?)?;
-            buffer
-                .resize(length)
-                .map_err(|_| crate::value::error::throw_range_error("Invalid grow length"))?;
-            Ok(Value::Undefined)
-        }
-        Builtin::SharedArrayBufferSlice => {
-            shared_array_buffer_slice(receiver, buffer, arguments)
-        }
-        _ => Err(type_error("Unknown SharedArrayBuffer builtin")),
-    }
-}
-
-fn shared_array_buffer_slice(
-    receiver: Option<&Value>,
-    buffer: &crate::value::ArrayBufferData,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
-    let length = buffer.byte_length() as i64;
-    let start = slice_index(arguments.first(), length)?.unwrap_or(0);
-    let end = slice_index(arguments.get(1), length)?.unwrap_or(length).max(start);
-    let bytes = buffer.bytes.borrow()[start as usize..end as usize].to_vec();
-    let constructor = crate::execute::get_property_result(
-        receiver.ok_or_else(|| type_error("Missing SharedArrayBuffer receiver"))?,
-        "constructor",
-    )?;
-    if matches!(constructor, Value::Null) || !matches!(constructor, Value::Undefined)
-        && !crate::value::is_object(&constructor)
-    {
-        return Err(type_error("SharedArrayBuffer constructor must be an object"));
-    }
-    let species = if matches!(constructor, Value::Undefined) {
-        Value::Builtin(Builtin::SharedArrayBuffer)
-    } else {
-        let value = crate::execute::get_property_result(&constructor, "Symbol.species")?;
-        if !matches!(value, Value::Undefined) {
-            value
-        } else {
-            species_property(&constructor)
-        }
-    };
-    let species = if matches!(species, Value::Undefined | Value::Null) {
-        Value::Builtin(Builtin::SharedArrayBuffer)
-    } else {
-        species
-    };
-    if !crate::conversion::is_callable(&species) {
-        return Err(type_error("SharedArrayBuffer species must be a constructor"));
-    }
-    let result = crate::construct::construct_value(&species, &[Value::Number(bytes.len() as f64)])?;
-    let Value::ArrayBuffer(result) = result else {
-        return Err(type_error("SharedArrayBuffer species must return a buffer"));
-    };
-    let same_buffer = matches!(receiver, Some(Value::ArrayBuffer(source)) if std::rc::Rc::ptr_eq(source, &result));
-    if same_buffer || result.bytes.borrow().len() < bytes.len() {
-        return Err(type_error("SharedArrayBuffer species returned an invalid buffer"));
-    }
-    let copy_length = result.bytes.borrow().len().min(bytes.len());
-    result.bytes.borrow_mut()[..copy_length].copy_from_slice(&bytes[..copy_length]);
-    Ok(Value::ArrayBuffer(result))
-}
-
-fn species_property(constructor: &Value) -> Value {
-    let Value::Object(properties) = constructor else {
-        return Value::Undefined;
-    };
-    properties
-        .iter()
-        .rev()
-        .find(|(key, _)| key.starts_with("Symbol.species\0"))
-        .map_or(Value::Undefined, |(_, value)| value.clone())
-}
-
-fn slice_index(value: Option<&Value>, length: i64) -> Result<Option<i64>, VmError> {
-    let Some(value) = value else { return Ok(None) };
-    if matches!(value, Value::Undefined) {
-        return Ok(None);
-    }
-    let number = crate::conversion::to_number(value)?;
-    if number.is_nan() { return Ok(Some(0)); }
-    let integer = number.trunc() as i64;
-    Ok(Some(if integer < 0 { (length + integer).max(0) } else { integer.min(length) }))
 }
 fn is_number_receiver(receiver: Option<&Value>) -> bool {
     matches!(receiver, Some(Value::Builtin(Builtin::Number)))
@@ -966,7 +907,7 @@ fn function_prototype_builtin(
 ) -> Result<Value, VmError> {
     match builtin {
         Builtin::FunctionPrototypeToString => {
-            Ok(crate::builtins::function_prototype_to_string(receiver))
+            crate::builtins::function_prototype_to_string(receiver)
         }
         Builtin::FunctionPrototypeValueOf => {
             Ok(crate::builtins::function_prototype_value_of(receiver))
