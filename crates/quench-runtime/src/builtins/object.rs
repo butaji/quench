@@ -107,10 +107,14 @@ fn create(arguments: &[Value]) -> Result<Value, VmError> {
             "Object prototype must be an object or null",
         ));
     }
-    Ok(Value::Object(Rc::new(ObjectData::new(vec![(
+    let object = Value::Object(Rc::new(ObjectData::new(vec![(
         "\0prototype".to_string(),
         prototype,
-    )]))))
+    )])));
+    if arguments.len() > 1 && !matches!(arguments[1], Value::Undefined) {
+        return crate::builtins::define_properties(&[object, arguments[1].clone()]);
+    }
+    Ok(object)
 }
 pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(target) = arguments.first() else {
@@ -335,6 +339,16 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
 
 fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
     let getter = match (builtin, key) {
+        (Builtin::RegExpPrototype, "source") => Builtin::RegExpSourceGetter,
+        (Builtin::RegExpPrototype, "flags") => Builtin::RegExpFlagsGetter,
+        (Builtin::RegExpPrototype, "global") => Builtin::RegExpGlobalGetter,
+        (Builtin::RegExpPrototype, "ignoreCase") => Builtin::RegExpIgnoreCaseGetter,
+        (Builtin::RegExpPrototype, "multiline") => Builtin::RegExpMultilineGetter,
+        (Builtin::RegExpPrototype, "dotAll") => Builtin::RegExpDotAllGetter,
+        (Builtin::RegExpPrototype, "unicode") => Builtin::RegExpUnicodeGetter,
+        (Builtin::RegExpPrototype, "sticky") => Builtin::RegExpStickyGetter,
+        (Builtin::RegExpPrototype, "hasIndices") => Builtin::RegExpHasIndicesGetter,
+        (Builtin::RegExpPrototype, "unicodeSets") => Builtin::RegExpUnicodeSetsGetter,
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
         (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
         (
@@ -357,6 +371,10 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::ArrayBufferPrototype, "immutable") => Builtin::ArrayBufferImmutableGetter,
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
         (Builtin::DisposableStackPrototype, "disposed") => Builtin::DisposableStackDisposed,
+        (Builtin::IteratorPrototype, "constructor") => Builtin::IteratorPrototypeConstructorGetter,
+        (Builtin::IteratorPrototype, "Symbol.toStringTag") => {
+            Builtin::IteratorPrototypeToStringTagGetter
+        }
         (Builtin::AsyncDisposableStackPrototype, "disposed") => {
             Builtin::AsyncDisposableStackDisposed
         }
@@ -389,6 +407,14 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::ErrorPrototype, "stack") => accessor_descriptor_with_setter(
             Builtin::ErrorPrototypeStackGetter,
             Some(Builtin::ErrorPrototypeStackSetter),
+        ),
+        (Builtin::IteratorPrototype, "constructor") => accessor_descriptor_with_setter(
+            Builtin::IteratorPrototypeConstructorGetter,
+            Some(Builtin::IteratorPrototypeConstructorSetter),
+        ),
+        (Builtin::IteratorPrototype, "Symbol.toStringTag") => accessor_descriptor_with_setter(
+            Builtin::IteratorPrototypeToStringTagGetter,
+            Some(Builtin::IteratorPrototypeToStringTagSetter),
         ),
         _ => accessor_descriptor_with_setter(getter, None),
     };
