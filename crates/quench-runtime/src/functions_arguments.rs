@@ -214,6 +214,19 @@ fn execute_function_call(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let receiver = receiver.ok_or(crate::execute::VmError::NotCallable)?;
+    if let crate::value::Value::BoundFunction(bound) = receiver {
+        return crate::vm::with_realm(bound.realm, || {
+            execute_function_call_in_realm(receiver, arguments)
+        })
+        .unwrap_or_else(|| execute_function_call_in_realm(receiver, arguments));
+    }
+    execute_function_call_in_realm(receiver, arguments)
+}
+
+fn execute_function_call_in_realm(
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
     let this = arguments
         .first()
         .cloned()
@@ -253,6 +266,7 @@ fn bind_function_target(
     );
     Ok(crate::value::Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
+            realm: crate::vm::current_context_or_default().realm(),
             target: target.clone(),
             receiver: bound_target,
             arguments: extra,
