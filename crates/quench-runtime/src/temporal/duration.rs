@@ -821,7 +821,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
             'S' => 6,
             _ => return Err(crate::value::error::throw_range_error("Invalid duration")),
         };
-        if matches!(index, 4 | 5 | 6) && raw.contains('.') {
+        if matches!(index, 4..=6) && raw.contains('.') {
             let value = if index == 6 {
                 raw.split_once('.')
                     .and_then(|(whole, _)| whole.parse().ok())
