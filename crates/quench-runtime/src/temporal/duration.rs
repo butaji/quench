@@ -131,16 +131,29 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                 hours / 23.0
             }
         }
-        "days" if before_fall_transition(relative.as_ref()) && hours.abs() > 24.0 => {
+        "days"
+            if before_fall_transition(relative.as_ref())
+                && hours.abs() > 24.0
+                && calendar_days == 0.0 =>
+        {
             if hours.abs() <= 25.0 {
                 hours / 25.0
             } else {
                 (hours + hours.signum()) / 25.0
             }
         }
-        "days" if before_fall_transition(relative.as_ref()) && hours > 0.0 => hours / 25.0,
+        "days"
+            if before_fall_transition(relative.as_ref()) && hours > 0.0 && calendar_days == 0.0 =>
+        {
+            hours / 25.0
+        }
         "days" if before_fall_transition(relative.as_ref()) && hours < 0.0 => hours / 25.0,
-        "days" if !matches!(relative.as_ref(), Some(Value::String(_))) && hours > 0.0 => {
+        "days"
+            if !matches!(relative.as_ref(), Some(Value::String(_)))
+                && hours > 0.0
+                && skipped == 0.0
+                && calendar_days == 0.0 =>
+        {
             hours / 24.0
         }
         "months" => {
