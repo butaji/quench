@@ -139,7 +139,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::AsyncDisposableStack => Some(Builtin::AsyncDisposableStackPrototype),
         Builtin::FinalizationRegistry => Some(Builtin::FinalizationRegistryPrototype),
         Builtin::Function => Some(Builtin::FunctionPrototype),
-        Builtin::AsyncFunction => Some(Builtin::AsyncFunctionPrototype),
+        Builtin::AsyncFunction => Some(Builtin::FunctionPrototype),
         Builtin::GeneratorFunction => Some(Builtin::GeneratorFunctionPrototype),
         Builtin::AsyncGeneratorFunction => Some(Builtin::AsyncGeneratorFunctionPrototype),
         Builtin::Number => Some(Builtin::ObjectPrototype),
@@ -274,6 +274,7 @@ pub fn instance_prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::String => Some(Builtin::StringPrototype),
         Builtin::Symbol => Some(Builtin::SymbolPrototype),
         Builtin::BigInt => Some(Builtin::BigIntPrototype),
+        Builtin::AsyncFunction => Some(Builtin::AsyncFunctionPrototype),
         _ => prototype(builtin),
     }
 }
