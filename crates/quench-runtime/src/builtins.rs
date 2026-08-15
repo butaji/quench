@@ -495,6 +495,9 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         return result;
     }
     match target {
+        Value::Object(properties) if boxed_string_immutable_key(&properties, key) => {
+            Value::Object(properties)
+        }
         Value::Object(properties)
             if descriptor_flag_in(&properties, key, "writable") == Some(false) =>
         {
@@ -525,6 +528,13 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         }
         other => other,
     }
+}
+
+fn boxed_string_immutable_key(properties: &ObjectData, key: &str) -> bool {
+    let is_string = properties
+        .iter()
+        .any(|(name, value)| name == "_value" && matches!(value, Value::String(_)));
+    is_string && (key == "length" || key.parse::<usize>().is_ok())
 }
 
 fn set_object_alias_property(
