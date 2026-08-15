@@ -62,8 +62,36 @@ fn step_target_state(
             kind,
             done,
         } => StepTarget::Value(iterator_map::step(data, index, kind, done)),
+        IteratorState::Mapped {
+            iterator,
+            mapper,
+            index,
+            done,
+        } => StepTarget::Value(mapped_step(iterator, mapper, index, done)?),
         state => return step_target_tail(state),
     })
+}
+
+fn mapped_step(
+    iterator: &Value,
+    mapper: &Value,
+    index: &mut usize,
+    done: &mut bool,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    if *done {
+        return Ok(None);
+    }
+    let Some(value) = super::step_value(iterator)? else {
+        *done = true;
+        return Ok(None);
+    };
+    let result = crate::functions::execute_target(
+        mapper,
+        &Value::Undefined,
+        &[value, Value::Number(*index as f64), iterator.clone()],
+    )?;
+    *index += 1;
+    Ok(Some(result))
 }
 
 fn step_target_tail(state: &mut IteratorState) -> Result<StepTarget, crate::execute::VmError> {
