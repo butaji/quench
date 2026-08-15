@@ -235,6 +235,7 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
     let milliseconds = number(properties, "milliseconds");
     let microseconds = number(properties, "microseconds");
     let nanoseconds = number(properties, "nanoseconds");
+    validate_duration(properties)?;
     let days = number(properties, "days");
     let negative = [days, hours, minutes, seconds]
         .iter()
@@ -299,6 +300,45 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
         }
     }
     Ok(parts.join(", "))
+}
+
+fn validate_duration(properties: &[(String, Value)]) -> Result<(), VmError> {
+    let values = [
+        number(properties, "years"),
+        number(properties, "months"),
+        number(properties, "weeks"),
+        number(properties, "days"),
+        number(properties, "hours"),
+        number(properties, "minutes"),
+        number(properties, "seconds"),
+        number(properties, "milliseconds"),
+        number(properties, "microseconds"),
+        number(properties, "nanoseconds"),
+    ];
+    if values[..3]
+        .iter()
+        .any(|value| value.unsigned_abs() >= 1_u64 << 32)
+        || values[3].unsigned_abs() >= 104_249_991_375
+        || normalized_seconds(&values).abs() >= 9_007_199_254_740_992.0
+    {
+        return Err(runtime_error("RangeError: invalid duration"));
+    }
+    let positive = values.iter().any(|value| *value > 0);
+    let negative = values.iter().any(|value| *value < 0);
+    if positive && negative {
+        return Err(runtime_error("RangeError: mixed-sign duration"));
+    }
+    Ok(())
+}
+
+fn normalized_seconds(values: &[i64; 10]) -> f64 {
+    values[3] as f64 * 86_400.0
+        + values[4] as f64 * 3_600.0
+        + values[5] as f64 * 60.0
+        + values[6] as f64
+        + values[7] as f64 / 1_000.0
+        + values[8] as f64 / 1_000_000.0
+        + values[9] as f64 / 1_000_000_000.0
 }
 
 fn slot_value<'a>(slots: &'a [(String, Value)], key: &str) -> Option<&'a str> {
