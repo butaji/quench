@@ -261,6 +261,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::BigIntAsIntN
             | Builtin::BigIntAsUintN
             | Builtin::BigIntToString
+            | Builtin::BigIntToLocaleString
             | Builtin::NumberToString
             | Builtin::NumberValueOf
             | Builtin::BigIntValueOf
@@ -350,6 +351,7 @@ fn execute_simple_builtin(
             bigint_as_n(arguments, builtin == Builtin::BigIntAsIntN)
         }
         Builtin::BigIntToString => bigint_to_string(receiver, arguments),
+        Builtin::BigIntToLocaleString => bigint_to_locale_string(receiver, arguments),
         Builtin::NumberToString => boolean_or_number_string(receiver, arguments),
         Builtin::NumberValueOf => number_value_of(receiver),
         Builtin::BigIntValueOf => bigint_value_of(receiver),

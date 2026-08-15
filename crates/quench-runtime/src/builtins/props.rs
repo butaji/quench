@@ -164,6 +164,26 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             collections_prop(builtin, k)
         }
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
+        (IntlCollatorPrototype, "constructor") => Some(Value::Builtin(IntlCollator)),
+        (IntlCollatorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.Collator".to_string()))
+        }
+        (IntlDateTimeFormatPrototype, "constructor") => Some(Value::Builtin(IntlDateTimeFormat)),
+        (IntlDateTimeFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DateTimeFormat".to_string()))
+        }
+        (IntlDurationFormatPrototype, "constructor") => Some(Value::Builtin(IntlDurationFormat)),
+        (IntlDurationFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DurationFormat".to_string()))
+        }
+        (IntlDisplayNamesPrototype, "constructor") => Some(Value::Builtin(IntlDisplayNames)),
+        (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DisplayNames".to_string()))
+        }
+        (IntlListFormatPrototype, "constructor") => Some(Value::Builtin(IntlListFormat)),
+        (IntlListFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.ListFormat".to_string()))
+        }
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
         (FinalizationRegistry, "prototype") => Some(Value::Builtin(FinalizationRegistryPrototype)),
         (FinalizationRegistryPrototype, "Symbol.toStringTag") => {
@@ -721,7 +741,8 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (BigInt, "asUintN") => Some(BigIntAsUintN),
         (BigIntPrototype, "valueOf") => Some(BigIntValueOf),
         (BigIntPrototype, "constructor") => Some(BigInt),
-        (BigIntPrototype, "toString" | "toLocaleString") => Some(BigIntToString),
+        (BigIntPrototype, "toString") => Some(BigIntToString),
+        (BigIntPrototype, "toLocaleString") => Some(BigIntToLocaleString),
         _ => None,
     }
 }

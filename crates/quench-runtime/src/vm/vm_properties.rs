@@ -45,6 +45,9 @@ fn property_for_value(value: &Value, key: &str) -> Value {
             )
         }
         Builtin(builtin) => bind_callable_property(value, *builtin, key),
+        Array(values) if key == "toLocaleString" => {
+            bind_method(value, crate::arrays::property(values, key))
+        }
         Array(values) => crate::arrays::property(values, key),
         ArrayBuffer(buffer) => array_buffer_property(buffer, key),
         Float64Array(view) => float64_array_property(view, key),
@@ -294,6 +297,14 @@ pub(crate) fn get_property_with_receiver(
     if let Some(descriptor) = own_descriptor {
         if !matches!(descriptor, Value::Undefined) {
             if let Value::Object(descriptor) = descriptor {
+                if descriptor.iter().any(|(name, _)| name == "value") {
+                    let property = get_property(value, key);
+                    return Ok(if crate::intl::intl_object(value) {
+                        receiver_property(value, key, receiver)
+                    } else {
+                        property
+                    });
+                }
                 if let Some((_, getter)) = descriptor
                     .iter()
                     .rev()
@@ -506,6 +517,9 @@ fn receiver_property(value: &Value, key: &str, _receiver: &Value) -> Value {
             Builtin::IntlNumberFormatFormatToParts
                 | Builtin::IntlNumberFormatFormatRange
                 | Builtin::IntlNumberFormatFormatRangeToParts
+                | Builtin::IntlDurationFormatFormat
+                | Builtin::IntlDurationFormatFormatToParts
+                | Builtin::IntlDurationFormatResolvedOptions
         )
     ) {
         return property;
