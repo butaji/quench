@@ -102,6 +102,9 @@ pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
                 }
                 crate::value::PromiseState::Rejected(reason) => Err(VmError::Thrown(reason)),
                 crate::value::PromiseState::Pending => {
+                    if crate::vm::async_module_step() {
+                        return Err(VmError::Suspended(promise));
+                    }
                     crate::promise::drain_microtasks();
                     let state = promise.state.borrow().clone();
                     match state {
