@@ -23,7 +23,7 @@ pub(crate) fn async_generator_prototype() -> Value {
         if let Some(value) = cell.borrow().as_ref() {
             return value.clone();
         }
-        let value = Value::Object(Rc::new(ObjectData::new(vec![
+        let mut value = Value::Object(Rc::new(ObjectData::new(vec![
             (
                 "Symbol.asyncIterator".to_string(),
                 Value::Builtin(Builtin::AsyncIteratorSelf),
@@ -37,6 +37,22 @@ pub(crate) fn async_generator_prototype() -> Value {
                 Value::Builtin(Builtin::ObjectPrototype),
             ),
         ])));
+        for key in ["Symbol.asyncIterator", "Symbol.asyncDispose"] {
+            let method = match key {
+                "Symbol.asyncIterator" => Value::Builtin(Builtin::AsyncIteratorSelf),
+                _ => Value::Builtin(Builtin::AsyncIteratorDispose),
+            };
+            store_descriptor_metadata(
+                &mut value,
+                key,
+                &[
+                    ("value".to_string(), method),
+                    ("writable".to_string(), Value::Boolean(true)),
+                    ("enumerable".to_string(), Value::Boolean(false)),
+                    ("configurable".to_string(), Value::Boolean(true)),
+                ],
+            );
+        }
         *cell.borrow_mut() = Some(value.clone());
         value
     })
