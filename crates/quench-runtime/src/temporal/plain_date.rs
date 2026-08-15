@@ -279,9 +279,9 @@ fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Va
     else {
         return Err(crate::value::error::throw_type_error("Not a PlainDate"));
     };
-    let year = field_number(object, "year")?;
-    let month = field_number(object, "month")?;
-    let day = field_number(object, "day")?;
+    let year = field_number(object, "_year")?;
+    let month = field_number(object, "_month")?;
+    let day = field_number(object, "_day")?;
     let value = match builtin {
         crate::ops::Builtin::TemporalPlainDateCalendarIdGetter => Value::String("iso8601".into()),
         crate::ops::Builtin::TemporalPlainDateYearGetter => Value::Number(year),
@@ -705,6 +705,10 @@ fn date_object(year: f64, month: f64, day: f64) -> Value {
         ("month".into(), Value::Number(month)),
         ("monthCode".into(), Value::String(format!("M{month:02.0}"))),
         ("day".into(), Value::Number(day)),
+        ("_temporal_kind".into(), Value::String("PlainDate".into())),
+        ("_year".into(), Value::Number(year)),
+        ("_month".into(), Value::Number(month)),
+        ("_day".into(), Value::Number(day)),
         ("calendarId".into(), Value::String("iso8601".into())),
         (
             "dayOfWeek".into(),
