@@ -3,7 +3,7 @@ use crate::ops::{
     Builtin, FunctionKind, FunctionStrictness, HostCapabilityKind, HostCapabilityRef, Op, RealmId,
 };
 use crate::value::Value;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 mod realm;
@@ -11,10 +11,6 @@ mod scope;
 mod vm_arithmetic;
 pub(crate) mod vm_ops;
 mod vm_typed_bigint;
-
-pub fn reset_host_agent_state() {
-    reset_agent_state();
-}
 pub use crate::intl::tolocale::value::is_truthy;
 pub use scope::ExecutionScope;
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
@@ -34,6 +30,7 @@ pub fn reset_current_global() {
     GLOBAL_OBJECT.with(|global| global.replace(None));
 }
 type ObjectProperties = Rc<crate::value::ObjectData>;
+type DeferredCallback = Rc<dyn Fn(u32) -> Result<Value, VmError>>;
 #[derive(Clone)]
 pub struct VmContext {
     output_sink: Option<OutputSink>,
@@ -56,6 +53,93 @@ impl Default for VmContext {
 thread_local! {
     static CURRENT_CONTEXT: RefCell<Option<VmContext>> = const { RefCell::new(None) };
     static GLOBAL_OBJECT: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
+    static DEFERRED_MODULE_CALLBACK: RefCell<Option<DeferredCallback>> = const { RefCell::new(None) };
+    static DYNAMIC_IMPORT_CALLBACK: RefCell<Option<DynamicImportCallback>> = const { RefCell::new(None) };
+    static DEFERRED_MODULE_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static ASYNC_MODULE_STEP: Cell<bool> = const { Cell::new(false) };
+}
+
+pub struct AsyncModuleStepGuard {
+    previous: bool,
+}
+
+pub fn install_async_module_step() -> AsyncModuleStepGuard {
+    let previous = ASYNC_MODULE_STEP.with(|slot| slot.replace(true));
+    AsyncModuleStepGuard { previous }
+}
+
+pub(crate) fn async_module_step() -> bool {
+    ASYNC_MODULE_STEP.with(Cell::get)
+}
+
+pub struct DeferredModuleCallbackGuard {
+    previous: Option<DeferredCallback>,
+}
+
+pub type DynamicImportCallback = Rc<dyn Fn(String, bool, Value) -> Result<Value, VmError>>;
+
+pub struct DynamicImportCallbackGuard {
+    previous: Option<DynamicImportCallback>,
+}
+
+pub fn install_deferred_module_callback(callback: DeferredCallback) -> DeferredModuleCallbackGuard {
+    let previous = DEFERRED_MODULE_CALLBACK.with(|slot| slot.replace(Some(callback)));
+    DeferredModuleCallbackGuard { previous }
+}
+
+impl Drop for DeferredModuleCallbackGuard {
+    fn drop(&mut self) {
+        DEFERRED_MODULE_CALLBACK.with(|slot| slot.replace(self.previous.take()));
+    }
+}
+
+pub fn install_dynamic_import_callback(
+    callback: DynamicImportCallback,
+) -> DynamicImportCallbackGuard {
+    let previous = DYNAMIC_IMPORT_CALLBACK.with(|slot| slot.replace(Some(callback)));
+    DynamicImportCallbackGuard { previous }
+}
+
+impl Drop for DynamicImportCallbackGuard {
+    fn drop(&mut self) {
+        DYNAMIC_IMPORT_CALLBACK.with(|slot| slot.replace(self.previous.take()));
+    }
+}
+
+impl Drop for AsyncModuleStepGuard {
+    fn drop(&mut self) {
+        ASYNC_MODULE_STEP.with(|slot| slot.set(self.previous));
+    }
+}
+
+pub(crate) fn execute_dynamic_import(
+    specifier: String,
+    deferred: bool,
+    options: Value,
+) -> Result<Value, VmError> {
+    let callback = DYNAMIC_IMPORT_CALLBACK.with(|slot| slot.borrow().clone());
+    callback.map_or(Err(VmError::NotCallable), |callback| {
+        callback(specifier, deferred, options)
+    })
+}
+
+pub(crate) fn execute_deferred_module(id: u32) -> Result<Value, VmError> {
+    let nested = DEFERRED_MODULE_DEPTH.with(|depth| {
+        let nested = depth.get() > 0;
+        if !nested {
+            depth.set(1);
+        }
+        nested
+    });
+    if nested {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot evaluate a deferred module while it is evaluating",
+        ));
+    }
+    let callback = DEFERRED_MODULE_CALLBACK.with(|slot| slot.borrow().clone());
+    let result = callback.map_or(Err(VmError::NotCallable), |callback| callback(id));
+    DEFERRED_MODULE_DEPTH.with(|depth| depth.set(0));
+    result
 }
 struct ContextGuard {
     previous: Option<VmContext>,
@@ -78,6 +162,15 @@ impl VmContext {
             output_sink: Some(output_sink),
             ..Self::default()
         }
+    }
+
+    pub fn with_can_block(mut self, can_block: bool) -> Self {
+        self.can_block = can_block;
+        self
+    }
+
+    pub(crate) fn can_block(&self) -> bool {
+        self.can_block
     }
 
     pub fn with_host_capability(
@@ -110,15 +203,6 @@ impl VmContext {
 
     pub fn realm(&self) -> RealmId {
         self.realm
-    }
-
-    pub fn with_can_block(mut self, can_block: bool) -> Self {
-        self.can_block = can_block;
-        self
-    }
-
-    pub(crate) fn can_block(&self) -> bool {
-        self.can_block
     }
 
     pub fn has_capability(&self, kind: HostCapabilityKind) -> bool {
@@ -357,6 +441,27 @@ fn run_ops_completion_step(
     Ok(CompletionStep {
         completion: crate::completion::Completion::Normal,
         next: ops.len(),
+    })
+}
+
+pub(crate) fn execute_completion_step_in_environment(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+    environment: Rc<crate::environment::Environment>,
+    drain_microtasks: bool,
+) -> Result<CompletionStep, VmError> {
+    let _context_guard = ContextGuard::install(context);
+    let _global_guard = GlobalObjectGuard::install();
+    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    if drain_microtasks {
+        crate::promise::drain_microtasks();
+    }
+    let step = run_ops_completion_step(ops, registers, context)?;
+    let completion = preserve_frame_completion(step.completion)?;
+    Ok(CompletionStep {
+        completion,
+        next: step.next,
     })
 }
 

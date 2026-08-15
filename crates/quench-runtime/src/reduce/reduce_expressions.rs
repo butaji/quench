@@ -8,7 +8,7 @@ use crate::{
     special, transparent,
 };
 use oxc::{
-    ast::ast::{Expression, Statement, VariableDeclarationKind},
+    ast::ast::{Expression, ImportPhase, Statement, VariableDeclarationKind},
     syntax::operator::UnaryOperator,
 };
 use std::collections::HashMap;
@@ -212,6 +212,13 @@ pub fn reduce_expression(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     match expression {
+        Expression::PrivateInExpression(private) => {
+            let object = reduce_expression(&private.right, ops, facts, next_register, locals)?;
+            let dst = take_register(next_register);
+            let name = facts.private_name(private.left.span)?;
+            ops.push(Op::HasPrivate { dst, object, name });
+            return Some(dst);
+        }
         Expression::TaggedTemplateExpression(tagged) => {
             return super::tagged_template::reduce(tagged, ops, facts, next_register, locals);
         }
@@ -253,12 +260,37 @@ fn reduce_import_expression(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    // Dynamic imports have no module graph in this runtime, so eagerly
-    // evaluate the specifier/options for side effects and return a Promise.
     let specifier = reduce_expression(&import.source, ops, facts, next_register, locals)?;
-    for argument in &import.arguments {
-        reduce_expression(argument, ops, facts, next_register, locals)?;
-    }
+    let options = import
+        .arguments
+        .last()
+        .and_then(|argument| reduce_expression(argument, ops, facts, next_register, locals))
+        .unwrap_or_else(|| {
+            let register = take_register(next_register);
+            ops.push(Op::Const {
+                dst: register,
+                value: crate::ops::Constant::Undefined,
+            });
+            register
+        });
+    let phase = take_register(next_register);
+    ops.push(Op::Const {
+        dst: phase,
+        value: crate::ops::Constant::Boolean(matches!(import.phase, Some(ImportPhase::Defer))),
+    });
+    let capability = take_register(next_register);
+    ops.push(Op::MakeBuiltin {
+        dst: capability,
+        builtin: crate::ops::Builtin::HostCapability(crate::ops::HostCapabilityKind::DynamicImport),
+    });
+    let imported = take_register(next_register);
+    ops.push(Op::CallMethod {
+        dst: imported,
+        object: capability,
+        key: "dynamicImport".to_string(),
+        callee: None,
+        args: vec![specifier, phase, options],
+    });
     let promise = take_register(next_register);
     ops.push(Op::MakeBuiltin {
         dst: promise,
@@ -270,7 +302,7 @@ fn reduce_import_expression(
         object: promise,
         key: "resolve".to_string(),
         callee: None,
-        args: vec![specifier],
+        args: vec![imported],
     });
     Some(dst)
 }
@@ -282,6 +314,13 @@ fn reduce_in(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if let Expression::PrivateFieldExpression(private) = &binary.left {
+        let object = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
+        let dst = take_register(next_register);
+        let name = facts.private_name(private.field.span)?;
+        ops.push(Op::HasPrivate { dst, object, name });
+        return Some(dst);
+    }
     let key = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
     let object = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
     let dst = take_register(next_register);
