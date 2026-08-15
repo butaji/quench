@@ -333,6 +333,26 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
         })
 }
 fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
+    let legacy = key.strip_prefix('$').is_some_and(|suffix| {
+        matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+    }) || matches!(
+        key,
+        "$_" | "input" | "lastMatch" | "lastParen" | "leftContext" | "rightContext"
+    );
+    if builtin == Builtin::RegExp && legacy {
+        let setter = matches!(
+            key,
+            "$_" | "input" | "lastMatch" | "lastParen" | "leftContext" | "rightContext"
+        );
+        return Some(if setter {
+            accessor_descriptor_with_setter(
+                Builtin::RegExpLegacyGetter,
+                Some(Builtin::RegExpLegacyGetter),
+            )
+        } else {
+            accessor_descriptor(Builtin::RegExpLegacyGetter)
+        });
+    }
     let getter = match (builtin, key) {
         (Builtin::RegExpPrototype, "source") => Builtin::RegExpSourceGetter,
         (Builtin::RegExpPrototype, "flags") => Builtin::RegExpFlagsGetter,

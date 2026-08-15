@@ -114,6 +114,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::FunctionPrototypeValueOf
             | Builtin::RegExpPrototypeToString
             | Builtin::RegExpCompile
+            | Builtin::RegExpLegacyGetter
             | Builtin::RegExpSourceGetter
             | Builtin::RegExpFlagsGetter
             | Builtin::RegExpGlobalGetter
@@ -197,6 +198,7 @@ fn execute_simple_builtin(
         }
         Builtin::RegExpPrototypeToString => regexp_prototype_to_string(receiver),
         Builtin::RegExpCompile => crate::regexp::compile_method_for_vm(receiver, arguments),
+        Builtin::RegExpLegacyGetter => crate::regexp::legacy_getter(receiver),
         Builtin::RegExpSourceGetter => regexp_prototype_accessor(receiver, "source"),
         Builtin::RegExpFlagsGetter => regexp_prototype_accessor(receiver, "flags"),
         Builtin::RegExpGlobalGetter => regexp_prototype_accessor(receiver, "global"),
