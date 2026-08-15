@@ -25,19 +25,19 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => {
             Value::Builtin(Builtin::TypedArray)
         }
+        Value::Builtin(Builtin::AsyncFunctionPrototype) => {
+            Value::Builtin(Builtin::FunctionPrototype)
+        }
         Value::Builtin(builtin) if is_intrinsic_prototype(*builtin) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(Builtin::FunctionPrototype) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Builtin(Builtin::AsyncFunctionPrototype) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Builtin(Builtin::SuppressedError) => Value::Builtin(Builtin::Error),
         Value::Builtin(Builtin::AggregateError) => Value::Builtin(Builtin::Error),
         Value::Builtin(Builtin::SuppressedErrorPrototype) => {
             Value::Builtin(Builtin::ErrorPrototype)
         }
-        Value::Builtin(Builtin::AggregateErrorPrototype) => {
-            Value::Builtin(Builtin::ErrorPrototype)
-        }
+        Value::Builtin(Builtin::AggregateErrorPrototype) => Value::Builtin(Builtin::ErrorPrototype),
         Value::Builtin(
             builtin @ (Builtin::ArrayIteratorPrototype
             | Builtin::StringIteratorPrototype
@@ -54,6 +54,13 @@ fn prototype_for_value_tail(value: &Value) -> Value {
     match value {
         Value::Function(function) => {
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
+        }
+        Value::Builtin(Builtin::AsyncFunction) => Value::Builtin(Builtin::Function),
+        Value::BoundFunction(bound)
+            if crate::vm::is_intrinsic_bound(bound)
+                && matches!(bound.target, Value::Builtin(Builtin::AsyncFunction)) =>
+        {
+            crate::vm::realm_intrinsic_for(bound.realm, Builtin::Function)
         }
         Value::Builtin(_) | Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),

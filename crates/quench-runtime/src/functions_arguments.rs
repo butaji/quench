@@ -134,7 +134,9 @@ pub(crate) fn execute_bound(
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     match &bound.target {
-        crate::value::Value::Builtin(builtin) => execute_bound_builtin(*builtin, bound, &combined),
+        crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(&bound.target) => {
+            execute_bound_builtin(*builtin, bound, &combined)
+        }
         crate::value::Value::Function(function) => {
             execute_bound_function(function, bound, &combined)
         }
