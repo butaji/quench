@@ -45,7 +45,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn locale_tag(value: &Value) -> Result<String, VmError> {
     match value {
-        Value::String(_) | Value::Object(_) => Ok(to_string_value(value)),
+        Value::String(_) => Ok(to_string_value(value)),
+        Value::Object(_) => crate::conversion::to_string(value),
         _ => Err(runtime_error("TypeError: locale tag must be a string")),
     }
 }
@@ -129,15 +130,28 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "Cannot convert null or undefined to object",
         ));
     }
-    let Some(Value::Object(properties)) = options else {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok(locale);
     };
-    for (key, value) in properties.iter() {
+    const OPTION_ORDER: [&str; 10] = [
+        "language",
+        "script",
+        "region",
+        "variants",
+        "calendar",
+        "collation",
+        "hourCycle",
+        "caseFirst",
+        "numeric",
+        "numberingSystem",
+    ];
+    for key in OPTION_ORDER {
+        let value = crate::execute::get_property_result(options, key)?;
         if matches!(value, Value::Undefined) {
             continue;
         }
-        let text = crate::conversion::to_string(value)?;
-        match key.as_str() {
+        let text = crate::conversion::to_string(&value)?;
+        match key {
             "calendar" => {
                 let value = option_value(&text, "calendar")?;
                 locale.calendar = Some(calendar_alias(&value));
@@ -148,7 +162,7 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "numberingSystem" => {
                 locale.numbering_system = Some(option_value(&text, "numberingSystem")?)
             }
-            "numeric" => locale.numeric = normalize_numeric(value, &text)?,
+            "numeric" => locale.numeric = normalize_numeric(&value, &text)?,
             "firstDayOfWeek" => {
                 let _ = option_value(&text, "firstDayOfWeek")?;
             }
