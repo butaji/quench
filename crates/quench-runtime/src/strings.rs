@@ -220,7 +220,9 @@ pub(crate) fn execute_builtin(
 }
 
 fn at(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let value = string_receiver(receiver)?;
+    let units = receiver
+        .and_then(units_of)
+        .unwrap_or(string_receiver(receiver)?.encode_utf16().collect());
     let index = arguments
         .first()
         .map(crate::conversion::to_number)
@@ -231,7 +233,6 @@ fn at(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::exe
     } else {
         index.trunc() as isize
     };
-    let units: Vec<u16> = value.encode_utf16().collect();
     let position = if index < 0 {
         units.len() as isize + index
     } else {
