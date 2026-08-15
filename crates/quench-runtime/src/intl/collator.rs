@@ -159,39 +159,41 @@ pub(crate) fn prototype_method(
             let right = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
             Ok(Value::Number(compare(&left, &right, &locale)))
         }
-        crate::ops::Builtin::IntlCollatorResolvedOptions => Ok(make_object(vec![
-            ("locale".to_string(), Value::String(locale)),
-            (
-                "usage".to_string(),
-                Value::String(slot_string(&slots, "usage").unwrap_or_else(|| "sort".to_string())),
-            ),
-            (
-                "sensitivity".to_string(),
-                Value::String(
-                    slot_string(&slots, "sensitivity").unwrap_or_else(|| "variant".to_string()),
-                ),
-            ),
-            (
-                "ignorePunctuation".to_string(),
-                Value::Boolean(slot_bool(&slots, "ignorePunctuation").unwrap_or(false)),
-            ),
-            (
-                "collation".to_string(),
-                Value::String("default".to_string()),
-            ),
-            (
-                "numeric".to_string(),
-                Value::Boolean(slot_bool(&slots, "numeric").unwrap_or(false)),
-            ),
-            (
-                "caseFirst".to_string(),
-                Value::String(
-                    slot_string(&slots, "caseFirst").unwrap_or_else(|| "false".to_string()),
-                ),
-            ),
-        ])),
+        crate::ops::Builtin::IntlCollatorResolvedOptions => Ok(resolved_options(&slots, locale)),
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn resolved_options(slots: &[(String, Value)], locale: String) -> Value {
+    make_object(vec![
+        ("locale".to_string(), Value::String(locale)),
+        (
+            "usage".to_string(),
+            Value::String(slot_string(&slots, "usage").unwrap_or_else(|| "sort".to_string())),
+        ),
+        (
+            "sensitivity".to_string(),
+            Value::String(
+                slot_string(&slots, "sensitivity").unwrap_or_else(|| "variant".to_string()),
+            ),
+        ),
+        (
+            "ignorePunctuation".to_string(),
+            Value::Boolean(slot_bool(&slots, "ignorePunctuation").unwrap_or(false)),
+        ),
+        (
+            "collation".to_string(),
+            Value::String("default".to_string()),
+        ),
+        (
+            "numeric".to_string(),
+            Value::Boolean(slot_bool(&slots, "numeric").unwrap_or(false)),
+        ),
+        (
+            "caseFirst".to_string(),
+            Value::String(slot_string(&slots, "caseFirst").unwrap_or_else(|| "false".to_string())),
+        ),
+    ])
 }
 
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
