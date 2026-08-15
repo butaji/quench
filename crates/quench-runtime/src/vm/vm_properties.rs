@@ -234,27 +234,50 @@ fn generator_property(value: &Value, key: &str) -> Value {
 
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     if key == "constructor" {
-        return Value::Builtin(function_constructor(function));
+        return function_realm_intrinsic(function, function_constructor(function));
     }
     let properties = function.properties.borrow();
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
     }
-    function_inherited_property(&properties, key)
+    function_inherited_property(function, &properties, key)
 }
 
-fn function_inherited_property(properties: &[(String, Value)], key: &str) -> Value {
+fn function_realm_intrinsic(
+    function: &crate::value::FunctionValue,
+    builtin: crate::ops::Builtin,
+) -> Value {
+    let global = function.captures.get(0);
+    crate::vm::realm_id_for_global_value(&global)
+        .and_then(|realm| crate::vm::realm::intrinsic(realm, builtin))
+        .unwrap_or(Value::Builtin(builtin))
+}
+
+fn function_inherited_property(
+    function: &crate::value::FunctionValue,
+    properties: &[(String, Value)],
+    key: &str,
+) -> Value {
     properties
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then(|| property_value(value)))
         .map_or_else(
-            || function_prototype_property(key),
+            || function_prototype_property(function, key),
             |prototype| get_property(&prototype, key),
         )
 }
-fn function_prototype_property(key: &str) -> Value {
-    let value = builtin_property(Builtin::FunctionPrototype, key);
+fn function_prototype_property(function: &crate::value::FunctionValue, key: &str) -> Value {
+    let builtin = if function.is_async {
+        Builtin::AsyncFunctionPrototype
+    } else {
+        Builtin::FunctionPrototype
+    };
+    function_prototype_property_for_builtin(builtin, key)
+}
+
+pub(super) fn function_prototype_property_for_builtin(builtin: Builtin, key: &str) -> Value {
+    let value = builtin_property(builtin, key);
     value_or_object_prototype(value, key)
 }
 
