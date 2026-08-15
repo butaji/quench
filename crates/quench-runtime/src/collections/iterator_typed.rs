@@ -38,6 +38,31 @@ pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::V
         _ => Err(crate::collections::iterator::not_iterable()),
     }
 }
+
+pub(crate) fn typed_length(value: &Value) -> Result<usize, crate::execute::VmError> {
+    macro_rules! length {
+        ($data:expr) => {
+            collect_typed($data.logical_len(), $data.buffer.byte_length() < $data.byte_offset, |index| {
+                $data.get(index).map(|_| ())
+            })
+            .map(|values| values.len())
+        };
+    }
+    match value {
+        Value::Float64Array(data) => length!(data),
+        Value::Float32Array(data) => length!(data),
+        Value::Int8Array(data) => length!(data),
+        Value::Int16Array(data) => length!(data),
+        Value::Int32Array(data) => length!(data),
+        Value::Uint8Array(data) => length!(data),
+        Value::Uint8ClampedArray(data) => length!(data),
+        Value::Uint16Array(data) => length!(data),
+        Value::Uint32Array(data) => length!(data),
+        Value::BigInt64Array(data) => length!(data),
+        Value::BigUint64Array(data) => length!(data),
+        _ => Err(crate::collections::iterator::not_iterable()),
+    }
+}
 fn collect_typed(
     length: usize,
     out_of_bounds: bool,
