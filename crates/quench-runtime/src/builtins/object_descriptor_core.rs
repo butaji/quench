@@ -181,24 +181,29 @@ fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
             Builtin::AsyncDisposableStackDisposed
         }
         (Builtin::ErrorPrototype, "stack") => Builtin::ErrorPrototypeStackGetter,
-        (Builtin::IntlLocalePrototype, "baseName") => Builtin::IntlLocaleBaseNameGetter,
-        (Builtin::IntlLocalePrototype, "calendar") => Builtin::IntlLocaleCalendarGetter,
-        (Builtin::IntlLocalePrototype, "caseFirst") => Builtin::IntlLocaleCaseFirstGetter,
-        (Builtin::IntlLocalePrototype, "collation") => Builtin::IntlLocaleCollationGetter,
-        (Builtin::IntlLocalePrototype, "firstDayOfWeek") => Builtin::IntlLocaleFirstDayOfWeekGetter,
-        (Builtin::IntlLocalePrototype, "hourCycle") => Builtin::IntlLocaleHourCycleGetter,
-        (Builtin::IntlLocalePrototype, "language") => Builtin::IntlLocaleLanguageGetter,
-        (Builtin::IntlLocalePrototype, "numberingSystem") => {
-            Builtin::IntlLocaleNumberingSystemGetter
-        }
-        (Builtin::IntlLocalePrototype, "numeric") => Builtin::IntlLocaleNumericGetter,
-        (Builtin::IntlLocalePrototype, "region") => Builtin::IntlLocaleRegionGetter,
-        (Builtin::IntlLocalePrototype, "script") => Builtin::IntlLocaleScriptGetter,
-        (Builtin::IntlLocalePrototype, "textInfo") => Builtin::IntlLocaleTextInfoGetter,
-        (Builtin::IntlLocalePrototype, "variants") => Builtin::IntlLocaleVariantsGetter,
-        _ => return None,
+        _ => return intrinsic_getter_tail(builtin, key),
     };
     Some(getter)
+}
+
+fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    Some(match (builtin, key) {
+        (IntlLocalePrototype, "baseName") => IntlLocaleBaseNameGetter,
+        (IntlLocalePrototype, "calendar") => IntlLocaleCalendarGetter,
+        (IntlLocalePrototype, "caseFirst") => IntlLocaleCaseFirstGetter,
+        (IntlLocalePrototype, "collation") => IntlLocaleCollationGetter,
+        (IntlLocalePrototype, "firstDayOfWeek") => IntlLocaleFirstDayOfWeekGetter,
+        (IntlLocalePrototype, "hourCycle") => IntlLocaleHourCycleGetter,
+        (IntlLocalePrototype, "language") => IntlLocaleLanguageGetter,
+        (IntlLocalePrototype, "numberingSystem") => IntlLocaleNumberingSystemGetter,
+        (IntlLocalePrototype, "numeric") => IntlLocaleNumericGetter,
+        (IntlLocalePrototype, "region") => IntlLocaleRegionGetter,
+        (IntlLocalePrototype, "script") => IntlLocaleScriptGetter,
+        (IntlLocalePrototype, "textInfo") => IntlLocaleTextInfoGetter,
+        (IntlLocalePrototype, "variants") => IntlLocaleVariantsGetter,
+        _ => return None,
+    })
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
