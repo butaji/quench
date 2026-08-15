@@ -557,18 +557,29 @@ pub(crate) fn date_to_locale_string(
 }
 
 fn date_options(kind: DateLocaleKind, supplied: Option<&Value>) -> Value {
-    if let Some(Value::Object(properties)) = supplied {
-        return super::make_object(properties.properties.clone());
-    }
     let defaults = match kind {
         DateLocaleKind::String => ["year", "month", "day", "hour", "minute", "second"],
         DateLocaleKind::Date => ["year", "month", "day", "", "", ""],
         DateLocaleKind::Time => ["", "", "", "hour", "minute", "second"],
     };
-    let properties = defaults
+    let supplied_properties = match supplied {
+        Some(Value::Object(properties)) => properties.properties.clone(),
+        _ => Vec::new(),
+    };
+    let has_component = supplied_properties.iter().any(|(key, _)| {
+        matches!(
+            key.as_str(),
+            "year" | "month" | "day" | "hour" | "minute" | "second"
+        )
+    });
+    if has_component {
+        return super::make_object(supplied_properties);
+    }
+    let mut properties = defaults
         .iter()
         .filter(|key| !key.is_empty())
         .map(|key| ((*key).to_string(), Value::String("numeric".to_string())))
         .collect::<Vec<_>>();
+    properties.extend(supplied_properties);
     super::make_object(properties)
 }
