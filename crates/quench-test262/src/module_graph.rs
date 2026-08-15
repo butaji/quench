@@ -23,6 +23,18 @@ pub enum ModuleKind {
     Bytes,
 }
 
+fn dynamic_kind(specifier: &str) -> ModuleKind {
+    if specifier.ends_with(".json") {
+        ModuleKind::Json
+    } else if specifier.ends_with(".txt") {
+        ModuleKind::Text
+    } else if specifier.ends_with(".bin") {
+        ModuleKind::Bytes
+    } else {
+        ModuleKind::JavaScript
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ModuleGraph {
     entry: Option<ModuleId>,
@@ -154,7 +166,45 @@ impl ModuleGraph {
                 self.deferred_edges.insert((from, target));
             }
         }
+        for specifier in &metadata.dynamic_imports {
+            let kind = dynamic_kind(specifier);
+            let target = self.ensure_dependency(from, specifier, kind)?;
+            self.link(from, target)?;
+        }
         Ok(())
+    }
+
+    fn ensure_dependency(
+        &mut self,
+        from: ModuleId,
+        specifier: &str,
+        kind: ModuleKind,
+    ) -> Result<ModuleId, String> {
+        if let Some(target) = self.resolve_kind(from, specifier, kind) {
+            return Ok(target);
+        }
+        let base = self
+            .unit(from)
+            .and_then(|unit| unit.path.parent())
+            .ok_or_else(|| "dynamic import source has no base path".to_string())?;
+        let path = normalize_module_path(&base.join(specifier));
+        match kind {
+            ModuleKind::Json | ModuleKind::Text | ModuleKind::JavaScript => {
+                let source = std::fs::read_to_string(&path)
+                    .map_err(|error| format!("module {}: {error}", path.display()))?;
+                Ok(match kind {
+                    ModuleKind::Json => self.add_json_dependency(path, source),
+                    ModuleKind::Text => self.add_text_dependency(path, source),
+                    ModuleKind::JavaScript => self.add_dependency(path, source),
+                    ModuleKind::Bytes => unreachable!(),
+                })
+            }
+            ModuleKind::Bytes => {
+                let bytes = std::fs::read(&path)
+                    .map_err(|error| format!("module {}: {error}", path.display()))?;
+                Ok(self.add_bytes_dependency(path, bytes))
+            }
+        }
     }
 
     /// Link every currently loaded unit from its canonical static metadata.
