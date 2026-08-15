@@ -48,6 +48,15 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlLocaleBaseNameGetter => Ok(Value::String(
             slot_string(&super::intl_slots(receiver)?, "base").unwrap_or_default(),
         )),
+        _ => return prototype_method_tail(builtin, receiver),
+    }
+}
+
+fn prototype_method_tail(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    match builtin {
         crate::ops::Builtin::IntlLocaleCalendarGetter
         | crate::ops::Builtin::IntlLocaleCaseFirstGetter
         | crate::ops::Builtin::IntlLocaleCollationGetter
