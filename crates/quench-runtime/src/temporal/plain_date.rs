@@ -10,11 +10,33 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     (builtin == crate::ops::Builtin::TemporalPlainDateFrom)
         .then(|| from(arguments.first(), arguments.get(1)))
+        .or_else(|| match builtin {
+            crate::ops::Builtin::TemporalPlainDateToString
+            | crate::ops::Builtin::TemporalPlainDateToJSON => Some(to_string(receiver)),
+            _ => None,
+        })
+}
+
+fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDate"))?
+    else {
+        return Err(crate::value::error::throw_type_error("Not a PlainDate"));
+    };
+    let year = field_number(object, "year")? as i64;
+    let month = field_number(object, "month")? as i64;
+    let day = field_number(object, "day")? as i64;
+    let year = if year >= 0 && year <= 9999 {
+        format!("{year:04}")
+    } else {
+        format!("{year:+07}")
+    };
+    Ok(Value::String(format!("{year}-{month:02}-{day:02}")))
 }
 
 fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {

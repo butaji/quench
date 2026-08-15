@@ -7,6 +7,8 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalDurationCompare => Some("Temporal.Duration.compare"),
         Builtin::TemporalPlainDate => Some("Temporal.PlainDate"),
         Builtin::TemporalPlainDateFrom => Some("Temporal.PlainDate.from"),
+        Builtin::TemporalPlainDateToString => Some("Temporal.PlainDate.prototype.toString"),
+        Builtin::TemporalPlainDateToJSON => Some("Temporal.PlainDate.prototype.toJSON"),
         _ => None,
     }
 }
@@ -18,6 +20,8 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalDurationCompare => Some("compare"),
         Builtin::TemporalPlainDate => Some("PlainDate"),
         Builtin::TemporalPlainDateFrom => Some("from"),
+        Builtin::TemporalPlainDateToString => Some("toString"),
+        Builtin::TemporalPlainDateToJSON => Some("toJSON"),
         _ => None,
     }
 }
@@ -27,6 +31,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalDurationFrom => Some(1.0),
         Builtin::TemporalDurationCompare => Some(2.0),
         Builtin::TemporalPlainDateFrom => Some(1.0),
+        Builtin::TemporalPlainDateToString | Builtin::TemporalPlainDateToJSON => Some(0.0),
         _ => None,
     }
 }

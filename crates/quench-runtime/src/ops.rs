@@ -366,6 +366,8 @@ pub enum Builtin {
     TemporalPlainDate,
     TemporalPlainDatePrototype,
     TemporalPlainDateFrom,
+    TemporalPlainDateToString,
+    TemporalPlainDateToJSON,
     IntlGetCanonicalLocales,
     IntlSupportedValuesOf,
     IntlLocale,
