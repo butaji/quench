@@ -61,6 +61,45 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "Symbol.iterator" {
         return Some(Value::Builtin(IteratorSelf));
     }
+    if builtin == IteratorPrototype && key == "constructor" {
+        return Some(Value::Builtin(IteratorPrototypeConstructorGetter));
+    }
+    if builtin == IteratorPrototype && key == "Symbol.toStringTag" {
+        return Some(Value::Builtin(IteratorPrototypeToStringTagGetter));
+    }
+    if builtin == IteratorPrototype && key == "toArray" {
+        return Some(Value::Builtin(IteratorToArray));
+    }
+    if builtin == IteratorPrototype && key == "drop" {
+        return Some(Value::Builtin(IteratorDrop));
+    }
+    if builtin == IteratorPrototype && key == "map" {
+        return Some(Value::Builtin(IteratorMap));
+    }
+    if builtin == IteratorPrototype && key == "every" {
+        return Some(Value::Builtin(IteratorEvery));
+    }
+    if builtin == IteratorPrototype && key == "some" {
+        return Some(Value::Builtin(IteratorSome));
+    }
+    if builtin == IteratorPrototype && key == "find" {
+        return Some(Value::Builtin(IteratorFind));
+    }
+    if builtin == IteratorPrototype && key == "filter" {
+        return Some(Value::Builtin(IteratorFilter));
+    }
+    if builtin == IteratorPrototype && key == "take" {
+        return Some(Value::Builtin(IteratorTake));
+    }
+    if builtin == IteratorPrototype && key == "Symbol.dispose" {
+        return Some(Value::Builtin(IteratorReturn));
+    }
+    if builtin == Iterator && key == "concat" {
+        return Some(Value::Builtin(IteratorConcat));
+    }
+    if builtin == Iterator && key == "from" {
+        return Some(Value::Builtin(IteratorFrom));
+    }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);
     }
@@ -102,6 +141,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             crate::builtin_meta::finalization_registry::property(k).map(Value::Builtin)
         }
         (ObjectPrototype, "constructor") => Some(Value::Builtin(Object)),
+        (ObjectPrototype, "toLocaleString") => Some(Value::Builtin(ObjectPrototypeToString)),
+        (ObjectPrototype, k) => object_prototype_method(k).map(Value::Builtin),
         (DatePrototype, k) => crate::builtin_meta::date::date_prop(k).map(Value::Builtin),
         (DisposableStack, "prototype") => Some(Value::Builtin(DisposableStackPrototype)),
         (AsyncDisposableStack, "prototype") => Some(Value::Builtin(AsyncDisposableStackPrototype)),
@@ -235,8 +276,11 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
     }
     match key {
         "Symbol.iterator" => Some(Value::Builtin(Builtin::IteratorSelf)),
-        "Symbol.toStringTag" => Some(Value::String("Iterator".into())),
-        "constructor" => Some(Value::Builtin(Builtin::Iterator)),
+        "toArray" => Some(Value::Builtin(Builtin::IteratorToArray)),
+        "drop" => Some(Value::Builtin(Builtin::IteratorDrop)),
+        "map" => Some(Value::Builtin(Builtin::IteratorMap)),
+        "Symbol.toStringTag" => Some(Value::Builtin(Builtin::IteratorPrototypeToStringTagGetter)),
+        "constructor" => Some(Value::Builtin(Builtin::IteratorPrototypeConstructorGetter)),
         _ => None,
     }
 }
@@ -632,6 +676,7 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (NumberPrototype, "valueOf") => Some(NumberValueOf),
         (NumberPrototype, "toFixed") => Some(NumberToFixed),
         (NumberPrototype, "toPrecision") => Some(NumberToPrecision),
+        (NumberPrototype, "constructor") => Some(Number),
         (NumberPrototype, "toExponential") => Some(NumberToExponential),
         (Number, "isNaN") => Some(IsNaN),
         (Number, "isFinite") => Some(IsFinite),
@@ -682,8 +727,23 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
         _ => None,
     }
 }
-pub(crate) fn is_builtin_deletable(builtin: Builtin, key: &str) -> bool {
-    if builtin == Builtin::FunctionPrototype && key == "Symbol.hasInstance" {
+pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
+    if _builtin == Builtin::Number
+        && matches!(
+            key,
+            "EPSILON"
+                | "MAX_SAFE_INTEGER"
+                | "MAX_VALUE"
+                | "MIN_SAFE_INTEGER"
+                | "MIN_VALUE"
+                | "NaN"
+                | "NEGATIVE_INFINITY"
+                | "POSITIVE_INFINITY"
+        )
+    {
+        return false;
+    }
+    if key == "prototype" {
         return false;
     }
     if key == "prototype" && builtin != Builtin::GeneratorFunctionPrototype {

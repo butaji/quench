@@ -22,6 +22,7 @@ include!("generator_async.rs");
 include!("generator_try.rs");
 include!("generator_try_frame.rs");
 include!("generator_iterator_binding.rs");
+include!("generator_loop.rs");
 include!("generator_suspension.rs");
 include!("generator_reduce.rs");
 include!("generator_machine.rs");
@@ -280,20 +281,17 @@ fn resume_with_global(generator: &GeneratorData, resume: Resume) -> Result<Value
     if let Resume::Next(input) = &resume {
         install_resume_input(generator, &mut state, input.clone());
     }
-    if let Some(result) = resume_suspended_contexts(generator, &mut state, &completion)? {
-        generator.state.replace(Some(state));
-        return Ok(result);
-    }
-    if generator.machine.borrow().frame_count() == 0
-        && matches!(
-            suspended_context(generator, &state),
-            Some(SuspendedContext::Yield)
-        )
-    {
-        match resume {
-            Resume::Return(value) => return finish(generator, value),
-            Resume::Throw(value) => return throw_and_finish(generator, value),
-            Resume::Next(_) => {}
+    let has_loop_frame = generator
+        .machine
+        .borrow()
+        .frames
+        .frames
+        .last()
+        .is_some_and(|frame| matches!(frame, crate::machine::Frame::Loop { .. }));
+    if has_loop_frame || !direct_suspension {
+        if let Some(result) = resume_suspended_contexts(generator, &mut state, &completion)? {
+            generator.state.replace(Some(state));
+            return Ok(result);
         }
     }
     *generator.executing.borrow_mut() = true;
@@ -320,6 +318,9 @@ fn current_state(generator: &GeneratorData) -> Result<GeneratorState, VmError> {
 }
 
 fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
+    if push_loop_frame(generator, state)? {
+        return Ok(());
+    }
     if push_nested_frame(generator, state)? {
         return Ok(());
     }
@@ -365,6 +366,9 @@ fn resume_suspended_contexts(
     state: &mut GeneratorState,
     completion: &crate::completion::Completion,
 ) -> Result<Option<Value>, VmError> {
+    if let Some(completion) = resume_loop_frame(generator, state, completion.clone())? {
+        return resume_machine_frame(generator, state, completion).map(Some);
+    }
     if let Some(completion) = resume_private_frame(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);
     }

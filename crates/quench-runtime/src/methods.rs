@@ -13,16 +13,14 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
         key,
         callee,
         args,
+        spreads,
     } = op
     else {
         return Err(VmError::NotCallable);
     };
     let receiver = read_register(registers, *object)?;
     let callee = resolved_callee(registers, *callee, &receiver, key)?;
-    let arguments = args
-        .iter()
-        .map(|index| read_register(registers, *index))
-        .collect::<Result<Vec<_>, _>>()?;
+    let arguments = crate::vm::vm_ops::collect_call_arguments(registers, args, spreads)?;
     let propagates = matches!(
         callee,
         Value::Builtin(crate::ops::Builtin::MapSet | crate::ops::Builtin::SetAdd)

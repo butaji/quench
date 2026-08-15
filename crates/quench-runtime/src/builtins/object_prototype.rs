@@ -136,7 +136,7 @@ fn slot_prototype(value: &Value) -> Option<Value> {
     })
 }
 
-fn generator_prototype(generator: &crate::value::GeneratorData) -> Value {
+pub(crate) fn generator_prototype(generator: &crate::value::GeneratorData) -> Value {
     let properties = generator.function.properties.borrow();
     let prototype = properties
         .iter()
@@ -371,8 +371,6 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
-            | Builtin::GeneratorFunctionPrototype
-            | Builtin::AsyncGeneratorFunctionPrototype
             | Builtin::ErrorPrototype
             | Builtin::EvalErrorPrototype
             | Builtin::RangeErrorPrototype

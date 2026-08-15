@@ -144,6 +144,11 @@ fn map_property(data: &crate::value::MapData, key: &str) -> Value {
 /// `Undefined`. Used to surface `constructor` and prototype methods for
 /// primitive values like `1`, `true`, and `null`-shaped access.
 fn primitive_prototype_property(value: &Value, key: &str) -> Value {
+    if let Value::String(symbol) = value {
+        if symbol.starts_with("Symbol.") && key == "description" {
+            return Value::String(symbol.clone());
+        }
+    }
     let prototype = match value {
         Value::Number(_) => Some(Value::Builtin(Builtin::NumberPrototype)),
         Value::Boolean(_) => Some(Value::Builtin(Builtin::BooleanPrototype)),
@@ -188,6 +193,14 @@ fn generator_property(value: &Value, key: &str) -> Value {
         "next" => crate::ops::Builtin::GeneratorNext,
         "return" => crate::ops::Builtin::GeneratorReturn,
         "throw" => crate::ops::Builtin::GeneratorThrow,
+        "toArray" => crate::ops::Builtin::IteratorToArray,
+        "drop" => crate::ops::Builtin::IteratorDrop,
+        "map" => crate::ops::Builtin::IteratorMap,
+        "every" => crate::ops::Builtin::IteratorEvery,
+        "some" => crate::ops::Builtin::IteratorSome,
+        "find" => crate::ops::Builtin::IteratorFind,
+        "filter" => crate::ops::Builtin::IteratorFilter,
+        "take" => crate::ops::Builtin::IteratorTake,
         _ => return Value::Undefined,
     };
     bind_method(value, Value::Builtin(builtin))
@@ -276,8 +289,26 @@ fn early_property_access(
             "'caller' and 'arguments' are unavailable on this function",
         )));
     }
-    if let Some(result) = array_early_access(value, key, receiver) {
-        return Some(result);
+    if let Some(getter) = array_accessor(value, key, "get") {
+        if matches!(getter, Value::Undefined) {
+            return Ok(Value::Undefined);
+        }
+        return invoke_accessor(&getter, receiver);
+    }
+    if let Value::Array(values) = value {
+        let has_own = key == "length"
+            || crate::arrays::array_index(key)
+                .is_some_and(|index| values.has_index(index as usize))
+            || values.descriptor(key).is_some()
+            || values.property(key).is_some();
+        if !has_own {
+            if let Some(getter) = crate::arrays::prototype_override_getter(key) {
+                if matches!(getter, Value::Undefined) {
+                    return Ok(Value::Undefined);
+                }
+                return invoke_accessor(&getter, receiver);
+            }
+        }
     }
     if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
         return Some(result);
@@ -452,7 +483,30 @@ fn receiver_property(value: &Value, key: &str, _receiver: &Value) -> Value {
     if matches!(key, "constructor" | "prototype") {
         return property;
     }
-    property
+    if same_property_receiver(value, receiver) {
+        return property;
+    }
+    if let Value::BoundFunction(bound) = &property {
+        if same_property_receiver(&bound.receiver, value) {
+            return bind_method(receiver, bound.target.clone());
+        }
+    }
+    match property {
+        Value::Builtin(builtin)
+            if !is_accessor_builtin(builtin)
+                && !is_iterator_next_builtin(builtin)
+                && crate::intl::tolocale::symbol::name(builtin).is_none() =>
+        {
+            bind_method(receiver, property)
+        }
+        other => other,
+    }
+}
+fn is_iterator_next_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::RegExpStringIteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext
+    )
 }
 /// Accessor getters/setters carry their `this` at invocation time; binding
 /// them to the object they were read from (e.g. a property descriptor's
