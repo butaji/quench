@@ -272,11 +272,6 @@ fn put_with_receiver(
     receiver: &Value,
 ) -> Result<(), VmError> {
     let receiver = crate::locals::resolved_replacement(receiver.clone());
-    if crate::builtins::namespace_uninitialized(&receiver, key) {
-        return Err(crate::value::error::throw_reference_error(
-            "Cannot access an uninitialized module binding",
-        ));
-    }
     if matches!(target, Value::Proxy(_)) {
         crate::proxy::proxy_set(target, key, &value, Some(&receiver))?;
         return Ok(());
@@ -287,6 +282,11 @@ fn put_with_receiver(
         }
         crate::functions::execute_target(&setter, &receiver, std::slice::from_ref(&value))?;
         return Ok(());
+    }
+    if crate::builtins::namespace_uninitialized(&receiver, key) {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access an uninitialized module binding",
+        ));
     }
     if crate::builtins::descriptor_flag(target, key, "writable") == Some(false) {
         return strict_write_failure();
