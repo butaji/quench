@@ -190,7 +190,7 @@ fn function_source(
         (_, true) => "async function",
         (_, false) => "function",
     };
-    Ok(format!("{prefix} anonymous({parameters}){{{body}}}"))
+    Ok(format!("{prefix} anonymous({parameters}\n) {{\n{body}\n}}"))
 }
 
 fn mark_dynamic(value: &Value) {
