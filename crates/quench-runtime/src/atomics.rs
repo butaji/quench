@@ -228,6 +228,9 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
     }
     let timeout = crate::conversion::to_number(arguments.get(3).unwrap_or(&Value::Undefined))?;
     if builtin == Builtin::AtomicsWait {
+        if timeout.is_nan() || (timeout.is_finite() && timeout <= 0.0) {
+            return Ok(Value::String("timed-out".into()));
+        }
         return Err(type_error("Atomics.wait cannot suspend this agent"));
     }
     if builtin == Builtin::AtomicsWaitAsync {
