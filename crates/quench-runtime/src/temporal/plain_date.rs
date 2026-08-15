@@ -385,6 +385,11 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             ));
         }
     }
+    if text.matches("u-ca=").count() > 1 && text.contains("!u-ca=") {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid calendar annotation",
+        ));
+    }
     let invalid_annotation = text.split('[').skip(1).any(|part| {
         if part.starts_with('!') && part.contains('=') && !part.starts_with("!u-ca=iso8601") {
             return true;
