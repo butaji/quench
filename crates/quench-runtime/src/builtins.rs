@@ -290,6 +290,12 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         }
         Value::Array(values) => set_array_property(values, key, value),
         Value::Function(function) => set_function_property(function, key, value),
+        _ => set_property_tail(target, key, value),
+    }
+}
+
+fn set_property_tail(target: Value, key: &str, value: Value) -> Value {
+    match target {
         Value::BoundFunction(bound) => {
             {
                 let mut properties = bound.properties.borrow_mut();
