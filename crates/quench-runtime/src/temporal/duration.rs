@@ -444,10 +444,14 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         ));
     }
     let difference = duration_value(&left) - duration_value(&right);
-    if difference == 0.0 {
+    if difference == 0 {
         return Ok(Value::Number(0.0));
     }
-    Ok(Value::Number(difference.signum()))
+    Ok(Value::Number(if difference.is_positive() {
+        1.0
+    } else {
+        -1.0
+    }))
 }
 
 fn date_units(value: &Value) -> bool {
@@ -486,21 +490,21 @@ fn same_fields(left: Option<&Value>, right: Option<&Value>) -> bool {
     })
 }
 
-fn duration_value(value: &Value) -> f64 {
+fn duration_value(value: &Value) -> i128 {
     [
-        ("years", 31_536_000.0),
-        ("months", 2_592_000.0),
-        ("weeks", 604_800.0),
-        ("days", 86_400.0),
-        ("hours", 3_600.0),
-        ("minutes", 60.0),
-        ("seconds", 1.0),
-        ("milliseconds", 1e-3),
-        ("microseconds", 1e-6),
-        ("nanoseconds", 1e-9),
+        ("years", 31_536_000_i128 * 1_000_000_000),
+        ("months", 2_592_000_i128 * 1_000_000_000),
+        ("weeks", 604_800_i128 * 1_000_000_000),
+        ("days", 86_400_i128 * 1_000_000_000),
+        ("hours", 3_600_i128 * 1_000_000_000),
+        ("minutes", 60_i128 * 1_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
     ]
     .iter()
-    .map(|(name, scale)| number_property(value, name) * scale)
+    .map(|(name, scale)| number_property(value, name) as i128 * scale)
     .sum()
 }
 
