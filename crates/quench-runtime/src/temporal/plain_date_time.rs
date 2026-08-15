@@ -61,8 +61,64 @@ pub(crate) fn execute(
 ) -> Option<Result<Value, VmError>> {
     match builtin {
         crate::ops::Builtin::TemporalPlainDateTimeFrom => Some(from(arguments.first())),
+        crate::ops::Builtin::TemporalPlainDateTimeCalendarIdGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeYearGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeMonthGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeMonthCodeGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeDayGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeHourGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeMinuteGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeSecondGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeMillisecondGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeMicrosecondGetter
+        | crate::ops::Builtin::TemporalPlainDateTimeNanosecondGetter => {
+            Some(getter(builtin, _receiver))
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeToString
+        | crate::ops::Builtin::TemporalPlainDateTimeToJSON => Some(to_string(_receiver)),
         _ => None,
     }
+}
+
+fn getter(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let name = match builtin {
+        crate::ops::Builtin::TemporalPlainDateTimeCalendarIdGetter => "calendarId",
+        crate::ops::Builtin::TemporalPlainDateTimeYearGetter => "year",
+        crate::ops::Builtin::TemporalPlainDateTimeMonthGetter => "month",
+        crate::ops::Builtin::TemporalPlainDateTimeMonthCodeGetter => "monthCode",
+        crate::ops::Builtin::TemporalPlainDateTimeDayGetter => "day",
+        crate::ops::Builtin::TemporalPlainDateTimeHourGetter => "hour",
+        crate::ops::Builtin::TemporalPlainDateTimeMinuteGetter => "minute",
+        crate::ops::Builtin::TemporalPlainDateTimeSecondGetter => "second",
+        crate::ops::Builtin::TemporalPlainDateTimeMillisecondGetter => "millisecond",
+        crate::ops::Builtin::TemporalPlainDateTimeMicrosecondGetter => "microsecond",
+        _ => "nanosecond",
+    };
+    crate::execute::get_property_result(receiver, name)
+}
+
+fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let values = NAMES
+        .iter()
+        .map(|name| crate::execute::get_property_result(receiver, name))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|value| crate::conversion::to_number(&value))
+        .collect::<Result<Vec<_>, _>>()?;
+    let fraction = values[6] as u32 * 1_000_000 + values[7] as u32 * 1_000 + values[8] as u32;
+    let suffix = if fraction == 0 {
+        String::new()
+    } else {
+        format!(".{fraction:09}").trim_end_matches('0').to_string()
+    };
+    Ok(Value::String(format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{suffix}",
+        values[0], values[1], values[2], values[3], values[4], values[5]
+    )))
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
