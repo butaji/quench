@@ -42,6 +42,14 @@ fn run_local_binding_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmE
             name,
             dynamic,
         } => crate::locals::load_binding(registers, *dst, *slot, name, *dynamic)?,
+        _ => return run_local_resolved_op(registers, op),
+    }
+    Ok(true)
+}
+
+fn run_local_resolved_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
+    use Op::*;
+    match op {
         ResolveBindingTarget { dst, name } => crate::locals::resolve_target(registers, *dst, name)?,
         InitializeResolvedBinding {
             target,
