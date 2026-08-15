@@ -28,6 +28,7 @@ pub struct ImportBinding {
     pub imported: String,
     pub local: String,
     pub deferred: bool,
+    pub source_phase: bool,
 }
 
 /// One local binding exposed under an exported module name.
@@ -92,6 +93,7 @@ impl ModuleMetadata {
                             imported,
                             local,
                             deferred: matches!(import.phase, Some(ImportPhase::Defer)),
+                            source_phase: matches!(import.phase, Some(ImportPhase::Source)),
                         });
                     }
                 }

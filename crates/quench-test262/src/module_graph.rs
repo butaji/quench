@@ -106,6 +106,9 @@ impl ModuleGraph {
         specifier: &str,
         kind: ModuleKind,
     ) -> Option<ModuleId> {
+        if specifier == "<module source>" {
+            return Some(from);
+        }
         let base = self.units.get(from.0 as usize)?.path.parent()?;
         let path = normalize_module_path(&base.join(specifier));
         self.paths.get(&(path, kind)).copied()
