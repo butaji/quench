@@ -194,12 +194,18 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
     }
-    let inherited = properties
+    function_inherited_property(&properties, key)
+}
+
+fn function_inherited_property(properties: &[(String, Value)], key: &str) -> Value {
+    properties
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then(|| property_value(value)))
-        .map(|prototype| get_property(&prototype, key));
-    inherited.unwrap_or_else(|| function_prototype_property(key))
+        .map_or_else(
+            || function_prototype_property(key),
+            |prototype| get_property(&prototype, key),
+        )
 }
 fn function_prototype_property(key: &str) -> Value {
     let value = builtin_property(Builtin::FunctionPrototype, key);
