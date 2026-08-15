@@ -282,6 +282,7 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
             Builtin::AsyncDisposableStackDisposed
         }
         (Builtin::ErrorPrototype, "stack") => Builtin::ErrorPrototypeStackGetter,
+        (Builtin::FunctionPrototype, "caller" | "arguments") => Builtin::ThrowTypeError,
         (Builtin::IntlLocalePrototype, "baseName") => Builtin::IntlLocaleBaseNameGetter,
         (Builtin::IntlLocalePrototype, "calendar") => Builtin::IntlLocaleCalendarGetter,
         (Builtin::IntlLocalePrototype, "caseFirst") => Builtin::IntlLocaleCaseFirstGetter,
@@ -300,6 +301,9 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         _ => return None,
     };
     let descriptor = match (builtin, key) {
+        (Builtin::FunctionPrototype, "caller" | "arguments") => {
+            accessor_descriptor_with_setter(Builtin::ThrowTypeError, Some(Builtin::ThrowTypeError))
+        }
         (Builtin::ErrorPrototype, "stack") => accessor_descriptor_with_setter(
             Builtin::ErrorPrototypeStackGetter,
             Some(Builtin::ErrorPrototypeStackSetter),
@@ -312,12 +316,18 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::ThrowTypeError && key == "length" {
         return Some(descriptor_object_with_flags(
-            Value::Number(0.0), false, false, false,
+            Value::Number(0.0),
+            false,
+            false,
+            false,
         ));
     }
     if builtin == Builtin::ThrowTypeError && key == "name" {
         return Some(descriptor_object_with_flags(
-            Value::String(String::new()), false, false, false,
+            Value::String(String::new()),
+            false,
+            false,
+            false,
         ));
     }
     if builtin == Builtin::FunctionPrototype && key == "Symbol.hasInstance" {
