@@ -31,11 +31,7 @@ pub(crate) fn has_restricted_function_property(value: &Value, key: &str) -> bool
     is_restricted && !properties.iter().any(|(name, _)| name == key)
 }
 
-fn object_prototype_property(
-    receiver: &Value,
-    properties: &[(String, Value)],
-    key: &str,
-) -> Value {
+fn object_prototype_property(receiver: &Value, properties: &[(String, Value)], key: &str) -> Value {
     properties
         .iter()
         .rev()
@@ -90,10 +86,7 @@ pub(crate) fn object_property(
     crate::builtins::property(prototype, key)
 }
 
-fn boxed_string_property(
-    properties: &Rc<crate::value::ObjectData>,
-    key: &str,
-) -> Option<Value> {
+fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
     let Some((_, Value::String(value))) = properties.iter().find(|(name, _)| name == "_value")
     else {
         return None;
