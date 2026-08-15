@@ -60,6 +60,9 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainTimeNanosecondGetter => {
             Some("Temporal.PlainTime.prototype.nanosecond")
         }
+        Builtin::TemporalPlainTimeToString => Some("Temporal.PlainTime.prototype.toString"),
+        Builtin::TemporalPlainTimeToJSON => Some("Temporal.PlainTime.prototype.toJSON"),
+        Builtin::TemporalPlainTimeValueOf => Some("Temporal.PlainTime.prototype.valueOf"),
         _ => None,
     }
 }
@@ -104,6 +107,9 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainTimeMillisecondGetter => Some("get millisecond"),
         Builtin::TemporalPlainTimeMicrosecondGetter => Some("get microsecond"),
         Builtin::TemporalPlainTimeNanosecondGetter => Some("get nanosecond"),
+        Builtin::TemporalPlainTimeToString => Some("toString"),
+        Builtin::TemporalPlainTimeToJSON => Some("toJSON"),
+        Builtin::TemporalPlainTimeValueOf => Some("valueOf"),
         _ => None,
     }
 }
@@ -116,6 +122,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalPlainDateCompare => Some(2.0),
         Builtin::TemporalPlainTimeFrom => Some(1.0),
         Builtin::TemporalPlainTimeCompare => Some(2.0),
+        Builtin::TemporalPlainTimeToString | Builtin::TemporalPlainTimeToJSON => Some(0.0),
         Builtin::TemporalPlainDateToString | Builtin::TemporalPlainDateToJSON => Some(0.0),
         _ => None,
     }
