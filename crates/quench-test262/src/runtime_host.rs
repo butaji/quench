@@ -245,6 +245,25 @@ fn namespace_cell(
             })
             .collect::<Vec<_>>(),
     );
+    for name in unit.export_names() {
+        properties.push((
+            format!("\0quench:descriptor:\0{name}"),
+            quench_runtime::value::Value::object(vec![
+                (
+                    "writable".to_string(),
+                    quench_runtime::value::Value::Boolean(true),
+                ),
+                (
+                    "enumerable".to_string(),
+                    quench_runtime::value::Value::Boolean(true),
+                ),
+                (
+                    "configurable".to_string(),
+                    quench_runtime::value::Value::Boolean(false),
+                ),
+            ]),
+        ));
+    }
     properties.push((
         "Symbol.toStringTag".to_string(),
         quench_runtime::value::Value::String("Module".to_string()),
