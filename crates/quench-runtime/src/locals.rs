@@ -269,6 +269,10 @@ pub(crate) fn mark_uninitialized(slot: u16) {
     current().mark_uninitialized(slot);
 }
 
+pub(crate) fn mark_immutable(slot: u16) {
+    current().mark_immutable_slot(slot);
+}
+
 pub(crate) fn check_initialized(slot: u16, name: &str) -> Result<(), VmError> {
     ensure_initialized(slot, name)
 }
