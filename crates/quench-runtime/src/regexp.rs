@@ -351,7 +351,22 @@ fn build_match_result(
     }
     let values = match_values(s, &m, search_start);
     let index = Value::Number(crate::strings::byte_to_utf16(s, m.start() + search_start) as f64);
-    Ok(match_result(values, index, s))
+    let groups = named_groups(s, &m, search_start);
+    Ok(match_result(values, index, s, groups))
+}
+
+fn named_groups(text: &str, m: &regress::Match, offset: usize) -> Option<Value> {
+    let properties: Vec<(String, Value)> = m
+        .named_groups()
+        .map(|(name, range)| {
+            let value = range.map_or(Value::Undefined, |range| {
+                Value::String(text[offset + range.start..offset + range.end].to_string())
+            });
+            (name.to_string(), value)
+        })
+        .collect();
+    (!properties.is_empty())
+        .then(|| Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties))))
 }
 
 fn match_values(text: &str, m: &regress::Match, offset: usize) -> Vec<Value> {
@@ -372,9 +387,12 @@ fn match_values(text: &str, m: &regress::Match, offset: usize) -> Vec<Value> {
     values
 }
 
-fn match_result(values: Vec<Value>, index: Value, input: &str) -> Value {
+fn match_result(values: Vec<Value>, index: Value, input: &str, groups: Option<Value>) -> Value {
     let result = crate::builtins::set_property(Value::array(values), "index", index);
-    crate::builtins::set_property(result, "input", Value::String(input.to_string()))
+    let result = crate::builtins::set_property(result, "input", Value::String(input.to_string()));
+    groups.map_or(result.clone(), |groups| {
+        crate::builtins::set_property(result, "groups", groups)
+    })
 }
 
 fn argument_string(arguments: &[Value]) -> Result<String, VmError> {
