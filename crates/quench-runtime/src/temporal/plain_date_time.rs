@@ -569,11 +569,15 @@ fn overflow_reject(options: Option<&Value>) -> bool {
 
 fn constrain_date_fields(fields: &mut [Value]) -> Result<(), VmError> {
     let year = crate::conversion::to_number(&fields[0])?;
-    let month = crate::conversion::to_number(&fields[1])?.clamp(1.0, 12.0);
+    let month = crate::conversion::to_number(&fields[1])?;
+    let day = crate::conversion::to_number(&fields[2])?;
+    if month <= 0.0 || day <= 0.0 {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    let month = month.clamp(1.0, 12.0);
     fields[1] = Value::Number(month);
     let max_day = days_in_month(year as i32, month as u32);
-    let day = crate::conversion::to_number(&fields[2])?.clamp(1.0, max_day as f64);
-    fields[2] = Value::Number(day);
+    fields[2] = Value::Number(day.clamp(1.0, max_day as f64));
     Ok(())
 }
 
@@ -666,6 +670,9 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     validate_time_offset(time)?;
     validate_fraction_digits(time)?;
     let time = time.split(['+', '-']).next().unwrap_or(time);
+    if date.starts_with("-000000") {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     if !date.starts_with(['+', '-']) && date.contains('-') && {
         let parts = date.split('-').collect::<Vec<_>>();
         parts.len() != 3 || parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2
