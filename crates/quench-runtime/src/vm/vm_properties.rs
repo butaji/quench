@@ -458,42 +458,60 @@ fn bound_function_property(
     {
         return value.clone();
     }
-    if matches!(key, "apply" | "call" | "bind") {
-        if realm::is_intrinsic(bound)
-            && matches!(bound.target, Value::Builtin(Builtin::FunctionPrototype))
-        {
-            return crate::vm::intrinsic_for_realm(bound.realm, function_builtin_property(key));
+    match key {
+        "apply" | "call" | "bind" => bound_method(value, bound, key),
+        "length" => bound_length(bound),
+        "name" => bound_name(bound),
+        "prototype" => bound_prototype(bound),
+        _ => bound_other_property(bound, key),
+    }
+}
+
+fn bound_method(value: &Value, bound: &crate::value::BoundFunctionValue, key: &str) -> Value {
+    if realm::is_intrinsic(bound)
+        && matches!(bound.target, Value::Builtin(Builtin::FunctionPrototype))
+    {
+        return crate::vm::intrinsic_for_realm(bound.realm, function_builtin_property(key));
+    }
+    bind_function_property(value, key)
+}
+
+fn bound_length(bound: &crate::value::BoundFunctionValue) -> Value {
+    if realm::is_intrinsic(bound) {
+        return Value::Undefined;
+    }
+    match &bound.target {
+        Value::Builtin(builtin) => {
+            crate::builtins::props::callable(*builtin, "length").unwrap_or(Value::Number(0.0))
         }
-        bind_function_property(value, key)
-    } else if key == "length" && !realm::is_intrinsic(bound) {
-        match &bound.target {
-            Value::Builtin(builtin) => {
-                crate::builtins::props::callable(*builtin, key).unwrap_or(Value::Number(0.0))
-            }
-            target => get_property(target, key),
-        }
-    } else if key == "name" && !realm::is_intrinsic(bound) {
-        Value::String(String::new())
-    } else if key == "prototype" {
-        if matches!(bound.target, Value::Builtin(Builtin::Function)) {
-            return crate::vm::intrinsic_for_realm(bound.realm, Builtin::FunctionPrototype);
-        }
-        let result = get_property(&bound.target, key);
-        if let Value::Builtin(builtin) = result {
-            realm::intrinsic_value(bound, builtin)
-                .unwrap_or_else(|| crate::vm::intrinsic_for_realm(bound.realm, builtin))
-        } else {
-            result
-        }
+        target => get_property(target, "length"),
+    }
+}
+
+fn bound_name(bound: &crate::value::BoundFunctionValue) -> Value {
+    if realm::is_intrinsic(bound) {
+        get_property(&bound.target, "name")
     } else {
-        let result = get_property(&bound.target, key);
-        if let Value::Builtin(builtin) = &result {
-            return crate::vm::intrinsic_for_realm(bound.realm, *builtin);
-        }
-        if !matches!(result, Value::Undefined) {
-            return result;
-        }
-        function_prototype_property(key)
+        Value::String(String::new())
+    }
+}
+
+fn bound_prototype(bound: &crate::value::BoundFunctionValue) -> Value {
+    if matches!(bound.target, Value::Builtin(Builtin::Function)) {
+        return crate::vm::intrinsic_for_realm(bound.realm, Builtin::FunctionPrototype);
+    }
+    match get_property(&bound.target, "prototype") {
+        Value::Builtin(builtin) => realm::intrinsic_value(bound, builtin)
+            .unwrap_or_else(|| crate::vm::intrinsic_for_realm(bound.realm, builtin)),
+        result => result,
+    }
+}
+
+fn bound_other_property(bound: &crate::value::BoundFunctionValue, key: &str) -> Value {
+    match get_property(&bound.target, key) {
+        Value::Builtin(builtin) => crate::vm::intrinsic_for_realm(bound.realm, builtin),
+        result if !matches!(result, Value::Undefined) => result,
+        _ => function_prototype_property(key),
     }
 }
 fn bind_method(receiver: &Value, property: Value) -> Value {
