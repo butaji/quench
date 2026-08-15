@@ -50,6 +50,9 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationAbs => Some(absolute(receiver)),
         crate::ops::Builtin::TemporalDurationToJSON => Some(to_json(receiver)),
         crate::ops::Builtin::TemporalDurationAdd => Some(combine(receiver, arguments.first(), 1.0)),
+        crate::ops::Builtin::TemporalDurationValueOf => Some(Err(
+            crate::value::error::throw_type_error("Cannot convert Duration to a number"),
+        )),
         _ => None,
     }
 }
