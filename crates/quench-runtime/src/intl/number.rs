@@ -1117,7 +1117,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlNumberFormat => Some(construct(arguments)),
+        crate::ops::Builtin::IntlNumberFormat => Some(construct_or_legacy(arguments, receiver)),
         crate::ops::Builtin::IntlNumberFormatFormat
         | crate::ops::Builtin::IntlNumberFormatFormatToParts
         | crate::ops::Builtin::IntlNumberFormatFormatRange
@@ -1127,4 +1127,28 @@ pub(crate) fn dispatch(
         }
         _ => None,
     }
+}
+
+fn construct_or_legacy(
+    arguments: &[Value],
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(Value::Object(object)) = receiver else {
+        return construct(arguments);
+    };
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let fallback = construct(arguments)?;
+    let id = FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let symbol = format!("Symbol.IntlLegacyConstructedSymbol\0{id}");
+    let receiver = Value::Object(object.clone());
+    let descriptor = vec![
+        ("value".to_string(), fallback),
+        ("writable".to_string(), Value::Boolean(false)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(false)),
+    ];
+    let updated = crate::builtins::define_own_property(&receiver, &symbol, &descriptor)?;
+    crate::locals::replace_value(&receiver, &updated);
+    Ok(updated)
 }
