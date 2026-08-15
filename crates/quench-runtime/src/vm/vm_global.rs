@@ -139,6 +139,11 @@ fn current_realm() -> RealmId {
     })
 }
 
+pub(crate) fn current_realm_intrinsic(builtin: Builtin) -> Option<Value> {
+    realm::intrinsic(current_realm(), builtin)
+}
+
+
 fn registered_current_global() -> Option<ObjectProperties> {
     let Value::Object(global) = realm::global(current_realm())? else {
         return None;

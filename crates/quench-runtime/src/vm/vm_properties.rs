@@ -78,12 +78,16 @@ fn get_property_value(value: &Value, key: &str) -> Value {
     }
 }
 
+
 fn iterator_property(value: &Value, key: &str) -> Value {
     let property = crate::collections::iterator::property_for(value, key);
     if matches!(
         property,
         Value::Builtin(
-            Builtin::RegExpStringIteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext
+            Builtin::IteratorNext
+                | Builtin::RegExpStringIteratorNext
+                | Builtin::SetIteratorNext
+                | Builtin::MapIteratorNext
         )
     ) {
         return property;
@@ -159,7 +163,11 @@ fn primitive_prototype_property(value: &Value, key: &str) -> Value {
 }
 
 fn generator_property(value: &Value, key: &str) -> Value {
+    let is_async = matches!(value, Value::Generator(generator) if generator.function.is_async);
     let builtin = match key {
+        "next" if is_async => crate::ops::Builtin::AsyncGeneratorNext,
+        "return" if is_async => crate::ops::Builtin::AsyncGeneratorReturn,
+        "throw" if is_async => crate::ops::Builtin::AsyncGeneratorThrow,
         "next" => crate::ops::Builtin::GeneratorNext,
         "return" => crate::ops::Builtin::GeneratorReturn,
         "throw" => crate::ops::Builtin::GeneratorThrow,
@@ -241,7 +249,8 @@ pub(crate) fn get_property_with_receiver(
     }
     if let Value::Array(values) = value {
         let has_own = key == "length"
-            || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+            || crate::arrays::array_index(key)
+                .is_some_and(|index| values.has_index(index as usize))
             || values.descriptor(key).is_some()
             || values.property(key).is_some();
         if !has_own {
@@ -500,14 +509,21 @@ fn promise_property(value: &Value, key: &str) -> Value {
     }))
 }
 fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Value {
+    if let Some(value) = buffer.own_property(key) {
+        return value;
+    }
     match key {
         "byteLength" => Value::Number(buffer.byte_length() as f64),
         "maxByteLength" => {
             Value::Number(buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64)
         }
         "resizable" => Value::Boolean(buffer.max_byte_length.is_some()),
+        "detached" => Value::Boolean(*buffer.detached.borrow()),
+        "immutable" => Value::Boolean(buffer.immutable),
         "resize" => Value::Builtin(Builtin::ArrayBufferResize),
+        "transfer" => Value::Builtin(Builtin::ArrayBufferTransfer),
         "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
+        "slice" => Value::Builtin(Builtin::ArrayBufferSlice),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
     }
 }
