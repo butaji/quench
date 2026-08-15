@@ -49,8 +49,34 @@ impl ExecutionScope {
             .borrow_mut()
             .get_or_insert_with(|| crate::environment::Environment::child(&self.0, Vec::new()))
             .clone();
-        let step =
-            super::execute_completion_step_in_environment(ops, registers, context, environment)?;
+        let step = super::execute_completion_step_in_environment(
+            ops,
+            registers,
+            context,
+            environment,
+            false,
+        )?;
+        Ok((step.completion, step.next))
+    }
+
+    pub fn execute_resumed_completion_step(
+        &self,
+        ops: &[Op],
+        registers: &mut Vec<Value>,
+        context: &VmContext,
+    ) -> Result<(crate::completion::Completion, usize), crate::execute::VmError> {
+        let environment = self
+            .1
+            .borrow_mut()
+            .get_or_insert_with(|| crate::environment::Environment::child(&self.0, Vec::new()))
+            .clone();
+        let step = super::execute_completion_step_in_environment(
+            ops,
+            registers,
+            context,
+            environment,
+            true,
+        )?;
         Ok((step.completion, step.next))
     }
 
