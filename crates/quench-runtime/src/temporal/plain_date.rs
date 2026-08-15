@@ -21,14 +21,31 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     };
     let date = text.split('T').next().unwrap_or(text);
     let parts = date.split('-').collect::<Vec<_>>();
-    if parts.len() == 1 && date.len() == 8 {
-        let year = date[..4]
+    if parts.len() == 1 && (date.len() == 8 || date.len() == 11) {
+        let (year_end, month_start, day_start) = if date.len() == 11 {
+            (7, 7, 9)
+        } else {
+            (4, 4, 6)
+        };
+        let year = date[..year_end]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        let month = date[4..6]
+        let month = date[month_start..month_start + 2]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        let day = date[6..]
+        let day = date[day_start..]
+            .parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+        return Ok(date_object(year, month, day));
+    }
+    if parts.len() == 4 && parts[0].is_empty() {
+        let year = format!("-{}", parts[1])
+            .parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+        let month = parts[2]
+            .parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+        let day = parts[3]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
         return Ok(date_object(year, month, day));
