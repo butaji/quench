@@ -283,6 +283,12 @@ fn namespace_cell(
             ));
         }
     }
+    if deferred {
+        properties.push((
+            "\0quench:deferred-module".to_string(),
+            Value::BindingCell(Rc::new(RefCell::new(Value::Number(f64::from(target.0))))),
+        ));
+    }
     let tag_value = if deferred {
         Value::BindingCell(Rc::new(RefCell::new(Value::String(
             "Deferred Module".to_string(),

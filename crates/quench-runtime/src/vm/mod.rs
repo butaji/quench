@@ -3,7 +3,7 @@ use crate::ops::{
     Builtin, FunctionKind, FunctionStrictness, HostCapabilityKind, HostCapabilityRef, Op, RealmId,
 };
 use crate::value::Value;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 mod realm;
@@ -52,6 +52,7 @@ thread_local! {
     static CURRENT_CONTEXT: RefCell<Option<VmContext>> = const { RefCell::new(None) };
     static GLOBAL_OBJECT: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
     static DEFERRED_MODULE_CALLBACK: RefCell<Option<DeferredCallback>> = const { RefCell::new(None) };
+    static DEFERRED_MODULE_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
 pub struct DeferredModuleCallbackGuard {
@@ -70,8 +71,22 @@ impl Drop for DeferredModuleCallbackGuard {
 }
 
 pub(crate) fn execute_deferred_module(id: u32) -> Result<Value, VmError> {
+    let nested = DEFERRED_MODULE_DEPTH.with(|depth| {
+        let nested = depth.get() > 0;
+        if !nested {
+            depth.set(1);
+        }
+        nested
+    });
+    if nested {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot evaluate a deferred module while it is evaluating",
+        ));
+    }
     let callback = DEFERRED_MODULE_CALLBACK.with(|slot| slot.borrow().clone());
-    callback.map_or(Err(VmError::NotCallable), |callback| callback(id))
+    let result = callback.map_or(Err(VmError::NotCallable), |callback| callback(id));
+    DEFERRED_MODULE_DEPTH.with(|depth| depth.set(0));
+    result
 }
 struct ContextGuard {
     previous: Option<VmContext>,
