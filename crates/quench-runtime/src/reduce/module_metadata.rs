@@ -11,6 +11,7 @@ use oxc::ast::ast::{Expression, ImportExpression, Program};
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ModuleMetadata {
     pub import_specifiers: Vec<String>,
+    pub has_top_level_await: bool,
     pub eager_imports: Vec<String>,
     pub imports: Vec<ImportBinding>,
     pub import_attributes: Vec<(String, String)>,
@@ -50,6 +51,7 @@ impl ModuleMetadata {
         let mut collector = DynamicImportCollector::default();
         oxc::ast::visit::walk::walk_program(&mut collector, program);
         metadata.dynamic_imports = collector.specifiers;
+        metadata.has_top_level_await = collector.has_await;
         metadata
     }
 
@@ -178,9 +180,15 @@ impl ModuleMetadata {
 #[derive(Default)]
 struct DynamicImportCollector {
     specifiers: Vec<String>,
+    has_await: bool,
 }
 
 impl<'a> oxc::ast::visit::Visit<'a> for DynamicImportCollector {
+    fn visit_await_expression(&mut self, await_expression: &oxc::ast::ast::AwaitExpression<'a>) {
+        self.has_await = true;
+        oxc::ast::visit::walk::walk_await_expression(self, await_expression);
+    }
+
     fn visit_import_expression(&mut self, import: &ImportExpression<'a>) {
         if let Expression::StringLiteral(source) = &import.source {
             push_unique(&mut self.specifiers, source.value.as_str());
