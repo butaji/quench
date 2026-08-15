@@ -65,7 +65,6 @@ pub enum Op {
     MarkImmutable {
         slot: u16,
     },
-    ModuleEvaluationStart,
     CheckInitialized {
         slot: u16,
         name: String,

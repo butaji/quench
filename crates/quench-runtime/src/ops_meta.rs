@@ -41,8 +41,18 @@ pub enum HostCapabilityKind {
     CreateRealm,
     EvalScript,
     DetachArrayBuffer,
-    DeferredModule,
-    DynamicImport,
+    Agent,
+    AgentStart,
+    AgentBroadcast,
+    AgentReport,
+    AgentGetReport,
+    AgentLeaving,
+    AgentReceiveBroadcast,
+    AgentSleep,
+    AgentTryYield,
+    AgentTrySleep,
+    AgentSetTimeout,
+    AgentMonotonicNow,
 }
 
 /// Non-JavaScript capability descriptor; exposure is owned by the host.

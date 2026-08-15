@@ -36,27 +36,9 @@ pub(crate) fn all(target: &Value) -> Result<Value, VmError> {
 
 pub(crate) fn keys_result(target: Option<&Value>) -> Result<Value, VmError> {
     let target = require_object(target)?;
-    if let Some(id) = crate::vm::deferred_namespace_operation(target) {
-        crate::vm::execute_deferred_module(id)?;
-    }
     let keys = own_enumerable_string_keys(target);
     check_namespace_bindings(target, &keys)?;
     Ok(Value::array(keys.into_iter().map(Value::String).collect()))
-}
-
-fn check_namespace_bindings(target: &Value, keys: &[String]) -> Result<(), VmError> {
-    if !crate::builtins::is_module_namespace(target) {
-        return Ok(());
-    }
-    if keys
-        .iter()
-        .any(|key| crate::builtins::namespace_uninitialized(target, key))
-    {
-        return Err(crate::value::error::throw_reference_error(
-            "Cannot access an uninitialized module binding",
-        ));
-    }
-    Ok(())
 }
 
 pub(crate) fn values(target: Option<&Value>, entries: bool) -> Result<Value, VmError> {
@@ -200,6 +182,21 @@ pub(crate) fn enumerable_key_strings_result(
     let keys = own_enumerable_string_keys(target);
     check_namespace_bindings(target, &keys)?;
     Ok(keys)
+}
+
+fn check_namespace_bindings(target: &Value, keys: &[String]) -> Result<(), VmError> {
+    if !crate::builtins::is_module_namespace(target) {
+        return Ok(());
+    }
+    if keys
+        .iter()
+        .any(|key| crate::builtins::namespace_uninitialized(target, key))
+    {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access an uninitialized module binding",
+        ));
+    }
+    Ok(())
 }
 
 fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {

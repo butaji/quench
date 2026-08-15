@@ -158,122 +158,14 @@ impl ModuleGraph {
         let source = unit.source.clone();
         let metadata = quench_runtime::reduce::inspect_module_source(&source)
             .map_err(|errors| errors.join("; "))?;
-        for specifier in &metadata.import_specifiers {
-            let kind = metadata
-                .import_attributes
+        self.link_specifiers(
+            from,
+            metadata
+                .import_specifiers
                 .iter()
-                .find(|(source, _)| source == specifier)
-                .and_then(|(_, value)| match value.as_str() {
-                    "type=json" => Some(ModuleKind::Json),
-                    "type=text" => Some(ModuleKind::Text),
-                    "type=bytes" => Some(ModuleKind::Bytes),
-                    _ => None,
-                })
-                .unwrap_or(ModuleKind::JavaScript);
-            let target = self.resolve_kind(from, specifier, kind).ok_or_else(|| {
-                format!("unresolved module specifier {specifier:?} from {from:?}")
-            })?;
-            let is_deferred = metadata
-                .deferred_imports
-                .iter()
-                .any(|item| item == specifier);
-            let has_eager_request = metadata.eager_imports.iter().any(|item| item == specifier);
-            if !is_deferred || !has_eager_request {
-                self.link(from, target)?;
-            }
-            if metadata
-                .deferred_imports
-                .iter()
-                .any(|item| item == specifier)
-                && !has_eager_request
-            {
-                self.deferred_edges.insert((from, target));
-            }
-        }
-        for specifier in &metadata.eager_imports {
-            if metadata
-                .deferred_imports
-                .iter()
-                .any(|item| item == specifier)
-            {
-                let kind = metadata
-                    .import_attributes
-                    .iter()
-                    .find(|(source, _)| source == specifier)
-                    .and_then(|(_, value)| import_attribute_kind(value))
-                    .unwrap_or(ModuleKind::JavaScript);
-                let target = self.resolve_kind(from, specifier, kind).ok_or_else(|| {
-                    format!("unresolved module specifier {specifier:?} from {from:?}")
-                })?;
-                self.link(from, target)?;
-            }
-        }
-        for specifier in &metadata.dynamic_imports {
-            let kind = dynamic_kind(specifier);
-            let _ = self.ensure_dependency(from, specifier, kind);
-        }
-        Ok(())
-    }
-
-    fn ensure_dependency(
-        &mut self,
-        from: ModuleId,
-        specifier: &str,
-        kind: ModuleKind,
-    ) -> Result<ModuleId, String> {
-        if let Some(target) = self.resolve_kind(from, specifier, kind) {
-            return Ok(target);
-        }
-        let base = self
-            .unit(from)
-            .and_then(|unit| unit.path.parent())
-            .ok_or_else(|| "dynamic import source has no base path".to_string())?;
-        let path = normalize_module_path(&base.join(specifier));
-        match kind {
-            ModuleKind::Json | ModuleKind::Text | ModuleKind::JavaScript => {
-                let source = std::fs::read_to_string(&path)
-                    .map_err(|error| format!("module {}: {error}", path.display()))?;
-                if kind == ModuleKind::JavaScript {
-                    Self::validate_static_source(&path, &source, &mut Vec::new())?;
-                }
-                Ok(match kind {
-                    ModuleKind::Json => self.add_json_dependency(path, source),
-                    ModuleKind::Text => self.add_text_dependency(path, source),
-                    ModuleKind::JavaScript => self.add_dependency(path, source),
-                    ModuleKind::Bytes => unreachable!(),
-                })
-            }
-            ModuleKind::Bytes => {
-                let bytes = std::fs::read(&path)
-                    .map_err(|error| format!("module {}: {error}", path.display()))?;
-                Ok(self.add_bytes_dependency(path, bytes))
-            }
-        }
-    }
-
-    fn validate_static_source(
-        path: &Path,
-        source: &str,
-        seen: &mut Vec<PathBuf>,
-    ) -> Result<(), String> {
-        let path = normalize_module_path(path);
-        if seen.contains(&path) {
-            return Ok(());
-        }
-        seen.push(path.clone());
-        let metadata = quench_runtime::reduce::inspect_module_source(source)
-            .map_err(|errors| errors.join("; "))?;
-        let base = path.parent().unwrap_or_else(|| Path::new(""));
-        for imported in metadata.import_specifiers {
-            if imported == "<module source>" {
-                continue;
-            }
-            let imported_path = normalize_module_path(&base.join(&imported));
-            let imported_source = std::fs::read_to_string(&imported_path)
-                .map_err(|_| format!("unresolved module {}", imported_path.display()))?;
-            Self::validate_static_source(&imported_path, &imported_source, seen)?;
-        }
-        Ok(())
+                .map(String::as_str)
+                .filter(|specifier| *specifier != "<module source>"),
+        )
     }
 
     /// Link every currently loaded unit from its canonical static metadata.
