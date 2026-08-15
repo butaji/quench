@@ -183,9 +183,11 @@ fn function_source(
         .map(to_string)
         .collect::<Result<Vec<_>, _>>()?
         .join(",");
+    let parameters = normalize_annex_b_comments(&parameters);
     let body = arguments
         .last()
         .map_or_else(|| Ok(String::new()), to_string)?;
+    let body = normalize_annex_b_comments(&body);
     let prefix = match (kind, is_async) {
         (FunctionKind::Generator, true) => "async function*",
         (FunctionKind::Generator, false) => "function*",
@@ -193,6 +195,22 @@ fn function_source(
         (_, false) => "function",
     };
     Ok(format!("{prefix} anonymous({parameters}\n) {{\n{body}\n}}"))
+}
+
+fn normalize_annex_b_comments(source: &str) -> String {
+    let source = source.strip_prefix("<!--").unwrap_or(source);
+    source
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("-->") {
+                &line[..line.len() - trimmed.len()]
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn mark_dynamic(value: &Value) {
