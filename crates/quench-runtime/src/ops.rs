@@ -409,6 +409,8 @@ pub enum Builtin {
     TemporalPlainDateTimeCompare,
     TemporalPlainDateTimeEquals,
     TemporalPlainDateTimeValueOf,
+    TemporalPlainDateTimeAdd,
+    TemporalPlainDateTimeSubtract,
     TemporalPlainTime,
     TemporalPlainTimePrototype,
     TemporalPlainTimeFrom,
