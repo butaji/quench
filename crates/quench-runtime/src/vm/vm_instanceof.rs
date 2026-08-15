@@ -1,4 +1,6 @@
 fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
+    let value = dereference_binding(value);
+    let constructor = dereference_binding(constructor);
     if !crate::value::is_object(constructor) {
         return Err(type_error("Right-hand side of instanceof is not an object"));
     }
@@ -20,6 +22,15 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
         return Ok(result);
     }
     ordinary_instanceof(value, constructor)
+}
+
+fn dereference_binding(value: &Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => {
+            crate::module_bindings::ModuleBindingCell::from_shared(std::rc::Rc::clone(cell)).get()
+        }
+        _ => value.clone(),
+    }
 }
 
 fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
