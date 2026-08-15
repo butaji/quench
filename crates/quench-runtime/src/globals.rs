@@ -46,7 +46,17 @@ pub(crate) fn immutable_value(name: &str) -> Option<crate::value::Value> {
 }
 
 pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> Vec<(String, u16)> {
-    let names = [
+    script_property_names()
+        .into_iter()
+        .filter_map(|name| {
+            let register = emit_builtin(ops, next_register, builtin(name)?);
+            Some((name.to_string(), register))
+        })
+        .collect()
+}
+
+fn script_property_names() -> [&'static str; 32] {
+    [
         "Object",
         "Function",
         "Array",
@@ -79,14 +89,7 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         "Symbol",
         "Temporal",
         "ShadowRealm",
-    ];
-    names
-        .into_iter()
-        .filter_map(|name| {
-            let register = emit_builtin(ops, next_register, builtin(name)?);
-            Some((name.to_string(), register))
-        })
-        .collect()
+    ]
 }
 
 fn global_constant(name: &str) -> Option<(FactConstant, Constant)> {
