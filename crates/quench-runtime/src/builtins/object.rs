@@ -297,6 +297,10 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::DataViewPrototype, "byteLength") => Builtin::DataViewByteLengthGetter,
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
         (Builtin::DisposableStackPrototype, "disposed") => Builtin::DisposableStackDisposed,
+        (Builtin::IteratorPrototype, "constructor") => Builtin::IteratorPrototypeConstructorGetter,
+        (Builtin::IteratorPrototype, "Symbol.toStringTag") => {
+            Builtin::IteratorPrototypeToStringTagGetter
+        }
         (Builtin::AsyncDisposableStackPrototype, "disposed") => {
             Builtin::AsyncDisposableStackDisposed
         }
@@ -322,6 +326,14 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::ErrorPrototype, "stack") => accessor_descriptor_with_setter(
             Builtin::ErrorPrototypeStackGetter,
             Some(Builtin::ErrorPrototypeStackSetter),
+        ),
+        (Builtin::IteratorPrototype, "constructor") => accessor_descriptor_with_setter(
+            Builtin::IteratorPrototypeConstructorGetter,
+            Some(Builtin::IteratorPrototypeConstructorSetter),
+        ),
+        (Builtin::IteratorPrototype, "Symbol.toStringTag") => accessor_descriptor_with_setter(
+            Builtin::IteratorPrototypeToStringTagGetter,
+            Some(Builtin::IteratorPrototypeToStringTagSetter),
         ),
         _ => accessor_descriptor_with_setter(getter, None),
     };
