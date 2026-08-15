@@ -1,6 +1,6 @@
 use crate::value::Value;
 
-fn supported_calendars() -> Vec<Value> {
+pub(crate) fn supported_calendars() -> Vec<Value> {
     strings(&[
         "buddhist",
         "chinese",
@@ -23,7 +23,7 @@ fn supported_calendars() -> Vec<Value> {
     ])
 }
 
-fn supported_collations() -> Vec<Value> {
+pub(crate) fn supported_collations() -> Vec<Value> {
     strings(&["default"])
 }
 
@@ -52,11 +52,11 @@ const CURRENCIES: &[&str] = &[
     "ZMK", "ZMW", "ZRN", "ZRZ", "ZWD", "ZWL", "ZWR",
 ];
 
-fn supported_currencies() -> Vec<Value> {
+pub(crate) fn supported_currencies() -> Vec<Value> {
     strings(CURRENCIES)
 }
 
-fn supported_numbering_systems() -> Vec<Value> {
+pub(crate) fn supported_numbering_systems() -> Vec<Value> {
     strings(NUMBERING_SYSTEMS)
 }
 
@@ -71,7 +71,7 @@ pub(crate) const NUMBERING_SYSTEMS: &[&str] = &[
     "tols", "vaii", "wara", "wcho",
 ];
 
-fn supported_time_zones() -> Vec<Value> {
+pub(crate) fn supported_time_zones() -> Vec<Value> {
     strings(&["UTC"])
 }
 
@@ -123,7 +123,7 @@ const UNITS: &[&str] = &[
     "year",
 ];
 
-fn supported_units() -> Vec<Value> {
+pub(crate) fn supported_units() -> Vec<Value> {
     strings(UNITS)
 }
 

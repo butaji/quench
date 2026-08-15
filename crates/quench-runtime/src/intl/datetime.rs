@@ -319,7 +319,7 @@ fn prototype_result(
             let (start, end) = range_values(arguments)?;
             Ok(make_array(range_parts(&start, &end)))
         }
-        crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots)),
+        crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots.to_vec())),
         _ => Err(runtime_error("TypeError: method not found")),
     }
 }

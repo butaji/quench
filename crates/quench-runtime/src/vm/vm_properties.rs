@@ -479,3 +479,4 @@ fn is_accessor_builtin(builtin: Builtin) -> bool {
     name.starts_with("get ") || name.starts_with("set ")
 }
 include!("vm_properties_special.rs");
+use crate::value::Value::{HostCapability, Promise};

@@ -65,7 +65,7 @@ fn reduce_eval_program(
     next_slot: u16,
     behavior: crate::reduce_support::EvalBehavior,
     directive_completion: Option<String>,
-    deletable: bool,
+    deletable: Vec<(String, u16)>,
 ) -> Result<ResidualProgram, Vec<String>> {
     facts.eval_deletable = deletable;
     let ops = reduce_eval_body(
@@ -122,5 +122,5 @@ fn eval_facts(analysis: &crate::semantic::Analysis, strict: bool) -> ProgramDb {
 
 fn install_eval_facts(facts: &mut ProgramDb, source: &str, analysis: &crate::semantic::Analysis) {
     facts.install_reduction_source(source);
-    facts.install_fact_sites(analysis.fact_sites);
+    facts.install_fact_sites(analysis.fact_sites.clone());
 }

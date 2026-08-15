@@ -1,23 +1,24 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{locale_slot_value, make_array, make_object, runtime_error, slot_string};
+use crate::intl::intl_slots;
 
 pub(crate) fn prototype_method(
     builtin: crate::ops::Builtin,
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    let slot = slot_string(&super::intl_slots(receiver)?, "full").unwrap_or_default();
+    let slot = slot_string(&intl_slots(receiver)?, "full").unwrap_or_default();
     match builtin {
         crate::ops::Builtin::IntlLocaleToString => Ok(Value::String(slot)),
         crate::ops::Builtin::IntlLocaleMaximize => Ok(Value::String(maximize(&slot))),
         crate::ops::Builtin::IntlLocaleMinimize => Ok(Value::String(minimize(&slot))),
         crate::ops::Builtin::IntlLocaleGetCalendars => {
-            let calendar = slot_string(&super::intl_slots(receiver)?, "calendar")
+            let calendar = slot_string(&intl_slots(receiver)?, "calendar")
                 .unwrap_or_else(|| "gregory".to_string());
             Ok(make_array(vec![Value::String(calendar)]))
         }
         crate::ops::Builtin::IntlLocaleGetCollations => {
-            let collation = slot_string(&super::intl_slots(receiver)?, "collation")
+            let collation = slot_string(&intl_slots(receiver)?, "collation")
                 .unwrap_or_else(|| "default".to_string());
             Ok(make_array(vec![Value::String(collation)]))
         }
@@ -38,7 +39,7 @@ fn prototype_method_middle(
 ) -> Result<Value, VmError> {
     match builtin {
         crate::ops::Builtin::IntlLocaleGetTimeZones => {
-            if slot_string(&super::intl_slots(receiver)?, "region").is_some() {
+            if slot_string(&intl_slots(receiver)?, "region").is_some() {
                 Ok(make_array(vec![Value::String("UTC".to_string())]))
             } else {
                 Ok(Value::Undefined)
@@ -56,7 +57,7 @@ fn prototype_method_middle(
             ),
         ])),
         crate::ops::Builtin::IntlLocaleBaseNameGetter => Ok(Value::String(
-            slot_string(&super::intl_slots(receiver)?, "base").unwrap_or_default(),
+            slot_string(&intl_slots(receiver)?, "base").unwrap_or_default(),
         )),
         _ => prototype_method_tail(builtin, receiver),
     }
@@ -93,7 +94,7 @@ fn prototype_method_tail(
                 crate::ops::Builtin::IntlLocaleTextInfoGetter => "textInfo",
                 _ => "variants",
             };
-            Ok(locale_slot_value(&super::intl_slots(receiver)?, key))
+            Ok(locale_slot_value(&intl_slots(receiver)?, key))
         }
         _ => Err(runtime_error("TypeError: method not found")),
     }
