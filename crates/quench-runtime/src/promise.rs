@@ -414,6 +414,8 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     let Some(Value::Promise(promise)) = receiver else {
         return Err(VmError::NotCallable);
     };
+    let promise_value = Value::Promise(Rc::clone(promise));
+    let _constructor = crate::execute::get_property_result(&promise_value, "constructor")?;
     let result = new_promise();
     let result_promise = match &result {
         Value::Promise(promise) => Rc::clone(promise),
