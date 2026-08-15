@@ -246,6 +246,14 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = builtin_special_descriptor(builtin, key) {
         return Some(descriptor);
     }
+    if builtin == Builtin::GeneratorFunctionPrototype && key == "prototype" {
+        return Some(descriptor_object_with_flags(
+            Value::Builtin(Builtin::ObjectPrototype),
+            false,
+            false,
+            true,
+        ));
+    }
     if builtin == Builtin::AsyncGeneratorFunctionPrototype
         && matches!(key, "constructor" | "prototype" | "Symbol.toStringTag")
     {
