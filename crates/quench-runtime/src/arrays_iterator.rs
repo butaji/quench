@@ -11,9 +11,6 @@ fn array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmE
 }
 
 fn array_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    if let Some(value) = receiver.filter(|value| is_typed_array(value)) {
-        return Ok(crate::collections::iterator::make_typed_keys(value.clone()));
-    }
     let values = array_iterator_values(receiver)?;
     Ok(crate::collections::iterator::make(
         (0..values.len())
