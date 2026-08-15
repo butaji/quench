@@ -169,6 +169,14 @@ fn execute_bound_function(
         }
         Err(error) => return Err(error),
     };
+    finish_bound_result(result, bound, realm)
+}
+
+fn finish_bound_result(
+    result: crate::value::Value,
+    bound: &crate::value::BoundFunctionValue,
+    realm: Option<crate::ops::RealmId>,
+) -> Result<crate::value::Value, crate::execute::VmError> {
     if realm.is_some() && crate::conversion::is_callable(&result) {
         crate::reflect::wrap_shadow_function_with_caller(
             &result,
