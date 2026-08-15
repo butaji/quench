@@ -7,6 +7,9 @@ pub(crate) fn set_with_receiver(
     if !crate::value::is_object(receiver) {
         return Ok(false);
     }
+    if crate::builtins::is_module_namespace(target) {
+        return Ok(false);
+    }
     let descriptor = inherited_descriptor(target, key)?;
     match descriptor {
         Some(descriptor) if descriptor_field_exists(&descriptor, "set") => {

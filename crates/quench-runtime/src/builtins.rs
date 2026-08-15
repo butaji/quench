@@ -600,6 +600,9 @@ pub(crate) fn define_own_property(
 ) -> Result<Value, crate::execute::VmError> {
     let key_value = Value::String(key.to_string());
     let current = crate::builtins::object::descriptor(Some(target), Some(&key_value))?;
+    if is_module_namespace(target) {
+        return define_namespace_property(target, key, descriptor, &current);
+    }
     if matches!(current, Value::Undefined) && crate::properties::rejects_new_property(target, key) {
         return Err(crate::value::error::throw_type_error(
             "Cannot define a property on a non-extensible object",
@@ -623,6 +626,61 @@ pub(crate) fn define_own_property(
     store_descriptor_metadata(&mut result, key, &descriptor);
     define_array_descriptor(&mut result, key, descriptor);
     Ok(result)
+}
+
+pub(crate) fn is_module_namespace(target: &Value) -> bool {
+    let Value::Object(properties) = target else {
+        return false;
+    };
+    properties.iter().any(|(key, value)| {
+        key == "\0quench:non_extensible" && matches!(value, Value::Boolean(true))
+    }) && properties
+        .iter()
+        .any(|(key, value)| key == "\0prototype" && matches!(value, Value::Null))
+}
+
+fn define_namespace_property(
+    target: &Value,
+    key: &str,
+    descriptor: &[(String, Value)],
+    current: &Value,
+) -> Result<Value, crate::execute::VmError> {
+    if matches!(current, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot define a property on a non-extensible object",
+        ));
+    }
+    if descriptor.is_empty() {
+        return Ok(target.clone());
+    }
+    let symbol_tag = key == "Symbol.toStringTag";
+    for (field, requested) in descriptor {
+        if field.starts_with('\0') {
+            continue;
+        }
+        let compatible = match field.as_str() {
+            "value" => {
+                crate::builtins::same_value(descriptor_value(current, field), Some(requested))
+            }
+            "configurable" => *requested == Value::Boolean(false),
+            "writable" => *requested != Value::Boolean(false) || symbol_tag,
+            "enumerable" => *requested == Value::Boolean(!symbol_tag),
+            _ => false,
+        };
+        if !compatible {
+            return Err(cannot_redefine_namespace(key));
+        }
+    }
+    Ok(target.clone())
+}
+
+fn cannot_redefine_namespace(key: &str) -> crate::execute::VmError {
+    crate::execute::VmError::Thrown(crate::builtins::error(
+        Builtin::TypeError,
+        &[Value::String(format!(
+            "Cannot redefine namespace property {key}"
+        ))],
+    ))
 }
 fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(String, Value)]) {
     let metadata = Value::Object(Rc::new(ObjectData::new(descriptor.to_vec())));
