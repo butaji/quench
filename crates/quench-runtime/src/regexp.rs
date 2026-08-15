@@ -4,10 +4,31 @@ include!("regexp_named_groups.rs");
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_literal_ranges(pattern)?;
     validate_flags(flags)?;
-    let reg_flags: Flags = flags.into();
+    let host_flags = host_flags(pattern, flags);
+    let reg_flags: Flags = host_flags.as_str().into();
     catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
         .map_err(|_| "invalid regular expression".to_string())?
         .map_err(|e| e.to_string())
+}
+
+fn host_flags(pattern: &str, flags: &str) -> String {
+    if flags.contains('u') && has_bare_null_escape(pattern) {
+        return flags.chars().filter(|flag| *flag != 'u').collect();
+    }
+    flags.to_string()
+}
+
+fn has_bare_null_escape(pattern: &str) -> bool {
+    let mut chars = pattern.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character == '\\'
+            && chars.next_if_eq(&'0').is_some()
+            && !chars.peek().is_some_and(|next| next.is_ascii_digit())
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn validate_flags(flags: &str) -> Result<(), String> {
