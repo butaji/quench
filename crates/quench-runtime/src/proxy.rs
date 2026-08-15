@@ -176,10 +176,7 @@ pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError>
         if let Some(trap) = get_handler_trap(proxy, "deleteProperty") {
             return call_trap(
                 &trap,
-                &[
-                    proxy.target.clone(),
-                    Value::String(prop.to_string()),
-                ],
+                &[proxy.target.clone(), Value::String(prop.to_string())],
                 Some(&proxy.handler),
             );
         }
@@ -261,8 +258,9 @@ pub(crate) fn proxy_get_prototype_of(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "getPrototypeOf") {
-            return call_trap(&trap, slice::from_ref(target), None);
+            return call_trap(&trap, slice::from_ref(&proxy.target), None);
         }
+        return proxy_get_prototype_of(&proxy.target);
     }
     crate::builtins::object::get_prototype_of(Some(target))
 }
