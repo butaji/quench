@@ -285,9 +285,9 @@ fn intl_constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::Intl
         | Builtin::IntlCollator
         | Builtin::IntlPluralRules
-        | Builtin::IntlDateTimeFormat => 0.0,
+        | Builtin::IntlDateTimeFormat
+        | Builtin::IntlListFormat => 0.0,
         Builtin::IntlDisplayNames
-        | Builtin::IntlListFormat
         | Builtin::IntlNumberFormat
         | Builtin::IntlRelativeTimeFormat
         | Builtin::IntlSegmenter => 2.0,
