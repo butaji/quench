@@ -104,20 +104,7 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
         })
 }
 fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
-    let legacy = key.strip_prefix('$').is_some_and(|suffix| {
-        matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
-    }) || matches!(
-        key,
-        "$_" | "$&"
-            | "$`"
-            | "$'"
-            | "$+"
-            | "input"
-            | "lastMatch"
-            | "lastParen"
-            | "leftContext"
-            | "rightContext"
-    );
+    let legacy = is_regexp_legacy_accessor(key);
     if builtin == Builtin::RegExp && legacy {
         let setter = matches!(key, "$_" | "input");
         return Some(if setter {
@@ -138,6 +125,23 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         _ => accessor_descriptor_with_setter(getter, None),
     };
     Some(descriptor)
+}
+
+fn is_regexp_legacy_accessor(key: &str) -> bool {
+    key.strip_prefix('$')
+        .is_some_and(|suffix| matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"))
+        || matches!(
+            key,
+            "$_" | "$&"
+                | "$`"
+                | "$'"
+                | "$+"
+                | "input"
+                | "lastMatch"
+                | "lastParen"
+                | "leftContext"
+                | "rightContext"
+        )
 }
 
 fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
