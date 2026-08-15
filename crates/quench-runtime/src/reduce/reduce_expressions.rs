@@ -247,9 +247,18 @@ fn reduce_import_expression(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let specifier = reduce_expression(&import.source, ops, facts, next_register, locals)?;
-    for argument in &import.arguments {
-        reduce_expression(argument, ops, facts, next_register, locals)?;
-    }
+    let options = import
+        .arguments
+        .last()
+        .and_then(|argument| reduce_expression(argument, ops, facts, next_register, locals))
+        .unwrap_or_else(|| {
+            let register = take_register(next_register);
+            ops.push(Op::Const {
+                dst: register,
+                value: crate::ops::Constant::Undefined,
+            });
+            register
+        });
     let phase = take_register(next_register);
     ops.push(Op::Const {
         dst: phase,
@@ -266,7 +275,7 @@ fn reduce_import_expression(
         object: capability,
         key: "dynamicImport".to_string(),
         callee: None,
-        args: vec![specifier, phase],
+        args: vec![specifier, phase, options],
     });
     let promise = take_register(next_register);
     ops.push(Op::MakeBuiltin {

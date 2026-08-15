@@ -35,14 +35,14 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::DeferredModule => Err(type_error(
             "deferred module expects one module id",
         )),
-        HostCapabilityKind::DynamicImport if arguments.len() == 2 => {
+        HostCapabilityKind::DynamicImport if arguments.len() == 3 => {
             let Value::String(specifier) = &arguments[0] else {
                 return Err(type_error("dynamic import specifier must be a string"));
             };
             let Value::Boolean(deferred) = arguments[1] else {
                 return Err(type_error("dynamic import phase must be boolean"));
             };
-            crate::vm::execute_dynamic_import(specifier.clone(), deferred)
+            crate::vm::execute_dynamic_import(specifier.clone(), deferred, arguments[2].clone())
         }
         HostCapabilityKind::DynamicImport => Err(type_error(
             "dynamic import expects a specifier and phase",

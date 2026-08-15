@@ -97,9 +97,10 @@ impl LinkedModuleGraph {
         let graph_ptr = self as *const Self;
         let module_graph_ptr = graph as *const ModuleGraph;
         let _dynamic = quench_runtime::vm::install_dynamic_import_callback(Rc::new(
-            move |specifier, deferred| {
+            move |specifier, deferred, options| {
                 let graph = unsafe { &*module_graph_ptr };
-                let target = graph.resolve(entry, &specifier).ok_or_else(|| {
+                let kind = dynamic_module_kind(&options);
+                let target = graph.resolve_kind(entry, &specifier, kind).ok_or_else(|| {
                     quench_runtime::execute::VmError::EvalError(
                         "Cannot resolve dynamic import".to_string(),
                     )
@@ -124,6 +125,32 @@ impl LinkedModuleGraph {
 
     pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
         self.units.get(&unit)?.export_cell(name)
+    }
+}
+
+fn dynamic_module_kind(options: &Value) -> ModuleKind {
+    let Value::Object(properties) = options else {
+        return ModuleKind::JavaScript;
+    };
+    let Some(Value::Object(with)) = properties
+        .iter()
+        .find(|(key, _)| key == "with")
+        .map(|(_, value)| value)
+    else {
+        return ModuleKind::JavaScript;
+    };
+    let Some(Value::String(kind)) = with
+        .iter()
+        .find(|(key, _)| key == "type")
+        .map(|(_, value)| value)
+    else {
+        return ModuleKind::JavaScript;
+    };
+    match kind.as_str() {
+        "json" => ModuleKind::Json,
+        "text" => ModuleKind::Text,
+        "bytes" => ModuleKind::Bytes,
+        _ => ModuleKind::JavaScript,
     }
 }
 
