@@ -51,6 +51,7 @@ pub(crate) fn execute(
         }
         crate::ops::Builtin::TemporalPlainTimeToString
         | crate::ops::Builtin::TemporalPlainTimeToJSON => Some(to_string(_receiver)),
+        crate::ops::Builtin::TemporalPlainTimeToLocaleString => Some(to_string(_receiver)),
         crate::ops::Builtin::TemporalPlainTimeValueOf => Some(Err(
             crate::value::error::throw_type_error("Cannot convert PlainTime to a number"),
         )),

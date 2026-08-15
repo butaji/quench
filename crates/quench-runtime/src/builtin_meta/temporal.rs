@@ -64,6 +64,9 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainTimeToJSON => Some("Temporal.PlainTime.prototype.toJSON"),
         Builtin::TemporalPlainTimeValueOf => Some("Temporal.PlainTime.prototype.valueOf"),
         Builtin::TemporalPlainTimeEquals => Some("Temporal.PlainTime.prototype.equals"),
+        Builtin::TemporalPlainTimeToLocaleString => {
+            Some("Temporal.PlainTime.prototype.toLocaleString")
+        }
         _ => None,
     }
 }
@@ -112,6 +115,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainTimeToJSON => Some("toJSON"),
         Builtin::TemporalPlainTimeValueOf => Some("valueOf"),
         Builtin::TemporalPlainTimeEquals => Some("equals"),
+        Builtin::TemporalPlainTimeToLocaleString => Some("toLocaleString"),
         _ => None,
     }
 }
