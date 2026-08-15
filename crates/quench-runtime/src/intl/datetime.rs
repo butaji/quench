@@ -716,8 +716,11 @@ pub(crate) fn prototype_method(
             }
             if nearly_equal_range(arguments)? && !has_fraction(&slots) {
                 if let Some(parts) = time_parts(&slots, start) {
-                    return Ok(make_array(parts));
+                    return Ok(make_array(add_range_source(parts, "shared")));
                 }
+            }
+            if let Some(parts) = range_time_parts(&slots, start, end) {
+                return Ok(make_array(parts));
             }
             let start = format_number(&slots, start);
             let end = format_number(&slots, end);
@@ -778,6 +781,34 @@ fn date_range_parts(slots: &[(String, Value)], start: f64, end: f64) -> Option<V
         return Some(named_range_parts(&first, &last));
     }
     None
+}
+
+fn range_time_parts(slots: &[(String, Value)], start: f64, end: f64) -> Option<Vec<Value>> {
+    if slot_string(slots, "minute").is_none() || slot_string(slots, "second").is_none() {
+        return None;
+    }
+    let mut parts = add_range_source(time_parts(slots, start)?, "startRange");
+    parts.push(range_literal_part(" – ", "shared"));
+    parts.extend(add_range_source(time_parts(slots, end)?, "endRange"));
+    Some(parts)
+}
+
+fn add_range_source(parts: Vec<Value>, source: &str) -> Vec<Value> {
+    parts
+        .into_iter()
+        .filter_map(|part| {
+            let Value::Object(properties) = part else {
+                return None;
+            };
+            let kind = properties.iter().find(|(key, _)| key == "type")?.1.clone();
+            let value = properties.iter().find(|(key, _)| key == "value")?.1.clone();
+            Some(make_object(vec![
+                ("type".to_string(), kind),
+                ("value".to_string(), value),
+                ("source".to_string(), Value::String(source.to_string())),
+            ]))
+        })
+        .collect()
 }
 
 fn numeric_range_parts(first: &NaiveDateTime, last: &NaiveDateTime) -> Vec<Value> {
