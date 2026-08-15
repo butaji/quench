@@ -474,10 +474,13 @@ fn attach_prototype(value: &crate::value::Value) {
         vec![("constructor".to_string(), value.clone())],
     )));
     if let crate::value::Value::Function(function) = value {
-        function
-            .properties
-            .borrow_mut()
-            .push(("prototype".to_string(), prototype));
+        function.properties.borrow_mut().extend([
+            ("prototype".to_string(), prototype.clone()),
+            (
+                crate::builtins::descriptor_key("prototype"),
+                prototype_descriptor(prototype),
+            ),
+        ]);
     }
 }
 
