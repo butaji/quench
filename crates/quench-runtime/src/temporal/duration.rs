@@ -40,17 +40,53 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
         crate::ops::Builtin::TemporalDurationFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalDurationCompare => Some(compare(arguments)),
+        crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
         _ => None,
     }
 }
 
+fn negated(value: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::Object(object)) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid duration"));
+    };
+    let names = [
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ];
+    let values = names
+        .iter()
+        .map(|name| {
+            match object
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value)
+            {
+                Some(Value::Number(value)) => Value::Number(-value),
+                _ => Value::Number(0.0),
+            }
+        })
+        .collect::<Vec<_>>();
+    construct(&values)
+}
+
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
+    if let Some(Value::String(text)) = value {
+        return parse_string(text);
+    }
     let Some(Value::Object(object)) = value else {
         return Err(crate::value::error::throw_type_error(
             "Duration.from requires a duration-like object",
@@ -78,6 +114,35 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         })
         .collect::<Vec<_>>();
     construct(&arguments)
+}
+
+fn parse_string(text: &str) -> Result<Value, VmError> {
+    let Some(rest) = text.strip_prefix('P') else {
+        return Err(crate::value::error::throw_range_error("Invalid duration"));
+    };
+    let mut values = vec![Value::Number(0.0); 10];
+    let mut number = String::new();
+    for character in rest.chars() {
+        if character.is_ascii_digit() || character == '-' || character == '+' {
+            number.push(character);
+            continue;
+        }
+        let value = number
+            .parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid duration"))?;
+        number.clear();
+        let index = match character {
+            'Y' => 0,
+            'M' => 1,
+            'W' => 2,
+            'D' => 3,
+            'H' => 4,
+            'S' => 6,
+            _ => return Err(crate::value::error::throw_range_error("Invalid duration")),
+        };
+        values[index] = Value::Number(value);
+    }
+    construct(&values)
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {

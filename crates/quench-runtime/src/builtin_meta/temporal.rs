@@ -5,6 +5,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalDuration => Some("Temporal.Duration"),
         Builtin::TemporalDurationFrom => Some("Temporal.Duration.from"),
         Builtin::TemporalDurationCompare => Some("Temporal.Duration.compare"),
+        Builtin::TemporalDurationNegated => Some("Temporal.Duration.prototype.negated"),
         Builtin::TemporalPlainDate => Some("Temporal.PlainDate"),
         Builtin::TemporalPlainDateFrom => Some("Temporal.PlainDate.from"),
         Builtin::TemporalPlainDateToString => Some("Temporal.PlainDate.prototype.toString"),
@@ -30,6 +31,8 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
             Some("Temporal.PlainDate.prototype.monthsInYear")
         }
         Builtin::TemporalPlainDateEquals => Some("Temporal.PlainDate.prototype.equals"),
+        Builtin::TemporalPlainDateAdd => Some("Temporal.PlainDate.prototype.add"),
+        Builtin::TemporalPlainDateSubtract => Some("Temporal.PlainDate.prototype.subtract"),
         _ => None,
     }
 }
@@ -39,6 +42,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalDuration => Some("Duration"),
         Builtin::TemporalDurationFrom => Some("from"),
         Builtin::TemporalDurationCompare => Some("compare"),
+        Builtin::TemporalDurationNegated => Some("negated"),
         Builtin::TemporalPlainDate => Some("PlainDate"),
         Builtin::TemporalPlainDateFrom => Some("from"),
         Builtin::TemporalPlainDateToString => Some("toString"),
@@ -52,6 +56,8 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateInLeapYearGetter => Some("get inLeapYear"),
         Builtin::TemporalPlainDateMonthsInYearGetter => Some("get monthsInYear"),
         Builtin::TemporalPlainDateEquals => Some("equals"),
+        Builtin::TemporalPlainDateAdd => Some("add"),
+        Builtin::TemporalPlainDateSubtract => Some("subtract"),
         _ => None,
     }
 }
