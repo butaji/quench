@@ -277,20 +277,24 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         define_proxy_stack(value, stack.clone())?;
         return Ok(Value::Undefined);
     }
-    let key = Value::String("stack".to_string());
-    if !matches!(
-        crate::builtins::object::descriptor(Some(value), Some(&key))?,
-        Value::Undefined
-    ) {
-        define_own_stack(value, stack.clone())?;
-    } else {
-        define_own_stack(value, stack.clone())?;
-    }
+    define_own_stack(value, stack.clone())?;
     Ok(Value::Undefined)
 }
 
 fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
-    let updated = crate::builtins::set_property(value.clone(), "stack", stack);
+    let key = Value::String("stack".to_string());
+    let own = crate::builtins::object::has_own_property(Some(value), Some(&key));
+    let updated = if matches!(own, Value::Boolean(true)) {
+        let descriptor = [
+            ("value".to_string(), stack),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ];
+        crate::builtins::define_own_property(value, "stack", &descriptor)?
+    } else {
+        crate::builtins::set_property(value.clone(), "stack", stack)
+    };
     crate::locals::replace_value(value, &updated);
     Ok(())
 }
