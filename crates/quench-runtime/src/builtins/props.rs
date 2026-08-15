@@ -174,26 +174,6 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             collections_prop(builtin, k)
         }
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
-        (IntlCollatorPrototype, "constructor") => Some(Value::Builtin(IntlCollator)),
-        (IntlCollatorPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.Collator".to_string()))
-        }
-        (IntlDateTimeFormatPrototype, "constructor") => Some(Value::Builtin(IntlDateTimeFormat)),
-        (IntlDateTimeFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.DateTimeFormat".to_string()))
-        }
-        (IntlDurationFormatPrototype, "constructor") => Some(Value::Builtin(IntlDurationFormat)),
-        (IntlDurationFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.DurationFormat".to_string()))
-        }
-        (IntlDisplayNamesPrototype, "constructor") => Some(Value::Builtin(IntlDisplayNames)),
-        (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.DisplayNames".to_string()))
-        }
-        (IntlListFormatPrototype, "constructor") => Some(Value::Builtin(IntlListFormat)),
-        (IntlListFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.ListFormat".to_string()))
-        }
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
         (FinalizationRegistry, "prototype") => Some(Value::Builtin(FinalizationRegistryPrototype)),
         (FinalizationRegistryPrototype, "Symbol.toStringTag") => {
@@ -472,7 +452,6 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
-        (FunctionPrototype, "Symbol.hasInstance") => Some(FunctionPrototypeHasInstance),
         (FunctionCall, "bind") => Some(FunctionBind),
         (Object, "prototype") => Some(ObjectPrototype),
         (Object, "fromEntries") => Some(ObjectFromEntries),
@@ -498,6 +477,7 @@ fn regexp_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "Symbol.split") => RegExpSymbolSplit,
         (RegExpPrototype, "Symbol.matchAll") => RegExpSymbolMatchAll,
         (RegExpStringIteratorPrototype, "next") => RegExpStringIteratorNext,
+        (StringIteratorPrototype, "next") => StringIteratorNext,
         _ => return None,
     })
 }
@@ -709,6 +689,7 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Map, "prototype") => Some(MapPrototype),
         (Set, "prototype") => Some(SetPrototype),
         (FunctionPrototype, "toString") => Some(FunctionPrototypeToString),
+        (FunctionPrototype, "valueOf") => Some(FunctionPrototypeValueOf),
         (RegExpPrototype, "toString") => Some(RegExpPrototypeToString),
         _ => builtin_method3(builtin, key),
     }
@@ -751,8 +732,7 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (BigInt, "asUintN") => Some(BigIntAsUintN),
         (BigIntPrototype, "valueOf") => Some(BigIntValueOf),
         (BigIntPrototype, "constructor") => Some(BigInt),
-        (BigIntPrototype, "toString") => Some(BigIntToString),
-        (BigIntPrototype, "toLocaleString") => Some(BigIntToLocaleString),
+        (BigIntPrototype, "toString" | "toLocaleString") => Some(BigIntToString),
         _ => None,
     }
 }
@@ -795,14 +775,14 @@ pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
     if key == "prototype" {
         return false;
     }
-    if key == "prototype" && builtin != Builtin::GeneratorFunctionPrototype {
+    if key == "prototype" {
         return false;
     }
-    if crate::builtins::object::is_well_known_symbol_property(builtin, key) {
+    if crate::builtins::object::is_well_known_symbol_property(_builtin, key) {
         return false;
     }
     if matches!(
-        (builtin, key),
+        (_builtin, key),
         (
             Builtin::Math,
             "E" | "LN2" | "LN10" | "LOG2E" | "LOG10E" | "PI" | "SQRT1_2" | "SQRT2"

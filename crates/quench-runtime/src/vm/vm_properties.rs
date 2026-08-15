@@ -45,9 +45,6 @@ fn property_for_value(value: &Value, key: &str) -> Value {
             )
         }
         Builtin(builtin) => bind_callable_property(value, *builtin, key),
-        Array(values) if key == "toLocaleString" => {
-            bind_method(value, crate::arrays::property(values, key))
-        }
         Array(values) => crate::arrays::property(values, key),
         ArrayBuffer(buffer) => array_buffer_property(buffer, key),
         Float64Array(view) => float64_array_property(view, key),
@@ -68,13 +65,9 @@ fn property_for_value(value: &Value, key: &str) -> Value {
         StringUnits(units) => string_units_property(units, key),
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
-        Function(function)
-            if function.realm == crate::ops::RealmId::ROOT
-                && matches!(key, "apply" | "call" | "bind") =>
-        {
-            function_prototype_method(function.realm, key)
+        Function(_) if matches!(key, "apply" | "call" | "bind") => {
+            bind_function_property(value, key)
         }
-        Function(_) if matches!(key, "apply" | "call" | "bind") => bind_function_property(value, key),
         Function(function) => function_property(function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
         Map(data) => map_property(data, key),
@@ -202,9 +195,7 @@ fn generator_property(value: &Value, key: &str) -> Value {
 
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     if key == "constructor" {
-        let builtin = function_constructor(function);
-        return crate::vm::intrinsic_for_global(&function.captures.get(0), builtin)
-            .unwrap_or(Value::Builtin(builtin));
+        return Value::Builtin(function_constructor(function));
     }
     let properties = function.properties.borrow();
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
@@ -297,14 +288,6 @@ pub(crate) fn get_property_with_receiver(
     if let Some(descriptor) = own_descriptor {
         if !matches!(descriptor, Value::Undefined) {
             if let Value::Object(descriptor) = descriptor {
-                if descriptor.iter().any(|(name, _)| name == "value") {
-                    let property = get_property(value, key);
-                    return Ok(if crate::intl::intl_object(value) {
-                        receiver_property(value, key, receiver)
-                    } else {
-                        property
-                    });
-                }
                 if let Some((_, getter)) = descriptor
                     .iter()
                     .rev()
@@ -525,9 +508,6 @@ fn receiver_property(value: &Value, key: &str, _receiver: &Value) -> Value {
             Builtin::IntlNumberFormatFormatToParts
                 | Builtin::IntlNumberFormatFormatRange
                 | Builtin::IntlNumberFormatFormatRangeToParts
-                | Builtin::IntlDurationFormatFormat
-                | Builtin::IntlDurationFormatFormatToParts
-                | Builtin::IntlDurationFormatResolvedOptions
         )
     ) {
         return property;
@@ -543,6 +523,17 @@ fn is_iterator_next_builtin(builtin: Builtin) -> bool {
         Builtin::RegExpStringIteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext
     )
 }
+
+fn is_iterator_next_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::RegExpStringIteratorNext
+            | Builtin::StringIteratorNext
+            | Builtin::SetIteratorNext
+            | Builtin::MapIteratorNext
+    )
+}
+
 /// Accessor getters/setters carry their `this` at invocation time; binding
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
@@ -572,12 +563,6 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     let property = builtin_property(builtin, key);
     if matches!(key, "prototype" | "constructor") {
-        if key == "constructor"
-            && matches!(property, Value::Undefined)
-            && crate::builtin_meta::constructor_name(builtin).is_some()
-        {
-            return Value::Builtin(Builtin::Function);
-        }
         return property;
     }
     if !matches!(property, Value::Undefined) {

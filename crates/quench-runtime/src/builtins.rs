@@ -466,7 +466,7 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
         ("message".to_string(), Value::String(message)),
-        ("constructor".to_string(), intrinsic),
+        ("constructor".to_string(), constructor),
         (ERROR_SLOT.to_string(), Value::Boolean(true)),
         ("\0prototype".to_string(), prototype),
     ];
@@ -481,14 +481,6 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         properties.extend(existing.properties.clone());
     }
     Value::Object(Rc::new(ObjectData::new(properties)))
-}
-
-pub(crate) fn type_error_in_realm(realm: crate::ops::RealmId, message: &str) -> Value {
-    let arguments = [Value::String(message.to_string())];
-    crate::vm::with_error_realm(realm, || {
-        crate::vm::with_realm(realm, || error(Builtin::TypeError, &arguments))
-    })
-    .unwrap_or_else(|| error(Builtin::TypeError, &arguments))
 }
 
 pub(crate) fn suppressed_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {

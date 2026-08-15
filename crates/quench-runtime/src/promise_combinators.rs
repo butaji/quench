@@ -13,6 +13,7 @@ pub(crate) fn promise_combinator(
     }
     validate_resolve(&constructor)?;
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let values = crate::collections::iterator::collect_iterable(source)?;
     let result = Rc::new(PromiseData::default());
     let values = match collect_resolved(source, Some(&constructor)) {
         Ok(values) => values,

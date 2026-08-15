@@ -456,6 +456,7 @@ pub fn delegate_next(
             }
             IteratorState::Set { .. }
             | IteratorState::Map { .. }
+            | IteratorState::String { .. }
             | IteratorState::RegExpString { .. } => {
                 return Ok(DelegationResult::Done(Value::Undefined));
             }
@@ -543,6 +544,7 @@ fn delegation_target(
         | IteratorState::ArrayLike { .. }
         | IteratorState::Set { .. }
         | IteratorState::Map { .. }
+        | IteratorState::String { .. }
         | IteratorState::RegExpString { .. } => None,
         IteratorState::Concat { .. } => None,
         IteratorState::Drop { iterator, .. } => Some(iterator.clone()),

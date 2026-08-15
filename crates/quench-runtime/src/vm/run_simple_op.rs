@@ -34,14 +34,6 @@ fn run_simple_single_op(
         MakeFunction { .. } | MakeFunctionWithKind { .. } => {
             crate::functions::write_op(registers, op)
         }
-        RemoveFunctionPrototype { function } => {
-            let value = read_register(registers, *function)?;
-            if let Value::Function(function) = value {
-                function.properties.borrow_mut().retain(|(key, _)| {
-                    key != "prototype" && !key.starts_with("\0quench:descriptor:\0prototype")
-                });
-            }
-        }
         Call { .. } => run_call(registers, op)?,
         OptionalCall { .. } => run_optional_call(registers, op)?,
         Eval { .. } => run_eval(registers, op)?,

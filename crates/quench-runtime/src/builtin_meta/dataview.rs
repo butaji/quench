@@ -12,6 +12,11 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::ArrayBufferResizableGetter => Some("get resizable"),
         Builtin::ArrayBufferImmutableGetter => Some("get immutable"),
         Builtin::DataViewByteOffsetGetter => Some("get byteOffset"),
+        Builtin::SharedArrayBufferByteLengthGetter => Some("get byteLength"),
+        Builtin::SharedArrayBufferGrowableGetter => Some("get growable"),
+        Builtin::SharedArrayBufferMaxByteLengthGetter => Some("get maxByteLength"),
+        Builtin::SharedArrayBufferGrow => Some("grow"),
+        Builtin::SharedArrayBufferSlice => Some("slice"),
         _ => None,
     }
 }
