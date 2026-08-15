@@ -66,7 +66,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
             "Invalid annotation key",
         ));
     }
-    if text.contains("[!") && !text.contains("[!u-ca=") {
+    if has_unknown_critical_annotation(text) {
         return Err(crate::value::error::throw_range_error(
             "Unknown critical annotation",
         ));
@@ -113,6 +113,12 @@ fn has_uppercase_annotation_key(text: &str) -> bool {
                 .next()
                 .is_some_and(|key| key.chars().any(|character| character.is_ascii_uppercase()))
         })
+}
+
+fn has_unknown_critical_annotation(text: &str) -> bool {
+    text.split('[').skip(1).any(|annotation| {
+        annotation.starts_with('!') && annotation.contains('=') && !annotation.starts_with("!u-ca=")
+    })
 }
 
 fn date_part(text: &str) -> &str {
