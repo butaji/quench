@@ -220,33 +220,33 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
             let global = Value::Object(properties.clone());
             let deleted = properties
                 .iter()
-                .any(|(name, _)| name == &crate::builtins::deleted_key(&key));
+                .any(|(name, _)| name == crate::builtins::deleted_key(key));
             if !deleted
                 && crate::vm::is_global_object(&global)
-                && crate::vm::global_builtin_exists(&key)
+                && crate::vm::global_builtin_exists(key)
             {
-                let value = crate::execute::get_property(&global, &key);
+                let value = crate::execute::get_property(&global, key);
                 Some(descriptor_object_with_flags(value, true, false, true))
             } else if is_child_realm_global(&global)
                 && !matches!(key, "undefined" | "Infinity" | "NaN")
             {
-                configurable_global_descriptor(&global, &key)
+                configurable_global_descriptor(&global, key)
             } else {
-                object_descriptor(properties, &key)
+                object_descriptor(properties, key)
             }
         }
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
             .upgrade()
-            .and_then(|properties| object_descriptor(&properties, &key)),
-        Value::Array(values) => array_descriptor(values, &key),
-        Value::String(value) => string_descriptor(value, &key),
-        Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),
-        Value::Function(function) => function_descriptor(function, &key),
-        Value::BoundFunction(bound) => bound_descriptor(bound, &key),
-        Value::ArrayBuffer(buffer) => buffer_descriptor(buffer, &key),
-        Value::DataView(view) => data_view_descriptor(view, &key),
+            .and_then(|properties| object_descriptor(&properties, key)),
+        Value::Array(values) => array_descriptor(values, key),
+        Value::String(value) => string_descriptor(value, key),
+        Value::Builtin(builtin) => builtin_descriptor(*builtin, key),
+        Value::Function(function) => function_descriptor(function, key),
+        Value::BoundFunction(bound) => bound_descriptor(bound, key),
+        Value::ArrayBuffer(buffer) => buffer_descriptor(buffer, key),
+        Value::DataView(view) => data_view_descriptor(view, key),
         _ => None,
     };
     descriptor
