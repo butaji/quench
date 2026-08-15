@@ -233,8 +233,8 @@ pub(crate) fn proxy_construct(
             let new_target = new_target.unwrap_or(target);
             return call_trap(
                 &trap,
-                &[target.clone(), args_array, new_target.clone()],
-                None,
+                &[proxy.target.clone(), args_array, new_target.clone()],
+                Some(&proxy.handler),
             );
         }
     }

@@ -93,6 +93,7 @@ fn construct_with_new_target(
         }
         Value::Function(function) => construct_function(function, new_target, arguments),
         Value::BoundFunction(bound) => construct_bound(bound, target, new_target, arguments),
+        Value::Proxy(_) => crate::proxy::proxy_construct(target, arguments, Some(new_target)),
         _ => Err(crate::vm::not_callable()),
     }
 }
