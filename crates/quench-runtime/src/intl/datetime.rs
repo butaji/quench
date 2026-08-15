@@ -428,62 +428,7 @@ fn component_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>>
         if slot_string(slots, name).is_none() {
             continue;
         }
-        let value = match name {
-            "year" => date.year().to_string(),
-            "month" if slot_string(slots, "month") == Some("long".into()) => {
-                if slot_string(slots, "calendar")
-                    .is_some_and(|calendar| calendar.contains("islamic"))
-                    || slot_string(slots, "locale").is_some_and(|locale| locale.contains("islamic"))
-                {
-                    "Ramadan".into()
-                } else {
-                    [
-                        "January",
-                        "February",
-                        "March",
-                        "April",
-                        "May",
-                        "June",
-                        "July",
-                        "August",
-                        "September",
-                        "October",
-                        "November",
-                        "December",
-                    ][date.month0() as usize]
-                        .into()
-                }
-            }
-            "month" => date.month().to_string(),
-            "day" => date.day().to_string(),
-            "hour"
-                if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h23")
-                    || slot_bool(slots, "hour12") == Some(false)
-                    || slot_string(slots, "hour").as_deref() == Some("2-digit") =>
-            {
-                format!("{:02}", date.hour())
-            }
-            "hour" if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h24") => {
-                if date.hour() == 0 {
-                    "24".into()
-                } else {
-                    format!("{:02}", date.hour())
-                }
-            }
-            "hour"
-                if slot_bool(slots, "hour12") == Some(true)
-                    || slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h12") =>
-            {
-                let hour = date.hour() % 12;
-                format!("{}", if hour == 0 { 12 } else { hour })
-            }
-            "hour" if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h11") => {
-                (date.hour() % 12).to_string()
-            }
-            "hour" => date.hour().to_string(),
-            "minute" => format!("{:02}", date.minute()),
-            _ => format!("{:02}", date.second()),
-        };
+        let value = component_value(name, slots, date);
         parts.push(make_object(vec![
             ("type".to_string(), Value::String(kind.to_string())),
             ("value".to_string(), Value::String(value)),
@@ -505,6 +450,64 @@ fn component_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>>
         ]));
     }
     (!parts.is_empty()).then_some(parts)
+}
+
+fn component_value(name: &str, slots: &[(String, Value)], date: DateTime<Utc>) -> String {
+    match name {
+        "year" => date.year().to_string(),
+        "month" if slot_string(slots, "month") == Some("long".into()) => {
+            if slot_string(slots, "calendar").is_some_and(|calendar| calendar.contains("islamic"))
+                || slot_string(slots, "locale").is_some_and(|locale| locale.contains("islamic"))
+            {
+                "Ramadan".into()
+            } else {
+                [
+                    "January",
+                    "February",
+                    "March",
+                    "April",
+                    "May",
+                    "June",
+                    "July",
+                    "August",
+                    "September",
+                    "October",
+                    "November",
+                    "December",
+                ][date.month0() as usize]
+                    .into()
+            }
+        }
+        "month" => date.month().to_string(),
+        "day" => date.day().to_string(),
+        "hour"
+            if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h23")
+                || slot_bool(slots, "hour12") == Some(false)
+                || slot_string(slots, "hour").as_deref() == Some("2-digit") =>
+        {
+            format!("{:02}", date.hour())
+        }
+        "hour" if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h24") => {
+            if date.hour() == 0 {
+                "24".into()
+            } else {
+                format!("{:02}", date.hour())
+            }
+        }
+        "hour"
+            if slot_bool(slots, "hour12") == Some(true)
+                || slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h12") =>
+        {
+            let hour = date.hour() % 12;
+            format!("{}", if hour == 0 { 12 } else { hour })
+        }
+        "hour" if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h11") => {
+            (date.hour() % 12).to_string()
+        }
+        "hour" => date.hour().to_string(),
+        "minute" => format!("{:02}", date.minute()),
+        _ => format!("{:02}", date.second()),
+    }
 }
 
 fn part_value(part: &Value) -> Option<String> {
