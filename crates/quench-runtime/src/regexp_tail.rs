@@ -406,10 +406,6 @@ pub(crate) fn iterator_step(
             crate::conversion::to_string(&crate::execute::get_property_result(&result, "0")?)?;
         if matched.is_empty() {
             let index = extract_last_index(regexp)?;
-            if index >= crate::strings::utf16_len(input) {
-                *done = true;
-                return Ok(Some(result));
-            }
             set_last_index(regexp, advance_string_index(input, index, unicode) as f64)?;
         }
     } else {
