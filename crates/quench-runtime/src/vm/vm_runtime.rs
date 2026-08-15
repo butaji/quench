@@ -206,6 +206,9 @@ fn stateful_builtin(
         Builtin::AtomicsAnd => Some(Err(crate::value::error::throw_type_error(
             "Atomics.and requires a valid typed array",
         ))),
+        Builtin::AtomicsOr => Some(Err(crate::value::error::throw_type_error(
+            "Atomics.or requires a valid typed array",
+        ))),
         _ => None,
     }
 }

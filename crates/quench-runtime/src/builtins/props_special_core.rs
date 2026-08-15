@@ -85,6 +85,7 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         (Atomics, "Symbol.toStringTag") => Some(Value::String("Atomics".into())),
         (Atomics, "add") => Some(Value::Builtin(AtomicsAdd)),
         (Atomics, "and") => Some(Value::Builtin(AtomicsAnd)),
+        (Atomics, "or") => Some(Value::Builtin(AtomicsOr)),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
