@@ -57,6 +57,8 @@ impl LinkedModuleGraph {
                 LinkedModule::compile_json(&unit.source)?
             } else if unit.kind == ModuleKind::Text {
                 LinkedModule::compile_text(&unit.source)?
+            } else if unit.kind == ModuleKind::Bytes {
+                LinkedModule::compile_bytes(&unit.bytes)?
             } else {
                 LinkedModule::compile(&unit.source)?
             };
@@ -347,6 +349,19 @@ impl LinkedModule {
         Ok(module)
     }
 
+    pub fn compile_bytes(bytes: &[u8]) -> Result<Self, String> {
+        let mut module = Self::compile("export default null;")?;
+        let buffer = std::rc::Rc::new(quench_runtime::value::ArrayBufferData::new(0));
+        *buffer.bytes.borrow_mut() = bytes.to_vec();
+        buffer.immutable = true;
+        let view = quench_runtime::value::Uint8ArrayData::new(buffer, 0, bytes.len());
+        module.fixed_exports.push((
+            "default".to_string(),
+            quench_runtime::value::Value::Uint8Array(std::rc::Rc::new(view)),
+        ));
+        Ok(module)
+    }
+
     pub fn bind_import(&self, local: &str, cell: ModuleBindingCell) -> Result<(), String> {
         let slot = self
             .program
@@ -579,10 +594,12 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
             )
         })
         .ok_or_else(|| "module unit is unknown".to_string())?;
-    if graph
-        .unit(from)
-        .is_some_and(|unit| matches!(unit.kind, ModuleKind::Json | ModuleKind::Text))
-    {
+    if graph.unit(from).is_some_and(|unit| {
+        matches!(
+            unit.kind,
+            ModuleKind::Json | ModuleKind::Text | ModuleKind::Bytes
+        )
+    }) {
         return Ok(());
     }
     let metadata = inspect_module_source(&source).map_err(|errors| errors.join("; "))?;
@@ -591,7 +608,11 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
             .import_types
             .iter()
             .any(|(source, attribute)| source == &specifier && attribute == "type=text");
-        if graph.resolve(from, &specifier).is_some() && !text_import {
+        let bytes_import = metadata
+            .import_types
+            .iter()
+            .any(|(source, attribute)| source == &specifier && attribute == "type=bytes");
+        if graph.resolve(from, &specifier).is_some() && !text_import && !bytes_import {
             continue;
         }
         if specifier == "<module source>" {
@@ -613,6 +634,14 @@ fn add_module_source(
     import_types: &[(String, String)],
     specifier: &str,
 ) -> Result<ModuleId, String> {
+    if import_types
+        .iter()
+        .any(|(source, attribute)| source == specifier && attribute == "type=bytes")
+    {
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
+        return Ok(graph.add_bytes_dependency(path, bytes));
+    }
     let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("module {}: {error}", path.display()))?;
     if import_types
