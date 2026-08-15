@@ -50,6 +50,11 @@ pub(crate) fn current_global_for(value: &Value) -> Option<Value> {
 pub(crate) fn intrinsic_for_realm(realm: RealmId, builtin: Builtin) -> Value {
     realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
 }
+
+pub(crate) fn realm_intrinsic(builtin: Builtin) -> Value {
+    let realm = current_context_or_default().realm();
+    realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
+}
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
