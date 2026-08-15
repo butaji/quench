@@ -34,9 +34,10 @@ fn step_target_state(
     Ok(match state {
         IteratorState::Native {
             values,
+            receiver,
             index,
             done,
-        } => StepTarget::Value(native_step(values, index, done)),
+        } => StepTarget::Value(native_step(values, receiver.as_ref(), index, done)),
         IteratorState::String { input, index, done } => {
             StepTarget::Value(string_step(input, index, done))
         }
