@@ -183,7 +183,8 @@ fn array_descriptor_flag(values: &crate::value::ArrayData, key: &str, flag: &str
 fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value: Value) -> Value {
     if key == "length" {
         if values.is_arguments() {
-            Rc::make_mut(&mut values).set_property(key, value);
+            let length = value_to_number(&value).max(0.0) as usize;
+            Rc::make_mut(&mut values).set_length(length);
             return Value::Array(values);
         }
         let length = value_to_number(&value).max(0.0) as usize;
