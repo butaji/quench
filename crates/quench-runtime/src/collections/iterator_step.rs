@@ -1,6 +1,6 @@
 //! Iterator stepping — one observable `next` fetch per protocol iterator (GetIterator semantics).
 
-use super::{iterator_map, iterator_protocol, mark_done, native_step, not_iterable};
+use super::{close, iterator_map, iterator_protocol, mark_done, native_step, not_iterable};
 use crate::value::{IteratorData, IteratorState, Value};
 
 pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
@@ -146,13 +146,14 @@ fn zip_step(
     }
     let mut values = Vec::with_capacity(iterators.len());
     let mut ended = 0;
-    for iterator in iterators {
-        match super::step_value(iterator)? {
-            Some(value) => values.push(value),
-            None => {
+    for (index, iterator) in iterators.iter().enumerate() {
+        match super::step_value(iterator) {
+            Ok(Some(value)) => values.push(value),
+            Ok(None) => {
                 ended += 1;
                 values.push(Value::Undefined);
             }
+            Err(error) => return Err(close_remaining(&iterators[index + 1..], error)),
         }
     }
     if ended == iterators.len() {
@@ -169,6 +170,18 @@ fn zip_step(
         return Ok(None);
     }
     Ok(Some(Value::array(values)))
+}
+
+fn close_remaining(iterators: &[Value], error: crate::execute::VmError) -> crate::execute::VmError {
+    let mut completion = crate::completion::Completion::from_vm_error(error.clone())
+        .unwrap_or(crate::completion::Completion::Throw(Value::Undefined));
+    for iterator in iterators.iter().rev() {
+        completion = close(iterator.clone(), completion.clone()).unwrap_or(completion);
+    }
+    match completion.into_vm_error() {
+        Err(close_error) => close_error,
+        Ok(_) => error,
+    }
 }
 
 fn mapped_step(
