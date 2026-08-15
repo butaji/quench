@@ -14,44 +14,81 @@ pub(crate) fn promise_combinator(
     validate_resolve(&constructor)?;
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     let result = Rc::new(PromiseData::default());
-    let values = match collect_resolved(source, Some(&constructor)) {
+    let (resolve, reject, constructed) = capability(receiver, &result)?;
+    validate_constructor(receiver)?;
+    let values = match collect_resolved(source, receiver) {
         Ok(values) => values,
         Err(error) => return Ok(Value::Promise(result_with_error(result, error))),
     };
     let aggregate = Rc::new(PromiseAggregate {
         kind,
         result: Rc::clone(&result),
+        resolve,
+        reject,
         remaining: RefCell::new(values.len()),
         values: RefCell::new(vec![Value::Undefined; values.len()]),
         settled: RefCell::new(false),
     });
+    let empty = values.is_empty();
     for (index, value) in values.into_iter().enumerate() {
         register_aggregate_value(&aggregate, index, value);
     }
-    if *aggregate.remaining.borrow() == 0 {
+    if empty {
         finish_empty_aggregate(&aggregate);
     }
-    Ok(Value::Promise(result))
+    crate::promise::drain_microtasks();
+    Ok(constructed.unwrap_or(Value::Promise(result)))
 }
 
-fn validate_resolve(constructor: &Value) -> Result<(), VmError> {
-    let resolve = crate::execute::get_property_result(constructor, "resolve")?;
-    if !crate::conversion::is_callable(&resolve) {
+fn validate_constructor(receiver: Option<&Value>) -> Result<(), VmError> {
+    let constructor = receiver.unwrap_or(&Value::Builtin(crate::ops::Builtin::Promise));
+    if !crate::conversion::is_callable(constructor) {
         return Err(crate::value::error::throw_type_error(
-            "Promise constructor resolve is not callable",
+            "Promise constructor must be callable",
         ));
     }
     Ok(())
 }
 
-fn is_constructor(value: &Value) -> bool {
-    match value {
-        Value::Function(function) => crate::functions::is_constructible(function),
-        Value::BoundFunction(bound) => is_constructor(&bound.target),
-        Value::Proxy(_) => true,
-        Value::Builtin(builtin) => matches!(builtin, crate::ops::Builtin::Promise),
-        _ => false,
+fn capability(
+    receiver: Option<&Value>,
+    result: &Rc<PromiseData>,
+) -> Result<(Value, Value, Option<Value>), VmError> {
+    let resolve =
+        crate::promise::bound_settler_for_capability(crate::ops::Builtin::PromiseResolve, result);
+    let reject =
+        crate::promise::bound_settler_for_capability(crate::ops::Builtin::PromiseReject, result);
+    let Some(constructor) = receiver else {
+        return Ok((resolve, reject, None));
+    };
+    if matches!(constructor, Value::Builtin(crate::ops::Builtin::Promise)) {
+        return Ok((resolve, reject, None));
     }
+    let state = Value::BindingCell(Rc::new(RefCell::new(Value::Object(Rc::new(
+        crate::value::ObjectData::new(vec![
+            ("resolve".to_string(), Value::Undefined),
+            ("reject".to_string(), Value::Undefined),
+        ]),
+    )))));
+    let executor = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(crate::ops::Builtin::PromiseCapabilityExecutor),
+        receiver: state.clone(),
+        arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
+    }));
+    let constructed = crate::construct::construct_value(constructor, &[executor])?;
+    let state = match state {
+        Value::BindingCell(cell) => cell.borrow().clone(),
+        _ => unreachable!(),
+    };
+    let resolve = crate::execute::get_property_result(&state, "resolve")?;
+    let reject = crate::execute::get_property_result(&state, "reject")?;
+    if !crate::conversion::is_callable(&resolve) || !crate::conversion::is_callable(&reject) {
+        return Err(crate::value::error::throw_type_error(
+            "Promise capability callbacks must be callable",
+        ));
+    }
+    Ok((resolve, reject, Some(constructed)))
 }
 
 fn collect_resolved(source: Value, receiver: Option<&Value>) -> Result<Vec<Value>, Value> {
@@ -68,6 +105,8 @@ fn collect_resolved(source: Value, receiver: Option<&Value>) -> Result<Vec<Value
         let Some(item) = item else { return Ok(values) };
         let resolved = crate::functions::execute_target(&resolve, &constructor, &[item])
             .map_err(|error| close_reason(&iterator, error))?;
+        let resolved = crate::promise::promise_resolve(&[resolved]);
+        crate::promise::drain_microtasks();
         values.push(resolved);
     }
 }
@@ -192,12 +231,12 @@ fn finish_empty_aggregate(aggregate: &PromiseAggregate) {
 
 fn resolve_aggregate(aggregate: &PromiseAggregate, value: Value) {
     *aggregate.settled.borrow_mut() = true;
-    resolve_promise(&aggregate.result, value);
+    let _ = crate::functions::execute_target(&aggregate.resolve, &Value::Undefined, &[value]);
 }
 
 fn reject_aggregate(aggregate: &PromiseAggregate, value: Value) {
     *aggregate.settled.borrow_mut() = true;
-    reject_promise(&aggregate.result, value);
+    let _ = crate::functions::execute_target(&aggregate.reject, &Value::Undefined, &[value]);
 }
 
 fn settled_record(status: &str, value: Value) -> Value {

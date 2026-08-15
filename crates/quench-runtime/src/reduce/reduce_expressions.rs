@@ -288,7 +288,8 @@ fn reduce_import_expression(
         object: promise,
         key: "resolve".to_string(),
         callee: None,
-        args: vec![imported],
+        args: vec![specifier],
+        spreads: vec![false],
     });
     Some(dst)
 }

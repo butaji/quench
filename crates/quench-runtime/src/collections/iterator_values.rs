@@ -98,10 +98,18 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
         IteratorState::RegExpString { .. } => crate::ops::Builtin::RegExpStringIteratorPrototype,
         IteratorState::Set { .. } => crate::ops::Builtin::SetIteratorPrototype,
         IteratorState::Map { .. } => crate::ops::Builtin::MapIteratorPrototype,
-        IteratorState::Native { .. } | IteratorState::Protocol { .. } => {
-            crate::ops::Builtin::ArrayIteratorPrototype
-        }
-        IteratorState::ArrayLike { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::Native { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::Protocol { iterator, .. } => match iterator {
+            Value::Generator(generator) => {
+                return crate::builtins::object::generator_prototype(generator);
+            }
+            _ => crate::ops::Builtin::ArrayIteratorPrototype,
+        },
+        IteratorState::Concat { .. } => crate::ops::Builtin::IteratorPrototype,
+        IteratorState::Drop { .. } => crate::ops::Builtin::IteratorPrototype,
+        IteratorState::MapHelper { .. } => crate::ops::Builtin::IteratorPrototype,
+        IteratorState::FilterHelper { .. } => crate::ops::Builtin::IteratorPrototype,
+        IteratorState::Take { .. } => crate::ops::Builtin::IteratorPrototype,
     };
     Value::Builtin(builtin)
 }
@@ -109,6 +117,15 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
 pub(crate) fn property(key: &str) -> Value {
     match key {
         "next" => Value::Builtin(crate::ops::Builtin::IteratorNext),
+        "return" => Value::Builtin(crate::ops::Builtin::IteratorReturn),
+        "toArray" => Value::Builtin(crate::ops::Builtin::IteratorToArray),
+        "drop" => Value::Builtin(crate::ops::Builtin::IteratorDrop),
+        "map" => Value::Builtin(crate::ops::Builtin::IteratorMap),
+        "every" => Value::Builtin(crate::ops::Builtin::IteratorEvery),
+        "some" => Value::Builtin(crate::ops::Builtin::IteratorSome),
+        "find" => Value::Builtin(crate::ops::Builtin::IteratorFind),
+        "filter" => Value::Builtin(crate::ops::Builtin::IteratorFilter),
+        "take" => Value::Builtin(crate::ops::Builtin::IteratorTake),
         "Symbol.iterator" => Value::Builtin(crate::ops::Builtin::IteratorSelf),
         _ => Value::Undefined,
     }
@@ -117,6 +134,21 @@ pub(crate) fn property(key: &str) -> Value {
 pub(crate) fn property_for(value: &Value, key: &str) -> Value {
     if key == "next" {
         return next_for(value);
+    }
+    if key == "return" {
+        let Value::Iterator(data) = value else {
+            return property(key);
+        };
+        let state = data.state.borrow();
+        if matches!(
+            &*state,
+            IteratorState::Native { .. }
+                | IteratorState::Set { .. }
+                | IteratorState::Map { .. }
+                | IteratorState::RegExpString { .. }
+        ) {
+            return Value::Undefined;
+        }
     }
     if key != "Symbol.toStringTag" {
         return property(key);
@@ -130,6 +162,11 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
         IteratorState::Set { .. } => "Set Iterator",
         IteratorState::Map { .. } => "Map Iterator",
         IteratorState::Protocol { .. } => "Iterator",
+        IteratorState::Concat { .. } => "Iterator",
+        IteratorState::Drop { .. } => "Iterator",
+        IteratorState::MapHelper { .. } => "Iterator",
+        IteratorState::FilterHelper { .. } => "Iterator",
+        IteratorState::Take { .. } => "Iterator",
     };
     Value::String(tag.to_string())
 }
@@ -143,9 +180,12 @@ fn next_for(value: &Value) -> Value {
         IteratorState::RegExpString { .. } => Builtin::RegExpStringIteratorNext,
         IteratorState::Set { .. } => Builtin::SetIteratorNext,
         IteratorState::Map { .. } => Builtin::MapIteratorNext,
-        IteratorState::Native { .. }
-        | IteratorState::ArrayLike { .. }
-        | IteratorState::Protocol { .. } => Builtin::IteratorNext,
+        IteratorState::Native { .. } | IteratorState::Protocol { .. } => Builtin::IteratorNext,
+        IteratorState::Concat { .. } => Builtin::IteratorNext,
+        IteratorState::Drop { .. } => Builtin::IteratorNext,
+        IteratorState::MapHelper { .. } => Builtin::IteratorNext,
+        IteratorState::FilterHelper { .. } => Builtin::IteratorNext,
+        IteratorState::Take { .. } => Builtin::IteratorNext,
     };
     Value::Builtin(builtin)
 }

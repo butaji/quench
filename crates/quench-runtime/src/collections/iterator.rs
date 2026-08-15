@@ -11,19 +11,125 @@ mod iterator_typed;
 #[path = "iterator_values.rs"]
 mod iterator_values;
 pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpdateGuard};
-pub(crate) use iterator_step::step_value;
+pub(crate) use iterator_step::{step_source, step_value};
 pub(crate) use iterator_values::{
     from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_array_like,
     make_regexp_string, next, next_map, next_set, property_for, prototype_of,
 };
+
+pub(crate) fn return_(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::vm::not_callable());
+    };
+    let Value::Iterator(data) = receiver else {
+        let method = crate::execute::get_property_result(receiver, "return")?;
+        if matches!(method, Value::Undefined | Value::Null) {
+            return Ok(Value::Undefined);
+        }
+        if !crate::conversion::is_callable(&method) {
+            return Err(crate::vm::not_callable());
+        }
+        crate::functions::execute_target(&method, receiver, &[])?;
+        return Ok(Value::Undefined);
+    };
+    let (iterator, arguments) = {
+        let mut state = data.state.borrow_mut();
+        match &mut *state {
+            IteratorState::Protocol { iterator, done, .. } => {
+                if *done {
+                    return Ok(iterator_result(Value::Undefined, true));
+                }
+                *done = true;
+                (iterator.clone(), arguments.to_vec())
+            }
+            IteratorState::Concat {
+                current: Some(iterator),
+                done,
+                executing,
+                ..
+            } => {
+                if *executing {
+                    return Err(crate::value::error::throw_type_error(
+                        "Iterator is already executing",
+                    ));
+                }
+                if *done {
+                    return Ok(iterator_result(Value::Undefined, true));
+                }
+                *done = true;
+                *executing = true;
+                (iterator.clone(), Vec::new())
+            }
+            IteratorState::Concat { done, .. } => {
+                *done = true;
+                return Ok(iterator_result(Value::Undefined, true));
+            }
+            IteratorState::Drop { iterator, done, .. }
+            | IteratorState::MapHelper { iterator, done, .. }
+            | IteratorState::Take { iterator, done, .. } => {
+                if *done {
+                    return Ok(iterator_result(Value::Undefined, true));
+                }
+                *done = true;
+                (iterator.clone(), Vec::new())
+            }
+            _ => return Ok(iterator_result(Value::Undefined, true)),
+        }
+    };
+    let method = crate::execute::get_property_result(&iterator, "return")?;
+    if matches!(method, Value::Undefined | Value::Null) {
+        clear_concat_executing(receiver);
+        return Ok(iterator_result(Value::Undefined, true));
+    }
+    if !crate::conversion::is_callable(&method) {
+        clear_concat_executing(receiver);
+        return Err(crate::vm::not_callable());
+    }
+    let result = crate::functions::execute_target(&method, &iterator, &arguments);
+    clear_concat_executing(receiver);
+    result
+}
+
+fn clear_concat_executing(receiver: &Value) {
+    if let Value::Iterator(data) = receiver {
+        if let IteratorState::Concat { executing, .. } = &mut *data.state.borrow_mut() {
+            *executing = false;
+        }
+    }
+}
+
+fn iterator_result(value: Value, done: bool) -> Value {
+    Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), value),
+        ("done".to_string(), Value::Boolean(done)),
+    ])))
+}
 fn make_protocol(iterator: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Protocol {
             iterator,
             next: Value::Undefined,
             done: false,
+            executing: false,
         }),
     }))
+}
+
+pub(crate) fn open_with_method(
+    iterable: Value,
+    method: Value,
+) -> Result<Value, crate::execute::VmError> {
+    let iterator = crate::functions::execute_target(&method, &iterable, &[])?;
+    if !crate::value::is_object(&iterator) {
+        return Err(not_iterable());
+    }
+    if matches!(iterator, Value::Iterator(_) | Value::Generator(_)) {
+        return Ok(iterator);
+    }
+    Ok(make_protocol(iterator))
 }
 pub(crate) fn execute(
     registers: &mut Vec<Value>,
@@ -70,8 +176,8 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
     let Value::Iterator(data) = record else {
         return Err(not_iterable());
     };
-    let state = data.state.borrow();
-    match &*state {
+    let mut state = data.state.borrow_mut();
+    match &mut *state {
         IteratorState::Native { done: true, .. }
         | IteratorState::ArrayLike { done: true, .. }
         | IteratorState::Set { done: true, .. }
@@ -84,6 +190,28 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
         IteratorState::Map { .. } => Ok(None),
         IteratorState::RegExpString { .. } => Ok(None),
         IteratorState::Protocol { iterator, .. } => Ok(Some(iterator.clone())),
+        IteratorState::Concat {
+            current: Some(iterator),
+            done,
+            ..
+        } => {
+            *done = true;
+            Ok(Some(iterator.clone()))
+        }
+        IteratorState::Concat { .. } => Ok(None),
+        IteratorState::Drop { iterator, done, .. } => {
+            *done = true;
+            Ok(Some(iterator.clone()))
+        }
+        IteratorState::MapHelper { iterator, done, .. }
+        | IteratorState::FilterHelper { iterator, done, .. } => {
+            *done = true;
+            Ok(Some(iterator.clone()))
+        }
+        IteratorState::Take { iterator, done, .. } => {
+            *done = true;
+            Ok(Some(iterator.clone()))
+        }
     }
 }
 fn get_return_method(iterator: &Value) -> Result<Option<Value>, crate::execute::VmError> {
@@ -139,7 +267,7 @@ fn require_object_coercible(value: Value) -> Result<(), crate::execute::VmError>
     Ok(())
 }
 pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
-    if matches!(value, Value::Iterator(_)) {
+    if matches!(value, Value::Iterator(_) | Value::Generator(_)) {
         return Ok(value);
     }
     let method = crate::execute::get_property_result(&value, "Symbol.iterator")?;
@@ -161,7 +289,7 @@ pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
     if !crate::value::is_object(&iterator) {
         return Err(not_iterable());
     }
-    if matches!(iterator, Value::Iterator(_)) {
+    if matches!(iterator, Value::Iterator(_) | Value::Generator(_)) {
         return Ok(iterator);
     }
     Ok(make_protocol(iterator))
@@ -202,6 +330,9 @@ fn collect_rest(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
 }
 
 pub(crate) fn collect(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
+    if matches!(value, Value::Generator(_)) {
+        return collect_generator(value);
+    }
     let mut values = Vec::new();
     loop {
         match step_value(value) {
@@ -223,6 +354,15 @@ pub(crate) fn collect(value: &Value) -> Result<Vec<Value>, crate::execute::VmErr
     }
 }
 
+fn collect_generator(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
+    let mut values = Vec::new();
+    for_each_generator(value.clone(), |item| {
+        values.push(item);
+        Ok(())
+    })?;
+    Ok(values)
+}
+
 pub(crate) fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
     let iterator = open(value)?;
     collect(&iterator)
@@ -235,7 +375,16 @@ pub(crate) fn for_each_iterable<F>(
 where
     F: FnMut(Value) -> Result<(), crate::execute::VmError>,
 {
+    if matches!(value, Value::Generator(_)) {
+        return for_each_generator(value, callback);
+    }
+    if let Some(generator) = protocol_generator(&value) {
+        return for_each_generator(generator, callback);
+    }
     let iterator = open(value)?;
+    if matches!(iterator, Value::Generator(_)) {
+        return for_each_generator(iterator, callback);
+    }
     loop {
         let Some(item) = step_value(&iterator)? else {
             return Ok(());
@@ -249,6 +398,32 @@ where
             }
             return Err(error);
         }
+    }
+}
+
+fn protocol_generator(value: &Value) -> Option<Value> {
+    let Value::Iterator(data) = value else {
+        return None;
+    };
+    let state = data.state.borrow();
+    let IteratorState::Protocol { iterator, .. } = &*state else {
+        return None;
+    };
+    matches!(iterator, Value::Generator(_)).then(|| iterator.clone())
+}
+
+fn for_each_generator<F>(generator: Value, mut callback: F) -> Result<(), crate::execute::VmError>
+where
+    F: FnMut(Value) -> Result<(), crate::execute::VmError>,
+{
+    loop {
+        let result = crate::generator::next(Some(&generator), &[])?;
+        let done = crate::execute::get_property_result(&result, "done")?;
+        if crate::execute::is_truthy(&done) {
+            return Ok(());
+        }
+        let value = crate::execute::get_property_result(&result, "value")?;
+        callback(value)?;
     }
 }
 pub enum DelegationResult {
@@ -285,6 +460,11 @@ pub fn delegate_next(
             }
             IteratorState::Protocol { iterator, done, .. } if !*done => Some(iterator.clone()),
             IteratorState::Protocol { .. } => None,
+            IteratorState::Concat { .. } => None,
+            IteratorState::Drop { .. } => None,
+            IteratorState::MapHelper { .. } => None,
+            IteratorState::FilterHelper { .. } => None,
+            IteratorState::Take { .. } => None,
         }
     };
     let Some(iterator) = protocol else {
@@ -363,6 +543,11 @@ fn delegation_target(
         | IteratorState::Set { .. }
         | IteratorState::Map { .. }
         | IteratorState::RegExpString { .. } => None,
+        IteratorState::Concat { .. } => None,
+        IteratorState::Drop { iterator, .. } => Some(iterator.clone()),
+        IteratorState::MapHelper { iterator, .. } => Some(iterator.clone()),
+        IteratorState::FilterHelper { iterator, .. } => Some(iterator.clone()),
+        IteratorState::Take { iterator, .. } => Some(iterator.clone()),
     };
     Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
 }
@@ -414,6 +599,11 @@ pub(super) fn mark_done(data: &IteratorData) {
         | IteratorState::Map { done, .. }
         | IteratorState::Protocol { done, .. }
         | IteratorState::RegExpString { done, .. } => *done = true,
+        IteratorState::Concat { done, .. } => *done = true,
+        IteratorState::Drop { done, .. } => *done = true,
+        IteratorState::MapHelper { done, .. } => *done = true,
+        IteratorState::FilterHelper { done, .. } => *done = true,
+        IteratorState::Take { done, .. } => *done = true,
     }
 }
 fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {

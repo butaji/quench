@@ -191,6 +191,7 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "Function" => Function,
         "Proxy" => Proxy,
         "Promise" => Promise,
+        "Proxy" => Proxy,
         "RegExp" => RegExp,
         "Symbol" => Symbol,
         "Intl" => Intl,

@@ -58,6 +58,15 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
         | Builtin::AggregateErrorPrototype => {
             &["constructor", "name", "message", "toString"]
         }
+        Builtin::EvalErrorPrototype
+        | Builtin::RangeErrorPrototype
+        | Builtin::ReferenceErrorPrototype
+        | Builtin::SyntaxErrorPrototype
+        | Builtin::TypeErrorPrototype
+        | Builtin::URIErrorPrototype
+        | Builtin::AggregateErrorPrototype => {
+            &["constructor", "name", "message", "toString"]
+        }
         Builtin::SuppressedErrorPrototype => &["constructor", "name", "message", "toString"],
         Builtin::DisposableStack => &["length", "name", "prototype"],
         Builtin::DisposableStackPrototype => &[
@@ -71,6 +80,7 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "Symbol.dispose",
             "Symbol.toStringTag",
         ],
+        Builtin::IteratorPrototype => &["constructor", "next", "toArray", "drop", "map", "every", "some", "find", "filter", "take", "Symbol.iterator", "Symbol.dispose"],
         Builtin::AsyncDisposableStack => &["length", "name", "prototype"],
         Builtin::FinalizationRegistry => &["length", "name", "prototype"],
         Builtin::FinalizationRegistryPrototype => &[
