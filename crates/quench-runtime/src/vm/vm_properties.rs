@@ -171,11 +171,8 @@ fn generator_property(value: &Value, key: &str) -> Value {
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     if key == "constructor" {
         let builtin = function_constructor(function);
-        return crate::vm::intrinsic_for_global(
-            &function.captures.get(0),
-            builtin,
-        )
-        .unwrap_or(Value::Builtin(builtin));
+        return crate::vm::intrinsic_for_global(&function.captures.get(0), builtin)
+            .unwrap_or(Value::Builtin(builtin));
     }
     let properties = function.properties.borrow();
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
@@ -246,7 +243,8 @@ pub(crate) fn get_property_with_receiver(
     }
     if let Value::Array(values) = value {
         let has_own = key == "length"
-            || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+            || crate::arrays::array_index(key)
+                .is_some_and(|index| values.has_index(index as usize))
             || values.descriptor(key).is_some()
             || values.property(key).is_some();
         if !has_own {
@@ -346,6 +344,9 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
 fn is_accessor_builtin(builtin: Builtin) -> bool {
+    if builtin == Builtin::ThrowTypeError {
+        return true;
+    }
     let name = crate::builtins::builtin_name(builtin);
     name.starts_with("get ") || name.starts_with("set ")
 }
@@ -458,13 +459,24 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
     };
-    let properties = if matches!(builtin, Builtin::GeneratorNext | Builtin::GeneratorReturn | Builtin::GeneratorThrow) {
+    let properties = if matches!(
+        builtin,
+        Builtin::GeneratorNext | Builtin::GeneratorReturn | Builtin::GeneratorThrow
+    ) {
         let name = crate::builtins::builtin_name(builtin).to_string();
         RefCell::new(vec![
             ("length".to_string(), Value::Number(1.0)),
             ("name".to_string(), Value::String(name)),
-            (crate::builtins::descriptor_key("length"), bound_function_descriptor(Value::Number(1.0))),
-            (crate::builtins::descriptor_key("name"), bound_function_descriptor(Value::String(crate::builtins::builtin_name(builtin).to_string()))),
+            (
+                crate::builtins::descriptor_key("length"),
+                bound_function_descriptor(Value::Number(1.0)),
+            ),
+            (
+                crate::builtins::descriptor_key("name"),
+                bound_function_descriptor(Value::String(
+                    crate::builtins::builtin_name(builtin).to_string(),
+                )),
+            ),
         ])
     } else if builtin == Builtin::IntlNumberFormatFormat {
         RefCell::new(number_format_bound_properties())
