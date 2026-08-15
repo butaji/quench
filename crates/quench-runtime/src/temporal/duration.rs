@@ -4,6 +4,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let values = (0..10)
         .map(|index| number(arguments.get(index)))
         .collect::<Result<Vec<_>, _>>()?;
+    validate_range(&values)?;
     let sign = values
         .iter()
         .find(|value| **value != 0.0)
@@ -152,6 +153,57 @@ fn duration_value(value: &Value) -> f64 {
     .iter()
     .map(|(name, scale)| number_property(value, name) * scale)
     .sum()
+}
+
+fn validate_range(values: &[f64]) -> Result<(), VmError> {
+    if date_fields_out_of_range(&values[..3]) || time_fields_out_of_range(&values[3..]) {
+        return Err(crate::value::error::throw_range_error(
+            "Duration fields are out of range",
+        ));
+    }
+    Ok(())
+}
+
+fn date_fields_out_of_range(values: &[f64]) -> bool {
+    values.iter().any(|value| value.abs() > 4_294_967_295.0)
+}
+
+fn time_fields_out_of_range(values: &[f64]) -> bool {
+    let limits = [
+        104_249_991_375.0,
+        2_501_999_792_984.0,
+        150_119_987_579_017.0,
+        9_007_199_254_740_991.0,
+        9_007_199_254_740_991.0,
+        9_007_199_254_740_991.0,
+        9_007_199_254_740_991.0,
+    ];
+    values
+        .iter()
+        .zip(limits)
+        .any(|(value, limit)| value.abs() > limit)
+        || total_time_out_of_range(values)
+}
+
+fn total_time_out_of_range(values: &[f64]) -> bool {
+    let scales = [
+        86_400_000_000_000_i128,
+        3_600_000_000_000,
+        60_000_000_000,
+        1_000_000_000,
+        1_000_000,
+        1_000,
+        1,
+    ];
+    let total = values
+        .iter()
+        .zip(scales)
+        .try_fold(0_i128, |total, (value, scale)| {
+            let value = i128::from(*value as i64);
+            total.checked_add(value.checked_mul(scale)?)
+        });
+    let limit = 9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;
+    total.is_none_or(|total| total.abs() > limit)
 }
 
 fn number_property(value: &Value, name: &str) -> f64 {
