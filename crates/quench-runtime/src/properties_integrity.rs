@@ -129,6 +129,19 @@ fn descriptor_flag_field(value: Option<&crate::value::Value>, field: &str) -> Op
     )
 }
 
+fn descriptor_field_value(
+    value: Option<&crate::value::Value>,
+    field: &str,
+) -> Option<crate::value::Value> {
+    let crate::value::Value::Object(fields) = value? else {
+        return None;
+    };
+    fields
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == field).then_some(value.clone()))
+}
+
 fn descriptor_object(fields: Vec<(String, crate::value::Value)>) -> crate::value::Value {
     crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(fields)))
 }
