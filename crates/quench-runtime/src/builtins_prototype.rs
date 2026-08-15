@@ -78,7 +78,7 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::Builtin(Builtin::StringPrototype)) => "String",
         Some(Value::Builtin(Builtin::SymbolPrototype)) => "Symbol",
         Some(Value::Builtin(Builtin::BigIntPrototype)) => "BigInt",
-        Some(Value::Builtin(Builtin::ErrorPrototype)) => "Error",
+        Some(Value::Builtin(Builtin::ErrorPrototype)) => "Object",
         Some(Value::Builtin(
             Builtin::EvalErrorPrototype
             | Builtin::RangeErrorPrototype
