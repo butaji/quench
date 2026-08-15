@@ -194,6 +194,7 @@ fn stateful_builtin(
 ) -> Option<Result<Value, VmError>> {
     match builtin {
         Builtin::GeneratorNext => Some(crate::generator::next(receiver, arguments)),
+        Builtin::AsyncGeneratorNext => Some(crate::generator::async_next(receiver, arguments)),
         Builtin::GeneratorReturn => Some(crate::generator::return_(receiver, arguments)),
         Builtin::GeneratorThrow => Some(crate::generator::throw(receiver, arguments)),
         Builtin::AsyncIteratorDispose => Some(crate::generator::async_dispose(receiver)),
