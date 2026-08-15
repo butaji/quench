@@ -32,6 +32,14 @@ pub(crate) struct NumberOptions {
     pub rounding_priority: String,
 }
 
+fn compact_magnitude(options: &NumberOptions, value: f64) -> i32 {
+    if options.notation == "compact" {
+        compact_scale(value, &options.locale, &options.compact_display)
+    } else {
+        0
+    }
+}
+
 pub(crate) struct RawOptions {
     style: String,
     currency: Option<String>,
@@ -436,62 +444,8 @@ impl NumberOptions {
     }
 
     fn format_number(&self, number: f64) -> String {
-        let scaled = match self.style.as_str() {
-            "percent" => number * 100.0,
-            _ => number,
-        };
-        let scientific = match self.notation.as_str() {
-            "scientific" => Some(scientific_parts(scaled, false)),
-            "engineering" => Some(scientific_parts(scaled, true)),
-            _ => None,
-        };
-        let magnitude = if self.notation == "compact" {
-            compact_scale(scaled, &self.locale, &self.compact_display)
-        } else {
-            0
-        };
-        let value = if let Some((coefficient, _)) = scientific {
-            coefficient
-        } else if magnitude == 0 {
-            scaled
-        } else {
-            scaled / 10f64.powi(magnitude)
-        };
-        let compact_unscaled_de = self.notation == "compact"
-            && self.locale.starts_with("de")
-            && magnitude == 0
-            && scaled.abs() >= 1_000.0;
-        let fraction_digits = if self.notation == "compact" && !compact_unscaled_de {
-            compact_fraction_digits(value)
-        } else {
-            self.maximum_fraction_digits
-        };
-        let fraction_text = format_number_rounded(value, fraction_digits, self.rounding_increment);
-        let (mut text, significant_selected) =
-            if let Some(maximum) = self.maximum_significant_digits {
-                let significant_text = format_significant(
-                    value,
-                    self.minimum_significant_digits.unwrap_or(1),
-                    maximum,
-                    &self.rounding_mode,
-                );
-                let selected = match self.rounding_priority.as_str() {
-                    "morePrecision"
-                        if decimal_places(&fraction_text) > decimal_places(&significant_text) =>
-                    {
-                        (fraction_text, false)
-                    }
-                    "lessPrecision"
-                        if decimal_places(&fraction_text) < decimal_places(&significant_text) =>
-                    {
-                        (fraction_text, false)
-                    }
-                    _ => (significant_text, true),
-                };
-                (selected.0, selected.1)
-            } else {
-                (fraction_text, false)
-            };
+        let (mut text, significant_selected, scientific, magnitude, scaled, compact_unscaled_de) =
+            self.prepare_number(number);
         if scientific.is_none()
             && self.use_grouping
             && (!self.grouping_min2 || scaled.abs() >= 10_000.0)
@@ -512,31 +466,7 @@ impl NumberOptions {
         if self.minimum_fraction_digits > 0 && !significant_selected {
             text = pad_locale_fraction(&text, self.minimum_fraction_digits, &self.locale);
         }
-        let negative = text.starts_with('-');
-        if number.is_nan() && self.locale.starts_with("zh") {
-            text = "非數值".to_string();
-        }
-        let zero = number == 0.0;
-        let rounded_zero = text
-            .trim_start_matches('-')
-            .chars()
-            .all(|character| matches!(character, '0' | '.' | ','));
-        let hide_negative = self.sign_display == "never"
-            || (self.sign_display == "auto"
-                && zero
-                && self.style == "currency"
-                && self.currency_sign != "accounting")
-            || (self.sign_display == "exceptZero" && rounded_zero)
-            || (self.sign_display == "negative" && rounded_zero);
-        if hide_negative && negative {
-            text.remove(0);
-        } else if !negative
-            && (!number.is_nan() || self.sign_display == "always")
-            && (self.sign_display == "always"
-                || (self.sign_display == "exceptZero" && !rounded_zero))
-        {
-            text.insert(0, '+');
-        }
+        text = self.apply_sign(text, number);
         match self.style.as_str() {
             "percent" => text.push('%'),
             "currency" => {
@@ -566,6 +496,94 @@ impl NumberOptions {
             ));
         }
         text
+    }
+
+    fn apply_sign(&self, mut text: String, number: f64) -> String {
+        let negative = text.starts_with('-');
+        if number.is_nan() && self.locale.starts_with("zh") {
+            text = "非數值".to_string();
+        }
+        let zero = number == 0.0;
+        let rounded_zero = text
+            .trim_start_matches('-')
+            .chars()
+            .all(|character| matches!(character, '0' | '.' | ','));
+        let hide_negative = self.sign_display == "never"
+            || (self.sign_display == "auto"
+                && zero
+                && self.style == "currency"
+                && self.currency_sign != "accounting")
+            || (self.sign_display == "exceptZero" && rounded_zero)
+            || (self.sign_display == "negative" && rounded_zero);
+        if hide_negative && negative {
+            text.remove(0);
+        } else if !negative
+            && (!number.is_nan() || self.sign_display == "always")
+            && (self.sign_display == "always"
+                || (self.sign_display == "exceptZero" && !rounded_zero))
+        {
+            text.insert(0, '+');
+        }
+        text
+    }
+
+    fn prepare_number(&self, number: f64) -> (String, bool, Option<(f64, i32)>, i32, f64, bool) {
+        let scaled = if self.style == "percent" {
+            number * 100.0
+        } else {
+            number
+        };
+        let scientific = match self.notation.as_str() {
+            "scientific" => Some(scientific_parts(scaled, false)),
+            "engineering" => Some(scientific_parts(scaled, true)),
+            _ => None,
+        };
+        let magnitude = compact_magnitude(self, scaled);
+        let value = scientific.map_or(scaled, |(coefficient, _)| coefficient);
+        let compact_unscaled_de = self.notation == "compact"
+            && self.locale.starts_with("de")
+            && magnitude == 0
+            && scaled.abs() >= 1_000.0;
+        let fraction_digits = if self.notation == "compact" && !compact_unscaled_de {
+            compact_fraction_digits(value)
+        } else {
+            self.maximum_fraction_digits
+        };
+        let fraction_text = format_number_rounded(value, fraction_digits, self.rounding_increment);
+        let (text, selected) = self.select_precision(value, fraction_text);
+        (
+            text,
+            selected,
+            scientific,
+            magnitude,
+            scaled,
+            compact_unscaled_de,
+        )
+    }
+
+    fn select_precision(&self, value: f64, fraction_text: String) -> (String, bool) {
+        let Some(maximum) = self.maximum_significant_digits else {
+            return (fraction_text, false);
+        };
+        let significant_text = format_significant(
+            value,
+            self.minimum_significant_digits.unwrap_or(1),
+            maximum,
+            &self.rounding_mode,
+        );
+        match self.rounding_priority.as_str() {
+            "morePrecision"
+                if decimal_places(&fraction_text) > decimal_places(&significant_text) =>
+            {
+                (fraction_text, false)
+            }
+            "lessPrecision"
+                if decimal_places(&fraction_text) < decimal_places(&significant_text) =>
+            {
+                (fraction_text, false)
+            }
+            _ => (significant_text, true),
+        }
     }
 
     fn parts(&self, number: f64) -> Vec<Value> {
