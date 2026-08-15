@@ -28,6 +28,7 @@ pub struct LinkedModule {
     scope: ExecutionScope,
     fixed_exports: Vec<(String, quench_runtime::value::Value)>,
     linked_exports: RefCell<HashMap<String, ModuleBindingCell>>,
+    export_candidates: RefCell<HashMap<String, Vec<ModuleBindingCell>>>,
     ambiguous_exports: RefCell<HashSet<String>>,
     namespace: RefCell<Option<ModuleBindingCell>>,
 }
@@ -60,16 +61,17 @@ impl LinkedModuleGraph {
             units.insert(unit.id, module);
         }
         link_reexports(graph, &units)?;
-        bind_imports(graph, &units)?;
+        bind_imports(graph, &units, true)?;
         for unit in units.values() {
             unit.reset_links();
         }
         link_reexports(graph, &units)?;
-        bind_imports(graph, &units)?;
+        bind_imports(graph, &units, true)?;
         for unit in units.values() {
             unit.reset_links();
         }
         link_reexports(graph, &units)?;
+        bind_imports(graph, &units, false)?;
         Ok(Self { units })
     }
 
@@ -91,6 +93,7 @@ impl LinkedModuleGraph {
 fn bind_imports(
     graph: &ModuleGraph,
     units: &HashMap<ModuleId, LinkedModule>,
+    provisional: bool,
 ) -> Result<(), String> {
     for id in units.keys().copied().collect::<Vec<_>>() {
         let metadata = unit_metadata(units, id)?;
@@ -98,7 +101,7 @@ fn bind_imports(
             let target = graph
                 .resolve(id, &binding.source)
                 .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-            let cell = import_cell(units, target, &binding.imported)?;
+            let cell = import_cell(units, target, &binding.imported, provisional)?;
             units
                 .get(&id)
                 .ok_or_else(|| "module unit missing".to_string())?
@@ -151,7 +154,7 @@ fn link_reexport(
     if binding.imported == "*all*" {
         return link_star_exports(units, from, target);
     }
-    let cell = import_cell(units, target, &binding.imported)?;
+    let cell = import_cell(units, target, &binding.imported, true)?;
     units
         .get(&from)
         .ok_or_else(|| "module unit missing".to_string())?
@@ -180,13 +183,20 @@ fn import_cell(
     units: &std::collections::HashMap<ModuleId, LinkedModule>,
     target: ModuleId,
     imported: &str,
+    provisional: bool,
 ) -> Result<ModuleBindingCell, String> {
     if imported == "*" {
         return namespace_cell(units, target);
     }
     units
         .get(&target)
-        .and_then(|unit| unit.export_cell(imported))
+        .and_then(|unit| {
+            if provisional {
+                unit.provisional_export_cell(imported)
+            } else {
+                unit.export_cell(imported)
+            }
+        })
         .ok_or_else(|| format!("SyntaxError: export {imported} missing"))
 }
 
@@ -211,9 +221,7 @@ fn namespace_cell(
             )
         })
         .collect();
-    let namespace = ModuleBindingCell::new(
-        quench_runtime::value::Value::object(properties),
-    );
+    let namespace = ModuleBindingCell::new(quench_runtime::value::Value::object(properties));
     unit.namespace.replace(Some(namespace.clone()));
     Ok(namespace)
 }
@@ -226,6 +234,7 @@ impl LinkedModule {
             scope: ExecutionScope::new(),
             fixed_exports: Vec::new(),
             linked_exports: RefCell::new(HashMap::new()),
+            export_candidates: RefCell::new(HashMap::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace: RefCell::new(None),
         })
@@ -238,6 +247,7 @@ impl LinkedModule {
             scope: ExecutionScope::new(),
             fixed_exports: Vec::new(),
             linked_exports: RefCell::new(HashMap::new()),
+            export_candidates: RefCell::new(HashMap::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace: RefCell::new(None),
         })
@@ -269,6 +279,9 @@ impl LinkedModule {
         if let Some(cell) = self.linked_exports.borrow().get(name) {
             return Some(cell.clone());
         }
+        if self.ambiguous_exports.borrow().contains(name) {
+            return None;
+        }
         let local = self
             .program
             .module_metadata
@@ -283,6 +296,21 @@ impl LinkedModule {
             .get(local)
             .copied()
             .map(|slot| self.scope.module_cell_slot(slot))
+    }
+
+    fn provisional_export_cell(&self, name: &str) -> Option<ModuleBindingCell> {
+        if let Some(cell) = self.linked_exports.borrow().get(name) {
+            return Some(cell.clone());
+        }
+        if let Some(cell) = self
+            .export_candidates
+            .borrow()
+            .get(name)
+            .and_then(|candidates| candidates.first())
+        {
+            return Some(cell.clone());
+        }
+        self.export_cell(name)
     }
 
     fn export_names(&self) -> Vec<String> {
@@ -300,24 +328,30 @@ impl LinkedModule {
     }
 
     fn link_export(&self, name: &str, cell: ModuleBindingCell) {
-        if self.ambiguous_exports.borrow().contains(name) {
+        let mut candidates = self.export_candidates.borrow_mut();
+        let entries = candidates.entry(name.to_string()).or_default();
+        if entries
+            .iter()
+            .any(|candidate| Rc::ptr_eq(&candidate.shared(), &cell.shared()))
+        {
             return;
         }
-        let existing = self.linked_exports.borrow().get(name).cloned();
-        if let Some(existing) = existing {
-            if !Rc::ptr_eq(&existing.shared(), &cell.shared()) {
-                self.linked_exports.borrow_mut().remove(name);
-                self.ambiguous_exports.borrow_mut().insert(name.to_string());
-            }
-            return;
+        entries.push(cell.clone());
+        let unique = entries.len();
+        drop(candidates);
+        if unique == 1 {
+            self.linked_exports
+                .borrow_mut()
+                .insert(name.to_string(), cell);
+        } else {
+            self.linked_exports.borrow_mut().remove(name);
+            self.ambiguous_exports.borrow_mut().insert(name.to_string());
         }
-        self.linked_exports
-            .borrow_mut()
-            .insert(name.to_string(), cell);
     }
 
     fn reset_links(&self) {
         self.linked_exports.borrow_mut().clear();
+        self.export_candidates.borrow_mut().clear();
         self.ambiguous_exports.borrow_mut().clear();
     }
 
