@@ -1,5 +1,18 @@
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::Temporal => &["Duration", "PlainDate"],
+        Builtin::TemporalDuration => &["length", "name", "prototype", "from", "compare"],
+        Builtin::TemporalDurationPrototype => &[
+            "constructor", "years", "months", "weeks", "days", "hours", "minutes", "seconds",
+            "milliseconds", "microseconds", "nanoseconds", "sign", "blank", "toString",
+            "toJSON", "valueOf",
+        ],
+        Builtin::TemporalPlainDate => &["length", "name", "prototype", "from"],
+        Builtin::TemporalPlainDatePrototype => &[
+            "constructor", "calendarId", "era", "eraYear", "year", "month", "monthCode", "day",
+            "dayOfWeek", "dayOfYear", "weekOfYear", "daysInWeek", "daysInMonth", "daysInYear",
+            "monthsInYear", "inLeapYear", "toString", "toJSON", "toLocaleString", "valueOf",
+        ],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => {
             &["constructor", "toString", "valueOf", "Symbol.toStringTag"]
