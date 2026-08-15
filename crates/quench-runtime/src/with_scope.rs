@@ -134,6 +134,15 @@ fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> 
             "{key} is not defined"
         )));
     }
+    if crate::builtins::descriptor_flag(&global, key, "writable") == Some(false) {
+        return if strict {
+            Err(crate::value::error::throw_type_error(
+                "Cannot assign to read-only property",
+            ))
+        } else {
+            Ok(())
+        };
+    }
     let updated = crate::builtins::set_property(global.clone(), key, value);
     crate::vm::synchronize_global_object(&mut Vec::new(), &global, &updated);
     Ok(())
@@ -244,6 +253,15 @@ fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Re
             "{key} is not defined"
         )));
     }
+    if crate::builtins::descriptor_flag(&global, key, "writable") == Some(false) {
+        return if strict {
+            Err(crate::value::error::throw_type_error(
+                "Cannot assign to read-only property",
+            ))
+        } else {
+            Ok(())
+        };
+    }
     let updated = crate::builtins::set_property(global.clone(), key, value);
     crate::vm::synchronize_global_object(registers, &global, &updated);
     Ok(())
@@ -294,8 +312,11 @@ pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
     for (index, object) in objects.iter().enumerate().rev() {
         if has_property(object, key)? && !is_unscopable(object, key)? {
             let updated = crate::proxy::proxy_set(object, key, value, None)?;
-            OBJECTS.with(|objects| objects.borrow_mut()[index] = updated);
-            return Ok(true);
+            let success = crate::execute::is_truthy(&updated);
+            if success {
+                OBJECTS.with(|objects| objects.borrow_mut()[index] = updated);
+            }
+            return Ok(success);
         }
     }
     Ok(false)
@@ -324,6 +345,12 @@ pub(crate) fn has_property(value: &Value, key: &str) -> Result<bool, VmError> {
             return Ok(crate::execute::is_truthy(&result));
         }
         return has_property(&proxy.target, key);
+    }
+    if crate::vm::is_global_object(value)
+        && (crate::vm::global_builtin_exists(key)
+            || matches!(key, "NaN" | "Infinity" | "undefined"))
+    {
+        return Ok(true);
     }
     let key_value = Value::String(key.to_string());
     let own = crate::builtins::object::has_own_property(Some(value), Some(&key_value));
