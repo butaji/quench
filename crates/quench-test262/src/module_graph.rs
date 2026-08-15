@@ -47,6 +47,23 @@ impl ModuleGraph {
     }
 
     pub fn add_text_dependency(&mut self, path: PathBuf, source: String) -> ModuleId {
+        let path = normalize_module_path(&path);
+        if self
+            .paths
+            .get(&path)
+            .and_then(|id| self.unit(*id))
+            .is_some_and(|unit| unit.kind == ModuleKind::JavaScript)
+        {
+            let id = ModuleId(self.units.len() as u32);
+            self.paths.insert(path.clone(), id);
+            self.units.push(ModuleUnit {
+                id,
+                path,
+                source,
+                kind: ModuleKind::Text,
+            });
+            return id;
+        }
         self.add_unit(path, source, ModuleKind::Text, false)
     }
 
