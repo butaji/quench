@@ -305,8 +305,12 @@ fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
     }
-    let detached = view.length != usize::MAX
-        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+    let detached = typed_array_detached(
+        view.length,
+        &view.buffer,
+        view.byte_offset,
+        view.byte_length(),
+    );
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
@@ -322,8 +326,12 @@ fn uint32_array_property(view: &crate::value::Uint32ArrayData, key: &str) -> Val
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
     }
-    let detached = view.length != usize::MAX
-        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+    let detached = typed_array_detached(
+        view.length,
+        &view.buffer,
+        view.byte_offset,
+        view.byte_length(),
+    );
     match key {
         "buffer" => Value::ArrayBuffer(view.buffer.clone()),
         "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
