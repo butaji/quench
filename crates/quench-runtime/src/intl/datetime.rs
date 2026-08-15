@@ -308,9 +308,11 @@ pub(crate) fn prototype_method(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     let mut slots = receiver_slots(receiver)?;
-    let temporal_input = arguments
-        .first()
-        .is_some_and(|value| matches!(value, Value::Object(object) if object.iter().any(|(key, _)| key == "epochNanoseconds")));
+    let temporal_input = arguments.first().is_some_and(|value| {
+        matches!(value, Value::Object(object) if object.iter().any(|(key, _)| {
+            matches!(key.as_str(), "epochNanoseconds" | "calendarId")
+        }))
+    });
     let no_options = slot_bool(&slots, "__explicitDateOptions") != Some(true);
     if slot_string(&slots, "dateStyle").is_some() && slot_string(&slots, "timeStyle").is_none() {
         let month_style = if slot_string(&slots, "dateStyle").as_deref() == Some("long") {
