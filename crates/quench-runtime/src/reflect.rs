@@ -9,63 +9,27 @@ pub(crate) fn builtin(
     let Some(value) = arguments.first() else {
         return Ok(Value::Undefined);
     };
-    if builtin == crate::ops::Builtin::ShadowRealmEvaluate && !is_shadow_realm_receiver(receiver) {
-        return Err(shadow_type_error_for_realm(
-            receiver,
-            "ShadowRealm.prototype.evaluate called on incompatible receiver",
-        ));
-    }
-    if builtin == crate::ops::Builtin::ShadowRealmEvaluate && !matches!(value, Value::String(_)) {
-        return Err(shadow_type_error_for_realm(
-            receiver,
-            "ShadowRealm.prototype.evaluate requires a string",
-        ));
-    }
     let realm = crate::vm::realm_id_for_intrinsic_receiver(receiver);
-    let direct_syntax_error = matches!(
-        value,
-        Value::String(source)
-            if crate::reduce::reduce_eval_source(source, false, true, false, &[], &[]).is_err()
-    );
-    let error_realm = shadow_creation_realm(receiver);
-    let result = evaluate(value, false, realm, error_realm).map_err(|error| {
-        if builtin == crate::ops::Builtin::ShadowRealmEvaluate
-            && !direct_syntax_error
-            && matches!(error, VmError::Thrown(_))
-        {
-            shadow_type_error_for_realm(receiver, "ShadowRealm evaluation threw a value")
-        } else {
-            error
-        }
-    })?;
+    let result = evaluate(value, false, realm)?;
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate
         && crate::conversion::is_callable(&result)
     {
-        return wrap_shadow_function(&result, realm);
-    }
-    if builtin == crate::ops::Builtin::ShadowRealmEvaluate && crate::value::is_object(&result) {
-        return Err(shadow_type_error_for_realm(
-            receiver,
-            "ShadowRealm evaluation must return a primitive",
-        ));
+        return wrap_shadow_function(&result);
     }
     Ok(result)
 }
 
-pub(crate) fn wrap_shadow_function(
-    target: &Value,
-    realm: Option<crate::ops::RealmId>,
-) -> Result<Value, VmError> {
-    let name = match shadow_property(target, "name", realm)? {
+fn wrap_shadow_function(target: &Value) -> Result<Value, VmError> {
+    let name = match crate::execute::get_property_result(target, "name")? {
         Value::String(value) if !crate::conversion::is_symbol_string(&value) => value,
         _ => String::new(),
     };
-    let length = match shadow_property(target, "length", realm)? {
+    let length = match crate::execute::get_property_result(target, "length")? {
         Value::Number(value) if value.is_finite() => value.max(0.0).trunc(),
         Value::Number(value) if value.is_infinite() && value.is_sign_positive() => value,
         _ => 0.0,
     };
-    let mut properties = vec![
+    let properties = vec![
         ("name".to_string(), Value::String(name.clone())),
         (
             crate::builtins::descriptor_key("name"),
@@ -77,9 +41,6 @@ pub(crate) fn wrap_shadow_function(
             length_descriptor(length),
         ),
     ];
-    if let Some(realm) = realm.and_then(crate::vm::realm_token) {
-        properties.push(("\0realm".to_string(), realm));
-    }
     Ok(Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
             target: target.clone(),
@@ -88,80 +49,6 @@ pub(crate) fn wrap_shadow_function(
             properties: std::cell::RefCell::new(properties),
         },
     )))
-}
-
-fn shadow_property(
-    target: &Value,
-    key: &str,
-    realm: Option<crate::ops::RealmId>,
-) -> Result<Value, VmError> {
-    let read = || {
-        if matches!(target, Value::Proxy(_)) {
-            crate::proxy::proxy_get_own_property_descriptor(target, key)
-                .and_then(|_| crate::execute::get_property_result(target, key))
-        } else {
-            crate::execute::get_property_result(target, key)
-        }
-    };
-    let result = realm
-        .filter(|realm| *realm != crate::ops::RealmId::ROOT)
-        .and_then(|realm| crate::vm::with_realm(realm, read))
-        .unwrap_or_else(read);
-    result.map_err(|_| shadow_type_error("ShadowRealm wrapped function metadata failed"))
-}
-
-fn shadow_type_error(message: &str) -> VmError {
-    shadow_type_error_with_constructor(message, Value::Builtin(crate::ops::Builtin::TypeError))
-}
-
-fn shadow_type_error_for_realm(receiver: Option<&Value>, message: &str) -> VmError {
-    let realm = shadow_creation_realm(receiver)
-        .or_else(|| crate::vm::realm_id_for_intrinsic_receiver(receiver));
-    let constructor = realm
-        .and_then(|realm| {
-            crate::vm::with_realm(realm, || {
-                crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError)
-            })
-        })
-        .unwrap_or(Value::Builtin(crate::ops::Builtin::TypeError));
-    shadow_type_error_with_constructor(message, constructor)
-}
-
-fn shadow_creation_realm(receiver: Option<&Value>) -> Option<crate::ops::RealmId> {
-    let Some(Value::Object(properties)) = receiver else {
-        return None;
-    };
-    properties.iter().find_map(|(key, value)| {
-        (key == "\0creation_realm").then(|| match value {
-            Value::HostCapability(token) => crate::vm::realm_id_for_intrinsic_receiver(Some(
-                &Value::HostCapability(token.clone()),
-            )),
-            _ => Some(crate::ops::RealmId::ROOT),
-        })?
-    })
-}
-
-fn shadow_type_error_with_constructor(message: &str, constructor: Value) -> VmError {
-    let error = crate::builtins::error(
-        crate::ops::Builtin::TypeError,
-        &[Value::String(message.to_string())],
-    );
-    VmError::Thrown(crate::builtins::set_property(
-        error,
-        "constructor",
-        constructor,
-    ))
-}
-
-fn is_shadow_realm_receiver(receiver: Option<&Value>) -> bool {
-    matches!(
-        receiver,
-        Some(Value::Object(properties))
-            if properties.iter().any(|(key, value)| {
-                key == "\0prototype"
-                    && *value == Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype)
-            })
-    )
 }
 
 fn name_descriptor(value: &str) -> Value {
@@ -196,7 +83,7 @@ pub(crate) fn execute_eval(
             input.forbidden_var_names,
         )?
     } else {
-        evaluate(&source, input.strict, None, None)?
+        evaluate(&source, input.strict, None)?
     };
     crate::execute::write_value(registers, input.dst, value);
     Ok(())
@@ -217,7 +104,6 @@ fn evaluate(
     value: &Value,
     strict: bool,
     realm: Option<crate::ops::RealmId>,
-    error_realm: Option<crate::ops::RealmId>,
 ) -> Result<Value, VmError> {
     let Value::String(source) = value else {
         return Ok(value.clone());
@@ -227,7 +113,7 @@ fn evaluate(
         ("\0script_this".to_string(), 0),
     ];
     let program = crate::reduce::reduce_eval_source(source, strict, true, false, &bindings, &[])
-        .map_err(|errors| syntax_error(errors, error_realm))?;
+        .map_err(syntax_error)?;
     match realm {
         Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, program.ops()),
         None => crate::vm::execute_indirect_eval(program.ops()),
@@ -258,7 +144,7 @@ fn evaluate_direct(
         forbidden_var_names,
         grammar,
     )
-    .map_err(|errors| syntax_error(errors, None))?;
+    .map_err(syntax_error)?;
     execute_direct_eval(program.ops(), program.facts.strict)
 }
 
@@ -269,21 +155,9 @@ fn execute_direct_eval(ops: &[crate::ops::Op], strict: bool) -> Result<Value, Vm
     crate::execute::execute_in_place(ops, &mut Vec::new())
 }
 
-fn syntax_error(errors: Vec<String>, realm: Option<crate::ops::RealmId>) -> VmError {
-    let error = crate::builtins::error(
+fn syntax_error(errors: Vec<String>) -> VmError {
+    VmError::Thrown(crate::builtins::error(
         crate::ops::Builtin::SyntaxError,
         &[Value::String(errors.join("; "))],
-    );
-    let constructor = realm
-        .and_then(|realm| {
-            crate::vm::with_realm(realm, || {
-                crate::vm::realm_intrinsic(crate::ops::Builtin::SyntaxError)
-            })
-        })
-        .unwrap_or(Value::Builtin(crate::ops::Builtin::SyntaxError));
-    VmError::Thrown(crate::builtins::set_property(
-        error,
-        "constructor",
-        constructor,
     ))
 }
