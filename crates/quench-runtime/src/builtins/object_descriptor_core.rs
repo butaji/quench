@@ -63,9 +63,7 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
     {
         return Some(public_descriptor(metadata));
     }
-    if crate::vm::realm_is_intrinsic(function)
-        && function.target == Value::Builtin(Builtin::AbstractModuleSource)
-    {
+    if function.target == Value::Builtin(Builtin::AbstractModuleSource) {
         return builtin_descriptor(Builtin::AbstractModuleSource, key);
     }
     function
