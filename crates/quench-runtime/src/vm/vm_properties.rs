@@ -361,7 +361,31 @@ fn early_property_result(
             "'caller' and 'arguments' are unavailable on this function",
         )));
     }
+    if key == "buffer" && is_typed_array_prototype(value) {
+        return Some(Err(crate::value::error::throw_type_error(
+            "Receiver is not a TypedArray",
+        )));
+    }
     None
+}
+
+fn is_typed_array_prototype(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Builtin(
+            crate::ops::Builtin::Float64ArrayPrototype
+                | crate::ops::Builtin::Float32ArrayPrototype
+                | crate::ops::Builtin::Int8ArrayPrototype
+                | crate::ops::Builtin::Int16ArrayPrototype
+                | crate::ops::Builtin::Int32ArrayPrototype
+                | crate::ops::Builtin::Uint8ArrayPrototype
+                | crate::ops::Builtin::Uint16ArrayPrototype
+                | crate::ops::Builtin::Uint32ArrayPrototype
+                | crate::ops::Builtin::Uint8ClampedArrayPrototype
+                | crate::ops::Builtin::BigInt64ArrayPrototype
+                | crate::ops::Builtin::BigUint64ArrayPrototype
+        )
+    )
 }
 
 fn array_property_result(
