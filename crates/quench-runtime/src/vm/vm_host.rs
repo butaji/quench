@@ -1,3 +1,8 @@
+thread_local! {
+    static AGENT_CALLBACKS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+    static AGENT_REPORTS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+}
+
 pub(crate) fn execute_host_capability(
     kind: HostCapabilityKind,
     receiver: Option<&Value>,
@@ -26,16 +31,53 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
         HostCapabilityKind::EvalScript => run_eval_script(arguments),
-        HostCapabilityKind::Agent
-        | HostCapabilityKind::AgentStart
-        | HostCapabilityKind::AgentBroadcast
-        | HostCapabilityKind::AgentReport
-        | HostCapabilityKind::AgentGetReport
-        | HostCapabilityKind::AgentLeaving
-        | HostCapabilityKind::AgentReceiveBroadcast => {
-            Err(type_error("$262.agent is not available"))
-        }
+        HostCapabilityKind::Agent => Err(type_error("$262.agent is not callable")),
+        HostCapabilityKind::AgentStart => agent_start(arguments),
+        HostCapabilityKind::AgentBroadcast => agent_broadcast(arguments),
+        HostCapabilityKind::AgentReport => agent_report(arguments),
+        HostCapabilityKind::AgentGetReport => Ok(agent_get_report()),
+        HostCapabilityKind::AgentLeaving => Ok(Value::Undefined),
+        HostCapabilityKind::AgentReceiveBroadcast => agent_receive_broadcast(arguments),
     }
+}
+
+fn agent_start(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(_)) = arguments.first() else {
+        return Err(type_error("$262.agent.start expects a string"));
+    };
+    run_eval_script(arguments)
+}
+
+fn agent_receive_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
+    let callback = arguments
+        .first()
+        .ok_or_else(|| type_error("$262.agent.receiveBroadcast expects a callback"))?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(type_error("$262.agent.receiveBroadcast expects a callback"));
+    }
+    AGENT_CALLBACKS.with(|callbacks| callbacks.borrow_mut().push(callback.clone()));
+    Ok(Value::Undefined)
+}
+
+fn agent_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
+    let buffer = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let callbacks = AGENT_CALLBACKS.with(|callbacks| callbacks.borrow().clone());
+    for callback in callbacks {
+        crate::functions::execute_target(&callback, &Value::Undefined, &[buffer.clone()])?;
+    }
+    Ok(Value::Undefined)
+}
+
+fn agent_report(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    AGENT_REPORTS.with(|reports| reports.borrow_mut().push(value));
+    Ok(Value::Undefined)
+}
+
+fn agent_get_report() -> Value {
+    AGENT_REPORTS
+        .with(|reports| reports.borrow_mut().pop())
+        .unwrap_or(Value::Undefined)
 }
 
 fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
