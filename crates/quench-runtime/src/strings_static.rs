@@ -52,11 +52,25 @@ pub(crate) fn lossy(value: &Value) -> Option<String> {
 pub(crate) fn source_text(value: &Value) -> Option<String> {
     let units = units_of(value)?;
     let mut source = String::new();
-    for unit in units {
-        if (0xD800..=0xDFFF).contains(&unit) {
+    let mut index = 0;
+    while let Some(&unit) = units.get(index) {
+        if (0xD800..=0xDBFF).contains(&unit)
+            && units
+                .get(index + 1)
+                .is_some_and(|next| (0xDC00..=0xDFFF).contains(next))
+        {
+            let low = units[index + 1];
+            let code = 0x1_0000 + ((u32::from(unit) - 0xD800) << 10) + (u32::from(low) - 0xDC00);
+            source.push(char::from_u32(code)?);
+            index += 2;
+        } else if (0xD800..=0xDFFF).contains(&unit) {
             source.push_str(&format!("\\u{unit:04X}"));
+            index += 1;
         } else if let Some(character) = char::from_u32(u32::from(unit)) {
             source.push(character);
+            index += 1;
+        } else {
+            index += 1;
         }
     }
     Some(source)
