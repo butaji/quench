@@ -448,8 +448,12 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
     };
-    let properties = if builtin == Builtin::IntlNumberFormatFormat {
-        RefCell::new(number_format_bound_properties())
+    let properties = if builtin == Builtin::IntlNumberFormatFormat
+        && is_number_format_receiver(receiver)
+    {
+        RefCell::new(number_format_bound_properties(1.0, ""))
+    } else if builtin == Builtin::IntlNumberFormatFormat {
+        RefCell::new(number_format_bound_properties(0.0, "get format"))
     } else {
         RefCell::new(Vec::new())
     };
@@ -460,10 +464,10 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
         properties,
     }))
 }
-fn number_format_bound_properties() -> Vec<(String, Value)> {
+fn number_format_bound_properties(length: f64, name: &str) -> Vec<(String, Value)> {
     [
-        ("length", Value::Number(1.0)),
-        ("name", Value::String(String::new())),
+        ("length", Value::Number(length)),
+        ("name", Value::String(name.to_string())),
     ]
     .into_iter()
     .flat_map(|(key, value)| {
@@ -479,6 +483,14 @@ fn number_format_bound_properties() -> Vec<(String, Value)> {
         ]
     })
     .collect()
+}
+
+fn is_number_format_receiver(receiver: &Value) -> bool {
+    matches!(
+        receiver,
+        Value::Object(properties)
+            if properties.iter().any(|(name, _)| name == crate::intl::SLOT)
+    )
 }
 fn promise_property(value: &Value, key: &str) -> Value {
     if key == "finally" {
