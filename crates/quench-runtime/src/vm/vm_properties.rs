@@ -223,6 +223,13 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = special_property(value, key, receiver) {
         return result;
     }
+    if key == "stack" && crate::vm::has_error_slot(value) {
+        return crate::vm::execute_builtin_with_receiver(
+            crate::ops::Builtin::ErrorPrototypeStackGetter,
+            &[],
+            Some(receiver),
+        );
+    }
     if let Ok(descriptor) =
         crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))
     {
