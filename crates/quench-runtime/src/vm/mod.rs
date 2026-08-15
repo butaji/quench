@@ -500,6 +500,7 @@ fn is_object_special(builtin: Builtin) -> bool {
         Builtin::ObjectHasOwnProperty
             | Builtin::ObjectHasOwn
             | Builtin::ObjectGetOwnPropertyDescriptor
+            | Builtin::ObjectGetOwnPropertyDescriptors
             | Builtin::ObjectGetOwnPropertyNames
             | Builtin::ObjectGetOwnPropertySymbols
             | Builtin::ObjectKeys
