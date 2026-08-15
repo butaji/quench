@@ -88,6 +88,7 @@ fn construct_with_new_target(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let result = match target {
+        Value::Proxy(_) => crate::proxy::proxy_construct(target, arguments, Some(new_target)),
         Value::Builtin(builtin) => {
             let value = construct_builtin(*builtin, arguments)?;
             let value = with_new_target_prototype(value, target, new_target)?;
