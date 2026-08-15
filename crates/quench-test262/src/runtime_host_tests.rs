@@ -13,43 +13,265 @@ fn default_export_cell_observes_module_execution() {
 }
 
 #[test]
-fn json_module_exports_recursive_runtime_values() {
-    let module = LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
+fn uninitialized_export_cell_is_marked_before_module_execution() {
+    let module = LinkedModule::compile("export let value;").expect("module compiles");
+    assert!(module
+        .program
+        .ops()
+        .iter()
+        .any(|op| matches!(op, quench_runtime::ops::Op::MarkUninitialized { .. })));
+    let slot = module.export_slot("value").expect("export slot");
+    assert!(module.program.ops().iter().any(|op| {
+        matches!(op, quench_runtime::ops::Op::MarkUninitialized { slot: found } if *found == slot)
+    }));
+    let cell = module.export_cell("value").expect("export cell");
+    assert!(quench_runtime::module_bindings::ModuleBindingCell::is_uninitialized(&cell.get()));
+}
+
+#[test]
+fn named_default_function_has_a_default_export_cell() {
+    let module = LinkedModule::compile("export default function f() { return 1; }")
+        .expect("module compiles");
     let cell = module.export_cell("default").expect("default export cell");
     module.execute().expect("module executes");
-    let Value::Array(values) = cell.get() else { panic!("JSON default export is not an array") };
+    assert!(matches!(cell.get(), Value::Function(_)));
+}
+
+#[test]
+fn imported_named_default_function_is_callable() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import f from './entry.js'; assert.sameValue(f(), 1); export default function fName() { return 1; }"
+            .to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("entry.js"),
+        "import f from './entry.js'; assert.sameValue(f(), 1); export default function fName() { return 1; }"
+            .to_string(),
+    );
+    let linked = LinkedModuleGraph::compile_with_entry_prefix(
+        &mut graph,
+        Some(entry),
+        &[include_str!("../../../tests/test262/harness/assert.js")],
+    )
+    .expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    let cell = linked
+        .export_cell(entry, "default")
+        .expect("entry export");
+    assert!(matches!(cell.get(), Value::Function(_)));
+}
+
+#[test]
+fn json_module_exports_recursive_runtime_values() {
+    let module =
+        LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
+    let cell = module.export_cell("default").expect("default export cell");
+    module.execute().expect("module executes");
+    let Value::Array(values) = cell.get() else {
+        panic!("JSON default export is not an array")
+    };
     assert_eq!(values.logical_len(), 2);
     assert_eq!(values[0], Value::Boolean(true));
     assert!(matches!(values[1], Value::Object(_)));
 }
 
 #[test]
+fn text_module_exports_source_as_string() {
+    let module = LinkedModule::compile_text("export const value = 1;").expect("module compiles");
+    let cell = module.export_cell("default").expect("default export cell");
+    module.execute().expect("module executes");
+    assert_eq!(
+        cell.get(),
+        Value::String("export const value = 1;".to_string())
+    );
+}
+
+#[test]
+fn self_text_import_uses_text_module_identity() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import value from './entry.js' with { type: 'text' }; export default typeof value;"
+            .to_string(),
+    );
+    graph.add_text_dependency(
+        PathBuf::from("entry.js"),
+        "import value from './entry.js' with { type: 'text' }; export default typeof value;"
+            .to_string(),
+    );
+    let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    assert_eq!(
+        linked
+            .export_cell(entry, "default")
+            .expect("default export")
+            .get(),
+        Value::String("string".to_string())
+    );
+}
+
+#[test]
+fn self_text_import_with_prefix_uses_text_module_identity() {
+    let source =
+        "import value from './entry.js' with { type: 'text' }; export default typeof value;";
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(PathBuf::from("entry.js"), source.to_string());
+    graph.add_text_dependency(PathBuf::from("entry.js"), source.to_string());
+    let linked = LinkedModuleGraph::compile_with_entry_prefix(&mut graph, Some(entry), &[" "])
+        .expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    assert_eq!(
+        linked
+            .export_cell(entry, "default")
+            .expect("default export")
+            .get(),
+        Value::String("string".to_string())
+    );
+}
+
+#[test]
+fn resource_imports_survive_assert_harness_prefix() {
+    let source = "import value from './entry.js' with { type: 'text' }; assert.sameValue(typeof value, 'string');";
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(PathBuf::from("entry.js"), source.to_string());
+    graph.add_text_dependency(PathBuf::from("entry.js"), source.to_string());
+    let linked = LinkedModuleGraph::compile_with_entry_prefix(
+        &mut graph,
+        Some(entry),
+        &[include_str!("../../../tests/test262/harness/assert.js")],
+    )
+    .expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+}
+
+#[test]
+fn imported_javascript_module_preserves_harness_globals() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import { value } from './dep.js'; assert.sameValue(value, true); export default value;"
+            .to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const value = true;".to_string(),
+    );
+    let linked = LinkedModuleGraph::compile_with_entry_prefix(
+        &mut graph,
+        Some(entry),
+        &[include_str!("../../../tests/test262/harness/assert.js")],
+    )
+    .expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+}
+
+#[test]
+fn namespace_reexport_metadata_records_exported_name() {
+    let metadata =
+        quench_runtime::reduce::inspect_module_source("export * as foo from './dep.js';")
+            .expect("module metadata");
+    assert_eq!(metadata.exported_names, vec!["foo"]);
+    assert_eq!(metadata.reexports[0].imported, "*");
+}
+
+#[test]
 fn linked_import_reads_the_exporters_live_default_cell() {
     let mut graph = ModuleGraph::new();
-    let entry = graph.add_entry(PathBuf::from("entry.js"), "import value from './dep.js'; export default value;".to_string());
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import value from './dep.js'; export default value;".to_string(),
+    );
     graph.add_dependency(PathBuf::from("dep.js"), "export default true;".to_string());
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
-    assert_eq!(linked.export_cell(entry, "default").expect("default export").get(), Value::Boolean(true));
+    assert_eq!(
+        linked
+            .export_cell(entry, "default")
+            .expect("default export")
+            .get(),
+        Value::Boolean(true)
+    );
 }
 
 #[test]
 fn namespace_import_reads_live_export_cells() {
     let mut graph = ModuleGraph::new();
-    let entry = graph.add_entry(PathBuf::from("entry.js"), "import * as ns from './dep.js'; export default ns.value;".to_string());
-    graph.add_dependency(PathBuf::from("dep.js"), "export const value = true;".to_string());
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import * as ns from './dep.js'; export default ns.value;".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const value = true;".to_string(),
+    );
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
-    assert_eq!(linked.export_cell(entry, "default").expect("default export").get(), Value::Boolean(true));
+    assert_eq!(
+        linked
+            .export_cell(entry, "default")
+            .expect("default export")
+            .get(),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn async_module_drains_promise_jobs_before_resuming() {
+    let module = LinkedModule::compile(
+        "export let value = 'synchronous'; Promise.resolve().then(() => value = 'tick'); await 1;",
+    )
+    .expect("module compiles");
+    let cell = module.export_cell("value").expect("export cell");
+    module.execute().expect("module starts");
+    while module.async_next.get().is_some() {
+        module.resume_async().expect("module resumes");
+    }
+    assert_eq!(
+        cell.get(),
+        Value::String("tick".to_string())
+    );
 }
 
 #[test]
 fn export_star_forwards_live_cells() {
     let mut graph = ModuleGraph::new();
-    let entry = graph.add_entry(PathBuf::from("entry.js"), "import { value } from './barrel.js'; export default value;".to_string());
-    graph.add_dependency(PathBuf::from("barrel.js"), "export * from './dep.js';".to_string());
-    graph.add_dependency(PathBuf::from("dep.js"), "export const value = true;".to_string());
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import { value } from './barrel.js'; export default value;".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("barrel.js"),
+        "export * from './dep.js';".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const value = true;".to_string(),
+    );
     let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
     linked.execute(&graph, entry).expect("graph executes");
-    assert_eq!(linked.export_cell(entry, "default").expect("default export").get(), Value::Boolean(true));
+    assert_eq!(
+        linked
+            .export_cell(entry, "default")
+            .expect("default export")
+            .get(),
+        Value::Boolean(true)
+    );
+}
+
+#[test]
+fn module_metadata_marks_top_level_await() {
+    let module = LinkedModule::compile("await 0;").expect("module compiles");
+    assert!(module.has_top_level_await());
+}
+
+#[test]
+fn async_export_cell_is_initialized_after_resume() {
+    let module = LinkedModule::compile("export default await 42;").expect("module compiles");
+    let cell = module.export_cell("default").expect("default export cell");
+    module.instantiate().expect("module instantiates");
+    module.execute().expect("module starts");
+    module.resume_async().expect("module resumes");
+    assert_eq!(cell.get(), Value::Number(42.0));
 }
