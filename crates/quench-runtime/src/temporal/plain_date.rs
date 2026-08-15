@@ -578,7 +578,7 @@ fn make_date_reject(year: f64, month: f64, day: f64) -> Result<Value, VmError> {
 
 fn make_date(year: f64, month: f64, day: f64, options: Option<&Value>) -> Result<Value, VmError> {
     let max = days_in_month(year, month)?;
-    if day <= 0.0 {
+    if !day.is_finite() || day <= 0.0 {
         return Err(crate::value::error::throw_range_error("Invalid date"));
     }
     let outside_temporal_range = (year == -271821.0 && (month < 4.0 || month == 4.0 && day < 19.0))
@@ -602,7 +602,8 @@ fn make_date(year: f64, month: f64, day: f64, options: Option<&Value>) -> Result
 
 fn validate_date(year: f64, month: f64, day: f64) -> Result<(), VmError> {
     let max = days_in_month(year, month)?;
-    if day <= 0.0
+    if !day.is_finite()
+        || day <= 0.0
         || day > max
         || (year == -271821.0 && (month < 4.0 || (month == 4.0 && day < 19.0)))
         || (year == 275760.0 && (month > 9.0 || (month == 9.0 && day > 13.0)))
@@ -644,19 +645,13 @@ fn field(object: &crate::value::ObjectData, name: &str) -> Result<Value, VmError
 }
 
 fn field_number(object: &crate::value::ObjectData, name: &str) -> Result<f64, VmError> {
-    match field(object, name)? {
-        Value::Number(value) => Ok(value),
-        _ => Err(crate::value::error::throw_type_error(
-            "Invalid PlainDate field",
-        )),
-    }
+    let value = field(object, name)?;
+    crate::conversion::to_number(&value).map(f64::trunc)
 }
 
 fn number(value: Option<&Value>) -> Result<f64, VmError> {
-    match value {
-        Some(Value::Number(value)) => Ok(*value),
-        _ => Err(crate::value::error::throw_type_error("Invalid PlainDate")),
-    }
+    let value = value.unwrap_or(&Value::Undefined);
+    crate::conversion::to_number(value).map(f64::trunc)
 }
 
 fn date_object(year: f64, month: f64, day: f64) -> Value {
