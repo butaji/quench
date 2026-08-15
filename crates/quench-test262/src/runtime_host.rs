@@ -60,16 +60,11 @@ impl LinkedModuleGraph {
             };
             units.insert(unit.id, module);
         }
-        link_reexports(graph, &units)?;
-        bind_imports(graph, &units, true)?;
         for unit in units.values() {
             unit.reset_links();
         }
         link_reexports(graph, &units)?;
-        bind_imports(graph, &units, true)?;
-        for unit in units.values() {
-            unit.reset_links();
-        }
+        link_reexports(graph, &units)?;
         link_reexports(graph, &units)?;
         bind_imports(graph, &units, false)?;
         Ok(Self { units })
