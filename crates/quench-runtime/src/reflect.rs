@@ -9,12 +9,22 @@ pub(crate) fn builtin(
     let Some(value) = arguments.first() else {
         return Ok(Value::Undefined);
     };
+    if builtin == crate::ops::Builtin::ShadowRealmEvaluate && !matches!(value, Value::String(_)) {
+        return Err(crate::value::error::throw_type_error(
+            "ShadowRealm.prototype.evaluate requires a string",
+        ));
+    }
     let realm = crate::vm::realm_id_for_intrinsic_receiver(receiver);
     let result = evaluate(value, false, realm)?;
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate
         && crate::conversion::is_callable(&result)
     {
         return wrap_shadow_function(&result);
+    }
+    if builtin == crate::ops::Builtin::ShadowRealmEvaluate && crate::value::is_object(&result) {
+        return Err(crate::value::error::throw_type_error(
+            "ShadowRealm evaluation must return a primitive",
+        ));
     }
     Ok(result)
 }
