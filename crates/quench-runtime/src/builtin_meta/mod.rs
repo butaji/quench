@@ -234,8 +234,7 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::BooleanPrototype
             | Builtin::SymbolPrototype
             | Builtin::StringPrototype
-            | Builtin::BigIntPrototype
-        | Builtin::TemporalDurationPrototype => true,
+            | Builtin::BigIntPrototype => true,
         _ => is_runtime_prototype_tail(builtin),
     )
 }
@@ -243,7 +242,9 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
 fn is_runtime_prototype_tail(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::TemporalPlainDatePrototype | Builtin::ShadowRealmPrototype
+        Builtin::TemporalDurationPrototype
+            | Builtin::TemporalPlainDatePrototype
+            | Builtin::ShadowRealmPrototype
     )
 }
 
