@@ -253,11 +253,14 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
         })
         .unwrap_or("short");
     if style == "digital" {
-        let clock = if hours == 0 {
+        let mut clock = if hours == 0 {
             format!("{minutes:02}:{seconds:02}")
         } else {
             format!("{hours}:{minutes:02}:{seconds:02}")
         };
+        if let Some(fraction) = digital_fraction(slots, milliseconds, microseconds, nanoseconds) {
+            clock.push_str(&fraction);
+        }
         return if days == 0 {
             Ok(if negative { format!("-{clock}") } else { clock })
         } else {
@@ -300,6 +303,34 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
         }
     }
     Ok(parts.join(", "))
+}
+
+fn digital_fraction(
+    slots: &[(String, Value)],
+    milliseconds: i64,
+    microseconds: i64,
+    nanoseconds: i64,
+) -> Option<String> {
+    let digits = slot_number(slots, "fractionalDigits");
+    let raw = format!(
+        "{:03}{:03}{:03}",
+        milliseconds.abs(),
+        microseconds.abs(),
+        nanoseconds.abs()
+    );
+    let count = digits.map_or_else(|| raw.trim_end_matches('0').len(), |value| value as usize);
+    (count > 0).then(|| format!(".{}", &raw[..count.min(9)]))
+}
+
+fn slot_number(slots: &[(String, Value)], key: &str) -> Option<f64> {
+    slots.iter().find_map(|(name, value)| {
+        (name == key)
+            .then_some(value)
+            .and_then(|value| match value {
+                Value::Number(value) => Some(*value),
+                _ => None,
+            })
+    })
 }
 
 fn validate_duration(properties: &[(String, Value)]) -> Result<(), VmError> {
