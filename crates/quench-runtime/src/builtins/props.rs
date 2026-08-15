@@ -88,6 +88,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.DisplayNames".to_string()))
         }
+        (IntlListFormatPrototype, "constructor") => Some(Value::Builtin(IntlListFormat)),
+        (IntlListFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.ListFormat".to_string()))
+        }
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
         (FinalizationRegistry, "prototype") => Some(Value::Builtin(FinalizationRegistryPrototype)),
         (FinalizationRegistryPrototype, "Symbol.toStringTag") => {
