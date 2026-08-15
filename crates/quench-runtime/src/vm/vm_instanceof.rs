@@ -240,6 +240,7 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
         builtin,
         Builtin::GeneratorFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype
+            | Builtin::AsyncFunctionPrototype
     ) {
         return Some(Value::Builtin(Builtin::FunctionPrototype));
     }
