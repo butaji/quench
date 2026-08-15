@@ -32,8 +32,6 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
         Builtin::IntlDurationFormatPrototype => &[
             "constructor", "format", "formatToParts", "resolvedOptions", "Symbol.toStringTag",
         ],
-        Builtin::ShadowRealm => &["length", "name", "prototype"],
-        Builtin::ShadowRealmPrototype => &["constructor", "evaluate", "Symbol.toStringTag"],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => {
             &[
