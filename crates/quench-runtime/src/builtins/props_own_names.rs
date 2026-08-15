@@ -175,6 +175,7 @@ fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str]
             "immutable",
             "maxByteLength",
             "resizable",
+            "slice",
             "resize",
             "transferToImmutable",
             "Symbol.toStringTag",
