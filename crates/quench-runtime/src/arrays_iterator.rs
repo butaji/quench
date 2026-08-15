@@ -31,7 +31,27 @@ fn array_iterator_values(receiver: Option<&Value>) -> Result<Vec<Value>, crate::
             "Array iterator called on incompatible receiver",
         ));
     };
+    if is_typed_array(value) {
+        return crate::collections::iterator_typed::typed_values(value.clone());
+    }
     array_like_values(value)
+}
+
+fn is_typed_array(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Float64Array(_)
+            | Value::Float32Array(_)
+            | Value::Int8Array(_)
+            | Value::Int16Array(_)
+            | Value::Int32Array(_)
+            | Value::Uint8Array(_)
+            | Value::Uint8ClampedArray(_)
+            | Value::Uint16Array(_)
+            | Value::Uint32Array(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
+    )
 }
 
 fn array_like_values(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {

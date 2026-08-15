@@ -22,7 +22,7 @@ macro_rules! bigint_values {
         )
     };
 }
-pub(super) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
+pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
     match value {
         Value::Float64Array(data) => number_values!(data),
         Value::Float32Array(data) => number_values!(data),
