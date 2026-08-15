@@ -46,9 +46,16 @@ fn validate(fields: &[f64]) -> Result<(), VmError> {
     if !(1.0..=12.0).contains(&fields[1])
         || !(1.0..=31.0).contains(&fields[2])
         || !(0.0..=23.0).contains(&fields[3])
+        || !(0.0..=59.0).contains(&fields[4])
+        || !(0.0..=60.0).contains(&fields[5])
         || fields[4..]
             .iter()
             .any(|value| !(0.0..=999.0).contains(value))
+    {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
+    if chrono::NaiveDate::from_ymd_opt(fields[0] as i32, fields[1] as u32, fields[2] as u32)
+        .is_none()
     {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
