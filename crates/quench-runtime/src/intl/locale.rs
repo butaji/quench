@@ -152,7 +152,10 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "firstDayOfWeek" => {
                 let _ = option_value(&text, "firstDayOfWeek")?;
             }
-            "language" | "region" | "script" | "variants" => {
+            "language" => locale.language = option_value(&text, key)?,
+            "region" => locale.region = Some(option_value(&text, key)?.to_ascii_uppercase()),
+            "script" => locale.script = Some(option_value(&text, key)?),
+            "variants" => {
                 let _ = option_value(&text, key)?;
             }
             _ => {}
