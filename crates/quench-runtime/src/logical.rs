@@ -184,6 +184,5 @@ fn is_truthy(value: &Constant) -> bool {
         Constant::StringUnits(value) => !value.is_empty(),
         Constant::BigInt(value) => value != "0",
         Constant::Null | Constant::Undefined => false,
-        Constant::StringUnits(value) => value.is_empty(),
     }
 }
