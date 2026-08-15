@@ -335,39 +335,30 @@ fn validate_duration(properties: &[(String, Value)]) -> Result<(), VmError> {
 }
 
 fn raw_duration_out_of_range(properties: &[(String, Value)]) -> bool {
-    let threshold = 9_007_199_254_740_992.0;
-    let components = [
-        ("days", 86_400.0),
-        ("hours", 3_600.0),
-        ("minutes", 60.0),
-        ("seconds", 1.0),
-        ("milliseconds", 1e-3),
-        ("microseconds", 1e-6),
-        ("nanoseconds", 1e-9),
+    let factors = [
+        ("days", 86_400_000_000_000_i128),
+        ("hours", 3_600_000_000_000),
+        ("minutes", 60_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
     ];
-    if components.iter().any(|(unit, scale)| {
-        properties.iter().any(|(name, value)| {
-            name == unit
-                && matches!(value, Value::Number(value) if value.abs() * scale >= threshold)
-        })
-    }) {
-        let total = components.iter().fold(0.0, |total, (unit, scale)| {
-            total
-                + properties.iter().fold(0.0, |subtotal, (name, value)| {
-                    subtotal
-                        + if name == unit {
-                            match value {
-                                Value::Number(value) => value * scale,
-                                _ => 0.0,
-                            }
-                        } else {
-                            0.0
+    let total = factors.iter().fold(0_i128, |total, (unit, factor)| {
+        total
+            + properties.iter().fold(0_i128, |subtotal, (name, value)| {
+                subtotal
+                    + if name == unit {
+                        match value {
+                            Value::Number(value) => *value as i128 * factor,
+                            _ => 0,
                         }
-                })
-        });
-        return total.abs() >= threshold;
-    }
-    false
+                    } else {
+                        0
+                    }
+            })
+    });
+    total.abs() >= 9_007_199_254_740_992_i128 * 1_000_000_000
 }
 
 fn normalized_nanoseconds(values: &[i64; 10]) -> i128 {
