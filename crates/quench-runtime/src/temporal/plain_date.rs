@@ -75,6 +75,11 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     if has_invalid_calendar_annotation(text) {
         return Err(crate::value::error::throw_range_error("Invalid calendar"));
     }
+    if has_multiple_time_zones(text) {
+        return Err(crate::value::error::throw_range_error(
+            "Multiple time zones",
+        ));
+    }
     if has_unknown_critical_annotation(text) {
         return Err(crate::value::error::throw_range_error(
             "Unknown critical annotation",
@@ -144,6 +149,14 @@ fn has_invalid_calendar_annotation(text: &str) -> bool {
             .and_then(|value| value.split(']').next())
             .is_some_and(|value| !value.eq_ignore_ascii_case("iso8601"))
     })
+}
+
+fn has_multiple_time_zones(text: &str) -> bool {
+    text.split('[')
+        .skip(1)
+        .filter(|annotation| !annotation.contains('=') && !annotation.is_empty())
+        .count()
+        > 1
 }
 
 fn has_excess_fraction(text: &str) -> bool {
