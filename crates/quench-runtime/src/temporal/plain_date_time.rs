@@ -22,6 +22,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     while fields.len() < 9 {
         fields.push(0.0);
     }
+    if fields[5] == 60.0 {
+        fields[5] = 59.0;
+    }
     validate(&fields)?;
     let month_code = format!("M{:02}", fields[1] as u32);
     let properties = NAMES
@@ -85,7 +88,9 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::TemporalPlainDateTimeFrom => Some(from(arguments.first())),
+        crate::ops::Builtin::TemporalPlainDateTimeFrom => {
+            Some(from(arguments.first(), arguments.get(1)))
+        }
         crate::ops::Builtin::TemporalPlainDateTimeCalendarIdGetter
         | crate::ops::Builtin::TemporalPlainDateTimeYearGetter
         | crate::ops::Builtin::TemporalPlainDateTimeMonthGetter
@@ -207,8 +212,8 @@ fn fields(value: &Value) -> Result<Vec<f64>, VmError> {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
-    let left = fields(&from(arguments.first())?)?;
-    let right = fields(&from(arguments.get(1))?)?;
+    let left = fields(&from(arguments.first(), None)?)?;
+    let right = fields(&from(arguments.get(1), None)?)?;
     Ok(Value::Number(match left.partial_cmp(&right) {
         Some(std::cmp::Ordering::Less) => -1.0,
         Some(std::cmp::Ordering::Greater) => 1.0,
@@ -219,7 +224,9 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
-    Ok(Value::Boolean(fields(receiver)? == fields(&from(other)?)?))
+    Ok(Value::Boolean(
+        fields(receiver)? == fields(&from(other, None)?)?,
+    ))
 }
 
 fn add(
@@ -486,7 +493,7 @@ fn year_text(year: i32) -> String {
     }
 }
 
-fn from(value: Option<&Value>) -> Result<Value, VmError> {
+fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let Some(value) = value else {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     };
@@ -534,6 +541,11 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         } else {
             field
         });
+    }
+    if matches!(fields.get(5), Some(Value::Number(value)) if *value == 60.0)
+        && matches!(options.and_then(|value| crate::execute::get_property_result(value, "overflow").ok()), Some(Value::String(value)) if value == "reject")
+    {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
     construct(&fields)
 }
