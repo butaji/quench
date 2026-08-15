@@ -291,6 +291,7 @@ fn append_scoped_statements(
     global_script: bool,
 ) -> Result<Option<u16>, Vec<String>> {
     let mut last = None;
+    let mut evaluation_started = state.script;
     let order = if !state.script {
         let mut order = Vec::with_capacity(statements.len());
         for (index, statement) in statements.iter().enumerate() {
@@ -309,6 +310,10 @@ fn append_scoped_statements(
     };
     for index in order {
         let statement = &statements[index];
+        if !evaluation_started && !is_function_declaration(statement) {
+            state.ops.push(Op::ModuleEvaluationStart);
+            evaluation_started = true;
+        }
         if global_script && matches!(statement, Statement::FunctionDeclaration(_)) {
             continue;
         }
