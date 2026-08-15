@@ -368,6 +368,7 @@ fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         ]))));
     }
     let descriptor = match (builtin, key) {
+        (Builtin::FunctionPrototype, "name") => (Value::String(String::new()), false, false, true),
         (Builtin::ThrowTypeError, "length") => (Value::Number(0.0), false, false, false),
         (Builtin::ThrowTypeError, "name") => (Value::String(String::new()), false, false, false),
         (Builtin::Object, "hasOwn") => (Value::Builtin(Builtin::ObjectHasOwn), true, false, true),
