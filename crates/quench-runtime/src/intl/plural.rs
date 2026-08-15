@@ -73,12 +73,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 "maximumFractionDigits" => {
                     maximum_fraction_digits = text.parse().ok().map_or(3.0, |value| value)
                 }
-                "minimumSignificantDigits" => {
-                    minimum_significant_digits = text.parse().ok()
-                }
-                "maximumSignificantDigits" => {
-                    maximum_significant_digits = text.parse().ok()
-                }
+                "minimumSignificantDigits" => minimum_significant_digits = text.parse().ok(),
+                "maximumSignificantDigits" => maximum_significant_digits = text.parse().ok(),
                 _ => {}
             }
         }
@@ -104,16 +100,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         ),
     ];
     if let Some(value) = minimum_significant_digits {
-        slot_properties.push((
-            "minimumSignificantDigits".to_string(),
-            Value::Number(value),
-        ));
+        slot_properties.push(("minimumSignificantDigits".to_string(), Value::Number(value)));
     }
     if let Some(value) = maximum_significant_digits {
-        slot_properties.push((
-            "maximumSignificantDigits".to_string(),
-            Value::Number(value),
-        ));
+        slot_properties.push(("maximumSignificantDigits".to_string(), Value::Number(value)));
     }
     slot_properties.push((
         "compactDisplay".to_string(),
@@ -134,10 +124,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 "resolvedOptions".to_string(),
                 Value::Builtin(crate::ops::Builtin::IntlPluralRulesResolvedOptions),
             ),
-            (
-                SLOT.to_string(),
-                make_object(slot_properties),
-            ),
+            (SLOT.to_string(), make_object(slot_properties)),
         ],
     ))
 }
@@ -171,8 +158,14 @@ pub(crate) fn prototype_method(
             let slots = super::intl_slots(receiver)?;
             let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
-            let notation = slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
-            Ok(Value::String(select(number, &plural_type, &locale, &notation)))
+            let notation =
+                slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
+            Ok(Value::String(select(
+                number,
+                &plural_type,
+                &locale,
+                &notation,
+            )))
         }
         crate::ops::Builtin::IntlPluralRulesSelectRange => {
             if arguments.len() < 2
@@ -191,7 +184,8 @@ pub(crate) fn prototype_method(
             let slots = super::intl_slots(receiver)?;
             let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
-            let notation = slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
+            let notation =
+                slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
             Ok(Value::String(select(end, &plural_type, &locale, &notation)))
         }
         crate::ops::Builtin::IntlPluralRulesResolvedOptions => {
@@ -294,12 +288,7 @@ fn select(number: f64, plural_type: &str, locale: &str, notation: &str) -> Strin
         if notation == "standard" && number.abs() == 1_000_000.0 {
             return "many".to_string();
         }
-        return if number.abs() < 2.0 {
-            "one"
-        } else {
-            "other"
-        }
-        .to_string();
+        return if number.abs() < 2.0 { "one" } else { "other" }.to_string();
     }
     if locale.starts_with("ru") || locale.starts_with("uk") {
         return russian_cardinal(number);
