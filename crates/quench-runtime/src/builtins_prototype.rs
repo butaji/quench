@@ -57,6 +57,9 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
             {
                 return "Error";
             }
+            if crate::regexp::has_regexp_internal_slot(&Value::Object(properties.clone())) {
+                return "RegExp";
+            }
             boxed_object_tag(properties).unwrap_or("Object")
         }
         Some(Value::ArrayBuffer(_)) => "ArrayBuffer",
