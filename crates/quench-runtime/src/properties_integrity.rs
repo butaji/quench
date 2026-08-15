@@ -90,7 +90,13 @@ fn integrity_descriptor(
     let flag = |field: &str| descriptor_flag_field(existing.as_ref(), field).unwrap_or(true);
     let accessor = existing.as_ref().is_some_and(is_accessor_descriptor);
     let mut fields = Vec::new();
-    if !accessor {
+    if accessor {
+        for field in ["get", "set"] {
+            if let Some(value) = descriptor_field_value(existing.as_ref(), field) {
+                fields.push((field.to_string(), value));
+            }
+        }
+    } else {
         fields.push((
             "writable".to_string(),
             crate::value::Value::Boolean(!frozen && flag("writable")),
@@ -105,6 +111,19 @@ fn integrity_descriptor(
         crate::value::Value::Boolean(false),
     ));
     descriptor_object(fields)
+}
+
+fn descriptor_field_value(
+    value: Option<&crate::value::Value>,
+    field: &str,
+) -> Option<crate::value::Value> {
+    let crate::value::Value::Object(fields) = value? else {
+        return None;
+    };
+    fields
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == field).then_some(value.clone()))
 }
 
 fn is_accessor_descriptor(value: &crate::value::Value) -> bool {
@@ -203,4 +222,3 @@ fn integrity_array_descriptor(
     ));
     descriptor_object(fields)
 }
-
