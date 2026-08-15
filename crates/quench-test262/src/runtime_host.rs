@@ -234,8 +234,10 @@ fn namespace_cell(
         "\0prototype".to_string(),
         quench_runtime::value::Value::Null,
     )];
+    let mut export_names = unit.export_names();
+    export_names.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
     properties.extend(
-        unit.export_names()
+        export_names
             .iter()
             .filter_map(|name| unit.export_cell(name).map(|cell| (name.clone(), cell)))
             .map(|(name, cell)| {
@@ -246,7 +248,7 @@ fn namespace_cell(
             })
             .collect::<Vec<_>>(),
     );
-    for name in unit.export_names() {
+    for name in export_names {
         let value = unit
             .export_cell(&name)
             .map(|cell| quench_runtime::value::Value::BindingCell(cell.shared()))
