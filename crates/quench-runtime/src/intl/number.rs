@@ -204,48 +204,7 @@ impl NumberOptions {
     }
 
     fn slot(&self) -> Value {
-        let mut properties = vec![
-            ("locale".to_string(), Value::String(self.locale.clone())),
-            ("style".to_string(), Value::String(self.style.clone())),
-            ("useGrouping".to_string(), Value::Boolean(self.use_grouping)),
-            (
-                "groupingMin2".to_string(),
-                Value::Boolean(self.grouping_min2),
-            ),
-            (
-                "minimumIntegerDigits".to_string(),
-                Value::Number(self.minimum_integer_digits as f64),
-            ),
-            (
-                "minimumFractionDigits".to_string(),
-                Value::Number(self.minimum_fraction_digits as f64),
-            ),
-            (
-                "maximumFractionDigits".to_string(),
-                Value::Number(self.maximum_fraction_digits as f64),
-            ),
-            ("notation".to_string(), Value::String(self.notation.clone())),
-            (
-                "compactDisplay".to_string(),
-                Value::String(self.compact_display.clone()),
-            ),
-            (
-                "signDisplay".to_string(),
-                Value::String(self.sign_display.clone()),
-            ),
-            (
-                "roundingMode".to_string(),
-                Value::String(self.rounding_mode.clone()),
-            ),
-            (
-                "roundingPriority".to_string(),
-                Value::String(self.rounding_priority.clone()),
-            ),
-            (
-                "roundingIncrement".to_string(),
-                Value::Number(self.rounding_increment as f64),
-            ),
-        ];
+        let mut properties = slot_base(self);
         if let Some(value) = self.minimum_significant_digits {
             properties.push((
                 "minimumSignificantDigits".to_string(),
@@ -270,7 +229,7 @@ impl NumberOptions {
             ));
         }
         if let Some(unit) = &self.unit {
-            properties.push(("unit".to_string(), Value::String(unit.clone())));
+            properties.push(("unit".to_string(), Value::String(self.unit.clone())));
             properties.push((
                 "unitDisplay".to_string(),
                 Value::String(self.unit_display.clone()),
@@ -278,6 +237,57 @@ impl NumberOptions {
         }
         make_object(properties)
     }
+}
+
+fn slot_base(number: &NumberFormat) -> Vec<(String, Value)> {
+    vec![
+        ("locale".to_string(), Value::String(number.locale.clone())),
+        ("style".to_string(), Value::String(number.style.clone())),
+        (
+            "useGrouping".to_string(),
+            Value::Boolean(number.use_grouping),
+        ),
+        (
+            "groupingMin2".to_string(),
+            Value::Boolean(number.grouping_min2),
+        ),
+        (
+            "minimumIntegerDigits".to_string(),
+            Value::Number(number.minimum_integer_digits as f64),
+        ),
+        (
+            "minimumFractionDigits".to_string(),
+            Value::Number(number.minimum_fraction_digits as f64),
+        ),
+        (
+            "maximumFractionDigits".to_string(),
+            Value::Number(number.maximum_fraction_digits as f64),
+        ),
+        (
+            "notation".to_string(),
+            Value::String(number.notation.clone()),
+        ),
+        (
+            "compactDisplay".to_string(),
+            Value::String(number.compact_display.clone()),
+        ),
+        (
+            "signDisplay".to_string(),
+            Value::String(number.sign_display.clone()),
+        ),
+        (
+            "roundingMode".to_string(),
+            Value::String(number.rounding_mode.clone()),
+        ),
+        (
+            "roundingPriority".to_string(),
+            Value::String(number.rounding_priority.clone()),
+        ),
+        (
+            "roundingIncrement".to_string(),
+            Value::Number(number.rounding_increment as f64),
+        ),
+    ]
 }
 
 fn valid_unit(unit: Option<&str>) -> bool {
