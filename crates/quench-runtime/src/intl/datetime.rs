@@ -113,7 +113,9 @@ fn sanitize_locale_extensions(locale: &str) -> String {
             continue;
         }
         let value = parts.get(cursor + 1).copied().unwrap_or_default();
-        if key == "nu" && valid_numbering_system(value) {
+        if (key == "nu" && valid_numbering_system(value))
+            || (key == "ca" && valid_calendar_extension(value))
+        {
             result.push(key.to_string());
             result.push(value.to_string());
         }
@@ -124,6 +126,65 @@ fn sanitize_locale_extensions(locale: &str) -> String {
     }
     if result.len() == index {
         return result.join("-");
+    }
+    result.insert(index, "u".to_string());
+    result.join("-")
+}
+
+fn valid_calendar_extension(value: &str) -> bool {
+    matches!(
+        value,
+        "buddhist"
+            | "chinese"
+            | "coptic"
+            | "dangi"
+            | "ethioaa"
+            | "ethiopic"
+            | "gregory"
+            | "hebrew"
+            | "indian"
+            | "islamic-civil"
+            | "islamic-tbla"
+            | "islamic-umalqura"
+            | "iso8601"
+            | "japanese"
+            | "persian"
+            | "roc"
+    )
+}
+
+fn locale_calendar(locale: &str) -> Option<&str> {
+    locale
+        .split('-')
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find(|pair| pair[0] == "ca" && valid_calendar_extension(pair[1]))
+        .map(|pair| pair[1])
+}
+
+fn locale_numbering_system(locale: &str) -> Option<&str> {
+    locale
+        .split('-')
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find(|pair| pair[0] == "nu" && valid_numbering_system(pair[1]))
+        .map(|pair| pair[1])
+}
+
+fn remove_locale_extension(locale: &str, unwanted: &str) -> String {
+    let parts = locale.split('-').collect::<Vec<_>>();
+    let mut result = Vec::new();
+    let mut index = 0;
+    while index < parts.len() {
+        if parts[index] == unwanted {
+            index += 2;
+            continue;
+        }
+        result.push(parts[index]);
+        index += 1;
+    }
+    if result.last() == Some(&"u") {
+        result.pop();
     }
     result.join("-")
 }
@@ -168,6 +229,12 @@ impl DateTimeOptions {
             fractional_second_digits: None,
             hour12: None,
         };
+        if let Some(calendar) = locale_calendar(&formatter.locale) {
+            formatter.calendar = calendar.to_string();
+        }
+        if let Some(numbering_system) = locale_numbering_system(&formatter.locale) {
+            formatter.numbering_system = numbering_system.to_string();
+        }
         if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
             for key in OPTION_ORDER {
                 let value = crate::execute::get_property_result(options, key)?;
@@ -227,9 +294,31 @@ impl DateTimeOptions {
                 }
                 self.time_zone = canonicalize_time_zone(&text);
             }
-            "calendar" => self.calendar = canonicalize_calendar(&text)?,
+            "calendar" => {
+                if !valid_identifier_shape(&text) {
+                    return Err(runtime_error("RangeError: invalid calendar"));
+                }
+                let normalized = text.to_ascii_lowercase();
+                if valid_calendar_extension(&normalized)
+                    || matches!(normalized.as_str(), "islamicc" | "ethiopic-amete-alem")
+                {
+                    let calendar = canonicalize_calendar(&normalized)?;
+                    if locale_calendar(&self.locale) != Some(calendar.as_str()) {
+                        self.locale = remove_locale_extension(&self.locale, "ca");
+                    }
+                    self.calendar = calendar;
+                }
+            }
             "numberingSystem" => {
-                self.numbering_system = validate_identifier(&text, "numberingSystem")?
+                if !valid_identifier_shape(&text) {
+                    return Err(runtime_error("RangeError: invalid numberingSystem"));
+                }
+                if valid_numbering_system(&text.to_ascii_lowercase()) {
+                    if locale_numbering_system(&self.locale) != Some(text.as_str()) {
+                        self.locale = remove_locale_extension(&self.locale, "nu");
+                    }
+                    self.numbering_system = text;
+                }
             }
             _ => {}
         }
@@ -362,6 +451,13 @@ impl DateTimeOptions {
     }
 }
 
+fn valid_identifier_shape(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('-').all(|part| {
+            (3..=8).contains(&part.len()) && part.chars().all(|ch| ch.is_ascii_alphanumeric())
+        })
+}
+
 fn valid_component(text: &str, allowed: &[&str]) -> Option<String> {
     if allowed.contains(&text) {
         Some(text.to_string())
@@ -388,17 +484,6 @@ fn canonicalize_calendar(value: &str) -> Result<String, VmError> {
         "islamic" | "islamic-rgsa" => "islamic-civil".to_string(),
         _ => "gregory".to_string(),
     })
-}
-
-fn validate_identifier(value: &str, name: &str) -> Result<String, VmError> {
-    if value.is_empty()
-        || !value.split('-').all(|part| {
-            (3..=8).contains(&part.len()) && part.chars().all(|ch| ch.is_ascii_alphanumeric())
-        })
-    {
-        return Err(runtime_error(&format!("RangeError: invalid {name}")));
-    }
-    Ok(value.to_ascii_lowercase())
 }
 
 fn canonicalize_time_zone(time_zone: &str) -> String {
