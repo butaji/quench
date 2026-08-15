@@ -47,6 +47,13 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         Builtin(builtin) => bind_callable_property(value, *builtin, key),
         Array(values) => crate::arrays::property(values, key),
         ArrayBuffer(buffer) => array_buffer_property(buffer, key),
+        _ => get_property_value_typed_tail(value, key),
+    }
+}
+
+fn get_property_value_typed_tail(value: &Value, key: &str) -> Value {
+    use Value::*;
+    match value {
         Float64Array(view) => float64_array_property(view, key),
         Float32Array(view) => float32_array_property(view, key),
         Int8Array(view) => int8_array_property(view, key),
