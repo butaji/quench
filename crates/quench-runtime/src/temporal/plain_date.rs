@@ -60,6 +60,9 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     let Some(Value::String(text)) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
+    if has_utc_designator(text) {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
     if has_excess_fraction(text) {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
@@ -129,6 +132,12 @@ fn has_excess_fraction(text: &str) -> bool {
         .next()
         .and_then(|value| value.find('.').map(|index| &value[index + 1..]))
         .is_some_and(|fraction| fraction.bytes().take_while(u8::is_ascii_digit).count() > 9)
+}
+
+fn has_utc_designator(text: &str) -> bool {
+    text.split('[')
+        .next()
+        .is_some_and(|value| value.ends_with('Z'))
 }
 
 fn date_part(text: &str) -> &str {
