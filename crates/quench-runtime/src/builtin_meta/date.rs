@@ -160,12 +160,11 @@ const fn fn_len_get_or_set(b: Builtin) -> Option<f64> {
     }
 }
 
+#[rustfmt::skip]
 const fn fn_len_getters(b: Builtin) -> Option<f64> {
     use Builtin::*;
     match b {
-        DateGetTime
-        | DateToString
-        | DateToDateString
+        DateGetTime | DateToString | DateToDateString
         | DateToTimeString
         | DateToUTCString
         | DateToISOString
