@@ -388,7 +388,7 @@ fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execut
         .map(crate::conversion::to_string)
         .transpose()?;
     let mut properties = error_properties(&crate::ops::Builtin::AggregateError, message);
-    append_error_cause(&mut properties, &arguments[1..])?;
+    append_error_cause_value(&mut properties, arguments.get(2))?;
     push_error_property(&mut properties, "errors", Value::array(errors));
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
 }
@@ -434,10 +434,14 @@ fn append_error_cause(
     properties: &mut Vec<(String, Value)>,
     arguments: &[Value],
 ) -> Result<(), crate::execute::VmError> {
-    if let Some(cause_source) = arguments
-        .get(1)
-        .filter(|value| !matches!(value, Value::Undefined))
-    {
+    append_error_cause_value(properties, arguments.get(1))
+}
+
+fn append_error_cause_value(
+    properties: &mut Vec<(String, Value)>,
+    cause_source: Option<&Value>,
+) -> Result<(), crate::execute::VmError> {
+    if let Some(cause_source) = cause_source.filter(|value| !matches!(value, Value::Undefined)) {
         let options = to_object(cause_source)?;
         if !crate::with_scope::has_property(&options, "cause")? {
             return Ok(());
