@@ -308,6 +308,7 @@ pub enum Builtin {
     RegExp,
     RegExpEscape,
     RegExpPrototype,
+    RegExpCompile,
     RegExpTest,
     RegExpExec,
     RegExpPrototypeToString,

@@ -361,12 +361,18 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
             "\0prototype".to_string(),
             Value::Builtin(crate::ops::Builtin::RegExpPrototype),
         ),
-        ("source".to_string(), Value::String(source.clone())),
+        (
+            "source".to_string(),
+            Value::BindingCell(Rc::new(RefCell::new(Value::String(source.clone())))),
+        ),
         (
             crate::builtins::descriptor_key("source"),
             regexp_data_descriptor(false, true, Value::String(source)),
         ),
-        ("flags".to_string(), Value::String(flags.clone())),
+        (
+            "flags".to_string(),
+            Value::BindingCell(Rc::new(RefCell::new(Value::String(flags.clone())))),
+        ),
         (
             crate::builtins::descriptor_key("flags"),
             regexp_data_descriptor(false, true, Value::String(flags.clone())),
