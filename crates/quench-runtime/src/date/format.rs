@@ -8,6 +8,7 @@ const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
+type UtcFields = (i32, u32, u32, u32, u32, u32, usize, u32);
 
 pub fn execute(builtin: Builtin, receiver: Option<&Value>) -> Option<Result<Value, VmError>> {
     let result = match builtin {
@@ -92,7 +93,7 @@ fn local_fields(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, usize)> {
     Some((y, m, d, h, min, sec, day))
 }
 
-fn utc_fields(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, usize, u32)> {
+fn utc_fields(ms: f64) -> Option<UtcFields> {
     let (y, m, d, h, min, sec, milli) = chrono_utils::utc_components(ms)?;
     let day = chrono_utils::weekday(ms)?;
     Some((y, m, d, h, min, sec, day, milli))
