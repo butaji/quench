@@ -385,7 +385,7 @@ fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Va
     let month = field_number(object, "_month")?;
     let day = field_number(object, "_day")?;
     let calendar = field(object, "calendarId").unwrap_or_else(|_| Value::String("iso8601".into()));
-    let (era, era_year) = era_values(&calendar, year);
+    let (era, era_year) = era_values(&calendar, year, month, day);
     let value = match builtin {
         crate::ops::Builtin::TemporalPlainDateCalendarIdGetter => {
             field(object, "calendarId").unwrap_or_else(|_| Value::String("iso8601".into()))
@@ -418,15 +418,52 @@ fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Va
     Ok(value)
 }
 
-fn era_values(calendar: &Value, year: f64) -> (Value, Value) {
+fn era_values(calendar: &Value, year: f64, month: f64, day: f64) -> (Value, Value) {
     let Value::String(calendar) = calendar else {
         return (Value::Undefined, Value::Undefined);
     };
     match calendar.as_str() {
         "hebrew" => (Value::String("am".into()), Value::Number(year)),
+        "japanese" => japanese_era(year, month, day),
         "gregory" if year > 0.0 => (Value::String("ce".into()), Value::Number(year)),
         "gregory" => (Value::String("bce".into()), Value::Number(1.0 - year)),
         _ => (Value::Undefined, Value::Undefined),
+    }
+}
+
+fn japanese_era(year: f64, month: f64, day: f64) -> (Value, Value) {
+    let (name, start) = if (year, month, day) >= (2019.0, 5.0, 1.0) {
+        ("reiwa", 2019.0)
+    } else if (year, month, day) >= (1989.0, 1.0, 8.0) {
+        ("heisei", 1989.0)
+    } else if (year, month, day) >= (1926.0, 12.0, 25.0) {
+        ("showa", 1926.0)
+    } else if (year, month, day) >= (1912.0, 7.0, 30.0) {
+        ("taisho", 1912.0)
+    } else if (year, month, day) >= (1873.0, 1.0, 1.0) {
+        ("meiji", 1868.0)
+    } else if year > 0.0 {
+        ("ce", 1.0)
+    } else {
+        ("bce", 1.0 - year)
+    };
+    let era_year = if name == "bce" {
+        1.0 - year
+    } else {
+        year - start + 1.0
+    };
+    (Value::String(name.into()), Value::Number(era_year))
+}
+
+fn japanese_year_from_era(era: &str, era_year: f64) -> f64 {
+    match era {
+        "reiwa" => 2019.0 + era_year - 1.0,
+        "heisei" => 1989.0 + era_year - 1.0,
+        "showa" => 1926.0 + era_year - 1.0,
+        "taisho" => 1912.0 + era_year - 1.0,
+        "meiji" => 1868.0 + era_year - 1.0,
+        "bc" | "bce" => 1.0 - era_year,
+        _ => era_year,
     }
 }
 
@@ -550,8 +587,21 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                 validate_era(object, &calendar)?;
             }
         }
-        validate_required_fields(object)?;
-        let year = field_number(object, "year")?;
+        let calendar = match field(object, "calendar")? {
+            Value::String(calendar) => canonical_calendar(&Value::String(calendar))?,
+            _ => "iso8601".into(),
+        };
+        let year = if calendar == "japanese" && field(object, "year").is_err() {
+            let era_year = field_number(object, "eraYear")?;
+            let era = field(object, "era")?;
+            let Value::String(era) = era else {
+                return Err(crate::value::error::throw_type_error("Invalid era"));
+            };
+            japanese_year_from_era(&era, era_year)
+        } else {
+            validate_required_fields(object)?;
+            field_number(object, "year")?
+        };
         let day = field_number(object, "day")?;
         let month = field_number(object, "month").or_else(|_| {
             let code = field(object, "monthCode")?;
@@ -566,10 +616,6 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         if month < 0.0 || day < 0.0 {
             return Err(crate::value::error::throw_range_error("Invalid date"));
         }
-        let calendar = match field(object, "calendar")? {
-            Value::String(calendar) => canonical_calendar(&Value::String(calendar))?,
-            _ => "iso8601".into(),
-        };
         let month = if calendar == "hebrew" {
             hebrew_month_number(year, month, field(object, "monthCode").ok().as_ref())?
         } else {
