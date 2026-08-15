@@ -626,15 +626,15 @@ fn push_error_property(properties: &mut Vec<(String, Value)>, name: &str, value:
 }
 
 fn error_properties(name: &str, prototype: crate::ops::Builtin) -> Vec<(String, Value)> {
-    vec![
-        ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), Value::String(String::new())),
-        (
-            crate::builtins::ERROR_SLOT.to_string(),
-            Value::Boolean(true),
-        ),
-        ("\0prototype".to_string(), Value::Builtin(prototype)),
-    ]
+    let mut properties = Vec::new();
+    push_error_property(&mut properties, "name", Value::String(name.to_string()));
+    push_error_property(&mut properties, "message", Value::String(String::new()));
+    properties.push((
+        crate::builtins::ERROR_SLOT.to_string(),
+        Value::Boolean(true),
+    ));
+    properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
+    properties
 }
 
 fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
