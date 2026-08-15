@@ -17,23 +17,8 @@ pub fn execute(
     if builtin == Builtin::DateUTC {
         return Some(date_utc(arguments));
     }
-    if builtin == Builtin::DateSetDate {
-        return Some(super::setter::set_date(receiver, arguments));
-    }
-    if builtin == Builtin::DateSetUTCDate {
-        return Some(super::setter::set_utc_date(receiver, arguments));
-    }
-    if builtin == Builtin::DateSetUTCMonth {
-        return Some(super::setter::set_utc_month(receiver, arguments));
-    }
-    if builtin == Builtin::DateSetUTCFullYear {
-        return Some(super::setter::set_utc_full_year(receiver, arguments));
-    }
-    if builtin == Builtin::DateSetFullYear {
-        return Some(super::setter::set_full_year(receiver, arguments));
-    }
-    if builtin == Builtin::DateSetMonth {
-        return Some(super::setter::set_month(receiver, arguments));
+    if let Some(result) = execute_special_setter(builtin, receiver, arguments) {
+        return Some(result);
     }
     if builtin == Builtin::DateSetTime {
         return Some(super::setter::set_time(receiver, arguments));
@@ -69,6 +54,24 @@ pub fn execute(
         }
     };
     Some(Ok(result))
+}
+
+fn execute_special_setter(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    let result = match builtin {
+        Builtin::DateSetDate => super::setter::set_date(receiver, arguments),
+        Builtin::DateSetUTCDate => super::setter::set_utc_date(receiver, arguments),
+        Builtin::DateSetUTCMonth => super::setter::set_utc_month(receiver, arguments),
+        Builtin::DateSetUTCFullYear => super::setter::set_utc_full_year(receiver, arguments),
+        Builtin::DateSetFullYear => super::setter::set_full_year(receiver, arguments),
+        Builtin::DateSetMonth => super::setter::set_month(receiver, arguments),
+        Builtin::DateSetTime => super::setter::set_time(receiver, arguments),
+        _ => return None,
+    };
+    Some(result)
 }
 
 fn is_date_getter(builtin: Builtin) -> bool {
