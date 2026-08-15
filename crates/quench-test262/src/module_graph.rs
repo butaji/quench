@@ -107,7 +107,14 @@ impl ModuleGraph {
         let source = unit.source.clone();
         let metadata = quench_runtime::reduce::inspect_module_source(&source)
             .map_err(|errors| errors.join("; "))?;
-        self.link_specifiers(from, metadata.import_specifiers.iter().map(String::as_str))
+        self.link_specifiers(
+            from,
+            metadata
+                .import_specifiers
+                .iter()
+                .map(String::as_str)
+                .filter(|specifier| *specifier != "<module source>"),
+        )
     }
 
     /// Link every currently loaded unit from its canonical static metadata.
