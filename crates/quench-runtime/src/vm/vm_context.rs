@@ -57,9 +57,6 @@ pub(crate) fn is_intrinsic_bound(bound: &crate::value::BoundFunctionValue) -> bo
     realm::is_intrinsic(bound)
 }
 
-pub(crate) fn realm_is_intrinsic(bound: &crate::value::BoundFunctionValue) -> bool {
-    is_intrinsic_bound(bound)
-}
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
