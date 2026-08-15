@@ -206,6 +206,7 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
         "growable" => Value::Boolean(buffer.shared && buffer.max_byte_length.is_some()),
         "resize" => Value::Builtin(Builtin::ArrayBufferResize),
         "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
+        "Symbol.toStringTag" => crate::builtins::property(Builtin::ArrayBufferPrototype, key),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
     }
 }
