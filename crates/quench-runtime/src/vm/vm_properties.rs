@@ -520,6 +520,9 @@ fn promise_property(value: &Value, key: &str) -> Value {
     }))
 }
 fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Value {
+    if let Some(value) = buffer.own_property(key) {
+        return value;
+    }
     if key == "constructor" && buffer.shared {
         return Value::Builtin(Builtin::SharedArrayBuffer);
     }
