@@ -10,11 +10,26 @@ fn prototype_for_value(value: &Value) -> Value {
     if let Some(prototype) = slot_prototype(value) {
         return prototype;
     }
-    match value {
-        Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
-        Value::Builtin(Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype) => {
-            Value::Builtin(Builtin::ObjectPrototype)
+    let result = match value {
+        Value::Builtin(Builtin::AggregateError) => Value::Builtin(Builtin::Error),
+        Value::Builtin(Builtin::AsyncFunction) => Value::Builtin(Builtin::Function),
+        Value::Builtin(Builtin::AsyncFunctionPrototype) => {
+            Value::Builtin(Builtin::FunctionPrototype)
         }
+        Value::Builtin(Builtin::AsyncGeneratorPrototype) => {
+            Value::Builtin(Builtin::AsyncIteratorPrototype)
+        }
+        Value::Builtin(Builtin::GeneratorPrototype) => Value::Builtin(Builtin::IteratorPrototype),
+        Value::Builtin(Builtin::AsyncIteratorPrototype) => Value::Builtin(Builtin::ObjectPrototype),
+        Value::Builtin(Builtin::Atomics) => Value::Builtin(Builtin::ObjectPrototype),
+        Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
+        Value::Builtin(
+            Builtin::Math
+            | Builtin::Reflect
+            | Builtin::Json
+            | Builtin::DisposableStackPrototype
+            | Builtin::AsyncDisposableStackPrototype,
+        ) => Value::Builtin(Builtin::ObjectPrototype),
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
             Value::Builtin(Builtin::TypedArray)
         }
@@ -26,10 +41,14 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::Builtin(Builtin::SuppressedErrorPrototype) => {
             Value::Builtin(Builtin::ErrorPrototype)
         }
-        Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::SetIteratorPrototype | Builtin::MapIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
-        Value::Function(function) => {
-            internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
-        }
+        Value::Builtin(
+            builtin @ (Builtin::ArrayIteratorPrototype
+            | Builtin::RegExpStringIteratorPrototype
+            | Builtin::SetIteratorPrototype
+            | Builtin::MapIteratorPrototype
+            | Builtin::IteratorPrototype),
+        ) => iterator_prototype(*builtin),
+        Value::Function(function) => function_prototype(function),
         Value::Builtin(_) | Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
         Value::Generator(generator) => generator_prototype(generator),
@@ -52,7 +71,18 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::BigInt64Array(_) => Value::Builtin(Builtin::BigInt64ArrayPrototype),
         Value::BigUint64Array(_) => Value::Builtin(Builtin::BigUint64ArrayPrototype),
         _ => Value::Null,
-    }
+    };
+    result
+}
+
+fn function_prototype(function: &crate::value::FunctionValue) -> Value {
+    let builtin = match (function.kind, function.is_async) {
+        (crate::ops::FunctionKind::Generator, true) => Builtin::AsyncGeneratorFunctionPrototype,
+        (crate::ops::FunctionKind::Generator, false) => Builtin::GeneratorFunctionPrototype,
+        (_, true) => Builtin::AsyncFunctionPrototype,
+        (_, false) => Builtin::FunctionPrototype,
+    };
+    internal_prototype(&function.properties.borrow(), builtin)
 }
 
 fn slot_prototype(value: &Value) -> Option<Value> {
@@ -136,7 +166,10 @@ pub(crate) fn is_prototype_of(
     prototype_chain_contains(value, prototype).map(Value::Boolean)
 }
 
-fn prototype_chain_contains(value: &Value, prototype: &Value) -> Result<bool, crate::execute::VmError> {
+fn prototype_chain_contains(
+    value: &Value,
+    prototype: &Value,
+) -> Result<bool, crate::execute::VmError> {
     let mut seen = Vec::new();
     let mut current = resolve_object_alias(get_prototype_of(Some(value))?);
     while !matches!(current, Value::Null) {
@@ -169,24 +202,32 @@ fn resolve_object_alias(value: Value) -> Value {
 }
 
 pub(crate) fn define_legacy_accessor(
-    receiver: Option<&Value>, arguments: &[Value], field: &str,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    field: &str,
 ) -> Result<Value, crate::execute::VmError> {
     let target = require_object_receiver(receiver)?;
     let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
     let accessor = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&accessor) {
-        return Err(crate::value::error::throw_type_error("Accessor must be callable"));
+        return Err(crate::value::error::throw_type_error(
+            "Accessor must be callable",
+        ));
     }
-    let descriptor = vec![(field.to_string(), accessor),
+    let descriptor = vec![
+        (field.to_string(), accessor),
         ("enumerable".to_string(), Value::Boolean(true)),
-        ("configurable".to_string(), Value::Boolean(true))];
+        ("configurable".to_string(), Value::Boolean(true)),
+    ];
     let result = crate::builtins::define_own_property(target, &key, &descriptor)?;
     crate::locals::replace_value(target, &result);
     Ok(Value::Undefined)
 }
 
 pub(crate) fn lookup_legacy_accessor(
-    receiver: Option<&Value>, arguments: &[Value], field: &str,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    field: &str,
 ) -> Result<Value, crate::execute::VmError> {
     let target = require_object_receiver(receiver)?;
     let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
@@ -194,9 +235,9 @@ pub(crate) fn lookup_legacy_accessor(
 }
 
 fn require_object_receiver(receiver: Option<&Value>) -> Result<&Value, crate::execute::VmError> {
-    receiver.filter(|value| crate::value::is_object(value)).ok_or_else(|| {
-        crate::value::error::throw_type_error("Object receiver required")
-    })
+    receiver
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| crate::value::error::throw_type_error("Object receiver required"))
 }
 
 pub(crate) fn from_entries(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -291,6 +332,10 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
+            | Builtin::AsyncFunctionPrototype
+            | Builtin::AsyncGeneratorFunctionPrototype
+            | Builtin::AsyncGeneratorPrototype
+            | Builtin::AsyncIteratorPrototype
     )
 }
 
