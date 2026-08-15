@@ -85,6 +85,9 @@ impl RawOptions {
         };
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
+                if matches!(value, Value::Undefined) {
+                    continue;
+                }
                 let value = to_string_value(value);
                 apply_option(&mut raw, key, &value);
             }
