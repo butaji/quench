@@ -309,9 +309,14 @@ pub(crate) fn consume_deferred_namespace_marker(value: &Value, key: &str) -> Opt
     {
         return None;
     }
-    let Value::Object(properties) = value else {
-        return None;
-    };
+    if let Value::BindingCell(cell) = value {
+        return consume_deferred_namespace_marker(&cell.borrow(), key);
+    }
+    if let Value::ObjectAlias(alias) = value {
+        let object = alias.0.borrow().upgrade().map(Value::Object)?;
+        return consume_deferred_namespace_marker(&object, key);
+    }
+    let Value::Object(properties) = value else { return None };
     let marker = format!("\0quench:deferred:\0{key}");
     let id = properties.iter().rev().find_map(|(name, value)| {
         if name == "\0quench:deferred-module" {
