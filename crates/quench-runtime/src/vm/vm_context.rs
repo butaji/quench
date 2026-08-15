@@ -25,7 +25,6 @@ pub(crate) fn is_legacy_global(key: &str) -> bool {
         "parseFloat"
             | "parseInt"
             | "decodeURI"
-            | "decodeURIComponent"
             | "encodeURI"
             | "encodeURIComponent"
     )
