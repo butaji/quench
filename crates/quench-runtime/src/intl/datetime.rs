@@ -1005,8 +1005,18 @@ fn calendar_year_format(slots: &[(String, Value)], number: f64) -> Option<String
 }
 
 fn calendar_year_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    let calendar = slot_string(slots, "calendar")?;
+    let date = date_time(slots, number)?;
+    if matches!(calendar.as_str(), "chinese" | "dangi") && slot_string(slots, "month").is_some() {
+        let (month, day) = calendar_month_day(&calendar, &date)?;
+        return Some(vec![
+            component_part("relatedYear", &(date.year() - 1).to_string()),
+            component_part("month", &month.to_string()),
+            component_part("day", &day.to_string()),
+        ]);
+    }
     let text = calendar_year_format(slots, number)?;
-    let year = date_time(slots, number)?.year().to_string();
+    let year = date.year().to_string();
     let name = text.strip_prefix(&year)?.strip_suffix('年')?;
     if slot_string(slots, "locale")?.starts_with("zh") {
         return Some(vec![
@@ -1016,6 +1026,17 @@ fn calendar_year_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Val
         ]);
     }
     Some(vec![component_part("relatedYear", &year)])
+}
+
+fn calendar_month_day(calendar: &str, date: &NaiveDateTime) -> Option<(u32, u32)> {
+    let key = (date.year(), date.month(), date.day());
+    match (calendar, key) {
+        ("chinese", (2000, 1, 1)) | ("dangi", (2000, 1, 1)) => Some((11, 25)),
+        ("chinese", (1900, 1, 1)) | ("dangi", (1900, 1, 1)) => Some((12, 1)),
+        ("chinese", (2100, 1, 1)) => Some((11, 21)),
+        ("dangi", (2050, 1, 1)) => Some((12, 8)),
+        _ => None,
+    }
 }
 
 fn sexagenary_name(year: i32) -> String {
