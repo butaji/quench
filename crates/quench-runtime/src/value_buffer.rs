@@ -69,6 +69,21 @@ impl ArrayBufferData {
         self.prototype.replace(Some(prototype));
     }
 
+    pub(crate) fn own_property(&self, key: &str) -> Option<Value> {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    }
+
+    pub(crate) fn set_own_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        properties.retain(|(name, _)| name != key);
+        properties.push((key.to_string(), value));
+    }
+
     pub fn detach(&self) {
         *self.detached.borrow_mut() = true;
         self.bytes.borrow_mut().clear();
