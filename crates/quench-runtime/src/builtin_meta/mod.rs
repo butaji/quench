@@ -60,6 +60,12 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::RegExp => Some("RegExp"),
         Builtin::String => Some("String"),
         Builtin::Symbol => Some("Symbol"),
+        _ => constructor_name_tail(builtin),
+    }
+}
+
+fn constructor_name_tail(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
         Builtin::Float64Array => Some("Float64Array"),
         Builtin::Float32Array => Some("Float32Array"),
         Builtin::Int8Array => Some("Int8Array"),
@@ -143,6 +149,12 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::TemporalPlainDate => Some(Builtin::TemporalPlainDatePrototype),
         Builtin::ShadowRealm => Some(Builtin::ShadowRealmPrototype),
         Builtin::Symbol => Some(Builtin::ObjectPrototype),
+        _ => prototype_tail(builtin),
+    }
+}
+
+fn prototype_tail(builtin: Builtin) -> Option<Builtin> {
+    match builtin {
         Builtin::IntlCollator => Some(Builtin::IntlCollatorPrototype),
         Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatPrototype),
         Builtin::IntlDisplayNames => Some(Builtin::IntlDisplayNamesPrototype),
@@ -159,9 +171,9 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::WeakSet => Some(Builtin::WeakSetPrototype),
         Builtin::WeakRef => Some(Builtin::WeakRefPrototype),
         Builtin::Error | Builtin::RangeError => Some(Builtin::ErrorPrototype),
-        Builtin::ReferenceError => Some(Builtin::ErrorPrototype),
-        Builtin::SyntaxError => Some(Builtin::ErrorPrototype),
-        Builtin::EvalError => Some(Builtin::ErrorPrototype),
+        Builtin::ReferenceError | Builtin::SyntaxError | Builtin::EvalError => {
+            Some(Builtin::ErrorPrototype)
+        }
         Builtin::URIError => Some(Builtin::ErrorPrototype),
         Builtin::AggregateError => Some(Builtin::ErrorPrototype),
         Builtin::SuppressedError => Some(Builtin::SuppressedErrorPrototype),
