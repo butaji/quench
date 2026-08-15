@@ -267,7 +267,6 @@ fn uint8_array_base64_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         "toBase64" => Builtin::Uint8ArrayToBase64,
         "toHex" => Builtin::Uint8ArrayToHex,
         "subarray" => Builtin::Uint8ArraySubarray,
-        "slice" => Builtin::Uint8ArraySlice,
         _ => return None,
     })
 }

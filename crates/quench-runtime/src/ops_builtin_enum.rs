@@ -174,7 +174,7 @@ pub enum Builtin {
     TypedArrayFill, Uint8ArrayFromBase64,
     Uint8ArrayFromHex, Uint8ArraySetFromBase64,
     Uint8ArraySetFromHex, Uint8ArrayToBase64,
-    Uint8ArrayToHex, Uint8ArraySubarray, Uint8ArraySlice,
+    Uint8ArrayToHex, Uint8ArraySubarray,
     ObjectDefineProperty, ObjectDefineProperties,
     ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols,
     ObjectPropertyIsEnumerable, ObjectPrototypeToString,
