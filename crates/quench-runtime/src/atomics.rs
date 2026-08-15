@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::VecDeque,
     rc::Rc,
+    time::{Duration, Instant},
 };
 
 use crate::{
@@ -15,6 +16,7 @@ struct Waiter {
     index: usize,
     promise: Rc<PromiseData>,
     result: Option<Rc<Cell<bool>>>,
+    deadline: Option<Instant>,
 }
 
 struct WaitState {
@@ -38,6 +40,7 @@ thread_local! {
 }
 
 pub(crate) fn execute(builtin: Builtin, arguments: &[Value]) -> Option<Result<Value, VmError>> {
+    expire_async_waiters();
     if builtin == Builtin::AtomicsIsLockFree {
         return Some(is_lock_free(arguments));
     }
@@ -446,12 +449,28 @@ fn wait_async_result(view: &Value, index: usize, timeout: f64) -> Result<Value, 
             index,
             promise: Rc::clone(&promise),
             result: None,
+            deadline: timeout
+                .is_finite()
+                .then(|| Instant::now() + Duration::from_secs_f64(timeout.max(0.0) / 1_000.0)),
         })
     });
     Ok(Value::object(vec![
         ("async".into(), Value::Boolean(true)),
         ("value".into(), Value::Promise(promise)),
     ]))
+}
+
+pub(crate) fn expire_async_waiters() {
+    let now = Instant::now();
+    WAITERS.with(|waiters| {
+        waiters.borrow_mut().retain(|waiter| {
+            let expired = waiter.deadline.is_some_and(|deadline| deadline <= now);
+            if expired {
+                crate::promise::resolve_promise(&waiter.promise, Value::String("timed-out".into()));
+            }
+            !expired
+        });
+    });
 }
 
 fn validate_wait_view(view: &Value) -> Result<(), VmError> {
