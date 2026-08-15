@@ -35,7 +35,20 @@ pub(crate) fn with_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> Opt
 }
 
 pub(crate) fn global_builtin_exists(key: &str) -> bool {
-    realm::global_builtin_exists(key)
+    realm::global_builtin_exists(key) && !is_legacy_global(key)
+}
+
+pub(crate) fn global_builtin_exists_for_object(
+    object: &std::rc::Rc<crate::value::ObjectData>,
+    key: &str,
+) -> bool {
+    realm::id_for_global(object).is_some()
+        && realm::global_builtin_exists(key)
+        && !is_legacy_global(key)
+}
+
+pub(crate) fn is_legacy_global(key: &str) -> bool {
+    matches!(key, "parseFloat" | "parseInt" | "decodeURI" | "decodeURIComponent" | "encodeURI" | "encodeURIComponent")
 }
 
 pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
@@ -47,6 +60,10 @@ pub(crate) fn intrinsic_for_global(global: &Value, builtin: Builtin) -> Option<V
         return None;
     };
     realm::id_for_global(object).and_then(|id| realm::intrinsic(id, builtin))
+}
+
+pub(crate) fn realm_token(realm: RealmId) -> Option<Value> {
+    realm::token(realm).map(Value::HostCapability)
 }
 
 pub(crate) fn with_global_realm<T>(global: &Value, callback: impl FnOnce() -> T) -> Option<T> {
