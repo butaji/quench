@@ -170,7 +170,12 @@ fn generator_property(value: &Value, key: &str) -> Value {
 
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     if key == "constructor" {
-        return Value::Builtin(function_constructor(function));
+        let builtin = function_constructor(function);
+        return crate::vm::intrinsic_for_global(
+            &function.captures.get(0),
+            builtin,
+        )
+        .unwrap_or(Value::Builtin(builtin));
     }
     let properties = function.properties.borrow();
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
@@ -438,6 +443,11 @@ fn bound_function_property(
         Value::String(String::new())
     } else {
         let result = get_property(&bound.target, key);
+        if let Value::Builtin(builtin) = &result {
+            if let Some(intrinsic) = realm::intrinsic_value(bound, *builtin) {
+                return intrinsic;
+            }
+        }
         if !matches!(result, Value::Undefined) {
             return result;
         }
