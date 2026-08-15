@@ -303,6 +303,9 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
 }
 
 fn validate_duration(properties: &[(String, Value)]) -> Result<(), VmError> {
+    if raw_duration_out_of_range(properties) {
+        return Err(runtime_error("RangeError: invalid duration"));
+    }
     let values = [
         number(properties, "years"),
         number(properties, "months"),
@@ -319,7 +322,7 @@ fn validate_duration(properties: &[(String, Value)]) -> Result<(), VmError> {
         .iter()
         .any(|value| value.unsigned_abs() >= 1_u64 << 32)
         || values[3].unsigned_abs() >= 104_249_991_375
-        || normalized_seconds(&values).abs() >= 9_007_199_254_740_992.0
+        || normalized_nanoseconds(&values).abs() >= 9_007_199_254_740_992_i128 * 1_000_000_000
     {
         return Err(runtime_error("RangeError: invalid duration"));
     }
@@ -331,14 +334,50 @@ fn validate_duration(properties: &[(String, Value)]) -> Result<(), VmError> {
     Ok(())
 }
 
-fn normalized_seconds(values: &[i64; 10]) -> f64 {
-    values[3] as f64 * 86_400.0
-        + values[4] as f64 * 3_600.0
-        + values[5] as f64 * 60.0
-        + values[6] as f64
-        + values[7] as f64 / 1_000.0
-        + values[8] as f64 / 1_000_000.0
-        + values[9] as f64 / 1_000_000_000.0
+fn raw_duration_out_of_range(properties: &[(String, Value)]) -> bool {
+    let threshold = 9_007_199_254_740_992.0;
+    let components = [
+        ("days", 86_400.0),
+        ("hours", 3_600.0),
+        ("minutes", 60.0),
+        ("seconds", 1.0),
+        ("milliseconds", 1e-3),
+        ("microseconds", 1e-6),
+        ("nanoseconds", 1e-9),
+    ];
+    if components.iter().any(|(unit, scale)| {
+        properties.iter().any(|(name, value)| {
+            name == unit
+                && matches!(value, Value::Number(value) if value.abs() * scale >= threshold)
+        })
+    }) {
+        let total = components.iter().fold(0.0, |total, (unit, scale)| {
+            total
+                + properties.iter().fold(0.0, |subtotal, (name, value)| {
+                    subtotal
+                        + if name == unit {
+                            match value {
+                                Value::Number(value) => value * scale,
+                                _ => 0.0,
+                            }
+                        } else {
+                            0.0
+                        }
+                })
+        });
+        return total.abs() >= threshold;
+    }
+    false
+}
+
+fn normalized_nanoseconds(values: &[i64; 10]) -> i128 {
+    i128::from(values[3]) * 86_400_000_000_000
+        + i128::from(values[4]) * 3_600_000_000_000
+        + i128::from(values[5]) * 60_000_000_000
+        + i128::from(values[6]) * 1_000_000_000
+        + i128::from(values[7]) * 1_000_000
+        + i128::from(values[8]) * 1_000
+        + i128::from(values[9])
 }
 
 fn slot_value<'a>(slots: &'a [(String, Value)], key: &str) -> Option<&'a str> {
