@@ -330,9 +330,6 @@ pub enum Op {
         is_async: bool,
         mapped_arguments: bool,
     },
-    RemoveFunctionPrototype {
-        function: u16,
-    },
     Call {
         dst: u16,
         callee: u16,

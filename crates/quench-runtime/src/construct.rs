@@ -201,7 +201,6 @@ fn construct_bound(
                 return Err(crate::vm::not_callable());
             }
             let value = construct_bound_in_realm(bound, *builtin, &combined)?;
-            install_dynamic_global(bound, &value);
             with_new_target_prototype(value, &Value::Builtin(*builtin), &new_target)?
         }
         Value::Function(function) => construct_function(function, &new_target, &combined)?,
@@ -226,25 +225,6 @@ fn construct_bound(
         ));
     }
     Ok(value)
-}
-
-fn install_dynamic_global(bound: &crate::value::BoundFunctionValue, value: &Value) {
-    let Value::Function(function) = value else {
-        return;
-    };
-    let dynamic = function
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| name == "\0dynamic_function");
-    if !dynamic {
-        return;
-    }
-    if let Some(Some(global)) =
-        crate::vm::with_realm(bound.realm, || Some(crate::vm::current_global_object()))
-    {
-        function.captures.set(0, global);
-    }
 }
 fn construct_builtin(
     builtin: crate::ops::Builtin,
@@ -613,10 +593,7 @@ fn construct_error(
         ),
         (
             "\0prototype".to_string(),
-            Value::Builtin(
-                crate::builtin_meta::instance_prototype(*builtin)
-                    .unwrap_or(crate::ops::Builtin::ErrorPrototype),
-            ),
+            Value::Builtin(crate::ops::Builtin::ErrorPrototype),
         ),
     ];
 
@@ -625,31 +602,14 @@ fn construct_error(
         .filter(|value| !matches!(value, Value::Undefined))
     {
         let options = to_object(cause_source)?;
-        if crate::with_scope::has_property(&options, "cause")? {
-            let cause = crate::execute::get_property_result(&options, "cause")?;
-            properties.push(("cause".to_string(), cause));
+        if !crate::with_scope::has_property(&options, "cause")? {
+            return Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))));
         }
-    }
-
-    for key in ["name", "message", "cause"] {
-        if let Some((_, value)) = properties.iter().rev().find(|(current, _)| current == key) {
-            properties.push((
-                crate::builtins::descriptor_key(key),
-                non_enumerable_descriptor(value),
-            ));
-        }
+        let cause = crate::execute::get_property_result(&options, "cause")?;
+        properties.push(("cause".to_string(), cause));
     }
 
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
-}
-
-fn non_enumerable_descriptor(value: &Value) -> Value {
-    Value::Object(std::rc::Rc::new(ObjectData::new(vec![
-        ("value".to_string(), value.clone()),
-        ("writable".to_string(), Value::Boolean(true)),
-        ("enumerable".to_string(), Value::Boolean(false)),
-        ("configurable".to_string(), Value::Boolean(true)),
-    ])))
 }
 
 fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
@@ -729,11 +689,6 @@ fn construct_function(
         if crate::value::is_object(&final_this) {
             return Ok(final_this);
         }
-        if !matches!(result, Value::Undefined) {
-            return Err(crate::value::error::throw_type_error(
-                "Derived constructor returned a non-object",
-            ));
-        }
         return Err(crate::value::error::throw_reference_error(
             "Derived constructor did not initialize this",
         ));
@@ -760,16 +715,6 @@ include!("construct_instance_fields.rs");
 pub(crate) fn derived_constructor(
     function: &crate::value::FunctionValue,
 ) -> Result<Value, crate::execute::VmError> {
-    let derived = function
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| name == "\0derived_constructor");
-    if !derived {
-        return Err(crate::value::error::throw_reference_error(
-            "super is unavailable",
-        ));
-    }
     function
         .properties
         .borrow()

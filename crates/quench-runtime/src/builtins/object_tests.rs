@@ -1,7 +1,6 @@
 #[test]
 fn has_own_observes_function_own_properties() {
     let function = Value::Function(Rc::new(FunctionValue {
-        realm: crate::ops::RealmId::ROOT,
         code: empty_function_code(),
         params: 2,
         kind: crate::ops::FunctionKind::Ordinary,
@@ -46,18 +45,15 @@ fn empty_function_code() -> crate::machine::FunctionCode {
 
 #[test]
 fn array_property_descriptor_exposes_assigned_value() {
-    let array =
-        crate::builtins::set_property(Value::array(Vec::new()), "custom", Value::Boolean(true));
-    let descriptor =
-        descriptor(Some(&array), Some(&Value::String("custom".into()))).expect("array descriptor");
-    assert_eq!(
-        crate::execute::get_property(&descriptor, "value"),
-        Value::Boolean(true)
+    let array = crate::builtins::set_property(
+        Value::array(Vec::new()),
+        "custom",
+        Value::Boolean(true),
     );
-    assert_eq!(
-        crate::execute::get_property(&descriptor, "enumerable"),
-        Value::Boolean(true)
-    );
+    let descriptor = descriptor(Some(&array), Some(&Value::String("custom".into())))
+        .expect("array descriptor");
+    assert_eq!(crate::execute::get_property(&descriptor, "value"), Value::Boolean(true));
+    assert_eq!(crate::execute::get_property(&descriptor, "enumerable"), Value::Boolean(true));
 }
 
 #[test]
