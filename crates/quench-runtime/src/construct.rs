@@ -519,9 +519,10 @@ fn construct_error(
         ),
         (
             "\0prototype".to_string(),
-            Value::Builtin(crate::builtin_meta::instance_prototype(*builtin).unwrap_or(
-                crate::ops::Builtin::ErrorPrototype,
-            )),
+            Value::Builtin(
+                crate::builtin_meta::instance_prototype(*builtin)
+                    .unwrap_or(crate::ops::Builtin::ErrorPrototype),
+            ),
         ),
     ];
 
@@ -634,7 +635,7 @@ fn construct_function(
         if crate::value::is_object(&final_this) {
             return Ok(final_this);
         }
-        return Err(crate::value::error::throw_reference_error(
+        return Err(crate::value::error::throw_type_error(
             "Derived constructor did not initialize this",
         ));
     }
