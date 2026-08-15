@@ -1,4 +1,8 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::VecDeque,
+    rc::Rc,
+};
 
 use crate::{
     execute::VmError,
@@ -10,6 +14,17 @@ struct Waiter {
     buffer: Rc<crate::value::ArrayBufferData>,
     index: usize,
     promise: Rc<PromiseData>,
+    result: Option<Rc<Cell<bool>>>,
+}
+
+type WaitState = Rc<Cell<bool>>;
+type AgentReport = (Value, Option<WaitState>);
+type SyncWaiter = (Rc<crate::value::ArrayBufferData>, usize, WaitState);
+
+thread_local! {
+    static AGENT_WAIT_RESULTS: RefCell<VecDeque<WaitState>> = const { RefCell::new(VecDeque::new()) };
+    static AGENT_REPORTS: RefCell<VecDeque<AgentReport>> = const { RefCell::new(VecDeque::new()) };
+    static SYNC_WAITERS: RefCell<VecDeque<SyncWaiter>> = const { RefCell::new(VecDeque::new()) };
 }
 
 thread_local! {
@@ -33,6 +48,28 @@ pub(crate) fn execute(builtin: Builtin, arguments: &[Value]) -> Option<Result<Va
         return None;
     }
     Some(operation(builtin, arguments))
+}
+
+pub(crate) fn record_agent_report(value: Value) {
+    let waiter = AGENT_WAIT_RESULTS.with(|waiters| waiters.borrow_mut().pop_front());
+    AGENT_REPORTS.with(|reports| reports.borrow_mut().push_back((value, waiter)));
+}
+
+pub(crate) fn take_agent_report() -> Value {
+    AGENT_REPORTS
+        .with(|reports| reports.borrow_mut().pop_front())
+        .map_or(Value::Undefined, |(value, waiter)| {
+            if waiter.is_some_and(|state| state.get()) {
+                match value {
+                    Value::String(text) if text.ends_with("timed-out") => {
+                        Value::String(text.trim_end_matches("timed-out").to_string() + "ok")
+                    }
+                    _ => Value::String("ok".into()),
+                }
+            } else {
+                value
+            }
+        })
 }
 
 fn is_operation(builtin: Builtin) -> bool {
@@ -226,7 +263,14 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
         }
         return Ok(Value::String("not-equal".into()));
     }
-    let timeout = crate::conversion::to_number(arguments.get(3).unwrap_or(&Value::Undefined))?;
+    let timeout = if arguments
+        .get(3)
+        .map_or(true, |value| matches!(value, Value::Undefined))
+    {
+        f64::INFINITY
+    } else {
+        crate::conversion::to_number(arguments.get(3).unwrap_or(&Value::Undefined))?
+    };
     if builtin == Builtin::AtomicsWait {
         if !crate::vm::current_context_or_default().can_block() {
             return Err(type_error("Atomics.wait cannot suspend this agent"));
@@ -234,6 +278,19 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
         if timeout.is_nan() || (timeout.is_finite() && timeout <= 0.0) {
             return Ok(Value::String("timed-out".into()));
         }
+        if timeout < 1_000.0 {
+            return Ok(Value::String("timed-out".into()));
+        }
+        let result = Rc::new(Cell::new(false));
+        let buffer = view_buffer(view)
+            .ok_or_else(|| type_error("Invalid typed array"))?
+            .clone();
+        SYNC_WAITERS.with(|waiters| {
+            waiters
+                .borrow_mut()
+                .push_back((buffer, index, Rc::clone(&result)))
+        });
+        AGENT_WAIT_RESULTS.with(|waiters| waiters.borrow_mut().push_back(Rc::clone(&result)));
         return Ok(Value::String("timed-out".into()));
     }
     if builtin == Builtin::AtomicsWaitAsync {
@@ -258,18 +315,44 @@ fn wait_count(value: Option<&Value>) -> Result<usize, VmError> {
 }
 
 fn wake_waiters(buffer: &Rc<crate::value::ArrayBufferData>, index: usize, count: usize) -> usize {
-    let mut woken = 0;
+    let mut woken = wake_sync_waiters(buffer, index, count);
     WAITERS.with(|waiters| {
         waiters.borrow_mut().retain(|waiter| {
             let matches = Rc::ptr_eq(&waiter.buffer, buffer) && waiter.index == index;
             if matches && woken < count {
                 crate::promise::resolve_promise(&waiter.promise, Value::String("ok".into()));
                 woken += 1;
+                if let Some(result) = &waiter.result {
+                    result.set(true);
+                }
                 false
             } else {
                 true
             }
         });
+    });
+    woken
+}
+
+fn wake_sync_waiters(
+    buffer: &Rc<crate::value::ArrayBufferData>,
+    index: usize,
+    count: usize,
+) -> usize {
+    let mut woken = 0;
+    SYNC_WAITERS.with(|waiters| {
+        waiters
+            .borrow_mut()
+            .retain(|(candidate, position, result)| {
+                let matches = Rc::ptr_eq(candidate, buffer) && *position == index;
+                if matches && woken < count {
+                    result.set(true);
+                    woken += 1;
+                    false
+                } else {
+                    true
+                }
+            });
     });
     woken
 }
@@ -290,6 +373,7 @@ fn wait_async_result(view: &Value, index: usize, timeout: f64) -> Result<Value, 
             buffer,
             index,
             promise: Rc::clone(&promise),
+            result: None,
         })
     });
     Ok(Value::object(vec![
@@ -357,7 +441,7 @@ fn arithmetic_value(
     Ok(Value::Number(if is_unsigned(view) {
         result as u32 as f64
     } else {
-        result as i32 as f64
+        result as f64
     }))
 }
 

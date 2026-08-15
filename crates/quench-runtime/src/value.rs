@@ -53,12 +53,14 @@ pub struct HostCapabilityValue {
     properties: Rc<RefCell<Vec<(String, Value)>>>,
 }
 
+type HostProperties = Rc<RefCell<Vec<(String, Value)>>>;
+
 thread_local! {
-    static HOST_PROPERTIES: RefCell<HashMap<HostCapabilityRef, Rc<RefCell<Vec<(String, Value)>>>>>
+    static HOST_PROPERTIES: RefCell<HashMap<HostCapabilityRef, HostProperties>>
         = RefCell::new(HashMap::new());
 }
 
-fn host_properties(descriptor: HostCapabilityRef) -> Rc<RefCell<Vec<(String, Value)>>> {
+fn host_properties(descriptor: HostCapabilityRef) -> HostProperties {
     HOST_PROPERTIES.with(|properties| {
         properties
             .borrow_mut()
