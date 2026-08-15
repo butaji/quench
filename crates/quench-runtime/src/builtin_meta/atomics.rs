@@ -10,6 +10,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::AtomicsCompareExchange => "Atomics.compareExchange",
         Builtin::AtomicsIsLockFree => "Atomics.isLockFree",
         Builtin::AtomicsNotify => "Atomics.notify",
+        Builtin::AtomicsWait => "Atomics.wait",
         _ => return None,
     })
 }
@@ -24,6 +25,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::AtomicsCompareExchange => Some(4.0),
         Builtin::AtomicsIsLockFree => Some(1.0),
         Builtin::AtomicsNotify => Some(2.0),
+        Builtin::AtomicsWait => Some(2.0),
         _ => None,
     }
 }
@@ -38,6 +40,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::AtomicsCompareExchange => "compareExchange",
         Builtin::AtomicsIsLockFree => "isLockFree",
         Builtin::AtomicsNotify => "notify",
+        Builtin::AtomicsWait => "wait",
         _ => return None,
     })
 }
