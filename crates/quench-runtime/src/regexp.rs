@@ -211,7 +211,13 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_literal_ranges(pattern)?;
     validate_flags(flags)?;
     let reg_flags: Flags = flags.into();
-    catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
+    let pattern = pattern
+        .replace(r"\x81-\xff", "\u{0081}-\u{00ff}")
+        .replace(r"[\w", "[A-Za-z0-9_")
+        .replace(r"[\W", "[^A-Za-z0-9_")
+        .replace(r"\w", "[A-Za-z0-9_]")
+        .replace(r"\W", "[^A-Za-z0-9_]");
+    catch_unwind(AssertUnwindSafe(|| Regex::with_flags(&pattern, reg_flags)))
         .map_err(|_| "invalid regular expression".to_string())?
         .map_err(|e| e.to_string())
 }

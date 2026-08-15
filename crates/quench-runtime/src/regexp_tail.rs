@@ -368,6 +368,7 @@ fn template_group(m: &regress::Match, rest: &str, digit: char) -> Option<String>
 
 fn groups_at<'a>(m: &'a regress::Match) -> impl Iterator<Item = Option<(usize, usize)>> + 'a {
     m.groups()
+        .skip(1)
         .map(|group| group.map(|range| (range.start, range.end)))
 }
 
