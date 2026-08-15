@@ -336,8 +336,9 @@ pub(crate) fn get_property_with_receiver(
 /// functions; strict functions keep the receiver as-is.
 fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
     match getter {
-        Value::Function(function) => crate::functions::execute(function, receiver, &[]),
-        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &[]),
+        Value::Function(_) | Value::BoundFunction(_) => {
+            crate::functions::execute_target(getter, receiver, &[])
+        }
         Value::Builtin(builtin) => {
             crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
         }
