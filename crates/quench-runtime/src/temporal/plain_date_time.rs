@@ -30,7 +30,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let calendar = arguments
         .get(9)
         .filter(|value| matches!(value, Value::String(_)))
-        .cloned()
+        .map(canonical_calendar)
         .unwrap_or_else(|| Value::String("iso8601".into()));
     let properties = NAMES
         .into_iter()
@@ -48,6 +48,17 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(properties),
     )))
+}
+
+fn canonical_calendar(value: &Value) -> Value {
+    let Value::String(calendar) = value else {
+        return Value::String("iso8601".into());
+    };
+    Value::String(match calendar.to_ascii_lowercase().as_str() {
+        "islamicc" => "islamic-civil".into(),
+        "ethiopic-amete-alem" => "ethioaa".into(),
+        value => value.into(),
+    })
 }
 
 fn validate(fields: &[f64]) -> Result<(), VmError> {
