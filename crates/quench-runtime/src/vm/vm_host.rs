@@ -11,11 +11,14 @@ pub(crate) fn execute_host_capability(
         kind,
     };
     let permitted = CURRENT_CONTEXT.with(|context| {
-        context.borrow().as_ref().is_some_and(|context| {
-            context.permits(descriptor)
-                || (kind == HostCapabilityKind::EvalScript
-                    && realm::context(capability.realm()).is_some())
-        })
+        context
+            .borrow()
+            .as_ref()
+            .is_some_and(|context| {
+                context.permits(descriptor)
+                    || (kind == HostCapabilityKind::EvalScript
+                        && realm::context(capability.realm()).is_some())
+            })
     });
     if !permitted {
         return Err(VmError::NotCallable);
@@ -26,10 +29,10 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::CreateRealm if arguments.is_empty() => Ok(create_realm_value()),
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
-        HostCapabilityKind::EvalScript => {
-            realm::with_realm(capability.realm(), || run_eval_script(arguments))
-                .ok_or(VmError::NotCallable)?
-        }
+        HostCapabilityKind::EvalScript => realm::with_realm(capability.realm(), || {
+            run_eval_script(arguments)
+        })
+        .ok_or(VmError::NotCallable)?,
     }
 }
 
@@ -81,23 +84,14 @@ fn create_realm_value() -> Value {
     };
     let properties = Rc::new(crate::value::ObjectData::new(vec![
         ("TypeError".to_string(), constructor),
-        (
-            "\0realm".to_string(),
-            Value::HostCapability(Rc::clone(&token)),
-        ),
+        ("\0realm".to_string(), Value::HostCapability(Rc::clone(&token))),
     ]));
     if realm::id_for_token(&token).is_none() || !realm::register_global(&token, properties) {
         return Value::Undefined;
     }
     let global = realm::global(realm).unwrap_or(Value::Undefined);
-    let global_reference = match &global {
-        Value::Object(object) => Value::ObjectAlias(crate::value::ObjectAliasValue(Rc::new(
-            RefCell::new(Rc::downgrade(object)),
-        ))),
-        _ => global.clone(),
-    };
     Value::Object(Rc::new(crate::value::ObjectData::new(vec![
-        ("global".to_string(), global_reference),
+        ("global".to_string(), global),
         ("\0realm".to_string(), Value::HostCapability(token)),
         ("\0creation_realm".to_string(), creation_realm),
     ])))
