@@ -468,36 +468,4 @@ pub(crate) fn prototype_method(
     }
 }
 
-fn relative_parts(
-    value: f64,
-    unit: &str,
-    style: &str,
-    numeric: &str,
-    locale: &str,
-) -> Result<Value, VmError> {
-    if !value.is_finite() {
-        return Err(runtime_error("RangeError: value must be finite"));
-    }
-    parts_value(value, unit, style, numeric, locale)
-}
-
-fn relative_resolved_options(
-    slots: &[(String, Value)],
-    locale: String,
-    style: String,
-    numeric: String,
-) -> Result<Value, VmError> {
-    Ok(make_object(vec![
-        ("locale".to_string(), Value::String(locale)),
-        ("style".to_string(), Value::String(style)),
-        ("numeric".to_string(), Value::String(numeric)),
-        (
-            "numberingSystem".to_string(),
-            Value::String(
-                slot_string(slots, "numberingSystem").unwrap_or_else(|| "latn".to_string()),
-            ),
-        ),
-    ]))
-}
-
 include!("relative_dispatch.rs");
