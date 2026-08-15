@@ -5,7 +5,8 @@ fn early_dispatch(
 ) -> Option<Result<Value, VmError>> {
     crate::intl::tolocale::symbol::dispatch(builtin, arguments, receiver)
         .or_else(|| {
-            (builtin == Builtin::ShadowRealmEvaluate)
+            (builtin == Builtin::ShadowRealmEvaluate
+                || builtin == Builtin::ShadowRealmImportValue)
                 .then(|| crate::reflect::builtin(builtin, arguments, receiver))
         })
         .or_else(|| crate::json::execute(builtin, arguments))

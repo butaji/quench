@@ -260,6 +260,7 @@ pub enum Builtin {
     ShadowRealm,
     ShadowRealmPrototype,
     ShadowRealmEvaluate,
+    ShadowRealmImportValue,
     DateValueOf,
     DateGetTime,
     DateGetFullYear,

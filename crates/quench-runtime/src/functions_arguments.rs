@@ -310,7 +310,10 @@ fn execute_function_call(
     if let crate::value::Value::BoundFunction(bound) = receiver {
         if matches!(
             bound.target,
-            crate::value::Value::Builtin(crate::ops::Builtin::ShadowRealmEvaluate)
+            crate::value::Value::Builtin(
+                crate::ops::Builtin::ShadowRealmEvaluate
+                    | crate::ops::Builtin::ShadowRealmImportValue,
+            )
         ) {
             return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
         }
