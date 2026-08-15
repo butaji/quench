@@ -361,6 +361,8 @@ pub enum Builtin {
     Temporal,
     TemporalDuration,
     TemporalDurationPrototype,
+    TemporalDurationFrom,
+    TemporalDurationCompare,
     IntlGetCanonicalLocales,
     IntlSupportedValuesOf,
     IntlLocale,
