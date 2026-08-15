@@ -38,7 +38,6 @@ pub(crate) fn execute(
         Builtin::Uint8ArrayToBase64 => Some(to_base64(receiver, arguments)),
         Builtin::Uint8ArrayToHex => Some(to_hex(receiver)),
         Builtin::Uint8ArraySubarray => Some(subarray(receiver, arguments)),
-        Builtin::Uint8ArraySlice => Some(slice(receiver, arguments)),
         _ => None,
     }
 }
@@ -179,9 +178,6 @@ fn relative_index(value: Option<&Value>, length: usize) -> Result<usize, VmError
     let Some(value) = value else {
         return Ok(length);
     };
-    if matches!(value, Value::Undefined) {
-        return Ok(length);
-    }
     let index = crate::conversion::to_number(value)?.trunc() as i64;
     let length = length as i64;
     Ok(if index < 0 {
@@ -198,26 +194,13 @@ fn subarray(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         None | Some(Value::Undefined) => 0,
         Some(_) => relative_index(arguments.first(), length)?,
     };
-    let end = relative_index(arguments.get(1), length)?.max(begin);
+    let end = relative_index(arguments.get(1), length)?;
     let view = crate::value::Uint8ArrayData::new(
         view.buffer.clone(),
         view.byte_offset + begin,
         end.saturating_sub(begin),
     );
     Ok(Value::Uint8Array(Rc::new(view)))
-}
-
-fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let view = uint8_receiver(receiver)?;
-    check_detached(view)?;
-    let length = view.logical_len();
-    let begin = match arguments.first() {
-        None | Some(Value::Undefined) => 0,
-        Some(_) => relative_index(arguments.first(), length)?,
-    };
-    let end = relative_index(arguments.get(1), length)?.max(begin);
-    let result = uint8_array_from_bytes(&receiver_bytes(view)[begin..end]);
-    Ok(result)
 }
 
 fn read_written_object(read: usize, written: usize) -> Value {
