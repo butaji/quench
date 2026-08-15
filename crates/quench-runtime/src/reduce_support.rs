@@ -172,6 +172,7 @@ pub(crate) fn instantiate_script_declarations(
             ops.push(Op::CheckGlobalVar {
                 name: name.clone(),
                 is_lexical: true,
+                is_eval: false,
             });
             let slot = *next_slot;
             *next_slot = next_slot.saturating_add(1);

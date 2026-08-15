@@ -46,7 +46,13 @@ pub(super) fn instantiate_functions(
     let (ops, next_register, next_slot, locals) = state;
     let (selected, variables, lexical) = instantiate_context(statements, behavior);
     if is_global_behavior(behavior) {
-        emit_global_checks(&selected, &variables, &lexical, ops);
+        emit_global_checks(
+            &selected,
+            &variables,
+            &lexical,
+            ops,
+            behavior == EvalBehavior::Global,
+        );
     }
     emit_function_declarations(
         statements,
@@ -230,6 +236,7 @@ fn emit_global_checks(
     variables: &[String],
     lexical: &[String],
     ops: &mut Vec<Op>,
+    is_eval: bool,
 ) {
     for statement in functions.iter().rev() {
         let Statement::FunctionDeclaration(function) = statement else {
@@ -247,6 +254,7 @@ fn emit_global_checks(
         ops.push(Op::CheckGlobalVar {
             name: name.clone(),
             is_lexical: lexical_set.contains(name),
+            is_eval,
         });
     }
     for name in lexical {
@@ -254,6 +262,7 @@ fn emit_global_checks(
             ops.push(Op::CheckGlobalVar {
                 name: name.clone(),
                 is_lexical: true,
+                is_eval,
             });
         }
     }
