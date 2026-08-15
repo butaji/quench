@@ -1140,8 +1140,29 @@ fn date_time(slots: &[(String, Value)], number: f64) -> Option<NaiveDateTime> {
     } else {
         Utc.timestamp_millis_opt(millis)
             .single()
-            .map(|date| date.naive_utc())
+            .map(|date| date.naive_utc() + chrono::Duration::seconds(time_zone_offset(slots)))
     }
+}
+
+fn time_zone_offset(slots: &[(String, Value)]) -> i64 {
+    let Some(time_zone) = slot_string(slots, "timeZone") else {
+        return 0;
+    };
+    offset_seconds(&time_zone).unwrap_or(0)
+}
+
+fn offset_seconds(time_zone: &str) -> Option<i64> {
+    if let Some(hours) = time_zone.strip_prefix("Etc/GMT+") {
+        return hours.parse::<i64>().ok().map(|value| -value * 3600);
+    }
+    if let Some(hours) = time_zone.strip_prefix("Etc/GMT-") {
+        return hours.parse::<i64>().ok().map(|value| value * 3600);
+    }
+    let normalized = normalize_offset(time_zone)?;
+    let sign = if normalized.starts_with('-') { -1 } else { 1 };
+    let hours = normalized[1..3].parse::<i64>().ok()?;
+    let minutes = normalized[4..6].parse::<i64>().ok()?;
+    Some(sign * (hours * 60 + minutes) * 60)
 }
 
 fn date_component_format(slots: &[(String, Value)], number: f64) -> Option<String> {
