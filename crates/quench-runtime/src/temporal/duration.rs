@@ -3,7 +3,7 @@ use crate::{execute::VmError, value::Value};
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let values = (0..10)
         .map(|index| number(arguments.get(index)))
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     if values
         .iter()
         .any(|value| value.is_finite() && value.fract() != 0.0)
@@ -303,7 +303,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     if let Some(Value::String(text)) = value {
         return parse_string(text);
     }
-    let Some(Value::Object(object)) = value else {
+    let Some(value) = value.filter(|value| crate::value::is_object(value)) else {
         return Err(crate::value::error::throw_type_error(
             "Duration.from requires a duration-like object",
         ));
@@ -320,23 +320,38 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         "microseconds",
         "nanoseconds",
     ];
-    if !names
+    let access_names = [
+        "days",
+        "hours",
+        "microseconds",
+        "milliseconds",
+        "minutes",
+        "months",
+        "nanoseconds",
+        "seconds",
+        "weeks",
+        "years",
+    ];
+    let mut arguments = vec![Value::Undefined; names.len()];
+    for name in access_names {
+        let index = names.iter().position(|candidate| *candidate == name);
+        if let Some(index) = index {
+            let field = crate::execute::get_property_result(value, name)?;
+            arguments[index] = if matches!(field, Value::Undefined) {
+                field
+            } else {
+                Value::Number(crate::conversion::to_number(&field)?)
+            };
+        }
+    }
+    if arguments
         .iter()
-        .any(|name| object.iter().any(|(key, _)| key == name))
+        .all(|value| matches!(value, Value::Undefined))
     {
         return Err(crate::value::error::throw_type_error(
             "Duration-like object has no duration fields",
         ));
     }
-    let arguments = names
-        .iter()
-        .map(|name| {
-            object
-                .iter()
-                .find(|(key, _)| key == name)
-                .map_or(Value::Undefined, |(_, value)| value.clone())
-        })
-        .collect::<Vec<_>>();
     construct(&arguments)
 }
 
@@ -433,12 +448,12 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
             return Err(crate::value::error::throw_type_error("Invalid options"));
         }
     }
+    let relative_to =
+        options.and_then(|value| crate::execute::get_property_result(value, "relativeTo").ok());
     if same_fields(arguments.first(), arguments.get(1)) {
         return Ok(Value::Number(0.0));
     }
     if date_units(&left) || date_units(&right) {
-        let relative_to =
-            options.and_then(|value| crate::execute::get_property_result(value, "relativeTo").ok());
         if relative_to.is_none() || matches!(relative_to, Some(Value::Undefined)) {
             return Err(crate::value::error::throw_range_error(
                 "relativeTo is required for date units",
@@ -526,11 +541,10 @@ fn number_property(value: &Value, name: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
-fn number(value: Option<&Value>) -> f64 {
+fn number(value: Option<&Value>) -> Result<f64, VmError> {
     match value {
-        Some(Value::Number(value)) if *value != 0.0 => *value,
-        Some(Value::Number(_)) => 0.0,
-        Some(Value::Undefined) | None => 0.0,
-        _ => f64::NAN,
+        Some(Value::Undefined) | None => Ok(0.0),
+        Some(Value::Number(value)) => Ok(*value),
+        Some(value) => crate::conversion::to_number(value),
     }
 }
