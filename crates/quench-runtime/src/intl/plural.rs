@@ -17,6 +17,16 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let mut minimum_significant_digits = None;
     let mut maximum_significant_digits = None;
     let mut plural_type = "cardinal".to_string();
+    let mut parsed = ParsedOptions {
+        plural_type: plural_type.clone(),
+        notation: notation.clone(),
+        compact_display: compact_display.clone(),
+        minimum_integer_digits,
+        minimum_fraction_digits,
+        maximum_fraction_digits,
+        minimum_significant_digits,
+        maximum_significant_digits,
+    };
     if let Some(options) = arguments
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined))
@@ -46,39 +56,17 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             if matches!(value, Value::Undefined) {
                 continue;
             }
-            let text = option_string(&value)?;
-            match key {
-                "type" => plural_type = text,
-                "notation" => {
-                    if !matches!(
-                        text.as_str(),
-                        "standard" | "compact" | "scientific" | "engineering"
-                    ) {
-                        return Err(runtime_error("RangeError: invalid notation"));
-                    }
-                    notation = text;
-                }
-                "compactDisplay" => {
-                    if !matches!(text.as_str(), "short" | "long") {
-                        return Err(runtime_error("RangeError: invalid compactDisplay"));
-                    }
-                    compact_display = Some(text);
-                }
-                "minimumIntegerDigits" => {
-                    minimum_integer_digits = text.parse().ok().map_or(1.0, |value| value)
-                }
-                "minimumFractionDigits" => {
-                    minimum_fraction_digits = text.parse().ok().map_or(0.0, |value| value)
-                }
-                "maximumFractionDigits" => {
-                    maximum_fraction_digits = text.parse().ok().map_or(3.0, |value| value)
-                }
-                "minimumSignificantDigits" => minimum_significant_digits = text.parse().ok(),
-                "maximumSignificantDigits" => maximum_significant_digits = text.parse().ok(),
-                _ => {}
-            }
+            apply_option(key, &value, &mut parsed)?;
         }
     }
+    plural_type = parsed.plural_type;
+    notation = parsed.notation;
+    compact_display = parsed.compact_display;
+    minimum_integer_digits = parsed.minimum_integer_digits;
+    minimum_fraction_digits = parsed.minimum_fraction_digits;
+    maximum_fraction_digits = parsed.maximum_fraction_digits;
+    minimum_significant_digits = parsed.minimum_significant_digits;
+    maximum_significant_digits = parsed.maximum_significant_digits;
     if !matches!(plural_type.as_str(), "cardinal" | "ordinal") {
         return Err(runtime_error("RangeError: invalid type"));
     }
@@ -127,6 +115,46 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             (SLOT.to_string(), make_object(slot_properties)),
         ],
     ))
+}
+
+struct ParsedOptions {
+    plural_type: String,
+    notation: String,
+    compact_display: Option<String>,
+    minimum_integer_digits: f64,
+    minimum_fraction_digits: f64,
+    maximum_fraction_digits: f64,
+    minimum_significant_digits: Option<f64>,
+    maximum_significant_digits: Option<f64>,
+}
+
+fn apply_option(key: &str, value: &Value, options: &mut ParsedOptions) -> Result<(), VmError> {
+    let text = option_string(value)?;
+    match key {
+        "type" => options.plural_type = text,
+        "notation" => {
+            if !matches!(
+                text.as_str(),
+                "standard" | "compact" | "scientific" | "engineering"
+            ) {
+                return Err(runtime_error("RangeError: invalid notation"));
+            }
+            options.notation = text;
+        }
+        "compactDisplay" => {
+            if !matches!(text.as_str(), "short" | "long") {
+                return Err(runtime_error("RangeError: invalid compactDisplay"));
+            }
+            options.compact_display = Some(text);
+        }
+        "minimumIntegerDigits" => options.minimum_integer_digits = text.parse().unwrap_or(1.0),
+        "minimumFractionDigits" => options.minimum_fraction_digits = text.parse().unwrap_or(0.0),
+        "maximumFractionDigits" => options.maximum_fraction_digits = text.parse().unwrap_or(3.0),
+        "minimumSignificantDigits" => options.minimum_significant_digits = text.parse().ok(),
+        "maximumSignificantDigits" => options.maximum_significant_digits = text.parse().ok(),
+        _ => {}
+    }
+    Ok(())
 }
 
 fn option_string(value: &Value) -> Result<String, VmError> {
