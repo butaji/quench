@@ -57,7 +57,7 @@ fn validate(fields: &[f64]) -> Result<(), VmError> {
 
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
@@ -73,34 +73,86 @@ pub(crate) fn execute(
         | crate::ops::Builtin::TemporalPlainDateTimeMillisecondGetter
         | crate::ops::Builtin::TemporalPlainDateTimeMicrosecondGetter
         | crate::ops::Builtin::TemporalPlainDateTimeNanosecondGetter => {
-            Some(getter(builtin, _receiver))
+            Some(getter(builtin, receiver))
         }
         crate::ops::Builtin::TemporalPlainDateTimeToString
         | crate::ops::Builtin::TemporalPlainDateTimeToJSON
         | crate::ops::Builtin::TemporalPlainDateTimeToLocaleString => {
-            Some(to_string(_receiver, arguments.first()))
+            Some(to_string(receiver, arguments.first()))
         }
         crate::ops::Builtin::TemporalPlainDateTimeCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalPlainDateTimeEquals => {
-            Some(equals(_receiver, arguments.first()))
+            Some(equals(receiver, arguments.first()))
         }
         crate::ops::Builtin::TemporalPlainDateTimeValueOf => Some(Err(
             crate::value::error::throw_type_error("Cannot convert PlainDateTime to a number"),
         )),
         crate::ops::Builtin::TemporalPlainDateTimeAdd => {
-            Some(add(_receiver, arguments.first(), 1.0))
+            Some(add(receiver, arguments.first(), 1.0))
         }
         crate::ops::Builtin::TemporalPlainDateTimeSubtract => {
-            Some(add(_receiver, arguments.first(), -1.0))
+            Some(add(receiver, arguments.first(), -1.0))
         }
         crate::ops::Builtin::TemporalPlainDateTimeWith => {
-            Some(with(_receiver, arguments.first(), arguments.get(1)))
+            Some(with(receiver, arguments.first(), arguments.get(1)))
         }
-        crate::ops::Builtin::TemporalPlainDateTimeRound => {
-            Some(round(_receiver, arguments.first()))
+        crate::ops::Builtin::TemporalPlainDateTimeRound => Some(round(receiver, arguments.first())),
+        crate::ops::Builtin::TemporalPlainDateTimeToZonedDateTime => {
+            Some(to_zoned_date_time(receiver, arguments.first()))
         }
         _ => None,
     }
+}
+
+fn to_zoned_date_time(
+    receiver: Option<&Value>,
+    time_zone: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(Value::Object(object)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid PlainDateTime",
+        ));
+    };
+    let Value::String(time_zone) = time_zone.unwrap_or(&Value::Undefined) else {
+        return Err(crate::value::error::throw_type_error("Invalid time zone"));
+    };
+    let number = |name| object_number(object, name) as u32;
+    let date =
+        chrono::NaiveDate::from_ymd_opt(number("year") as i32, number("month"), number("day"))
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
+    let time = chrono::NaiveTime::from_hms_nano_opt(
+        number("hour"),
+        number("minute"),
+        number("second"),
+        number("millisecond") * 1_000_000 + number("microsecond") * 1_000 + number("nanosecond"),
+    )
+    .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
+    let epoch = chrono::NaiveDateTime::new(date, time)
+        .and_utc()
+        .timestamp_nanos_opt()
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
+    Ok(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            ("epochNanoseconds".into(), Value::BigInt(epoch.to_string())),
+            ("timeZoneId".into(), Value::String(time_zone.clone())),
+            ("calendarId".into(), Value::String("iso8601".into())),
+            (
+                "\0prototype".into(),
+                Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype),
+            ),
+        ]),
+    )))
+}
+
+fn object_number(object: &crate::value::ObjectData, name: &str) -> f64 {
+    object
+        .iter()
+        .find(|(key, _)| key == name)
+        .and_then(|(_, value)| match value {
+            Value::Number(value) => Some(*value),
+            _ => None,
+        })
+        .unwrap_or(0.0)
 }
 
 fn getter(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Value, VmError> {
