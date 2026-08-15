@@ -765,6 +765,15 @@ fn date_range_parts(slots: &[(String, Value)], start: f64, end: f64) -> Option<V
     if !slot_string(slots, "locale")?.starts_with("en-US") || has_fraction(slots) {
         return None;
     }
+    if matches!(
+        slot_string(slots, "calendar")?.as_str(),
+        "chinese" | "dangi"
+    ) && slot_string(slots, "month").is_some()
+    {
+        let first = add_range_source(calendar_year_parts(slots, start)?, "startRange");
+        let last = add_range_source(calendar_year_parts(slots, end)?, "endRange");
+        return Some([first, vec![range_literal_part(" – ", "shared")], last].concat());
+    }
     let first = date_time(slots, start)?;
     let last = date_time(slots, end)?;
     if slot_string(slots, "month") == Some("numeric".to_string()) {
