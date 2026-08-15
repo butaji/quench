@@ -141,11 +141,12 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::SharedArrayBuffer => Some(Builtin::SharedArrayBufferPrototype),
         Builtin::WeakSet => Some(Builtin::WeakSetPrototype),
         Builtin::WeakRef => Some(Builtin::WeakRefPrototype),
-        Builtin::Error | Builtin::RangeError => Some(Builtin::ErrorPrototype),
-        Builtin::ReferenceError => Some(Builtin::ErrorPrototype),
-        Builtin::SyntaxError => Some(Builtin::ErrorPrototype),
-        Builtin::EvalError => Some(Builtin::ErrorPrototype),
-        Builtin::URIError => Some(Builtin::ErrorPrototype),
+        Builtin::Error => Some(Builtin::ErrorPrototype),
+        Builtin::RangeError
+        | Builtin::ReferenceError
+        | Builtin::SyntaxError
+        | Builtin::EvalError
+        | Builtin::URIError => Some(Builtin::ErrorPrototype),
         Builtin::AggregateError => Some(Builtin::AggregateErrorPrototype),
         Builtin::SuppressedError => Some(Builtin::SuppressedErrorPrototype),
         Builtin::TypeError => Some(Builtin::ErrorPrototype),

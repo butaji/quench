@@ -316,6 +316,14 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = async_generator_descriptor(builtin, key) {
         return descriptor;
     }
+    if builtin == Builtin::ErrorPrototype && matches!(key, "name" | "message") {
+        let value = if key == "name" {
+            Value::String("Error".to_string())
+        } else {
+            Value::String(String::new())
+        };
+        return Some(descriptor_object_with_flags(value, true, false, true));
+    }
     if builtin == Builtin::Object && key == "hasOwn" {
         return Some(descriptor_object_with_flags(
             Value::Builtin(Builtin::ObjectHasOwn),

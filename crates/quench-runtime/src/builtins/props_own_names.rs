@@ -21,7 +21,6 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "constructor",
             "name",
             "message",
-            "cause",
             "stack",
             "toString",
         ],

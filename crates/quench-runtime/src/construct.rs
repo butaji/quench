@@ -516,17 +516,25 @@ fn construct_error(
     let message = arguments
         .first()
         .map_or(Ok(String::new()), crate::conversion::to_string)?;
+    let prototype = crate::builtin_meta::instance_prototype(*builtin)
+        .map(Value::Builtin)
+        .unwrap_or(Value::Builtin(crate::ops::Builtin::ErrorPrototype));
     let mut properties = vec![
+        (
+            crate::builtins::descriptor_key("name"),
+            error_data_descriptor(Value::String(name.to_string())),
+        ),
         ("name".to_string(), Value::String(name.to_string())),
+        (
+            crate::builtins::descriptor_key("message"),
+            error_data_descriptor(Value::String(message.clone())),
+        ),
         ("message".to_string(), Value::String(message)),
         (
             crate::builtins::ERROR_SLOT.to_string(),
             Value::Boolean(true),
         ),
-        (
-            "\0prototype".to_string(),
-            Value::Builtin(crate::ops::Builtin::ErrorPrototype),
-        ),
+        ("\0prototype".to_string(), prototype),
     ];
 
     if let Some(cause_source) = arguments
@@ -538,10 +546,23 @@ fn construct_error(
             return Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))));
         }
         let cause = crate::execute::get_property_result(&options, "cause")?;
+        properties.push((
+            crate::builtins::descriptor_key("cause"),
+            error_data_descriptor(cause.clone()),
+        ));
         properties.push(("cause".to_string(), cause));
     }
 
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
+}
+
+fn error_data_descriptor(value: Value) -> Value {
+    Value::Object(std::rc::Rc::new(ObjectData::new(vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])))
 }
 
 fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
