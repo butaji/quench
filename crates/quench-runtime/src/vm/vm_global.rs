@@ -35,6 +35,10 @@ pub(crate) fn is_global_object(value: &Value) -> bool {
     matches!(current_global_object(), Value::Object(global) if Rc::ptr_eq(&global, object))
 }
 
+pub(crate) fn is_child_global_object(value: &Value) -> bool {
+    is_global_object(value) && current_context_or_default().realm() != crate::ops::RealmId::ROOT
+}
+
 pub(crate) fn begin_global_declaration_batch() {
     if GLOBAL_DECLARATION_BATCH.with(|batch| batch.borrow().is_some()) {
         return;

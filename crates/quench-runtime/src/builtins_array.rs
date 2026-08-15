@@ -3,6 +3,11 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         Value::Object(properties) if global_constant(&properties, key) => {
             (Value::Object(properties), false)
         }
+        Value::Object(properties) if properties.iter().any(|(name, _)| name == "\0realm")
+            && !matches!(key, "undefined" | "Infinity" | "NaN") =>
+        {
+            (delete_object_property(properties, key), true)
+        }
         Value::Object(properties)
             if descriptor_flag_in(&properties, key, "configurable") == Some(false) =>
         {
