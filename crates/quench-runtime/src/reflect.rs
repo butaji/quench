@@ -10,12 +10,14 @@ pub(crate) fn builtin(
         return Ok(Value::Undefined);
     };
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && !is_shadow_realm_receiver(receiver) {
-        return Err(shadow_type_error(
+        return Err(shadow_type_error_for_realm(
+            receiver,
             "ShadowRealm.prototype.evaluate called on incompatible receiver",
         ));
     }
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && !matches!(value, Value::String(_)) {
-        return Err(shadow_type_error(
+        return Err(shadow_type_error_for_realm(
+            receiver,
             "ShadowRealm.prototype.evaluate requires a string",
         ));
     }
@@ -30,7 +32,7 @@ pub(crate) fn builtin(
             && !direct_syntax_error
             && matches!(error, VmError::Thrown(_))
         {
-            shadow_type_error("ShadowRealm evaluation threw a value")
+            shadow_type_error_for_realm(receiver, "ShadowRealm evaluation threw a value")
         } else {
             error
         }
@@ -41,7 +43,8 @@ pub(crate) fn builtin(
         return wrap_shadow_function(&result, realm);
     }
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && crate::value::is_object(&result) {
-        return Err(shadow_type_error(
+        return Err(shadow_type_error_for_realm(
+            receiver,
             "ShadowRealm evaluation must return a primitive",
         ));
     }
@@ -97,6 +100,37 @@ fn shadow_property(target: &Value, key: &str) -> Result<Value, VmError> {
 }
 
 fn shadow_type_error(message: &str) -> VmError {
+    shadow_type_error_with_constructor(message, Value::Builtin(crate::ops::Builtin::TypeError))
+}
+
+fn shadow_type_error_for_realm(receiver: Option<&Value>, message: &str) -> VmError {
+    let realm = shadow_creation_realm(receiver)
+        .or_else(|| crate::vm::realm_id_for_intrinsic_receiver(receiver));
+    let constructor = realm
+        .and_then(|realm| {
+            crate::vm::with_realm(realm, || {
+                crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError)
+            })
+        })
+        .unwrap_or(Value::Builtin(crate::ops::Builtin::TypeError));
+    shadow_type_error_with_constructor(message, constructor)
+}
+
+fn shadow_creation_realm(receiver: Option<&Value>) -> Option<crate::ops::RealmId> {
+    let Some(Value::Object(properties)) = receiver else {
+        return None;
+    };
+    properties.iter().find_map(|(key, value)| {
+        (key == "\0creation_realm").then(|| match value {
+            Value::HostCapability(token) => crate::vm::realm_id_for_intrinsic_receiver(Some(
+                &Value::HostCapability(token.clone()),
+            )),
+            _ => Some(crate::ops::RealmId::ROOT),
+        })?
+    })
+}
+
+fn shadow_type_error_with_constructor(message: &str, constructor: Value) -> VmError {
     let error = crate::builtins::error(
         crate::ops::Builtin::TypeError,
         &[Value::String(message.to_string())],
@@ -104,7 +138,7 @@ fn shadow_type_error(message: &str) -> VmError {
     VmError::Thrown(crate::builtins::set_property(
         error,
         "constructor",
-        Value::Builtin(crate::ops::Builtin::TypeError),
+        constructor,
     ))
 }
 
