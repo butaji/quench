@@ -240,7 +240,7 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
     }
-    function_inherited_property(&properties, key)
+    function_inherited_property(function, &properties, key)
 }
 
 fn function_realm_intrinsic(
@@ -255,18 +255,27 @@ fn function_realm_intrinsic(
         .unwrap_or(Value::Builtin(builtin))
 }
 
-fn function_inherited_property(properties: &[(String, Value)], key: &str) -> Value {
+fn function_inherited_property(
+    function: &crate::value::FunctionValue,
+    properties: &[(String, Value)],
+    key: &str,
+) -> Value {
     properties
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then(|| property_value(value)))
         .map_or_else(
-            || function_prototype_property(key),
+            || function_prototype_property(function, key),
             |prototype| get_property(&prototype, key),
         )
 }
-fn function_prototype_property(key: &str) -> Value {
-    let value = builtin_property(Builtin::FunctionPrototype, key);
+fn function_prototype_property(function: &crate::value::FunctionValue, key: &str) -> Value {
+    let prototype = if function.is_async {
+        Builtin::AsyncFunctionPrototype
+    } else {
+        Builtin::FunctionPrototype
+    };
+    let value = builtin_property(prototype, key);
     value_or_object_prototype(value, key)
 }
 
