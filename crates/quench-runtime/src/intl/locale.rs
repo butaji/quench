@@ -116,6 +116,7 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
                     "nu" if locale.numbering_system.is_none() => {
                         locale.numbering_system = Some(item.to_string())
                     }
+                    "kn" => locale.numeric = item == "true",
                     _ => {}
                 }
                 j += calendar_extension_width(parts, j, key, item);
@@ -366,8 +367,10 @@ fn slot_full(locale: &Locale) -> String {
         for (key, item) in keys {
             full.push('-');
             full.push_str(key);
-            full.push('-');
-            full.push_str(&item);
+            if !item.is_empty() {
+                full.push('-');
+                full.push_str(&item);
+            }
         }
     }
     full
@@ -391,7 +394,7 @@ fn slot_keys(locale: &Locale) -> Vec<(&'static str, String)> {
         keys.push(("nu", numbering.clone()));
     }
     if locale.numeric {
-        keys.push(("kn", "true".to_string()));
+        keys.push(("kn", String::new()));
     }
     keys
 }
