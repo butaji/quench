@@ -188,7 +188,7 @@ fn require_object_coercible(value: Value) -> Result<(), crate::execute::VmError>
     Ok(())
 }
 pub(crate) fn open(value: Value) -> Result<Value, crate::execute::VmError> {
-    if matches!(value, Value::Iterator(_)) {
+    if matches!(value, Value::Iterator(_) | Value::Generator(_)) {
         return Ok(value);
     }
     let method = crate::execute::get_property_result(&value, "Symbol.iterator")?;
@@ -251,6 +251,9 @@ fn collect_rest(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
 }
 
 pub(crate) fn collect(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
+    if matches!(value, Value::Generator(_)) {
+        return collect_generator(value);
+    }
     let mut values = Vec::new();
     loop {
         match step_value(value) {
@@ -272,6 +275,15 @@ pub(crate) fn collect(value: &Value) -> Result<Vec<Value>, crate::execute::VmErr
     }
 }
 
+fn collect_generator(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
+    let mut values = Vec::new();
+    for_each_generator(value.clone(), |item| {
+        values.push(item);
+        Ok(())
+    })?;
+    Ok(values)
+}
+
 pub(crate) fn collect_iterable(value: Value) -> Result<Vec<Value>, crate::execute::VmError> {
     let iterator = open(value)?;
     collect(&iterator)
@@ -287,7 +299,13 @@ where
     if matches!(value, Value::Generator(_)) {
         return for_each_generator(value, callback);
     }
+    if let Some(generator) = protocol_generator(&value) {
+        return for_each_generator(generator, callback);
+    }
     let iterator = open(value)?;
+    if matches!(iterator, Value::Generator(_)) {
+        return for_each_generator(iterator, callback);
+    }
     loop {
         let Some(item) = step_value(&iterator)? else {
             return Ok(());
@@ -302,6 +320,17 @@ where
             return Err(error);
         }
     }
+}
+
+fn protocol_generator(value: &Value) -> Option<Value> {
+    let Value::Iterator(data) = value else {
+        return None;
+    };
+    let state = data.state.borrow();
+    let IteratorState::Protocol { iterator, .. } = &*state else {
+        return None;
+    };
+    matches!(iterator, Value::Generator(_)).then(|| iterator.clone())
 }
 
 fn for_each_generator<F>(generator: Value, mut callback: F) -> Result<(), crate::execute::VmError>
