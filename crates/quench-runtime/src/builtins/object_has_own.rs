@@ -78,6 +78,9 @@ fn typed_array_owns(value: &Value, key: &str) -> bool {
 }
 
 fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
+    if crate::vm::is_legacy_global(key) {
+        return false;
+    }
     let deleted = properties
         .iter()
         .any(|(name, _)| name == &crate::builtins::deleted_key(key));
@@ -86,8 +89,9 @@ fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
         .any(|(name, _)| name == key && !super::is_descriptor_key(name))
         || boxed_string_owns(properties, key)
         || (!deleted
-            && crate::vm::is_global_object(&Value::Object(properties.clone()))
-            && crate::vm::global_builtin_exists(key))
+            && (crate::vm::global_builtin_exists_for_object(properties, key)
+                || (crate::vm::is_global_object(&Value::Object(properties.clone()))
+                    && crate::vm::global_builtin_exists(key))))
 }
 
 fn boxed_string_owns(properties: &[(String, Value)], key: &str) -> bool {
