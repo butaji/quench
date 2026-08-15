@@ -102,7 +102,8 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
                 match key {
                     "ca" => {
                         if locale.calendar.is_none() {
-                            locale.calendar = Some(calendar_alias(item));
+                            let value = calendar_extension_value(parts, j, item);
+                            locale.calendar = Some(calendar_alias(&value));
                         }
                     }
                     "co" if locale.collation.is_none() => locale.collation = Some(item.to_string()),
@@ -117,7 +118,7 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
                     }
                     _ => {}
                 }
-                j += 2;
+                j += calendar_extension_width(parts, j, key, item);
             }
             break;
         }
@@ -128,7 +129,35 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
 fn calendar_alias(value: &str) -> String {
     match value {
         "islamicc" => "islamic-civil".to_string(),
+        "ethiopic-amete-alem" => "ethioaa".to_string(),
         other => canonicalize(other).unwrap_or_else(|_| other.to_string()),
+    }
+}
+
+fn calendar_extension_value(parts: &[&str], index: usize, item: &str) -> String {
+    match (
+        item,
+        parts.get(index + 2).copied(),
+        parts.get(index + 3).copied(),
+    ) {
+        ("islamic", Some("civil"), _) => "islamic-civil".to_string(),
+        ("ethiopic", Some("amete"), Some("alem")) => "ethiopic-amete-alem".to_string(),
+        _ => item.to_string(),
+    }
+}
+
+fn calendar_extension_width(parts: &[&str], index: usize, key: &str, item: &str) -> usize {
+    if key != "ca" {
+        return 2;
+    }
+    match (
+        item,
+        parts.get(index + 2).copied(),
+        parts.get(index + 3).copied(),
+    ) {
+        ("islamic", Some("civil"), _) => 3,
+        ("ethiopic", Some("amete"), Some("alem")) => 4,
+        _ => 2,
     }
 }
 
