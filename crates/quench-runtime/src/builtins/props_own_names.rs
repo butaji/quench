@@ -119,7 +119,7 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
 
 fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
-        Builtin::Temporal => &["Duration", "PlainDate"],
+        Builtin::Temporal => &["Duration", "PlainDate", "Symbol.toStringTag"],
         Builtin::TemporalDuration => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalDurationPrototype => TEMPORAL_DURATION_PROTOTYPE_NAMES,
         Builtin::TemporalPlainDate => &["length", "name", "prototype", "from"],
