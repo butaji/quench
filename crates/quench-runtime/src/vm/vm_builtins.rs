@@ -46,6 +46,7 @@ fn early_dispatch(
         .or_else(|| crate::promise::execute_builtin(builtin, receiver, arguments))
         .or_else(|| crate::disposable_stack::execute(builtin, receiver, arguments))
         .or_else(|| crate::finalization_registry::execute(builtin, receiver, arguments))
+        .or_else(|| crate::temporal::execute(builtin, receiver, arguments))
         .or_else(|| {
             (builtin != Builtin::Date)
                 .then(|| crate::date::execute(builtin, receiver, arguments))?
@@ -405,6 +406,21 @@ fn execute_simple_builtin(
         | Builtin::ErrorPrototypeStackSetter => Ok(error_builtin(builtin, arguments, receiver)?),
         Builtin::Object => Ok(crate::builtins::object(arguments)),
         Builtin::Date => Ok(crate::date::call()),
+        Builtin::TemporalDuration => Err(crate::value::error::throw_type_error(
+            "Temporal.Duration requires new",
+        )),
+        Builtin::TemporalZonedDateTime => Err(crate::value::error::throw_type_error(
+            "Temporal.ZonedDateTime requires new",
+        )),
+        Builtin::TemporalPlainDate | Builtin::TemporalPlainDateTime => {
+            Err(crate::value::error::throw_type_error("Temporal requires new"))
+        }
+        Builtin::TemporalPlainYearMonth | Builtin::TemporalPlainMonthDay => {
+            Err(crate::value::error::throw_type_error("Temporal requires new"))
+        }
+        Builtin::TemporalPlainTime => Err(crate::value::error::throw_type_error(
+            "Temporal.PlainTime requires new",
+        )),
         _ => Ok(Value::Undefined),
     }
 }
