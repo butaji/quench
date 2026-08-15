@@ -62,7 +62,9 @@ fn map_argument_error(
     if builtin != crate::ops::Builtin::ArrayMap {
         return None;
     }
-    if receiver.is_none_or(|value| matches!(value, Value::Null | Value::Undefined)) {
+    if receiver.map_or(true, |value| {
+        matches!(value, Value::Null | Value::Undefined)
+    }) {
         return Some(Err(crate::value::error::throw_type_error(
             "Array.prototype.map called on null or undefined",
         )));
