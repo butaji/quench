@@ -365,6 +365,7 @@ fn is_accessor_builtin(builtin: Builtin) -> bool {
 fn same_property_receiver(value: &Value, receiver: &Value) -> bool {
     match (value, receiver) {
         (Value::Builtin(left), Value::Builtin(right)) => left == right,
+        (Value::Object(left), Value::Object(right)) => std::rc::Rc::ptr_eq(left, right),
         (Value::Map(left), Value::Map(right)) => std::rc::Rc::ptr_eq(left, right),
         (Value::Set(left), Value::Set(right)) => std::rc::Rc::ptr_eq(left, right),
         (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
@@ -427,13 +428,17 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     )
 }
 fn bind_function_property(value: &Value, key: &str) -> Value {
-    let builtin = match key {
+    let builtin = function_builtin_property(key);
+    bind_method(value, Value::Builtin(builtin))
+}
+
+fn function_builtin_property(key: &str) -> Builtin {
+    match key {
         "apply" => Builtin::FunctionApply,
         "call" => Builtin::FunctionCall,
         "bind" => Builtin::FunctionBind,
-        _ => return Value::Undefined,
-    };
-    bind_method(value, Value::Builtin(builtin))
+        _ => Builtin::FunctionCall,
+    }
 }
 fn bound_function_property(
     value: &Value,
@@ -450,6 +455,11 @@ fn bound_function_property(
         return value.clone();
     }
     if matches!(key, "apply" | "call" | "bind") {
+        if realm::is_intrinsic(bound)
+            && matches!(bound.target, Value::Builtin(Builtin::FunctionPrototype))
+        {
+            return crate::vm::intrinsic_for_realm(bound.realm, function_builtin_property(key));
+        }
         bind_function_property(value, key)
     } else if key == "length" && !realm::is_intrinsic(bound) {
         match &bound.target {
@@ -460,12 +470,21 @@ fn bound_function_property(
         }
     } else if key == "name" && !realm::is_intrinsic(bound) {
         Value::String(String::new())
+    } else if key == "prototype" {
+        if matches!(bound.target, Value::Builtin(Builtin::Function)) {
+            return crate::vm::intrinsic_for_realm(bound.realm, Builtin::FunctionPrototype);
+        }
+        let result = get_property(&bound.target, key);
+        if let Value::Builtin(builtin) = result {
+            realm::intrinsic_value(bound, builtin)
+                .unwrap_or_else(|| crate::vm::intrinsic_for_realm(bound.realm, builtin))
+        } else {
+            result
+        }
     } else {
         let result = get_property(&bound.target, key);
         if let Value::Builtin(builtin) = &result {
-            if let Some(intrinsic) = realm::intrinsic_value(bound, *builtin) {
-                return intrinsic;
-            }
+            return crate::vm::intrinsic_for_realm(bound.realm, *builtin);
         }
         if !matches!(result, Value::Undefined) {
             return result;
@@ -502,7 +521,13 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
         RefCell::new(Vec::new())
     };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
+        realm: match receiver {
+            Value::BoundFunction(bound) => bound.realm,
+            Value::Function(function) => crate::vm::realm_id_for_global(&function.captures.get(0))
+                .unwrap_or_else(|| crate::vm::current_context_or_default().realm()),
+            _ => crate::vm::realm_id_for_intrinsic_receiver(Some(receiver))
+                .unwrap_or_else(|| crate::vm::current_context_or_default().realm()),
+        },
         target: Value::Builtin(builtin),
         receiver: receiver.clone(),
         arguments: Vec::new(),
