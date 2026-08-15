@@ -50,13 +50,6 @@ pub(crate) fn object_property(
     receiver: &Value,
     key: &str,
 ) -> Value {
-    if let Some(Value::Object(current)) = crate::vm::current_global_for(&Value::Object(
-        Rc::clone(properties),
-    )) {
-        if !Rc::ptr_eq(&current, properties) {
-            return object_property(&current, receiver, key);
-        }
-    }
     if properties
         .iter()
         .any(|(name, _)| name == &crate::builtins::deleted_key(key))

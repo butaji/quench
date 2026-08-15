@@ -190,7 +190,6 @@ fn construct_bound(
                 return Err(crate::vm::not_callable());
             }
             let value = construct_bound_in_realm(bound, *builtin, &combined)?;
-            install_dynamic_global(bound, &value);
             with_new_target_prototype(value, &Value::Builtin(*builtin), &new_target)?
         }
         Value::Function(function) => construct_function(function, &new_target, &combined)?,
@@ -202,30 +201,19 @@ fn construct_bound(
         )?,
         _ => return Err(crate::vm::not_callable()),
     };
-    Ok(if let Value::HostCapability(capability) = &bound.receiver {
-        crate::builtins::set_property(value, "\0realm", Value::HostCapability(capability.clone()))
-    } else {
-        value
-    })
-}
-
-fn install_dynamic_global(bound: &crate::value::BoundFunctionValue, value: &Value) {
-    let Value::Function(function) = value else {
-        return;
-    };
-    let dynamic = function
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| name == "\0dynamic_function");
-    if !dynamic {
-        return;
+    if let Value::HostCapability(capability) = &bound.receiver {
+        let value = crate::builtins::set_property(
+            value,
+            "\0realm",
+            Value::HostCapability(capability.clone()),
+        );
+        return Ok(crate::builtins::set_property(
+            value,
+            "\0creation_realm",
+            Value::HostCapability(capability.clone()),
+        ));
     }
-    if let Some(Some(global)) =
-        crate::vm::with_realm(bound.realm, || Some(crate::vm::current_global_object()))
-    {
-        function.captures.set(0, global);
-    }
+    Ok(value)
 }
 fn construct_builtin(
     builtin: crate::ops::Builtin,

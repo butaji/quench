@@ -324,7 +324,7 @@ fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::e
         }
     }
     let Some(receiver @ Value::Array(values)) = receiver else {
-        return Ok(Value::Undefined);
+        return Value::Undefined;
     };
     let length = values.logical_len();
     let mut sorted = values.to_vec();

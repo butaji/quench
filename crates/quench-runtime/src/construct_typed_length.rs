@@ -1,7 +1,11 @@
-fn object_array_like(properties: &crate::value::ObjectData) -> Option<Vec<Value>> {
-    let (_, length) = properties.iter().rev().find(|(name, _)| name == "length")?;
+fn object_array_like(
+    properties: &crate::value::ObjectData,
+) -> Result<Option<Vec<Value>>, crate::execute::VmError> {
+    let Some((_, length)) = properties.iter().rev().find(|(name, _)| name == "length") else {
+        return Ok(None);
+    };
     let Value::Number(length) = length else {
-        return None;
+        return Ok(None);
     };
     let length = (*length).max(0.0) as usize;
     if length > u32::MAX as usize {
@@ -18,7 +22,7 @@ fn object_array_like(properties: &crate::value::ObjectData) -> Option<Vec<Value>
             .unwrap_or(Value::Undefined);
         values.push(value);
     }
-    Some(values)
+    Ok(Some(values))
 }
 
 fn byte_length(length: usize, element_size: usize) -> Result<usize, crate::execute::VmError> {
@@ -51,9 +55,9 @@ fn length_float32_array(length: f64) -> Result<Value, crate::execute::VmError> {
 fn length_int8_array(length: f64) -> Result<Value, crate::execute::VmError> {
     let length = to_index(length)?;
     let buffer = Rc::new(crate::value::ArrayBufferData::new(length));
-    Ok(Value::Int8Array(Rc::new(
-        crate::value::Int8ArrayData::new(buffer, 0, length),
-    )))
+    Ok(Value::Int8Array(Rc::new(crate::value::Int8ArrayData::new(
+        buffer, 0, length,
+    ))))
 }
 fn length_int16_array(length: f64) -> Result<Value, crate::execute::VmError> {
     let length = to_index(length)?;

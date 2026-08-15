@@ -120,9 +120,11 @@ fn function_prototype(function: &crate::value::FunctionValue) -> Value {
 
 fn slot_prototype(value: &Value) -> Option<Value> {
     Some(match value {
-        Value::ArrayBuffer(buffer) => buffer
-            .prototype()
-            .unwrap_or(Value::Builtin(Builtin::ArrayBufferPrototype)),
+        Value::ArrayBuffer(buffer) => buffer.prototype().unwrap_or(Value::Builtin(if buffer.shared {
+            Builtin::SharedArrayBufferPrototype
+        } else {
+            Builtin::ArrayBufferPrototype
+        })),
         Value::DataView(view) => view
             .prototype()
             .unwrap_or(Value::Builtin(Builtin::DataViewPrototype)),
@@ -170,6 +172,7 @@ fn iterator_prototype(builtin: Builtin) -> Value {
     if matches!(
         builtin,
         Builtin::ArrayIteratorPrototype
+            | Builtin::StringIteratorPrototype
             | Builtin::RegExpStringIteratorPrototype
             | Builtin::SetIteratorPrototype
             | Builtin::MapIteratorPrototype
@@ -354,17 +357,7 @@ fn add_group_value(
 pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::ObjectPrototype
-            | Builtin::ArrayPrototype
-            | Builtin::NumberPrototype
-            | Builtin::RegExpPrototype
-            | Builtin::DatePrototype
-            | Builtin::IteratorPrototype
-            | Builtin::ArrayIteratorPrototype
-            | Builtin::SetIteratorPrototype
-            | Builtin::MapIteratorPrototype
-            | Builtin::RegExpStringIteratorPrototype
-            | Builtin::PromisePrototype
+        Builtin::NumberPrototype
             | Builtin::BooleanPrototype
             | Builtin::StringPrototype
             | Builtin::MapPrototype

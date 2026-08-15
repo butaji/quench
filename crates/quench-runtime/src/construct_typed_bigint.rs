@@ -18,6 +18,7 @@ pub(crate) fn construct_bigint64_array(
             )
         }
         Some(Value::Number(length)) => bigint64_with_length(to_index(*length)?),
+        Some(Value::Object(properties)) => excessive_object_length(properties),
         Some(_) => Err(type_error("BigInt64Array source must contain BigInts")),
     }
 }
@@ -40,6 +41,7 @@ pub(crate) fn construct_biguint64_array(
             )
         }
         Some(Value::Number(length)) => biguint64_with_length(to_index(*length)?),
+        Some(Value::Object(properties)) => excessive_object_length(properties),
         Some(_) => Err(type_error("BigUint64Array source must contain BigInts")),
     }
 }
@@ -56,7 +58,10 @@ fn new_bigint64_data(
     length: usize,
 ) -> Result<Rc<crate::value::BigInt64ArrayData>, crate::execute::VmError> {
     let bytes = typed_byte_length(length)?;
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(bytes));
+    let buffer = Rc::new(
+        crate::value::ArrayBufferData::try_new(bytes)
+            .ok_or_else(|| range_error("Typed-array length is too large"))?,
+    );
     Ok(Rc::new(crate::value::BigInt64ArrayData::new(
         buffer, 0, length,
     )))
@@ -66,10 +71,27 @@ fn new_biguint64_data(
     length: usize,
 ) -> Result<Rc<crate::value::BigUint64ArrayData>, crate::execute::VmError> {
     let bytes = typed_byte_length(length)?;
-    let buffer = Rc::new(crate::value::ArrayBufferData::new(bytes));
+    let buffer = Rc::new(
+        crate::value::ArrayBufferData::try_new(bytes)
+            .ok_or_else(|| range_error("Typed-array length is too large"))?,
+    );
     Ok(Rc::new(crate::value::BigUint64ArrayData::new(
         buffer, 0, length,
     )))
+}
+
+fn excessive_object_length(
+    properties: &Rc<crate::value::ObjectData>,
+) -> Result<Value, crate::execute::VmError> {
+    let length = crate::execute::get_property_result(
+        &Value::Object(properties.clone()),
+        "length",
+    )?;
+    let length = crate::conversion::to_number(&length)?;
+    if length >= 9_007_199_254_740_992.0 {
+        return Err(range_error("Typed-array length is too large"));
+    }
+    Err(type_error("BigInt typed-array source must contain BigInts"))
 }
 
 fn values_bigint64_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {

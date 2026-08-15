@@ -1,7 +1,6 @@
 //! `Intl.DateTimeFormat`.
 
-use chrono::{DateTime, Datelike, Local, NaiveDateTime, TimeZone, Timelike, Utc};
-use std::sync::atomic::{AtomicU64, Ordering};
+use chrono::{DateTime, Datelike, Timelike, Utc};
 
 use crate::{conversion, execute::VmError, value::Value};
 
@@ -64,155 +63,13 @@ pub(crate) struct DateTimeOptions {
     components: Vec<(String, String)>,
     fractional_second_digits: Option<u32>,
     hour12: Option<bool>,
-    local_time_zone: bool,
 }
-
-static LEGACY_SYMBOL_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = locales
-        .first()
-        .map(|value| sanitize_locale_extensions(value))
-        .unwrap_or_else(default_locale);
+    let locale = locales.first().cloned().unwrap_or_else(default_locale);
     let options = DateTimeOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
-}
-
-fn sanitize_locale_extensions(locale: &str) -> String {
-    let Some(index) = locale.split('-').position(|part| part == "u") else {
-        return locale.to_string();
-    };
-    let parts: Vec<&str> = locale.split('-').collect();
-    let mut result = parts[..index]
-        .iter()
-        .map(|part| (*part).to_string())
-        .collect::<Vec<_>>();
-    let mut cursor = index + 1;
-    while cursor < parts.len() {
-        let key = parts[cursor];
-        if key.len() != 2 {
-            cursor += 1;
-            continue;
-        }
-        let value = parts.get(cursor + 1).copied().unwrap_or_default();
-        if (key == "nu" && valid_numbering_system(value))
-            || (key == "ca" && valid_calendar_extension(value))
-            || (key == "hc" && valid_hour_cycle(value))
-        {
-            result.push(key.to_string());
-            result.push(value.to_string());
-        }
-        cursor += 1;
-        while cursor < parts.len() && parts[cursor].len() > 2 {
-            cursor += 1;
-        }
-    }
-    if result.len() == index {
-        return result.join("-");
-    }
-    result.insert(index, "u".to_string());
-    result.join("-")
-}
-
-fn valid_calendar_extension(value: &str) -> bool {
-    matches!(
-        value,
-        "buddhist"
-            | "chinese"
-            | "coptic"
-            | "dangi"
-            | "ethioaa"
-            | "ethiopic"
-            | "gregory"
-            | "hebrew"
-            | "indian"
-            | "islamic-civil"
-            | "islamic-tbla"
-            | "islamic-umalqura"
-            | "iso8601"
-            | "japanese"
-            | "persian"
-            | "roc"
-    )
-}
-
-fn locale_calendar(locale: &str) -> Option<&str> {
-    locale
-        .split('-')
-        .collect::<Vec<_>>()
-        .windows(2)
-        .find(|pair| pair[0] == "ca" && valid_calendar_extension(pair[1]))
-        .map(|pair| pair[1])
-}
-
-fn locale_numbering_system(locale: &str) -> Option<&str> {
-    locale
-        .split('-')
-        .collect::<Vec<_>>()
-        .windows(2)
-        .find(|pair| pair[0] == "nu" && valid_numbering_system(pair[1]))
-        .map(|pair| pair[1])
-}
-
-fn locale_hour_cycle(locale: &str) -> Option<&str> {
-    locale
-        .split('-')
-        .collect::<Vec<_>>()
-        .windows(2)
-        .find(|pair| pair[0] == "hc" && valid_hour_cycle(pair[1]))
-        .map(|pair| pair[1])
-}
-
-fn valid_hour_cycle(value: &str) -> bool {
-    matches!(value, "h11" | "h12" | "h23" | "h24")
-}
-
-fn remove_locale_extension(locale: &str, unwanted: &str) -> String {
-    let parts = locale.split('-').collect::<Vec<_>>();
-    let mut result = Vec::new();
-    let mut index = 0;
-    while index < parts.len() {
-        if parts[index] == unwanted {
-            index += 2;
-            continue;
-        }
-        result.push(parts[index]);
-        index += 1;
-    }
-    if result.last() == Some(&"u") {
-        result.pop();
-    }
-    result.join("-")
-}
-
-fn valid_numbering_system(value: &str) -> bool {
-    matches!(
-        value,
-        "adlm"
-            | "arab"
-            | "arabext"
-            | "bali"
-            | "beng"
-            | "deva"
-            | "fullwide"
-            | "gujr"
-            | "guru"
-            | "hanidec"
-            | "khmr"
-            | "knda"
-            | "laoo"
-            | "latn"
-            | "limb"
-            | "mlym"
-            | "mong"
-            | "mymr"
-            | "orya"
-            | "tamldec"
-            | "telu"
-            | "thai"
-            | "tibt"
-    )
 }
 
 impl DateTimeOptions {
@@ -225,38 +82,14 @@ impl DateTimeOptions {
             components: Vec::new(),
             fractional_second_digits: None,
             hour12: None,
-            local_time_zone: true,
         };
-        if let Some(calendar) = locale_calendar(&formatter.locale) {
-            formatter.calendar = calendar.to_string();
-        }
-        if let Some(numbering_system) = locale_numbering_system(&formatter.locale) {
-            formatter.numbering_system = numbering_system.to_string();
-        }
-        if let Some(hour_cycle) = locale_hour_cycle(&formatter.locale) {
-            formatter.set_component("hourCycle", hour_cycle.to_string());
-        }
-        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
-            for key in OPTION_ORDER {
-                let value = crate::execute::get_property_result(options, key)?;
-                if *key == "formatMatcher" && !matches!(value, Value::Undefined) {
-                    let matcher = conversion::to_string(&value)?;
-                    if !matches!(matcher.as_str(), "basic" | "best fit") {
-                        return Err(runtime_error("RangeError: invalid formatMatcher"));
-                    }
-                } else if *key == "localeMatcher" && !matches!(value, Value::Undefined) {
-                    let matcher = conversion::to_string(&value)?;
-                    if !matches!(matcher.as_str(), "lookup" | "best fit") {
-                        return Err(runtime_error("RangeError: invalid localeMatcher"));
-                    }
-                } else {
-                    formatter.apply(key, &value)?;
-                }
+        if let Some(Value::Object(properties)) = options {
+            for (key, value) in properties.iter() {
+                formatter.apply(key, value)?;
             }
         }
         formatter.apply_defaults();
         formatter.validate_styles()?;
-        formatter.resolve_styles();
         formatter.resolve_hour();
         Ok(formatter)
     }
@@ -265,44 +98,25 @@ impl DateTimeOptions {
         if matches!(value, Value::Undefined) {
             return Ok(());
         }
-        if key == "hour12" {
-            self.hour12 = Some(crate::execute::is_truthy(value));
-            self.locale = remove_locale_extension(&self.locale, "hc");
-            return Ok(());
-        }
-        if key == "fractionalSecondDigits" {
-            let digits = conversion::to_number(value)?;
-            if !digits.is_finite() || !(1.0..=3.0).contains(&digits) {
-                return Err(runtime_error("RangeError: invalid fractionalSecondDigits"));
-            }
-            self.fractional_second_digits = Some(digits.trunc() as u32);
-            return Ok(());
-        }
-        let text = conversion::to_string(value)?;
+        let text = to_string_value(value);
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
             if let Some(valid) = valid_component(&text, allowed) {
                 self.set_component(name, valid);
-                if *name == "hourCycle" && locale_hour_cycle(&self.locale) != Some(text.as_str()) {
-                    self.locale = remove_locale_extension(&self.locale, "hc");
-                }
             } else {
                 return Err(runtime_error("RangeError: invalid date/time option"));
             }
             return Ok(());
         }
         match key {
+            "hour12" => self.hour12 = Some(text == "true"),
             "timeZone" => {
-                if !valid_time_zone_name(&text) {
-                    return Err(runtime_error("RangeError: invalid time zone"));
-                }
-                if text.starts_with(['+', '-', '\u{2212}']) && normalize_offset(&text).is_none() {
+                if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
                 if NON_IANA_TIME_ZONES.contains(&text.as_str()) {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
                 self.time_zone = canonicalize_time_zone(&text);
-                self.local_time_zone = false;
             }
             "calendar" => {
                 let calendar = calendar_alias(&text.to_ascii_lowercase());
@@ -317,6 +131,7 @@ impl DateTimeOptions {
                 if !digits.is_finite() || digits.fract() != 0.0 || !(1.0..=9.0).contains(&digits) {
                     return Err(runtime_error("RangeError: invalid fractionalSecondDigits"));
                 }
+                self.fractional_second_digits = Some(digits as u32);
             }
             _ => {}
         }
@@ -343,19 +158,7 @@ impl DateTimeOptions {
         if self.contains("dateStyle") || self.contains("timeStyle") {
             return;
         }
-        if [
-            "year",
-            "month",
-            "day",
-            "dayPeriod",
-            "hour",
-            "minute",
-            "second",
-            "timeZoneName",
-        ]
-        .iter()
-        .any(|key| self.contains(key))
-        {
+        if self.contains("year") || self.contains("month") || self.contains("day") {
             return;
         }
         for key in ["year", "month", "day"] {
@@ -379,76 +182,13 @@ impl DateTimeOptions {
 
     fn resolve_hour(&mut self) {
         if !self.contains("hour") {
-            if self.contains("timeStyle") {
-                self.set_component("hour", "numeric".to_string());
-            } else {
-                return;
-            }
+            return;
         }
-        if let Some(hour12) = self.hour12 {
+        if self.hour12.is_some() {
             self.components.retain(|(key, _)| key != "hourCycle");
-            let cycle = if hour12 {
-                if self.locale.starts_with("ja") {
-                    "h11"
-                } else {
-                    "h12"
-                }
-            } else {
-                "h23"
-            };
-            self.set_component("hourCycle", cycle.to_string());
         } else if !self.contains("hourCycle") {
-            let cycle = if self.locale.starts_with("ja") {
-                "h11"
-            } else {
-                "h12"
-            };
-            self.set_component("hourCycle", cycle.to_string());
-            self.hour12 = Some(true);
-        } else if let Some(cycle) = self.component_value("hourCycle") {
-            self.hour12 = Some(cycle.starts_with("h1"));
+            self.set_component("hourCycle", "h23".to_string());
         }
-    }
-
-    fn resolve_styles(&mut self) {
-        if let Some(style) = self.component_value("dateStyle").map(str::to_owned) {
-            let month = match style.as_str() {
-                "short" => "numeric",
-                "medium" => "short",
-                _ => "long",
-            };
-            let year = if style == "short" {
-                "2-digit"
-            } else {
-                "numeric"
-            };
-            self.set_component("year", year.to_string());
-            self.set_component("month", month.to_string());
-            self.set_component("day", "numeric".to_string());
-            if style == "full" {
-                self.set_component("weekday", "long".to_string());
-            }
-        }
-        if let Some(style) = self.component_value("timeStyle").map(str::to_owned) {
-            self.set_component("hour", "numeric".to_string());
-            self.set_component("minute", "2-digit".to_string());
-            if style != "short" {
-                self.set_component("second", "2-digit".to_string());
-            }
-            if matches!(style.as_str(), "long" | "full") {
-                self.set_component("timeZoneName", "short".to_string());
-            }
-            if style == "full" {
-                self.set_component("timeZoneName", "long".to_string());
-            }
-        }
-    }
-
-    fn component_value(&self, key: &str) -> Option<&str> {
-        self.components
-            .iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value.as_str())
     }
 
     fn build_object(&self) -> Value {
@@ -474,21 +214,12 @@ impl DateTimeOptions {
                 Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatResolvedOptions),
             ),
             (SLOT.to_string(), self.slot()),
-            (
-                "\0prototype".to_string(),
-                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatPrototype),
-            ),
         ];
         make_object(properties)
     }
 
     fn slot(&self) -> Value {
-        let mut properties = self.resolved_properties();
-        properties.push((
-            "__localTimeZone".to_string(),
-            Value::Boolean(self.local_time_zone),
-        ));
-        make_object(properties)
+        make_object(self.resolved_properties())
     }
 
     fn resolved_properties(&self) -> Vec<(String, Value)> {
@@ -520,10 +251,15 @@ impl DateTimeOptions {
             props.push(("hour12".to_string(), Value::Boolean(hour12)));
         }
         for (key, value) in &self.components {
-            if key == "hourCycle" || (!has_hour && key == "hour12") {
+            if key == "hourCycle" && !has_hour {
                 continue;
             }
             props.push((key.clone(), Value::String(value.clone())));
+        }
+        if has_hour {
+            if let Some(hour12) = self.hour12 {
+                props.push(("hour12".to_string(), Value::Boolean(hour12)));
+            }
         }
         if let Some(digits) = self.fractional_second_digits {
             props.push((
@@ -535,39 +271,12 @@ impl DateTimeOptions {
     }
 }
 
-fn valid_identifier_shape(value: &str) -> bool {
-    !value.is_empty()
-        && value.split('-').all(|part| {
-            (3..=8).contains(&part.len()) && part.chars().all(|ch| ch.is_ascii_alphanumeric())
-        })
-}
-
 fn valid_component(text: &str, allowed: &[&str]) -> Option<String> {
     if allowed.contains(&text) {
         Some(text.to_string())
     } else {
         None
     }
-}
-
-fn canonicalize_calendar(value: &str) -> Result<String, VmError> {
-    let value = value.to_ascii_lowercase();
-    if value.is_empty()
-        || !value.split('-').all(|part| {
-            (3..=8).contains(&part.len()) && part.chars().all(|ch| ch.is_ascii_alphanumeric())
-        })
-    {
-        return Err(runtime_error("RangeError: invalid calendar"));
-    }
-    Ok(match value.as_str() {
-        "islamicc" => "islamic-civil".to_string(),
-        "ethiopic-amete-alem" => "ethioaa".to_string(),
-        "gregory" | "buddhist" | "japanese" | "islamic-civil" | "persian" | "iso8601"
-        | "chinese" | "coptic" | "dangi" | "ethioaa" | "ethiopic" | "hebrew" | "indian"
-        | "islamic-tbla" | "islamic-umalqura" | "roc" => value,
-        "islamic" | "islamic-rgsa" => "islamic-civil".to_string(),
-        _ => "gregory".to_string(),
-    })
 }
 
 fn canonicalize_time_zone(time_zone: &str) -> String {
@@ -578,36 +287,11 @@ fn canonicalize_time_zone(time_zone: &str) -> String {
     if let Some(offset) = normalize_offset(time_zone) {
         return offset;
     }
-    if let Some(zone) = chrono_tz::TZ_VARIANTS
-        .iter()
-        .find(|zone| zone.name().eq_ignore_ascii_case(time_zone))
-    {
-        return zone.name().to_string();
-    }
     if time_zone.is_empty() {
         "UTC".to_string()
     } else {
         time_zone.to_string()
     }
-}
-
-fn valid_time_zone_name(time_zone: &str) -> bool {
-    if time_zone.is_empty() || !time_zone.is_ascii() {
-        return false;
-    }
-    if matches!(time_zone.to_ascii_uppercase().as_str(), "UTC" | "GMT") {
-        return true;
-    }
-    if normalize_offset(time_zone).is_some() {
-        return true;
-    }
-    if chrono_tz::TZ_VARIANTS
-        .iter()
-        .any(|zone| zone.name().eq_ignore_ascii_case(time_zone))
-    {
-        return true;
-    }
-    time_zone.contains('/') && !matches!(time_zone, "ACT" | "invalid")
 }
 
 fn normalize_offset(time_zone: &str) -> Option<String> {
@@ -616,39 +300,21 @@ fn normalize_offset(time_zone: &str) -> Option<String> {
         '-' => ('-', &time_zone[1..]),
         _ => return None,
     };
-    let (hours, minutes) = match rest.split_once(':') {
-        Some((hours, minutes)) if hours.len() == 2 && minutes.len() == 2 => (hours, minutes),
-        None if rest.len() == 2 => (&rest[..2], "00"),
-        None if rest.len() == 4 => (&rest[..2], &rest[2..]),
-        _ => return None,
-    };
+    let (hours, minutes) = rest.split_once(':')?;
+    if hours.len() != 2 || minutes.len() != 2 {
+        return None;
+    }
     let hour: u32 = hours.parse().ok()?;
     let minute: u32 = minutes.parse().ok()?;
     if hour > 23 || minute > 59 {
         return None;
     }
-    let sign = if hour == 0 && minute == 0 { '+' } else { sign };
     Some(format!("{sign}{hour:02}:{minute:02}"))
 }
 
 fn literal_part(value: &str) -> Value {
     make_object(vec![
         ("type".to_string(), Value::String("literal".to_string())),
-        ("value".to_string(), Value::String(value.to_string())),
-    ])
-}
-
-fn range_literal_part(value: &str, source: &str) -> Value {
-    make_object(vec![
-        ("type".to_string(), Value::String("literal".to_string())),
-        ("value".to_string(), Value::String(value.to_string())),
-        ("source".to_string(), Value::String(source.to_string())),
-    ])
-}
-
-fn component_part(kind: &str, value: &str) -> Value {
-    make_object(vec![
-        ("type".to_string(), Value::String(kind.to_string())),
         ("value".to_string(), Value::String(value.to_string())),
     ])
 }
@@ -697,7 +363,17 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
             let input = arguments.first().unwrap_or(&Value::Undefined);
             let number = range_number(input)?;
-            Ok(Value::String(format_number(&slots, number)))
+            if let Some(value) = day_period_format(&slots, number) {
+                return Ok(Value::String(value));
+            }
+            if let Some(value) = proleptic_year_format(&slots, number) {
+                return Ok(Value::String(value));
+            }
+            if let Some(value) = fractional_format(&slots, number) {
+                return Ok(Value::String(value));
+            }
+            let value = range_text(number);
+            Ok(Value::String(value))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatToParts => {
             let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
@@ -718,12 +394,7 @@ pub(crate) fn prototype_method(
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRange => {
             let (start, end) = range_values(arguments)?;
-            if let Some(value) = date_range_text(&slots, start, end) {
-                return Ok(Value::String(value));
-            }
-            let start = format_number(&slots, start);
-            let end = format_number(&slots, end);
-            if start == end || (nearly_equal_range(arguments)? && !has_fraction(&slots)) {
+            if start == end {
                 return Ok(Value::String(start));
             }
             Ok(Value::String(format!("{start} – {end}")))
@@ -750,17 +421,12 @@ pub(crate) fn prototype_method(
                 return Ok(make_array(vec![literal_part(&start)]));
             }
             Ok(make_array(vec![
-                range_literal_part(&start, "startRange"),
-                range_literal_part(" – ", "shared"),
-                range_literal_part(&end, "endRange"),
+                literal_part(&start),
+                literal_part(" – "),
+                literal_part(&end),
             ]))
         }
-        crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(
-            slots
-                .into_iter()
-                .filter(|(key, _)| !key.starts_with("__"))
-                .collect(),
-        )),
+        crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots)),
         _ => Err(runtime_error("TypeError: method not found")),
     }
 }
@@ -1266,38 +932,15 @@ fn weekday_name(date: chrono::Weekday) -> &'static str {
 
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
     let style = slot_string(slots, "dayPeriod")?;
-    let hour = date_time(slots, number)?.hour();
-    let name = match style.as_str() {
-        "narrow" => day_period_name(hour, true),
-        _ => day_period_name(hour, false),
-    };
-    if slot_string(slots, "hour").is_some() {
-        let display_hour = if hour % 12 == 0 { 12 } else { hour % 12 };
-        Some(format!("{display_hour} {name}"))
-    } else {
-        Some(name)
-    }
+    let hour = DateTime::<Utc>::from_timestamp((number / 1_000.0).trunc() as i64, 0)?.hour();
+    Some(match style.as_str() {
+        "narrow" => day_period_name(hour, false),
+        "short" => day_period_name(hour, true),
+        _ => day_period_name(hour, true),
+    })
 }
 
 fn day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
-    let style = slot_string(slots, "dayPeriod")?;
-    if slot_string(slots, "hour").is_some() {
-        let hour = Local
-            .timestamp_opt((number / 1_000.0).trunc() as i64, 0)
-            .single()?
-            .hour();
-        let display_hour = if hour % 12 == 0 { 12 } else { hour % 12 };
-        let name = if style == "narrow" {
-            day_period_name(hour, true)
-        } else {
-            day_period_name(hour, false)
-        };
-        return Some(vec![
-            component_part("hour", &display_hour.to_string()),
-            literal_part(" "),
-            component_part("dayPeriod", &name),
-        ]);
-    }
     let value = day_period_format(slots, number)?;
     Some(vec![make_object(vec![
         ("type".to_string(), Value::String("dayPeriod".to_string())),
@@ -1305,23 +948,23 @@ fn day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>
     ])])
 }
 
-fn day_period_name(hour: u32, narrow: bool) -> String {
+fn day_period_name(hour: u32, with_prefix: bool) -> String {
     let name = match hour {
-        0..=5 => "at night",
+        0..=5 => "night",
         6..=11 => "in the morning",
         12 => "noon",
         13..=17 => "in the afternoon",
         18..=20 => "in the evening",
         _ => "at night",
     };
-    if narrow && hour == 12 {
-        "n".to_string()
-    } else {
+    if with_prefix {
         name.to_string()
+    } else {
+        name.replace("in the ", "").replace("at ", "")
     }
 }
 
-fn range_values(arguments: &[Value]) -> Result<(f64, f64), VmError> {
+fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
     let Some(start_value) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
             "date value is undefined",
@@ -1339,58 +982,18 @@ fn range_values(arguments: &[Value]) -> Result<(f64, f64), VmError> {
     }
     let start = range_number(start_value)?;
     let end = range_number(end_value)?;
-    Ok((start, end))
-}
-
-fn nearly_equal_range(arguments: &[Value]) -> Result<bool, VmError> {
-    let (start, end) = range_values(arguments)?;
-    Ok((start - end).abs() < 1_000.0)
+    Ok((range_text(start), range_text(end)))
 }
 
 fn fractional_format(slots: &[(String, Value)], number: f64) -> Option<String> {
-    let date = date_time(slots, number)?;
-    if slot_string(slots, "second").is_some() && slot_string(slots, "minute").is_none() {
-        return Some(date.second().to_string());
-    }
-    if slot_string(slots, "minute").is_some() && slot_string(slots, "second").is_none() {
-        return Some(date.minute().to_string());
-    }
     if slot_string(slots, "minute").is_none() || slot_string(slots, "second").is_none() {
         return None;
     }
     let digits = slot_number(slots, "fractionalSecondDigits").unwrap_or(0.0) as u32;
-    let hour = if super::slot_bool(slots, "hour12").unwrap_or(false) {
-        match date.hour() % 12 {
-            0 => 12,
-            value => value,
-        }
-    } else {
-        date.hour()
-    };
-    let prefix = if slot_string(slots, "hour").is_some() {
-        if slot_string(slots, "hour") == Some("2-digit".to_string()) {
-            format!("{hour:02}:")
-        } else {
-            format!("{hour}:")
-        }
-    } else {
-        String::new()
-    };
-    let period = if super::slot_bool(slots, "hour12").unwrap_or(false) {
-        if date.hour() < 12 {
-            " AM"
-        } else {
-            " PM"
-        }
-    } else {
-        ""
-    };
+    let seconds = (number / 1_000.0).trunc() as i64;
+    let date = DateTime::<Utc>::from_timestamp(seconds, 0)?;
     if digits == 0 {
-        return Some(format!(
-            "{prefix}{:02}:{:02}{period}",
-            date.minute(),
-            date.second()
-        ));
+        return Some(format!("{:02}:{:02}", date.minute(), date.second()));
     }
     let millis = number.rem_euclid(1_000.0) as u32;
     let fraction = if digits <= 3 {
@@ -1399,7 +1002,7 @@ fn fractional_format(slots: &[(String, Value)], number: f64) -> Option<String> {
         millis * 10_u32.pow(digits - 3)
     };
     Some(format!(
-        "{prefix}{:02}:{:02}.{:0width$}{period}",
+        "{:02}:{:02}.{:0width$}",
         date.minute(),
         date.second(),
         fraction,
@@ -1447,9 +1050,6 @@ fn grouped_year(year: i64) -> String {
 }
 
 fn range_number(value: &Value) -> Result<f64, VmError> {
-    if matches!(value, Value::Undefined) {
-        return Ok(Utc::now().timestamp_millis() as f64);
-    }
     let number = conversion::to_number(value)?;
     if !number.is_finite() || number.abs() > 8_640_000_000_000_000.0 {
         return Err(runtime_error("RangeError: date value is not finite"));
@@ -1518,7 +1118,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlDateTimeFormat => Some(construct_call(arguments, receiver)),
+        crate::ops::Builtin::IntlDateTimeFormat => Some(construct(arguments)),
         crate::ops::Builtin::IntlDateTimeFormatFormat
         | crate::ops::Builtin::IntlDateTimeFormatFormatToParts
         | crate::ops::Builtin::IntlDateTimeFormatFormatRange
@@ -1528,25 +1128,4 @@ pub(crate) fn dispatch(
         }
         _ => None,
     }
-}
-
-fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
-    let (legacy_receiver, constructor_arguments) = match receiver {
-        Some(value) if crate::value::is_object(value) => (receiver, arguments),
-        Some(Value::HostCapability(_))
-            if arguments.first().is_some_and(crate::value::is_object) =>
-        {
-            (arguments.first(), &arguments[1..])
-        }
-        _ => return construct(arguments),
-    };
-    let formatter = construct(constructor_arguments)?;
-    let slots = crate::execute::get_property(&formatter, SLOT);
-    let symbol = format!(
-        "Symbol.IntlLegacyConstructedSymbol\0{}",
-        LEGACY_SYMBOL_ID.fetch_add(1, Ordering::Relaxed)
-    );
-    let receiver = legacy_receiver.cloned().unwrap_or(Value::Undefined);
-    let receiver = crate::builtins::set_property(receiver, SLOT, slots.clone());
-    Ok(crate::builtins::set_property(receiver, &symbol, slots))
 }

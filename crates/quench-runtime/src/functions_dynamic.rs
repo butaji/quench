@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use oxc::{allocator::Allocator, ast::visit::Visit, parser::Parser, span::SourceType};
+use oxc::{allocator::Allocator, parser::Parser, span::SourceType};
 
 use crate::{execute::VmError, facts::ProgramDb, ops::FunctionKind, value::Value};
 
@@ -189,11 +189,8 @@ fn dynamic_value(
     )
 }
 
-fn function_source(
-    arguments: &[Value],
-    kind: FunctionKind,
-    is_async: bool,
-) -> Result<String, VmError> {
+fn function_source(arguments: &[Value], kind: FunctionKind, is_async: bool) -> String {
+    let body = arguments.last().map_or_else(String::new, to_string);
     let parameters = arguments
         .get(..arguments.len().saturating_sub(1))
         .unwrap_or_default()
@@ -217,10 +214,10 @@ fn function_source(
 
 fn mark_dynamic(value: &Value) {
     if let Value::Function(function) = value {
-        function.properties.borrow_mut().extend([
-            ("\0dynamic_function".to_string(), Value::Boolean(true)),
-            ("name".to_string(), Value::String("anonymous".to_string())),
-        ]);
+        function
+            .properties
+            .borrow_mut()
+            .push(("\0dynamic_function".to_string(), Value::Boolean(true)));
     }
 }
 

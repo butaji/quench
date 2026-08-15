@@ -1,8 +1,3 @@
-thread_local! {
-    static GENERATOR_PROTOTYPES: std::cell::RefCell<std::collections::HashMap<usize, crate::value::Value>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
 pub(super) fn reduce_function_ops(
     statements: &[oxc::ast::ast::Statement<'_>],
     formal: &oxc::ast::ast::FormalParameters<'_>,
@@ -41,8 +36,9 @@ fn reduce_function_ops_named(
         lexical_receiver,
         self_name.map(|(name, _)| name),
     );
-    let self_name_slot = self_name
-        .and_then(|(name, immutable)| immutable.then(|| body_locals.get(name)).flatten().copied());
+    let self_name_slot = self_name.and_then(|(name, immutable)| {
+        immutable.then(|| body_locals.get(name)).flatten().copied()
+    });
     let prefix = reduce_function_body(
         (statements, formal),
         facts,
@@ -102,8 +98,10 @@ fn reduce_function_body(
     facts.eval_var_scope_start = layout.1;
     facts.eval_arrow_scope = arrow_expression.is_some();
     let previous_name_slot = facts.function_name_slot;
-    facts.function_name_slot = self_name_slot
-        .or_else(|| previous_name_slot.filter(|slot| captured_name_slot.contains(slot)));
+    facts.function_name_slot = self_name_slot.or_else(|| {
+        previous_name_slot
+            .filter(|slot| captured_name_slot.contains(slot))
+    });
     let result = reduce_function_body_inner(syntax, facts, locals, layout, arrow_expression, rest);
     (facts.eval_var_scope_start, facts.eval_arrow_scope) = inherited;
     facts.function_name_slot = previous_name_slot;
@@ -234,18 +232,11 @@ pub(crate) fn reduce_selected_body(
     let barrier_len = facts.eval_var_barrier.len();
     facts
         .eval_var_barrier
-        .extend(crate::semantic_early::lexically_declared_names_in(
-            statements,
-        ));
+        .extend(crate::semantic_early::lexically_declared_names_in(statements));
     for statement in ordered {
-        let Some(value) = evaluate_statement(
-            statement,
-            facts,
-            &mut ops,
-            &mut next_register,
-            &mut next_slot,
-            &mut locals,
-        ) else {
+        let Some(value) =
+            evaluate_statement(statement, facts, &mut ops, &mut next_register, &mut next_slot, &mut locals)
+        else {
             facts.eval_var_barrier.truncate(barrier_len);
             return None;
         };
@@ -274,7 +265,15 @@ fn evaluate_statement(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Option<Option<u16>> {
-    crate::reduce::reduce_statement(statement, ops, facts, next_register, next_slot, locals).ok()
+    crate::reduce::reduce_statement(
+        statement,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        locals,
+    )
+    .ok()
 }
 
 fn finalize_function_body(
@@ -439,7 +438,6 @@ fn make_function_value(
     metadata: FunctionMetadata,
 ) -> crate::value::Value {
     crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
-        realm: crate::vm::current_realm_id(),
         code,
         params,
         captures,
@@ -477,17 +475,14 @@ fn attach_prototype(value: &crate::value::Value) {
             return attach_generator_prototype(function);
         }
     }
-    let prototype = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
-        vec![("constructor".to_string(), value.clone())],
-    )));
+    let prototype = crate::value::Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![("constructor".to_string(), value.clone())]),
+    ));
     if let crate::value::Value::Function(function) = value {
-        function.properties.borrow_mut().extend([
-            ("prototype".to_string(), prototype.clone()),
-            (
-                crate::builtins::descriptor_key("prototype"),
-                prototype_descriptor(prototype),
-            ),
-        ]);
+        function
+            .properties
+            .borrow_mut()
+            .push(("prototype".to_string(), prototype));
     }
 }
 
@@ -546,14 +541,8 @@ fn prototype_descriptor(value: crate::value::Value) -> crate::value::Value {
     crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
         ("value".to_string(), value),
         ("writable".to_string(), crate::value::Value::Boolean(true)),
-        (
-            "enumerable".to_string(),
-            crate::value::Value::Boolean(false),
-        ),
-        (
-            "configurable".to_string(),
-            crate::value::Value::Boolean(false),
-        ),
+        ("enumerable".to_string(), crate::value::Value::Boolean(false)),
+        ("configurable".to_string(), crate::value::Value::Boolean(false)),
     ])))
 }
 
