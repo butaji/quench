@@ -148,7 +148,7 @@ fn create_function(
 ) -> Result<(), VmError> {
     let current = own_descriptor(name);
     let value = crate::locals::slot_cell(slot).borrow().clone();
-    let cell = function_binding_cell(slot, value);
+    let cell = binding_cell(name, slot, Some(&value));
     // Per spec, global function bindings are configurable when declared from eval
     // bindings and non-configurable otherwise.
     let descriptor = match current {
@@ -163,13 +163,6 @@ fn binding_cell(name: &str, slot: u16, value: Option<&Value>) -> Rc<RefCell<Valu
     if let Some(value) = value {
         *cell.borrow_mut() = value.clone();
     }
-    crate::locals::install_slot_cell(slot, Rc::clone(&cell));
-    cell
-}
-
-fn function_binding_cell(slot: u16, value: Value) -> Rc<RefCell<Value>> {
-    let cell = crate::locals::slot_cell(slot);
-    *cell.borrow_mut() = value;
     crate::locals::install_slot_cell(slot, Rc::clone(&cell));
     cell
 }
