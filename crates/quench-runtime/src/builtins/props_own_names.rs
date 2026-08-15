@@ -181,6 +181,7 @@ fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str]
             "stack",
             "toString",
         ],
+        Builtin::AggregateErrorPrototype => &["constructor", "name", "message"],
         Builtin::SuppressedErrorPrototype => &["constructor", "name", "message", "toString"],
         _ => own_property_names_tail(builtin),
     }

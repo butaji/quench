@@ -229,7 +229,9 @@ fn finish_set_property(
 fn inherits_error_prototype(target: &crate::value::Value) -> bool {
     if matches!(
         target,
-        crate::value::Value::Builtin(crate::ops::Builtin::ErrorPrototype)
+        crate::value::Value::Builtin(
+            crate::ops::Builtin::ErrorPrototype | crate::ops::Builtin::AggregateErrorPrototype,
+        )
     ) {
         return true;
     }

@@ -177,7 +177,7 @@ fn prototype_tail(builtin: Builtin) -> Option<Builtin> {
             Some(Builtin::ErrorPrototype)
         }
         Builtin::URIError => Some(Builtin::ErrorPrototype),
-        Builtin::AggregateError => Some(Builtin::ErrorPrototype),
+        Builtin::AggregateError => Some(Builtin::AggregateErrorPrototype),
         Builtin::SuppressedError => Some(Builtin::SuppressedErrorPrototype),
         Builtin::TypeError => Some(Builtin::ErrorPrototype),
         _ => None,
@@ -195,6 +195,7 @@ pub fn is_prototype(builtin: Builtin) -> bool {
                 | Builtin::WeakSetPrototype
                 | Builtin::WeakRefPrototype
                 | Builtin::ErrorPrototype
+                | Builtin::AggregateErrorPrototype
                 | Builtin::SuppressedErrorPrototype
                 | Builtin::PromisePrototype
         )
