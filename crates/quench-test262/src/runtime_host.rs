@@ -152,7 +152,10 @@ fn link_star_exports(
     from: ModuleId,
     target: ModuleId,
 ) -> Result<(), String> {
-    let names = unit_metadata(units, target)?.exported_names.clone();
+    let names = units
+        .get(&target)
+        .ok_or_else(|| "module unit missing".to_string())?
+        .export_names();
     let from_unit = units
         .get(&from)
         .ok_or_else(|| "module unit missing".to_string())?;
