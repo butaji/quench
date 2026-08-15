@@ -67,6 +67,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::ObjectGetOwnPropertyDescriptor | Builtin::ObjectIs => Some(2.0),
         Builtin::ObjectGetOwnPropertyDescriptors => Some(1.0),
         Builtin::ObjectAssign => Some(2.0),
+        Builtin::ObjectCreate => Some(2.0),
         Builtin::ObjectFromEntries => Some(1.0),
         Builtin::ObjectGroupBy => Some(2.0),
         Builtin::WeakRefDeref => Some(0.0),

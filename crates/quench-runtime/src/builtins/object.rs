@@ -107,10 +107,14 @@ fn create(arguments: &[Value]) -> Result<Value, VmError> {
             "Object prototype must be an object or null",
         ));
     }
-    Ok(Value::Object(Rc::new(ObjectData::new(vec![(
+    let object = Value::Object(Rc::new(ObjectData::new(vec![(
         "\0prototype".to_string(),
         prototype,
-    )]))))
+    )])));
+    if arguments.len() > 1 && !matches!(arguments[1], Value::Undefined) {
+        return crate::builtins::define_properties(&[object, arguments[1].clone()]);
+    }
+    Ok(object)
 }
 pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(target) = arguments.first() else {
@@ -218,10 +222,11 @@ pub(crate) fn descriptor(
             if !deleted
                 && crate::vm::is_global_object(&global)
                 && (crate::vm::global_builtin_exists(&key)
-                    || matches!(key.as_str(), "undefined" | "Infinity" | "NaN"))
+                    || crate::globals::is_global_constant(&key))
             {
-                let value = crate::execute::get_property(&global, &key);
-                let immutable = matches!(key.as_str(), "undefined" | "Infinity" | "NaN");
+                let value = crate::globals::immutable_value(&key)
+                    .unwrap_or_else(|| crate::execute::get_property(&global, &key));
+                let immutable = crate::globals::is_global_constant(&key);
                 Some(descriptor_object_with_flags(
                     value, !immutable, false, !immutable,
                 ))
@@ -333,6 +338,16 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
 
 fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
     let getter = match (builtin, key) {
+        (Builtin::RegExpPrototype, "source") => Builtin::RegExpSourceGetter,
+        (Builtin::RegExpPrototype, "flags") => Builtin::RegExpFlagsGetter,
+        (Builtin::RegExpPrototype, "global") => Builtin::RegExpGlobalGetter,
+        (Builtin::RegExpPrototype, "ignoreCase") => Builtin::RegExpIgnoreCaseGetter,
+        (Builtin::RegExpPrototype, "multiline") => Builtin::RegExpMultilineGetter,
+        (Builtin::RegExpPrototype, "dotAll") => Builtin::RegExpDotAllGetter,
+        (Builtin::RegExpPrototype, "unicode") => Builtin::RegExpUnicodeGetter,
+        (Builtin::RegExpPrototype, "sticky") => Builtin::RegExpStickyGetter,
+        (Builtin::RegExpPrototype, "hasIndices") => Builtin::RegExpHasIndicesGetter,
+        (Builtin::RegExpPrototype, "unicodeSets") => Builtin::RegExpUnicodeSetsGetter,
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
         (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
         (
@@ -355,6 +370,10 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::ArrayBufferPrototype, "immutable") => Builtin::ArrayBufferImmutableGetter,
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
         (Builtin::DisposableStackPrototype, "disposed") => Builtin::DisposableStackDisposed,
+        (Builtin::IteratorPrototype, "constructor") => Builtin::IteratorPrototypeConstructorGetter,
+        (Builtin::IteratorPrototype, "Symbol.toStringTag") => {
+            Builtin::IteratorPrototypeToStringTagGetter
+        }
         (Builtin::AsyncDisposableStackPrototype, "disposed") => {
             Builtin::AsyncDisposableStackDisposed
         }
@@ -387,6 +406,14 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::ErrorPrototype, "stack") => accessor_descriptor_with_setter(
             Builtin::ErrorPrototypeStackGetter,
             Some(Builtin::ErrorPrototypeStackSetter),
+        ),
+        (Builtin::IteratorPrototype, "constructor") => accessor_descriptor_with_setter(
+            Builtin::IteratorPrototypeConstructorGetter,
+            Some(Builtin::IteratorPrototypeConstructorSetter),
+        ),
+        (Builtin::IteratorPrototype, "Symbol.toStringTag") => accessor_descriptor_with_setter(
+            Builtin::IteratorPrototypeToStringTagGetter,
+            Some(Builtin::IteratorPrototypeToStringTagSetter),
         ),
         _ => accessor_descriptor_with_setter(getter, None),
     };
@@ -494,10 +521,10 @@ fn builtin_descriptor_general(builtin: Builtin, key: &str) -> Option<Value> {
             Value::Undefined => None,
             value => Some(value),
         })?;
-    let writable = ((!matches!(
+    let writable = (!matches!(
         key,
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
-    )) || (key == "name"
+    ) || (key == "name"
         && matches!(
             builtin,
             Builtin::ErrorPrototype
@@ -508,8 +535,10 @@ fn builtin_descriptor_general(builtin: Builtin, key: &str) -> Option<Value> {
                 | Builtin::TypeErrorPrototype
                 | Builtin::URIErrorPrototype
                 | Builtin::AggregateErrorPrototype
-                | Builtin::SuppressedErrorPrototype
         )))
+        && !is_well_known_symbol_property(builtin, key)
+        && builtin_property_writable(builtin, key);
+    let configurable = !matches!(key, "prototype" | "unscopables")
         && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);
     let configurable = ((key == "prototype" && builtin_property_configurable(builtin, key))

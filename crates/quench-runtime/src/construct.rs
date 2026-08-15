@@ -89,10 +89,19 @@ fn construct_with_new_target(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let result = match target {
+        Value::Proxy(_) => crate::proxy::proxy_construct(target, arguments, Some(new_target)),
         Value::Builtin(builtin) => {
-            let prefetched = prefetch_buffer_prototype(*builtin, target, new_target)?;
-            let value = construct_builtin(*builtin, arguments)?;
-            let value = with_new_target_prototype_cached(value, target, new_target, prefetched)?;
+            if *builtin == crate::ops::Builtin::Iterator
+                && crate::builtins::same_value(Some(target), Some(new_target))
+            {
+                return Err(type_error("Iterator is not constructable directly"));
+            }
+            let value = if *builtin == crate::ops::Builtin::Iterator {
+                crate::builtins::object(arguments)
+            } else {
+                construct_builtin(*builtin, arguments)?
+            };
+            let value = with_new_target_prototype(value, target, new_target)?;
             if let Value::DataView(view) = &value {
                 if *view.buffer.detached.borrow() {
                     return Err(type_error("Cannot use a detached ArrayBuffer"));
@@ -322,13 +331,19 @@ fn construct_typed_builtin(
 }
 
 fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let source_value = arguments
-        .first()
-        .map_or_else(|| Ok(Value::String(String::new())), regexp_source)?;
+    let source = match arguments.first() {
+        Some(value) if crate::regexp::has_regexp_internal_slot(value) => {
+            crate::execute::get_property_result(value, "source")
+                .and_then(|source| crate::conversion::to_string(&source))?
+        }
+        Some(value) => crate::conversion::to_string(value)?,
+        None => String::new(),
+    };
     let flags = arguments
         .get(1)
         .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
-    validate_regexp_pattern(&source, &flags)?;
+    crate::regexp::compile(&source, &flags)
+        .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
     let last_index = Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))));
     let mut entries = vec![
         ("\0regexp".to_string(), Value::Boolean(true)),
@@ -611,7 +626,6 @@ fn construct_error(
             ));
         }
     }
-
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
 }
 

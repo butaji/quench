@@ -404,7 +404,15 @@ fn boxed_object(value: &Value) -> Value {
     let constructor = object::boxed_constructor(value);
     let mut properties = vec![
         ("_value".to_string(), value.clone()),
-        ("constructor".to_string(), Value::Builtin(constructor)),
+        (
+            descriptor_key("_value"),
+            Value::Object(Rc::new(ObjectData::new(vec![
+                ("value".to_string(), value.clone()),
+                ("writable".to_string(), Value::Boolean(true)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]))),
+        ),
     ];
     if let Some(prototype) = crate::builtin_meta::instance_prototype(constructor) {
         properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
@@ -679,11 +687,17 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     };
     let key = crate::conversion::to_property_key(arguments.get(1).unwrap_or(&Value::Undefined))?;
     if matches!(target, Value::Proxy(_)) {
-        return crate::proxy::proxy_define_property(
+        let result = crate::proxy::proxy_define_property(
             target,
             &key,
             arguments.get(2).unwrap_or(&Value::Undefined),
-        );
+        )?;
+        if !crate::execute::is_truthy(&result) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy defineProperty trap returned false",
+            ));
+        }
+        return Ok(target.clone());
     }
     let Some(Value::Object(descriptor)) = arguments.get(2) else {
         return Ok(target.clone());

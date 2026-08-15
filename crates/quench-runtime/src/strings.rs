@@ -184,6 +184,7 @@ fn is_surrogate(code: u32) -> bool {
 
 pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
     match key {
+        "Symbol.iterator" => Some(crate::ops::Builtin::ArrayIterator),
         "includes" => Some(crate::ops::Builtin::StringIncludes),
         "isWellFormed" => Some(crate::ops::Builtin::StringIsWellFormed),
         "toWellFormed" => Some(crate::ops::Builtin::StringToWellFormed),
@@ -488,12 +489,23 @@ pub(crate) fn replace(
     arguments: &[Value],
     all: bool,
 ) -> Result<Value, crate::execute::VmError> {
-    let value = string_receiver(receiver)?;
-    let pattern = arguments
-        .first()
-        .map(crate::conversion::to_string)
-        .transpose()?
-        .unwrap_or_default();
+    let Some(Value::String(value)) = receiver else {
+        return Ok(Value::String(String::new()));
+    };
+    if let Some(pattern) = arguments.first() {
+        let method = crate::execute::get_property_result(pattern, "Symbol.replace")?;
+        if crate::conversion::is_callable(&method) {
+            return crate::functions::execute_target(
+                &method,
+                pattern,
+                &[
+                    Value::String(value.clone()),
+                    arguments.get(1).cloned().unwrap_or(Value::Undefined),
+                ],
+            );
+        }
+    }
+    let pattern = arguments.first().map_or_else(String::new, to_string);
     let Some(replacement) = arguments.get(1) else {
         let result = if all {
             value.replace(&pattern, "")

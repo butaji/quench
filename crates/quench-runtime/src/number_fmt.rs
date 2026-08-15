@@ -14,11 +14,18 @@ pub(crate) fn number_format(
         ));
     };
     let number = if number == 0.0 { 0.0 } else { number };
+    let fixed_digits = (builtin == Builtin::NumberToFixed)
+        .then(|| {
+            digits
+                .filter(|value| !matches!(value, Value::Undefined))
+                .map(to_digits)
+                .transpose()
+        })
+        .transpose()?
+        .flatten();
     if !number.is_finite() {
-        if let Some(value) = digits.filter(|value| !matches!(value, Value::Undefined)) {
-            if builtin == Builtin::NumberToFixed {
-                let _ = to_digits(value)?;
-            } else {
+        if builtin != Builtin::NumberToFixed {
+            if let Some(value) = digits.filter(|value| !matches!(value, Value::Undefined)) {
                 let _ = crate::conversion::to_number(value)?;
             }
         }
@@ -29,7 +36,7 @@ pub(crate) fn number_format(
         .map(to_digits)
         .transpose()?;
     let text = match builtin {
-        Builtin::NumberToFixed => fixed(number, digits.unwrap_or(0))?,
+        Builtin::NumberToFixed => fixed(number, fixed_digits.unwrap_or(0))?,
         Builtin::NumberToPrecision => precision(number, digits)?,
         Builtin::NumberToExponential => exponential(number, digits)?,
         _ => return Ok(Value::Undefined),
