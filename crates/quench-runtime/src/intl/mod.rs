@@ -371,6 +371,9 @@ fn resolve_locale_object(locales: &Value) -> Result<Vec<String>, VmError> {
     };
     let mut out = Vec::new();
     for index in 0..length {
+        if !crate::with_scope::has_property(locales, &index.to_string())? {
+            continue;
+        }
         let value = crate::execute::get_property_result(locales, &index.to_string())?;
         if !matches!(value, Value::Undefined) {
             out.push(canonicalize(&crate::conversion::to_string(&value)?)?);
