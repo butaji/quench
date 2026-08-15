@@ -2,30 +2,15 @@ pub(crate) fn execute_target_with_receiver(
     target: &crate::value::Value,
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
-) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
-    if let crate::value::Value::Function(function) = target {
-        return crate::vm::with_realm(function.realm, || {
-            execute_target_with_receiver_in_realm(target, receiver, arguments)
-        })
-        .unwrap_or_else(|| execute_target_with_receiver_in_realm(target, receiver, arguments));
-    }
-    execute_target_with_receiver_in_realm(target, receiver, arguments)
-}
-
-fn execute_target_with_receiver_in_realm(
-    target: &crate::value::Value,
-    receiver: &crate::value::Value,
-    arguments: &[crate::value::Value],
-) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
+) -> Result<
+    (crate::value::Value, crate::value::Value),
+    crate::execute::VmError,
+> {
     let crate::value::Value::Function(function) = target else {
         let result = execute_target(target, receiver, arguments)?;
         return Ok((result, receiver.clone()));
     };
-    let frame = CallFrame::new(
-        std::rc::Rc::clone(function),
-        receiver.clone(),
-        arguments.to_vec(),
-    );
+    let frame = CallFrame::new(std::rc::Rc::clone(function), receiver.clone(), arguments.to_vec());
     if matches!(function.kind, FunctionKind::Generator) || function.is_async {
         let result = execute_target(target, receiver, arguments)?;
         return Ok((result, receiver.clone()));
