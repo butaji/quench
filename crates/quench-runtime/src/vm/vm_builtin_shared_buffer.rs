@@ -35,9 +35,15 @@ pub(crate) fn execute_shared_array_buffer_builtin(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let Some(Value::ArrayBuffer(buffer)) = receiver.filter(|value| {
-        matches!(value, Value::ArrayBuffer(data) if data.shared)
-            || (builtin == Builtin::ArrayBufferByteLengthGetter
-                && matches!(value, Value::ArrayBuffer(data) if !data.shared))
+        matches!(value, Value::ArrayBuffer(data) if data.shared && !matches!(
+            builtin,
+            Builtin::ArrayBufferByteLengthGetter
+                | Builtin::ArrayBufferDetachedGetter
+                | Builtin::ArrayBufferImmutableGetter
+                | Builtin::ArrayBufferMaxByteLengthGetter
+                | Builtin::ArrayBufferResizableGetter
+        )) || (builtin == Builtin::ArrayBufferByteLengthGetter
+            && matches!(value, Value::ArrayBuffer(data) if !data.shared))
             || (builtin == Builtin::ArrayBufferDetachedGetter
                 && matches!(value, Value::ArrayBuffer(data) if !data.shared))
             || (builtin == Builtin::ArrayBufferImmutableGetter
