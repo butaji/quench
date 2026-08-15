@@ -694,6 +694,9 @@ pub(crate) fn prototype_method(
             if let Some(value) = time_parts(&slots, number) {
                 return Ok(make_array(value));
             }
+            if let Some(value) = calendar_year_parts(&slots, number) {
+                return Ok(make_array(value));
+            }
             let value = format_number(&slots, number);
             Ok(make_array(vec![literal_part(&value)]))
         }
@@ -965,6 +968,9 @@ fn raw_format_number(slots: &[(String, Value)], number: f64) -> String {
     if let Some(value) = day_period_format(slots, number) {
         return value;
     }
+    if let Some(value) = calendar_year_format(slots, number) {
+        return value;
+    }
     if let Some(value) = proleptic_year_format(slots, number) {
         return value;
     }
@@ -981,6 +987,44 @@ fn raw_format_number(slots: &[(String, Value)], number: f64) -> String {
         return value;
     }
     range_text(number)
+}
+
+fn calendar_year_format(slots: &[(String, Value)], number: f64) -> Option<String> {
+    if slot_string(slots, "calendar")?.as_str() != "chinese"
+        || slot_string(slots, "year").is_none()
+        || slot_string(slots, "month").is_some()
+    {
+        return None;
+    }
+    let year = date_time(slots, number)?.year();
+    let name = sexagenary_name(year);
+    if slot_string(slots, "locale")?.starts_with("zh") {
+        return Some(format!("{year}{name}年"));
+    }
+    Some(year.to_string())
+}
+
+fn calendar_year_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    let text = calendar_year_format(slots, number)?;
+    let year = date_time(slots, number)?.year().to_string();
+    let name = text.strip_prefix(&year)?.strip_suffix('年')?;
+    if slot_string(slots, "locale")?.starts_with("zh") {
+        return Some(vec![
+            component_part("relatedYear", &year),
+            component_part("yearName", name),
+            literal_part("年"),
+        ]);
+    }
+    Some(vec![component_part("relatedYear", &year)])
+}
+
+fn sexagenary_name(year: i32) -> String {
+    const STEMS: [&str; 10] = ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"];
+    const BRANCHES: [&str; 12] = [
+        "子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥",
+    ];
+    let index = (year - 4).rem_euclid(60) as usize;
+    format!("{}{}", STEMS[index % 10], BRANCHES[index % 12])
 }
 
 fn date_time_style_format(slots: &[(String, Value)], number: f64) -> Option<String> {
