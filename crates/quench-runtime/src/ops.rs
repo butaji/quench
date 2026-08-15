@@ -413,6 +413,7 @@ pub enum Builtin {
     TemporalPlainDateTimeAdd,
     TemporalPlainDateTimeSubtract,
     TemporalPlainDateTimeWith,
+    TemporalPlainDateTimeRound,
     TemporalPlainTime,
     TemporalPlainTimePrototype,
     TemporalPlainTimeFrom,
