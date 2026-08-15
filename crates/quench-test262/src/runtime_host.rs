@@ -1,6 +1,11 @@
 //! Adapter from the runner contract to the residual runtime.
 
-use std::{cell::RefCell, collections::HashMap, path::Path, sync::OnceLock};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::OnceLock,
+};
 
 use quench_runtime::module_bindings::ModuleBindingCell;
 use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef, RealmId};
@@ -22,6 +27,8 @@ pub struct LinkedModule {
     scope: ExecutionScope,
     fixed_exports: Vec<(String, quench_runtime::value::Value)>,
     linked_exports: RefCell<HashMap<String, ModuleBindingCell>>,
+    star_exports: RefCell<HashSet<String>>,
+    ambiguous_exports: RefCell<HashSet<String>>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -145,7 +152,14 @@ fn link_star_exports(
         .ok_or_else(|| "module unit missing".to_string())?;
     for name in names.into_iter().filter(|name| name != "default") {
         if let Some(cell) = units.get(&target).and_then(|unit| unit.export_cell(&name)) {
-            from_unit.link_export(&name, cell);
+            if from_unit.has_local_export(&name) {
+                continue;
+            }
+            if from_unit.has_star_export(&name) {
+                from_unit.mark_ambiguous_export(&name);
+            } else if !from_unit.is_ambiguous_export(&name) {
+                from_unit.link_star_export(&name, cell);
+            }
         }
     }
     Ok(())
@@ -196,6 +210,8 @@ impl LinkedModule {
             scope: ExecutionScope::new(),
             fixed_exports: Vec::new(),
             linked_exports: RefCell::new(HashMap::new()),
+            star_exports: RefCell::new(HashSet::new()),
+            ambiguous_exports: RefCell::new(HashSet::new()),
         })
     }
 
@@ -206,6 +222,8 @@ impl LinkedModule {
             scope: ExecutionScope::new(),
             fixed_exports: Vec::new(),
             linked_exports: RefCell::new(HashMap::new()),
+            star_exports: RefCell::new(HashSet::new()),
+            ambiguous_exports: RefCell::new(HashSet::new()),
         })
     }
 
@@ -229,6 +247,9 @@ impl LinkedModule {
     }
 
     pub fn export_cell(&self, name: &str) -> Option<ModuleBindingCell> {
+        if self.ambiguous_exports.borrow().contains(name) {
+            return None;
+        }
         if let Some(cell) = self.linked_exports.borrow().get(name) {
             return Some(cell.clone());
         }
@@ -254,6 +275,7 @@ impl LinkedModule {
             .module_metadata
             .as_ref()
             .map_or_else(Vec::new, |metadata| metadata.exported_names.clone());
+        names.retain(|name| !self.ambiguous_exports.borrow().contains(name));
         for name in self.linked_exports.borrow().keys() {
             if !names.contains(name) {
                 names.push(name.clone());
@@ -266,6 +288,37 @@ impl LinkedModule {
         self.linked_exports
             .borrow_mut()
             .insert(name.to_string(), cell);
+    }
+
+    fn link_star_export(&self, name: &str, cell: ModuleBindingCell) {
+        self.link_export(name, cell);
+        self.star_exports.borrow_mut().insert(name.to_string());
+    }
+
+    fn mark_ambiguous_export(&self, name: &str) {
+        self.linked_exports.borrow_mut().remove(name);
+        self.star_exports.borrow_mut().remove(name);
+        self.ambiguous_exports.borrow_mut().insert(name.to_string());
+    }
+
+    fn has_star_export(&self, name: &str) -> bool {
+        self.star_exports.borrow().contains(name)
+    }
+
+    fn has_local_export(&self, name: &str) -> bool {
+        self.program
+            .module_metadata
+            .as_ref()
+            .is_some_and(|metadata| {
+                metadata
+                    .exports
+                    .iter()
+                    .any(|binding| binding.exported == name)
+            })
+    }
+
+    fn is_ambiguous_export(&self, name: &str) -> bool {
+        self.ambiguous_exports.borrow().contains(name)
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
