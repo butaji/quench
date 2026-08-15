@@ -21,8 +21,19 @@ pub(crate) fn return_(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Iterator(data)) = receiver else {
+    let Some(receiver) = receiver else {
         return Err(crate::vm::not_callable());
+    };
+    let Value::Iterator(data) = receiver else {
+        let method = crate::execute::get_property_result(receiver, "return")?;
+        if matches!(method, Value::Undefined | Value::Null) {
+            return Ok(Value::Undefined);
+        }
+        if !crate::conversion::is_callable(&method) {
+            return Err(crate::vm::not_callable());
+        }
+        crate::functions::execute_target(&method, receiver, &[])?;
+        return Ok(Value::Undefined);
     };
     let (iterator, arguments) = {
         let mut state = data.state.borrow_mut();

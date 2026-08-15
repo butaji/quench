@@ -294,6 +294,12 @@ pub enum PrivatePhase {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum LoopPhase {
+    Body,
+    Continue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Frame {
     Try {
         phase: TryPhase,
@@ -337,6 +343,15 @@ pub enum Frame {
         body_resume: CodeRange,
         resume: CodeRange,
         yield_dst: u16,
+    },
+    Loop {
+        phase: LoopPhase,
+        body: CodeRange,
+        body_resume: CodeRange,
+        test: CodeRange,
+        update: CodeRange,
+        resume: CodeRange,
+        post_test: bool,
     },
 }
 
@@ -459,6 +474,26 @@ impl Machine {
             return false;
         };
         frame.advance_resume(resume, yield_dst)
+    }
+
+    pub(crate) fn set_loop_phase(&mut self, phase: LoopPhase) -> bool {
+        let Some(Frame::Loop { phase: current, .. }) = self.frames.frames.last_mut() else {
+            return false;
+        };
+        *current = phase;
+        true
+    }
+
+    pub(crate) fn advance_loop_resume(&mut self, resume: CodeRange) -> bool {
+        let Some(Frame::Loop {
+            phase, body_resume, ..
+        }) = self.frames.frames.last_mut()
+        else {
+            return false;
+        };
+        *phase = LoopPhase::Body;
+        *body_resume = resume;
+        true
     }
 }
 

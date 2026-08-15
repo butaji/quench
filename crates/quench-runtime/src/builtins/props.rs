@@ -49,6 +49,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "toArray" {
         return Some(Value::Builtin(IteratorToArray));
     }
+    if builtin == IteratorPrototype && key == "Symbol.dispose" {
+        return Some(Value::Builtin(IteratorReturn));
+    }
     if builtin == Iterator && key == "concat" {
         return Some(Value::Builtin(IteratorConcat));
     }
