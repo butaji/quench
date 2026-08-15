@@ -267,6 +267,14 @@ pub(crate) fn get_property_with_receiver(
     {
         if !matches!(descriptor, Value::Undefined) {
             if let Value::Object(descriptor) = descriptor {
+                if descriptor.iter().any(|(name, _)| name == "value") {
+                    let property = get_property(value, key);
+                    return Ok(if crate::intl::intl_object(value) {
+                        receiver_property(value, key, receiver)
+                    } else {
+                        property
+                    });
+                }
                 if let Some((_, getter)) = descriptor
                     .iter()
                     .rev()
