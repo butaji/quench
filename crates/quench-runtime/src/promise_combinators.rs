@@ -3,9 +3,18 @@ pub(crate) fn promise_combinator(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    let constructor = receiver
+        .cloned()
+        .unwrap_or(Value::Builtin(crate::ops::Builtin::Promise));
+    if !is_constructor(&constructor) {
+        return Err(crate::value::error::throw_type_error(
+            "Promise combinator receiver is not a constructor",
+        ));
+    }
+    validate_resolve(&constructor)?;
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     let result = Rc::new(PromiseData::default());
-    let values = match collect_resolved(source, receiver) {
+    let values = match collect_resolved(source, Some(&constructor)) {
         Ok(values) => values,
         Err(error) => return Ok(Value::Promise(result_with_error(result, error))),
     };
@@ -25,18 +34,37 @@ pub(crate) fn promise_combinator(
     Ok(Value::Promise(result))
 }
 
-fn collect_resolved(
-    source: Value,
-    receiver: Option<&Value>,
-) -> Result<Vec<Value>, Value> {
+fn validate_resolve(constructor: &Value) -> Result<(), VmError> {
+    let resolve = crate::execute::get_property_result(constructor, "resolve")?;
+    if !crate::conversion::is_callable(&resolve) {
+        return Err(crate::value::error::throw_type_error(
+            "Promise constructor resolve is not callable",
+        ));
+    }
+    Ok(())
+}
+
+fn is_constructor(value: &Value) -> bool {
+    match value {
+        Value::Function(function) => crate::functions::is_constructible(function),
+        Value::BoundFunction(bound) => is_constructor(&bound.target),
+        Value::Proxy(_) => true,
+        Value::Builtin(builtin) => matches!(builtin, crate::ops::Builtin::Promise),
+        _ => false,
+    }
+}
+
+fn collect_resolved(source: Value, receiver: Option<&Value>) -> Result<Vec<Value>, Value> {
     let iterator = crate::collections::iterator::open(source).map_err(vm_reason)?;
-    let constructor = receiver.cloned().unwrap_or(Value::Builtin(crate::ops::Builtin::Promise));
-    let resolve = crate::execute::get_property_result(&constructor, "resolve").map_err(vm_reason)?;
+    let constructor = receiver
+        .cloned()
+        .unwrap_or(Value::Builtin(crate::ops::Builtin::Promise));
+    let resolve =
+        crate::execute::get_property_result(&constructor, "resolve").map_err(vm_reason)?;
     let mut values = Vec::new();
     loop {
-        let item = crate::collections::iterator::step_value(&iterator).map_err(|error| {
-            close_reason(&iterator, error)
-        })?;
+        let item = crate::collections::iterator::step_value(&iterator)
+            .map_err(|error| close_reason(&iterator, error))?;
         let Some(item) = item else { return Ok(values) };
         let resolved = crate::functions::execute_target(&resolve, &constructor, &[item])
             .map_err(|error| close_reason(&iterator, error))?;
@@ -90,7 +118,9 @@ fn aggregate_settle(aggregate: &Rc<PromiseAggregate>, index: usize, state: &Prom
     if *aggregate.settled.borrow() {
         return;
     }
-    let Some(value) = settled_value(state) else { return };
+    let Some(value) = settled_value(state) else {
+        return;
+    };
     match (aggregate.kind, state) {
         (PromiseAggregateKind::Race, PromiseState::Fulfilled(_))
         | (PromiseAggregateKind::Any, PromiseState::Fulfilled(_)) => {
