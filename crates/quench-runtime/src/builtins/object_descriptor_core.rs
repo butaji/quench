@@ -341,6 +341,14 @@ fn builtin_descriptor_for_property(builtin: Builtin, key: &str) -> Option<Value>
 }
 
 fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::Temporal && key == "Symbol.toStringTag" {
+        return Some(descriptor_object_with_flags(
+            Value::String("Temporal".into()),
+            false,
+            false,
+            true,
+        ));
+    }
     if builtin == Builtin::AbstractModuleSourcePrototype && key == "constructor" {
         return Some(descriptor_object_with_flags(
             crate::vm::realm_intrinsic(Builtin::AbstractModuleSource),
