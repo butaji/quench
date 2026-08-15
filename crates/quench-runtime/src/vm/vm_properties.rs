@@ -276,6 +276,27 @@ pub(crate) fn get_property_with_receiver(
         }
     }
     if key == "stack"
+        && matches!(
+            value,
+            Value::Builtin(
+                Builtin::RangeErrorPrototype
+                    | Builtin::ReferenceErrorPrototype
+                    | Builtin::SyntaxErrorPrototype
+                    | Builtin::EvalErrorPrototype
+                    | Builtin::URIErrorPrototype
+                    | Builtin::AggregateErrorPrototype
+                    | Builtin::TypeErrorPrototype
+                    | Builtin::SuppressedErrorPrototype
+            )
+        )
+    {
+        return crate::vm::execute_builtin_with_receiver(
+            Builtin::ErrorPrototypeStackGetter,
+            &[],
+            Some(receiver),
+        );
+    }
+    if key == "stack"
         && crate::vm::has_error_slot(value)
         && crate::properties::inherits_error_prototype(value)
     {
