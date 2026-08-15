@@ -96,11 +96,24 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (DisposableStackPrototype, "Symbol.dispose") => {
             Some(Value::Builtin(DisposableStackDispose))
         }
-        (ErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
-        (ErrorPrototype, "name") => Some(Value::String("Error".to_string())),
-        (ErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (ErrorPrototype, "cause") => Some(Value::Undefined),
-        (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
+        (ErrorPrototype, "toString")
+        | (RangeErrorPrototype, "toString")
+        | (ReferenceErrorPrototype, "toString")
+        | (SyntaxErrorPrototype, "toString")
+        | (EvalErrorPrototype, "toString")
+        | (URIErrorPrototype, "toString")
+        | (AggregateErrorPrototype, "toString")
+        | (TypeErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
+        (prototype, "name") if is_native_error_prototype(prototype) => {
+            Some(Value::String(native_error_name(prototype).to_string()))
+        }
+        (prototype, "message") if is_native_error_prototype(prototype) => {
+            Some(Value::String("".to_string()))
+        }
+        (prototype, "cause") if is_native_error_prototype(prototype) => Some(Value::Undefined),
+        (prototype, "constructor") if is_native_error_prototype(prototype) => {
+            Some(Value::Builtin(native_error_constructor(prototype)))
+        }
         (SuppressedError, "prototype") => Some(Value::Builtin(SuppressedErrorPrototype)),
         (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
         (SuppressedErrorPrototype, "message") => Some(Value::String("".to_string())),
@@ -112,6 +125,46 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             crate::builtin_meta::disposable::property(k).map(Value::Builtin)
         }
         _ => builtin_method(builtin, key).map(Value::Builtin),
+    }
+}
+
+fn is_native_error_prototype(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::TypeErrorPrototype
+    )
+}
+
+fn native_error_name(builtin: Builtin) -> &'static str {
+    match builtin {
+        Builtin::RangeErrorPrototype => "RangeError",
+        Builtin::ReferenceErrorPrototype => "ReferenceError",
+        Builtin::SyntaxErrorPrototype => "SyntaxError",
+        Builtin::EvalErrorPrototype => "EvalError",
+        Builtin::URIErrorPrototype => "URIError",
+        Builtin::AggregateErrorPrototype => "AggregateError",
+        Builtin::TypeErrorPrototype => "TypeError",
+        _ => "Error",
+    }
+}
+
+fn native_error_constructor(builtin: Builtin) -> Builtin {
+    match builtin {
+        Builtin::RangeErrorPrototype => Builtin::RangeError,
+        Builtin::ReferenceErrorPrototype => Builtin::ReferenceError,
+        Builtin::SyntaxErrorPrototype => Builtin::SyntaxError,
+        Builtin::EvalErrorPrototype => Builtin::EvalError,
+        Builtin::URIErrorPrototype => Builtin::URIError,
+        Builtin::AggregateErrorPrototype => Builtin::AggregateError,
+        Builtin::TypeErrorPrototype => Builtin::TypeError,
+        _ => Builtin::Error,
     }
 }
 
@@ -280,7 +333,17 @@ fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
                 | Builtin::AggregateError
                 | Builtin::TypeError
         ))
-    .then_some(Builtin::ErrorPrototype)
+    .then_some(match builtin {
+        Builtin::Error => Builtin::ErrorPrototype,
+        Builtin::RangeError => Builtin::RangeErrorPrototype,
+        Builtin::ReferenceError => Builtin::ReferenceErrorPrototype,
+        Builtin::SyntaxError => Builtin::SyntaxErrorPrototype,
+        Builtin::EvalError => Builtin::EvalErrorPrototype,
+        Builtin::URIError => Builtin::URIErrorPrototype,
+        Builtin::AggregateError => Builtin::AggregateErrorPrototype,
+        Builtin::TypeError => Builtin::TypeErrorPrototype,
+        _ => Builtin::ErrorPrototype,
+    })
 }
 fn specialized_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_property(builtin, key).or_else(|| {
