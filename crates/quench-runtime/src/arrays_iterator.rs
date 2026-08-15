@@ -4,9 +4,6 @@ fn array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmE
     if let Some(Value::Array(data)) = receiver {
         return Ok(crate::collections::iterator::make_array(Rc::clone(data)));
     }
-    if let Some(value) = receiver.filter(|value| is_typed_array(value)) {
-        return Ok(crate::collections::iterator::make_typed(value.clone()));
-    }
     Ok(crate::collections::iterator::make(array_iterator_values(receiver)?))
 }
 
@@ -39,6 +36,9 @@ fn array_iterator_values(receiver: Option<&Value>) -> Result<Vec<Value>, crate::
             "Array iterator called on incompatible receiver",
         ));
     };
+    if is_typed_array(value) {
+        return crate::collections::iterator_typed::typed_values(value.clone());
+    }
     array_like_values(value)
 }
 
