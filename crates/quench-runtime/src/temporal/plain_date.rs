@@ -468,6 +468,25 @@ fn day_of_week(year: f64, month: f64, day: f64) -> f64 {
     }
 }
 
+fn day_of_week_for_calendar(year: f64, month: f64, day: f64, calendar: &str) -> f64 {
+    if calendar != "hebrew" {
+        return day_of_week(year, month, day);
+    }
+    let month_days = (1..month as i32)
+        .map(|value| days_in_month_for_calendar(year, value as f64, calendar).unwrap_or(0.0))
+        .sum::<f64>();
+    let weekday = (hebrew_delay(year as i64)
+        + hebrew_postponement(year as i64)
+        + month_days as i64
+        + day as i64)
+        .rem_euclid(7);
+    if weekday == 0 {
+        7.0
+    } else {
+        weekday as f64
+    }
+}
+
 fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     let Value::Object(object) =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDate"))?
@@ -862,15 +881,24 @@ fn days_in_month_for_calendar(year: f64, month: f64, calendar: &str) -> Result<f
     if !(1.0..=max_month).contains(&month) || !year.is_finite() {
         return Err(crate::value::error::throw_range_error("Invalid date"));
     }
-    let lengths = [
-        30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 29.0,
-    ];
+    let lengths = if leap {
+        [
+            30.0, 29.0, 30.0, 29.0, 30.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0,
+        ]
+    } else {
+        [
+            30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 0.0,
+        ]
+    };
     let mut length = lengths[month as usize - 1];
     let year_length = hebrew_year_length(year);
     if month == 2.0 {
         length = if year_length % 10 == 5 { 30.0 } else { 29.0 };
     } else if month == 3.0 {
         length = if year_length % 10 == 3 { 29.0 } else { 30.0 };
+    }
+    if month == 6.0 && leap {
+        length = 30.0;
     }
     Ok(length)
 }
@@ -970,7 +998,7 @@ fn date_object_with_calendar(year: f64, month: f64, day: f64, calendar: &str) ->
         ("calendarId".into(), Value::String(calendar.into())),
         (
             "dayOfWeek".into(),
-            Value::Number(day_of_week(year, month, day)),
+            Value::Number(day_of_week_for_calendar(year, month, day, calendar)),
         ),
         (
             "dayOfYear".into(),
