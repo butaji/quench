@@ -12,9 +12,13 @@ fn prototype_for_value(value: &Value) -> Value {
     }
     match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
-        Value::Builtin(Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype) => {
-            Value::Builtin(Builtin::ObjectPrototype)
-        }
+        Value::Builtin(
+            Builtin::Math
+            | Builtin::Reflect
+            | Builtin::Json
+            | Builtin::DisposableStackPrototype
+            | Builtin::AsyncDisposableStackPrototype,
+        ) => Value::Builtin(Builtin::ObjectPrototype),
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
             Value::Builtin(Builtin::TypedArray)
         }
@@ -26,7 +30,14 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::Builtin(Builtin::SuppressedErrorPrototype) => {
             Value::Builtin(Builtin::ErrorPrototype)
         }
-        Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::SetIteratorPrototype | Builtin::MapIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
+        Value::Builtin(
+            builtin @ (Builtin::ArrayIteratorPrototype
+            | Builtin::StringIteratorPrototype
+            | Builtin::RegExpStringIteratorPrototype
+            | Builtin::SetIteratorPrototype
+            | Builtin::MapIteratorPrototype
+            | Builtin::IteratorPrototype),
+        ) => iterator_prototype(*builtin),
         Value::Function(function) => {
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
         }
@@ -57,9 +68,11 @@ fn prototype_for_value(value: &Value) -> Value {
 
 fn slot_prototype(value: &Value) -> Option<Value> {
     Some(match value {
-        Value::ArrayBuffer(buffer) => buffer
-            .prototype()
-            .unwrap_or(Value::Builtin(Builtin::ArrayBufferPrototype)),
+        Value::ArrayBuffer(buffer) => buffer.prototype().unwrap_or(Value::Builtin(if buffer.shared {
+            Builtin::SharedArrayBufferPrototype
+        } else {
+            Builtin::ArrayBufferPrototype
+        })),
         Value::DataView(view) => view
             .prototype()
             .unwrap_or(Value::Builtin(Builtin::DataViewPrototype)),
@@ -107,6 +120,7 @@ fn iterator_prototype(builtin: Builtin) -> Value {
     if matches!(
         builtin,
         Builtin::ArrayIteratorPrototype
+            | Builtin::StringIteratorPrototype
             | Builtin::RegExpStringIteratorPrototype
             | Builtin::SetIteratorPrototype
             | Builtin::MapIteratorPrototype
@@ -136,7 +150,10 @@ pub(crate) fn is_prototype_of(
     prototype_chain_contains(value, prototype).map(Value::Boolean)
 }
 
-fn prototype_chain_contains(value: &Value, prototype: &Value) -> Result<bool, crate::execute::VmError> {
+fn prototype_chain_contains(
+    value: &Value,
+    prototype: &Value,
+) -> Result<bool, crate::execute::VmError> {
     let mut seen = Vec::new();
     let mut current = resolve_object_alias(get_prototype_of(Some(value))?);
     while !matches!(current, Value::Null) {
@@ -169,24 +186,32 @@ fn resolve_object_alias(value: Value) -> Value {
 }
 
 pub(crate) fn define_legacy_accessor(
-    receiver: Option<&Value>, arguments: &[Value], field: &str,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    field: &str,
 ) -> Result<Value, crate::execute::VmError> {
     let target = require_object_receiver(receiver)?;
     let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
     let accessor = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&accessor) {
-        return Err(crate::value::error::throw_type_error("Accessor must be callable"));
+        return Err(crate::value::error::throw_type_error(
+            "Accessor must be callable",
+        ));
     }
-    let descriptor = vec![(field.to_string(), accessor),
+    let descriptor = vec![
+        (field.to_string(), accessor),
         ("enumerable".to_string(), Value::Boolean(true)),
-        ("configurable".to_string(), Value::Boolean(true))];
+        ("configurable".to_string(), Value::Boolean(true)),
+    ];
     let result = crate::builtins::define_own_property(target, &key, &descriptor)?;
     crate::locals::replace_value(target, &result);
     Ok(Value::Undefined)
 }
 
 pub(crate) fn lookup_legacy_accessor(
-    receiver: Option<&Value>, arguments: &[Value], field: &str,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    field: &str,
 ) -> Result<Value, crate::execute::VmError> {
     let target = require_object_receiver(receiver)?;
     let key = crate::conversion::to_property_key(arguments.first().unwrap_or(&Value::Undefined))?;
@@ -194,9 +219,9 @@ pub(crate) fn lookup_legacy_accessor(
 }
 
 fn require_object_receiver(receiver: Option<&Value>) -> Result<&Value, crate::execute::VmError> {
-    receiver.filter(|value| crate::value::is_object(value)).ok_or_else(|| {
-        crate::value::error::throw_type_error("Object receiver required")
-    })
+    receiver
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| crate::value::error::throw_type_error("Object receiver required"))
 }
 
 pub(crate) fn from_entries(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -291,16 +316,7 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
-            | Builtin::IntlLocalePrototype
-            | Builtin::IntlNumberFormatPrototype
-            | Builtin::IntlPluralRulesPrototype
-            | Builtin::IntlDateTimeFormatPrototype
-            | Builtin::IntlCollatorPrototype
-            | Builtin::IntlListFormatPrototype
-            | Builtin::IntlRelativeTimeFormatPrototype
-            | Builtin::IntlSegmenterPrototype
-            | Builtin::IntlDisplayNamesPrototype
-            | Builtin::IntlDurationFormatPrototype
+            | Builtin::ShadowRealmPrototype
     )
 }
 

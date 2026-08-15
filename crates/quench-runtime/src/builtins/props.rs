@@ -67,6 +67,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (ShadowRealmPrototype, "constructor") => Some(Value::Builtin(ShadowRealm)),
         (ShadowRealm, "prototype") => Some(Value::Builtin(ShadowRealmPrototype)),
         (ShadowRealmPrototype, "evaluate") => Some(Value::Builtin(ShadowRealmEvaluate)),
+        (ShadowRealmPrototype, "importValue") => Some(Value::Builtin(ShadowRealmImportValue)),
         (ShadowRealmPrototype, "Symbol.toStringTag") => Some(Value::String("ShadowRealm".into())),
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
@@ -455,6 +456,7 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Object, "defineProperty") => Some(ObjectDefineProperty),
         (Object, "defineProperties") => Some(ObjectDefineProperties),
         (Object, "getOwnPropertyDescriptor") => Some(ObjectGetOwnPropertyDescriptor),
+        (Object, "getOwnPropertyDescriptors") => Some(ObjectGetOwnPropertyDescriptors),
         (Object, "keys") => Some(ObjectKeys),
         (Object, "values") => Some(ObjectValues),
         (Object, "entries") => Some(ObjectEntries),
@@ -532,6 +534,12 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     }
 }
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
+    if matches!(
+        (_builtin, key),
+        (Builtin::ThrowTypeError, "length" | "name")
+    ) {
+        return false;
+    }
     if key == "prototype" {
         return false;
     }

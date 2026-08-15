@@ -1,14 +1,7 @@
-pub(crate) fn promise_combinator(
-    kind: PromiseAggregateKind,
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
+fn promise_combinator(kind: PromiseAggregateKind, arguments: &[Value]) -> Result<Value, VmError> {
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let values = crate::collections::iterator::collect_iterable(source)?;
     let result = Rc::new(PromiseData::default());
-    let values = match collect_resolved(source, receiver) {
-        Ok(values) => values,
-        Err(error) => return Ok(Value::Promise(result_with_error(result, error))),
-    };
     let aggregate = Rc::new(PromiseAggregate {
         kind,
         result: Rc::clone(&result),
@@ -23,50 +16,6 @@ pub(crate) fn promise_combinator(
         finish_empty_aggregate(&aggregate);
     }
     Ok(Value::Promise(result))
-}
-
-fn collect_resolved(
-    source: Value,
-    receiver: Option<&Value>,
-) -> Result<Vec<Value>, Value> {
-    let iterator = crate::collections::iterator::open(source).map_err(vm_reason)?;
-    let constructor = receiver.cloned().unwrap_or(Value::Builtin(crate::ops::Builtin::Promise));
-    let resolve = crate::execute::get_property_result(&constructor, "resolve").map_err(vm_reason)?;
-    let mut values = Vec::new();
-    loop {
-        let item = crate::collections::iterator::step_value(&iterator).map_err(|error| {
-            close_reason(&iterator, error)
-        })?;
-        let Some(item) = item else { return Ok(values) };
-        let resolved = crate::functions::execute_target(&resolve, &constructor, &[item])
-            .map_err(|error| close_reason(&iterator, error))?;
-        values.push(resolved);
-    }
-}
-
-fn close_reason(iterator: &Value, error: VmError) -> Value {
-    let VmError::Thrown(reason) = error else {
-        return Value::String("Promise combinator iterator failure".into());
-    };
-    match crate::collections::iterator::close(
-        iterator.clone(),
-        crate::completion::Completion::Throw(reason.clone()),
-    ) {
-        Ok(crate::completion::Completion::Throw(reason)) => reason,
-        _ => reason,
-    }
-}
-
-fn vm_reason(error: VmError) -> Value {
-    match error {
-        VmError::Thrown(reason) => reason,
-        _ => Value::String("Promise combinator iterator failure".into()),
-    }
-}
-
-fn result_with_error(result: Rc<PromiseData>, error: Value) -> Rc<PromiseData> {
-    crate::promise::reject_promise(&result, error);
-    result
 }
 
 fn register_aggregate_value(aggregate: &Rc<PromiseAggregate>, index: usize, value: Value) {
