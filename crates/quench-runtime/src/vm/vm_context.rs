@@ -1,5 +1,12 @@
 pub use scope::ExecutionScope;
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
+pub trait Host: 'static {
+    fn call(
+        &self,
+        capability: HostCapabilityRef,
+        arguments: &[Value],
+    ) -> Result<Value, VmError>;
+}
 pub(crate) fn with_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> Option<T> {
     realm::with_realm(realm, callback)
 }
@@ -54,6 +61,7 @@ type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
     output_sink: Option<OutputSink>,
+    host: Option<Rc<dyn Host>>,
     realm: RealmId,
     capabilities: Vec<HostCapabilityRef>,
     host_bindings: Vec<(String, HostCapabilityRef)>,
@@ -62,6 +70,7 @@ impl Default for VmContext {
     fn default() -> Self {
         Self {
             output_sink: None,
+            host: None,
             realm: RealmId::ROOT,
             capabilities: Vec::new(),
             host_bindings: Vec::new(),
@@ -93,6 +102,21 @@ impl VmContext {
             output_sink: Some(output_sink),
             ..Self::default()
         }
+    }
+
+    pub fn with_host(mut self, host: Rc<dyn Host>) -> Self {
+        self.host = Some(host);
+        self
+    }
+
+    pub(crate) fn call_host(
+        &self,
+        capability: HostCapabilityRef,
+        arguments: &[Value],
+    ) -> Option<Result<Value, VmError>> {
+        self.host
+            .as_ref()
+            .map(|host| host.call(capability, arguments))
     }
 
     pub fn with_host_capability(
