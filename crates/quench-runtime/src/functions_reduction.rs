@@ -433,6 +433,7 @@ fn make_function_value(
     metadata: FunctionMetadata,
 ) -> crate::value::Value {
     crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         code,
         params,
         captures,
