@@ -233,13 +233,26 @@ fn generator_property(value: &Value, key: &str) -> Value {
 
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     if key == "constructor" {
-        return Value::Builtin(function_constructor(function));
+        let builtin = function_constructor(function);
+        return function_realm_intrinsic(function, builtin);
     }
     let properties = function.properties.borrow();
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
     }
     function_inherited_property(&properties, key)
+}
+
+fn function_realm_intrinsic(
+    function: &crate::value::FunctionValue,
+    builtin: crate::ops::Builtin,
+) -> Value {
+    function
+        .captures
+        .get(0)
+        .and_then(|global| crate::vm::realm_id_for_global_value(&global))
+        .and_then(|realm| crate::vm::realm::intrinsic(realm, builtin))
+        .unwrap_or(Value::Builtin(builtin))
 }
 
 fn function_inherited_property(properties: &[(String, Value)], key: &str) -> Value {
