@@ -1,4 +1,5 @@
 use super::*;
+use super::number_render::to_number_result;
 
 pub(crate) fn prototype_method(
     builtin: crate::ops::Builtin,

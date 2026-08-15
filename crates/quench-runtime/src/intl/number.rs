@@ -152,8 +152,8 @@ impl NumberOptions {
         Ok(number_options(
             locale,
             raw,
-            minimum_fraction_digits,
-            maximum_fraction_digits,
+            minimum_fraction_digits as f64,
+            maximum_fraction_digits as f64,
         ))
     }
 
@@ -210,7 +210,7 @@ impl NumberOptions {
             ));
         }
         if let Some(unit) = &self.unit {
-            properties.push(("unit".to_string(), Value::String(self.unit.clone())));
+            properties.push(("unit".to_string(), Value::String(unit.clone())));
             properties.push((
                 "unitDisplay".to_string(),
                 Value::String(self.unit_display.clone()),
@@ -235,8 +235,8 @@ fn number_options(
         unit: raw.unit,
         unit_display: raw.unit_display,
         minimum_integer_digits: raw.minimum_integer_digits.max(1.0) as u32,
-        minimum_fraction_digits,
-        maximum_fraction_digits,
+        minimum_fraction_digits: minimum_fraction_digits as u32,
+        maximum_fraction_digits: maximum_fraction_digits as u32,
         use_grouping: raw.use_grouping,
         grouping_min2: raw.grouping_min2,
         notation: raw.notation,
@@ -251,7 +251,7 @@ fn number_options(
     }
 }
 
-fn slot_base(number: &NumberFormat) -> Vec<(String, Value)> {
+fn slot_base(number: &NumberOptions) -> Vec<(String, Value)> {
     let mut properties = slot_primary(number);
     properties.extend([
         (
@@ -282,7 +282,7 @@ fn slot_base(number: &NumberFormat) -> Vec<(String, Value)> {
     properties
 }
 
-fn slot_primary(number: &NumberFormat) -> Vec<(String, Value)> {
+fn slot_primary(number: &NumberOptions) -> Vec<(String, Value)> {
     vec![
         ("locale".to_string(), Value::String(number.locale.clone())),
         ("style".to_string(), Value::String(number.style.clone())),

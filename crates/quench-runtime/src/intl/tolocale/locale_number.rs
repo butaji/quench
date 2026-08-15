@@ -18,7 +18,7 @@ pub(super) fn to_locale_string(
     )))
 }
 
-fn format_number(number: f64, locales: &[String], options: Option<&Value>) -> String {
+pub(super) fn format_number(number: f64, locales: &[String], options: Option<&Value>) -> String {
     let locale = locales.first().cloned().unwrap_or_else(|| "en".to_string());
     let resolved = number_resolved(locale, options);
     number::format_resolved(number, &resolved)

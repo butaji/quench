@@ -1,4 +1,5 @@
 //! `toLocaleString` family and number/string formatting helpers.
+use self::locale_number::format_number;
 use super::{resolve_locales, runtime_error, to_string_value};
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
@@ -103,6 +104,7 @@ pub(crate) mod value {
             }
             Some(Value::Object(properties)) => boxed_number(properties),
             Some(value) if is_non_numeric(value) => f64::NAN,
+            Some(_) => f64::NAN,
         }
     }
     fn is_non_numeric(value: &Value) -> bool {

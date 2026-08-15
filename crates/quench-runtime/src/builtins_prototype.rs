@@ -67,6 +67,7 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
 
 fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
     match receiver {
+        None => "Object",
         Some(Value::Float32Array(_)) => "Float32Array",
         Some(Value::Float64Array(_)) => "Float64Array",
         Some(Value::Int16Array(_)) => "Int16Array",
@@ -92,6 +93,7 @@ fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
         Some(Value::Generator(_)) => "Generator",
         Some(Value::BindingCell(cell)) => return prototype_tag(Some(&cell.borrow())),
         Some(Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_)) => "Object",
+        Some(_) => "Object",
     }
 }
 

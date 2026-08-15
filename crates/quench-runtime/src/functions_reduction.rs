@@ -390,7 +390,7 @@ fn reduce_arrow_body(
     function: &oxc::ast::ast::ArrowFunctionExpression<'_>,
     facts: &mut ProgramDb,
     locals: &HashMap<String, u16>,
-) -> Option<(Vec<Op>, u16, bool)> {
+) -> Option<(Vec<Op>, u16, crate::ops_meta::FunctionStrictness)> {
     let strictness = crate::reduce_support::function_strictness(&function.body, facts.strict);
     let (parameters, parameter_count) =
         crate::function_parameters::bindings(&function.params).ok()?;

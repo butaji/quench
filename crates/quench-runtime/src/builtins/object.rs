@@ -228,7 +228,7 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
                 let value = crate::execute::get_property(&global, &key);
                 Some(descriptor_object_with_flags(value, true, false, true))
             } else if is_child_realm_global(&global)
-                && !matches!(key.as_str(), "undefined" | "Infinity" | "NaN")
+                && !matches!(key, "undefined" | "Infinity" | "NaN")
             {
                 configurable_global_descriptor(&global, &key)
             } else {

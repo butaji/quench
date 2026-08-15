@@ -324,10 +324,10 @@ pub(crate) fn format_decimal_literal(value: &str, locale: &str) -> String {
 }
 
 pub(crate) fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
-    super::intl_slots(receiver)
+    crate::intl::intl_slots(receiver)
 }
 
-fn to_number_result(value: Option<&Value>) -> Result<f64, VmError> {
+pub(crate) fn to_number_result(value: Option<&Value>) -> Result<f64, VmError> {
     crate::conversion::to_number(value.unwrap_or(&Value::Undefined))
 }
 
