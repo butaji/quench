@@ -63,6 +63,12 @@ pub(crate) fn execute(
         }
         crate::ops::Builtin::TemporalPlainTimeWith => Some(with(_receiver, arguments.first())),
         crate::ops::Builtin::TemporalPlainTimeRound => Some(round(_receiver, arguments.first())),
+        crate::ops::Builtin::TemporalPlainTimeUntil => {
+            Some(difference(_receiver, arguments.first(), 1))
+        }
+        crate::ops::Builtin::TemporalPlainTimeSince => {
+            Some(difference(_receiver, arguments.first(), -1))
+        }
         _ => None,
     }
 }
@@ -415,6 +421,34 @@ fn time_parts(total: i64) -> [Value; 6] {
         Value::Number((remainder / 1_000 % 1_000) as f64),
         Value::Number((remainder % 1_000) as f64),
     ]
+}
+
+fn difference(
+    receiver: Option<&Value>,
+    other: Option<&Value>,
+    direction: i64,
+) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
+    let delta = (time_fields(&from(other)?)? - time_fields(receiver)?) * direction;
+    let hours = delta / 3_600_000_000_000;
+    let remainder = delta % 3_600_000_000_000;
+    let minutes = remainder / 60_000_000_000;
+    let remainder = remainder % 60_000_000_000;
+    let seconds = remainder / 1_000_000_000;
+    let remainder = remainder % 1_000_000_000;
+    crate::temporal::duration::construct(&[
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(0.0),
+        Value::Number(hours as f64),
+        Value::Number(minutes as f64),
+        Value::Number(seconds as f64),
+        Value::Number((remainder / 1_000_000) as f64),
+        Value::Number((remainder / 1_000 % 1_000) as f64),
+        Value::Number((remainder % 1_000) as f64),
+    ])
 }
 
 fn time_fields(value: &Value) -> Result<i64, VmError> {
