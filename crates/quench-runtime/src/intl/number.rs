@@ -86,43 +86,41 @@ impl RawOptions {
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
                 let value = to_string_value(value);
-                match key.as_str() {
-                    "style" => raw.style = value,
-                    "currency" => raw.currency = Some(value.to_ascii_uppercase()),
-                    "currencyDisplay" => raw.currency_display = value,
-                    "currencySign" => raw.currency_sign = value,
-                    "unit" => raw.unit = Some(value),
-                    "unitDisplay" => raw.unit_display = value,
-                    "minimumFractionDigits" => {
-                        raw.minimum_fraction_digits = value.parse().unwrap_or(0.0)
-                    }
-                    "minimumIntegerDigits" => {
-                        raw.minimum_integer_digits = value.parse().unwrap_or(1.0)
-                    }
-                    "maximumFractionDigits" => {
-                        raw.maximum_fraction_digits = value.parse().unwrap_or(3.0)
-                    }
-                    "useGrouping" => {
-                        raw.use_grouping = grouping_enabled(&value);
-                        raw.grouping_min2 = value == "min2";
-                    }
-                    "notation" => raw.notation = value,
-                    "compactDisplay" => raw.compact_display = value,
-                    "roundingMode" => raw.rounding_mode = value,
-                    "roundingIncrement" => raw.rounding_increment = value.parse().unwrap_or(1.0),
-                    "signDisplay" => raw.sign_display = value,
-                    "minimumSignificantDigits" => {
-                        raw.minimum_significant_digits = value.parse().unwrap_or(-1.0)
-                    }
-                    "maximumSignificantDigits" => {
-                        raw.maximum_significant_digits = value.parse().unwrap_or(-1.0)
-                    }
-                    "roundingPriority" => raw.rounding_priority = value,
-                    _ => {}
-                }
+                apply_option(&mut raw, key, &value);
             }
         }
         raw
+    }
+}
+
+fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
+    match key {
+        "style" => raw.style = value.to_string(),
+        "currency" => raw.currency = Some(value.to_ascii_uppercase()),
+        "currencyDisplay" => raw.currency_display = value.to_string(),
+        "currencySign" => raw.currency_sign = value.to_string(),
+        "unit" => raw.unit = Some(value.to_string()),
+        "unitDisplay" => raw.unit_display = value.to_string(),
+        "minimumFractionDigits" => raw.minimum_fraction_digits = value.parse().unwrap_or(0.0),
+        "minimumIntegerDigits" => raw.minimum_integer_digits = value.parse().unwrap_or(1.0),
+        "maximumFractionDigits" => raw.maximum_fraction_digits = value.parse().unwrap_or(3.0),
+        "useGrouping" => {
+            raw.use_grouping = grouping_enabled(&value);
+            raw.grouping_min2 = value == "min2";
+        }
+        "notation" => raw.notation = value.to_string(),
+        "compactDisplay" => raw.compact_display = value.to_string(),
+        "roundingMode" => raw.rounding_mode = value.to_string(),
+        "roundingIncrement" => raw.rounding_increment = value.parse().unwrap_or(1.0),
+        "signDisplay" => raw.sign_display = value.to_string(),
+        "minimumSignificantDigits" => {
+            raw.minimum_significant_digits = value.parse().unwrap_or(-1.0)
+        }
+        "maximumSignificantDigits" => {
+            raw.maximum_significant_digits = value.parse().unwrap_or(-1.0)
+        }
+        "roundingPriority" => raw.rounding_priority = value.to_string(),
+        _ => {}
     }
 }
 
