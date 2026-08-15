@@ -51,10 +51,37 @@ fn regexp_prototype_accessor(receiver: Option<&Value>, key: &str) -> Result<Valu
             String::new()
         }));
     }
+    if key == "flags" {
+        if !crate::value::is_object(value) {
+            return Err(crate::value::error::throw_type_error(
+                "RegExp accessor called on incompatible receiver",
+            ));
+        }
+        return regexp_flags(value);
+    }
     if !crate::regexp::has_regexp_internal_slot(value) {
         return Err(crate::value::error::throw_type_error(
             "RegExp accessor called on incompatible receiver",
         ));
     }
     Ok(crate::execute::get_property(value, key))
+}
+
+fn regexp_flags(value: &Value) -> Result<Value, VmError> {
+    let properties = [
+        ("hasIndices", 'd'),
+        ("global", 'g'),
+        ("ignoreCase", 'i'),
+        ("multiline", 'm'),
+        ("dotAll", 's'),
+        ("unicode", 'u'),
+        ("sticky", 'y'),
+    ];
+    let mut flags = String::new();
+    for (key, flag) in properties {
+        if crate::execute::is_truthy(&crate::execute::get_property_result(value, key)?) {
+            flags.push(flag);
+        }
+    }
+    Ok(Value::String(flags))
 }
