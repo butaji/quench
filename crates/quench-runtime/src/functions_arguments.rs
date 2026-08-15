@@ -122,6 +122,14 @@ fn arguments_object(
         "Symbol.iterator",
         crate::value::Value::Builtin(crate::ops::Builtin::ArrayIterator),
     );
+    if strict {
+        let realm = crate::vm::realm_id_for_global_value(&function.captures.get(0))
+            .unwrap_or(crate::vm::current_context_or_default().realm());
+        arguments.set_property(
+            "\0realm",
+            crate::vm::realm_token(realm).unwrap_or(crate::value::Value::Undefined),
+        );
+    }
     if matches!(function.strictness, FunctionStrictness::Sloppy) && function.mapped_arguments {
         map_arguments(&mut arguments, function, environment);
         arguments.set_property(
@@ -166,7 +174,7 @@ pub(crate) fn execute_bound(
     combined.extend_from_slice(arguments);
     match &bound.target {
         crate::value::Value::Builtin(builtin) => {
-            execute_builtin_target(*builtin, Some(&bound.receiver), &combined)
+            execute_bound_builtin(*builtin, bound, &combined)
         }
         crate::value::Value::Function(function) => {
             let realm = bound.properties.borrow().iter().rev().find_map(|(key, value)| {
@@ -188,6 +196,21 @@ pub(crate) fn execute_bound(
             crate::proxy::proxy_apply(&bound.target, &bound.receiver, &combined)
         }
         _ => Err(crate::execute::VmError::NotCallable),
+    }
+}
+
+fn execute_bound_builtin(
+    builtin: crate::ops::Builtin,
+    bound: &crate::value::BoundFunctionValue,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let realm = crate::vm::realm_id_for_intrinsic_receiver(Some(&bound.receiver));
+    match realm {
+        Some(realm) if realm != crate::ops::RealmId::ROOT => crate::vm::with_realm(realm, || {
+            execute_builtin_target(builtin, Some(&bound.receiver), arguments)
+        })
+        .unwrap_or_else(|| execute_builtin_target(builtin, Some(&bound.receiver), arguments)),
+        _ => execute_builtin_target(builtin, Some(&bound.receiver), arguments),
     }
 }
 
