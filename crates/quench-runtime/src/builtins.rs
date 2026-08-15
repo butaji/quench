@@ -445,6 +445,11 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
             || (left == right && left.is_sign_negative() == right.is_sign_negative());
     }
     match (left, right) {
+        (Value::Builtin(left), Value::String(right))
+        | (Value::String(right), Value::Builtin(left)) => {
+            crate::intl::tolocale::symbol::name(*left)
+                .is_some_and(|name| right == name || right == &format!("{name}\0"))
+        }
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
         (Value::ObjectAlias(left), Value::Object(right))
@@ -633,6 +638,24 @@ pub(crate) fn is_module_namespace(target: &Value) -> bool {
     }) && properties
         .iter()
         .any(|(key, value)| key == "\0prototype" && matches!(value, Value::Null))
+}
+
+pub(crate) fn namespace_uninitialized(target: &Value, key: &str) -> bool {
+    let Value::Object(properties) = target else {
+        return false;
+    };
+    let metadata = descriptor_key(key);
+    let Some(Value::Object(descriptor)) = properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == &metadata)
+        .map(|(_, value)| value)
+    else {
+        return false;
+    };
+    descriptor.iter().any(|(name, value)| {
+        name == "\0quench:uninitialized" && matches!(value, Value::Boolean(true))
+    })
 }
 
 fn define_namespace_property(
