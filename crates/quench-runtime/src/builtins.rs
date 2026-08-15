@@ -376,12 +376,24 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         _ => ("Error", Builtin::Error, Builtin::ErrorPrototype),
     };
     let message = arguments.first().map_or_else(String::new, value_to_string);
+    let constructor =
+        if crate::vm::current_context_or_default().realm() != crate::ops::RealmId::ROOT {
+            crate::vm::realm_intrinsic(constructor)
+        } else {
+            Value::Builtin(constructor)
+        };
+    let prototype = if crate::vm::current_context_or_default().realm() != crate::ops::RealmId::ROOT
+    {
+        crate::vm::realm_intrinsic(prototype)
+    } else {
+        Value::Builtin(prototype)
+    };
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
         ("message".to_string(), Value::String(message)),
-        ("constructor".to_string(), Value::Builtin(constructor)),
+        ("constructor".to_string(), constructor),
         (ERROR_SLOT.to_string(), Value::Boolean(true)),
-        ("\0prototype".to_string(), Value::Builtin(prototype)),
+        ("\0prototype".to_string(), prototype),
     ];
     if let Some(Value::Object(existing)) = arguments.first() {
         properties.extend(existing.properties.clone());
@@ -495,6 +507,9 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         return result;
     }
     match target {
+        Value::Object(properties) if boxed_string_immutable_key(&properties, key) => {
+            Value::Object(properties)
+        }
         Value::Object(properties)
             if descriptor_flag_in(&properties, key, "writable") == Some(false) =>
         {
@@ -519,8 +534,23 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             view.set_own_property(key, value);
             Value::DataView(view)
         }
+        Value::ArrayBuffer(buffer) => {
+            let value = match value {
+                Value::Object(object) => crate::builtins::object_alias::alias(&object),
+                value => value,
+            };
+            buffer.set_own_property(key, value);
+            Value::ArrayBuffer(buffer)
+        }
         other => other,
     }
+}
+
+fn boxed_string_immutable_key(properties: &ObjectData, key: &str) -> bool {
+    let is_string = properties
+        .iter()
+        .any(|(name, value)| name == "_value" && matches!(value, Value::String(_)));
+    is_string && (key == "length" || key.parse::<usize>().is_ok())
 }
 
 fn set_object_alias_property(
@@ -640,6 +670,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
             properties.push((descriptor_key, metadata));
         }
         Value::Builtin(builtin) => write_intrinsic_override(*builtin, key, metadata),
+        Value::ArrayBuffer(buffer) => buffer.set_own_property(&descriptor_key, metadata),
         Value::DataView(view) => view.set_own_property(&descriptor_key, metadata),
         Value::BoundFunction(bound) => {
             let mut properties = bound.properties.borrow_mut();
@@ -657,6 +688,7 @@ fn define_accessor_placeholder(target: Value, key: &str) -> Value {
             | Value::Builtin(_)
             | Value::Promise(_)
             | Value::BoundFunction(_)
+            | Value::ArrayBuffer(_)
     ) {
         return define_property_value(target, key, Value::Undefined);
     }

@@ -5,6 +5,7 @@ use crate::{environment::Environment, execute::VmError, value::Value};
 thread_local! {
     static CURRENT_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
     static GLOBAL_LEXICAL_ENVIRONMENT: RefCell<Option<Rc<Environment>>> = const { RefCell::new(None) };
+    static GLOBAL_LEXICAL_REALM: RefCell<Option<crate::ops::RealmId>> = const { RefCell::new(None) };
     static REPLACEMENTS: RefCell<Vec<(Value, Value)>> = const { RefCell::new(Vec::new()) };
     static STRICT_EVAL: RefCell<bool> = const { RefCell::new(false) };
     static ACTIVE_EVAL: RefCell<bool> = const { RefCell::new(false) };
@@ -36,6 +37,7 @@ impl Drop for StrictEvalGuard {
 pub(crate) struct EnvironmentGuard {
     previous: Option<Rc<Environment>>,
     previous_global: Option<Rc<Environment>>,
+    previous_global_realm: Option<crate::ops::RealmId>,
 }
 
 pub(crate) struct GlobalLexicalGuard {
@@ -84,17 +86,21 @@ impl Drop for IterationBinding {
 impl EnvironmentGuard {
     pub(crate) fn install(environment: Rc<Environment>) -> Self {
         let previous = CURRENT_ENVIRONMENT.with(|current| current.replace(Some(environment)));
-        let previous_global = GLOBAL_LEXICAL_ENVIRONMENT.with(|global| {
+        let realm = crate::vm::current_context_or_default().realm();
+        let (previous_global, previous_global_realm) = GLOBAL_LEXICAL_ENVIRONMENT.with(|global| {
             let previous_global = global.borrow().clone();
-            if previous.is_none() && previous_global.is_none() {
+            let previous_global_realm = GLOBAL_LEXICAL_REALM.with(|value| *value.borrow());
+            if previous_global.is_none() || previous_global_realm != Some(realm) {
                 let current = CURRENT_ENVIRONMENT.with(|current| current.borrow().clone());
                 global.replace(current);
+                GLOBAL_LEXICAL_REALM.with(|value| value.replace(Some(realm)));
             }
-            previous_global
+            (previous_global, previous_global_realm)
         });
         Self {
             previous,
             previous_global,
+            previous_global_realm,
         }
     }
 }
@@ -103,6 +109,7 @@ impl Drop for EnvironmentGuard {
     fn drop(&mut self) {
         CURRENT_ENVIRONMENT.with(|current| current.replace(self.previous.take()));
         GLOBAL_LEXICAL_ENVIRONMENT.with(|global| global.replace(self.previous_global.take()));
+        GLOBAL_LEXICAL_REALM.with(|value| value.replace(self.previous_global_realm));
     }
 }
 
@@ -117,6 +124,13 @@ pub(crate) fn global_lexical() -> Option<Rc<Environment>> {
 }
 
 pub(crate) fn global_has_own_name(name: &str) -> bool {
+    global_lexical().is_some_and(|environment| environment.has_own_name(name))
+        || matches!(crate::vm::current_global_object(), Value::Object(object) if object
+            .iter()
+            .any(|(key, _)| key == name))
+}
+
+pub(crate) fn global_has_lexical_name(name: &str) -> bool {
     global_lexical().is_some_and(|environment| environment.has_own_name(name))
 }
 
@@ -328,12 +342,17 @@ pub(crate) fn is_immutable_name(name: &str) -> bool {
 }
 
 pub(crate) fn resolve_name(name: &str) -> Option<Value> {
-    current().resolve_name(name).or_else(|| {
-        global_has_own_name(name)
-            .then(global_lexical)
-            .flatten()?
-            .resolve_name(name)
-    })
+    if let Some(value) = current().resolve_name(name) {
+        return Some(value);
+    }
+    if global_has_own_name(name) {
+        if let Some(value) = global_lexical().and_then(|environment| environment.resolve_name(name))
+        {
+            return Some(value);
+        }
+        return crate::execute::get_property_result(&crate::vm::current_global_object(), name).ok();
+    }
+    None
 }
 
 pub(crate) fn resolve_eval_name(name: &str) -> Option<Value> {
