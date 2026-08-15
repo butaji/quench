@@ -4,10 +4,14 @@ fn promise_combinator(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let result = Rc::new(PromiseData::default());
-    if let Err(error) = get_promise_resolve(receiver) {
-        reject_with_completion(&result, error);
-        return Ok(Value::Promise(result));
-    }
+    let constructor = receiver.ok_or(VmError::NotCallable)?;
+    let resolve = match get_promise_resolve(Some(constructor)) {
+        Ok(resolve) => resolve,
+        Err(error) => {
+            reject_with_completion(&result, error);
+            return Ok(Value::Promise(result));
+        }
+    };
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     let values = match crate::collections::iterator::collect_iterable(source) {
         Ok(values) => values,
@@ -24,6 +28,13 @@ fn promise_combinator(
         settled: RefCell::new(false),
     });
     for (index, value) in values.into_iter().enumerate() {
+        let value = match crate::functions::execute_target(&resolve, constructor, &[value]) {
+            Ok(value) => value,
+            Err(error) => {
+                reject_with_completion(&result, error);
+                break;
+            }
+        };
         register_aggregate_value(&aggregate, index, value);
     }
     if *aggregate.remaining.borrow() == 0 {
