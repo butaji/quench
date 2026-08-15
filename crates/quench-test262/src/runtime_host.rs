@@ -64,6 +64,7 @@ impl LinkedModuleGraph {
             };
             units.insert(unit.id, module);
         }
+        bind_imports(graph, &units, true)?;
         for unit in units.values() {
             unit.reset_links();
         }
@@ -105,7 +106,11 @@ fn bind_imports(
             let target = graph
                 .resolve_kind(id, &binding.source, kind)
                 .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-            let cell = import_cell(units, target, &binding.imported, provisional)?;
+            let cell = match import_cell(units, target, &binding.imported, provisional) {
+                Ok(cell) => cell,
+                Err(_error) if provisional => continue,
+                Err(error) => return Err(error),
+            };
             units
                 .get(&id)
                 .ok_or_else(|| "module unit missing".to_string())?
