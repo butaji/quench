@@ -240,6 +240,10 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = descriptor_property_result(value, key, receiver) {
         return result;
     }
+    finish_property_access(value, key, receiver)
+}
+
+fn finish_property_access(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
     match crate::property_define::accessor(value, key, "get") {
         None => Ok(receiver_property(value, key, receiver)),
         Some(Value::Undefined) => Ok(Value::Undefined),
