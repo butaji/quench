@@ -57,6 +57,12 @@ macro_rules! reduce_exported_default {
             $locals,
         );
         if let Some(src) = result {
+            if crate::binding_patterns::anonymous_function_definition($expression) {
+                $ops.push(Op::SetFunctionName {
+                    function: src,
+                    name: "default".to_string(),
+                });
+            }
             let slot = *$next_slot;
             *$next_slot = $next_slot.saturating_add(1);
             $locals.insert("default".to_string(), slot);
@@ -347,6 +353,12 @@ fn reduce_default_class_declaration<'a>(
 ) -> Result<Option<u16>, Vec<String>> {
     let register = crate::classes::reduce_expression(class, ops, facts, next_register, locals)
         .ok_or_else(|| vec!["Unsupported class body".to_string()])?;
+    if class.id.is_none() {
+        ops.push(Op::SetFunctionName {
+            function: register,
+            name: "default".to_string(),
+        });
+    }
     if let Some(identifier) = &class.id {
         let slot = *next_slot;
         *next_slot = next_slot.saturating_add(1);
