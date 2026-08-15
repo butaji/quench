@@ -159,6 +159,16 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(options.build_object())
 }
 
+pub(crate) fn format_with_options(
+    number: f64,
+    locales: &[String],
+    options: Option<&Value>,
+) -> Result<String, VmError> {
+    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let options = NumberOptions::from_options(locale, options)?;
+    Ok(options.format_number(number))
+}
+
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
