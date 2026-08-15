@@ -106,3 +106,7 @@ fn digit_set(name: &str) -> Option<DigitSet> {
     };
     Some(DigitSet::Base(base))
 }
+
+pub(crate) fn is_supported(name: &str) -> bool {
+    digit_set(name).is_some()
+}
