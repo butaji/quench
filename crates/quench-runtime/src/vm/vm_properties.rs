@@ -61,9 +61,13 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         StringUnits(units) => string_units_property(units, key),
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
-        Function(_) if matches!(key, "apply" | "call" | "bind") => {
-            bind_function_property(value, key)
+        Function(function)
+            if function.realm == crate::ops::RealmId::ROOT
+                && matches!(key, "apply" | "call" | "bind") =>
+        {
+            function_prototype_method(function.realm, key)
         }
+        Function(_) if matches!(key, "apply" | "call" | "bind") => bind_function_property(value, key),
         Function(function) => function_property(function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
         Map(data) => map_property(data, key),
@@ -76,6 +80,16 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
         _ => Value::Undefined,
     }
+}
+
+fn function_prototype_method(realm: crate::ops::RealmId, key: &str) -> Value {
+    let builtin = match key {
+        "apply" => Builtin::FunctionApply,
+        "call" => Builtin::FunctionCall,
+        "bind" => Builtin::FunctionBind,
+        _ => return Value::Undefined,
+    };
+    crate::vm::intrinsic_for_realm(realm, builtin)
 }
 
 fn iterator_property(value: &Value, key: &str) -> Value {
