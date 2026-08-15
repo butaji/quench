@@ -101,6 +101,10 @@ fn define_property_value(target: Value, key: &str, value: Value) -> Value {
             crate::builtins::builtins_cells::set_object_property(properties, key, value)
         }
         Value::Array(values) => set_array_property(values, key, value),
+        Value::ArrayBuffer(buffer) => {
+            buffer.set_own_property(key, value);
+            Value::ArrayBuffer(buffer)
+        }
         Value::Function(function) => {
             let function = std::rc::Rc::clone(&function);
             {

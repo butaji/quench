@@ -186,10 +186,16 @@ pub(crate) fn descriptor(
         Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),
         Value::Function(function) => function_descriptor(function, &key),
         Value::BoundFunction(bound) => bound_descriptor(bound, &key),
+        Value::ArrayBuffer(buffer) => buffer_descriptor(buffer, &key),
         Value::DataView(view) => data_view_descriptor(view, &key),
         _ => None,
     };
     Ok(descriptor.unwrap_or(Value::Undefined))
+}
+fn buffer_descriptor(buffer: &crate::value::ArrayBufferData, key: &str) -> Option<Value> {
+    buffer
+        .own_property(&super::descriptor_key(key))
+        .map(|descriptor| public_descriptor(&descriptor))
 }
 fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Option<Value> {
     if let Some((_, metadata)) = function
