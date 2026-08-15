@@ -188,6 +188,9 @@ pub(crate) fn is_callable(value: &Value) -> bool {
         Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => {
             false
         }
+        Value::BoundFunction(bound) if matches!(&bound.target, Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin)) => {
+            false
+        }
         Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => true,
         Value::Proxy(proxy) => is_callable(&proxy.target),
         _ => false,

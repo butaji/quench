@@ -6,7 +6,7 @@ use crate::value::Value;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
-mod realm;
+pub(crate) mod realm;
 mod scope;
 mod vm_arithmetic;
 pub(crate) mod vm_ops;
@@ -259,6 +259,10 @@ pub(crate) fn current_context_or_default() -> VmContext {
     CURRENT_CONTEXT
         .with(|current| current.borrow().clone())
         .unwrap_or_default()
+}
+
+pub(crate) fn intrinsic_for_realm(realm: RealmId, builtin: Builtin) -> Value {
+    realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
 }
 
 pub(crate) fn execute_completion_in_place(
