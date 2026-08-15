@@ -30,6 +30,13 @@ pub(crate) fn realm_token(realm: RealmId) -> Option<Value> {
     realm::token(realm).map(Value::HostCapability)
 }
 
+pub(crate) fn realm_id_for_global_value(value: &Value) -> Option<RealmId> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    realm::id_for_global(object)
+}
+
 pub(crate) fn realm_intrinsic(builtin: Builtin) -> Value {
     let realm = current_context_or_default().realm();
     realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
