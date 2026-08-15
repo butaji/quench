@@ -67,6 +67,9 @@ impl ModuleGraph {
     }
 
     pub fn resolve(&self, from: ModuleId, specifier: &str) -> Option<ModuleId> {
+        if specifier == "<module source>" {
+            return self.paths.get(Path::new(specifier)).copied();
+        }
         let base = self.units.get(from.0 as usize)?.path.parent()?;
         let path = normalize_module_path(&base.join(specifier));
         self.paths.get(&path).copied()
