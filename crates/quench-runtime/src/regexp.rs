@@ -276,7 +276,7 @@ pub fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        Builtin::RegExpCompile => Some(compile_method(receiver, arguments)),
+        Builtin::RegExpCompile => Some(compile_method_for_vm(receiver, arguments)),
         Builtin::RegExpEscape => Some(escape(arguments)),
         Builtin::RegExpTest => Some(test(receiver, arguments)),
         Builtin::RegExpExec => Some(exec(receiver, arguments)),
@@ -290,7 +290,10 @@ pub fn execute_builtin(
     }
 }
 
-fn compile_method(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+pub(crate) fn compile_method_for_vm(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
     let Some(receiver) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "RegExp.prototype.compile requires RegExp",
