@@ -79,6 +79,7 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
             .filter(|key| key != "prototype")
             .collect(),
         Value::Array(values) => array_enumerable_keys(values),
+        Value::Builtin(builtin) => builtin_enumerable_keys(*builtin),
         Value::String(value) if !crate::conversion::is_symbol_string(value) => {
             string_indices(value)
         }
@@ -226,13 +227,49 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
         Value::String(value) if !crate::conversion::is_symbol_string(value) => {
             string_keys(value, symbols)
         }
-        Value::Builtin(builtin) => crate::builtins::own_property_names(*builtin)
-            .iter()
-            .map(|key| (*key).to_string())
-            .filter(|key| key.contains('\0') == symbols)
-            .collect(),
+        Value::Builtin(builtin) => builtin_keys(*builtin, symbols),
         _ => Vec::new(),
     }
+}
+
+fn builtin_keys(builtin: crate::ops::Builtin, symbols: bool) -> Vec<String> {
+    let mut keys: Vec<String> = crate::builtins::own_property_names(builtin)
+        .iter()
+        .map(|key| (*key).to_string())
+        .collect();
+    keys.extend(crate::builtins::intrinsic_override_keys(builtin));
+    keys.sort();
+    keys.dedup();
+    keys.into_iter()
+        .filter(|key| key.contains('\0') == symbols)
+        .filter(
+            |key| match crate::builtins::read_intrinsic_override(builtin, key) {
+                Some(descriptor) => descriptor_is_enumerable(&descriptor),
+                None => true,
+            },
+        )
+        .collect()
+}
+
+fn builtin_enumerable_keys(builtin: crate::ops::Builtin) -> Vec<String> {
+    crate::builtins::intrinsic_override_keys(builtin)
+        .into_iter()
+        .filter(|key| !key.contains('\0'))
+        .filter(|key| {
+            crate::builtins::read_intrinsic_override(builtin, key)
+                .as_ref()
+                .is_some_and(descriptor_is_enumerable)
+        })
+        .collect()
+}
+
+fn descriptor_is_enumerable(descriptor: &Value) -> bool {
+    let Value::Object(properties) = descriptor else {
+        return false;
+    };
+    properties
+        .iter()
+        .any(|(name, value)| name == "enumerable" && matches!(value, Value::Boolean(true)))
 }
 
 fn string_keys(value: &str, symbols: bool) -> Vec<String> {
