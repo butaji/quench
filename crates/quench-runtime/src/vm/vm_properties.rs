@@ -398,6 +398,21 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
         return bind_function_property(value, key);
     }
+    if key == "stack"
+        && matches!(
+            builtin,
+            Builtin::RangeErrorPrototype
+                | Builtin::ReferenceErrorPrototype
+                | Builtin::SyntaxErrorPrototype
+                | Builtin::EvalErrorPrototype
+                | Builtin::URIErrorPrototype
+                | Builtin::AggregateErrorPrototype
+                | Builtin::TypeErrorPrototype
+                | Builtin::SuppressedErrorPrototype
+        )
+    {
+        return crate::vm::get_property(&Value::Builtin(Builtin::ErrorPrototype), key);
+    }
     if crate::builtin_meta::is_prototype(builtin) {
         return crate::builtins::property(Builtin::ObjectPrototype, key);
     }
