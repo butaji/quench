@@ -113,12 +113,7 @@ pub(super) fn execute(id: RealmId, ops: &[Op]) -> Result<Value, VmError> {
         let _with_scope = crate::with_scope::FunctionGuard::isolate();
         super::run_ops(ops, &mut registers, &context)
     };
-    let updated_global = super::current_global_object();
-    state.global.replace(match &updated_global {
-        Value::Object(object) => Rc::clone(object),
-        _ => Rc::new(crate::value::ObjectData::new(Vec::new())),
-    });
-    caller.replace_value(&global, &updated_global);
+    caller.replace_value(&global, &Value::Object(state.global.borrow().clone()));
     result
 }
 
