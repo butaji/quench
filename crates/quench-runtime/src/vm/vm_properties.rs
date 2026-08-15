@@ -226,6 +226,37 @@ pub(crate) fn get_property_with_receiver(
     if matches!(value, Value::Proxy(_)) {
         return crate::proxy::proxy_get(value, key, Some(receiver));
     }
+    if let Value::Object(properties) = value {
+        let is_date_time_prototype = properties.iter().any(|(name, prototype)| {
+            name == "\0prototype"
+                && matches!(
+                    prototype,
+                    Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatPrototype)
+                )
+        });
+        if is_date_time_prototype
+            && matches!(
+                key,
+                "format" | "formatToParts" | "formatRange" | "formatRangeToParts" | "resolvedOptions"
+            )
+            && !crate::intl::intl_object(value)
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Intl.DateTimeFormat receiver is not initialized",
+            ));
+        }
+    }
+    if matches!(
+        value,
+        Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatPrototype)
+    ) && matches!(key, "format" | "formatToParts" | "formatRange" | "formatRangeToParts" | "resolvedOptions")
+        && matches!(receiver, Value::Object(_) | Value::ObjectAlias(_))
+        && !crate::intl::intl_object(receiver)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Intl.DateTimeFormat receiver is not initialized",
+        ));
+    }
     if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
         return Err(crate::value::error::throw_type_error(
             "'callee' is unavailable on strict arguments",
