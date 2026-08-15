@@ -372,6 +372,14 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         .find_map(|(name, value)| (name == field).then(|| value.clone()))
 }
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "agent" {
+        return Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
+            HostCapabilityRef {
+                realm: capability.realm,
+                kind: crate::ops::HostCapabilityKind::Agent,
+            },
+        )));
+    }
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
     if matches!(property, Value::Builtin(_)) {

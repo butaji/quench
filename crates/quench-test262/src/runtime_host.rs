@@ -421,6 +421,13 @@ fn host_context() -> &'static VmContext {
                 HostCapabilityKind::CreateRealm,
                 HostCapabilityKind::EvalScript,
                 HostCapabilityKind::DetachArrayBuffer,
+                HostCapabilityKind::Agent,
+                HostCapabilityKind::AgentStart,
+                HostCapabilityKind::AgentBroadcast,
+                HostCapabilityKind::AgentReport,
+                HostCapabilityKind::AgentGetReport,
+                HostCapabilityKind::AgentLeaving,
+                HostCapabilityKind::AgentReceiveBroadcast,
             ],
         )
         .with_host_capability(
