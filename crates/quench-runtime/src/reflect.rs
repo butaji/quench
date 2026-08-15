@@ -44,7 +44,7 @@ pub(crate) fn builtin(
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate
         && crate::conversion::is_callable(&result)
     {
-        return wrap_shadow_function_with_caller(&result, realm, error_realm);
+        return wrap_shadow_function(&result, realm);
     }
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && crate::value::is_object(&result) {
         return Err(shadow_type_error_for_realm(
@@ -85,14 +85,6 @@ pub(crate) fn wrap_shadow_function(
     target: &Value,
     realm: Option<crate::ops::RealmId>,
 ) -> Result<Value, VmError> {
-    wrap_shadow_function_with_caller(target, realm, None)
-}
-
-pub(crate) fn wrap_shadow_function_with_caller(
-    target: &Value,
-    realm: Option<crate::ops::RealmId>,
-    caller: Option<crate::ops::RealmId>,
-) -> Result<Value, VmError> {
     let name = match shadow_property(target, "name", realm)? {
         Value::String(value) if !crate::conversion::is_symbol_string(&value) => value,
         _ => String::new(),
@@ -116,9 +108,6 @@ pub(crate) fn wrap_shadow_function_with_caller(
     ];
     if let Some(realm) = realm.and_then(crate::vm::realm_token) {
         properties.push(("\0realm".to_string(), realm));
-    }
-    if let Some(caller) = caller.and_then(crate::vm::realm_token) {
-        properties.push(("\0caller_realm".to_string(), caller));
     }
     Ok(Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
@@ -154,7 +143,7 @@ fn shadow_type_error(message: &str) -> VmError {
     shadow_type_error_with_constructor(message, Value::Builtin(crate::ops::Builtin::TypeError))
 }
 
-pub(crate) fn shadow_type_error_for_realm(receiver: Option<&Value>, message: &str) -> VmError {
+fn shadow_type_error_for_realm(receiver: Option<&Value>, message: &str) -> VmError {
     let realm = shadow_creation_realm(receiver)
         .or_else(|| crate::vm::realm_id_for_intrinsic_receiver(receiver));
     let constructor = realm
@@ -194,10 +183,8 @@ fn shadow_type_error_with_constructor(message: &str, constructor: Value) -> VmEr
 }
 
 pub(crate) fn shadow_wrapped_object_error(realm: crate::ops::RealmId) -> VmError {
-    let constructor = crate::vm::with_realm(realm, || {
-        crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError)
-    })
-    .unwrap_or(Value::Builtin(crate::ops::Builtin::TypeError));
+    let _ = realm;
+    let constructor = crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError);
     shadow_type_error_with_constructor(
         "ShadowRealm wrapped function must return a primitive",
         constructor,
@@ -205,25 +192,22 @@ pub(crate) fn shadow_wrapped_object_error(realm: crate::ops::RealmId) -> VmError
 }
 
 pub(crate) fn shadow_wrapped_argument_error() -> VmError {
-    let constructor = Value::Builtin(crate::ops::Builtin::TypeError);
+    let constructor = crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError);
     shadow_type_error_with_constructor(
         "ShadowRealm wrapped function argument must be primitive or callable",
         constructor,
     )
 }
 
-pub(crate) fn shadow_wrapped_exception_error_for_realm(realm: crate::ops::RealmId) -> VmError {
-    let constructor = crate::vm::with_realm(realm, || {
-        crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError)
-    })
-    .unwrap_or(Value::Builtin(crate::ops::Builtin::TypeError));
+pub(crate) fn shadow_wrapped_exception_error() -> VmError {
+    let constructor = crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError);
     shadow_type_error_with_constructor(
         "ShadowRealm wrapped function threw an exception",
         constructor,
     )
 }
 
-pub(crate) fn is_shadow_realm_receiver(receiver: Option<&Value>) -> bool {
+fn is_shadow_realm_receiver(receiver: Option<&Value>) -> bool {
     matches!(
         receiver,
         Some(Value::Object(properties))
