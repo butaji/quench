@@ -138,6 +138,7 @@ fn reduce_import(
             name: local.name.to_string(),
             slot,
         });
+        ops.push(Op::MarkImmutable { slot });
     }
     Ok(None)
 }
