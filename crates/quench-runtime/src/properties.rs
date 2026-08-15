@@ -209,6 +209,58 @@ pub(crate) fn execute_set_property(
     Ok(())
 }
 
+fn validate_array_length_write(
+    target: &crate::value::Value,
+    key: &str,
+    value: &crate::value::Value,
+) -> Result<(), crate::execute::VmError> {
+    if !matches!(target, crate::value::Value::Array(values) if !values.is_arguments())
+        || key != "length"
+    {
+        return Ok(());
+    }
+    let length = crate::conversion::to_number(value)?;
+    if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > 4_294_967_295.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
+    }
+    Ok(())
+}
+
+fn is_primitive_property_target(target: &crate::value::Value) -> bool {
+    matches!(
+        target,
+        crate::value::Value::String(_)
+            | crate::value::Value::StringUnits(_)
+            | crate::value::Value::Number(_)
+            | crate::value::Value::Boolean(_)
+            | crate::value::Value::BigInt(_)
+    )
+}
+
+fn set_primitive_property(
+    registers: &mut Vec<crate::value::Value>,
+    object: u16,
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+    strict: bool,
+) -> Result<(), crate::execute::VmError> {
+    let boxed = crate::vm::to_object_value(target);
+    let constructor = crate::execute::get_property_result(&boxed, "constructor")?;
+    let prototype = crate::execute::get_property_result(&constructor, "prototype")?;
+    if !matches!(prototype, crate::value::Value::Proxy(_)) {
+        return write_failure(strict);
+    }
+    let result = crate::proxy::proxy_set(&prototype, key, &value, Some(&boxed))?;
+    if matches!(result, crate::value::Value::Boolean(false)) {
+        return write_failure(strict);
+    }
+    crate::execute::write_value(registers, object, target.clone());
+    Ok(())
+}
+
 pub(crate) fn inherits_error_prototype(target: &crate::value::Value) -> bool {
     if matches!(
         target,
