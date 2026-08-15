@@ -117,11 +117,24 @@ fn iterator_to_array(receiver: Option<&Value>) -> Result<Value, VmError> {
 
 fn iterator_drop(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     validate_iterator_receiver(receiver, "drop")?;
+    if arguments.is_empty() || matches!(arguments.first(), Some(Value::Undefined)) {
+        let _ = close_direct_receiver(receiver);
+        return Err(crate::value::error::throw_range_error(
+            "Invalid iterator drop count",
+        ));
+    }
     let count = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let number = crate::conversion::to_number(&count)?;
+    let number = match crate::conversion::to_number(&count) {
+        Ok(number) => number,
+        Err(error) => {
+            let _ = close_direct_receiver(receiver);
+            return Err(error);
+        }
+    };
     let integer = number.trunc();
     if number.is_nan() || integer < 0.0 {
         let error = crate::value::error::throw_range_error("Invalid iterator drop count");
+        let _ = close_direct_receiver(receiver);
         return Err(error);
     }
     let remaining = if integer.is_infinite() {
@@ -192,11 +205,14 @@ fn iterator_every(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         let Some(value) = crate::collections::iterator::step_source(&source)? else {
             return Ok(Value::Boolean(true));
         };
-        let result = crate::functions::execute_target(
+        let result = match crate::functions::execute_target(
             &callback,
             &Value::Undefined,
             &[value, Value::Number(index as f64)],
-        )?;
+        ) {
+            Ok(result) => result,
+            Err(error) => return Err(close_with_error(&source, error)),
+        };
         index = index.saturating_add(1);
         if !crate::execute::is_truthy(&result) {
             close_direct_receiver(Some(&source))?;
@@ -219,11 +235,14 @@ fn iterator_some(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
         let Some(value) = crate::collections::iterator::step_source(&source)? else {
             return Ok(Value::Boolean(false));
         };
-        let result = crate::functions::execute_target(
+        let result = match crate::functions::execute_target(
             &callback,
             &Value::Undefined,
             &[value, Value::Number(index as f64)],
-        )?;
+        ) {
+            Ok(result) => result,
+            Err(error) => return Err(close_with_error(&source, error)),
+        };
         index = index.saturating_add(1);
         if crate::execute::is_truthy(&result) {
             close_direct_receiver(Some(&source))?;
@@ -246,11 +265,14 @@ fn iterator_find(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
         let Some(value) = crate::collections::iterator::step_source(&source)? else {
             return Ok(Value::Undefined);
         };
-        let result = crate::functions::execute_target(
+        let result = match crate::functions::execute_target(
             &callback,
             &Value::Undefined,
             &[value.clone(), Value::Number(index as f64)],
-        )?;
+        ) {
+            Ok(result) => result,
+            Err(error) => return Err(close_with_error(&source, error)),
+        };
         index = index.saturating_add(1);
         if crate::execute::is_truthy(&result) {
             close_direct_receiver(Some(&source))?;
@@ -284,7 +306,7 @@ fn iterator_filter(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
 
 fn iterator_take(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     validate_iterator_receiver(receiver, "take")?;
-    if arguments.is_empty() {
+    if arguments.is_empty() || matches!(arguments.first(), Some(Value::Undefined)) {
         let _ = close_direct_receiver(receiver);
         return Err(crate::value::error::throw_range_error(
             "Invalid iterator take count",
@@ -338,6 +360,13 @@ fn close_direct_receiver(receiver: Option<&Value>) -> Result<(), VmError> {
     match completion {
         crate::completion::Completion::Throw(value) => Err(VmError::Thrown(value)),
         _ => Ok(()),
+    }
+}
+
+fn close_with_error(source: &Value, error: VmError) -> VmError {
+    match close_direct_receiver(Some(source)) {
+        Ok(()) => error,
+        Err(close_error) => close_error,
     }
 }
 
