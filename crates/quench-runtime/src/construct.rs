@@ -254,7 +254,7 @@ fn construct_bound_target(
             new_target,
             arguments,
         ),
-        _ => return Err(crate::vm::not_callable()),
+        _ => Err(crate::vm::not_callable()),
     }
 }
 
