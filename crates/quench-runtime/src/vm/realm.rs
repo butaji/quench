@@ -242,7 +242,7 @@ pub(super) fn global_builtin_exists(key: &str) -> bool {
     global_builtin(key).is_some() || key == "globalThis"
 }
 
-pub(crate) fn is_intrinsic(bound: &crate::value::BoundFunctionValue) -> bool {
+pub(super) fn is_intrinsic(bound: &crate::value::BoundFunctionValue) -> bool {
     let Value::HostCapability(token) = &bound.receiver else {
         return false;
     };
