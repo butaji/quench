@@ -70,7 +70,7 @@ pub(crate) fn open_with_method(
     if !crate::value::is_object(&iterator) {
         return Err(not_iterable());
     }
-    if matches!(iterator, Value::Iterator(_)) {
+    if matches!(iterator, Value::Iterator(_) | Value::Generator(_)) {
         return Ok(iterator);
     }
     Ok(make_protocol(iterator))
