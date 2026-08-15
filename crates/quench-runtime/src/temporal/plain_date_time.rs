@@ -77,7 +77,9 @@ pub(crate) fn execute(
         }
         crate::ops::Builtin::TemporalPlainDateTimeToString
         | crate::ops::Builtin::TemporalPlainDateTimeToJSON
-        | crate::ops::Builtin::TemporalPlainDateTimeToLocaleString => Some(to_string(_receiver)),
+        | crate::ops::Builtin::TemporalPlainDateTimeToLocaleString => {
+            Some(to_string(_receiver, arguments.first()))
+        }
         crate::ops::Builtin::TemporalPlainDateTimeCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalPlainDateTimeEquals => {
             Some(equals(_receiver, arguments.first()))
@@ -302,7 +304,7 @@ fn days_in_month(year: i32, month: u32) -> u32 {
         .unwrap_or(28)
 }
 
-fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
     let values = NAMES
@@ -313,10 +315,30 @@ fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
         .map(|value| crate::conversion::to_number(&value))
         .collect::<Result<Vec<_>, _>>()?;
     let fraction = values[6] as u32 * 1_000_000 + values[7] as u32 * 1_000 + values[8] as u32;
-    let suffix = if fraction == 0 {
+    let digits = options
+        .and_then(|value| crate::execute::get_property_result(value, "fractionalSecondDigits").ok())
+        .map(|value| match value {
+            Value::Number(value) if (0.0..=9.0).contains(&value) && value.fract() == 0.0 => {
+                Ok(value as usize)
+            }
+            Value::String(value) if value == "auto" => Ok(usize::MAX),
+            Value::Undefined => Ok(usize::MAX),
+            _ => Err(crate::value::error::throw_range_error(
+                "Invalid fractionalSecondDigits",
+            )),
+        })
+        .transpose()?
+        .unwrap_or(usize::MAX);
+    let suffix = if digits == 0 || (fraction == 0 && digits == usize::MAX) {
         String::new()
     } else {
-        format!(".{fraction:09}").trim_end_matches('0').to_string()
+        let text = format!("{fraction:09}");
+        let text = if digits == usize::MAX {
+            text.trim_end_matches('0')
+        } else {
+            &text[..digits]
+        };
+        format!(".{text}")
     };
     Ok(Value::String(format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{suffix}",
