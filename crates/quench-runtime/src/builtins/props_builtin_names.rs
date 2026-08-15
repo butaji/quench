@@ -4,7 +4,7 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         return name;
     }
     match builtin {
-        Escape => "escape", Unescape => "unescape", EncodeURI => "encodeURI", EncodeURIComponent => "encodeURIComponent", DecodeURI => "decodeURI", DecodeURIComponent => "decodeURIComponent", Array => "Array", ArrayBuffer => "ArrayBuffer",
+        Eval => "eval", Escape => "escape", Unescape => "unescape", EncodeURI => "encodeURI", EncodeURIComponent => "encodeURIComponent", DecodeURI => "decodeURI", DecodeURIComponent => "decodeURIComponent", Array => "Array", ArrayBuffer => "ArrayBuffer",
         ArrayBufferIsView => "isView", Object => "Object", String => "String", Symbol => "Symbol",
         Number => "Number", Date => "Date", DateGetYear => "getYear", DateSetYear => "setYear",
         RegExp => "RegExp", RegExpTest => "test", RegExpExec => "exec", _ => "",
