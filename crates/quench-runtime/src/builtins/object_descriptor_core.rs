@@ -63,11 +63,6 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
     {
         return Some(public_descriptor(metadata));
     }
-    if crate::vm::realm::is_intrinsic(function) {
-        if let Value::Builtin(builtin) = function.target {
-            return builtin_descriptor(builtin, key);
-        }
-    }
     function
         .properties
         .borrow()
