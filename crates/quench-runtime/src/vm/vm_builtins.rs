@@ -290,6 +290,9 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
             "Stack value must be a string",
         ));
     }
+    if is_native_error_prototype(value) {
+        return define_new_stack(value, stack.clone()).map(|()| Value::Undefined);
+    }
     if !matches!(value, Value::Proxy(_)) {
         if let Some(setter) = own_stack_setter(value)? {
             let argument = stack.clone();
@@ -320,7 +323,41 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         return Ok(Value::Undefined);
     }
     define_own_stack(value, stack.clone())?;
+    ensure_stack_enumerable(value)?;
     Ok(Value::Undefined)
+}
+
+fn is_native_error_prototype(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Builtin(
+            Builtin::RangeErrorPrototype
+                | Builtin::ReferenceErrorPrototype
+                | Builtin::SyntaxErrorPrototype
+                | Builtin::EvalErrorPrototype
+                | Builtin::URIErrorPrototype
+                | Builtin::AggregateErrorPrototype
+                | Builtin::TypeErrorPrototype
+                | Builtin::SuppressedErrorPrototype
+        )
+    )
+}
+
+fn ensure_stack_enumerable(value: &Value) -> Result<(), VmError> {
+    let key = Value::String("stack".to_string());
+    let descriptor = crate::builtins::object::descriptor(Some(value), Some(&key))?;
+    if !descriptor_field_is_false(&descriptor, "enumerable") {
+        return Ok(());
+    }
+    if !descriptor_field_is_false(&descriptor, "configurable") {
+        let updated = crate::builtins::define_own_property(
+            value,
+            "stack",
+            &[("enumerable".to_string(), Value::Boolean(true))],
+        )?;
+        crate::locals::replace_value(value, &updated);
+    }
+    Ok(())
 }
 
 fn proxy_has_own_stack(value: &Value) -> Result<bool, VmError> {
@@ -343,6 +380,10 @@ fn own_stack_setter(value: &Value) -> Result<Option<Value>, VmError> {
 
 fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
     let key = Value::String("stack".to_string());
+    let own = crate::builtins::object::has_own_property(Some(value), Some(&key));
+    if !matches!(own, Value::Boolean(true)) {
+        return define_new_stack(value, stack);
+    }
     let descriptor = crate::builtins::object::descriptor(Some(value), Some(&key))?;
     let updated = if !matches!(descriptor, Value::Undefined) {
         if let Some(setter) = descriptor_field(&descriptor, "set") {
@@ -387,6 +428,26 @@ fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
             ],
         )?
     };
+    crate::locals::replace_value(value, &updated);
+    Ok(())
+}
+
+fn define_new_stack(value: &Value, stack: Value) -> Result<(), VmError> {
+    if !crate::properties::object_is_extensible(value) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot add property 'stack'",
+        ));
+    }
+    let updated = crate::builtins::define_own_property(
+        value,
+        "stack",
+        &[
+            ("value".to_string(), stack),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ],
+    )?;
     crate::locals::replace_value(value, &updated);
     Ok(())
 }
