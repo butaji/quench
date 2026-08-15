@@ -1,0 +1,70 @@
+use crate::{execute::VmError, value::Value};
+
+pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
+    let year = number(arguments.first())?;
+    let month = number(arguments.get(1))?;
+    let day = number(arguments.get(2))?;
+    Ok(date_object(year, month, day))
+}
+
+pub(crate) fn execute(
+    builtin: crate::ops::Builtin,
+    _receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    (builtin == crate::ops::Builtin::TemporalPlainDateFrom).then(|| from(arguments.first()))
+}
+
+fn from(value: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::String(text)) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
+    };
+    let date = text.split('T').next().unwrap_or(text);
+    let parts = date.split('-').collect::<Vec<_>>();
+    if parts.len() == 1 && date.len() == 8 {
+        let year = date[..4]
+            .parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+        let month = date[4..6]
+            .parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+        let day = date[6..]
+            .parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+        return Ok(date_object(year, month, day));
+    }
+    if parts.len() != 3 {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
+    let year = parts[0]
+        .parse()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+    let month = parts[1]
+        .parse()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+    let day = parts[2]
+        .parse()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+    Ok(date_object(year, month, day))
+}
+
+fn number(value: Option<&Value>) -> Result<f64, VmError> {
+    match value {
+        Some(Value::Number(value)) => Ok(*value),
+        _ => Err(crate::value::error::throw_type_error("Invalid PlainDate")),
+    }
+}
+
+fn date_object(year: f64, month: f64, day: f64) -> Value {
+    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("year".into(), Value::Number(year)),
+        ("month".into(), Value::Number(month)),
+        ("monthCode".into(), Value::String(format!("M{month:02.0}"))),
+        ("day".into(), Value::Number(day)),
+        ("calendarId".into(), Value::String("iso8601".into())),
+        (
+            "\0prototype".into(),
+            Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype),
+        ),
+    ])))
+}

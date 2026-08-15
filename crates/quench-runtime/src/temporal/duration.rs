@@ -86,6 +86,11 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let left = from(arguments.first())?;
     let right = from(arguments.get(1))?;
+    if (date_units(&left) || date_units(&right)) && arguments.get(2).is_none() {
+        return Err(crate::value::error::throw_range_error(
+            "relativeTo is required for date units",
+        ));
+    }
     let difference = duration_value(&left) - duration_value(&right);
     if difference == 0.0 {
         return Err(crate::value::error::throw_range_error(
@@ -93,6 +98,12 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         ));
     }
     Ok(Value::Number(difference.signum()))
+}
+
+fn date_units(value: &Value) -> bool {
+    ["years", "months", "weeks"]
+        .iter()
+        .any(|name| number_property(value, name) != 0.0)
 }
 
 fn same_fields(left: Option<&Value>, right: Option<&Value>) -> bool {

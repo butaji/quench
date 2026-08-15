@@ -1,4 +1,5 @@
 pub(crate) mod duration;
+pub(crate) mod plain_date;
 
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
@@ -6,4 +7,5 @@ pub(crate) fn execute(
     arguments: &[crate::value::Value],
 ) -> Option<Result<crate::value::Value, crate::execute::VmError>> {
     duration::execute(builtin, receiver, arguments)
+        .or_else(|| plain_date::execute(builtin, receiver, arguments))
 }

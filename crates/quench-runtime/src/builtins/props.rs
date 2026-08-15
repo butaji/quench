@@ -56,6 +56,14 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
+        (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
+        (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
+        (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
+        (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
+        (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
+        (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
+        (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
+        (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
