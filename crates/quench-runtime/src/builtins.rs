@@ -645,6 +645,16 @@ pub(crate) fn is_module_namespace(target: &Value) -> bool {
 }
 
 pub(crate) fn namespace_uninitialized(target: &Value, key: &str) -> bool {
+    if let Value::BindingCell(cell) = target {
+        return namespace_uninitialized(&cell.borrow(), key);
+    }
+    if let Value::ObjectAlias(alias) = target {
+        return alias
+            .0
+            .borrow()
+            .upgrade()
+            .is_some_and(|properties| namespace_uninitialized(&Value::Object(properties), key));
+    }
     let Value::Object(properties) = target else {
         return false;
     };
