@@ -366,6 +366,7 @@ pub enum Builtin {
     TemporalInstantPrototype,
     TemporalInstantFrom,
     TemporalInstantEpochNanosecondsGetter,
+    TemporalInstantEpochMillisecondsGetter,
     TemporalInstantToString,
     TemporalInstantToJSON,
     TemporalInstantToLocaleString,
