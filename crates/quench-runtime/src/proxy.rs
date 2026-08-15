@@ -380,7 +380,7 @@ pub(crate) fn proxy_define_property(
                     Value::String(prop.to_string()),
                     descriptor.clone(),
                 ],
-                None,
+                Some(&proxy.handler),
             );
         }
     }
