@@ -32,22 +32,23 @@ fn attach_prototype(value: &crate::value::Value) {
 }
 
 fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue>) {
-    let function_prototype = if function.is_async {
-        crate::ops::Builtin::AsyncGeneratorFunctionPrototype
-    } else {
-        crate::ops::Builtin::GeneratorFunctionPrototype
-    };
-    let generator =
+    let parent = if function.is_async {
         crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![(
-            "\0prototype".to_string(),
-            crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype),
-        )])));
+            "Symbol.asyncIterator".to_string(),
+            crate::value::Value::Builtin(crate::ops::Builtin::AsyncIteratorSelf),
+        )])))
+    } else {
+        crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+    };
+    let generator = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+        vec![("\0prototype".to_string(), parent)],
+    )));
     let function_prototype =
         crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
             ("prototype".to_string(), generator.clone()),
             (
                 "\0prototype".to_string(),
-                crate::value::Value::Builtin(function_prototype),
+                crate::value::Value::Builtin(crate::ops::Builtin::FunctionPrototype),
             ),
         ])));
     let instance = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
