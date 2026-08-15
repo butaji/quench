@@ -296,16 +296,6 @@ pub(crate) fn get_property_with_receiver(
             Some(receiver),
         );
     }
-    if key == "stack"
-        && crate::vm::has_error_slot(value)
-        && crate::properties::inherits_error_prototype(value)
-    {
-        return crate::vm::execute_builtin_with_receiver(
-            crate::ops::Builtin::ErrorPrototypeStackGetter,
-            &[],
-            Some(receiver),
-        );
-    }
     let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
         return inherited_property(value, key, receiver);
