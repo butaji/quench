@@ -430,7 +430,7 @@ pub(super) fn native_step(
         return Ok(None);
     }
     let value = if let Some(value) = typed_receiver {
-        crate::collections::iterator_typed::typed_values(value.clone())?
+        iterator_typed::typed_values(value.clone())?
             .get(*index)
             .cloned()
     } else if let Some(data) = receiver {
