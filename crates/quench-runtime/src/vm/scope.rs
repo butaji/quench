@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cell::RefCell, rc::Rc};
 
 use crate::module_bindings::ModuleBindingCell;
 use crate::{ops::Op, value::Value};
@@ -7,11 +7,17 @@ use super::VmContext;
 
 /// Reusable lexical scope for independently reduced residual programs.
 #[derive(Clone)]
-pub struct ExecutionScope(Rc<crate::environment::Environment>);
+pub struct ExecutionScope(
+    Rc<crate::environment::Environment>,
+    Rc<RefCell<Option<Rc<crate::environment::Environment>>>>,
+);
 
 impl ExecutionScope {
     pub fn new() -> Self {
-        Self(crate::environment::Environment::new())
+        Self(
+            crate::environment::Environment::new(),
+            Rc::new(RefCell::new(None)),
+        )
     }
 
     pub fn execute(
@@ -30,6 +36,48 @@ impl ExecutionScope {
         context: &VmContext,
     ) -> Result<crate::completion::Completion, crate::execute::VmError> {
         super::execute_frame_completion(ops, registers, context, Rc::clone(&self.0))
+    }
+
+    pub fn execute_completion_step(
+        &self,
+        ops: &[Op],
+        registers: &mut Vec<Value>,
+        context: &VmContext,
+    ) -> Result<(crate::completion::Completion, usize), crate::execute::VmError> {
+        let environment = self
+            .1
+            .borrow_mut()
+            .get_or_insert_with(|| crate::environment::Environment::child(&self.0, Vec::new()))
+            .clone();
+        let step = super::execute_completion_step_in_environment(
+            ops,
+            registers,
+            context,
+            environment,
+            false,
+        )?;
+        Ok((step.completion, step.next))
+    }
+
+    pub fn execute_resumed_completion_step(
+        &self,
+        ops: &[Op],
+        registers: &mut Vec<Value>,
+        context: &VmContext,
+    ) -> Result<(crate::completion::Completion, usize), crate::execute::VmError> {
+        let environment = self
+            .1
+            .borrow_mut()
+            .get_or_insert_with(|| crate::environment::Environment::child(&self.0, Vec::new()))
+            .clone();
+        let step = super::execute_completion_step_in_environment(
+            ops,
+            registers,
+            context,
+            environment,
+            true,
+        )?;
+        Ok((step.completion, step.next))
     }
 
     /// Install a live module binding before executing a residual unit.
