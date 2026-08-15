@@ -311,6 +311,9 @@ fn is_unscopable(object: &Value, key: &str) -> Result<bool, VmError> {
 }
 
 pub(crate) fn has_property(value: &Value, key: &str) -> Result<bool, VmError> {
+    if let Some(id) = crate::vm::consume_deferred_namespace_marker(value, key) {
+        crate::vm::execute_deferred_module(id)?;
+    }
     if let Value::ObjectAlias(alias) = value {
         let Some(object) = alias.0.borrow().upgrade().map(Value::Object) else {
             return Ok(false);
