@@ -427,6 +427,16 @@ fn era_values(calendar: &Value, year: f64, month: f64, day: f64) -> (Value, Valu
         "japanese" => japanese_era(year, month, day),
         "gregory" if year > 0.0 => (Value::String("ce".into()), Value::Number(year)),
         "gregory" => (Value::String("bce".into()), Value::Number(1.0 - year)),
+        "ethiopic" if year > 0.0 => (Value::String("am".into()), Value::Number(year)),
+        "ethiopic" => (Value::String("aa".into()), Value::Number(5500.0 + year)),
+        "islamic-civil" | "islamic-tbla" | "islamic-umalqura" if year > 0.0 => {
+            (Value::String("ah".into()), Value::Number(year))
+        }
+        "islamic-civil" | "islamic-tbla" | "islamic-umalqura" => {
+            (Value::String("bh".into()), Value::Number(1.0 - year))
+        }
+        "roc" if year > 0.0 => (Value::String("roc".into()), Value::Number(year)),
+        "roc" => (Value::String("broc".into()), Value::Number(1.0 - year)),
         _ => (Value::Undefined, Value::Undefined),
     }
 }
@@ -463,6 +473,17 @@ fn japanese_year_from_era(era: &str, era_year: f64) -> f64 {
         "taisho" => 1912.0 + era_year - 1.0,
         "meiji" => 1868.0 + era_year - 1.0,
         "bc" | "bce" => 1.0 - era_year,
+        _ => era_year,
+    }
+}
+
+fn year_from_era(calendar: &str, era: &str, era_year: f64) -> f64 {
+    match calendar {
+        "japanese" => japanese_year_from_era(era, era_year),
+        "ethiopic" if era == "aa" => era_year - 5500.0,
+        "islamic-civil" | "islamic-tbla" | "islamic-umalqura" if era == "bh" => 1.0 - era_year,
+        "roc" if era == "broc" => 1.0 - era_year,
+        _ if matches!(era, "bc" | "bce" | "bh" | "broc") => 1.0 - era_year,
         _ => era_year,
     }
 }
@@ -591,13 +612,13 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             Value::String(calendar) => canonical_calendar(&Value::String(calendar))?,
             _ => "iso8601".into(),
         };
-        let year = if calendar == "japanese" && field(object, "year").is_err() {
+        let year = if field(object, "year").is_err() && field(object, "era").is_ok() {
             let era_year = field_number(object, "eraYear")?;
             let era = field(object, "era")?;
             let Value::String(era) = era else {
                 return Err(crate::value::error::throw_type_error("Invalid era"));
             };
-            japanese_year_from_era(&era, era_year)
+            year_from_era(&calendar, &era, era_year)
         } else {
             validate_required_fields(object)?;
             field_number(object, "year")?
