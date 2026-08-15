@@ -388,6 +388,7 @@ fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> O
         "tryYield" => AgentTryYield,
         "trySleep" => AgentTrySleep,
         "setTimeout" => AgentSetTimeout,
+        "monotonicNow" => AgentMonotonicNow,
         _ => return None,
     };
     Some(Builtin::HostCapability(kind))
