@@ -120,6 +120,9 @@ pub(crate) fn function_has_instance(
         return Ok(Value::Boolean(false));
     }
     let value = arguments.first().unwrap_or(&Value::Undefined);
+    if let Some(result) = builtin_instanceof(value, constructor) {
+        return Ok(Value::Boolean(result));
+    }
     Ok(Value::Boolean(ordinary_instanceof(value, constructor)?))
 }
 
