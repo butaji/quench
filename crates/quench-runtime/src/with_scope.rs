@@ -98,6 +98,9 @@ pub(crate) fn set_resolved(
 ) -> Result<(), VmError> {
     let mut target = crate::execute::read_register(registers, target_register)?;
     while let Some(updated) = crate::locals::replacement(&target) {
+        if target == updated {
+            break;
+        }
         target = updated;
     }
     let value = crate::execute::read_register(registers, src)?;
