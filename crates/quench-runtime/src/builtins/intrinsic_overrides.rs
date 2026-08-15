@@ -18,6 +18,17 @@ pub(crate) fn read(builtin: Builtin, key: &str) -> Option<Value> {
         .with(|overrides| overrides.borrow().get(&(builtin, key.to_string())).cloned())
 }
 
+pub(crate) fn keys(builtin: Builtin) -> Vec<String> {
+    INTRINSIC_OVERRIDES.with(|overrides| {
+        overrides
+            .borrow()
+            .keys()
+            .filter(|(owner, _)| *owner == builtin)
+            .map(|(_, key)| key.clone())
+            .collect()
+    })
+}
+
 pub(crate) fn write(builtin: Builtin, key: &str, descriptor: Value) {
     INTRINSIC_OVERRIDES.with(|overrides| {
         overrides
