@@ -217,7 +217,7 @@ fn resolve_export_cell(
         return Some(cell);
     }
     let metadata = unit_metadata(units, module).ok()?;
-    let mut result = None;
+    let mut result: Option<ModuleBindingCell> = None;
     for binding in &metadata.reexports {
         if binding.imported != "*all*" && binding.exported != name {
             continue;
@@ -309,20 +309,18 @@ impl LinkedModule {
         let mut module = Self::compile("export default null;")?;
         module.fixed_exports.push((
             "default".to_string(),
-            quench_runtime::value::Value::Object(std::rc::Rc::new(
-                quench_runtime::value::ObjectData::new(vec![
-                    (
-                        "\0prototype".to_string(),
-                        quench_runtime::value::Value::Builtin(
-                            quench_runtime::ops::Builtin::AbstractModuleSourcePrototype,
-                        ),
+            quench_runtime::value::Value::object(vec![
+                (
+                    "\0prototype".to_string(),
+                    quench_runtime::value::Value::Builtin(
+                        quench_runtime::ops::Builtin::AbstractModuleSourcePrototype,
                     ),
-                    (
-                        "source".to_string(),
-                        quench_runtime::value::Value::String(source.to_string()),
-                    ),
-                ]),
-            )),
+                ),
+                (
+                    "source".to_string(),
+                    quench_runtime::value::Value::String(source.to_string()),
+                ),
+            ]),
         ));
         Ok(module)
     }
