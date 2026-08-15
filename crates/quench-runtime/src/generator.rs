@@ -167,8 +167,12 @@ pub(crate) fn async_dispose(receiver: Option<&Value>) -> Result<Value, VmError> 
         Ok(method) => method,
         Err(error) => return Ok(crate::promise::from_async_completion(Err(error))),
     };
-    if !crate::conversion::is_callable(&method) {
+    if matches!(method, Value::Undefined | Value::Null) {
         return Ok(crate::promise::promise_resolve(&[Value::Undefined]));
+    }
+    if !crate::conversion::is_callable(&method) {
+        let error = crate::value::error::throw_type_error("AsyncIterator return is not callable");
+        return Ok(crate::promise::from_async_completion(Err(error)));
     }
     let result = match crate::functions::execute_target(&method, receiver, &[Value::Undefined]) {
         Ok(result) => result,
