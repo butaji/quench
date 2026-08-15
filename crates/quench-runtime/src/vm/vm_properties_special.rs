@@ -77,7 +77,7 @@ fn bound_function_property(
     {
         return value.clone();
     }
-    if realm::is_intrinsic(bound) {
+    if intrinsic_target_is_abstract_module_source(bound) {
         return intrinsic_bound_property(bound, key);
     }
     if matches!(key, "apply" | "call" | "bind") {
@@ -94,6 +94,10 @@ fn bound_function_property(
     } else {
         bound_function_fallback(bound, shadow_wrapper, key)
     }
+}
+
+fn intrinsic_target_is_abstract_module_source(bound: &crate::value::BoundFunctionValue) -> bool {
+    realm::is_intrinsic(bound) && bound.target == Value::Builtin(Builtin::AbstractModuleSource)
 }
 
 fn intrinsic_bound_property(bound: &crate::value::BoundFunctionValue, key: &str) -> Value {
