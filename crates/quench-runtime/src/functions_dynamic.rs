@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use oxc::{allocator::Allocator, ast::visit::Visit, parser::Parser, span::SourceType};
 
-use crate::{execute::VmError, facts::ProgramDb, ops::FunctionKind, value::Value};
+use crate::{
+    conversion::to_string, execute::VmError, facts::ProgramDb, ops::FunctionKind, value::Value,
+};
 
 pub(crate) fn construct(
     arguments: &[Value],
