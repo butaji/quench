@@ -45,6 +45,37 @@ fn string_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     .map(|(result, _)| result)
 }
 
+fn string_match_all(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let input = string_receiver(receiver)?;
+    let pattern = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let matcher = if crate::value::is_object(&pattern) {
+        crate::execute::get_property_result(&pattern, "Symbol.matchAll")?
+    } else {
+        Value::Undefined
+    };
+    if !matches!(matcher, Value::Undefined | Value::Null) {
+        if !crate::conversion::is_callable(&matcher) {
+            return Err(crate::value::error::throw_type_error(
+                "String matchAll method is not callable",
+            ));
+        }
+        return crate::functions::execute_target_with_receiver(
+            &matcher,
+            &pattern,
+            &[Value::String(input)],
+        )
+        .map(|(result, _)| result);
+    }
+    let regex = crate::construct::construct_value(
+        &Value::Builtin(crate::ops::Builtin::RegExp),
+        &[pattern, Value::String("g".to_string())],
+    )?;
+    crate::regexp::match_all_for_string(&regex, &input)
+}
+
 fn number(value: &Value) -> Option<f64> {
     match value {
         Value::Number(value) => Some(*value),

@@ -120,6 +120,7 @@ pub enum Builtin {
     StringSearch,
     StringLocaleCompare,
     StringMatch,
+    StringMatchAll,
     MathAbs,
     MathFloor,
     MathCeil,
