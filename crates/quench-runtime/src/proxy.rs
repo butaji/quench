@@ -49,10 +49,7 @@ fn create_revoke_function(proxy: Value) -> Value {
         target: Value::Builtin(Builtin::ProxyRevoke),
         receiver: proxy,
         arguments: Vec::new(),
-        properties: std::cell::RefCell::new(vec![
-            ("length".to_string(), Value::Number(0.0)),
-            ("name".to_string(), Value::String("revoke".to_string())),
-        ]),
+        properties: std::cell::RefCell::new(Vec::new()),
     }))
 }
 
