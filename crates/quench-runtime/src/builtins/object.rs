@@ -195,10 +195,14 @@ pub(crate) fn descriptor(
                 .any(|(name, _)| name == &crate::builtins::deleted_key(&key));
             if !deleted
                 && crate::vm::is_global_object(&global)
-                && crate::vm::global_builtin_exists(&key)
+                && (crate::vm::global_builtin_exists(&key)
+                    || matches!(key.as_str(), "undefined" | "Infinity" | "NaN"))
             {
                 let value = crate::execute::get_property(&global, &key);
-                Some(descriptor_object_with_flags(value, true, false, true))
+                let immutable = matches!(key.as_str(), "undefined" | "Infinity" | "NaN");
+                Some(descriptor_object_with_flags(
+                    value, !immutable, false, !immutable,
+                ))
             } else {
                 object_descriptor(properties, &key)
             }
