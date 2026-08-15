@@ -644,6 +644,7 @@ fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(Strin
             properties.push((descriptor_key, metadata));
         }
         Value::Builtin(builtin) => write_intrinsic_override(*builtin, key, metadata),
+        Value::ArrayBuffer(buffer) => buffer.set_own_property(&descriptor_key, metadata),
         Value::DataView(view) => view.set_own_property(&descriptor_key, metadata),
         Value::BoundFunction(bound) => {
             let mut properties = bound.properties.borrow_mut();
@@ -661,6 +662,7 @@ fn define_accessor_placeholder(target: Value, key: &str) -> Value {
             | Value::Builtin(_)
             | Value::Promise(_)
             | Value::BoundFunction(_)
+            | Value::ArrayBuffer(_)
     ) {
         return define_property_value(target, key, Value::Undefined);
     }
