@@ -14,9 +14,26 @@ pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpda
 pub(crate) use iterator_step::step_value;
 pub(crate) use iterator_values::{
     from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_array,
-    make_regexp_string, make_string, make_typed, make_typed_keys, next, next_map, next_set, property_for,
-    prototype_of,
+    make_regexp_string, make_string, make_typed, make_typed_keys, next, next_map, next_set,
+    property_for, prototype_of,
 };
+
+pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    for argument in arguments {
+        if !crate::value::is_object(argument) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.concat requires an object",
+            ));
+        }
+        let method = crate::execute::get_property_result(argument, "Symbol.iterator")?;
+        if !crate::conversion::is_callable(&method) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.concat iterator method is not callable",
+            ));
+        }
+    }
+    Ok(make(Vec::new()))
+}
 
 pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let branded = matches!(receiver, Some(Value::Iterator(data)) if matches!(
