@@ -458,8 +458,11 @@ impl Test262Host for RuntimeHost {
 }
 
 fn module_graph(path: &Path, source: &str) -> Result<ModuleGraph, String> {
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("module {}: {error}", path.display()))?;
     let mut graph = ModuleGraph::new();
-    let entry = graph.add_entry(path.to_path_buf(), source.to_string());
+    let entry = graph.add_entry(path, source.to_string());
     load_module_dependencies(&mut graph, entry)?;
     Ok(graph)
 }
@@ -502,10 +505,10 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
 
 fn module_kind(path: &Path, attributes: &[(String, String)], specifier: &str) -> ModuleKind {
     if let Some((_, attribute)) = attributes.iter().find(|(source, _)| source == specifier) {
-        return match attribute.as_str() {
-            "type=json" => ModuleKind::Json,
-            "type=text" => ModuleKind::Text,
-            "type=bytes" => ModuleKind::Bytes,
+        return match resource_type_name(attribute) {
+            Some("json") => ModuleKind::Json,
+            Some("text") => ModuleKind::Text,
+            Some("bytes") => ModuleKind::Bytes,
             _ => ModuleKind::JavaScript,
         };
     }
