@@ -441,6 +441,9 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         .find_map(|(name, value)| (name == field).then(|| value.clone()))
 }
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    if capability.kind == HostCapabilityKind::GetGlobal && key == "AbstractModuleSource" {
+        return Value::Builtin(Builtin::Object);
+    }
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
     if matches!(property, Value::Builtin(_)) {
