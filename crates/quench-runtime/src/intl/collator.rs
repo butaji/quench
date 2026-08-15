@@ -17,7 +17,11 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     if options.numeric {
         locale = remove_conflicting_extension(&locale, "kn", "true");
     }
-    Ok(make_object(vec![
+    Ok(collator_object(locale, options))
+}
+
+fn collator_object(locale: String, options: CollatorOptions) -> Value {
+    make_object(vec![
         (
             "compare".to_string(),
             Value::Builtin(crate::ops::Builtin::IntlCollatorCompare),
@@ -43,7 +47,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
             ]),
         ),
-    ]))
+    ])
 }
 
 struct CollatorOptions {
