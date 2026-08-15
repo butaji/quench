@@ -37,6 +37,10 @@ impl ExecutionScope {
     pub fn module_cell_slot(&self, slot: u16) -> ModuleBindingCell {
         ModuleBindingCell::from_shared(self.0.slot_cell(slot))
     }
+
+    pub fn is_uninitialized_slot(&self, slot: u16) -> bool {
+        self.0.is_uninitialized(slot)
+    }
 }
 
 impl Default for ExecutionScope {
