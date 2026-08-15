@@ -72,6 +72,9 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
             "Invalid annotation key",
         ));
     }
+    if has_invalid_calendar_annotation(text) {
+        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+    }
     if has_unknown_critical_annotation(text) {
         return Err(crate::value::error::throw_range_error(
             "Unknown critical annotation",
@@ -130,6 +133,16 @@ fn has_uppercase_annotation_key(text: &str) -> bool {
 fn has_unknown_critical_annotation(text: &str) -> bool {
     text.split('[').skip(1).any(|annotation| {
         annotation.starts_with('!') && annotation.contains('=') && !annotation.starts_with("!u-ca=")
+    })
+}
+
+fn has_invalid_calendar_annotation(text: &str) -> bool {
+    text.split('[').skip(1).any(|annotation| {
+        ["u-ca=", "!u-ca="]
+            .iter()
+            .find_map(|prefix| annotation.strip_prefix(prefix))
+            .and_then(|value| value.split(']').next())
+            .is_some_and(|value| !value.eq_ignore_ascii_case("iso8601"))
     })
 }
 
