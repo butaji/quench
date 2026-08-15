@@ -410,10 +410,12 @@ fn normalize_offset(time_zone: &str) -> Option<String> {
         '-' => ('-', &time_zone[1..]),
         _ => return None,
     };
-    let (hours, minutes) = rest.split_once(':')?;
-    if hours.len() != 2 || minutes.len() != 2 {
-        return None;
-    }
+    let (hours, minutes) = match rest.split_once(':') {
+        Some((hours, minutes)) if hours.len() == 2 && minutes.len() == 2 => (hours, minutes),
+        None if rest.len() == 2 => (&rest[..2], "00"),
+        None if rest.len() == 4 => (&rest[..2], &rest[2..]),
+        _ => return None,
+    };
     let hour: u32 = hours.parse().ok()?;
     let minute: u32 = minutes.parse().ok()?;
     if hour > 23 || minute > 59 {
