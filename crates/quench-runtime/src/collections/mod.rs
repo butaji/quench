@@ -33,6 +33,16 @@ fn execute_core(
         IteratorConcat => Some(iterator_concat(arguments)),
         IteratorFrom => Some(iterator_from(arguments)),
         IteratorReturn => Some(iterator::return_(receiver, arguments)),
+        IteratorPrototypeConstructorGetter => Some(Ok(Value::Builtin(Builtin::Iterator))),
+        IteratorPrototypeConstructorSetter => {
+            Some(iterator_accessor_setter(receiver, arguments, "constructor"))
+        }
+        IteratorPrototypeToStringTagGetter => Some(Ok(Value::String("Iterator".into()))),
+        IteratorPrototypeToStringTagSetter => Some(iterator_accessor_setter(
+            receiver,
+            arguments,
+            "Symbol.toStringTag",
+        )),
         IteratorToArray => Some(iterator_to_array(receiver)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
@@ -60,6 +70,31 @@ fn execute_core(
         SetSpeciesGetter | MapSpeciesGetter | SpeciesGetter => Some(set::set_species(receiver)),
         _ => None,
     }
+}
+
+fn iterator_accessor_setter(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    key: &str,
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator accessor called on non-object",
+        ));
+    };
+    if !crate::value::is_object(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator accessor called on non-object",
+        ));
+    }
+    if matches!(receiver, Value::Builtin(Builtin::IteratorPrototype)) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot set Iterator prototype accessor",
+        ));
+    }
+    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    crate::builtins::set_property(receiver.clone(), key, value);
+    Ok(Value::Undefined)
 }
 
 fn iterator_to_array(receiver: Option<&Value>) -> Result<Value, VmError> {
