@@ -473,6 +473,11 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     let Some(target) = arguments.first() else {
         return Ok(Value::Undefined);
     };
+    if !crate::value::is_object(target) {
+        return Err(crate::value::error::throw_type_error(
+            "Object.defineProperty target must be an object",
+        ));
+    }
     let key = crate::conversion::to_property_key(arguments.get(1).unwrap_or(&Value::Undefined))?;
     if matches!(target, Value::Proxy(_)) {
         return crate::proxy::proxy_define_property(
