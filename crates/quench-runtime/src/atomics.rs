@@ -17,15 +17,19 @@ struct Waiter {
     result: Option<Rc<Cell<bool>>>,
 }
 
-type WaitState = Rc<Cell<bool>>;
-type AgentReport = (Value, Option<WaitState>);
-type SyncWaiter = (Rc<crate::value::ArrayBufferData>, usize, WaitState);
+struct WaitState {
+    woken: Cell<bool>,
+    available: Cell<bool>,
+}
+type WaitHandle = Rc<WaitState>;
+type AgentReport = (Value, Option<WaitHandle>);
+type SyncWaiter = (Rc<crate::value::ArrayBufferData>, usize, WaitHandle);
 
 thread_local! {
     static AGENT_REPORTS: RefCell<VecDeque<AgentReport>> = const { RefCell::new(VecDeque::new()) };
     static SYNC_WAITERS: RefCell<VecDeque<SyncWaiter>> = const { RefCell::new(VecDeque::new()) };
     static IN_AGENT_CALLBACK: Cell<bool> = const { Cell::new(false) };
-    static CURRENT_WAIT_STATE: RefCell<Option<WaitState>> = const { RefCell::new(None) };
+    static CURRENT_WAIT_STATE: RefCell<Option<WaitHandle>> = const { RefCell::new(None) };
 }
 
 thread_local! {
@@ -60,9 +64,11 @@ pub(crate) fn take_agent_report() -> Value {
     AGENT_REPORTS
         .with(|reports| {
             let mut reports = reports.borrow_mut();
-            let index = reports
-                .iter()
-                .position(|(_, waiter)| waiter.as_ref().map_or(true, |state| state.get()))?;
+            let index = reports.iter().position(|(_, waiter)| {
+                waiter
+                    .as_ref()
+                    .map_or(true, |state| state.available.get() || state.woken.get())
+            })?;
             reports.remove(index)
         })
         .map_or(Value::Undefined, |(value, waiter)| {
@@ -74,7 +80,7 @@ pub(crate) fn take_agent_report() -> Value {
             } else {
                 value
             };
-            if waiter.is_some_and(|state| state.get()) {
+            if waiter.is_some_and(|state| state.woken.get()) {
                 match value {
                     Value::String(text) if text.ends_with("timed-out") => {
                         Value::String(text.trim_end_matches("timed-out").to_string() + "ok")
@@ -95,7 +101,7 @@ pub(crate) fn end_agent_callback() {
     IN_AGENT_CALLBACK.with(|active| active.set(false));
 }
 
-fn promote_report(state: &WaitState) {
+fn promote_report(state: &WaitHandle) {
     AGENT_REPORTS.with(|reports| {
         let mut reports = reports.borrow_mut();
         let Some(index) = reports.iter().position(|(_, candidate)| {
@@ -326,15 +332,20 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
             }
             return Ok(Value::String("timed-out".into()));
         }
-        let result = Rc::new(Cell::new(false));
+        let result = Rc::new(WaitState {
+            woken: Cell::new(false),
+            available: Cell::new(timeout.is_finite()),
+        });
         let buffer = view_buffer(view)
             .ok_or_else(|| type_error("Invalid typed array"))?
             .clone();
-        SYNC_WAITERS.with(|waiters| {
-            waiters
-                .borrow_mut()
-                .push_back((buffer, index, Rc::clone(&result)))
-        });
+        if timeout.is_infinite() {
+            SYNC_WAITERS.with(|waiters| {
+                waiters
+                    .borrow_mut()
+                    .push_back((buffer, index, Rc::clone(&result)))
+            });
+        }
         CURRENT_WAIT_STATE.with(|state| state.borrow_mut().replace(Rc::clone(&result)));
         return Ok(Value::String("timed-out".into()));
     }
@@ -391,7 +402,7 @@ fn wake_sync_waiters(
             .retain(|(candidate, position, result)| {
                 let matches = Rc::ptr_eq(candidate, buffer) && *position == index;
                 if matches && woken < count {
-                    result.set(true);
+                    result.woken.set(true);
                     promote_report(result);
                     woken += 1;
                     false
