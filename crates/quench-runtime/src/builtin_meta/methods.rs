@@ -8,23 +8,8 @@ use super::{
 };
 
 pub fn function_name(builtin: Builtin) -> Option<&'static str> {
-    if matches!(
-        builtin,
-        Builtin::AtomicsPause
-            | Builtin::AtomicsAdd
-            | Builtin::AtomicsStore
-            | Builtin::AtomicsLoad
-            | Builtin::AtomicsAnd
-            | Builtin::AtomicsCompareExchange
-    ) {
-        return Some(match builtin {
-            Builtin::AtomicsPause => "Atomics.pause",
-            Builtin::AtomicsAdd => "Atomics.add",
-            Builtin::AtomicsStore => "Atomics.store",
-            Builtin::AtomicsLoad => "Atomics.load",
-            Builtin::AtomicsAnd => "Atomics.and",
-            _ => "Atomics.compareExchange",
-        });
+    if builtin == Builtin::Eval {
+        return Some("eval");
     }
     if let Some(v) = dataview::fn_name(builtin) {
         return Some(v);
@@ -79,20 +64,8 @@ pub fn function_name(builtin: Builtin) -> Option<&'static str> {
 }
 
 pub fn function_length(builtin: Builtin) -> Option<f64> {
-    if matches!(
-        builtin,
-        Builtin::AtomicsPause
-            | Builtin::AtomicsAdd
-            | Builtin::AtomicsStore
-            | Builtin::AtomicsLoad
-            | Builtin::AtomicsAnd
-            | Builtin::AtomicsCompareExchange
-    ) {
-        return Some(if builtin == Builtin::AtomicsPause {
-            0.0
-        } else {
-            3.0
-        });
+    if builtin == Builtin::Eval {
+        return Some(1.0);
     }
     if let Some(v) = dataview::fn_len(builtin) {
         return Some(v);

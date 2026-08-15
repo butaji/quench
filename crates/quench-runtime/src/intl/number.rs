@@ -32,6 +32,14 @@ pub(crate) struct NumberOptions {
     pub rounding_priority: String,
 }
 
+fn compact_magnitude(options: &NumberOptions, value: f64) -> i32 {
+    if options.notation == "compact" {
+        compact_scale(value, &options.locale, &options.compact_display)
+    } else {
+        0
+    }
+}
+
 pub(crate) struct RawOptions {
     style: String,
     currency: Option<String>,
@@ -436,62 +444,8 @@ impl NumberOptions {
     }
 
     fn format_number(&self, number: f64) -> String {
-        let scaled = match self.style.as_str() {
-            "percent" => number * 100.0,
-            _ => number,
-        };
-        let scientific = match self.notation.as_str() {
-            "scientific" => Some(scientific_parts(scaled, false)),
-            "engineering" => Some(scientific_parts(scaled, true)),
-            _ => None,
-        };
-        let magnitude = if self.notation == "compact" {
-            compact_scale(scaled, &self.locale, &self.compact_display)
-        } else {
-            0
-        };
-        let value = if let Some((coefficient, _)) = scientific {
-            coefficient
-        } else if magnitude == 0 {
-            scaled
-        } else {
-            scaled / 10f64.powi(magnitude)
-        };
-        let compact_unscaled_de = self.notation == "compact"
-            && self.locale.starts_with("de")
-            && magnitude == 0
-            && scaled.abs() >= 1_000.0;
-        let fraction_digits = if self.notation == "compact" && !compact_unscaled_de {
-            compact_fraction_digits(value)
-        } else {
-            self.maximum_fraction_digits
-        };
-        let fraction_text = format_number_rounded(value, fraction_digits, self.rounding_increment);
-        let (mut text, significant_selected) =
-            if let Some(maximum) = self.maximum_significant_digits {
-                let significant_text = format_significant(
-                    value,
-                    self.minimum_significant_digits.unwrap_or(1),
-                    maximum,
-                    &self.rounding_mode,
-                );
-                let selected = match self.rounding_priority.as_str() {
-                    "morePrecision"
-                        if decimal_places(&fraction_text) > decimal_places(&significant_text) =>
-                    {
-                        (fraction_text, false)
-                    }
-                    "lessPrecision"
-                        if decimal_places(&fraction_text) < decimal_places(&significant_text) =>
-                    {
-                        (fraction_text, false)
-                    }
-                    _ => (significant_text, true),
-                };
-                (selected.0, selected.1)
-            } else {
-                (fraction_text, false)
-            };
+        let (mut text, significant_selected, scientific, magnitude, scaled, compact_unscaled_de) =
+            self.prepare_number(number);
         if scientific.is_none()
             && self.use_grouping
             && (!self.grouping_min2 || scaled.abs() >= 10_000.0)
@@ -512,31 +466,7 @@ impl NumberOptions {
         if self.minimum_fraction_digits > 0 && !significant_selected {
             text = pad_locale_fraction(&text, self.minimum_fraction_digits, &self.locale);
         }
-        let negative = text.starts_with('-');
-        if number.is_nan() && self.locale.starts_with("zh") {
-            text = "非數值".to_string();
-        }
-        let zero = number == 0.0;
-        let rounded_zero = text
-            .trim_start_matches('-')
-            .chars()
-            .all(|character| matches!(character, '0' | '.' | ','));
-        let hide_negative = self.sign_display == "never"
-            || (self.sign_display == "auto"
-                && zero
-                && self.style == "currency"
-                && self.currency_sign != "accounting")
-            || (self.sign_display == "exceptZero" && rounded_zero)
-            || (self.sign_display == "negative" && rounded_zero);
-        if hide_negative && negative {
-            text.remove(0);
-        } else if !negative
-            && (!number.is_nan() || self.sign_display == "always")
-            && (self.sign_display == "always"
-                || (self.sign_display == "exceptZero" && !rounded_zero))
-        {
-            text.insert(0, '+');
-        }
+        text = self.apply_sign(text, number);
         match self.style.as_str() {
             "percent" => text.push('%'),
             "currency" => {
@@ -566,6 +496,94 @@ impl NumberOptions {
             ));
         }
         text
+    }
+
+    fn apply_sign(&self, mut text: String, number: f64) -> String {
+        let negative = text.starts_with('-');
+        if number.is_nan() && self.locale.starts_with("zh") {
+            text = "非數值".to_string();
+        }
+        let zero = number == 0.0;
+        let rounded_zero = text
+            .trim_start_matches('-')
+            .chars()
+            .all(|character| matches!(character, '0' | '.' | ','));
+        let hide_negative = self.sign_display == "never"
+            || (self.sign_display == "auto"
+                && zero
+                && self.style == "currency"
+                && self.currency_sign != "accounting")
+            || (self.sign_display == "exceptZero" && rounded_zero)
+            || (self.sign_display == "negative" && rounded_zero);
+        if hide_negative && negative {
+            text.remove(0);
+        } else if !negative
+            && (!number.is_nan() || self.sign_display == "always")
+            && (self.sign_display == "always"
+                || (self.sign_display == "exceptZero" && !rounded_zero))
+        {
+            text.insert(0, '+');
+        }
+        text
+    }
+
+    fn prepare_number(&self, number: f64) -> (String, bool, Option<(f64, i32)>, i32, f64, bool) {
+        let scaled = if self.style == "percent" {
+            number * 100.0
+        } else {
+            number
+        };
+        let scientific = match self.notation.as_str() {
+            "scientific" => Some(scientific_parts(scaled, false)),
+            "engineering" => Some(scientific_parts(scaled, true)),
+            _ => None,
+        };
+        let magnitude = compact_magnitude(self, scaled);
+        let value = scientific.map_or(scaled, |(coefficient, _)| coefficient);
+        let compact_unscaled_de = self.notation == "compact"
+            && self.locale.starts_with("de")
+            && magnitude == 0
+            && scaled.abs() >= 1_000.0;
+        let fraction_digits = if self.notation == "compact" && !compact_unscaled_de {
+            compact_fraction_digits(value)
+        } else {
+            self.maximum_fraction_digits
+        };
+        let fraction_text = format_number_rounded(value, fraction_digits, self.rounding_increment);
+        let (text, selected) = self.select_precision(value, fraction_text);
+        (
+            text,
+            selected,
+            scientific,
+            magnitude,
+            scaled,
+            compact_unscaled_de,
+        )
+    }
+
+    fn select_precision(&self, value: f64, fraction_text: String) -> (String, bool) {
+        let Some(maximum) = self.maximum_significant_digits else {
+            return (fraction_text, false);
+        };
+        let significant_text = format_significant(
+            value,
+            self.minimum_significant_digits.unwrap_or(1),
+            maximum,
+            &self.rounding_mode,
+        );
+        match self.rounding_priority.as_str() {
+            "morePrecision"
+                if decimal_places(&fraction_text) > decimal_places(&significant_text) =>
+            {
+                (fraction_text, false)
+            }
+            "lessPrecision"
+                if decimal_places(&fraction_text) < decimal_places(&significant_text) =>
+            {
+                (fraction_text, false)
+            }
+            _ => (significant_text, true),
+        }
     }
 
     fn parts(&self, number: f64) -> Vec<Value> {
@@ -600,13 +618,13 @@ impl NumberOptions {
             parts.push(crate::intl::number_format::percent_part());
             return parts;
         }
-        if self.style == "decimal" && self.unit.is_none() {
-            if number.is_infinite()
+        if self.style == "decimal"
+            && self.unit.is_none()
+            && (number.is_infinite()
                 || number.is_nan()
-                || (formatted.starts_with(['-', '+']) && !formatted.contains('.'))
-            {
-                return numeric_parts(&formatted, &self.locale);
-            }
+                || (formatted.starts_with(['-', '+']) && !formatted.contains('.')))
+        {
+            return numeric_parts(&formatted, &self.locale);
         }
         numeric_parts(&self.format_number(number), &self.locale)
     }
@@ -810,17 +828,7 @@ fn format_localized_unit(text: &str, unit: Option<&str>, display: &str, locale: 
     if unit != Some("kilometer-per-hour") {
         return format_unit(text, unit, display);
     }
-    let (prefix, suffix) = match (locale, display) {
-        (locale, "long") if locale.starts_with("ja") => ("時速 ", " キロメートル"),
-        (locale, "long") if locale.starts_with("ko") => ("시속 ", "킬로미터"),
-        (locale, "long") if locale.starts_with("zh-TW") => ("每小時 ", " 公里"),
-        (locale, "narrow") if locale.starts_with("zh-TW") => ("", "公里/小時"),
-        (locale, _) if locale.starts_with("zh-TW") => ("", " 公里/小時"),
-        (locale, "long") if locale.starts_with("de") => ("", " Kilometer pro Stunde"),
-        (locale, "long") if locale.starts_with("en") => ("", " kilometers per hour"),
-        (locale, _) if locale.starts_with("ko") => ("", "km/h"),
-        _ => ("", " km/h"),
-    };
+    let (prefix, suffix) = localized_unit_parts(locale, display);
     let text = if locale.starts_with("de") {
         text.replace('.', ",")
     } else {
@@ -831,6 +839,35 @@ fn format_localized_unit(text: &str, unit: Option<&str>, display: &str, locale: 
     } else {
         format!("{prefix}{text}{suffix}")
     }
+}
+
+fn localized_unit_parts(locale: &str, display: &str) -> (&'static str, &'static str) {
+    if locale.starts_with("ja") && display == "long" {
+        return ("時速 ", " キロメートル");
+    }
+    if locale.starts_with("ko") {
+        return if display == "long" {
+            ("시속 ", "킬로미터")
+        } else {
+            ("", "km/h")
+        };
+    }
+    if locale.starts_with("zh-TW") {
+        return if display == "long" {
+            ("每小時 ", " 公里")
+        } else if display == "narrow" {
+            ("", "公里/小時")
+        } else {
+            ("", " 公里/小時")
+        };
+    }
+    if locale.starts_with("de") && display == "long" {
+        return ("", " Kilometer pro Stunde");
+    }
+    if locale.starts_with("en") && display == "long" {
+        return ("", " kilometers per hour");
+    }
+    ("", " km/h")
 }
 
 fn is_decimal_literal(value: &str) -> bool {
