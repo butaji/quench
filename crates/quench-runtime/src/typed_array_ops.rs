@@ -162,6 +162,9 @@ pub(crate) fn execute(
             crate::typed_array_base64::execute(builtin, receiver, arguments)
         }
         Builtin::ArrayBufferTransferToImmutable => Some(transfer_to_immutable(receiver, arguments)),
+        Builtin::ArrayBufferTransfer | Builtin::ArrayBufferTransferToFixedLength => {
+            Some(transfer(receiver, arguments))
+        }
         Builtin::ArrayBufferSliceToImmutable => {
             Some(crate::vm::slice_to_immutable(receiver, arguments))
         }
@@ -200,6 +203,35 @@ fn transfer_to_immutable(receiver: Option<&Value>, arguments: &[Value]) -> Resul
     let copy_length = bytes.len().min(new_length);
     result.bytes.borrow_mut()[..copy_length].copy_from_slice(&bytes[..copy_length]);
     result.immutable = true;
+    buffer.detach();
+    Ok(Value::ArrayBuffer(std::rc::Rc::new(result)))
+}
+
+fn transfer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "transfer requires an ArrayBuffer",
+        ));
+    };
+    if buffer.shared || buffer.immutable || *buffer.detached.borrow() {
+        return Err(crate::value::error::throw_type_error(
+            "ArrayBuffer is not transferable",
+        ));
+    }
+    let new_length = match arguments.first() {
+        None | Some(Value::Undefined) => buffer.byte_length(),
+        Some(value) => crate::construct::to_index(crate::intl::tolocale::value::to_number_result(
+            Some(value),
+        )?)?,
+    };
+    let Some(result) = crate::value::ArrayBufferData::try_new(new_length) else {
+        return Err(crate::value::error::throw_range_error(
+            "ArrayBuffer length is too large",
+        ));
+    };
+    let bytes = buffer.bytes.borrow().clone();
+    let copy_length = bytes.len().min(new_length);
+    result.bytes.borrow_mut()[..copy_length].copy_from_slice(&bytes[..copy_length]);
     buffer.detach();
     Ok(Value::ArrayBuffer(std::rc::Rc::new(result)))
 }
