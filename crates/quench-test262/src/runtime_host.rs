@@ -673,6 +673,23 @@ impl LinkedModule {
             .find(|binding| binding.exported == name)?
             .local
             .as_str();
+        if self
+            .program
+            .module_metadata
+            .as_ref()?
+            .imports
+            .iter()
+            .any(|binding| binding.local == local && binding.source_phase)
+        {
+            let cell = ModuleBindingCell::new(Value::object(vec![(
+                "\0quench:module-source".to_string(),
+                Value::Boolean(true),
+            )]));
+            if let Some(slot) = self.program.local_slots.get(local).copied() {
+                self.scope.bind_module_slot(slot, cell.clone());
+            }
+            return Some(cell);
+        }
         let cell = self
             .program
             .local_slots
@@ -761,10 +778,10 @@ impl LinkedModule {
                 return;
             }
         }
-        if entries
-            .iter()
-            .any(|candidate| Rc::ptr_eq(&candidate.shared(), &cell.shared()))
-        {
+        if entries.iter().any(|candidate| {
+            Rc::ptr_eq(&candidate.shared(), &cell.shared())
+                || (is_module_source_cell(candidate) && is_module_source_cell(&cell))
+        }) {
             return;
         }
         entries.push(cell.clone());
@@ -924,6 +941,10 @@ impl LinkedModule {
             .collect::<Vec<_>>();
         namespace.set(Value::object(entries));
     }
+}
+
+fn is_module_source_cell(cell: &ModuleBindingCell) -> bool {
+    matches!(cell.get(), Value::Object(properties) if properties.iter().any(|(key, value)| key == "\0quench:module-source" && matches!(value, Value::Boolean(true))))
 }
 
 impl Test262Host for RuntimeHost {
