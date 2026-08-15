@@ -120,7 +120,7 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
 }
 
 fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let (source, flags) = regexp_source_and_flags(arguments)?;
+    let (source, observable_source, flags) = regexp_source_and_flags(arguments)?;
     crate::regexp::compile(&source, &flags)
         .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
     let last_index = Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))));
@@ -132,11 +132,11 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
         ),
         (
             "source".to_string(),
-            Value::BindingCell(Rc::new(RefCell::new(Value::String(source.clone())))),
+            Value::BindingCell(Rc::new(RefCell::new(observable_source.clone()))),
         ),
         (
             crate::builtins::descriptor_key("source"),
-            regexp_data_descriptor(false, true, Value::String(source)),
+            regexp_data_descriptor(false, true, observable_source),
         ),
         (
             "flags".to_string(),
@@ -158,7 +158,7 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
 
 fn regexp_source_and_flags(
     arguments: &[Value],
-) -> Result<(String, String), crate::execute::VmError> {
+) -> Result<(String, Value, String), crate::execute::VmError> {
     let source_value = arguments
         .first()
         .filter(|value| !matches!(value, Value::Undefined))
@@ -170,7 +170,8 @@ fn regexp_source_and_flags(
     let source = crate::strings::source_text(&source_value)
         .or_else(|| crate::conversion::to_string(&source_value).ok())
         .unwrap_or_default();
-    Ok((source, flags))
+    let observable_source = crate::strings::source_value(&source);
+    Ok((source, observable_source, flags))
 }
 
 fn regexp_data_descriptor(writable: bool, configurable: bool, value: Value) -> Value {
