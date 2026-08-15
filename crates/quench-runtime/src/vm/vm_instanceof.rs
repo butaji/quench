@@ -212,14 +212,22 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::Generator(generator) => generator_instance_prototype(generator),
         Value::Iterator(_) => Some(crate::collections::iterator::prototype_of(value)),
         Value::Builtin(builtin) => builtin_prototype_parent(*builtin),
-        Value::Function(function) => Some(Value::Builtin(if function.is_async {
-            Builtin::AsyncFunctionPrototype
-        } else {
-            Builtin::FunctionPrototype
-        })),
+        Value::Function(function) => Some(function_prototype(function)),
         Value::BoundFunction(bound) => bound_function_prototype(bound),
         _ => None,
     }
+}
+
+fn function_prototype(function: &crate::value::FunctionValue) -> Value {
+    let builtin = if function.is_async {
+        Builtin::AsyncFunctionPrototype
+    } else {
+        Builtin::FunctionPrototype
+    };
+    let global = function.captures.get(0);
+    crate::vm::realm_id_for_global_value(&global)
+        .and_then(|realm| crate::vm::realm::intrinsic(realm, builtin))
+        .unwrap_or(Value::Builtin(builtin))
 }
 
 fn bound_function_prototype(bound: &crate::value::BoundFunctionValue) -> Option<Value> {
