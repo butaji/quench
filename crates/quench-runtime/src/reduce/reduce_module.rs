@@ -378,7 +378,7 @@ fn reduce_default_function_declaration<'a>(
     if function.id.is_none() {
         let src = crate::functions::reduce_expression(function, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported default declaration".to_string()])?;
-        return store_default(src, ops, next_slot, locals);
+        return store_default(src, ops, next_slot, locals, true);
     }
     let result = reduce_exported_default!(
         function function,
@@ -407,7 +407,7 @@ fn reduce_default_class_declaration<'a>(
     if class.id.is_none() {
         let src = crate::classes::reduce_expression(class, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported default declaration".to_string()])?;
-        return store_default(src, ops, next_slot, locals);
+        return store_default(src, ops, next_slot, locals, !class_has_static_name(class));
     }
     let result = reduce_module_exported_decl!(
         class class,
@@ -456,11 +456,14 @@ fn store_default(
     ops: &mut Vec<Op>,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
+    set_name: bool,
 ) -> Result<Option<u16>, Vec<String>> {
-    ops.push(Op::SetFunctionName {
-        function: src,
-        name: "default".to_string(),
-    });
+    if set_name {
+        ops.push(Op::SetFunctionName {
+            function: src,
+            name: "default".to_string(),
+        });
+    }
     let slot = *next_slot;
     *next_slot = next_slot.saturating_add(1);
     locals.insert("default".to_string(), slot);
@@ -470,6 +473,21 @@ fn store_default(
     });
     ops.push(Op::StoreLocal { slot, src });
     Ok(None)
+}
+
+fn class_has_static_name(class: &oxc::ast::ast::Class<'_>) -> bool {
+    class.body.body.iter().any(|element| {
+        matches!(
+            element,
+            oxc::ast::ast::ClassElement::MethodDefinition(method)
+                if method.r#static
+                    && matches!(
+                        &method.key,
+                        oxc::ast::ast::PropertyKey::StaticIdentifier(identifier)
+                            if identifier.name == "name"
+                    )
+        )
+    })
 }
 
 fn reduce_class(
