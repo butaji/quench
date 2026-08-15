@@ -60,7 +60,7 @@ pub struct DeferredModuleCallbackGuard {
     previous: Option<DeferredCallback>,
 }
 
-pub type DynamicImportCallback = Rc<dyn Fn(String, bool) -> Result<Value, VmError>>;
+pub type DynamicImportCallback = Rc<dyn Fn(String, bool, Value) -> Result<Value, VmError>>;
 
 pub struct DynamicImportCallbackGuard {
     previous: Option<DynamicImportCallback>,
@@ -90,10 +90,14 @@ impl Drop for DynamicImportCallbackGuard {
     }
 }
 
-pub(crate) fn execute_dynamic_import(specifier: String, deferred: bool) -> Result<Value, VmError> {
+pub(crate) fn execute_dynamic_import(
+    specifier: String,
+    deferred: bool,
+    options: Value,
+) -> Result<Value, VmError> {
     let callback = DYNAMIC_IMPORT_CALLBACK.with(|slot| slot.borrow().clone());
     callback.map_or(Err(VmError::NotCallable), |callback| {
-        callback(specifier, deferred)
+        callback(specifier, deferred, options)
     })
 }
 
