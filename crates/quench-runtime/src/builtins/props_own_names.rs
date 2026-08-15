@@ -130,7 +130,9 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
 
 fn own_property_names_standard(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
-        Builtin::ShadowRealm
+        Builtin::AbstractModuleSource
+        | Builtin::AbstractModuleSourcePrototype
+        | Builtin::ShadowRealm
         | Builtin::ShadowRealmPrototype
         | Builtin::BigInt
         | Builtin::BigIntPrototype
@@ -142,6 +144,8 @@ fn own_property_names_standard(builtin: Builtin) -> &'static [&'static str] {
 
 fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::AbstractModuleSource => &["length", "name", "prototype"],
+        Builtin::AbstractModuleSourcePrototype => &["constructor", "Symbol.toStringTag"],
         Builtin::ShadowRealm => &["length", "name", "prototype"],
         Builtin::ShadowRealmPrototype => &[
             "constructor",
