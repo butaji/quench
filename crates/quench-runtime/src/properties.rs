@@ -458,6 +458,9 @@ pub(crate) fn execute_delete_property(
         ));
     }
     let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
+    if let Some(id) = crate::vm::consume_deferred_namespace_marker(&target, &key) {
+        crate::vm::execute_deferred_module(id)?;
+    }
     if matches!(target, crate::value::Value::Proxy(_)) {
         return delete_proxy_property(registers, *dst, &target, &key, *strict);
     }
