@@ -171,6 +171,7 @@ fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str]
         Builtin::ArrayBufferPrototype => &[
             "constructor",
             "byteLength",
+            "detached",
             "resize",
             "transferToImmutable",
             "Symbol.toStringTag",

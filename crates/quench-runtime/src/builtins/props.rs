@@ -98,6 +98,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
         (ArrayBufferPrototype, "constructor") => Some(ArrayBuffer),
         (ArrayBufferPrototype, "byteLength") => Some(ArrayBufferByteLengthGetter),
+        (ArrayBufferPrototype, "detached") => Some(ArrayBufferDetachedGetter),
         (ArrayBufferPrototype, "resize") => Some(ArrayBufferResize),
         (ArrayBufferPrototype, "transferToImmutable") => Some(ArrayBufferTransferToImmutable),
         (SharedArrayBufferPrototype, "constructor") => Some(SharedArrayBuffer),
