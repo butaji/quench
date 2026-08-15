@@ -96,8 +96,12 @@ fn reduce_call_arguments(
         .arguments
         .iter()
         .map(|argument| {
-            spreads.push(matches!(argument, oxc::ast::ast::Argument::SpreadElement(_)));
-            crate::reduce::reduce_expression(argument.as_expression()?, ops, facts, next, locals)
+            let (expression, spread) = match argument {
+                oxc::ast::ast::Argument::SpreadElement(value) => (&value.argument, true),
+                _ => (argument.as_expression()?, false),
+            };
+            spreads.push(spread);
+            crate::reduce::reduce_expression(expression, ops, facts, next, locals)
         })
         .collect::<Option<Vec<_>>>()?;
     Some((args, spreads))
