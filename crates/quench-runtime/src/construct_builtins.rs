@@ -417,8 +417,6 @@ fn error_properties(
     builtin: &crate::ops::Builtin,
     message: Option<String>,
 ) -> Vec<(String, Value)> {
-    let name = error_name(builtin);
-    let constructor = crate::vm::realm_intrinsic(*builtin);
     let prototype_builtin = crate::builtin_meta::instance_prototype(*builtin)
         .unwrap_or(crate::ops::Builtin::ErrorPrototype);
     let prototype = crate::vm::realm_intrinsic(prototype_builtin);
@@ -429,27 +427,10 @@ fn error_properties(
         ),
         ("\0prototype".to_string(), prototype),
     ];
-    if *builtin != crate::ops::Builtin::AggregateError {
-        properties.insert(0, ("constructor".to_string(), constructor));
-        properties.insert(0, ("name".to_string(), Value::String(name.to_string())));
-    }
     if let Some(message) = message {
         push_error_property(&mut properties, "message", Value::String(message));
     }
     properties
-}
-
-fn error_name(builtin: &crate::ops::Builtin) -> &'static str {
-    match builtin {
-        crate::ops::Builtin::RangeError => "RangeError",
-        crate::ops::Builtin::ReferenceError => "ReferenceError",
-        crate::ops::Builtin::SyntaxError => "SyntaxError",
-        crate::ops::Builtin::EvalError => "EvalError",
-        crate::ops::Builtin::URIError => "URIError",
-        crate::ops::Builtin::AggregateError => "AggregateError",
-        crate::ops::Builtin::TypeError => "TypeError",
-        _ => "Error",
-    }
 }
 
 fn append_error_cause(
