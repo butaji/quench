@@ -15,6 +15,12 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::Uint8ArrayToBase64 => Some("toBase64"),
         Builtin::Uint8ArrayToHex => Some("toHex"),
         Builtin::Uint8ArraySubarray => Some("subarray"),
+        _ => fn_name_methods(builtin),
+    }
+}
+
+const fn fn_name_methods(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
         Builtin::ArrayMap => Some("map"),
         Builtin::ArrayFilter => Some("filter"),
         Builtin::ArraySome => Some("some"),

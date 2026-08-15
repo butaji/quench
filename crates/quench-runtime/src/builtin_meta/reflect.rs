@@ -12,6 +12,12 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::ReflectGetOwnPropertyDescriptor => Some("Reflect.getOwnPropertyDescriptor"),
         Builtin::ReflectGetPrototypeOf => Some("Reflect.getPrototypeOf"),
         Builtin::ReflectHas => Some("Reflect.has"),
+        _ => fn_name_tail(builtin),
+    }
+}
+
+const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
         Builtin::ReflectIsExtensible => Some("Reflect.isExtensible"),
         Builtin::ReflectOwnKeys => Some("Reflect.ownKeys"),
         Builtin::ReflectPreventExtensions => Some("Reflect.preventExtensions"),
@@ -48,6 +54,12 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::ReflectGetOwnPropertyDescriptor => Some("getOwnPropertyDescriptor"),
         Builtin::ReflectGetPrototypeOf => Some("getPrototypeOf"),
         Builtin::ReflectHas => Some("has"),
+        _ => short_name_tail(builtin),
+    }
+}
+
+const fn short_name_tail(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
         Builtin::ReflectIsExtensible => Some("isExtensible"),
         Builtin::ReflectOwnKeys => Some("ownKeys"),
         Builtin::ReflectPreventExtensions => Some("preventExtensions"),
