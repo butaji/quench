@@ -306,29 +306,8 @@ fn prototype_result(
     slots: &[(String, Value)],
 ) -> Result<Value, VmError> {
     match builtin {
-        crate::ops::Builtin::IntlDateTimeFormatFormat => {
-            let input = arguments.first().unwrap_or(&Value::Undefined);
-            let number = range_number(input)?;
-            if let Some(value) = day_period_format(&slots, number) {
-                return Ok(Value::String(value));
-            }
-            if let Some(value) = proleptic_year_format(&slots, number) {
-                return Ok(Value::String(value));
-            }
-            if let Some(value) = fractional_format(&slots, number) {
-                return Ok(Value::String(value));
-            }
-            let value = range_text(number);
-            Ok(Value::String(value))
-        }
-        crate::ops::Builtin::IntlDateTimeFormatFormatToParts => {
-            let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
-            if let Some(value) = day_period_parts(&slots, number) {
-                return Ok(make_array(value));
-            }
-            let value = range_text(number);
-            Ok(make_array(vec![literal_part(&value)]))
-        }
+        crate::ops::Builtin::IntlDateTimeFormatFormat => format_result(arguments, slots),
+        crate::ops::Builtin::IntlDateTimeFormatFormatToParts => parts_result(arguments, slots),
         crate::ops::Builtin::IntlDateTimeFormatFormatRange => {
             let (start, end) = range_values(arguments)?;
             if start == end {
@@ -343,6 +322,29 @@ fn prototype_result(
         crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots)),
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value, VmError> {
+    let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    if let Some(value) = day_period_format(slots, number) {
+        return Ok(Value::String(value));
+    }
+    if let Some(value) = proleptic_year_format(slots, number) {
+        return Ok(Value::String(value));
+    }
+    if let Some(value) = fractional_format(slots, number) {
+        return Ok(Value::String(value));
+    }
+    Ok(Value::String(range_text(number)))
+}
+
+fn parts_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value, VmError> {
+    let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    if let Some(value) = day_period_parts(slots, number) {
+        return Ok(make_array(value));
+    }
+    let value = range_text(number);
+    Ok(make_array(vec![literal_part(&value)]))
 }
 
 fn range_parts(start: &str, end: &str) -> Vec<Value> {
