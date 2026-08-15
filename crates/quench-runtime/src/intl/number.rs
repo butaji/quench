@@ -238,29 +238,8 @@ impl NumberOptions {
 }
 
 fn slot_base(number: &NumberFormat) -> Vec<(String, Value)> {
-    vec![
-        ("locale".to_string(), Value::String(number.locale.clone())),
-        ("style".to_string(), Value::String(number.style.clone())),
-        (
-            "useGrouping".to_string(),
-            Value::Boolean(number.use_grouping),
-        ),
-        (
-            "groupingMin2".to_string(),
-            Value::Boolean(number.grouping_min2),
-        ),
-        (
-            "minimumIntegerDigits".to_string(),
-            Value::Number(number.minimum_integer_digits as f64),
-        ),
-        (
-            "minimumFractionDigits".to_string(),
-            Value::Number(number.minimum_fraction_digits as f64),
-        ),
-        (
-            "maximumFractionDigits".to_string(),
-            Value::Number(number.maximum_fraction_digits as f64),
-        ),
+    let mut properties = slot_primary(number);
+    properties.extend([
         (
             "notation".to_string(),
             Value::String(number.notation.clone()),
@@ -284,6 +263,34 @@ fn slot_base(number: &NumberFormat) -> Vec<(String, Value)> {
         (
             "roundingIncrement".to_string(),
             Value::Number(number.rounding_increment as f64),
+        ),
+    ]);
+    properties
+}
+
+fn slot_primary(number: &NumberFormat) -> Vec<(String, Value)> {
+    vec![
+        ("locale".to_string(), Value::String(number.locale.clone())),
+        ("style".to_string(), Value::String(number.style.clone())),
+        (
+            "useGrouping".to_string(),
+            Value::Boolean(number.use_grouping),
+        ),
+        (
+            "groupingMin2".to_string(),
+            Value::Boolean(number.grouping_min2),
+        ),
+        (
+            "minimumIntegerDigits".to_string(),
+            Value::Number(number.minimum_integer_digits as f64),
+        ),
+        (
+            "minimumFractionDigits".to_string(),
+            Value::Number(number.minimum_fraction_digits as f64),
+        ),
+        (
+            "maximumFractionDigits".to_string(),
+            Value::Number(number.maximum_fraction_digits as f64),
         ),
     ]
 }
