@@ -58,12 +58,7 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
             .iter()
             .rev()
             .any(|(name, _)| name == key),
-        Value::BoundFunction(bound) => bound
-            .properties
-            .borrow()
-            .iter()
-            .rev()
-            .any(|(name, _)| name == key),
+        Value::BoundFunction(bound) => bound_function_owns_property(bound, key),
         Value::Proxy(_) => {
             crate::proxy::proxy_get_own_property_descriptor(receiver, key)? != Value::Undefined
         }
@@ -71,6 +66,20 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
         value if typed_array_owns(value, key) => true,
         _ => false,
     })
+}
+
+fn bound_function_owns_property(bound: &crate::value::BoundFunctionValue, key: &str) -> bool {
+    if crate::vm::realm_is_intrinsic(bound) {
+        if let Value::Builtin(builtin) = bound.target {
+            return builtin_owns_property(builtin, key);
+        }
+    }
+    bound
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .any(|(name, _)| name == key)
 }
 
 fn typed_array_owns(value: &Value, key: &str) -> bool {
