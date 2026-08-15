@@ -230,6 +230,14 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = special_property(value, key, receiver) {
         return result;
     }
+    let own_descriptor = crate::builtins::object::descriptor(
+        Some(value),
+        Some(&Value::String(key.to_string())),
+    )
+    .ok();
+    if let Some(result) = error_stack_lookup(value, key, receiver, &own_descriptor) {
+        return result;
+    }
     if let Some(getter) = array_accessor(value, key, "get") {
         if matches!(getter, Value::Undefined) {
             return Ok(Value::Undefined);
@@ -257,9 +265,7 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = data_view_instance_accessor(value, key) {
         return result;
     }
-    if let Ok(descriptor) =
-        crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))
-    {
+    if let Some(descriptor) = own_descriptor {
         if !matches!(descriptor, Value::Undefined) {
             if let Value::Object(descriptor) = descriptor {
                 if let Some((_, getter)) = descriptor
@@ -277,6 +283,9 @@ pub(crate) fn get_property_with_receiver(
             return Ok(receiver_property(value, key, receiver));
         }
     }
+    if let Some(result) = native_error_stack_lookup(value, key, receiver) {
+        return result;
+    }
     let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
         return Ok(receiver_property(value, key, receiver));
@@ -285,6 +294,48 @@ pub(crate) fn get_property_with_receiver(
         return Ok(Value::Undefined);
     }
     invoke_accessor(&getter, receiver)
+}
+
+fn error_stack_lookup(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+    own_descriptor: &Option<Value>,
+) -> Option<Result<Value, VmError>> {
+    if key != "stack"
+        || !matches!(own_descriptor, Some(Value::Undefined))
+        || !crate::vm::has_error_slot(value)
+        || !crate::properties::inherits_error_prototype(value)
+    {
+        return None;
+    }
+    Some(crate::vm::execute_builtin_with_receiver(
+        Builtin::ErrorPrototypeStackGetter,
+        &[],
+        Some(receiver),
+    ))
+}
+
+fn native_error_stack_lookup(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
+    if key != "stack"
+        || !matches!(
+            value,
+            Value::Builtin(
+                Builtin::AggregateErrorPrototype | Builtin::SuppressedErrorPrototype
+            )
+        )
+    {
+        return None;
+    }
+    Some(crate::vm::execute_builtin_with_receiver(
+        Builtin::ErrorPrototypeStackGetter,
+        &[],
+        Some(receiver),
+    ))
 }
 
 fn special_property(
@@ -408,6 +459,14 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     }
     if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
         return bind_function_property(value, key);
+    }
+    if key == "stack"
+        && matches!(
+            builtin,
+            Builtin::AggregateErrorPrototype | Builtin::SuppressedErrorPrototype
+        )
+    {
+        return crate::vm::get_property(&Value::Builtin(Builtin::ErrorPrototype), key);
     }
     if crate::builtin_meta::is_prototype(builtin) {
         return crate::builtins::property(Builtin::ObjectPrototype, key);
