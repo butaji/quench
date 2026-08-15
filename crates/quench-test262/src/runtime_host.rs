@@ -647,8 +647,12 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
         return Ok(());
     }
     let metadata = inspect_module_source(&source).map_err(|errors| errors.join("; "))?;
-    for specifier in metadata.import_specifiers {
-        if graph.resolve(from, &specifier).is_some() {
+    for specifier in metadata.import_specifiers.clone() {
+        let text_import = metadata
+            .import_types
+            .iter()
+            .any(|(source, attribute)| source == &specifier && attribute == "type=text");
+        if graph.resolve(from, &specifier).is_some() && !text_import {
             continue;
         }
         if specifier == "<module source>" {
