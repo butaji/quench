@@ -81,6 +81,8 @@ fn bound_function_owns_property(bound: &crate::value::BoundFunctionValue, key: &
         .iter()
         .rev()
         .any(|(name, _)| name == key)
+        || (crate::vm::is_intrinsic_bound(bound)
+            && matches!(bound.target, Value::Builtin(builtin) if builtin_owns_property(builtin, key)))
 }
 
 fn typed_array_owns(value: &Value, key: &str) -> bool {
