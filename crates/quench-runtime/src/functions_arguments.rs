@@ -394,7 +394,8 @@ pub(crate) fn execute(
             ))
         };
         let global = function.captures.get(0);
-        return crate::vm::with_function_global(&global, error);
+        return crate::vm::with_realm(function.realm, error)
+            .unwrap_or_else(|| crate::vm::with_function_global(&global, error));
     }
     let frame = CallFrame::new(
         std::rc::Rc::clone(function),
