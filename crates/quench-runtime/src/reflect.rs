@@ -207,14 +207,28 @@ fn shadow_type_error_with_constructor(message: &str, constructor: Value) -> VmEr
 }
 
 pub(crate) fn shadow_wrapped_object_error(realm: crate::ops::RealmId) -> VmError {
-    let constructor = crate::vm::with_realm(realm, || {
+    let error = crate::builtins::error(
+        crate::ops::Builtin::TypeError,
+        &[Value::String(
+            "ShadowRealm wrapped function must return a primitive".to_string(),
+        )],
+    );
+    let constructor = if realm == crate::ops::RealmId::ROOT {
+        Value::Builtin(crate::ops::Builtin::TypeError)
+    } else {
         crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError)
-    })
-    .unwrap_or(Value::Builtin(crate::ops::Builtin::TypeError));
-    shadow_type_error_with_constructor(
-        "ShadowRealm wrapped function must return a primitive",
-        constructor,
-    )
+    };
+    let prototype = if realm == crate::ops::RealmId::ROOT {
+        Value::Builtin(crate::ops::Builtin::TypeErrorPrototype)
+    } else {
+        crate::vm::realm_intrinsic(crate::ops::Builtin::TypeErrorPrototype)
+    };
+    let error = crate::builtins::set_property(error, "constructor", constructor);
+    VmError::Thrown(crate::builtins::set_property(
+        error,
+        "\0prototype",
+        prototype,
+    ))
 }
 
 pub(crate) fn shadow_wrapped_argument_error_for_realm(realm: crate::ops::RealmId) -> VmError {
