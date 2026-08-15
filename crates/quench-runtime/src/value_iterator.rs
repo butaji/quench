@@ -11,6 +11,11 @@ pub enum IteratorState {
         current: Option<Value>,
         done: bool,
     },
+    Zip {
+        iterators: Vec<Value>,
+        mode: u8,
+        done: bool,
+    },
     Mapped {
         iterator: Value,
         mapper: Value,
