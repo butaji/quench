@@ -115,17 +115,15 @@ fn arguments_object(
     environment: &std::rc::Rc<crate::environment::Environment>,
 ) -> crate::value::Value {
     let length = values.len() as f64;
-    let strict = matches!(function.strictness, FunctionStrictness::Strict);
+    let strict = matches!(function.strictness, FunctionStrictness::Strict) || !function.mapped_arguments;
     let mut arguments = crate::value::ArrayData::new_arguments(values, strict);
     arguments.set_property("length", crate::value::Value::Number(length));
     arguments.set_property(
         "Symbol.iterator",
         crate::value::Value::Builtin(crate::ops::Builtin::ArrayIterator),
     );
-    if matches!(function.strictness, FunctionStrictness::Sloppy) {
-        if function.mapped_arguments {
-            map_arguments(&mut arguments, function, environment);
-        }
+    if matches!(function.strictness, FunctionStrictness::Sloppy) && function.mapped_arguments {
+        map_arguments(&mut arguments, function, environment);
         arguments.set_property(
             "callee",
             crate::value::Value::Function(std::rc::Rc::clone(function)),
