@@ -316,7 +316,7 @@ fn supported_values_of(arguments: &[Value]) -> Result<Value, VmError> {
 /// Resolve the `locales` argument to a canonical list of BCP-47 tags.
 fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
     let Some(locales) = arguments.first() else {
-        return Ok(vec![default_locale()]);
+        return Ok(Vec::new());
     };
     match locales {
         Value::Null => Err(crate::value::error::throw_type_error(
@@ -341,7 +341,8 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
             Ok(dedupe(out))
         }
         Value::Object(_) | Value::Proxy(_) => resolve_locale_object(locales),
-        _ => Ok(vec![default_locale()]),
+        Value::Undefined => Ok(Vec::new()),
+        _ => resolve_locale_object(locales),
     }
 }
 
@@ -375,11 +376,7 @@ fn resolve_locale_object(locales: &Value) -> Result<Vec<String>, VmError> {
             out.push(canonicalize(&crate::conversion::to_string(&value)?)?);
         }
     }
-    Ok(if out.is_empty() {
-        vec![default_locale()]
-    } else {
-        dedupe(out)
-    })
+    Ok(dedupe(out))
 }
 
 pub(crate) fn default_locale() -> String {
