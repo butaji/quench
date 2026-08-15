@@ -361,15 +361,17 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
 }
 
 fn should_preserve_receiver_property(value: &Value, key: &str, property: &Value) -> bool {
-    if let Value::Object(properties) = value {
-        if properties.iter().rev().any(|(name, _)| name == key) {
-            return true;
-        }
+    if object_has_property(value, key) {
+        return true;
     }
     matches!(value, Value::Builtin(_))
         || matches!(value, Value::Object(_)) && crate::vm::is_global_object(value)
         || is_intl_number_format_property(property)
         || matches!(key, "constructor" | "prototype")
+}
+
+fn object_has_property(value: &Value, key: &str) -> bool {
+    matches!(value, Value::Object(properties) if properties.iter().rev().any(|(name, _)| name == key))
 }
 
 fn is_intl_number_format_property(property: &Value) -> bool {
