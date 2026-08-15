@@ -15,20 +15,8 @@ fn special(builtin: Builtin, key: &str) -> Option<Value> {
 }
 fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
-    if builtin == ArrayIteratorPrototype && key == "constructor" {
-        return Some(Value::Builtin(Array));
-    }
-    if builtin == IteratorPrototype && key == "Symbol.iterator" {
-        return Some(Value::Builtin(IteratorSelf));
-    }
-    if let Some(value) = typed_array_static_property(builtin, key) {
+    if let Some(value) = special_match_prefix(builtin, key) {
         return Some(value);
-    }
-    if let Some(value) = weak_special(builtin, key) {
-        return Some(value);
-    }
-    if builtin == Builtin::Error && key == "isError" {
-        return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
         (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
@@ -46,6 +34,33 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (ShadowRealmPrototype, "Symbol.toStringTag") => Some(Value::String("ShadowRealm".into())),
         (String, "prototype") => Some(Value::Builtin(StringPrototype)),
         (StringPrototype, "constructor") => Some(Value::Builtin(String)),
+        _ => special_match_middle(builtin, key),
+    }
+}
+
+fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    if builtin == ArrayIteratorPrototype && key == "constructor" {
+        return Some(Value::Builtin(Array));
+    }
+    if builtin == IteratorPrototype && key == "Symbol.iterator" {
+        return Some(Value::Builtin(IteratorSelf));
+    }
+    if let Some(value) = typed_array_static_property(builtin, key) {
+        return Some(value);
+    }
+    if let Some(value) = weak_special(builtin, key) {
+        return Some(value);
+    }
+    if builtin == Builtin::Error && key == "isError" {
+        return Some(Value::Builtin(Builtin::ErrorIsError));
+    }
+    None
+}
+
+fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
