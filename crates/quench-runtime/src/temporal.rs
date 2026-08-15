@@ -86,6 +86,10 @@ fn now_zoned_date_time_iso(
     else {
         return Err(crate::value::error::throw_type_error("Invalid time zone"));
     };
+    let time_zone = time_zone
+        .rsplit_once('[')
+        .and_then(|(_, value)| value.strip_suffix(']'))
+        .unwrap_or(time_zone);
     Ok(crate::value::Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
             (
@@ -94,7 +98,7 @@ fn now_zoned_date_time_iso(
             ),
             (
                 "timeZoneId".into(),
-                crate::value::Value::String(time_zone.clone()),
+                crate::value::Value::String(time_zone.into()),
             ),
             (
                 "calendarId".into(),
