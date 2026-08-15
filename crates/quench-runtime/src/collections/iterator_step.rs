@@ -149,14 +149,21 @@ fn zip_step(
     let mut values = Vec::with_capacity(iterators.len());
     let mut ended = 0;
     let mut open = vec![true; iterators.len()];
+    let mut all_done = true;
     for (index, iterator) in iterators.iter().enumerate() {
         match super::step_value(iterator) {
-            Ok(Some(value)) => values.push(value),
+            Ok(Some(value)) => {
+                values.push(value);
+                if mode == 2 && ended > 0 {
+                    break;
+                }
+                all_done = false;
+            }
             Ok(None) => {
                 ended += 1;
                 open[index] = false;
                 values.push(Value::Undefined);
-                if mode == 0 {
+                if mode == 0 || (mode == 2 && !all_done) {
                     break;
                 }
             }
@@ -170,9 +177,7 @@ fn zip_step(
     if ended > 0 && mode != 1 {
         *done = true;
         if mode == 2 {
-            return Err(crate::value::error::throw_type_error(
-                "Iterator.zip iterators have different lengths",
-            ));
+            return Err(close_strict(iterators, &open));
         }
         if let Some(error) = close_shortest(iterators, &open)? {
             *done = true;
@@ -181,6 +186,27 @@ fn zip_step(
         return Ok(None);
     }
     Ok(Some(Value::array(values)))
+}
+
+fn close_strict(iterators: &[Value], open: &[bool]) -> crate::execute::VmError {
+    let open_iterators = iterators
+        .iter()
+        .zip(open)
+        .filter_map(|(iterator, is_open)| is_open.then_some(iterator.clone()))
+        .collect();
+    let error =
+        crate::value::error::throw_type_error("Iterator.zip iterators have different lengths");
+    let completion = match crate::completion::Completion::from_vm_error(error.clone()) {
+        Ok(completion) => completion,
+        Err(_) => return error,
+    };
+    match close_iterators(open_iterators, completion) {
+        Ok(completion) => match completion.into_vm_error() {
+            Err(error) => error,
+            Ok(_) => error,
+        },
+        Err(error) => error,
+    }
 }
 
 fn close_shortest(
