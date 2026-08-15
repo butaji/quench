@@ -624,6 +624,14 @@ fn literal_part(value: &str) -> Value {
     ])
 }
 
+fn range_literal_part(value: &str, source: &str) -> Value {
+    make_object(vec![
+        ("type".to_string(), Value::String("literal".to_string())),
+        ("value".to_string(), Value::String(value.to_string())),
+        ("source".to_string(), Value::String(source.to_string())),
+    ])
+}
+
 fn component_part(kind: &str, value: &str) -> Value {
     make_object(vec![
         ("type".to_string(), Value::String(kind.to_string())),
@@ -656,29 +664,32 @@ pub(crate) fn prototype_method(
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRange => {
             let (start, end) = range_values(arguments)?;
+            if let Some(value) = date_range_text(&slots, start, end) {
+                return Ok(Value::String(value));
+            }
             let start = format_number(&slots, start);
             let end = format_number(&slots, end);
-            if start == end || nearly_equal_range(arguments)? {
+            if start == end || (nearly_equal_range(arguments)? && !has_fraction(&slots)) {
                 return Ok(Value::String(start));
             }
             Ok(Value::String(format!("{start} – {end}")))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts => {
             let (start, end) = range_values(arguments)?;
-            if nearly_equal_range(arguments)? {
+            if nearly_equal_range(arguments)? && !has_fraction(&slots) {
                 if let Some(parts) = time_parts(&slots, start) {
                     return Ok(make_array(parts));
                 }
             }
             let start = format_number(&slots, start);
             let end = format_number(&slots, end);
-            if start == end || nearly_equal_range(arguments)? {
+            if start == end || (nearly_equal_range(arguments)? && !has_fraction(&slots)) {
                 return Ok(make_array(vec![literal_part(&start)]));
             }
             Ok(make_array(vec![
-                literal_part(&start),
-                literal_part(" – "),
-                literal_part(&end),
+                range_literal_part(&start, "startRange"),
+                range_literal_part(" – ", "shared"),
+                range_literal_part(&end, "endRange"),
             ]))
         }
         crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(
@@ -689,6 +700,35 @@ pub(crate) fn prototype_method(
         )),
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn date_range_text(slots: &[(String, Value)], start: f64, end: f64) -> Option<String> {
+    if start != end
+        && slot_string(slots, "locale")?.starts_with("en-US")
+        && (slot_string(slots, "dateStyle").is_some() || slot_string(slots, "year").is_some())
+        && !has_fraction(slots)
+    {
+        let first = date_time(slots, start)?;
+        let last = date_time(slots, end)?;
+        let first_text = format_number(slots, start);
+        let last_text = format_number(slots, end);
+        if first.year() == last.year() && first_text.contains(",") && last_text.contains(",") {
+            let prefix = first_text.rsplit_once(',')?.0;
+            let last_prefix = last_text.rsplit_once(',')?.0;
+            let day = if first.month() == last.month() {
+                last_prefix.split_whitespace().nth(1)?
+            } else {
+                last_prefix
+            };
+            let year = last_text.rsplit_once(',')?.1.trim();
+            return Some(format!("{prefix} – {day}, {year}"));
+        }
+    }
+    None
+}
+
+fn has_fraction(slots: &[(String, Value)]) -> bool {
+    slot_number(slots, "fractionalSecondDigits").is_some()
 }
 
 fn time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
@@ -775,13 +815,18 @@ fn date_time(slots: &[(String, Value)], number: f64) -> Option<NaiveDateTime> {
 }
 
 fn date_component_format(slots: &[(String, Value)], number: f64) -> Option<String> {
-    if !slot_string(slots, "year").is_some()
+    let style = slot_string(slots, "dateStyle");
+    if style.is_none()
+        && !slot_string(slots, "year").is_some()
         && !slot_string(slots, "month").is_some()
         && !slot_string(slots, "day").is_some()
     {
         return None;
     }
     let date = date_time(slots, number)?;
+    if slot_string(slots, "locale").is_some_and(|locale| locale.starts_with("en-US")) {
+        return Some(format_us_date(slots, &date, style));
+    }
     let mut parts = Vec::new();
     if slot_string(slots, "year").is_some() {
         parts.push(format!("{:04}", date.year()));
@@ -793,6 +838,66 @@ fn date_component_format(slots: &[(String, Value)], number: f64) -> Option<Strin
         parts.push(format!("{:02}", date.day()));
     }
     Some(parts.join("-"))
+}
+
+fn format_us_date(
+    slots: &[(String, Value)],
+    date: &NaiveDateTime,
+    style: Option<String>,
+) -> String {
+    let month = date.month();
+    let day = date.day();
+    let year = date.year();
+    let style = style.as_deref();
+    if style == Some("short") {
+        return format!("{month}/{day}/{:02}", year.rem_euclid(100));
+    }
+    let name = month_name(month, style == Some("long") || style == Some("full"));
+    let formatted_date = format!("{name} {day}, {year}");
+    if style == Some("full") {
+        return format!("{}, {formatted_date}", weekday_name(date.weekday()));
+    }
+    if style.is_some() || slot_string(slots, "month") != Some("numeric".to_string()) {
+        return formatted_date;
+    }
+    format!("{month}/{day}/{year}")
+}
+
+fn month_name(month: u32, long: bool) -> &'static str {
+    const SHORT: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    const LONG: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    if long {
+        LONG[(month - 1) as usize]
+    } else {
+        SHORT[(month - 1) as usize]
+    }
+}
+
+fn weekday_name(date: chrono::Weekday) -> &'static str {
+    match date {
+        chrono::Weekday::Mon => "Monday",
+        chrono::Weekday::Tue => "Tuesday",
+        chrono::Weekday::Wed => "Wednesday",
+        chrono::Weekday::Thu => "Thursday",
+        chrono::Weekday::Fri => "Friday",
+        chrono::Weekday::Sat => "Saturday",
+        chrono::Weekday::Sun => "Sunday",
+    }
 }
 
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
