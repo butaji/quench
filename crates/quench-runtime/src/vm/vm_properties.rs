@@ -328,6 +328,17 @@ pub(crate) fn consume_deferred_namespace_marker(value: &Value, key: &str) -> Opt
     Some(id)
 }
 
+pub(crate) fn deferred_namespace_operation(value: &Value) -> Option<u32> {
+    let Value::Object(properties) = value else {
+        return None;
+    };
+    let key = properties.iter().find_map(|(name, _)| {
+        name.strip_prefix("\0quench:deferred:\0")
+            .map(str::to_string)
+    })?;
+    consume_deferred_namespace_marker(value, &key)
+}
+
 /// Invoke a getter using the receiver as `this`. The getter's own
 /// `OrdinaryCallEvaluate` semantics handle ToObject coercion for sloppy
 /// functions; strict functions keep the receiver as-is.
