@@ -85,6 +85,10 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         (Value::Object(properties), Builtin::WeakRef) => {
             properties.iter().any(|(name, _)| name == "\0weakref")
         }
+        (Value::Object(properties), Builtin::ShadowRealm) => properties.iter().any(|(name, value)| {
+            name == "\0prototype"
+                && *value == Value::Builtin(Builtin::ShadowRealmPrototype)
+        }),
         _ => return None,
     })
 }
