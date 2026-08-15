@@ -304,9 +304,7 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let difference = duration_value(&left) - duration_value(&right);
     if difference == 0.0 {
-        return Err(crate::value::error::throw_range_error(
-            "relativeTo is required for unequal duration fields",
-        ));
+        return Ok(Value::Number(0.0));
     }
     Ok(Value::Number(difference.signum()))
 }
