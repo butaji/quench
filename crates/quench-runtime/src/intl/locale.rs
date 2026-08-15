@@ -135,11 +135,13 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
     let Some(Value::Object(properties)) = options else {
         return Ok(locale);
     };
-    for (key, value) in properties.iter() {
+    let object = Value::Object(properties.clone());
+    for (key, _) in properties.iter() {
+        let value = crate::execute::get_property_result(&object, key)?;
         if matches!(value, Value::Undefined) {
             continue;
         }
-        let text = crate::conversion::to_string(value)?;
+        let text = crate::conversion::to_string(&value)?;
         match key.as_str() {
             "calendar" => {
                 let value = option_value(&text, "calendar")?;
@@ -151,7 +153,7 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "numberingSystem" => {
                 locale.numbering_system = Some(option_value(&text, "numberingSystem")?)
             }
-            "numeric" => locale.numeric = normalize_numeric(value, &text)?,
+            "numeric" => locale.numeric = normalize_numeric(&value, &text)?,
             "firstDayOfWeek" => {
                 let _ = option_value(&text, "firstDayOfWeek")?;
             }
