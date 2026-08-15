@@ -40,14 +40,6 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             return Err(runtime_error("RangeError: invalid numberingSystem"));
         }
     }
-    if let Some(fractional) = option(options, "fractionalDigits")? {
-        let digits = fractional
-            .parse::<i64>()
-            .map_err(|_| runtime_error("RangeError: invalid fractionalDigits"))?;
-        if !(0..=9).contains(&digits) {
-            return Err(runtime_error("RangeError: invalid fractionalDigits"));
-        }
-    }
     let style = option(options, "style")?.unwrap_or_else(|| "short".to_string());
     if !matches!(style.as_str(), "long" | "short" | "narrow" | "digital") {
         return Err(runtime_error("RangeError: invalid style"));
@@ -79,13 +71,21 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             return Err(runtime_error("RangeError: invalid unit style"));
         }
         resolved.push((unit.to_string(), Value::String(value)));
-        resolved.push((format!("{unit}Display"), Value::String("auto".to_string())));
+        let display =
+            option(options, &format!("{unit}Display"))?.unwrap_or_else(|| "auto".to_string());
+        if !matches!(display.as_str(), "auto" | "always") {
+            return Err(runtime_error("RangeError: invalid display"));
+        }
+        resolved.push((format!("{unit}Display"), Value::String(display)));
     }
     if let Some(value) = option(options, "fractionalDigits")? {
-        resolved.push((
-            "fractionalDigits".to_string(),
-            Value::Number(value.parse::<f64>().unwrap_or(0.0)),
-        ));
+        let digits = value
+            .parse::<i64>()
+            .map_err(|_| runtime_error("RangeError: invalid fractionalDigits"))?;
+        if !(0..=9).contains(&digits) {
+            return Err(runtime_error("RangeError: invalid fractionalDigits"));
+        }
+        resolved.push(("fractionalDigits".to_string(), Value::Number(digits as f64)));
     }
     Ok(make_object(vec![
         (
@@ -259,14 +259,12 @@ fn number(properties: &[(String, Value)], key: &str) -> i64 {
 }
 
 fn option(options: Option<&Value>, key: &str) -> Result<Option<String>, VmError> {
-    let Some(Value::Object(properties)) = options else {
+    let Some(options) = options else {
         return Ok(None);
     };
-    let Some((_, value)) = properties.iter().find(|(name, _)| name == key) else {
-        return Ok(None);
-    };
+    let value = crate::execute::get_property_result(options, key)?;
     if matches!(value, Value::Undefined) {
         return Ok(None);
     }
-    Ok(Some(crate::conversion::to_string(value)?))
+    Ok(Some(crate::conversion::to_string(&value)?))
 }
