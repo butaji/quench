@@ -68,9 +68,11 @@ fn prototype_for_value(value: &Value) -> Value {
 
 fn slot_prototype(value: &Value) -> Option<Value> {
     Some(match value {
-        Value::ArrayBuffer(buffer) => buffer
-            .prototype()
-            .unwrap_or(Value::Builtin(Builtin::ArrayBufferPrototype)),
+        Value::ArrayBuffer(buffer) => buffer.prototype().unwrap_or(Value::Builtin(if buffer.shared {
+            Builtin::SharedArrayBufferPrototype
+        } else {
+            Builtin::ArrayBufferPrototype
+        })),
         Value::DataView(view) => view
             .prototype()
             .unwrap_or(Value::Builtin(Builtin::DataViewPrototype)),
