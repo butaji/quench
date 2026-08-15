@@ -22,6 +22,7 @@ struct ArgumentLive {
 impl ArrayData {
     pub fn new(values: Vec<Value>) -> Self {
         let length = values.len();
+        let live_values = values.clone();
         Self {
             values,
             length,
@@ -32,7 +33,7 @@ impl ArrayData {
             mapped: Vec::new(),
             deleted: Vec::new(),
         argument_live: Some(Rc::new(RefCell::new(ArgumentLive {
-            values: values.clone(),
+            values: live_values,
             length,
             mapped: Vec::new(),
             deleted: Vec::new(),
