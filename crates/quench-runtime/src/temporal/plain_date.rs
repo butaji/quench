@@ -332,6 +332,20 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
     if let Value::Object(object) = value {
+        if let Ok(Value::String(code)) = field(object, "monthCode") {
+            if crate::conversion::is_symbol(&Value::String(code.clone())) {
+                return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+            }
+            let syntax = code.len() == 3 || code.len() == 4 && code.ends_with('L');
+            if !syntax
+                || !code.starts_with('M')
+                || !code[1..3]
+                    .chars()
+                    .all(|character| character.is_ascii_digit())
+            {
+                return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+            }
+        }
         if let Ok(calendar) = field(object, "calendar") {
             let Value::String(calendar) = calendar else {
                 return Err(crate::value::error::throw_type_error("Invalid calendar"));
