@@ -70,16 +70,8 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return Some(property_value(value));
     }
-    if let Some(realm) = realm::id_for_global(properties) {
-        return Some(global_property(properties, key, Some(realm)));
-    }
-    if GLOBAL_OBJECT.with(|global| {
-        global
-            .borrow()
-            .as_ref()
-            .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
-    }) {
-        return Some(global_property(properties, key, None));
+    if let Some(value) = global_object_property(properties, key) {
+        return Some(value);
     }
     if let Some(value) = boxed_string_property(properties, key) {
         return Some(value);
@@ -88,6 +80,19 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
         .iter()
         .any(|(name, value)| name == "\0prototype" && matches!(value, Value::Null));
     null_prototype.then_some(Value::Undefined)
+}
+
+fn global_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
+    if let Some(realm) = realm::id_for_global(properties) {
+        return Some(global_property(properties, key, Some(realm)));
+    }
+    GLOBAL_OBJECT.with(|global| {
+        global
+            .borrow()
+            .as_ref()
+            .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
+            .then(|| global_property(properties, key, None))
+    })
 }
 
 fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
