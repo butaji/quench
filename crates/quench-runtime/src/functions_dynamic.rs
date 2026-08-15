@@ -175,7 +175,7 @@ fn function_source(
         (_, true) => "async function",
         (_, false) => "function",
     };
-    Ok(format!("{prefix} anonymous({parameters}){{{body}}}"))
+    Ok(format!("{prefix} anonymous({parameters}\n){{{body}\n}}"))
 }
 
 fn to_string(value: &Value) -> Result<String, VmError> {
