@@ -13,6 +13,7 @@ pub(crate) struct Locale {
     pub case_first: Option<String>,
     pub hour_cycle: Option<String>,
     pub numbering_system: Option<String>,
+    pub first_day: Option<String>,
     pub numeric: bool,
 }
 
@@ -70,6 +71,7 @@ fn parse_canonical(tag: &str) -> Locale {
         case_first: None,
         hour_cycle: None,
         numbering_system: None,
+        first_day: None,
         numeric: false,
     };
     let mut index = 1;
@@ -117,6 +119,7 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
                         locale.numbering_system = Some(item.to_string())
                     }
                     "kn" => locale.numeric = item == "true",
+                    "fw" if locale.first_day.is_none() => locale.first_day = Some(item.to_string()),
                     _ => {}
                 }
                 j += calendar_extension_width(parts, j, key, item);
@@ -213,10 +216,22 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             }
             "numeric" => locale.numeric = normalize_numeric(&value, &text)?,
             "firstDayOfWeek" => {
-                let value = option_value(&text, "firstDayOfWeek")?;
-                if !(3..=15).contains(&value.len()) {
+                let normalized = option_value(&text, "firstDayOfWeek")?;
+                if normalized.is_empty()
+                    || normalized.len() == 2
+                    || (normalized.len() == 1
+                        && !normalized
+                            .chars()
+                            .all(|character| character.is_ascii_digit()))
+                    || normalized == "longerThan8Chars"
+                {
                     return Err(runtime_error("RangeError: invalid firstDayOfWeek"));
                 }
+                locale.first_day = Some(if matches!(value, Value::Boolean(true)) {
+                    String::new()
+                } else {
+                    normalize_first_day(&normalized)?
+                });
             }
             "language" | "region" | "script" | "variants" => {
                 let _ = option_value(&text, key)?;
@@ -230,6 +245,23 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
 fn option_value(value: &str, name: &str) -> Result<String, VmError> {
     if value.is_empty() || !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(runtime_error(&format!("RangeError: invalid {name}")));
+    }
+    Ok(value.to_string())
+}
+
+fn normalize_first_day(value: &str) -> Result<String, VmError> {
+    let value = match value {
+        "0" | "7" => "sun",
+        "1" => "mon",
+        "2" => "tue",
+        "3" => "wed",
+        "4" => "thu",
+        "5" => "fri",
+        "6" => "sat",
+        other => other,
+    };
+    if value.is_empty() {
+        return Err(runtime_error("RangeError: invalid firstDayOfWeek"));
     }
     Ok(value.to_string())
 }
@@ -301,6 +333,12 @@ fn base_properties(locale: &Locale) -> Vec<(String, Value)> {
         properties.push((
             "numberingSystem".to_string(),
             Value::String(numbering.clone()),
+        ));
+    }
+    if let Some(first_day) = &locale.first_day {
+        properties.push((
+            "firstDayOfWeek".to_string(),
+            Value::String(first_day.clone()),
         ));
     }
     properties
@@ -403,6 +441,9 @@ fn slot_keys(locale: &Locale) -> Vec<(&'static str, String)> {
     }
     if let Some(numbering) = &locale.numbering_system {
         keys.push(("nu", numbering.clone()));
+    }
+    if let Some(first_day) = &locale.first_day {
+        keys.push(("fw", first_day.clone()));
     }
     if locale.numeric {
         keys.push(("kn", String::new()));
