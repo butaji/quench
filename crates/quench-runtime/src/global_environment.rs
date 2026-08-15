@@ -13,7 +13,11 @@ struct Descriptor {
 pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     match op {
         Op::CheckGlobalFunction { name } => check_function(name),
-        Op::CheckGlobalVar { name, is_lexical } => check_var(name, *is_lexical),
+        Op::CheckGlobalVar {
+            name,
+            is_lexical,
+            is_eval,
+        } => check_var(name, *is_lexical, *is_eval),
         Op::CreateGlobalFunction {
             name,
             slot,
@@ -49,7 +53,7 @@ fn check_function(name: &str) -> Result<(), VmError> {
     Ok(())
 }
 
-fn check_var(name: &str, is_lexical: bool) -> Result<(), VmError> {
+fn check_var(name: &str, is_lexical: bool, is_eval: bool) -> Result<(), VmError> {
     // The reducer conflates var and lexical declarations under CheckGlobalVar.
     // Lexical declarations (let/const/class) must throw SyntaxError on existing
     // or restricted bindings, while var declarations follow CanDeclareGlobalVar:
@@ -58,6 +62,8 @@ fn check_var(name: &str, is_lexical: bool) -> Result<(), VmError> {
     if is_lexical {
         check_lexical_declaration(name)?;
         Ok(())
+    } else if is_eval && crate::locals::global_has_lexical_name(name) {
+        lexical_collision(name)
     } else if own_descriptor(name).is_some() {
         Ok(())
     } else if !is_global_extensible() {
