@@ -366,15 +366,15 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
             ));
         }
     }
-    if matches!(value, Value::Proxy(_)) {
-        define_proxy_stack(value, stack.clone())?;
-        return Ok(Value::Undefined);
-    }
     let Value::String(_) = stack else {
         return Err(crate::value::error::throw_type_error(
             "Stack value must be a string",
         ));
     };
+    if matches!(value, Value::Proxy(_)) {
+        define_proxy_stack(value, stack.clone())?;
+        return Ok(Value::Undefined);
+    }
     let key = Value::String("stack".to_string());
     let descriptor = crate::builtins::object::descriptor(Some(value), Some(&key))?;
     if matches!(descriptor, Value::Undefined) {
@@ -385,7 +385,9 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
     } else if matches!(
         crate::execute::get_property(&descriptor, "writable"),
         Value::Boolean(false)
-    ) {
+    ) || !matches!(crate::execute::get_property(&descriptor, "get"), Value::Undefined)
+        && matches!(crate::execute::get_property(&descriptor, "set"), Value::Undefined)
+    {
         return Err(crate::value::error::throw_type_error(
             "Cannot assign to read-only property 'stack'",
         ));
