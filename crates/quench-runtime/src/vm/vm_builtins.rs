@@ -638,7 +638,12 @@ fn shared_array_buffer_slice(
     let species = if matches!(constructor, Value::Undefined) {
         Value::Builtin(Builtin::SharedArrayBuffer)
     } else {
-        crate::execute::get_property_result(&constructor, "Symbol.species")?
+        let value = crate::execute::get_property_result(&constructor, "Symbol.species")?;
+        if !matches!(value, Value::Undefined) {
+            value
+        } else {
+            species_property(&constructor)
+        }
     };
     let species = if matches!(species, Value::Undefined | Value::Null) {
         Value::Builtin(Builtin::SharedArrayBuffer)
@@ -659,6 +664,17 @@ fn shared_array_buffer_slice(
     let copy_length = result.bytes.borrow().len().min(bytes.len());
     result.bytes.borrow_mut()[..copy_length].copy_from_slice(&bytes[..copy_length]);
     Ok(Value::ArrayBuffer(result))
+}
+
+fn species_property(constructor: &Value) -> Value {
+    let Value::Object(properties) = constructor else {
+        return Value::Undefined;
+    };
+    properties
+        .iter()
+        .rev()
+        .find(|(key, _)| key.starts_with("Symbol.species\0"))
+        .map_or(Value::Undefined, |(_, value)| value.clone())
 }
 
 fn slice_index(value: Option<&Value>, length: i64) -> Result<Option<i64>, VmError> {
