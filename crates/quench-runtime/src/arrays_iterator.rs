@@ -1,9 +1,4 @@
-use std::rc::Rc;
-
 fn array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    if let Some(Value::Array(data)) = receiver {
-        return Ok(crate::collections::iterator::make_array(Rc::clone(data)));
-    }
     Ok(crate::collections::iterator::make(array_iterator_values(receiver)?))
 }
 
