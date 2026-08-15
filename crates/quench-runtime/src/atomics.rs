@@ -295,6 +295,9 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
             return Ok(Value::String("timed-out".into()));
         }
         if timeout < 1_000.0 {
+            if timeout.is_finite() && timeout > 0.0 {
+                std::thread::sleep(std::time::Duration::from_secs_f64(timeout / 1_000.0));
+            }
             return Ok(Value::String("timed-out".into()));
         }
         let result = Rc::new(Cell::new(false));
