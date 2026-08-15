@@ -108,8 +108,22 @@ fn construct_builtin_target(
     {
         return construct_shared_array_buffer_with_target(builtin, target, new_target, arguments);
     }
+    let prototype = if builtin == crate::ops::Builtin::ArrayBuffer
+        && !crate::builtins::same_value(Some(target), Some(new_target))
+    {
+        Some(crate::execute::get_property_result(
+            new_target,
+            "prototype",
+        )?)
+    } else {
+        None
+    };
     let value = construct_builtin(builtin, arguments)?;
-    let value = with_new_target_prototype(value, target, new_target)?;
+    let value = if let Some(prototype) = prototype {
+        apply_new_target_prototype(value, target, new_target, prototype)?
+    } else {
+        with_new_target_prototype(value, target, new_target)?
+    };
     validate_data_view(&value)?;
     Ok(value)
 }
@@ -177,6 +191,15 @@ fn with_new_target_prototype(
         return Ok(value);
     }
     let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+    apply_new_target_prototype(value, target, new_target, prototype)
+}
+
+fn apply_new_target_prototype(
+    value: Value,
+    target: &Value,
+    new_target: &Value,
+    prototype: Value,
+) -> Result<Value, crate::execute::VmError> {
     let prototype = if crate::value::is_object(&prototype) {
         Some(prototype)
     } else {
