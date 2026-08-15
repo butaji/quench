@@ -123,6 +123,9 @@ pub(crate) fn define(value: &Value, name: PrivateName, initial: Value) -> Result
 }
 
 fn define_slot(value: &Value, name: PrivateName, slot: PrivateSlot) -> Result<(), VmError> {
+    if crate::builtins::is_module_namespace(value) {
+        return Err(private_brand_error());
+    }
     let slots = slots(value)?;
     let mut slots = slots.borrow_mut();
     if slots.iter().any(|(id, _)| id == &name) {
