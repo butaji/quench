@@ -1,12 +1,13 @@
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
-    let values = (0..6)
-        .map(|index| number(arguments.get(index)))
-        .map(|value| value.map(f64::trunc))
-        .collect::<Result<Vec<_>, _>>()?;
-    if values.iter().any(|value| !value.is_finite()) {
-        return Err(crate::value::error::throw_range_error("Invalid time"));
+    let mut values = Vec::with_capacity(6);
+    for index in 0..6 {
+        let value = number(arguments.get(index))?.trunc();
+        if !value.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid time"));
+        }
+        values.push(if value == 0.0 { 0.0 } else { value });
     }
     if !(0.0..=23.0).contains(&values[0])
         || !(0.0..=59.0).contains(&values[1])
