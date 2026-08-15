@@ -128,7 +128,7 @@ pub(crate) fn wrap_shadow_function_with_caller(
     )))
 }
 
-fn shadow_function_properties(target: &Value, name: &str, length: f64) -> Vec<(String, Value)> {
+fn shadow_function_properties(_target: &Value, name: &str, length: f64) -> Vec<(String, Value)> {
     vec![
         ("name".to_string(), Value::String(name.to_string())),
         (
