@@ -58,6 +58,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "drop" {
         return Some(Value::Builtin(IteratorDrop));
     }
+    if builtin == IteratorPrototype && key == "map" {
+        return Some(Value::Builtin(IteratorMap));
+    }
     if builtin == IteratorPrototype && key == "Symbol.dispose" {
         return Some(Value::Builtin(IteratorReturn));
     }
