@@ -30,6 +30,32 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Number(0.0))
 }
 
+pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Int32Array(view)) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics.wait requires an Int32Array",
+        ));
+    };
+    if !view.buffer.shared {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics.wait requires a shared buffer",
+        ));
+    }
+    let index = atomic_index(arguments.get(1))?;
+    let expected = atomic_value(arguments.get(2))?;
+    let current = view.get(index).ok_or_else(|| {
+        crate::value::error::throw_range_error("Atomics.wait index is out of range")
+    })?;
+    if current != expected {
+        return Ok(Value::String("not-equal".into()));
+    }
+    let _timeout = arguments
+        .get(3)
+        .map(crate::conversion::to_number)
+        .transpose()?;
+    Ok(Value::String("timed-out".into()))
+}
+
 pub(crate) fn execute(
     builtin: Builtin,
     _receiver: Option<&Value>,
