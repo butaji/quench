@@ -129,6 +129,18 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
             accessor_descriptor(Builtin::RegExpLegacyGetter)
         });
     }
+    let getter = intrinsic_getter(builtin, key)?;
+    let descriptor = match (builtin, key) {
+        (Builtin::ErrorPrototype, "stack") => accessor_descriptor_with_setter(
+            Builtin::ErrorPrototypeStackGetter,
+            Some(Builtin::ErrorPrototypeStackSetter),
+        ),
+        _ => accessor_descriptor_with_setter(getter, None),
+    };
+    Some(descriptor)
+}
+
+fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
     let getter = match (builtin, key) {
         (Builtin::RegExpPrototype, "source") => Builtin::RegExpSourceGetter,
         (Builtin::RegExpPrototype, "flags") => Builtin::RegExpFlagsGetter,
@@ -186,14 +198,7 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::IntlLocalePrototype, "variants") => Builtin::IntlLocaleVariantsGetter,
         _ => return None,
     };
-    let descriptor = match (builtin, key) {
-        (Builtin::ErrorPrototype, "stack") => accessor_descriptor_with_setter(
-            Builtin::ErrorPrototypeStackGetter,
-            Some(Builtin::ErrorPrototypeStackSetter),
-        ),
-        _ => accessor_descriptor_with_setter(getter, None),
-    };
-    Some(descriptor)
+    Some(getter)
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
