@@ -137,7 +137,17 @@ fn accessor_builtin(builtin: Builtin, key: &str, field: &str) -> Option<Value> {
 /// Accessor properties that are intrinsic to a builtin itself (get-only, no
 /// runtime override needed), e.g. `get Set [@@species]`.
 fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
-    let getter = match (builtin, key) {
+    let getter = static_accessor_builtin(builtin, key)?;
+    Some(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            ("get".to_string(), Value::Builtin(getter)),
+            ("set".to_string(), Value::Undefined),
+        ]),
+    )))
+}
+
+fn static_accessor_builtin(builtin: Builtin, key: &str) -> Option<Builtin> {
+    Some(match (builtin, key) {
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
@@ -171,13 +181,7 @@ fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::IntlLocalePrototype, "textInfo") => Builtin::IntlLocaleTextInfoGetter,
         (Builtin::IntlLocalePrototype, "variants") => Builtin::IntlLocaleVariantsGetter,
         _ => return None,
-    };
-    Some(Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(vec![
-            ("get".to_string(), Value::Builtin(getter)),
-            ("set".to_string(), Value::Undefined),
-        ]),
-    )))
+    })
 }
 
 fn field_key(descriptor_key: &str) -> &str {
