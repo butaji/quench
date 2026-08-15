@@ -134,7 +134,8 @@ fn iterator_property_value(value: &Value, property: Value) -> Value {
     if matches!(
         property,
         Value::Builtin(
-            Builtin::RegExpStringIteratorNext
+            Builtin::IteratorNext
+                | Builtin::RegExpStringIteratorNext
                 | Builtin::StringIteratorNext
                 | Builtin::SetIteratorNext
                 | Builtin::MapIteratorNext
@@ -464,7 +465,8 @@ fn bind_receiver_property(property: Value, receiver: &Value) -> Value {
 fn is_iterator_next_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::RegExpStringIteratorNext
+        Builtin::IteratorNext
+            | Builtin::RegExpStringIteratorNext
             | Builtin::StringIteratorNext
             | Builtin::SetIteratorNext
             | Builtin::MapIteratorNext
