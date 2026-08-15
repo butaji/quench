@@ -639,13 +639,13 @@ impl NumberOptions {
             parts.push(crate::intl::number_format::percent_part());
             return parts;
         }
-        if self.style == "decimal" && self.unit.is_none() {
-            if number.is_infinite()
+        if self.style == "decimal"
+            && self.unit.is_none()
+            && (number.is_infinite()
                 || number.is_nan()
-                || (formatted.starts_with(['-', '+']) && !formatted.contains('.'))
-            {
-                return numeric_parts(&formatted, &self.locale);
-            }
+                || (formatted.starts_with(['-', '+']) && !formatted.contains('.')))
+        {
+            return numeric_parts(&formatted, &self.locale);
         }
         numeric_parts(&self.format_number(number), &self.locale)
     }

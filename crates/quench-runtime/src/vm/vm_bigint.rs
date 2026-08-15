@@ -76,10 +76,11 @@ fn bigint_to_locale_string(
         Value::String(value) => Some(value.as_str()),
         _ => None,
     });
-    let separator = locale
-        .is_some_and(|value| value.starts_with("de"))
-        .then_some('.')
-        .unwrap_or(',');
+    let separator = if locale.is_some_and(|value| value.starts_with("de")) {
+        '.'
+    } else {
+        ','
+    };
     Ok(Value::String(group_bigint(&value, separator)))
 }
 
@@ -94,10 +95,11 @@ fn bigint_fraction_format(value: &str, arguments: &[Value]) -> Option<String> {
         Value::String(value) => Some(value.as_str()),
         _ => None,
     });
-    let grouping = locale
-        .is_some_and(|value| value.starts_with("de"))
-        .then_some('.')
-        .unwrap_or(',');
+    let grouping = if locale.is_some_and(|value| value.starts_with("de")) {
+        '.'
+    } else {
+        ','
+    };
     let decimal = if grouping == '.' { ',' } else { '.' };
     Some(format!(
         "{}{decimal}{}",
@@ -129,10 +131,11 @@ fn bigint_significant_format(value: &str, arguments: &[Value]) -> Option<String>
         Value::String(value) => Some(value.as_str()),
         _ => None,
     });
-    let separator = locale
-        .is_some_and(|value| value.starts_with("de"))
-        .then_some('.')
-        .unwrap_or(',');
+    let separator = if locale.is_some_and(|value| value.starts_with("de")) {
+        '.'
+    } else {
+        ','
+    };
     let mut result = group_bigint(&rounded, separator);
     if is_percent {
         if locale.is_some_and(|value| value.starts_with("de")) {

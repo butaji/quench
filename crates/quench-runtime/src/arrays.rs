@@ -469,6 +469,10 @@ fn same_value_zero(left: &Value, right: &Value) -> bool {
     crate::builtins::same_value_zero(left, right)
 }
 
+include!("arrays_concat.rs");
+include!("arrays_slice.rs");
+include!("arrays_index_of.rs");
+
 #[cfg(test)]
 mod tests {
     use super::index_of;
@@ -484,7 +488,3 @@ mod tests {
         assert_eq!(result, Ok(Value::Number(-1.0)));
     }
 }
-
-include!("arrays_concat.rs");
-include!("arrays_slice.rs");
-include!("arrays_index_of.rs");
