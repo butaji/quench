@@ -85,7 +85,12 @@ impl LinkedModuleGraph {
             // Both pointed-to graphs are borrowed by the caller for that duration.
             let target = ModuleId(id);
             unsafe { (&*graph_ptr).execute(&*module_graph_ptr, target) }
-                .map(|_| Value::Undefined)
+                .map(|_| {
+                    if let Some(unit) = unsafe { (&*graph_ptr).units.get(&target) } {
+                        unit.complete_deferred_namespace();
+                    }
+                    Value::Undefined
+                })
                 .map_err(quench_runtime::execute::VmError::EvalError)
         }));
         for id in graph.dependency_order(entry)? {
@@ -277,17 +282,18 @@ fn namespace_cell(
             ));
         }
     }
-    properties.push((
-        "Symbol.toStringTag".to_string(),
-        quench_runtime::value::Value::String("Module".to_string()),
-    ));
+    let tag_value = if deferred {
+        Value::BindingCell(Rc::new(RefCell::new(Value::String(
+            "Deferred Module".to_string(),
+        ))))
+    } else {
+        Value::String("Module".to_string())
+    };
+    properties.push(("Symbol.toStringTag".to_string(), tag_value.clone()));
     properties.push((
         "\0quench:descriptor:\0Symbol.toStringTag".to_string(),
         quench_runtime::value::Value::object(vec![
-            (
-                "value".to_string(),
-                quench_runtime::value::Value::String("Module".to_string()),
-            ),
+            ("value".to_string(), tag_value),
             (
                 "writable".to_string(),
                 quench_runtime::value::Value::Boolean(false),
@@ -529,6 +535,22 @@ impl LinkedModule {
         self.linked_exports.borrow_mut().clear();
         self.export_candidates.borrow_mut().clear();
         self.ambiguous_exports.borrow_mut().clear();
+    }
+
+    fn complete_deferred_namespace(&self) {
+        let Some(namespace) = self.namespace.borrow().as_ref().cloned() else {
+            return;
+        };
+        let Value::Object(properties) = namespace.get() else {
+            return;
+        };
+        for (key, value) in properties.iter() {
+            if key == "Symbol.toStringTag" {
+                if let Value::BindingCell(cell) = value {
+                    cell.replace(Value::String("Module".to_string()));
+                }
+            }
+        }
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
