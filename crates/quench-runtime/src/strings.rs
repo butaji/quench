@@ -173,6 +173,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "search" => Some(crate::ops::Builtin::StringSearch),
         "localeCompare" => Some(crate::ops::Builtin::StringLocaleCompare),
         "match" => Some(crate::ops::Builtin::StringMatch),
+        "matchAll" => Some(crate::ops::Builtin::StringMatchAll),
         _ => None,
     }
 }
@@ -216,6 +217,7 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringSearch => Ok(search(receiver, arguments)),
         crate::ops::Builtin::StringLocaleCompare => locale_compare(receiver, arguments),
         crate::ops::Builtin::StringMatch => string_match(receiver, arguments),
+        crate::ops::Builtin::StringMatchAll => string_match_all(receiver, arguments),
         _ => return None,
     };
     Some(result)
