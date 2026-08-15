@@ -328,6 +328,12 @@ fn bind_imports(
                 .bind_import(&binding.local, cell)?;
         }
     }
+    for unit in units.values() {
+        for name in unit.export_names() {
+            unit.refresh_namespace_export(&name);
+            unit.refresh_deferred_namespace_export(&name);
+        }
+    }
     Ok(())
 }
 
@@ -851,7 +857,15 @@ impl LinkedModule {
     }
 
     fn refresh_namespace_export(&self, name: &str) {
-        let Some(namespace) = self.namespace.borrow().as_ref().cloned() else {
+        self.refresh_namespace_export_in(&self.namespace, name);
+    }
+
+    fn refresh_deferred_namespace_export(&self, name: &str) {
+        self.refresh_namespace_export_in(&self.deferred_namespace, name);
+    }
+
+    fn refresh_namespace_export_in(&self, cache: &RefCell<Option<ModuleBindingCell>>, name: &str) {
+        let Some(namespace) = cache.borrow().as_ref().cloned() else {
             return;
         };
         let Some(cell) = self
