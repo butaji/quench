@@ -87,15 +87,14 @@ fn construct_with_new_target(
     new_target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let result = match target {
+    match target {
         Value::Builtin(builtin) => {
             construct_builtin_target(*builtin, target, new_target, arguments)
         }
         Value::Function(function) => construct_function(function, new_target, arguments),
         Value::BoundFunction(bound) => construct_bound(bound, target, new_target, arguments),
         _ => Err(crate::vm::not_callable()),
-    };
-    result
+    }
 }
 
 fn construct_builtin_target(
