@@ -7,7 +7,6 @@ pub struct IteratorData {
 pub enum IteratorState {
     Native {
         values: Vec<Value>,
-        receiver: Option<Rc<crate::value::ArrayData>>,
         index: usize,
         done: bool,
     },

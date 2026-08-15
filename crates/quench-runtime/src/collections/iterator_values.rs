@@ -154,18 +154,6 @@ pub(crate) fn make(values: Vec<Value>) -> Value {
     Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Native {
             values,
-            receiver: None,
-            index: 0,
-            done: false,
-        }),
-    }))
-}
-
-pub(crate) fn make_array(data: Rc<crate::value::ArrayData>) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Native {
-            values: Vec::new(),
-            receiver: Some(data),
             index: 0,
             done: false,
         }),
