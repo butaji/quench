@@ -851,11 +851,6 @@ impl NumberOptions {
                 "Invalid number range",
             ));
         }
-        if start > end {
-            return Err(crate::value::error::throw_range_error(
-                "Number range start is greater than end",
-            ));
-        }
         Ok((start, end))
     }
 
@@ -923,7 +918,20 @@ impl NumberOptions {
 
     fn range_parts(&self, arguments: &[Value]) -> Result<Vec<Value>, VmError> {
         let (start, end) = self.range_values(arguments)?;
-        let mut parts = self.parts(start);
+        let mut parts = add_range_source(self.parts(start), "startRange")?;
+        if start != end && self.format_number(start) == self.format_number(end) {
+            parts.insert(
+                0,
+                make_object(vec![
+                    (
+                        "type".to_string(),
+                        Value::String("approximatelySign".to_string()),
+                    ),
+                    ("value".to_string(), Value::String("~".to_string())),
+                ]),
+            );
+            return add_range_source(parts, "shared");
+        }
         if start != end {
             let separator = if self.locale.starts_with("pt") && self.style == "currency" {
                 " - "
@@ -932,13 +940,25 @@ impl NumberOptions {
             } else {
                 " – "
             };
-            parts.push(make_object(vec![
+            let separator = make_object(vec![
                 ("type".to_string(), Value::String("literal".to_string())),
                 ("value".to_string(), Value::String(separator.to_string())),
-            ]));
-            parts.extend(self.parts(end));
+            ]);
+            parts.extend(add_range_source(vec![separator], "shared")?);
+            parts.extend(add_range_source(self.parts(end), "endRange")?);
+            return Ok(parts);
         }
-        Ok(parts)
+        parts.insert(
+            0,
+            make_object(vec![
+                (
+                    "type".to_string(),
+                    Value::String("approximatelySign".to_string()),
+                ),
+                ("value".to_string(), Value::String("~".to_string())),
+            ]),
+        );
+        add_range_source(parts, "shared")
     }
 
     fn resolved(&self) -> Value {
@@ -1021,6 +1041,24 @@ impl NumberOptions {
         }
         make_object(properties)
     }
+}
+
+fn add_range_source(parts: Vec<Value>, source: &str) -> Result<Vec<Value>, VmError> {
+    parts
+        .into_iter()
+        .map(|part| {
+            crate::builtins::define_own_property(
+                &part,
+                "source",
+                &[
+                    ("value".to_string(), Value::String(source.to_string())),
+                    ("writable".to_string(), Value::Boolean(true)),
+                    ("enumerable".to_string(), Value::Boolean(true)),
+                    ("configurable".to_string(), Value::Boolean(true)),
+                ],
+            )
+        })
+        .collect()
 }
 
 fn japanese_speed_parts(formatted: &str) -> Vec<Value> {
