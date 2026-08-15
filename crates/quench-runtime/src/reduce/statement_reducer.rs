@@ -1,4 +1,12 @@
 impl StatementReducer {
+    pub(super) fn set_source_type(&mut self, source_type: SourceType) {
+        self.script = source_type.is_script();
+        if source_type.is_module() {
+            self.locals.remove(SCRIPT_THIS_SLOT);
+            self.locals.insert(MODULE_THIS_SLOT.to_string(), 0);
+        }
+    }
+
     pub(super) fn local_slots(&self) -> HashMap<String, u16> {
         self.locals.clone()
     }
@@ -60,7 +68,9 @@ impl StatementReducer {
 
 fn initialize_statement_locals(source_type: SourceType) -> HashMap<String, u16> {
     let mut locals = HashMap::from([(GLOBAL_THIS.to_string(), 0)]);
-    if !source_type.is_module() {
+    if source_type.is_module() {
+        locals.insert(super::reduce_statements::MODULE_THIS_SLOT.to_string(), 0);
+    } else {
         locals.insert(SCRIPT_THIS_SLOT.to_string(), 0);
     }
     locals
