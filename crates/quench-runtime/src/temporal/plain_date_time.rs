@@ -1,5 +1,5 @@
 use crate::{execute::VmError, value::Value};
-use chrono::{Datelike, Duration as CalendarDuration, NaiveDate};
+use chrono::{Datelike, Duration as CalendarDuration, NaiveDate, Timelike};
 
 const NAMES: [&str; 9] = [
     "year",
@@ -514,6 +514,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
+    if let Some(result) = from_zoned(value, options)? {
+        return result;
+    }
     let year = crate::execute::get_property_result(value, "year")?;
     let day = crate::execute::get_property_result(value, "day")?;
     let month = crate::execute::get_property_result(value, "month")?;
@@ -559,6 +562,56 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
     construct(&fields)
+}
+
+fn from_zoned(
+    value: &Value,
+    _options: Option<&Value>,
+) -> Result<Option<Result<Value, VmError>>, VmError> {
+    let epoch = crate::execute::get_property_result(value, "epochNanoseconds")?;
+    let Value::BigInt(epoch) = epoch else {
+        return Ok(None);
+    };
+    let epoch = epoch
+        .parse::<i128>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid date-time"))?;
+    let zone = crate::execute::get_property_result(value, "timeZoneId")?;
+    let offset = match zone {
+        Value::String(zone) if zone.starts_with(['+', '-']) => parse_offset_minutes(&zone)?,
+        _ => 0,
+    };
+    let local = epoch + i128::from(offset) * 60_000_000_000;
+    let seconds = local.div_euclid(1_000_000_000) as i64;
+    let nanos = local.rem_euclid(1_000_000_000) as u32;
+    let date_time = chrono::DateTime::from_timestamp(seconds, nanos)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
+    let fields = vec![
+        Value::Number(date_time.year() as f64),
+        Value::Number(date_time.month() as f64),
+        Value::Number(date_time.day() as f64),
+        Value::Number(date_time.hour() as f64),
+        Value::Number(date_time.minute() as f64),
+        Value::Number(date_time.second() as f64),
+        Value::Number((nanos / 1_000_000) as f64),
+        Value::Number(((nanos / 1_000) % 1_000) as f64),
+        Value::Number((nanos % 1_000) as f64),
+    ];
+    Ok(Some(construct(&fields)))
+}
+
+fn parse_offset_minutes(zone: &str) -> Result<i64, VmError> {
+    let sign = if zone.starts_with('-') { -1 } else { 1 };
+    let parts = zone[1..].split(':').collect::<Vec<_>>();
+    if parts.len() != 2 {
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
+    let hours = parts[0]
+        .parse::<i64>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid time zone"))?;
+    let minutes = parts[1]
+        .parse::<i64>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid time zone"))?;
+    Ok(sign * (hours * 60 + minutes))
 }
 
 fn overflow_reject(options: Option<&Value>) -> bool {
