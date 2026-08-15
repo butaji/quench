@@ -356,8 +356,12 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         };
         format!(".{text}")
     };
+    let calendar_suffix = options
+        .and_then(|value| crate::execute::get_property_result(value, "calendarName").ok())
+        .filter(|value| matches!(value, Value::String(value) if value == "always"))
+        .map_or(String::new(), |_| "[u-ca=iso8601]".into());
     Ok(Value::String(format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{suffix}",
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{suffix}{calendar_suffix}",
         values[0], values[1], values[2], values[3], values[4], values[5]
     )))
 }
