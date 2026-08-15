@@ -1,10 +1,48 @@
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
-        Builtin::Function
-        | Builtin::AsyncFunction
-        | Builtin::GeneratorFunction
-        | Builtin::AsyncGeneratorFunction => &["length", "name", "prototype"],
-        Builtin::FunctionPrototype => &[
+        Builtin::IntlListFormat => &["length", "name", "prototype", "supportedLocalesOf"],
+        Builtin::IntlListFormatPrototype => &[
+            "constructor",
+            "format",
+            "formatToParts",
+            "resolvedOptions",
+            "Symbol.toStringTag",
+        ],
+        Builtin::IntlDateTimeFormat => &[
+            "length", "name", "prototype", "supportedLocalesOf",
+        ],
+        Builtin::IntlDateTimeFormatPrototype => &[
+            "constructor",
+            "format",
+            "formatToParts",
+            "formatRange",
+            "formatRangeToParts",
+            "resolvedOptions",
+            "Symbol.toStringTag",
+        ],
+        Builtin::IntlCollator => &[
+            "length", "name", "prototype", "supportedLocalesOf",
+        ],
+        Builtin::IntlCollatorPrototype => &[
+            "constructor", "compare", "resolvedOptions", "Symbol.toStringTag",
+        ],
+        Builtin::IntlDurationFormat => &[
+            "length", "name", "prototype", "supportedLocalesOf",
+        ],
+        Builtin::IntlDurationFormatPrototype => &[
+            "constructor", "format", "formatToParts", "resolvedOptions", "Symbol.toStringTag",
+        ],
+        Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
+        Builtin::BigIntPrototype => {
+            &[
+                "constructor",
+                "toString",
+                "toLocaleString",
+                "valueOf",
+                "Symbol.toStringTag",
+            ]
+        }
+        Builtin::Error => &[
             "length",
             "name",
             "arguments",

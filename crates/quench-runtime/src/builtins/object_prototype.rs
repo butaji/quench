@@ -24,25 +24,13 @@ fn prototype_for_value(value: &Value) -> Value {
     match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
         Value::Builtin(
-            Builtin::Error
-            | Builtin::EvalError
-            | Builtin::RangeError
-            | Builtin::ReferenceError
-            | Builtin::SyntaxError
-            | Builtin::TypeError
-            | Builtin::URIError
-            | Builtin::AggregateError,
-        ) => Value::Builtin(Builtin::Error),
-        Value::Builtin(
-            Builtin::EvalErrorPrototype
-            | Builtin::RangeErrorPrototype
-            | Builtin::ReferenceErrorPrototype
-            | Builtin::SyntaxErrorPrototype
-            | Builtin::TypeErrorPrototype
-            | Builtin::URIErrorPrototype
-            | Builtin::AggregateErrorPrototype,
-        ) => Value::Builtin(Builtin::ErrorPrototype),
-        Value::Builtin(Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype) => {
+            Builtin::Intl
+            | Builtin::Math
+            | Builtin::Reflect
+            | Builtin::Json
+            | Builtin::DisposableStackPrototype
+            | Builtin::AsyncDisposableStackPrototype,
+        ) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
@@ -371,14 +359,16 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
-            | Builtin::ErrorPrototype
-            | Builtin::EvalErrorPrototype
-            | Builtin::RangeErrorPrototype
-            | Builtin::ReferenceErrorPrototype
-            | Builtin::SyntaxErrorPrototype
-            | Builtin::TypeErrorPrototype
-            | Builtin::URIErrorPrototype
-            | Builtin::AggregateErrorPrototype
+            | Builtin::IntlLocalePrototype
+            | Builtin::IntlNumberFormatPrototype
+            | Builtin::IntlPluralRulesPrototype
+            | Builtin::IntlDateTimeFormatPrototype
+            | Builtin::IntlCollatorPrototype
+            | Builtin::IntlListFormatPrototype
+            | Builtin::IntlRelativeTimeFormatPrototype
+            | Builtin::IntlSegmenterPrototype
+            | Builtin::IntlDisplayNamesPrototype
+            | Builtin::IntlDurationFormatPrototype
     )
 }
 
