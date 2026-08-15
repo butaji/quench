@@ -216,7 +216,10 @@ pub(crate) fn execute_builtin(
 fn from_char_code(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let mut units = Vec::with_capacity(arguments.len());
     for value in arguments {
-        let number = crate::intl::tolocale::value::to_number_result(Some(value))?;
+        let number = match value {
+            Value::Number(number) => *number,
+            _ => crate::intl::tolocale::value::to_number_result(Some(value))?,
+        };
         units.push(crate::construct::to_uint16(number));
     }
     Ok(from_units(units))
