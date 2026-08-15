@@ -454,12 +454,12 @@ fn to_object_value_in_realm(this_value: &Value, global: &Value) -> Value {
         Value::BigInt(_) => "BigInt",
         _ => return to_object_value(this_value),
     };
+    let constructor = crate::execute::get_property(global, constructor);
+    let prototype = crate::execute::get_property(&constructor, "prototype");
     Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
         ("_value".to_string(), this_value.clone()),
-        (
-            "constructor".to_string(),
-            crate::execute::get_property(global, constructor),
-        ),
+        ("constructor".to_string(), constructor),
+        ("\0prototype".to_string(), prototype),
     ])))
 }
 
