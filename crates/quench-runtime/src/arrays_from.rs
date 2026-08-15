@@ -217,7 +217,7 @@ fn construct_result(
     let Some(constructor) = receiver else {
         return Ok(Value::array(Vec::new()));
     };
-    if !crate::conversion::is_callable(constructor) {
+    if !is_constructor(constructor) {
         return Err(crate::value::error::throw_type_error(
             "TypedArray.from receiver is not a constructor",
         ));
@@ -228,4 +228,14 @@ fn construct_result(
         vec![Value::Number(length as f64)]
     };
     crate::construct::construct_value(constructor, &arguments)
+}
+
+fn is_constructor(value: &Value) -> bool {
+    match value {
+        Value::Function(function) => crate::functions::is_constructible(function),
+        Value::BoundFunction(bound) => is_constructor(&bound.target),
+        Value::Builtin(builtin) => crate::builtin_meta::constructor_name(*builtin).is_some(),
+        Value::Proxy(proxy) => is_constructor(&proxy.target),
+        _ => false,
+    }
 }
