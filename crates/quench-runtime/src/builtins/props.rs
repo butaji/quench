@@ -110,7 +110,257 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
-        (Intl, "Symbol.toStringTag") => Some(Value::String("Intl".into())),
+        (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
+        (Temporal, "Instant") => Some(Value::Builtin(TemporalInstant)),
+        (Temporal, "ZonedDateTime") => Some(Value::Builtin(TemporalZonedDateTime)),
+        (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
+        (Temporal, "PlainDateTime") => Some(Value::Builtin(TemporalPlainDateTime)),
+        (Temporal, "PlainYearMonth") => Some(Value::Builtin(TemporalPlainYearMonth)),
+        (Temporal, "PlainMonthDay") => Some(Value::Builtin(TemporalPlainMonthDay)),
+        (Temporal, "PlainTime") => Some(Value::Builtin(TemporalPlainTime)),
+        (Temporal, "Symbol.toStringTag") => Some(Value::String("Temporal".into())),
+        (Temporal, "Now") => Some(Value::Builtin(TemporalNow)),
+        (TemporalNow, "zonedDateTimeISO") => Some(Value::Builtin(TemporalNowZonedDateTimeISO)),
+        (TemporalNow, "plainDateTimeISO") => Some(Value::Builtin(TemporalNowPlainDateTimeISO)),
+        (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
+        (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
+        (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
+        (TemporalInstant, "prototype") => Some(Value::Builtin(TemporalInstantPrototype)),
+        (TemporalInstant, "from") => Some(Value::Builtin(TemporalInstantFrom)),
+        (TemporalInstantPrototype, "epochNanoseconds") => {
+            Some(Value::Builtin(TemporalInstantEpochNanosecondsGetter))
+        }
+        (TemporalInstantPrototype, "epochMilliseconds") => {
+            Some(Value::Builtin(TemporalInstantEpochMillisecondsGetter))
+        }
+        (TemporalInstantPrototype, "toString") => Some(Value::Builtin(TemporalInstantToString)),
+        (TemporalInstantPrototype, "toJSON") => Some(Value::Builtin(TemporalInstantToJSON)),
+        (TemporalInstantPrototype, "toLocaleString") => {
+            Some(Value::Builtin(TemporalInstantToLocaleString))
+        }
+        (TemporalInstantPrototype, "toZonedDateTimeISO") => {
+            Some(Value::Builtin(TemporalInstantToZonedDateTimeISO))
+        }
+        (TemporalInstantPrototype, "equals") => Some(Value::Builtin(TemporalInstantEquals)),
+        (TemporalInstantPrototype, "add") => Some(Value::Builtin(TemporalInstantAdd)),
+        (TemporalInstantPrototype, "subtract") => Some(Value::Builtin(TemporalInstantSubtract)),
+        (TemporalZonedDateTime, "prototype") => {
+            Some(Value::Builtin(TemporalZonedDateTimePrototype))
+        }
+        (TemporalZonedDateTimePrototype, "constructor") => {
+            Some(Value::Builtin(TemporalZonedDateTime))
+        }
+        (TemporalZonedDateTimePrototype, "toString") => {
+            Some(Value::Builtin(TemporalZonedDateTimeToString))
+        }
+        (TemporalZonedDateTime, "from") => Some(Value::Builtin(TemporalZonedDateTimeFrom)),
+        (TemporalDurationPrototype, "round") => Some(Value::Builtin(TemporalDurationRound)),
+        (TemporalDurationPrototype, "total") => Some(Value::Builtin(TemporalDurationTotal)),
+        (TemporalDurationPrototype, "years") => Some(Value::Builtin(TemporalDurationYearsGetter)),
+        (TemporalDurationPrototype, "months") => Some(Value::Builtin(TemporalDurationMonthsGetter)),
+        (TemporalDurationPrototype, "weeks") => Some(Value::Builtin(TemporalDurationWeeksGetter)),
+        (TemporalDurationPrototype, "days") => Some(Value::Builtin(TemporalDurationDaysGetter)),
+        (TemporalDurationPrototype, "hours") => Some(Value::Builtin(TemporalDurationHoursGetter)),
+        (TemporalDurationPrototype, "minutes") => {
+            Some(Value::Builtin(TemporalDurationMinutesGetter))
+        }
+        (TemporalDurationPrototype, "seconds") => {
+            Some(Value::Builtin(TemporalDurationSecondsGetter))
+        }
+        (TemporalDurationPrototype, "milliseconds") => {
+            Some(Value::Builtin(TemporalDurationMillisecondsGetter))
+        }
+        (TemporalDurationPrototype, "microseconds") => {
+            Some(Value::Builtin(TemporalDurationMicrosecondsGetter))
+        }
+        (TemporalDurationPrototype, "nanoseconds") => {
+            Some(Value::Builtin(TemporalDurationNanosecondsGetter))
+        }
+        (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
+        (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
+        (TemporalPlainDate, "compare") => Some(Value::Builtin(TemporalPlainDateCompare)),
+        (TemporalPlainDatePrototype, "era") => Some(Value::Builtin(TemporalPlainDateEraGetter)),
+        (TemporalPlainDatePrototype, "eraYear") => {
+            Some(Value::Builtin(TemporalPlainDateEraYearGetter))
+        }
+        (TemporalPlainDateTime, "prototype") => {
+            Some(Value::Builtin(TemporalPlainDateTimePrototype))
+        }
+        (TemporalPlainDateTime, "from") => Some(Value::Builtin(TemporalPlainDateTimeFrom)),
+        (TemporalPlainDateTime, "compare") => Some(Value::Builtin(TemporalPlainDateTimeCompare)),
+        (TemporalPlainDateTimePrototype, "constructor") => {
+            Some(Value::Builtin(TemporalPlainDateTime))
+        }
+        (TemporalPlainDateTimePrototype, "calendarId") => {
+            Some(Value::Builtin(TemporalPlainDateTimeCalendarIdGetter))
+        }
+        (TemporalPlainDateTimePrototype, "year") => {
+            Some(Value::Builtin(TemporalPlainDateTimeYearGetter))
+        }
+        (TemporalPlainDateTimePrototype, "month") => {
+            Some(Value::Builtin(TemporalPlainDateTimeMonthGetter))
+        }
+        (TemporalPlainDateTimePrototype, "monthCode") => {
+            Some(Value::Builtin(TemporalPlainDateTimeMonthCodeGetter))
+        }
+        (TemporalPlainDateTimePrototype, "day") => {
+            Some(Value::Builtin(TemporalPlainDateTimeDayGetter))
+        }
+        (TemporalPlainDateTimePrototype, "hour") => {
+            Some(Value::Builtin(TemporalPlainDateTimeHourGetter))
+        }
+        (TemporalPlainDateTimePrototype, "minute") => {
+            Some(Value::Builtin(TemporalPlainDateTimeMinuteGetter))
+        }
+        (TemporalPlainDateTimePrototype, "second") => {
+            Some(Value::Builtin(TemporalPlainDateTimeSecondGetter))
+        }
+        (TemporalPlainDateTimePrototype, "millisecond") => {
+            Some(Value::Builtin(TemporalPlainDateTimeMillisecondGetter))
+        }
+        (TemporalPlainDateTimePrototype, "microsecond") => {
+            Some(Value::Builtin(TemporalPlainDateTimeMicrosecondGetter))
+        }
+        (TemporalPlainDateTimePrototype, "nanosecond") => {
+            Some(Value::Builtin(TemporalPlainDateTimeNanosecondGetter))
+        }
+        (TemporalPlainDateTimePrototype, "toString") => {
+            Some(Value::Builtin(TemporalPlainDateTimeToString))
+        }
+        (TemporalPlainDateTimePrototype, "toJSON") => {
+            Some(Value::Builtin(TemporalPlainDateTimeToJSON))
+        }
+        (TemporalPlainDateTimePrototype, "toLocaleString") => {
+            Some(Value::Builtin(TemporalPlainDateTimeToLocaleString))
+        }
+        (TemporalPlainDateTimePrototype, "equals") => {
+            Some(Value::Builtin(TemporalPlainDateTimeEquals))
+        }
+        (TemporalPlainDateTimePrototype, "valueOf") => {
+            Some(Value::Builtin(TemporalPlainDateTimeValueOf))
+        }
+        (TemporalPlainDateTimePrototype, "add") => Some(Value::Builtin(TemporalPlainDateTimeAdd)),
+        (TemporalPlainDateTimePrototype, "subtract") => {
+            Some(Value::Builtin(TemporalPlainDateTimeSubtract))
+        }
+        (TemporalPlainDateTimePrototype, "with") => Some(Value::Builtin(TemporalPlainDateTimeWith)),
+        (TemporalPlainDateTimePrototype, "round") => {
+            Some(Value::Builtin(TemporalPlainDateTimeRound))
+        }
+        (TemporalPlainDateTimePrototype, "toZonedDateTime") => {
+            Some(Value::Builtin(TemporalPlainDateTimeToZonedDateTime))
+        }
+        (TemporalPlainTime, "prototype") => Some(Value::Builtin(TemporalPlainTimePrototype)),
+        (TemporalPlainTime, "from") => Some(Value::Builtin(TemporalPlainTimeFrom)),
+        (TemporalPlainTime, "compare") => Some(Value::Builtin(TemporalPlainTimeCompare)),
+        (TemporalPlainTimePrototype, "constructor") => Some(Value::Builtin(TemporalPlainTime)),
+        (TemporalPlainTimePrototype, "hour") => Some(Value::Builtin(TemporalPlainTimeHourGetter)),
+        (TemporalPlainTimePrototype, "minute") => {
+            Some(Value::Builtin(TemporalPlainTimeMinuteGetter))
+        }
+        (TemporalPlainTimePrototype, "second") => {
+            Some(Value::Builtin(TemporalPlainTimeSecondGetter))
+        }
+        (TemporalPlainTimePrototype, "millisecond") => {
+            Some(Value::Builtin(TemporalPlainTimeMillisecondGetter))
+        }
+        (TemporalPlainTimePrototype, "microsecond") => {
+            Some(Value::Builtin(TemporalPlainTimeMicrosecondGetter))
+        }
+        (TemporalPlainTimePrototype, "nanosecond") => {
+            Some(Value::Builtin(TemporalPlainTimeNanosecondGetter))
+        }
+        (TemporalPlainTimePrototype, "toString") => Some(Value::Builtin(TemporalPlainTimeToString)),
+        (TemporalPlainTimePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainTimeToJSON)),
+        (TemporalPlainTimePrototype, "valueOf") => Some(Value::Builtin(TemporalPlainTimeValueOf)),
+        (TemporalPlainTimePrototype, "equals") => Some(Value::Builtin(TemporalPlainTimeEquals)),
+        (TemporalPlainTimePrototype, "toLocaleString") => {
+            Some(Value::Builtin(TemporalPlainTimeToLocaleString))
+        }
+        (TemporalPlainTimePrototype, "add") => Some(Value::Builtin(TemporalPlainTimeAdd)),
+        (TemporalPlainTimePrototype, "subtract") => Some(Value::Builtin(TemporalPlainTimeSubtract)),
+        (TemporalPlainTimePrototype, "with") => Some(Value::Builtin(TemporalPlainTimeWith)),
+        (TemporalPlainTimePrototype, "round") => Some(Value::Builtin(TemporalPlainTimeRound)),
+        (TemporalPlainTimePrototype, "until") => Some(Value::Builtin(TemporalPlainTimeUntil)),
+        (TemporalPlainTimePrototype, "since") => Some(Value::Builtin(TemporalPlainTimeSince)),
+        (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
+        (TemporalPlainDatePrototype, "toString") => Some(Value::Builtin(TemporalPlainDateToString)),
+        (TemporalPlainDatePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainDateToJSON)),
+        (TemporalPlainDatePrototype, "calendarId") => {
+            Some(Value::Builtin(TemporalPlainDateCalendarIdGetter))
+        }
+        (TemporalPlainDatePrototype, "year") => Some(Value::Builtin(TemporalPlainDateYearGetter)),
+        (TemporalPlainDatePrototype, "month") => Some(Value::Builtin(TemporalPlainDateMonthGetter)),
+        (TemporalPlainDatePrototype, "monthCode") => {
+            Some(Value::Builtin(TemporalPlainDateMonthCodeGetter))
+        }
+        (TemporalPlainDatePrototype, "day") => Some(Value::Builtin(TemporalPlainDateDayGetter)),
+        (TemporalPlainDatePrototype, "dayOfWeek") => {
+            Some(Value::Builtin(TemporalPlainDateDayOfWeekGetter))
+        }
+        (TemporalPlainDatePrototype, "dayOfYear") => {
+            Some(Value::Builtin(TemporalPlainDateDayOfYearGetter))
+        }
+        (TemporalPlainDatePrototype, "daysInMonth") => {
+            Some(Value::Builtin(TemporalPlainDateDaysInMonthGetter))
+        }
+        (TemporalPlainDatePrototype, "daysInWeek") => {
+            Some(Value::Builtin(TemporalPlainDateDaysInWeekGetter))
+        }
+        (TemporalPlainDatePrototype, "daysInYear") => {
+            Some(Value::Builtin(TemporalPlainDateDaysInYearGetter))
+        }
+        (TemporalPlainDatePrototype, "inLeapYear") => {
+            Some(Value::Builtin(TemporalPlainDateInLeapYearGetter))
+        }
+        (TemporalPlainDatePrototype, "monthsInYear") => {
+            Some(Value::Builtin(TemporalPlainDateMonthsInYearGetter))
+        }
+        (TemporalPlainDatePrototype, "equals") => Some(Value::Builtin(TemporalPlainDateEquals)),
+        (TemporalPlainDatePrototype, "valueOf") => Some(Value::Builtin(TemporalPlainDateValueOf)),
+        (TemporalPlainDatePrototype, "toLocaleString") => {
+            Some(Value::Builtin(TemporalPlainDateToLocaleString))
+        }
+        (TemporalPlainDatePrototype, "add") => Some(Value::Builtin(TemporalPlainDateAdd)),
+        (TemporalPlainDatePrototype, "subtract") => Some(Value::Builtin(TemporalPlainDateSubtract)),
+        (TemporalPlainDatePrototype, "until") => Some(Value::Builtin(TemporalPlainDateUntil)),
+        (TemporalPlainDatePrototype, "since") => Some(Value::Builtin(TemporalPlainDateSince)),
+        (TemporalDurationPrototype, "constructor") => Some(Value::Builtin(TemporalDuration)),
+        (TemporalDurationPrototype, "negated") => Some(Value::Builtin(TemporalDurationNegated)),
+        (TemporalDurationPrototype, "abs") => Some(Value::Builtin(TemporalDurationAbs)),
+        (TemporalDurationPrototype, "toJSON") => Some(Value::Builtin(TemporalDurationToJSON)),
+        (TemporalDurationPrototype, "toString") => Some(Value::Builtin(TemporalDurationToString)),
+        (TemporalDurationPrototype, "toLocaleString") => {
+            Some(Value::Builtin(TemporalDurationToLocaleString))
+        }
+        (TemporalDurationPrototype, "add") => Some(Value::Builtin(TemporalDurationAdd)),
+        (TemporalDurationPrototype, "subtract") => Some(Value::Builtin(TemporalDurationSubtract)),
+        (TemporalDurationPrototype, "valueOf") => Some(Value::Builtin(TemporalDurationValueOf)),
+        (IntlCollatorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.Collator".into()))
+        }
+        (IntlDateTimeFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DateTimeFormat".into()))
+        }
+        (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DisplayNames".into()))
+        }
+        (IntlListFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.ListFormat".into()))
+        }
+        (IntlLocalePrototype, "Symbol.toStringTag") => Some(Value::String("Intl.Locale".into())),
+        (IntlNumberFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.NumberFormat".into()))
+        }
+        (IntlPluralRulesPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.PluralRules".into()))
+        }
+        (IntlRelativeTimeFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.RelativeTimeFormat".into()))
+        }
+        (IntlSegmenterPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.Segmenter".into()))
+        }
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
@@ -530,11 +780,14 @@ fn reflect_method(key: &str) -> Option<Builtin> {
 fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_constructor_property(builtin, key)
         .or_else(|| {
-            (is_typed_array_prototype(builtin) && matches!(key, "values" | "Symbol.iterator"))
-                .then_some(Builtin::ArrayIterator)
-        })
-        .or_else(|| {
-            (is_typed_array_prototype(builtin) && key == "fill").then_some(Builtin::TypedArrayFill)
+            if !is_typed_array_prototype(builtin) {
+                return None;
+            }
+            Some(match key {
+                "fill" => Builtin::TypedArrayFill,
+                "toLocaleString" => Builtin::ArrayToLocaleString,
+                _ => return None,
+            })
         })
         .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "toLocaleString")

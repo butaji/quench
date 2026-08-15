@@ -43,7 +43,7 @@ pub(crate) fn execute_special(
             require_object_coercible(target)?;
             descriptor(target, key)
         }
-        Builtin::ObjectGetOwnPropertyDescriptors => own_descriptors(arguments.first()),
+        Builtin::ObjectGetOwnPropertyDescriptors => get_own_property_descriptors(arguments.first()),
         Builtin::ObjectGetOwnPropertyNames => object_proxy_names(arguments.first(), false),
         Builtin::ObjectGetOwnPropertySymbols => object_proxy_names(arguments.first(), true),
         Builtin::ObjectKeys => object_keys(arguments.first()),
@@ -58,7 +58,7 @@ pub(crate) fn execute_special(
     }
 }
 
-fn own_descriptors(target: Option<&Value>) -> Result<Value, VmError> {
+fn get_own_property_descriptors(target: Option<&Value>) -> Result<Value, VmError> {
     let target = target.ok_or_else(|| {
         crate::value::error::throw_type_error("Cannot convert undefined or null to object")
     })?;
@@ -69,17 +69,17 @@ fn own_descriptors(target: Option<&Value>) -> Result<Value, VmError> {
     }
     let keys = crate::own_keys::all(target)?;
     let Value::Array(keys) = keys else {
-        return Ok(Value::Object(Rc::new(ObjectData::new(Vec::new()))));
+        return Ok(Value::Undefined);
     };
     let mut properties = Vec::new();
-    for index in 0..keys.logical_len() {
-        let Some(key) = keys.get(index) else { continue };
-        let descriptor = descriptor(Some(target), Some(key))?;
-        if matches!(descriptor, Value::Undefined) {
+    for index in 0..keys.len() {
+        let Some(key) = keys.get_index(index) else {
             continue;
+        };
+        let descriptor = descriptor(Some(target), Some(&key))?;
+        if !matches!(descriptor, Value::Undefined) {
+            properties.push((crate::conversion::to_property_key(&key)?, descriptor));
         }
-        let name = crate::conversion::to_property_key(key)?;
-        properties.push((name, descriptor));
     }
     Ok(Value::Object(Rc::new(ObjectData::new(properties))))
 }
@@ -397,7 +397,38 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::IntlLocalePrototype, "script") => Builtin::IntlLocaleScriptGetter,
         (Builtin::IntlLocalePrototype, "textInfo") => Builtin::IntlLocaleTextInfoGetter,
         (Builtin::IntlLocalePrototype, "variants") => Builtin::IntlLocaleVariantsGetter,
-        (Builtin::IntlNumberFormatPrototype, "format") => Builtin::IntlNumberFormatFormat,
+        (Builtin::TemporalPlainDatePrototype, "calendarId") => {
+            Builtin::TemporalPlainDateCalendarIdGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "era") => Builtin::TemporalPlainDateEraGetter,
+        (Builtin::TemporalPlainDatePrototype, "eraYear") => Builtin::TemporalPlainDateEraYearGetter,
+        (Builtin::TemporalInstantPrototype, "epochNanoseconds") => {
+            Builtin::TemporalInstantEpochNanosecondsGetter
+        }
+        (Builtin::TemporalInstantPrototype, "epochMilliseconds") => {
+            Builtin::TemporalInstantEpochMillisecondsGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "dayOfWeek") => {
+            Builtin::TemporalPlainDateDayOfWeekGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "dayOfYear") => {
+            Builtin::TemporalPlainDateDayOfYearGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "daysInMonth") => {
+            Builtin::TemporalPlainDateDaysInMonthGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "daysInWeek") => {
+            Builtin::TemporalPlainDateDaysInWeekGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "daysInYear") => {
+            Builtin::TemporalPlainDateDaysInYearGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "inLeapYear") => {
+            Builtin::TemporalPlainDateInLeapYearGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "monthsInYear") => {
+            Builtin::TemporalPlainDateMonthsInYearGetter
+        }
         _ => return None,
     };
     let descriptor = match (builtin, key) {

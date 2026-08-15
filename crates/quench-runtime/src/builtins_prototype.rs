@@ -78,19 +78,19 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::Builtin(Builtin::StringPrototype)) => "String",
         Some(Value::Builtin(Builtin::SymbolPrototype)) => "Symbol",
         Some(Value::Builtin(Builtin::BigIntPrototype)) => "BigInt",
-        Some(Value::Builtin(
-            Builtin::Intl
-            | Builtin::IntlLocalePrototype
-            | Builtin::IntlNumberFormatPrototype
-            | Builtin::IntlPluralRulesPrototype
-            | Builtin::IntlDateTimeFormatPrototype
-            | Builtin::IntlCollatorPrototype
-            | Builtin::IntlListFormatPrototype
-            | Builtin::IntlRelativeTimeFormatPrototype
-            | Builtin::IntlSegmenterPrototype
-            | Builtin::IntlDisplayNamesPrototype
-            | Builtin::IntlDurationFormatPrototype,
-        )) => "Object",
+        Some(
+            Value::Builtin(
+                Builtin::IntlCollatorPrototype
+                | Builtin::IntlDateTimeFormatPrototype
+                | Builtin::IntlDisplayNamesPrototype
+                | Builtin::IntlListFormatPrototype
+                | Builtin::IntlLocalePrototype
+                | Builtin::IntlNumberFormatPrototype
+                | Builtin::IntlPluralRulesPrototype
+                | Builtin::IntlRelativeTimeFormatPrototype
+                | Builtin::IntlSegmenterPrototype,
+            ),
+        ) => "Object",
         Some(Value::Builtin(_)) => "Function",
         Some(Value::Proxy(_)) => "Object",
         Some(Value::Promise(_)) => "Promise",
@@ -129,15 +129,11 @@ pub(crate) fn function_prototype_to_string(
     receiver: Option<&Value>,
 ) -> Result<Value, crate::execute::VmError> {
     match receiver {
-        Some(Value::Builtin(builtin)) => Value::String(format!("function {}() {{ [native code] }}", builtin_name(*builtin))),
-        Some(Value::BoundFunction(bound)) => match &bound.target {
-            Value::Builtin(builtin) => Value::String(format!(
-                "function {}() {{ [native code] }}",
-                builtin_name(*builtin)
-            )),
-            _ => Value::String("function () { [native code] }".to_string()),
-        },
-        Some(Value::Function(_)) => Value::String("function () { [native code] }".to_string()),
+        Some(Value::Builtin(builtin)) => {
+            let name = crate::builtin_meta::constructor_name(*builtin).unwrap_or_else(|| builtin_name(*builtin));
+            Value::String(format!("function {name}() {{ [native code] }}"))
+        }
+        Some(Value::Function(_)) | Some(Value::BoundFunction(_)) => Value::String("function () {{ [native code] }}".to_string()),
         _ => Value::String(String::new()),
     }
 }

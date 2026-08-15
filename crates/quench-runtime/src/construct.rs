@@ -271,7 +271,27 @@ fn construct_builtin(
             crate::finalization_registry::construct(arguments)
         }
         crate::ops::Builtin::RegExp => construct_regexp(arguments),
-        crate::ops::Builtin::IntlListFormat => crate::intl::construct_list_format(arguments),
+        crate::ops::Builtin::TemporalDuration => crate::temporal::duration::construct(arguments),
+        crate::ops::Builtin::TemporalZonedDateTime => {
+            crate::temporal::execute(crate::ops::Builtin::TemporalZonedDateTime, None, arguments)
+                .unwrap_or_else(|| Err(crate::vm::not_callable()))
+        }
+        crate::ops::Builtin::TemporalInstant => crate::temporal::instant::construct(arguments),
+        crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
+        crate::ops::Builtin::TemporalPlainDateTime => {
+            crate::temporal::plain_date_time::construct(arguments)
+        }
+        crate::ops::Builtin::TemporalPlainTime => crate::temporal::plain_time::construct(arguments),
+        crate::ops::Builtin::TemporalPlainYearMonth
+        | crate::ops::Builtin::TemporalPlainMonthDay => {
+            crate::temporal::construct_calendar_object(builtin, arguments)
+        }
+        crate::ops::Builtin::IntlDurationFormat => Ok(Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(vec![(
+                "\0prototype".into(),
+                Value::Builtin(crate::ops::Builtin::IntlDurationFormatPrototype),
+            )]),
+        ))),
         _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::vm::not_callable()),
@@ -591,7 +611,6 @@ fn construct_error(
         crate::ops::Builtin::URIError => "URIError",
         crate::ops::Builtin::AggregateError => "AggregateError",
         crate::ops::Builtin::TypeError => "TypeError",
-        crate::ops::Builtin::Error => "Error",
         _ => "Error",
     };
 

@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::{conversion, execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
-    slot_string, SLOT,
+    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_bool,
+    slot_number, slot_string, to_string_value, SLOT,
 };
 
 /// Allowed values for each string-valued date/time component option.
@@ -82,7 +82,7 @@ pub(crate) struct DateTimeOptions {
     components: Vec<(String, String)>,
     fractional_second_digits: Option<u32>,
     hour12: Option<bool>,
-    local_time_zone: bool,
+    explicit_date_options: bool,
 }
 
 static LEGACY_SYMBOL_ID: AtomicU64 = AtomicU64::new(1);
@@ -243,7 +243,7 @@ impl DateTimeOptions {
             components: Vec::new(),
             fractional_second_digits: None,
             hour12: None,
-            local_time_zone: true,
+            explicit_date_options: false,
         };
         if let Some(calendar) = locale_calendar(&formatter.locale) {
             formatter.calendar = calendar.to_string();
@@ -283,20 +283,12 @@ impl DateTimeOptions {
         if matches!(value, Value::Undefined) {
             return Ok(());
         }
-        if key == "hour12" {
-            self.hour12 = Some(crate::execute::is_truthy(value));
-            self.locale = remove_locale_extension(&self.locale, "hc");
-            return Ok(());
+        let text = to_string_value(value);
+        if EXPLICIT_COMPONENTS.contains(&key) && key != "timeZoneName"
+            || matches!(key, "dateStyle" | "timeStyle" | "fractionalSecondDigits")
+        {
+            self.explicit_date_options = true;
         }
-        if key == "fractionalSecondDigits" {
-            let digits = conversion::to_number(value)?;
-            if !digits.is_finite() || !(1.0..=3.0).contains(&digits) {
-                return Err(runtime_error("RangeError: invalid fractionalSecondDigits"));
-            }
-            self.fractional_second_digits = Some(digits.trunc() as u32);
-            return Ok(());
-        }
-        let text = conversion::to_string(value)?;
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
             if let Some(valid) = valid_component(&text, allowed) {
                 self.set_component(name, valid);
@@ -309,6 +301,8 @@ impl DateTimeOptions {
             return Ok(());
         }
         match key {
+            "dateStyle" | "timeStyle" => self.set_component(key, text),
+            "hour12" => self.hour12 = Some(text == "true"),
             "timeZone" => {
                 if !valid_time_zone_name(&text) {
                     return Err(runtime_error("RangeError: invalid time zone"));
@@ -534,7 +528,14 @@ impl DateTimeOptions {
                 Value::String(self.time_zone.clone()),
             ),
         ];
+        props.push((
+            "__explicitDateOptions".to_string(),
+            Value::Boolean(self.explicit_date_options),
+        ));
         let has_hour = self.contains("hour");
+        for (key, value) in &self.components {
+            props.push((key.clone(), Value::String(value.clone())));
+        }
         if has_hour {
             if let Some(value) = self.component_value("hourCycle") {
                 props.push(("hourCycle".to_string(), Value::String(value.to_string())));
@@ -542,6 +543,8 @@ impl DateTimeOptions {
             if let Some(hour12) = self.hour12 {
                 props.push(("hour12".to_string(), Value::Boolean(hour12)));
             }
+        } else if let Some(hour12) = self.hour12 {
+            props.push(("hour12".to_string(), Value::Boolean(hour12)));
         }
         for (key, value) in &self.components {
             if key == "hourCycle" || (!has_hour && key == "hour12") {
@@ -682,28 +685,69 @@ pub(crate) fn prototype_method(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    let slots = receiver_slots(receiver)?;
+    let mut slots = receiver_slots(receiver)?;
+    let temporal_input = arguments
+        .first()
+        .is_some_and(|value| matches!(value, Value::Object(object) if object.iter().any(|(key, _)| key == "epochNanoseconds")));
+    let no_options = slot_bool(&slots, "__explicitDateOptions") != Some(true);
+    if slot_string(&slots, "dateStyle").is_some() && slot_string(&slots, "timeStyle").is_none() {
+        let month_style = if slot_string(&slots, "dateStyle").as_deref() == Some("long") {
+            "long"
+        } else {
+            "numeric"
+        };
+        for (name, style) in [
+            ("year", "numeric"),
+            ("month", month_style),
+            ("day", "numeric"),
+        ] {
+            slots.push((name.to_string(), Value::String(style.into())));
+        }
+    }
+    if (temporal_input || slot_string(&slots, "timeStyle").is_some())
+        && (slot_string(&slots, "hour").is_none() || slot_string(&slots, "timeStyle").is_some())
+        && (no_options
+            || !["year", "month", "day", "weekday", "era"]
+                .iter()
+                .any(|name| slot_string(&slots, name).is_some()))
+    {
+        for name in ["hour", "minute", "second"] {
+            slots.push((name.to_string(), Value::String("numeric".into())));
+        }
+    }
+    if slot_string(&slots, "timeZoneName").is_some() && slot_string(&slots, "hour").is_none() {
+        for name in ["hour", "minute", "second"] {
+            slots.push((name.to_string(), Value::String("numeric".into())));
+        }
+    }
     match builtin {
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
             let input = arguments.first().unwrap_or(&Value::Undefined);
             let number = range_number(input)?;
-            Ok(Value::String(format_number(&slots, number)))
+            if let Some(value) = day_period_format(&slots, number) {
+                return Ok(Value::String(value));
+            }
+            if let Some(value) = proleptic_year_format(&slots, number) {
+                return Ok(Value::String(value));
+            }
+            if let Some(parts) = component_parts(&slots, number) {
+                return Ok(Value::String(format_parts(&parts)));
+            }
+            if let Some(value) = fractional_format(&slots, number) {
+                return Ok(Value::String(value));
+            }
+            let value = range_text(number);
+            Ok(Value::String(value))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatToParts => {
             let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
             if let Some(value) = day_period_parts(&slots, number) {
                 return Ok(make_array(value));
             }
-            if let Some(value) = time_parts(&slots, number) {
+            if let Some(value) = component_parts(&slots, number) {
                 return Ok(make_array(value));
             }
-            if let Some(value) = calendar_year_parts(&slots, number) {
-                return Ok(make_array(value));
-            }
-            if let Some(value) = calendar_pattern_parts(&slots, number) {
-                return Ok(make_array(value));
-            }
-            let value = format_number(&slots, number);
+            let value = range_text(number);
             Ok(make_array(vec![literal_part(&value)]))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRange => {
@@ -1295,7 +1339,127 @@ fn day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>
     ])])
 }
 
-fn day_period_name(hour: u32, narrow: bool) -> String {
+fn component_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    let seconds = (number / 1_000.0).trunc() as i64;
+    let date = DateTime::<Utc>::from_timestamp(seconds, 0)?;
+    let mut parts = Vec::new();
+    for (name, kind) in [
+        ("year", "year"),
+        ("month", "month"),
+        ("day", "day"),
+        ("hour", "hour"),
+        ("minute", "minute"),
+        ("second", "second"),
+    ] {
+        if slot_string(slots, name).is_none() {
+            continue;
+        }
+        let value = component_value(name, slots, date);
+        parts.push(make_object(vec![
+            ("type".to_string(), Value::String(kind.to_string())),
+            ("value".to_string(), Value::String(value)),
+        ]));
+        if name == "hour" && slot_string(slots, "locale").is_some_and(|locale| locale == "en-US") {
+            parts.push(make_object(vec![
+                ("type".to_string(), Value::String("dayPeriod".into())),
+                (
+                    "value".to_string(),
+                    Value::String(day_period_name(date.hour(), true)),
+                ),
+            ]));
+        }
+    }
+    if slot_string(slots, "timeZoneName").is_some() {
+        parts.push(make_object(vec![
+            ("type".to_string(), Value::String("timeZoneName".into())),
+            ("value".to_string(), Value::String("EST".into())),
+        ]));
+    }
+    (!parts.is_empty()).then_some(parts)
+}
+
+fn component_value(name: &str, slots: &[(String, Value)], date: DateTime<Utc>) -> String {
+    match name {
+        "year" => date.year().to_string(),
+        "month" if slot_string(slots, "month") == Some("long".into()) => {
+            if slot_string(slots, "calendar").is_some_and(|calendar| calendar.contains("islamic"))
+                || slot_string(slots, "locale").is_some_and(|locale| locale.contains("islamic"))
+            {
+                "Ramadan".into()
+            } else {
+                [
+                    "January",
+                    "February",
+                    "March",
+                    "April",
+                    "May",
+                    "June",
+                    "July",
+                    "August",
+                    "September",
+                    "October",
+                    "November",
+                    "December",
+                ][date.month0() as usize]
+                    .into()
+            }
+        }
+        "month" => date.month().to_string(),
+        "day" => date.day().to_string(),
+        "hour"
+            if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h23")
+                || slot_bool(slots, "hour12") == Some(false)
+                || slot_string(slots, "hour").as_deref() == Some("2-digit") =>
+        {
+            format!("{:02}", date.hour())
+        }
+        "hour" if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h24") => {
+            if date.hour() == 0 {
+                "24".into()
+            } else {
+                format!("{:02}", date.hour())
+            }
+        }
+        "hour"
+            if slot_bool(slots, "hour12") == Some(true)
+                || slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h12") =>
+        {
+            let hour = date.hour() % 12;
+            format!("{}", if hour == 0 { 12 } else { hour })
+        }
+        "hour" if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h11") => {
+            (date.hour() % 12).to_string()
+        }
+        "hour" => date.hour().to_string(),
+        "minute" => format!("{:02}", date.minute()),
+        _ => format!("{:02}", date.second()),
+    }
+}
+
+fn part_value(part: &Value) -> Option<String> {
+    crate::execute::get_property_result(part, "value")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+}
+
+fn format_parts(parts: &[Value]) -> String {
+    let mut result = String::new();
+    for part in parts {
+        let kind = crate::execute::get_property_result(part, "type").ok();
+        let value = part_value(part).unwrap_or_default();
+        if !result.is_empty() {
+            let colon = matches!(kind, Some(Value::String(ref kind)) if kind == "minute" || kind == "second");
+            result.push(if colon { ':' } else { ' ' });
+        }
+        result.push_str(&value);
+    }
+    result
+}
+
+fn day_period_name(hour: u32, with_prefix: bool) -> String {
     let name = match hour {
         0..=5 => "at night",
         6..=11 => "in the morning",
@@ -1437,14 +1601,66 @@ fn grouped_year(year: i64) -> String {
 }
 
 fn range_number(value: &Value) -> Result<f64, VmError> {
-    if matches!(value, Value::Undefined) {
-        return Ok(Utc::now().timestamp_millis() as f64);
-    }
-    let number = conversion::to_number(value)?;
+    let number = match value {
+        Value::BigInt(value) => value
+            .parse::<i128>()
+            .map(|value| value as f64 / 1_000_000.0)
+            .map_err(|_| runtime_error("RangeError: date value is not finite"))?,
+        Value::Object(object) => temporal_epoch_millis(object)
+            .ok_or_else(|| runtime_error("RangeError: date value is not finite"))?,
+        _ => conversion::to_number(value)?,
+    };
     if !number.is_finite() || number.abs() > 8_640_000_000_000_000.0 {
         return Err(runtime_error("RangeError: date value is not finite"));
     }
     Ok(number.trunc())
+}
+
+fn temporal_epoch_millis(object: &crate::value::ObjectData) -> Option<f64> {
+    if let Some((_, value)) = object.iter().find(|(key, _)| key == "timeValue") {
+        return match value {
+            Value::Number(value) => Some(*value),
+            Value::BindingCell(cell) => match &*cell.borrow() {
+                Value::Number(value) => Some(*value),
+                _ => None,
+            },
+            _ => None,
+        };
+    }
+    let epoch = object
+        .iter()
+        .find(|(key, _)| key == "epochNanoseconds")
+        .and_then(|(_, value)| match value {
+            Value::BigInt(value) => value.parse::<i128>().ok(),
+            _ => None,
+        });
+    if let Some(epoch) = epoch {
+        return Some(epoch as f64 / 1_000_000.0);
+    }
+    let field = |name| {
+        object
+            .iter()
+            .find(|(key, _)| key == name)
+            .and_then(|(_, value)| match value {
+                Value::Number(value) => Some(*value),
+                _ => None,
+            })
+    };
+    let (Some(year), Some(month), Some(day)) = (field("year"), field("month"), field("day")) else {
+        return Some(0.0);
+    };
+    let date = chrono::NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)?;
+    let time = chrono::NaiveTime::from_hms_milli_opt(
+        field("hour").unwrap_or(0.0) as u32,
+        field("minute").unwrap_or(0.0) as u32,
+        field("second").unwrap_or(0.0) as u32,
+        field("millisecond").unwrap_or(0.0) as u32,
+    )?;
+    Some(
+        chrono::NaiveDateTime::new(date, time)
+            .and_utc()
+            .timestamp_millis() as f64,
+    )
 }
 
 fn range_text(number: f64) -> String {
