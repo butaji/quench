@@ -5,7 +5,7 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
         return crate::vm::realm::intrinsic(capability.realm, Builtin::AbstractModuleSource)
             .unwrap_or(Value::Builtin(Builtin::AbstractModuleSource));
     }
-    if matches!(property, Value::Builtin(Builtin::HostCapability(_))) {
+    if matches!(property, Value::Builtin(_)) {
         return bind_method(value, property);
     }
     property
