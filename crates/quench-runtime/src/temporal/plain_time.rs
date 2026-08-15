@@ -177,20 +177,51 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     if text.contains('Z') && !text.contains('T') && !text.contains('t') && !text.contains(' ') {
         return Err(crate::value::error::throw_range_error("Invalid time"));
     }
+    if let Some(index) = text.find('+').filter(|index| {
+        text[..*index].contains('T') || text[..*index].contains('t') || text[..*index].contains(' ')
+    }) {
+        let offset = &text[index + 1..];
+        let offset = offset.split('[').next().unwrap_or(offset);
+        if !offset
+            .chars()
+            .all(|character| character.is_ascii_digit() || character == ':')
+        {
+            return Err(crate::value::error::throw_range_error("Invalid time"));
+        }
+        validate_offset(offset)?;
+    } else if let Some(index) = text.rfind('-') {
+        let offset = text[index + 1..].split('[').next().unwrap_or("");
+        if offset.contains(':') && !offset.contains('T') && !offset.contains('t') {
+            validate_offset(offset)?;
+        }
+    }
+    if let Some(index) = text.find('Z') {
+        let suffix = text[index + 1..].split('[').next().unwrap_or("");
+        if !suffix.is_empty() {
+            return Err(crate::value::error::throw_range_error("Invalid time"));
+        }
+    }
+    if text
+        .rsplit_once(']')
+        .is_some_and(|(_, suffix)| !suffix.is_empty())
+    {
+        return Err(crate::value::error::throw_range_error("Invalid time"));
+    }
     let annotations = text.split('[').skip(1).collect::<Vec<_>>();
     if annotations
         .iter()
         .filter(|part| part.contains("u-ca="))
         .count()
         > 1
+        && annotations.iter().any(|part| part.starts_with("!u-ca="))
         || annotations
             .iter()
             .filter(|part| !part.contains('='))
             .count()
             > 1
-        || annotations.iter().any(|part| {
-            part.starts_with('!') && part.contains('=') && !part.starts_with("!u-ca=iso8601")
-        })
+        || annotations
+            .iter()
+            .any(|part| part.starts_with('!') && part.contains('=') && !part.starts_with("!u-ca="))
         || annotations.iter().any(|part| {
             part.split_once('=')
                 .is_some_and(|(key, _)| key.chars().any(|character| character.is_ascii_uppercase()))
@@ -271,6 +302,9 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     if parts.len() < 2 || parts.len() > 3 {
         return Err(crate::value::error::throw_range_error("Invalid time"));
     }
+    if parts[0].len() != 2 || parts[1].len() != 2 {
+        return Err(crate::value::error::throw_range_error("Invalid time"));
+    }
     let hour = parts[0]
         .parse::<f64>()
         .map_err(|_| crate::value::error::throw_range_error("Invalid time"))?;
@@ -302,6 +336,21 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         Value::Number((fraction / 1_000.0).trunc() % 1_000.0),
         Value::Number(fraction % 1_000.0),
     ])
+}
+
+fn validate_offset(offset: &str) -> Result<(), VmError> {
+    let parts = offset.split(':').collect::<Vec<_>>();
+    let (hour, minute) = if parts.len() == 2 && parts[0].len() == 2 && parts[1].len() == 2 {
+        (parts[0], parts[1])
+    } else if parts.len() == 1 && parts[0].len() == 4 {
+        (&parts[0][..2], &parts[0][2..])
+    } else {
+        return Err(crate::value::error::throw_range_error("Invalid offset"));
+    };
+    if hour.parse::<u32>().unwrap_or(99) > 23 || minute.parse::<u32>().unwrap_or(99) > 59 {
+        return Err(crate::value::error::throw_range_error("Invalid offset"));
+    }
+    Ok(())
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
