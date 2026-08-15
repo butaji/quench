@@ -152,6 +152,7 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlDateTimeFormatResolvedOptions
         | Builtin::IntlCollatorCompare
         | Builtin::IntlCollatorResolvedOptions
+        | Builtin::IntlDurationFormatResolvedOptions
         | Builtin::IntlSegmenterSegment
         | Builtin::IntlSegmenterSegmentsIterator
         | Builtin::IntlSegmenterSegmentsContaining
@@ -166,6 +167,8 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         Builtin::IntlListFormatFormat
         | Builtin::IntlListFormatFormatToParts
         | Builtin::IntlListFormatResolvedOptions
+        | Builtin::IntlDurationFormatFormat
+        | Builtin::IntlDurationFormatFormatToParts
         | Builtin::IntlRelativeTimeFormatFormat
         | Builtin::IntlRelativeTimeFormatFormatToParts
         | Builtin::IntlRelativeTimeFormatResolvedOptions => Some(1.0),
