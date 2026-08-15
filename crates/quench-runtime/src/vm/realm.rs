@@ -120,8 +120,13 @@ pub(super) fn execute(id: RealmId, ops: &[Op]) -> Result<Value, VmError> {
 pub(super) fn with_realm<T>(id: RealmId, callback: impl FnOnce() -> T) -> Option<T> {
     let state = state(id)?;
     let context = state.context.clone();
+    let global = Value::Object(state.global.borrow().clone());
+    let environment = crate::environment::Environment::new();
+    environment.set(0, global);
     let _context = super::ContextGuard::install(&context);
-    let _realm = ExecutionGuard::install(state);
+    let _realm = ExecutionGuard::install(Rc::clone(&state));
+    let _environment = crate::locals::EnvironmentGuard::install(environment);
+    let _global_lexical = crate::locals::GlobalLexicalGuard::install(crate::locals::current());
     Some(callback())
 }
 
