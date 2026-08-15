@@ -70,9 +70,9 @@ impl LinkedModuleGraph {
         for unit in units.values() {
             unit.reset_links();
         }
-        link_reexports(graph, &units)?;
-        link_reexports(graph, &units)?;
-        link_reexports(graph, &units)?;
+        for _ in 0..32 {
+            link_reexports(graph, &units)?;
+        }
         bind_imports(graph, &units, false)?;
         Ok(Self { units })
     }
