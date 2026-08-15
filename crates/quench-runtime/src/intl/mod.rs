@@ -136,6 +136,11 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         }
         (Builtin::IntlCollatorPrototype, "compare") => Builtin::IntlCollatorCompare,
         (Builtin::IntlCollatorPrototype, "resolvedOptions") => Builtin::IntlCollatorResolvedOptions,
+        (Builtin::IntlListFormatPrototype, "format") => Builtin::IntlListFormatFormat,
+        (Builtin::IntlListFormatPrototype, "formatToParts") => Builtin::IntlListFormatFormatToParts,
+        (Builtin::IntlListFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlListFormatResolvedOptions
+        }
         (Builtin::IntlDisplayNamesPrototype, "of") => Builtin::IntlDisplayNamesOf,
         (Builtin::IntlDisplayNamesPrototype, "resolvedOptions") => {
             Builtin::IntlDisplayNamesResolvedOptions
