@@ -273,7 +273,7 @@ fn namespace_cell(
         if deferred {
             properties.push((
                 format!("\0quench:deferred:\0{name}"),
-                Value::Number(f64::from(target.0)),
+                Value::BindingCell(Rc::new(RefCell::new(Value::Number(f64::from(target.0))))),
             ));
         }
     }
