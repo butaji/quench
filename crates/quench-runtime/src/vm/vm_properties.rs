@@ -426,6 +426,9 @@ fn receiver_property(value: &Value, key: &str, _receiver: &Value) -> Value {
     if matches!(value, Value::Object(_)) && crate::vm::is_global_object(value) {
         return property;
     }
+    if matches!(value, Value::HostCapability(_)) && key == "AbstractModuleSource" {
+        return property;
+    }
     if matches!(
         property,
         Value::Builtin(

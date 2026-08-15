@@ -430,8 +430,12 @@ fn link_reexports(
     graph: &ModuleGraph,
     units: &HashMap<ModuleId, LinkedModule>,
 ) -> Result<(), String> {
-    for unit in graph.units() {
-        let metadata = unit_metadata(units, unit.id)?;
+    let order = graph
+        .entry()
+        .and_then(|entry| graph.dependency_order(entry).ok())
+        .unwrap_or_else(|| graph.units().iter().map(|unit| unit.id).collect());
+    for id in order {
+        let metadata = unit_metadata(units, id)?;
         for binding in &metadata.reexports {
             let target = resolve_reexport(graph, unit.id, &binding.source)?;
             link_reexport(graph, units, unit.id, target, binding)?;
@@ -1260,13 +1264,13 @@ impl Test262Host for RuntimeHost {
             .collect::<Vec<_>>();
         scripts.push(ScriptSource { source, strict });
         let program = reduce_script_sources(&scripts).map_err(|errors| errors.join("; "))?;
-        execute_program(&program)
+        execute_program(&program, !source.contains("CanBlockIsFalse"))
     }
 
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
         let program =
             reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
-        execute_program(&program)
+        execute_program(&program, !source.contains("CanBlockIsFalse"))
     }
 
     fn run_harnessed_module_at(
@@ -1401,19 +1405,28 @@ fn resource_type_name(attribute: &str) -> Option<&str> {
 
 fn run_source(source: &str) -> Result<(), String> {
     let program = reduce_source(source).map_err(|errors| errors.join("; "))?;
-    execute_program(&program)
+    execute_program(&program, !source.contains("CanBlockIsFalse"))
 }
 
-fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
+fn execute_program(
+    program: &quench_runtime::reduce::ResidualProgram,
+    can_block: bool,
+) -> Result<(), String> {
+    quench_runtime::vm::reset_host_agent_state();
     quench_runtime::builtins::reset_intrinsic_prototype_state();
-    execute_with_context(program.ops(), host_context())
-        .map(|_| ())
-        .map_err(|error| format!("residual VM error: {}", error.render()))
+    let result = execute_with_context(
+        program.ops(),
+        &host_context().clone().with_can_block(can_block),
+    )
+    .map(|_| ())
+    .map_err(|error| format!("residual VM error: {}", error.render()));
+    quench_runtime::vm::reset_host_agent_state();
+    result
 }
 
 fn run_module_source(source: &str) -> Result<(), String> {
     let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
-    execute_program(&program)
+    execute_program(&program, !source.contains("CanBlockIsFalse"))
 }
 
 fn host_context() -> &'static VmContext {
@@ -1435,6 +1448,13 @@ fn host_context() -> &'static VmContext {
             HostCapabilityRef {
                 realm: RealmId::ROOT,
                 kind: HostCapabilityKind::GetGlobal,
+            },
+        )
+        .with_host_capability(
+            "receiveBroadcast",
+            HostCapabilityRef {
+                realm: RealmId::ROOT,
+                kind: HostCapabilityKind::AgentReceiveBroadcast,
             },
         )
     })

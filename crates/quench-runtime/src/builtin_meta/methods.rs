@@ -118,6 +118,46 @@ pub fn function_length(builtin: Builtin) -> Option<f64> {
     json::fn_len(builtin).or_else(|| promise::fn_len(builtin).or_else(|| string::fn_len(builtin)))
 }
 
+fn atomics_name(builtin: Builtin) -> Option<&'static str> {
+    Some(match builtin {
+        Builtin::AtomicsAdd => "add",
+        Builtin::AtomicsAnd => "and",
+        Builtin::AtomicsCompareExchange => "compareExchange",
+        Builtin::AtomicsExchange => "exchange",
+        Builtin::AtomicsIsLockFree => "isLockFree",
+        Builtin::AtomicsLoad => "load",
+        Builtin::AtomicsNotify => "notify",
+        Builtin::AtomicsOr => "or",
+        Builtin::AtomicsPause => "pause",
+        Builtin::AtomicsStore => "store",
+        Builtin::AtomicsSub => "sub",
+        Builtin::AtomicsWait => "wait",
+        Builtin::AtomicsWaitAsync => "waitAsync",
+        Builtin::AtomicsXor => "xor",
+        _ => return None,
+    })
+}
+
+fn atomics_length(builtin: Builtin) -> Option<f64> {
+    Some(match builtin {
+        Builtin::AtomicsAdd
+        | Builtin::AtomicsAnd
+        | Builtin::AtomicsExchange
+        | Builtin::AtomicsOr
+        | Builtin::AtomicsStore
+        | Builtin::AtomicsSub
+        | Builtin::AtomicsXor => 3.0,
+        Builtin::AtomicsLoad => 2.0,
+        Builtin::AtomicsCompareExchange => 4.0,
+        Builtin::AtomicsIsLockFree => 1.0,
+        Builtin::AtomicsNotify => 3.0,
+        Builtin::AtomicsPause => 0.0,
+        Builtin::AtomicsWait => 4.0,
+        Builtin::AtomicsWaitAsync => 4.0,
+        _ => return None,
+    })
+}
+
 pub fn short_name(builtin: Builtin) -> Option<&'static str> {
     if matches!(
         builtin,
