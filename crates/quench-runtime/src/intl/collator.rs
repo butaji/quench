@@ -9,49 +9,9 @@ use super::{
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let mut usage = "sort".to_string();
-    let mut sensitivity = "variant".to_string();
-    let mut ignore_punctuation = locale.starts_with("th");
-    let mut numeric = false;
-    let mut case_first = "false".to_string();
-    if let Some(Value::Object(properties)) = arguments.get(1) {
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
-            usage = to_string_value(value);
-            if !matches!(usage.as_str(), "sort" | "search") {
-                return Err(runtime_error("RangeError: invalid usage"));
-            }
-        }
-        if let Some((_, Value::Boolean(value))) =
-            properties.iter().find(|(name, _)| name == "numeric")
-        {
-            numeric = *value;
-        }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
-            case_first = to_string_value(value);
-            if !matches!(case_first.as_str(), "upper" | "lower" | "false") {
-                return Err(runtime_error("RangeError: invalid caseFirst"));
-            }
-        }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
-            sensitivity = to_string_value(value);
-            if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
-                return Err(runtime_error("RangeError: invalid sensitivity"));
-            }
-        }
-        if case_first != "false" {
-            locale = remove_conflicting_extension(&locale, "kf", &case_first);
-        }
-        if numeric {
-            locale = remove_conflicting_extension(&locale, "kn", "true");
-        }
-        if let Some((_, Value::Boolean(value))) = properties
-            .iter()
-            .find(|(name, _)| name == "ignorePunctuation")
-        {
-            ignore_punctuation = *value;
-        }
-    }
+    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let (locale, usage, sensitivity, ignore_punctuation, numeric, case_first) =
+        collator_options(&locale, arguments.get(1))?;
     Ok(make_object(vec![
         (
             "compare".to_string(),
@@ -76,6 +36,76 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ]),
         ),
     ]))
+}
+
+fn collator_options(
+    initial_locale: &str,
+    options: Option<&Value>,
+) -> Result<(String, String, String, bool, bool, String), VmError> {
+    let mut locale = initial_locale.to_string();
+    let mut usage = "sort".to_string();
+    let mut sensitivity = "variant".to_string();
+    let mut ignore_punctuation = locale.starts_with("th");
+    let mut numeric = false;
+    let mut case_first = "false".to_string();
+    let Some(Value::Object(properties)) = options else {
+        return Ok((
+            locale,
+            usage,
+            sensitivity,
+            ignore_punctuation,
+            numeric,
+            case_first,
+        ));
+    };
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
+        usage = to_string_value(value);
+        validate_option(&usage, &["sort", "search"], "usage")?;
+    }
+    if let Some((_, Value::Boolean(value))) = properties.iter().find(|(name, _)| name == "numeric")
+    {
+        numeric = *value;
+    }
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
+        case_first = to_string_value(value);
+        validate_option(&case_first, &["upper", "lower", "false"], "caseFirst")?;
+    }
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
+        sensitivity = to_string_value(value);
+        validate_option(
+            &sensitivity,
+            &["base", "accent", "case", "variant"],
+            "sensitivity",
+        )?;
+    }
+    if case_first != "false" {
+        locale = remove_conflicting_extension(&locale, "kf", &case_first);
+    }
+    if numeric {
+        locale = remove_conflicting_extension(&locale, "kn", "true");
+    }
+    if let Some((_, Value::Boolean(value))) = properties
+        .iter()
+        .find(|(name, _)| name == "ignorePunctuation")
+    {
+        ignore_punctuation = *value;
+    }
+    Ok((
+        locale,
+        usage,
+        sensitivity,
+        ignore_punctuation,
+        numeric,
+        case_first,
+    ))
+}
+
+fn validate_option(value: &str, allowed: &[&str], name: &str) -> Result<(), VmError> {
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        Err(runtime_error(&format!("RangeError: invalid {name}")))
+    }
 }
 
 fn remove_conflicting_extension(locale: &str, key: &str, value: &str) -> String {
