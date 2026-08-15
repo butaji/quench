@@ -69,6 +69,7 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         return Some(function_instanceof(value));
     }
     Some(match (value, constructor) {
+        (Value::Generator(_), Builtin::Object) => true,
         (Value::Array(values), Builtin::Array) if !values.is_arguments() => true,
         (Value::BigInt64Array(_), Builtin::BigInt64Array)
         | (Value::BigUint64Array(_), Builtin::BigUint64Array)
