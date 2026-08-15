@@ -67,6 +67,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (Temporal, "Symbol.toStringTag") => Some(Value::String("Temporal".into())),
         (Temporal, "Now") => Some(Value::Builtin(TemporalNow)),
         (TemporalNow, "zonedDateTimeISO") => Some(Value::Builtin(TemporalNowZonedDateTimeISO)),
+        (TemporalNow, "plainDateTimeISO") => Some(Value::Builtin(TemporalNowPlainDateTimeISO)),
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
         (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
         (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
