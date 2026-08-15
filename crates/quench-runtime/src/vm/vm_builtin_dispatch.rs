@@ -9,6 +9,15 @@ fn early_dispatch(
                 .then(|| crate::reflect::builtin(builtin, arguments, receiver))
         })
         .or_else(|| crate::json::execute(builtin, arguments))
+        .or_else(|| {
+            (builtin == Builtin::ArrayBufferIsView).then(|| {
+                Ok(Value::Boolean(
+                    arguments
+                        .first()
+                        .is_some_and(crate::typed_array_ops::is_view),
+                ))
+            })
+        })
         .or_else(|| crate::typed_array_ops::execute(builtin, receiver, arguments))
         .or_else(|| crate::arrays::execute_builtin(builtin, receiver, arguments))
         .or_else(|| crate::intl::tolocale::dispatch(builtin, receiver, arguments))
