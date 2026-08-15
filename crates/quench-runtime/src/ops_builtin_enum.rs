@@ -114,7 +114,7 @@ pub enum Builtin {
     DecodeURIComponent, Math,
     MathPow, Function,
     AsyncFunction, GeneratorFunction,
-    AsyncGeneratorFunction, FunctionPrototype,
+    AsyncGeneratorFunction, FunctionPrototype, AsyncFunctionPrototype,
     GeneratorFunctionPrototype, AsyncGeneratorFunctionPrototype,
     FunctionBind, ArrayJoin,
     TypeError, ThrowTypeError,
