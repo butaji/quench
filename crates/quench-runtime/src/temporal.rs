@@ -4,6 +4,51 @@ pub(crate) mod plain_date;
 pub(crate) mod plain_date_time;
 pub(crate) mod plain_time;
 
+pub(crate) fn construct_calendar_object(
+    builtin: crate::ops::Builtin,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let year = arguments
+        .first()
+        .cloned()
+        .unwrap_or(crate::value::Value::Number(1972.0));
+    let month = arguments
+        .get(1)
+        .cloned()
+        .unwrap_or(crate::value::Value::Number(1.0));
+    let day = if builtin == crate::ops::Builtin::TemporalPlainMonthDay {
+        arguments
+            .first()
+            .cloned()
+            .unwrap_or(crate::value::Value::Number(1.0))
+    } else {
+        crate::value::Value::Number(1.0)
+    };
+    let month = if builtin == crate::ops::Builtin::TemporalPlainMonthDay {
+        arguments
+            .get(1)
+            .cloned()
+            .unwrap_or(crate::value::Value::Number(1.0))
+    } else {
+        month
+    };
+    Ok(crate::value::Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            ("year".into(), year),
+            ("month".into(), month.clone()),
+            (
+                "monthCode".into(),
+                crate::value::Value::String("M01".into()),
+            ),
+            ("day".into(), day),
+            (
+                "calendar".into(),
+                crate::value::Value::String("iso8601".into()),
+            ),
+        ]),
+    )))
+}
+
 use chrono::Timelike;
 
 pub(crate) fn execute(

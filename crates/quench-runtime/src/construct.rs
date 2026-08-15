@@ -227,6 +227,10 @@ fn construct_builtin(
             crate::temporal::plain_date_time::construct(arguments)
         }
         crate::ops::Builtin::TemporalPlainTime => crate::temporal::plain_time::construct(arguments),
+        crate::ops::Builtin::TemporalPlainYearMonth
+        | crate::ops::Builtin::TemporalPlainMonthDay => {
+            crate::temporal::construct_calendar_object(builtin, arguments)
+        }
         _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::vm::not_callable()),
