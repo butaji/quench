@@ -230,6 +230,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalDurationPrototype, "negated") => Some(Value::Builtin(TemporalDurationNegated)),
         (TemporalDurationPrototype, "abs") => Some(Value::Builtin(TemporalDurationAbs)),
         (TemporalDurationPrototype, "toJSON") => Some(Value::Builtin(TemporalDurationToJSON)),
+        (TemporalDurationPrototype, "toString") => Some(Value::Builtin(TemporalDurationToString)),
         (TemporalDurationPrototype, "add") => Some(Value::Builtin(TemporalDurationAdd)),
         (TemporalDurationPrototype, "subtract") => Some(Value::Builtin(TemporalDurationSubtract)),
         (TemporalDurationPrototype, "valueOf") => Some(Value::Builtin(TemporalDurationValueOf)),
