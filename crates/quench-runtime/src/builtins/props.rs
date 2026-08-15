@@ -84,6 +84,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (IntlDurationFormatPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.DurationFormat".to_string()))
         }
+        (IntlDisplayNamesPrototype, "constructor") => Some(Value::Builtin(IntlDisplayNames)),
+        (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DisplayNames".to_string()))
+        }
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
         (FinalizationRegistry, "prototype") => Some(Value::Builtin(FinalizationRegistryPrototype)),
         (FinalizationRegistryPrototype, "Symbol.toStringTag") => {
