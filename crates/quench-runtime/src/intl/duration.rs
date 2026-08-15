@@ -10,12 +10,21 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        Builtin::IntlDurationFormat => Some(construct(arguments)),
+        Builtin::IntlDurationFormat => Some(construct_call(arguments, receiver)),
         Builtin::IntlDurationFormatFormat
         | Builtin::IntlDurationFormatFormatToParts
         | Builtin::IntlDurationFormatResolvedOptions => Some(method(builtin, arguments, receiver)),
         _ => None,
     }
+}
+
+fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    if receiver.is_some() {
+        return Err(crate::value::error::throw_type_error(
+            "Intl.DurationFormat requires new",
+        ));
+    }
+    construct(arguments)
 }
 
 fn construct(arguments: &[Value]) -> Result<Value, VmError> {
