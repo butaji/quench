@@ -676,6 +676,9 @@ pub(crate) fn prototype_method(
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts => {
             let (start, end) = range_values(arguments)?;
+            if let Some(parts) = date_range_parts(&slots, start, end) {
+                return Ok(make_array(parts));
+            }
             if nearly_equal_range(arguments)? && !has_fraction(&slots) {
                 if let Some(parts) = time_parts(&slots, start) {
                     return Ok(make_array(parts));
@@ -725,6 +728,98 @@ fn date_range_text(slots: &[(String, Value)], start: f64, end: f64) -> Option<St
         }
     }
     None
+}
+
+fn date_range_parts(slots: &[(String, Value)], start: f64, end: f64) -> Option<Vec<Value>> {
+    if !slot_string(slots, "locale")?.starts_with("en-US") || has_fraction(slots) {
+        return None;
+    }
+    let first = date_time(slots, start)?;
+    let last = date_time(slots, end)?;
+    if slot_string(slots, "month") == Some("numeric".to_string()) {
+        return Some(numeric_range_parts(&first, &last));
+    }
+    if slot_string(slots, "month").is_some() {
+        return Some(named_range_parts(&first, &last));
+    }
+    None
+}
+
+fn numeric_range_parts(first: &NaiveDateTime, last: &NaiveDateTime) -> Vec<Value> {
+    if first == last {
+        return numeric_date_parts(first, "shared");
+    }
+    let mut parts = numeric_date_parts(first, "startRange");
+    parts.push(range_literal_part(" – ", "shared"));
+    parts.extend(numeric_date_parts(last, "endRange"));
+    parts
+}
+
+fn numeric_date_parts(date: &NaiveDateTime, source: &str) -> Vec<Value> {
+    vec![
+        range_component_part("month", &date.month().to_string(), source),
+        range_literal_part_with_source("/", source),
+        range_component_part("day", &date.day().to_string(), source),
+        range_literal_part_with_source("/", source),
+        range_component_part("year", &date.year().to_string(), source),
+    ]
+}
+
+fn named_range_parts(first: &NaiveDateTime, last: &NaiveDateTime) -> Vec<Value> {
+    let month_first = month_name(first.month(), false);
+    if first == last {
+        return named_date_parts(first, "shared");
+    }
+    if first.year() == last.year() && first.month() == last.month() {
+        return vec![
+            range_component_part("month", month_first, "shared"),
+            range_literal_part_with_source(" ", "shared"),
+            range_component_part("day", &first.day().to_string(), "startRange"),
+            range_literal_part(" – ", "shared"),
+            range_component_part("day", &last.day().to_string(), "endRange"),
+            range_literal_part_with_source(", ", "shared"),
+            range_component_part("year", &first.year().to_string(), "shared"),
+        ];
+    }
+    if first.year() == last.year() {
+        return vec![
+            range_component_part("month", month_first, "startRange"),
+            range_literal_part_with_source(" ", "startRange"),
+            range_component_part("day", &first.day().to_string(), "startRange"),
+            range_literal_part(" – ", "shared"),
+            range_component_part("month", month_name(last.month(), false), "endRange"),
+            range_literal_part_with_source(" ", "endRange"),
+            range_component_part("day", &last.day().to_string(), "endRange"),
+            range_literal_part_with_source(", ", "shared"),
+            range_component_part("year", &first.year().to_string(), "shared"),
+        ];
+    }
+    let mut parts = named_date_parts(first, "startRange");
+    parts.push(range_literal_part(" – ", "shared"));
+    parts.extend(named_date_parts(last, "endRange"));
+    parts
+}
+
+fn named_date_parts(date: &NaiveDateTime, source: &str) -> Vec<Value> {
+    vec![
+        range_component_part("month", month_name(date.month(), false), source),
+        range_literal_part_with_source(" ", source),
+        range_component_part("day", &date.day().to_string(), source),
+        range_literal_part_with_source(", ", source),
+        range_component_part("year", &date.year().to_string(), source),
+    ]
+}
+
+fn range_component_part(kind: &str, value: &str, source: &str) -> Value {
+    make_object(vec![
+        ("type".to_string(), Value::String(kind.to_string())),
+        ("value".to_string(), Value::String(value.to_string())),
+        ("source".to_string(), Value::String(source.to_string())),
+    ])
+}
+
+fn range_literal_part_with_source(value: &str, source: &str) -> Value {
+    range_literal_part(value, source)
 }
 
 fn has_fraction(slots: &[(String, Value)]) -> bool {
