@@ -310,13 +310,16 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
             "Cannot convert null to object",
         )),
         Value::String(_) => Ok(vec![canonicalize(&to_string_value(locales))?]),
+        Value::Object(properties) if locale_slot(properties).is_some() => {
+            Ok(vec![canonicalize(&locale_slot(properties).unwrap_or_default())?])
+        }
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
                 if matches!(value, Value::Number(_)) {
                     return Err(runtime_error("RangeError: invalid language tag"));
                 }
-                out.push(canonicalize(&crate::conversion::to_string(value)?)?);
+                out.push(canonicalize(&locale_string(value)?)?);
             }
             Ok(dedupe(out))
         }
@@ -342,9 +345,44 @@ fn resolve_array_like_locales(locales: &Value) -> Result<Vec<String>, VmError> {
         if matches!(value, Value::Number(_)) {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
-        result.push(canonicalize(&crate::conversion::to_string(&value)?)?);
+        result.push(canonicalize(&locale_string(&value)?)?);
     }
     Ok(dedupe(result))
+}
+
+fn locale_slot(properties: &crate::value::ObjectData) -> Option<String> {
+    let slot = properties.iter().find_map(|(name, value)| {
+        (name == SLOT).then_some(value)
+    });
+    let locale = slot.and_then(|value| match value {
+        Value::Object(slots) => slots.iter().find_map(|(name, value)| {
+            (name == "locale").then(|| match value {
+                Value::String(value) => value.clone(),
+                _ => String::new(),
+            })
+        }),
+        _ => None,
+    });
+    let is_locale = properties.iter().any(|(name, value)| {
+        name == "toString" && *value == Value::Builtin(crate::ops::Builtin::IntlLocaleToString)
+    });
+    locale.or_else(|| is_locale.then(|| {
+        properties.iter().find_map(|(name, value)| {
+            (name == "baseName").then(|| match value {
+                Value::String(value) => value.clone(),
+                _ => String::new(),
+            })
+        }).unwrap_or_default()
+    }))
+}
+
+fn locale_string(value: &Value) -> Result<String, VmError> {
+    if let Value::Object(properties) = value {
+        if let Some(locale) = locale_slot(properties) {
+            return Ok(locale);
+        }
+    }
+    crate::conversion::to_string(value)
 }
 
 pub(crate) fn default_locale() -> String {
