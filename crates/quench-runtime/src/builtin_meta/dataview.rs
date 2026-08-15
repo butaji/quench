@@ -11,6 +11,8 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::ArrayBufferResizableGetter => Some("get resizable"),
         Builtin::ArrayBufferResize => Some("resize"),
         Builtin::ArrayBufferTransferToImmutable => Some("transferToImmutable"),
+        Builtin::ArrayBufferTransfer => Some("transfer"),
+        Builtin::ArrayBufferTransferToFixedLength => Some("transferToFixedLength"),
         Builtin::DataViewBufferGetter => Some("get buffer"),
         Builtin::DataViewByteLengthGetter => Some("get byteLength"),
         Builtin::DataViewByteOffsetGetter => Some("get byteOffset"),
@@ -38,6 +40,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::ArrayBufferResizableGetter => Some(0.0),
         Builtin::ArrayBufferResize => Some(1.0),
         Builtin::ArrayBufferTransferToImmutable => Some(0.0),
+        Builtin::ArrayBufferTransfer | Builtin::ArrayBufferTransferToFixedLength => Some(0.0),
         Builtin::SharedArrayBufferGrowableGetter
         | Builtin::SharedArrayBufferMaxByteLengthGetter => Some(0.0),
         Builtin::SharedArrayBufferGrow => Some(1.0),
