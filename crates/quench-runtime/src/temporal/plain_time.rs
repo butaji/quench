@@ -54,6 +54,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainTimeValueOf => Some(Err(
             crate::value::error::throw_type_error("Cannot convert PlainTime to a number"),
         )),
+        crate::ops::Builtin::TemporalPlainTimeEquals => Some(equals(_receiver, arguments.first())),
         _ => None,
     }
 }
@@ -241,6 +242,14 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     let left = time_fields(&left)?;
     let right = time_fields(&right)?;
     Ok(Value::Number((left.cmp(&right) as i8) as f64))
+}
+
+fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
+    let left = time_fields(receiver)?;
+    let right = time_fields(&from(other)?)?;
+    Ok(Value::Boolean(left == right))
 }
 
 fn time_fields(value: &Value) -> Result<i64, VmError> {
