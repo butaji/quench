@@ -8,6 +8,7 @@ const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
+type UtcFields = (i32, u32, u32, u32, u32, u32, usize, u32);
 
 pub fn execute(builtin: Builtin, receiver: Option<&Value>) -> Option<Result<Value, VmError>> {
     let result = match builtin {

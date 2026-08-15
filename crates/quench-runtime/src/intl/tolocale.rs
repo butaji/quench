@@ -8,9 +8,6 @@ mod date_kind;
 pub(crate) mod parse_num;
 pub(crate) use date_kind::DateLocaleKind;
 
-#[path = "tolocale_number.rs"]
-mod number;
-
 pub(crate) mod value {
     use crate::value::Value;
     pub(crate) fn to_string(value: Option<&Value>) -> String {
@@ -471,10 +468,19 @@ pub(crate) fn number_to_locale_string(
 ) -> Result<Value, VmError> {
     let number = match receiver {
         Some(Value::Number(number)) => *number,
+        Some(Value::Object(properties)) => match properties
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == "_value").then_some(value))
+        {
+            Some(Value::Number(number)) => *number,
+            _ => return Err(runtime_error("TypeError: Number.prototype.toLocaleString")),
+        },
         _ => return Err(runtime_error("TypeError: Number.prototype.toLocaleString")),
     };
     let locales = resolve_locales(arguments)?;
-    Ok(Value::String(format_number(
+    validate_number_options(arguments.get(1))?;
+    Ok(Value::String(super::number::format_with_options(
         number,
         &locales,
         arguments.get(1),
