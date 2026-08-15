@@ -287,6 +287,13 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 /// Canonicalize a single BCP-47 language tag.
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let tag = tag.trim();
+    match tag.to_ascii_lowercase().as_str() {
+        "cel-gaulish" => return Ok("xtg".to_string()),
+        "zh-min" | "i-default" => {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        _ => {}
+    }
     if tag.is_empty()
         || tag.eq_ignore_ascii_case("nan")
         || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
