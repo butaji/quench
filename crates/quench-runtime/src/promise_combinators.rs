@@ -57,6 +57,11 @@ fn reject_with_completion(promise: &Rc<PromiseData>, error: VmError) {
 }
 
 fn register_aggregate_value(aggregate: &Rc<PromiseAggregate>, index: usize, value: Value) {
+    let value = if crate::value::is_object(&value) {
+        resolve_value(value)
+    } else {
+        value
+    };
     let Value::Promise(promise) = value else {
         aggregate_settle(aggregate, index, &PromiseState::Fulfilled(value));
         return;
@@ -71,6 +76,7 @@ fn register_aggregate_value(aggregate: &Rc<PromiseAggregate>, index: usize, valu
     if !matches!(*promise.state.borrow(), PromiseState::Pending) {
         queue_promise(&promise);
     }
+    drain_microtasks();
 }
 
 fn aggregate_settle(aggregate: &Rc<PromiseAggregate>, index: usize, state: &PromiseState) {
