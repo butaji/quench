@@ -95,34 +95,7 @@ impl NumberOptions {
 
     fn parts(&self, number: f64) -> Vec<Value> {
         let formatted = self.format_number(number);
-        if self.style == "currency" {
-            return currency_parts(
-                &formatted,
-                self.currency.as_deref(),
-                &self.currency_display,
-                &self.locale,
-            );
-        }
-        if self.style == "unit" {
-            if self.locale.starts_with("ja")
-                && self.unit == Some("kilometer-per-hour".to_string())
-                && self.unit_display == "long"
-            {
-                return japanese_speed_parts(&formatted);
-            }
-            return unit_parts(
-                &formatted,
-                self.unit.as_deref(),
-                &self.unit_display,
-                &self.locale,
-            );
-        }
-        if self.style == "percent" {
-            let mut parts = numeric_parts(
-                formatted.strip_suffix('%').unwrap_or(&formatted),
-                &self.locale,
-            );
-            parts.push(crate::intl::number_format::percent_part());
+        if let Some(parts) = self.special_parts(&formatted) {
             return parts;
         }
         if self.style == "decimal"
@@ -134,6 +107,41 @@ impl NumberOptions {
             return numeric_parts(&formatted, &self.locale);
         }
         numeric_parts(&self.format_number(number), &self.locale)
+    }
+
+    fn special_parts(&self, formatted: &str) -> Option<Vec<Value>> {
+        match self.style.as_str() {
+            "currency" => Some(currency_parts(
+                formatted,
+                self.currency.as_deref(),
+                &self.currency_display,
+                &self.locale,
+            )),
+            "unit" => Some(self.unit_parts(formatted)),
+            "percent" => Some(Self::percent_parts(formatted, &self.locale)),
+            _ => None,
+        }
+    }
+
+    fn unit_parts(&self, formatted: &str) -> Vec<Value> {
+        if self.locale.starts_with("ja")
+            && self.unit == Some("kilometer-per-hour".to_string())
+            && self.unit_display == "long"
+        {
+            return japanese_speed_parts(formatted);
+        }
+        unit_parts(
+            formatted,
+            self.unit.as_deref(),
+            &self.unit_display,
+            &self.locale,
+        )
+    }
+
+    fn percent_parts(formatted: &str, locale: &str) -> Vec<Value> {
+        let mut parts = numeric_parts(formatted.strip_suffix('%').unwrap_or(formatted), locale);
+        parts.push(crate::intl::number_format::percent_part());
+        parts
     }
 
     fn range_values(&self, arguments: &[Value]) -> Result<(f64, f64), VmError> {
