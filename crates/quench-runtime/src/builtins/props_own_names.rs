@@ -174,6 +174,7 @@ fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str]
             "detached",
             "immutable",
             "maxByteLength",
+            "resizable",
             "resize",
             "transferToImmutable",
             "Symbol.toStringTag",

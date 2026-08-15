@@ -183,6 +183,7 @@ fn intrinsic_getter_extended(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ArrayBufferPrototype, "detached") => ArrayBufferDetachedGetter,
         (ArrayBufferPrototype, "immutable") => ArrayBufferImmutableGetter,
         (ArrayBufferPrototype, "maxByteLength") => ArrayBufferMaxByteLengthGetter,
+        (ArrayBufferPrototype, "resizable") => ArrayBufferResizableGetter,
         (SharedArrayBufferPrototype, "byteLength") => SharedArrayBufferByteLengthGetter,
         (SharedArrayBufferPrototype, "growable") => SharedArrayBufferGrowableGetter,
         (SharedArrayBufferPrototype, "maxByteLength") => SharedArrayBufferMaxByteLengthGetter,
