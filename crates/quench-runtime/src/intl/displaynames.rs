@@ -9,36 +9,26 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let options = arguments
-        .get(1)
-        .filter(|value| !matches!(value, Value::Undefined))
-        .ok_or_else(|| runtime_error("TypeError: options.type is required"))?;
-    if !matches!(options, Value::Object(_) | Value::Proxy(_)) {
-        return Err(runtime_error("TypeError: options must be an object"));
-    }
-    let matcher = option_string(options, "localeMatcher", "best fit")?;
-    if !matches!(matcher.as_str(), "lookup" | "best fit") {
-        return Err(runtime_error("RangeError: invalid localeMatcher"));
-    }
-    let style = option_string(options, "style", "long")?;
-    if !matches!(style.as_str(), "long" | "short" | "narrow") {
-        return Err(runtime_error("RangeError: invalid style"));
-    }
-    let display_type = option_string(options, "type", "\0missing")?;
-    if display_type == "\0missing" {
-        return Err(runtime_error("TypeError: options.type is required"));
-    }
+    let properties = match arguments.get(1) {
+        Some(Value::Object(properties)) => properties,
+        _ => return Err(runtime_error("TypeError: options.type is required")),
+    };
+    let display_type = option_string(properties, "type", "TypeError: options.type is required")?;
     if !matches!(
         display_type.as_str(),
         "language" | "region" | "currency" | "script" | "calendar" | "dateTimeField"
     ) {
         return Err(runtime_error("RangeError: invalid type"));
     }
-    let fallback = option_string(options, "fallback", "code")?;
+    let style = option_string(properties, "style", "")?;
+    if !matches!(style.as_str(), "long" | "short" | "narrow") {
+        return Err(runtime_error("RangeError: invalid style"));
+    }
+    let fallback = option_string(properties, "fallback", "")?;
     if !matches!(fallback.as_str(), "code" | "none") {
         return Err(runtime_error("RangeError: invalid fallback"));
     }
-    let language_display = option_string(options, "languageDisplay", "dialect")?;
+    let language_display = option_string(properties, "languageDisplay", "")?;
     if !matches!(language_display.as_str(), "dialect" | "standard") {
         return Err(runtime_error("RangeError: invalid languageDisplay"));
     }
@@ -63,10 +53,6 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                     Value::String(language_display),
                 ),
             ]),
-        ),
-        (
-            "\0prototype".to_string(),
-            Value::Builtin(crate::ops::Builtin::IntlDisplayNamesPrototype),
         ),
     ]))
 }
@@ -121,22 +107,7 @@ fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
         "calendar" => code.split('-').all(|part| {
             (3..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
         }),
-        "dateTimeField" => matches!(
-            code,
-            "era"
-                | "year"
-                | "quarter"
-                | "month"
-                | "weekOfYear"
-                | "weekday"
-                | "day"
-                | "dayPeriod"
-                | "hour"
-                | "minute"
-                | "second"
-                | "fractionalSecond"
-                | "timeZoneName"
-        ),
+        "dateTimeField" => !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric()),
         _ => false,
     };
     if valid {
@@ -149,68 +120,36 @@ fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
 fn language_code_valid(code: &str) -> bool {
     let mut parts = code.split('-');
     let language = parts.next().unwrap_or("");
-    if language == "root"
-        || !((2..=3).contains(&language.len()) || (5..=8).contains(&language.len()))
-        || !language.chars().all(|c| c.is_ascii_alphabetic())
-    {
-        return false;
-    }
-    let mut script = false;
-    let mut region = false;
-    let mut variants = Vec::<String>::new();
-    for part in parts {
-        if !valid_language_part(part, &mut script, &mut region, &mut variants) {
-            return false;
-        }
-    }
-    true
-}
-
-fn valid_language_part(
-    part: &str,
-    script: &mut bool,
-    region: &mut bool,
-    variants: &mut Vec<String>,
-) -> bool {
-    if !(2..=8).contains(&part.len()) || !part.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return false;
-    }
-    if part.len() == 4 && part.chars().all(|c| c.is_ascii_alphabetic()) {
-        let fresh = !*script;
-        *script = true;
-        return fresh;
-    }
-    if (part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic()))
-        || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
-    {
-        let fresh = !*region;
-        *region = true;
-        return fresh;
-    }
-    if part.len() <= 3 {
-        return false;
-    }
-    if part.len() == 1 || variants.iter().any(|variant| variant == part) {
-        return false;
-    }
-    variants.push(part.to_string());
-    true
+    ((2..=3).contains(&language.len()) || (5..=8).contains(&language.len()))
+        && language.chars().all(|c| c.is_ascii_alphabetic())
+        && parts.all(|part| {
+            (2..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
+        })
 }
 
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
-    let slots = super::intl_slots(receiver)?;
-    if !slots.iter().any(|(name, _)| name == "type") {
-        return Err(runtime_error("TypeError: not an Intl.DisplayNames object"));
-    }
-    Ok(slots)
+    super::intl_slots(receiver)
 }
 
-fn option_string(options: &Value, name: &str, default: &str) -> Result<String, VmError> {
-    let value = crate::execute::get_property_result(options, name)?;
-    if matches!(value, Value::Undefined) {
-        return Ok(default.to_string());
-    }
-    crate::conversion::to_string(&value)
+fn option_string(
+    properties: &[(String, Value)],
+    name: &str,
+    missing: &str,
+) -> Result<String, VmError> {
+    properties
+        .iter()
+        .find(|(key, _)| key == name)
+        .and_then(|(_, value)| match value {
+            Value::Undefined if name == "style" => Some("long".to_string()),
+            Value::Undefined if name == "fallback" => Some("code".to_string()),
+            Value::Undefined if name == "languageDisplay" => Some("dialect".to_string()),
+            Value::Undefined => None,
+            value => Some(to_string_value(value)),
+        })
+        .or_else(|| (name == "style").then(|| "long".to_string()))
+        .or_else(|| (name == "fallback").then(|| "code".to_string()))
+        .or_else(|| (name == "languageDisplay").then(|| "dialect".to_string()))
+        .ok_or_else(|| runtime_error(missing))
 }
 
 fn display_name(
