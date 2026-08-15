@@ -7,21 +7,21 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
 }
 
 fn prototype_for_value(value: &Value) -> Value {
+    if let Value::BindingCell(cell) = value {
+        return prototype_for_value(&cell.borrow());
+    }
+    if let Value::ObjectAlias(alias) = value {
+        return alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(|object| prototype_for_value(&Value::Object(object)))
+            .unwrap_or(Value::Null);
+    }
     if let Some(prototype) = slot_prototype(value) {
         return prototype;
     }
-    let result = match value {
-        Value::Builtin(Builtin::AggregateError) => Value::Builtin(Builtin::Error),
-        Value::Builtin(Builtin::AsyncFunction) => Value::Builtin(Builtin::Function),
-        Value::Builtin(Builtin::AsyncFunctionPrototype) => {
-            Value::Builtin(Builtin::FunctionPrototype)
-        }
-        Value::Builtin(Builtin::AsyncGeneratorPrototype) => {
-            Value::Builtin(Builtin::AsyncIteratorPrototype)
-        }
-        Value::Builtin(Builtin::GeneratorPrototype) => Value::Builtin(Builtin::IteratorPrototype),
-        Value::Builtin(Builtin::AsyncIteratorPrototype) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Builtin(Builtin::Atomics) => Value::Builtin(Builtin::ObjectPrototype),
+    match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
         Value::Builtin(
             Builtin::Math
@@ -42,15 +42,12 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::ErrorPrototype)
         }
         Value::Builtin(
-            Builtin::RangeErrorPrototype
-            | Builtin::ReferenceErrorPrototype
-            | Builtin::SyntaxErrorPrototype
-            | Builtin::EvalErrorPrototype
-            | Builtin::URIErrorPrototype
-            | Builtin::AggregateErrorPrototype
-            | Builtin::TypeErrorPrototype,
-        ) => Value::Builtin(Builtin::ErrorPrototype),
-        Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::SetIteratorPrototype | Builtin::MapIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
+            builtin @ (Builtin::ArrayIteratorPrototype
+            | Builtin::RegExpStringIteratorPrototype
+            | Builtin::SetIteratorPrototype
+            | Builtin::MapIteratorPrototype
+            | Builtin::IteratorPrototype),
+        ) => iterator_prototype(*builtin),
         Value::Function(function) => {
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
         }

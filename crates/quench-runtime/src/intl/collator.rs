@@ -9,21 +9,9 @@ use super::{
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let mut usage = "sort".to_string();
-    let mut sensitivity = "variant".to_string();
-    let mut ignore_punctuation = locale.starts_with("th");
-    let mut numeric = false;
-    let mut case_first = "false".to_string();
-    apply_options(
-        arguments.get(1),
-        &mut locale,
-        &mut usage,
-        &mut sensitivity,
-        &mut ignore_punctuation,
-        &mut numeric,
-        &mut case_first,
-    )?;
+    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let (locale, usage, sensitivity, ignore_punctuation, numeric, case_first) =
+        collator_options(&locale, arguments.get(1))?;
     Ok(make_object(vec![
         (
             "compare".to_string(),
@@ -50,46 +38,66 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     ]))
 }
 
-fn apply_options(
+fn collator_options(
+    initial_locale: &str,
     options: Option<&Value>,
-    locale: &mut String,
-    usage: &mut String,
-    sensitivity: &mut String,
-    ignore_punctuation: &mut bool,
-    numeric: &mut bool,
-    case_first: &mut String,
-) -> Result<(), VmError> {
+) -> Result<(String, String, String, bool, bool, String), VmError> {
+    let mut locale = initial_locale.to_string();
+    let mut usage = "sort".to_string();
+    let mut sensitivity = "variant".to_string();
+    let mut ignore_punctuation = locale.starts_with("th");
+    let mut numeric = false;
+    let mut case_first = "false".to_string();
     let Some(Value::Object(properties)) = options else {
-        return Ok(());
+        return Ok((
+            locale,
+            usage,
+            sensitivity,
+            ignore_punctuation,
+            numeric,
+            case_first,
+        ));
     };
     if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
-        *usage = to_string_value(value);
-        validate_option(usage, &["sort", "search"], "usage")?;
+        usage = to_string_value(value);
+        validate_option(&usage, &["sort", "search"], "usage")?;
     }
     if let Some((_, Value::Boolean(value))) = properties.iter().find(|(name, _)| name == "numeric")
     {
-        *numeric = *value;
+        numeric = *value;
     }
     if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
-        *case_first = to_string_value(value);
-        validate_option(case_first, &["upper", "lower", "false"], "caseFirst")?;
+        case_first = to_string_value(value);
+        validate_option(&case_first, &["upper", "lower", "false"], "caseFirst")?;
     }
     if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
-        *sensitivity = to_string_value(value);
+        sensitivity = to_string_value(value);
         validate_option(
-            sensitivity,
+            &sensitivity,
             &["base", "accent", "case", "variant"],
             "sensitivity",
         )?;
     }
-    update_locale(locale, case_first, *numeric);
+    if case_first != "false" {
+        locale = remove_conflicting_extension(&locale, "kf", &case_first);
+    }
+    if numeric {
+        locale = remove_conflicting_extension(&locale, "kn", "true");
+    }
     if let Some((_, Value::Boolean(value))) = properties
         .iter()
         .find(|(name, _)| name == "ignorePunctuation")
     {
-        *ignore_punctuation = *value;
+        ignore_punctuation = *value;
     }
-    Ok(())
+    Ok((
+        locale,
+        usage,
+        sensitivity,
+        ignore_punctuation,
+        numeric,
+        case_first,
+    ))
 }
 
 fn validate_option(value: &str, allowed: &[&str], name: &str) -> Result<(), VmError> {
@@ -97,15 +105,6 @@ fn validate_option(value: &str, allowed: &[&str], name: &str) -> Result<(), VmEr
         Ok(())
     } else {
         Err(runtime_error(&format!("RangeError: invalid {name}")))
-    }
-}
-
-fn update_locale(locale: &mut String, case_first: &str, numeric: bool) {
-    if case_first != "false" {
-        *locale = remove_conflicting_extension(locale, "kf", case_first);
-    }
-    if numeric {
-        *locale = remove_conflicting_extension(locale, "kn", "true");
     }
 }
 

@@ -258,6 +258,7 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         OptionalGet { .. } => crate::properties::execute_optional_get(registers, op)?,
         OptionalGetDynamic { .. } => crate::properties::execute_optional_get_dynamic(registers, op)?,
         GetPrivate { .. } => crate::private_slots::execute_get(registers, op)?,
+        HasPrivate { .. } => crate::private_slots::execute_has(registers, op)?,
         GetSuperProperty { .. } | GetSuperPropertyDynamic { .. } => crate::super_scope::execute_get(registers, op)?,
         ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,

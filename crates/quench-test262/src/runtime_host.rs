@@ -1,6 +1,12 @@
 //! Adapter from the runner contract to the residual runtime.
 
-use std::{cell::RefCell, collections::HashMap, path::Path, sync::OnceLock};
+use std::{
+    cell::{Cell, RefCell},
+    collections::{HashMap, HashSet},
+    path::Path,
+    rc::Rc,
+    sync::OnceLock,
+};
 
 use quench_runtime::module_bindings::ModuleBindingCell;
 use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef, RealmId};
@@ -8,6 +14,7 @@ use quench_runtime::reduce::{
     inspect_module_source, reduce_module_sequence, reduce_module_source, reduce_script_sources,
     reduce_source, ScriptSource,
 };
+use quench_runtime::value::Value;
 use quench_runtime::vm::{execute_with_context, ExecutionScope, VmContext};
 
 use crate::module_graph::{ModuleGraph, ModuleId, ModuleKind};
@@ -22,6 +29,16 @@ pub struct LinkedModule {
     scope: ExecutionScope,
     fixed_exports: Vec<(String, quench_runtime::value::Value)>,
     linked_exports: RefCell<HashMap<String, ModuleBindingCell>>,
+    export_candidates: RefCell<HashMap<String, Vec<ModuleBindingCell>>>,
+    ambiguous_exports: RefCell<HashSet<String>>,
+    namespace: RefCell<Option<ModuleBindingCell>>,
+    deferred_namespace: RefCell<Option<ModuleBindingCell>>,
+    executed: Cell<bool>,
+    started: Cell<bool>,
+    evaluating: Cell<bool>,
+    error: RefCell<Option<Value>>,
+    async_next: Cell<Option<usize>>,
+    async_registers: RefCell<Vec<Value>>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -46,45 +63,367 @@ impl LinkedModuleGraph {
                 LinkedModule::compile_with_prefix(prefix, &unit.source)?
             } else if unit.kind == ModuleKind::Json {
                 LinkedModule::compile_json(&unit.source)?
+            } else if unit.kind == ModuleKind::Text {
+                LinkedModule::compile_text(&unit.source)?
+            } else if unit.kind == ModuleKind::Bytes {
+                LinkedModule::compile_bytes(unit.bytes.as_deref().unwrap_or_default())?
             } else {
                 LinkedModule::compile(&unit.source)?
             };
             units.insert(unit.id, module);
         }
+        bind_imports(graph, &units, true)?;
+        for unit in units.values() {
+            unit.reset_links();
+        }
         link_reexports(graph, &units)?;
-        let ids = units.keys().copied().collect::<Vec<_>>();
-        for id in ids {
-            let metadata = units
-                .get(&id)
-                .and_then(|unit| unit.program.module_metadata.as_ref())
-                .ok_or_else(|| "module metadata missing".to_string())?;
-            for binding in &metadata.imports {
-                let target = graph
-                    .resolve(id, &binding.source)
-                    .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-                let cell = import_cell(&units, target, &binding.imported)?;
-                units
-                    .get(&id)
-                    .ok_or_else(|| "module unit missing".to_string())?
-                    .bind_import(&binding.local, cell)?;
+        link_reexports(graph, &units)?;
+        link_reexports(graph, &units)?;
+        validate_reexports(graph, &units)?;
+        bind_imports(graph, &units, false)?;
+        for unit in units.values() {
+            for name in unit.export_names() {
+                unit.refresh_namespace_export(&name);
             }
         }
         Ok(Self { units })
     }
 
     pub fn execute(&self, graph: &ModuleGraph, entry: ModuleId) -> Result<(), String> {
-        for id in graph.dependency_order(entry)? {
+        let graph_ptr = self as *const Self;
+        let module_graph_ptr = graph as *const ModuleGraph;
+        let _callback = quench_runtime::vm::install_deferred_module_callback(Rc::new(move |id| {
+            // The callback guard lives only for the duration of this execution.
+            // Both pointed-to graphs are borrowed by the caller for that duration.
+            let target = ModuleId(id);
+            let unit = unsafe { (&*graph_ptr).units.get(&target) };
+            if unit.is_some_and(LinkedModule::is_evaluating) {
+                return Err(quench_runtime::execute::VmError::Thrown(
+                    quench_runtime::builtins::error(
+                        quench_runtime::ops::Builtin::TypeError,
+                        &[Value::String(
+                            "Cannot evaluate a module while it is evaluating".to_string(),
+                        )],
+                    ),
+                ));
+            }
+            if let Some(unit) = unit {
+                if let Some(reason) = unit.error_value() {
+                    unit.restore_deferred_markers(target.0);
+                    return Err(quench_runtime::execute::VmError::Thrown(reason));
+                }
+            }
+            match unsafe { (&*graph_ptr).execute(&*module_graph_ptr, target) } {
+                Ok(()) => {
+                    if let Some(unit) = unsafe { (&*graph_ptr).units.get(&target) }
+                        .filter(|unit| unit.is_executed())
+                    {
+                        unit.complete_deferred_namespace();
+                        unit.clear_deferred_markers();
+                    }
+                    Ok(Value::Undefined)
+                }
+                Err(error) => {
+                    let Some(unit) = (unsafe { (&*graph_ptr).units.get(&target) }) else {
+                        return Err(quench_runtime::execute::VmError::EvalError(error));
+                    };
+                    unit.restore_deferred_markers(target.0);
+                    match unit.error_value() {
+                        Some(reason) => Err(quench_runtime::execute::VmError::Thrown(reason)),
+                        None => Err(quench_runtime::execute::VmError::EvalError(error)),
+                    }
+                }
+            }
+        }));
+        let graph_ptr = self as *const Self;
+        let module_graph_ptr = graph as *const ModuleGraph;
+        let _dynamic = quench_runtime::vm::install_dynamic_import_callback(Rc::new(
+            move |specifier, deferred, options| {
+                let graph = unsafe { &*module_graph_ptr };
+                let kind = dynamic_module_kind(&options);
+                let Some(target) = graph
+                    .resolve_kind(entry, &specifier, kind)
+                    .or_else(|| graph.resolve_kind(entry, &specifier, ModuleKind::Json))
+                    .or_else(|| graph.resolve_kind(entry, &specifier, ModuleKind::Text))
+                    .or_else(|| graph.resolve_kind(entry, &specifier, ModuleKind::JavaScript))
+                else {
+                    let reason = dynamic_import_error("Cannot resolve dynamic import");
+                    return Ok(Value::Promise(Rc::new(
+                        quench_runtime::value::PromiseData::new(
+                            quench_runtime::value::PromiseState::Rejected(reason),
+                        ),
+                    )));
+                };
+                let namespace = namespace_cell(unsafe { &(*graph_ptr).units }, target, deferred)
+                    .map_err(quench_runtime::execute::VmError::EvalError)?;
+                if !deferred {
+                    if let Err(error) = unsafe { (&*graph_ptr).execute(graph, target) } {
+                        let reason = dynamic_import_error(&error);
+                        return Ok(Value::Promise(Rc::new(
+                            quench_runtime::value::PromiseData::new(
+                                quench_runtime::value::PromiseState::Rejected(reason),
+                            ),
+                        )));
+                    }
+                }
+                Ok(fulfilled_import(namespace.get()))
+            },
+        ));
+        let order = graph.dependency_order(entry)?;
+        for id in &order {
             self.units
-                .get(&id)
+                .get(id)
                 .ok_or_else(|| "module unit missing".to_string())?
-                .execute()?;
+                .instantiate()?;
+        }
+        let mut completed = HashSet::new();
+        while completed.len() < order.len() {
+            let mut progressed = false;
+            for id in &order {
+                if completed.contains(id) || !self.ready_for_execution(graph, *id) {
+                    continue;
+                }
+                let unit = self
+                    .units
+                    .get(id)
+                    .ok_or_else(|| "module unit missing".to_string())?;
+                unit.execute()?;
+                completed.insert(*id);
+                progressed = true;
+            }
+            self.resume_async_modules_once(&order)?;
+            if !progressed && !self.has_pending_async(&order) {
+                for id in &order {
+                    if completed.insert(*id) {
+                        self.units
+                            .get(id)
+                            .ok_or_else(|| "module unit missing".to_string())?
+                            .execute()?;
+                    }
+                }
+            }
+        }
+        while self.has_pending_async(&order) {
+            self.resume_async_modules_once(&order)?;
         }
         Ok(())
+    }
+
+    fn ready_for_execution(&self, graph: &ModuleGraph, id: ModuleId) -> bool {
+        let mut seen = HashSet::new();
+        self.dependencies_settled(graph, id, &mut seen)
+    }
+
+    fn dependencies_settled(
+        &self,
+        graph: &ModuleGraph,
+        id: ModuleId,
+        seen: &mut HashSet<ModuleId>,
+    ) -> bool {
+        if !seen.insert(id) {
+            return true;
+        }
+        graph.dependencies(id).into_iter().all(|dependency| {
+            self.units
+                .get(&dependency)
+                .map_or(true, |unit| unit.async_next.get().is_none())
+                && self.dependencies_settled(graph, dependency, seen)
+        })
+    }
+
+    fn resume_async_modules_once(&self, order: &[ModuleId]) -> Result<(), String> {
+        for id in order {
+            if let Some(unit) = self.units.get(id) {
+                if unit.async_next.get().is_some() {
+                    unit.resume_async()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn has_pending_async(&self, order: &[ModuleId]) -> bool {
+        order.iter().any(|id| {
+            self.units
+                .get(id)
+                .is_some_and(|unit| unit.async_next.get().is_some())
+        })
     }
 
     pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
         self.units.get(&unit)?.export_cell(name)
     }
+}
+
+fn validate_reexports(
+    graph: &ModuleGraph,
+    units: &HashMap<ModuleId, LinkedModule>,
+) -> Result<(), String> {
+    for (&id, unit) in units {
+        let Some(metadata) = unit.program.module_metadata.as_ref() else {
+            continue;
+        };
+        for binding in metadata
+            .reexports
+            .iter()
+            .filter(|b| b.imported != "*all*" && b.imported != "*")
+        {
+            let target = graph
+                .resolve(id, &binding.source)
+                .ok_or_else(|| format!("unresolved module {}", binding.source))?;
+            if !resolve_export(units, graph, target, &binding.imported, &mut Vec::new()) {
+                return Err(format!("SyntaxError: export {} missing", binding.imported));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn resolve_export(
+    units: &HashMap<ModuleId, LinkedModule>,
+    graph: &ModuleGraph,
+    id: ModuleId,
+    name: &str,
+    seen: &mut Vec<(ModuleId, String)>,
+) -> bool {
+    let key = (id, name.to_string());
+    if seen.contains(&key) {
+        return false;
+    }
+    seen.push(key);
+    let Some(metadata) = units
+        .get(&id)
+        .and_then(|u| u.program.module_metadata.as_ref())
+    else {
+        return false;
+    };
+    if metadata
+        .exports
+        .iter()
+        .any(|export| export.exported == name)
+    {
+        return true;
+    }
+    if let Some(binding) = metadata
+        .reexports
+        .iter()
+        .find(|binding| binding.exported == name && binding.imported != "*all*")
+    {
+        let Some(target) = graph.resolve(id, &binding.source) else {
+            return false;
+        };
+        return resolve_export(units, graph, target, &binding.imported, seen);
+    }
+    if name == "default" {
+        return false;
+    }
+    let mut matches = metadata.reexports.iter().filter(|binding| {
+        binding.imported == "*all*"
+            && graph
+                .resolve(id, &binding.source)
+                .is_some_and(|target| resolve_export(units, graph, target, name, &mut seen.clone()))
+    });
+    matches.next().is_some() && matches.next().is_none()
+}
+
+fn dynamic_import_error(error: &str) -> Value {
+    let message = error
+        .strip_prefix("residual VM error: TypeError: ")
+        .unwrap_or(error);
+    quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String(message.to_string())],
+    )
+}
+
+fn fulfilled_import(value: Value) -> Value {
+    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Fulfilled(value),
+    )))
+}
+
+fn dynamic_module_kind(options: &Value) -> ModuleKind {
+    let Value::Object(properties) = options else {
+        return ModuleKind::JavaScript;
+    };
+    let Some(Value::Object(with)) = properties
+        .iter()
+        .find(|(key, _)| key == "with")
+        .map(|(_, value)| value)
+    else {
+        return ModuleKind::JavaScript;
+    };
+    let Some(Value::String(kind)) = with
+        .iter()
+        .find(|(key, _)| key == "type")
+        .map(|(_, value)| value)
+    else {
+        return ModuleKind::JavaScript;
+    };
+    match kind.as_str() {
+        "json" => ModuleKind::Json,
+        "text" => ModuleKind::Text,
+        "bytes" => ModuleKind::Bytes,
+        _ => ModuleKind::JavaScript,
+    }
+}
+
+fn bind_imports(
+    graph: &ModuleGraph,
+    units: &HashMap<ModuleId, LinkedModule>,
+    provisional: bool,
+) -> Result<(), String> {
+    let ids = units.keys().copied().collect::<Vec<_>>();
+    for id in ids {
+        let metadata = units
+            .get(&id)
+            .and_then(|unit| unit.program.module_metadata.as_ref())
+            .ok_or_else(|| "module metadata missing".to_string())?;
+        for binding in &metadata.imports {
+            let kind = import_kind(metadata, &binding.source);
+            let target = graph
+                .resolve_kind(id, &binding.source, kind)
+                .ok_or_else(|| format!("unresolved module {}", binding.source))?;
+            let deferred = binding.deferred;
+            let cell = if binding.source_phase {
+                ModuleBindingCell::new(Value::object(vec![(
+                    "\0quench:module-source".to_string(),
+                    Value::Boolean(true),
+                )]))
+            } else {
+                match import_cell(units, target, &binding.imported, provisional, deferred) {
+                    Ok(cell) => cell,
+                    Err(_error) if provisional && binding.imported != "*" => continue,
+                    Err(error) => return Err(error),
+                }
+            };
+            units
+                .get(&id)
+                .ok_or_else(|| "module unit missing".to_string())?
+                .bind_import(&binding.local, cell)?;
+        }
+    }
+    for unit in units.values() {
+        for name in unit.export_names() {
+            unit.refresh_namespace_export(&name);
+            unit.refresh_deferred_namespace_export(&name);
+        }
+    }
+    Ok(())
+}
+
+fn import_kind(metadata: &quench_runtime::reduce::ModuleMetadata, source: &str) -> ModuleKind {
+    metadata
+        .import_attributes
+        .iter()
+        .find(|(specifier, _)| specifier == source)
+        .and_then(|(_, value)| match value.as_str() {
+            "type=json" => Some(ModuleKind::Json),
+            "type=text" => Some(ModuleKind::Text),
+            "type=bytes" => Some(ModuleKind::Bytes),
+            _ => None,
+        })
+        .unwrap_or(ModuleKind::JavaScript)
 }
 
 fn link_reexports(
@@ -95,7 +434,7 @@ fn link_reexports(
         let metadata = unit_metadata(units, unit.id)?;
         for binding in &metadata.reexports {
             let target = resolve_reexport(graph, unit.id, &binding.source)?;
-            link_reexport(units, unit.id, target, binding)?;
+            link_reexport(graph, units, unit.id, target, binding)?;
         }
     }
     Ok(())
@@ -118,6 +457,7 @@ fn resolve_reexport(graph: &ModuleGraph, from: ModuleId, source: &str) -> Result
 }
 
 fn link_reexport(
+    graph: &ModuleGraph,
     units: &HashMap<ModuleId, LinkedModule>,
     from: ModuleId,
     target: ModuleId,
@@ -126,12 +466,78 @@ fn link_reexport(
     if binding.imported == "*all*" {
         return link_star_exports(units, from, target);
     }
-    let cell = import_cell(units, target, &binding.imported)?;
+    if binding.imported == "*" {
+        let cell = namespace_cell(units, target, false)?;
+        units
+            .get(&from)
+            .ok_or_else(|| "module unit missing".to_string())?
+            .link_export(&binding.exported, cell);
+        return Ok(());
+    }
+    let cell = match resolved_export_cell(units, graph, target, &binding.imported, &mut Vec::new())
+    {
+        Some(cell) => cell,
+        None if declares_export(units, target, &binding.imported) => {
+            ModuleBindingCell::unresolved()
+        }
+        None => return Err(format!("SyntaxError: export {} missing", binding.imported)),
+    };
     units
         .get(&from)
         .ok_or_else(|| "module unit missing".to_string())?
         .link_export(&binding.exported, cell);
     Ok(())
+}
+
+fn resolved_export_cell(
+    units: &HashMap<ModuleId, LinkedModule>,
+    graph: &ModuleGraph,
+    id: ModuleId,
+    name: &str,
+    seen: &mut Vec<(ModuleId, String)>,
+) -> Option<ModuleBindingCell> {
+    let key = (id, name.to_string());
+    if seen.contains(&key) {
+        return None;
+    }
+    seen.push(key);
+    if let Some(cell) = units.get(&id)?.export_cell(name) {
+        return Some(cell);
+    }
+    let metadata = units.get(&id)?.program.module_metadata.as_ref()?;
+    if let Some(binding) = metadata
+        .reexports
+        .iter()
+        .find(|binding| binding.exported == name && binding.imported != "*all*")
+    {
+        let target = graph.resolve(id, &binding.source)?;
+        return resolved_export_cell(units, graph, target, &binding.imported, seen);
+    }
+    metadata
+        .reexports
+        .iter()
+        .filter(|binding| binding.imported == "*all*")
+        .find_map(|binding| {
+            let target = graph.resolve(id, &binding.source)?;
+            resolved_export_cell(units, graph, target, name, &mut seen.clone())
+        })
+}
+
+fn declares_export(units: &HashMap<ModuleId, LinkedModule>, target: ModuleId, name: &str) -> bool {
+    let Some(metadata) = units
+        .get(&target)
+        .and_then(|unit| unit.program.module_metadata.as_ref())
+    else {
+        return false;
+    };
+    metadata
+        .exported_names
+        .iter()
+        .any(|exported| exported == name)
+        || metadata
+            .reexports
+            .iter()
+            .any(|binding| binding.exported == name)
 }
 
 fn link_star_exports(
@@ -155,40 +561,146 @@ fn import_cell(
     units: &std::collections::HashMap<ModuleId, LinkedModule>,
     target: ModuleId,
     imported: &str,
+    provisional: bool,
+    deferred: bool,
 ) -> Result<ModuleBindingCell, String> {
     if imported == "*" {
-        return namespace_cell(units, target);
+        return namespace_cell(units, target, deferred);
     }
     units
         .get(&target)
-        .and_then(|unit| unit.export_cell(imported))
+        .and_then(|unit| {
+            if provisional {
+                unit.provisional_export_cell(imported)
+            } else {
+                unit.export_cell(imported)
+            }
+        })
         .ok_or_else(|| format!("SyntaxError: export {imported} missing"))
 }
 
 fn namespace_cell(
     units: &std::collections::HashMap<ModuleId, LinkedModule>,
     target: ModuleId,
+    deferred: bool,
 ) -> Result<ModuleBindingCell, String> {
     let unit = units
         .get(&target)
         .ok_or_else(|| "module unit missing".to_string())?;
-    let properties = unit
-        .export_names()
-        .iter()
-        .filter_map(|name| unit.export_cell(name).map(|cell| (name.clone(), cell)))
-        .map(|(name, cell)| {
+    let cache = if deferred {
+        &unit.deferred_namespace
+    } else {
+        &unit.namespace
+    };
+    if let Some(namespace) = cache.borrow().as_ref() {
+        return Ok(namespace.clone());
+    }
+    let mut properties = vec![(
+        "\0prototype".to_string(),
+        quench_runtime::value::Value::Null,
+    )];
+    let mut export_names = unit.export_names();
+    export_names.retain(|name| !unit.ambiguous_exports.borrow().contains(name));
+    export_names.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
+    properties.extend(
+        export_names
+            .iter()
+            .filter_map(|name| unit.export_cell(name).map(|cell| (name.clone(), cell)))
+            .map(|(name, cell)| {
+                (
+                    name,
+                    quench_runtime::value::Value::BindingCell(cell.shared()),
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
+    for name in export_names {
+        properties.push((
+            format!("\0quench:descriptor:\0{name}"),
+            descriptor_value(unit, &name),
+        ));
+        if deferred {
+            properties.push((
+                format!("\0quench:deferred:\0{name}"),
+                Value::BindingCell(Rc::new(RefCell::new(Value::Number(f64::from(target.0))))),
+            ));
+        }
+    }
+    if deferred {
+        properties.push((
+            "\0quench:deferred-module".to_string(),
+            Value::BindingCell(Rc::new(RefCell::new(Value::Number(f64::from(target.0))))),
+        ));
+    }
+    let tag_value = if deferred {
+        Value::BindingCell(Rc::new(RefCell::new(Value::String(
+            "Deferred Module".to_string(),
+        ))))
+    } else {
+        Value::String("Module".to_string())
+    };
+    properties.push(("Symbol.toStringTag".to_string(), tag_value.clone()));
+    properties.push((
+        "\0quench:descriptor:\0Symbol.toStringTag".to_string(),
+        quench_runtime::value::Value::object(vec![
+            ("value".to_string(), tag_value),
             (
-                name,
-                quench_runtime::value::Value::BindingCell(cell.shared()),
-            )
-        })
-        .collect();
-    Ok(ModuleBindingCell::new(
-        quench_runtime::value::Value::object(properties),
-    ))
+                "writable".to_string(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+            (
+                "enumerable".to_string(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+            (
+                "configurable".to_string(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+        ]),
+    ));
+    properties.push((
+        "\0quench:non_extensible".to_string(),
+        quench_runtime::value::Value::Boolean(true),
+    ));
+    let namespace = ModuleBindingCell::new(quench_runtime::value::Value::object(properties));
+    cache.replace(Some(namespace.clone()));
+    Ok(namespace)
+}
+
+fn descriptor_value(unit: &LinkedModule, name: &str) -> Value {
+    let value = unit
+        .export_cell(name)
+        .map(|cell| Value::BindingCell(cell.shared()))
+        .unwrap_or(Value::Undefined);
+    let mut descriptor = vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(false)),
+    ];
+    if unit.export_is_uninitialized(name) {
+        descriptor.push(("\0quench:uninitialized".to_string(), Value::Boolean(true)));
+    }
+    Value::object(descriptor)
 }
 
 impl LinkedModule {
+    fn instantiate(&self) -> Result<(), String> {
+        let Some(end) = self
+            .program
+            .ops()
+            .iter()
+            .position(|op| matches!(op, quench_runtime::ops::Op::ModuleEvaluationStart))
+        else {
+            return Ok(());
+        };
+        let mut registers = Vec::new();
+        self.scope
+            .execute_completion(&self.program.ops()[..end], &mut registers, host_context())
+            .map(|_| ())
+            .map_err(|error| format!("residual VM error: {}", error.render()))
+    }
+
     pub fn compile(source: &str) -> Result<Self, String> {
         let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
         Ok(Self {
@@ -196,6 +708,16 @@ impl LinkedModule {
             scope: ExecutionScope::new(),
             fixed_exports: Vec::new(),
             linked_exports: RefCell::new(HashMap::new()),
+            export_candidates: RefCell::new(HashMap::new()),
+            ambiguous_exports: RefCell::new(HashSet::new()),
+            namespace: RefCell::new(None),
+            deferred_namespace: RefCell::new(None),
+            executed: Cell::new(false),
+            started: Cell::new(false),
+            evaluating: Cell::new(false),
+            error: RefCell::new(None),
+            async_next: Cell::new(None),
+            async_registers: RefCell::new(Vec::new()),
         })
     }
 
@@ -206,6 +728,16 @@ impl LinkedModule {
             scope: ExecutionScope::new(),
             fixed_exports: Vec::new(),
             linked_exports: RefCell::new(HashMap::new()),
+            export_candidates: RefCell::new(HashMap::new()),
+            ambiguous_exports: RefCell::new(HashSet::new()),
+            namespace: RefCell::new(None),
+            deferred_namespace: RefCell::new(None),
+            executed: Cell::new(false),
+            started: Cell::new(false),
+            evaluating: Cell::new(false),
+            error: RefCell::new(None),
+            async_next: Cell::new(None),
+            async_registers: RefCell::new(Vec::new()),
         })
     }
 
@@ -215,6 +747,22 @@ impl LinkedModule {
         let mut module = Self::compile("export default null;")?;
         module.fixed_exports.push(("default".to_string(), value));
         Ok(module)
+    }
+
+    pub fn compile_text(source: &str) -> Result<Self, String> {
+        let literal = serde_json::to_string(source).map_err(|error| error.to_string())?;
+        Self::compile(&format!("export default {literal};"))
+    }
+
+    pub fn compile_bytes(bytes: &[u8]) -> Result<Self, String> {
+        let values = bytes
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        Self::compile(&format!(
+            "const buffer = new Uint8Array([{values}]).buffer.transferToImmutable(); export default new Uint8Array(buffer);"
+        ))
     }
 
     pub fn bind_import(&self, local: &str, cell: ModuleBindingCell) -> Result<(), String> {
@@ -229,8 +777,14 @@ impl LinkedModule {
     }
 
     pub fn export_cell(&self, name: &str) -> Option<ModuleBindingCell> {
+        if self.ambiguous_exports.borrow().contains(name) {
+            return None;
+        }
         if let Some(cell) = self.linked_exports.borrow().get(name) {
             return Some(cell.clone());
+        }
+        if self.ambiguous_exports.borrow().contains(name) {
+            return None;
         }
         let local = self
             .program
@@ -241,11 +795,83 @@ impl LinkedModule {
             .find(|binding| binding.exported == name)?
             .local
             .as_str();
-        self.program
+        if self
+            .program
+            .module_metadata
+            .as_ref()?
+            .imports
+            .iter()
+            .any(|binding| binding.local == local && binding.source_phase)
+        {
+            let cell = ModuleBindingCell::new(Value::object(vec![(
+                "\0quench:module-source".to_string(),
+                Value::Boolean(true),
+            )]));
+            if let Some(slot) = self.program.local_slots.get(local).copied() {
+                self.scope.bind_module_slot(slot, cell.clone());
+            }
+            return Some(cell);
+        }
+        let cell = self
+            .program
             .local_slots
             .get(local)
             .copied()
-            .map(|slot| self.scope.module_cell_slot(slot))
+            .map(|slot| self.scope.module_cell_slot(slot));
+        if !self.executed.get() {
+            if let (Some(slot), Some(cell)) = (self.export_slot(name), cell.as_ref()) {
+                if self
+                .program
+                .ops()
+                .iter()
+                .any(|op| matches!(op, quench_runtime::ops::Op::MarkUninitialized { slot: found } if *found == slot))
+            {
+                cell.mark_uninitialized();
+            }
+            }
+        }
+        cell
+    }
+
+    fn export_slot(&self, name: &str) -> Option<u16> {
+        let local = self
+            .program
+            .module_metadata
+            .as_ref()?
+            .exports
+            .iter()
+            .find(|binding| binding.exported == name)?
+            .local
+            .as_str();
+        self.program.local_slots.get(local).copied()
+    }
+
+    fn export_is_uninitialized(&self, name: &str) -> bool {
+        if let Some(cell) = self.linked_exports.borrow().get(name) {
+            return ModuleBindingCell::is_uninitialized(&cell.get());
+        }
+        let Some(slot) = self.export_slot(name) else {
+            return false;
+        };
+        self.scope.is_uninitialized_slot(slot)
+            || self.program.ops().iter().any(|op| {
+                matches!(op, quench_runtime::ops::Op::MarkUninitialized { slot: found } if *found == slot)
+            })
+    }
+
+    fn provisional_export_cell(&self, name: &str) -> Option<ModuleBindingCell> {
+        if let Some(cell) = self.linked_exports.borrow().get(name) {
+            return Some(cell.clone());
+        }
+        if let Some(cell) = self
+            .export_candidates
+            .borrow()
+            .get(name)
+            .and_then(|candidates| candidates.first())
+        {
+            return Some(cell.clone());
+        }
+        self.export_cell(name)
     }
 
     fn export_names(&self) -> Vec<String> {
@@ -255,7 +881,7 @@ impl LinkedModule {
             .as_ref()
             .map_or_else(Vec::new, |metadata| metadata.exported_names.clone());
         for name in self.linked_exports.borrow().keys() {
-            if !names.contains(name) {
+            if !self.ambiguous_exports.borrow().contains(name) && !names.contains(name) {
                 names.push(name.clone());
             }
         }
@@ -263,25 +889,351 @@ impl LinkedModule {
     }
 
     fn link_export(&self, name: &str, cell: ModuleBindingCell) {
-        self.linked_exports
-            .borrow_mut()
-            .insert(name.to_string(), cell);
+        let mut candidates = self.export_candidates.borrow_mut();
+        let entries = candidates.entry(name.to_string()).or_default();
+        if let Some(existing) = entries.first() {
+            if ModuleBindingCell::is_unresolved(&existing.get()) {
+                existing.forward_to(&cell);
+                self.linked_exports
+                    .borrow_mut()
+                    .insert(name.to_string(), existing.clone());
+                return;
+            }
+        }
+        if entries.iter().any(|candidate| {
+            Rc::ptr_eq(&candidate.shared(), &cell.shared())
+                || (is_module_source_cell(candidate) && is_module_source_cell(&cell))
+        }) {
+            return;
+        }
+        entries.push(cell.clone());
+        let unique = entries.len();
+        drop(candidates);
+        if unique == 1 {
+            self.linked_exports
+                .borrow_mut()
+                .insert(name.to_string(), cell);
+            self.refresh_namespace_export(name);
+        } else {
+            self.linked_exports.borrow_mut().remove(name);
+            self.ambiguous_exports.borrow_mut().insert(name.to_string());
+            self.remove_namespace_export(name);
+        }
+    }
+
+    fn remove_namespace_export(&self, name: &str) {
+        let Some(namespace) = self.namespace.borrow().as_ref().cloned() else {
+            return;
+        };
+        let Value::Object(properties) = namespace.get() else {
+            return;
+        };
+        let descriptor = format!("\0quench:descriptor:\0{name}");
+        let entries = properties
+            .iter()
+            .filter(|(key, _)| key != name && key != &descriptor)
+            .cloned()
+            .collect::<Vec<_>>();
+        namespace.set(Value::object(entries));
+    }
+
+    fn refresh_namespace_export(&self, name: &str) {
+        self.refresh_namespace_export_in(&self.namespace, name);
+    }
+
+    fn refresh_deferred_namespace_export(&self, name: &str) {
+        self.refresh_namespace_export_in(&self.deferred_namespace, name);
+    }
+
+    fn refresh_namespace_export_in(&self, cache: &RefCell<Option<ModuleBindingCell>>, name: &str) {
+        let Some(namespace) = cache.borrow().as_ref().cloned() else {
+            return;
+        };
+        let Some(cell) = self
+            .linked_exports
+            .borrow()
+            .get(name)
+            .cloned()
+            .or_else(|| self.export_cell(name))
+        else {
+            return;
+        };
+        let Value::Object(properties) = namespace.get() else {
+            return;
+        };
+        let value = Value::BindingCell(cell.shared());
+        let descriptor_key = format!("\0quench:descriptor:\0{name}");
+        let mut entries = properties.iter().cloned().collect::<Vec<_>>();
+        let mut descriptor_entries = vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(false)),
+        ];
+        if self.export_is_uninitialized(name) {
+            descriptor_entries.push(("\0quench:uninitialized".to_string(), Value::Boolean(true)));
+        }
+        let descriptor = Value::object(descriptor_entries);
+        entries.retain(|(key, _)| key != name && key != &descriptor_key);
+        entries.push((name.to_string(), value));
+        entries.push((descriptor_key, descriptor));
+        namespace.set(Value::object(entries));
+    }
+
+    fn reset_links(&self) {
+        self.linked_exports.borrow_mut().clear();
+        self.export_candidates.borrow_mut().clear();
+        self.ambiguous_exports.borrow_mut().clear();
+    }
+
+    fn complete_deferred_namespace(&self) {
+        let Some(namespace) = self.deferred_namespace.borrow().as_ref().cloned() else {
+            return;
+        };
+        let Value::Object(properties) = namespace.get() else {
+            return;
+        };
+        for (key, value) in properties.iter() {
+            if key == "Symbol.toStringTag" {
+                if let Value::BindingCell(cell) = value {
+                    cell.replace(Value::String("Module".to_string()));
+                }
+            }
+        }
+        self.clear_namespace_tdz();
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
+        if self.started.replace(true) {
+            return Ok(Value::Undefined);
+        }
+        if self.executed.get() {
+            return Ok(Value::Undefined);
+        }
+        if self.evaluating.replace(true) {
+            return Ok(Value::Undefined);
+        }
+        let result = self.execute_inner();
+        if self.async_next.get().is_none() || result.is_err() {
+            self.evaluating.set(false);
+        }
+        result
+    }
+
+    fn is_evaluating(&self) -> bool {
+        self.evaluating.get()
+    }
+
+    fn is_executed(&self) -> bool {
+        self.executed.get()
+    }
+
+    fn error_value(&self) -> Option<Value> {
+        self.error.borrow().clone()
+    }
+
+    fn restore_deferred_markers(&self, id: u32) {
+        let namespaces = [
+            self.deferred_namespace.borrow().as_ref().cloned(),
+            self.namespace.borrow().as_ref().cloned(),
+        ];
+        for namespace in namespaces.into_iter().flatten() {
+            let Value::Object(properties) = namespace.get() else {
+                continue;
+            };
+            for (key, value) in properties.iter() {
+                if !key.starts_with("\0quench:deferred:") && key != "\0quench:deferred-module" {
+                    continue;
+                }
+                if let Value::BindingCell(cell) = value {
+                    if matches!(*cell.borrow(), Value::Undefined) {
+                        cell.replace(Value::Number(f64::from(id)));
+                    }
+                }
+            }
+        }
+    }
+
+    fn clear_deferred_markers(&self) {
+        let namespaces = [
+            self.deferred_namespace.borrow().as_ref().cloned(),
+            self.namespace.borrow().as_ref().cloned(),
+        ];
+        for namespace in namespaces.into_iter().flatten() {
+            let Value::Object(properties) = namespace.get() else {
+                continue;
+            };
+            for (key, value) in properties.iter() {
+                if !key.starts_with("\0quench:deferred:") && key != "\0quench:deferred-module" {
+                    continue;
+                }
+                if let Value::BindingCell(cell) = value {
+                    cell.replace(Value::Undefined);
+                }
+            }
+        }
+    }
+
+    fn execute_inner(&self) -> Result<quench_runtime::value::Value, String> {
+        let start = self
+            .program
+            .ops()
+            .iter()
+            .position(|op| matches!(op, quench_runtime::ops::Op::ModuleEvaluationStart))
+            .map_or(0, |index| index + 1);
         let mut registers = Vec::new();
-        let result = self
+        let result = if self.has_top_level_await() {
+            self.execute_async_step(start, &mut registers)?
+        } else {
+            self.scope
+                .execute(&self.program.ops()[start..], &mut registers, host_context())
+                .map_err(|error| self.record_error(error))?
+        };
+        if self.async_next.get().is_some() {
+            self.async_registers.replace(registers);
+            return Ok(result);
+        }
+        self.finish_execution()?;
+        Ok(result)
+    }
+
+    fn execute_async_step(
+        &self,
+        start: usize,
+        registers: &mut Vec<Value>,
+    ) -> Result<Value, String> {
+        let end = self.program.ops()[start..]
+            .iter()
+            .position(|op| matches!(op, quench_runtime::ops::Op::Await { .. }))
+            .map_or(self.program.ops().len() - start, |index| index + 1);
+        let _step_guard = quench_runtime::vm::install_async_module_step();
+        let (completion, next) = self
             .scope
-            .execute(self.program.ops(), &mut registers, host_context())
-            .map_err(|error| format!("residual VM error: {}", error.render()))?;
+            .execute_completion_step(
+                &self.program.ops()[start..start + end],
+                registers,
+                host_context(),
+            )
+            .map_err(|error| self.record_error(error))?;
+        let stopped_at_await = end < self.program.ops().len() - start;
+        match completion {
+            quench_runtime::completion::Completion::Suspend(_) => {
+                self.async_next.set(Some(start + next.saturating_sub(1)));
+                Ok(Value::Undefined)
+            }
+            quench_runtime::completion::Completion::Normal if stopped_at_await => {
+                self.async_next.set(Some(start + next));
+                Ok(Value::Undefined)
+            }
+            completion => completion
+                .into_vm_error()
+                .map_err(|error| self.record_error(error)),
+        }
+    }
+
+    fn resume_async(&self) -> Result<(), String> {
+        let Some(start) = self.async_next.take() else {
+            return Ok(());
+        };
+        let mut registers = self.async_registers.take();
+        let end = self.program.ops()[start..]
+            .iter()
+            .position(|op| matches!(op, quench_runtime::ops::Op::Await { .. }))
+            .map_or(self.program.ops().len() - start, |index| index + 1);
+        let (completion, next) = self
+            .scope
+            .execute_resumed_completion_step(
+                &self.program.ops()[start..start + end],
+                &mut registers,
+                host_context(),
+            )
+            .map_err(|error| self.record_error(error))?;
+        match completion {
+            quench_runtime::completion::Completion::Normal => {
+                if end < self.program.ops().len() - start {
+                    self.async_next.set(Some(start + next));
+                    self.async_registers.replace(registers);
+                } else {
+                    self.finish_execution()?;
+                    self.evaluating.set(false);
+                }
+                Ok(())
+            }
+            quench_runtime::completion::Completion::Suspend(_) => {
+                self.async_next.set(Some(start + next));
+                self.async_registers.replace(registers);
+                Ok(())
+            }
+            completion => completion
+                .into_vm_error()
+                .map_err(|error| self.record_error(error))
+                .map(|_| ()),
+        }
+    }
+
+    fn has_top_level_await(&self) -> bool {
+        self.program
+            .module_metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.has_top_level_await)
+    }
+
+    fn finish_execution(&self) -> Result<(), String> {
         for (name, value) in &self.fixed_exports {
             let cell = self
                 .export_cell(name)
                 .ok_or_else(|| format!("fixed export {name} missing"))?;
             cell.set(value.clone());
         }
-        Ok(result)
+        self.executed.set(true);
+        self.clear_namespace_tdz();
+        Ok(())
     }
+
+    fn record_error(&self, error: quench_runtime::execute::VmError) -> String {
+        if let quench_runtime::execute::VmError::Thrown(reason) = &error {
+            self.error.replace(Some(reason.clone()));
+        }
+        format!("residual VM error: {}", error.render())
+    }
+
+    fn clear_namespace_tdz(&self) {
+        let namespaces = [
+            self.namespace.borrow().as_ref().cloned(),
+            self.deferred_namespace.borrow().as_ref().cloned(),
+        ];
+        for namespace in namespaces.into_iter().flatten() {
+            self.clear_namespace_tdz_value(namespace);
+        }
+    }
+
+    fn clear_namespace_tdz_value(&self, namespace: ModuleBindingCell) {
+        let Value::Object(properties) = namespace.get() else {
+            return;
+        };
+        let entries = properties
+            .iter()
+            .map(|(key, value)| {
+                if key.starts_with("\0quench:descriptor:\0") {
+                    let Value::Object(descriptor) = value else {
+                        return (key.clone(), value.clone());
+                    };
+                    let filtered = descriptor
+                        .iter()
+                        .filter(|(name, _)| name != "\0quench:uninitialized")
+                        .cloned()
+                        .collect();
+                    return (key.clone(), Value::object(filtered));
+                }
+                (key.clone(), value.clone())
+            })
+            .collect::<Vec<_>>();
+        namespace.set(Value::object(entries));
+    }
+}
+
+fn is_module_source_cell(cell: &ModuleBindingCell) -> bool {
+    matches!(cell.get(), Value::Object(properties) if properties.iter().any(|(key, value)| key == "\0quench:module-source" && matches!(value, Value::Boolean(true))))
 }
 
 impl Test262Host for RuntimeHost {
@@ -323,21 +1275,34 @@ impl Test262Host for RuntimeHost {
         source: &str,
         path: &Path,
     ) -> Result<(), String> {
-        reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
+        quench_runtime::vm::reset_current_global();
+        let scripts = harness
+            .iter()
+            .map(|source| ScriptSource {
+                source,
+                strict: false,
+            })
+            .collect::<Vec<_>>();
+        let harness_program =
+            reduce_script_sources(&scripts).map_err(|errors| errors.join("; "))?;
+        execute_program(&harness_program)?;
+        reduce_module_source(source).map_err(|errors| errors.join("; "))?;
         let mut graph = module_graph(path, source)?;
         let entry = graph
             .entry()
             .ok_or_else(|| "module graph missing entry".to_string())?;
-        let linked =
-            LinkedModuleGraph::compile_with_entry_prefix(&mut graph, Some(entry), harness)?;
+        let linked = LinkedModuleGraph::compile_with_entry_prefix(&mut graph, Some(entry), &[])?;
         quench_runtime::builtins::reset_intrinsic_prototype_state();
         linked.execute(&graph, entry)
     }
 }
 
 fn module_graph(path: &Path, source: &str) -> Result<ModuleGraph, String> {
+    let path = path
+        .canonicalize()
+        .map_err(|error| format!("module {}: {error}", path.display()))?;
     let mut graph = ModuleGraph::new();
-    let entry = graph.add_entry(path.to_path_buf(), source.to_string());
+    let entry = graph.add_entry(path, source.to_string());
     load_module_dependencies(&mut graph, entry)?;
     Ok(graph)
 }
@@ -357,26 +1322,64 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
         .ok_or_else(|| "module unit is unknown".to_string())?;
     if graph
         .unit(from)
-        .is_some_and(|unit| unit.kind == ModuleKind::Json)
+        .is_some_and(|unit| unit.kind != ModuleKind::JavaScript)
     {
         return Ok(());
     }
     let metadata = inspect_module_source(&source).map_err(|errors| errors.join("; "))?;
     for specifier in metadata.import_specifiers {
-        if graph.resolve(from, &specifier).is_some() {
+        if specifier == "<module source>" {
+            continue;
+        }
+        let kind = module_kind(
+            &base.join(&specifier),
+            &metadata.import_attributes,
+            &specifier,
+        );
+        if graph.resolve_kind(from, &specifier, kind).is_some() {
             continue;
         }
         let path = base.join(&specifier);
-        let dependency = add_module_source(graph, path)?;
+        let dependency = add_module_source(graph, path, &metadata.import_attributes, &specifier)?;
         load_module_dependencies(graph, dependency)?;
     }
     Ok(())
 }
 
+fn module_kind(path: &Path, attributes: &[(String, String)], specifier: &str) -> ModuleKind {
+    if let Some((_, attribute)) = attributes.iter().find(|(source, _)| source == specifier) {
+        return match resource_type_name(attribute) {
+            Some("json") => ModuleKind::Json,
+            Some("text") => ModuleKind::Text,
+            Some("bytes") => ModuleKind::Bytes,
+            _ => ModuleKind::JavaScript,
+        };
+    }
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "json")
+    {
+        ModuleKind::Json
+    } else {
+        ModuleKind::JavaScript
+    }
+}
+
 fn add_module_source(
     graph: &mut ModuleGraph,
     path: std::path::PathBuf,
+    attributes: &[(String, String)],
+    specifier: &str,
 ) -> Result<ModuleId, String> {
+    let resource_type = attributes
+        .iter()
+        .find(|(source, _)| source == specifier)
+        .map(|(_, attribute)| attribute.as_str());
+    if resource_type.is_some_and(|value| resource_type_name(value) == Some("bytes")) {
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
+        return Ok(graph.add_bytes_dependency(path, bytes));
+    }
     let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("module {}: {error}", path.display()))?;
     if path
@@ -385,7 +1388,15 @@ fn add_module_source(
     {
         return Ok(graph.add_json_dependency(path, source));
     }
+    if resource_type.is_some_and(|value| resource_type_name(value) == Some("text")) {
+        return Ok(graph.add_text_dependency(path, source));
+    }
     Ok(graph.add_dependency(path, source))
+}
+
+fn resource_type_name(attribute: &str) -> Option<&str> {
+    let (key, value) = attribute.split_once('=')?;
+    (key == "type").then(|| value.trim_matches(['\'', '"']))
 }
 
 fn run_source(source: &str) -> Result<(), String> {
@@ -415,6 +1426,8 @@ fn host_context() -> &'static VmContext {
                 HostCapabilityKind::CreateRealm,
                 HostCapabilityKind::EvalScript,
                 HostCapabilityKind::DetachArrayBuffer,
+                HostCapabilityKind::DeferredModule,
+                HostCapabilityKind::DynamicImport,
             ],
         )
         .with_host_capability(
