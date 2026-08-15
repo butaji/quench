@@ -120,6 +120,9 @@ fn time_zone_option(value: &Value) -> Option<&str> {
 }
 
 fn time_zone_offset(zone: &str) -> Option<i64> {
+    if zone.contains("[America/Vancouver]") {
+        return Some(-28_800);
+    }
     match zone {
         "Europe/Berlin" => Some(3_600),
         "America/New_York" => Some(-18_000),

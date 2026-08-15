@@ -101,6 +101,7 @@ pub enum Builtin {
     StringLastIndexOf,
     StringSlice,
     StringSubstring,
+    StringSubstr,
     StringConcat,
     StringSplit,
     StringPadStart,
