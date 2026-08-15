@@ -313,24 +313,11 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if let Some(descriptor) = builtin_descriptor_special(builtin, key) {
+        return Some(descriptor);
+    }
     if let Some(descriptor) = async_generator_descriptor(builtin, key) {
         return descriptor;
-    }
-    if builtin == Builtin::ErrorPrototype && matches!(key, "name" | "message") {
-        let value = if key == "name" {
-            Value::String("Error".to_string())
-        } else {
-            Value::String(String::new())
-        };
-        return Some(descriptor_object_with_flags(value, true, false, true));
-    }
-    if builtin == Builtin::Object && key == "hasOwn" {
-        return Some(descriptor_object_with_flags(
-            Value::Builtin(Builtin::ObjectHasOwn),
-            true,
-            false,
-            true,
-        ));
     }
     if let Some(descriptor) = intrinsic_accessor(builtin, key) {
         return Some(descriptor);
@@ -390,6 +377,20 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         false,
         configurable,
     ))
+}
+
+fn builtin_descriptor_special(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::ErrorPrototype && matches!(key, "name" | "message") {
+        let value = if key == "name" {
+            Value::String("Error".to_string())
+        } else {
+            Value::String(String::new())
+        };
+        return Some(descriptor_object_with_flags(value, true, false, true));
+    }
+    (builtin == Builtin::Object && key == "hasOwn").then(|| {
+        descriptor_object_with_flags(Value::Builtin(Builtin::ObjectHasOwn), true, false, true)
+    })
 }
 
 fn async_generator_descriptor(builtin: Builtin, key: &str) -> Option<Option<Value>> {
