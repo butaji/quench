@@ -55,7 +55,7 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         BigInt64Array(_) | BigUint64Array(_) => vm_typed_bigint::property(value, key),
         DataView(view) => data_view_property(view, key),
         Object(properties) => object_property(properties, value, key),
-        ObjectAlias(alias) => object_alias_property(alias, key, value),
+        ObjectAlias(alias) => object_alias_property(alias, value, key),
         String(value) if crate::conversion::is_symbol_string(value) => Value::Undefined,
         String(value) => string_property(value, key),
         StringUnits(units) => string_units_property(units, key),
@@ -159,14 +159,10 @@ fn primitive_prototype_property(value: &Value, key: &str) -> Value {
 }
 
 fn generator_property(value: &Value, key: &str) -> Value {
-    let is_async = matches!(value, Value::Generator(generator) if generator.function.is_async);
-    let builtin = match (is_async, key) {
-        (true, "next") => crate::ops::Builtin::AsyncGeneratorNext,
-        (true, "return") => crate::ops::Builtin::AsyncGeneratorReturn,
-        (true, "throw") => crate::ops::Builtin::AsyncGeneratorThrow,
-        (false, "next") => crate::ops::Builtin::GeneratorNext,
-        (false, "return") => crate::ops::Builtin::GeneratorReturn,
-        (false, "throw") => crate::ops::Builtin::GeneratorThrow,
+    let builtin = match key {
+        "next" => crate::ops::Builtin::GeneratorNext,
+        "return" => crate::ops::Builtin::GeneratorReturn,
+        "throw" => crate::ops::Builtin::GeneratorThrow,
         _ => return Value::Undefined,
     };
     bind_method(value, Value::Builtin(builtin))
@@ -174,7 +170,7 @@ fn generator_property(value: &Value, key: &str) -> Value {
 
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     if key == "constructor" {
-        return function_constructor(function);
+        return Value::Builtin(function_constructor(function));
     }
     let properties = function.properties.borrow();
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
@@ -202,21 +198,13 @@ fn property_value(value: &Value) -> Value {
     }
 }
 
-fn function_constructor(function: &crate::value::FunctionValue) -> Value {
-    let builtin = match (function.kind, function.is_async) {
+fn function_constructor(function: &crate::value::FunctionValue) -> Builtin {
+    match (function.kind, function.is_async) {
         (crate::ops::FunctionKind::Generator, true) => Builtin::AsyncGeneratorFunction,
         (crate::ops::FunctionKind::Generator, false) => Builtin::GeneratorFunction,
         (_, true) => Builtin::AsyncFunction,
         (_, false) => Builtin::Function,
-    };
-    if let Value::Object(global) = function.captures.get(0) {
-        if let Some(realm) = crate::vm::realm::id_for_global(&global) {
-            if let Some(value) = crate::vm::realm::intrinsic(realm, builtin) {
-                return value;
-            }
-        }
     }
-    Value::Builtin(builtin)
 }
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     get_property_with_receiver(value, key, value)
@@ -227,45 +215,17 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(&format!(
+            "Cannot read property `{key}` of null or undefined"
+        )));
+    }
     if let Some(result) = special_property(value, key, receiver) {
         return result;
     }
-    let own_descriptor = crate::builtins::object::descriptor(
-        Some(value),
-        Some(&Value::String(key.to_string())),
-    )
-    .ok();
-    if let Some(result) = error_stack_lookup(value, key, receiver, &own_descriptor) {
-        return result;
-    }
-    if let Some(getter) = array_accessor(value, key, "get") {
-        if matches!(getter, Value::Undefined) {
-            return Ok(Value::Undefined);
-        }
-        return invoke_accessor(&getter, receiver);
-    }
-    if let Value::Array(values) = value {
-        let has_own = key == "length"
-            || crate::arrays::array_index(key)
-                .is_some_and(|index| values.has_index(index as usize))
-            || values.descriptor(key).is_some()
-            || values.property(key).is_some();
-        if !has_own {
-            if let Some(getter) = crate::arrays::prototype_override_getter(key) {
-                if matches!(getter, Value::Undefined) {
-                    return Ok(Value::Undefined);
-                }
-                return invoke_accessor(&getter, receiver);
-            }
-        }
-    }
-    if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
-        return result;
-    }
-    if let Some(result) = data_view_instance_accessor(value, key) {
-        return result;
-    }
-    if let Some(descriptor) = own_descriptor {
+    if let Ok(descriptor) =
+        crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))
+    {
         if !matches!(descriptor, Value::Undefined) {
             if let Value::Object(descriptor) = descriptor {
                 if let Some((_, getter)) = descriptor
@@ -283,12 +243,16 @@ pub(crate) fn get_property_with_receiver(
             return Ok(receiver_property(value, key, receiver));
         }
     }
-    if let Some(result) = native_error_stack_lookup(value, key, receiver) {
-        return result;
+    if key == "stack" && crate::vm::has_error_slot(value) {
+        return crate::vm::execute_builtin_with_receiver(
+            crate::ops::Builtin::ErrorPrototypeStackGetter,
+            &[],
+            Some(receiver),
+        );
     }
     let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
-        return Ok(receiver_property(value, key, receiver));
+        return inherited_property(value, key, receiver);
     };
     if matches!(getter, Value::Undefined) {
         return Ok(Value::Undefined);
@@ -296,72 +260,48 @@ pub(crate) fn get_property_with_receiver(
     invoke_accessor(&getter, receiver)
 }
 
-fn error_stack_lookup(
-    value: &Value,
-    key: &str,
-    receiver: &Value,
-    own_descriptor: &Option<Value>,
-) -> Option<Result<Value, VmError>> {
-    if key != "stack"
-        || !matches!(own_descriptor, Some(Value::Undefined))
-        || !crate::vm::has_error_slot(value)
-        || !crate::properties::inherits_error_prototype(value)
+fn inherited_property(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
+    let prototype = crate::builtins::object::get_prototype_of(Some(value))?;
+    if !matches!(prototype, Value::Null)
+        && !crate::builtins::same_value(Some(value), Some(&prototype))
     {
-        return None;
+        let inherited = get_property_with_receiver(&prototype, key, receiver)?;
+        if !matches!(inherited, Value::Undefined) {
+            return Ok(inherited);
+        }
     }
-    Some(crate::vm::execute_builtin_with_receiver(
-        Builtin::ErrorPrototypeStackGetter,
-        &[],
-        Some(receiver),
-    ))
+    Ok(receiver_property(value, key, receiver))
 }
 
-fn native_error_stack_lookup(
-    value: &Value,
-    key: &str,
-    receiver: &Value,
-) -> Option<Result<Value, VmError>> {
-    if key != "stack"
-        || !matches!(
-            value,
-            Value::Builtin(
-                Builtin::AggregateErrorPrototype | Builtin::SuppressedErrorPrototype
-            )
-        )
-    {
-        return None;
-    }
-    Some(crate::vm::execute_builtin_with_receiver(
-        Builtin::ErrorPrototypeStackGetter,
-        &[],
-        Some(receiver),
-    ))
-}
-
-fn special_property(
-    value: &Value,
-    key: &str,
-    receiver: &Value,
-) -> Option<Result<Value, VmError>> {
-    if matches!(value, Value::Null | Value::Undefined) {
-        return Some(Err(crate::value::error::throw_type_error(&format!(
-            "Cannot read property `{key}` of null or undefined"
-        ))));
-    }
+fn special_property(value: &Value, key: &str, receiver: &Value) -> Option<Result<Value, VmError>> {
     if matches!(value, Value::Proxy(_)) {
         return Some(crate::proxy::proxy_get(value, key, Some(receiver)));
     }
     if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
-        return Some(Err(crate::value::error::throw_type_error(
-            "'callee' is unavailable on strict arguments",
-        )));
+        return Some(Err(crate::value::error::throw_type_error("'callee' is unavailable on strict arguments")));
     }
     if has_restricted_function_property(value, key) {
-        return Some(Err(crate::value::error::throw_type_error(
-            "'caller' and 'arguments' are unavailable on this function",
-        )));
+        return Some(Err(crate::value::error::throw_type_error("'caller' and 'arguments' are unavailable on this function")));
     }
-    None
+    if let Some(getter) = array_accessor(value, key, "get") {
+        return Some(if matches!(getter, Value::Undefined) { Ok(Value::Undefined) } else { invoke_accessor(&getter, receiver) });
+    }
+    if let Some(result) = array_special(value, key, receiver) {
+        return Some(result);
+    }
+    crate::disposable_stack::accessor(value, key, receiver).or_else(|| data_view_instance_accessor(value, key))
+}
+
+fn array_special(value: &Value, key: &str, receiver: &Value) -> Option<Result<Value, VmError>> {
+    let Value::Array(values) = value else { return None };
+    let has_own = key == "length"
+        || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+        || values.descriptor(key).is_some()
+        || values.property(key).is_some();
+    if has_own { return None; }
+    crate::arrays::prototype_override_getter(key).map(|getter| {
+        if matches!(getter, Value::Undefined) { Ok(Value::Undefined) } else { invoke_accessor(&getter, receiver) }
+    })
 }
 
 /// Invoke a getter using the receiver as `this`. The getter's own
@@ -370,18 +310,6 @@ fn special_property(
 fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
     match getter {
         Value::Function(function) => crate::functions::execute(function, receiver, &[]),
-        Value::BoundFunction(bound)
-            if matches!(
-                bound.target,
-                Value::Builtin(
-                    Builtin::ErrorPrototypeStackGetter | Builtin::ErrorPrototypeStackSetter
-                )
-            ) => {
-                let Value::Builtin(builtin) = bound.target else {
-                    unreachable!()
-                };
-                crate::vm::execute_builtin_with_receiver(builtin, &[], Some(receiver))
-            }
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &[]),
         Value::Builtin(builtin) => {
             crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
@@ -390,53 +318,32 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
     }
 }
 
-fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
+fn receiver_property(value: &Value, key: &str, _receiver: &Value) -> Value {
     let property = get_property(value, key);
-    if receiver_uses_property(value, key, receiver, &property) {
+    if matches!(value, Value::Builtin(_)) {
         return property;
     }
-    match property {
-        Value::Builtin(builtin)
-            if !is_accessor_builtin(builtin)
-                && crate::intl::tolocale::symbol::name(builtin).is_none() =>
-        {
-            bind_method(receiver, property)
-        }
-        other => other,
+    if matches!(value, Value::Object(_)) && crate::vm::is_global_object(value) {
+        return property;
     }
-}
-
-fn receiver_uses_property(value: &Value, key: &str, receiver: &Value, property: &Value) -> bool {
-    matches!(value, Value::Builtin(_))
-        || matches!(value, Value::Object(_)) && crate::vm::is_global_object(value)
-        || matches!(value, Value::HostCapability(_)) && key == "AbstractModuleSource"
-        || matches!(property, Value::Builtin(Builtin::IntlNumberFormatFormatToParts | Builtin::IntlNumberFormatFormatRange | Builtin::IntlNumberFormatFormatRangeToParts))
-        || matches!(key, "constructor" | "prototype")
-        || same_property_receiver(value, receiver)
+    if matches!(
+        property,
+        Value::Builtin(
+            Builtin::IntlNumberFormatFormatToParts
+                | Builtin::IntlNumberFormatFormatRange
+                | Builtin::IntlNumberFormatFormatRangeToParts
+        )
+    ) {
+        return property;
+    }
+    if matches!(key, "constructor" | "prototype") {
+        return property;
+    }
+    property
 }
 /// Accessor getters/setters carry their `this` at invocation time; binding
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
-fn is_accessor_builtin(builtin: Builtin) -> bool {
-    let name = crate::builtins::builtin_name(builtin);
-    name.starts_with("get ") || name.starts_with("set ")
-}
-fn same_property_receiver(value: &Value, receiver: &Value) -> bool {
-    match (value, receiver) {
-        (Value::Builtin(left), Value::Builtin(right)) => left == right,
-        (Value::Object(left), Value::Object(right)) => std::rc::Rc::ptr_eq(left, right),
-        (Value::Map(left), Value::Map(right)) => std::rc::Rc::ptr_eq(left, right),
-        (Value::Set(left), Value::Set(right)) => std::rc::Rc::ptr_eq(left, right),
-        (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
-        (Value::Number(_), Value::Number(_))
-        | (Value::Boolean(_), Value::Boolean(_))
-        | (Value::BigInt(_), Value::BigInt(_))
-        | (Value::String(_), Value::String(_))
-        | (Value::StringUnits(_), Value::StringUnits(_)) => value == receiver,
-        _ => false,
-    }
-}
-
 pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
     let Value::Array(values) = value else {
         return None;
@@ -450,10 +357,6 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         .find_map(|(name, value)| (name == field).then(|| value.clone()))
 }
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
-    if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "AbstractModuleSource"
-    {
-        return Value::Builtin(Builtin::AbstractModuleSource);
-    }
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
     if matches!(property, Value::Builtin(_)) {
@@ -463,22 +366,20 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     let property = builtin_property(builtin, key);
-    if let Some(result) = builtin_constructor_property(key, property.clone()) {
-        return result;
+    if matches!(key, "prototype" | "constructor") {
+        if key == "constructor"
+            && matches!(property, Value::Undefined)
+            && crate::builtin_meta::constructor_name(builtin).is_some()
+        {
+            return Value::Builtin(Builtin::Function);
+        }
+        return property;
     }
     if !matches!(property, Value::Undefined) {
         return property;
     }
     if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
         return bind_function_property(value, key);
-    }
-    if key == "stack"
-        && matches!(
-            builtin,
-            Builtin::AggregateErrorPrototype | Builtin::SuppressedErrorPrototype
-        )
-    {
-        return crate::vm::get_property(&Value::Builtin(Builtin::ErrorPrototype), key);
     }
     if crate::builtin_meta::is_prototype(builtin) {
         return crate::builtins::property(Builtin::ObjectPrototype, key);
@@ -491,18 +392,6 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
         value,
         crate::builtins::property(Builtin::ObjectPrototype, key),
     )
-}
-
-fn builtin_constructor_property(key: &str, property: Value) -> Option<Value> {
-    match key {
-        "prototype" => Some(property),
-        "constructor" => Some(if matches!(property, Value::Undefined) {
-            Value::Builtin(Builtin::Function)
-        } else {
-            property
-        }),
-        _ => None,
-    }
 }
 fn bind_function_property(value: &Value, key: &str) -> Value {
     let builtin = match key {
@@ -527,8 +416,14 @@ fn bound_function_property(
     {
         return value.clone();
     }
-    if let Some(prototype) = bound_realm_prototype(bound, key) {
-        return prototype;
+    if key == "prototype" {
+        if let Some(prototype) = intrinsic_error_prototype(value, bound) {
+            bound
+                .properties
+                .borrow_mut()
+                .push((key.to_string(), prototype.clone()));
+            return prototype;
+        }
     }
     if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
@@ -550,20 +445,53 @@ fn bound_function_property(
     }
 }
 
-fn bound_realm_prototype(
+fn intrinsic_error_prototype(
+    value: &Value,
     bound: &crate::value::BoundFunctionValue,
-    key: &str,
 ) -> Option<Value> {
-    if key != "prototype" {
+    if !realm::is_intrinsic(bound) {
         return None;
     }
-    let (Value::Builtin(builtin), Value::HostCapability(capability)) =
-        (&bound.target, &bound.receiver)
-    else {
+    let Value::Builtin(constructor) = bound.target else {
         return None;
     };
-    let prototype = crate::builtin_meta::prototype(*builtin)?;
-    Some(crate::vm::intrinsic_for_realm(capability.realm(), prototype))
+    let prototype = crate::builtin_meta::prototype(constructor)?;
+    if !matches!(
+        prototype,
+        Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::TypeErrorPrototype
+    ) {
+        return None;
+    }
+    let mut properties = vec![
+        ("constructor".to_string(), value.clone()),
+        ("name".to_string(), crate::builtins::property(prototype, "name")),
+        ("message".to_string(), Value::String(String::new())),
+        ("toString".to_string(), Value::Builtin(Builtin::ErrorPrototypeToString)),
+        ("\0prototype".to_string(), if prototype == Builtin::ErrorPrototype {
+            Value::Builtin(Builtin::ObjectPrototype)
+        } else {
+            Value::Builtin(Builtin::ErrorPrototype)
+        }),
+    ];
+    if prototype == Builtin::ErrorPrototype {
+        properties.push((
+            crate::builtins::descriptor_key("stack"),
+            Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+                ("get".to_string(), Value::Builtin(Builtin::ErrorPrototypeStackGetter)),
+                ("set".to_string(), Value::Builtin(Builtin::ErrorPrototypeStackSetter)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]))),
+        ));
+    }
+    Some(Value::Object(Rc::new(crate::value::ObjectData::new(properties))))
 }
 fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
