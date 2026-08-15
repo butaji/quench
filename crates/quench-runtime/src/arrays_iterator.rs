@@ -31,6 +31,18 @@ fn array_iterator_values(receiver: Option<&Value>) -> Result<Vec<Value>, crate::
             "Array iterator called on incompatible receiver",
         ));
     };
+    if let Value::StringUnits(units) = value {
+        return Ok(String::from_utf16_lossy(units)
+            .chars()
+            .map(|character| Value::String(character.to_string()))
+            .collect());
+    }
+    if let Value::String(string) = value {
+        return Ok(string
+            .chars()
+            .map(|character| Value::String(character.to_string()))
+            .collect());
+    }
     array_like_values(value)
 }
 
