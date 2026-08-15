@@ -368,6 +368,7 @@ pub enum Builtin {
     TemporalInstantToString,
     TemporalInstantToJSON,
     TemporalInstantToLocaleString,
+    TemporalInstantToZonedDateTimeISO,
     TemporalInstantEquals,
     TemporalInstantAdd,
     TemporalInstantSubtract,

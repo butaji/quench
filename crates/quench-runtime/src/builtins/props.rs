@@ -78,6 +78,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalInstantPrototype, "toLocaleString") => {
             Some(Value::Builtin(TemporalInstantToLocaleString))
         }
+        (TemporalInstantPrototype, "toZonedDateTimeISO") => {
+            Some(Value::Builtin(TemporalInstantToZonedDateTimeISO))
+        }
         (TemporalInstantPrototype, "equals") => Some(Value::Builtin(TemporalInstantEquals)),
         (TemporalInstantPrototype, "add") => Some(Value::Builtin(TemporalInstantAdd)),
         (TemporalInstantPrototype, "subtract") => Some(Value::Builtin(TemporalInstantSubtract)),
