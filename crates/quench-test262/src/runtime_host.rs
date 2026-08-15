@@ -276,10 +276,7 @@ fn descriptor_value(unit: &LinkedModule, name: &str) -> Value {
         ("enumerable".to_string(), Value::Boolean(true)),
         ("configurable".to_string(), Value::Boolean(false)),
     ];
-    if unit
-        .export_slot(name)
-        .is_some_and(|slot| unit.scope.is_uninitialized_slot(slot))
-    {
+    if unit.export_is_uninitialized(name) {
         descriptor.push(("\0quench:uninitialized".to_string(), Value::Boolean(true)));
     }
     Value::object(descriptor)
@@ -386,6 +383,16 @@ impl LinkedModule {
         self.program.local_slots.get(local).copied()
     }
 
+    fn export_is_uninitialized(&self, name: &str) -> bool {
+        let Some(slot) = self.export_slot(name) else {
+            return false;
+        };
+        self.scope.is_uninitialized_slot(slot)
+            || self.program.ops().iter().any(|op| {
+                matches!(op, quench_runtime::ops::Op::MarkUninitialized { slot: found } if *found == slot)
+            })
+    }
+
     fn provisional_export_cell(&self, name: &str) -> Option<ModuleBindingCell> {
         if let Some(cell) = self.linked_exports.borrow().get(name) {
             return Some(cell.clone());
@@ -451,12 +458,16 @@ impl LinkedModule {
         let value = Value::BindingCell(cell.shared());
         let descriptor_key = format!("\0quench:descriptor:\0{name}");
         let mut entries = properties.iter().cloned().collect::<Vec<_>>();
-        let descriptor = Value::object(vec![
+        let mut descriptor_entries = vec![
             ("value".to_string(), value.clone()),
             ("writable".to_string(), Value::Boolean(true)),
             ("enumerable".to_string(), Value::Boolean(true)),
             ("configurable".to_string(), Value::Boolean(false)),
-        ]);
+        ];
+        if self.export_is_uninitialized(name) {
+            descriptor_entries.push(("\0quench:uninitialized".to_string(), Value::Boolean(true)));
+        }
+        let descriptor = Value::object(descriptor_entries);
         entries.retain(|(key, _)| key != name && key != &descriptor_key);
         entries.push((name.to_string(), value));
         entries.push((descriptor_key, descriptor));
