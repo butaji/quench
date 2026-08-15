@@ -162,7 +162,17 @@ pub(crate) fn async_next(receiver: Option<&Value>, arguments: &[Value]) -> Resul
 }
 pub(crate) fn return_(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_receiver(receiver, "return")?;
-    resume(generator, Resume::Return(first_argument(arguments)))
+    let completion = resume(generator, Resume::Return(first_argument(arguments)));
+    if generator.function.is_async {
+        let generator = match receiver {
+            Some(Value::Generator(generator)) => Rc::clone(generator),
+            _ => return completion,
+        };
+        return Ok(crate::promise::from_async_generator_completion(
+            completion, generator,
+        ));
+    }
+    completion
 }
 pub(crate) fn throw(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_receiver(receiver, "throw")?;
