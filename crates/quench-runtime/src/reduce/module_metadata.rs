@@ -2,6 +2,7 @@ use oxc::ast::ast::{
     BindingPattern, BindingPatternKind, Declaration, ExportDefaultDeclaration,
     ExportNamedDeclaration, ImportPhase, ModuleExportName, Statement,
 };
+use oxc::ast::ast::{Expression, ImportExpression, Program};
 
 /// Static module edges and names discovered directly from OXC's module AST.
 ///
@@ -16,6 +17,7 @@ pub struct ModuleMetadata {
     pub exports: Vec<ExportBinding>,
     pub reexports: Vec<ReexportBinding>,
     pub exported_names: Vec<String>,
+    pub dynamic_imports: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +44,14 @@ pub struct ReexportBinding {
 }
 
 impl ModuleMetadata {
+    pub(crate) fn from_program(program: &Program<'_>) -> Self {
+        let mut metadata = Self::from_statements(&program.body);
+        let mut collector = DynamicImportCollector::default();
+        oxc::ast::visit::walk::walk_program(&mut collector, program);
+        metadata.dynamic_imports = collector.specifiers;
+        metadata
+    }
+
     pub(crate) fn from_statements(statements: &[Statement<'_>]) -> Self {
         let mut metadata = Self::default();
         for statement in statements {
@@ -159,6 +169,20 @@ impl ModuleMetadata {
             local: "default".to_string(),
             exported: "default".to_string(),
         });
+    }
+}
+
+#[derive(Default)]
+struct DynamicImportCollector {
+    specifiers: Vec<String>,
+}
+
+impl<'a> oxc::ast::visit::Visit<'a> for DynamicImportCollector {
+    fn visit_import_expression(&mut self, import: &ImportExpression<'a>) {
+        if let Expression::StringLiteral(source) = &import.source {
+            push_unique(&mut self.specifiers, source.value.as_str());
+        }
+        oxc::ast::visit::walk::walk_import_expression(self, import);
     }
 }
 
