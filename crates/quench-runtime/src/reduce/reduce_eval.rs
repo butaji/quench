@@ -97,7 +97,7 @@ fn emit_function_declarations(
     behavior: EvalBehavior,
 ) -> Result<(), Vec<String>> {
     let emit_global = is_global_behavior(behavior);
-    for statement in selected_functions(statements) {
+    for statement in selected_functions(statements, behavior) {
         let Statement::FunctionDeclaration(function) = statement else {
             continue;
         };
