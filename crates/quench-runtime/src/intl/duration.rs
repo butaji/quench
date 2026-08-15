@@ -233,11 +233,17 @@ fn method(
 }
 
 fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<String, VmError> {
-    let Value::Object(properties) = value.unwrap_or(&Value::Undefined) else {
-        return Err(crate::value::error::throw_type_error(
-            "Duration must be an object",
-        ));
+    let value = value.unwrap_or(&Value::Undefined);
+    let Value::Object(properties) = value else {
+        return Err(match value {
+            value if crate::conversion::is_symbol(value) => {
+                crate::value::error::throw_type_error("Duration must be an object")
+            }
+            Value::String(_) => runtime_error("RangeError: invalid duration string"),
+            _ => crate::value::error::throw_type_error("Duration must be an object"),
+        });
     };
+    validate_duration_fields(properties)?;
     let hours = number(properties, "hours");
     let minutes = number(properties, "minutes");
     let seconds = number(properties, "seconds");
@@ -317,6 +323,35 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
         }
     }
     Ok(parts.join(", "))
+}
+
+fn validate_duration_fields(properties: &[(String, Value)]) -> Result<(), VmError> {
+    const UNITS: [&str; 10] = [
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ];
+    let fields = properties
+        .iter()
+        .filter(|(name, _)| UNITS.contains(&name.as_str()))
+        .collect::<Vec<_>>();
+    if fields.is_empty()
+        || fields
+            .iter()
+            .any(|(_, value)| matches!(value, Value::Undefined))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "invalid duration record",
+        ));
+    }
+    Ok(())
 }
 
 fn format_days(days: i64) -> String {
