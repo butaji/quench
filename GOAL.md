@@ -1,9 +1,7 @@
-# Goal: stage 40
+# Goal: stage 20 residuals
 
-Bring test262 stage 40, `built-ins/Atomics`, to 100% passing through the
-canonical runner. Implement the complete Atomics family with exact coercion,
-validation, shared/resizable-buffer behavior, index evaluation order, notify
-completion values, wait/async-wait behavior, and error classification. Fix
-shared canonical semantics; never shim the harness or edit test262. Re-run
-stage 40 and earlier regressions after each fix, then run format/clippy and
-commit the verified result.
+Bring test262 stage 20 (`language/module-code`) to 100% through the canonical
+runner, starting from the current 597/599 baseline. Fix only shared module
+linking, evaluation, completion, and error-ordering semantics; do not alter
+test262 or the harness. Re-run stage 20 and earlier regressions, verify strict
+format/clippy, and commit the verified result.
