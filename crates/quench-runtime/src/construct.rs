@@ -614,7 +614,8 @@ fn construct_function(
     }
     if is_default_derived_constructor(function) {
         let super_constructor = derived_constructor(function)?;
-        return construct_with_new_target(&super_constructor, target, arguments);
+        let receiver = construct_with_new_target(&super_constructor, target, arguments)?;
+        return initialize_instance_fields(function, receiver);
     }
     if derived_constructor(function).is_ok() {
         let _context = crate::super_scope::Guard::install(function, &Value::Undefined);
