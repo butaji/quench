@@ -409,16 +409,22 @@ fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
     if let Some(value) = view.own_property(key) {
         return value;
     }
-    match key {
-        "buffer" => return Value::ArrayBuffer(view.buffer.clone()),
-        "byteLength" => return Value::Number(view.byte_length() as f64),
-        "byteOffset" => return Value::Number(view.byte_offset as f64),
-        _ => {}
+    if let Some(value) = data_view_own_property(view, key) {
+        return value;
     }
     if let Some(prototype) = view.prototype() {
         return get_property(&prototype, key);
     }
     data_view_prototype_property(key)
+}
+
+fn data_view_own_property(view: &crate::value::DataViewData, key: &str) -> Option<Value> {
+    Some(match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(view.byte_length() as f64),
+        "byteOffset" => Value::Number(view.byte_offset as f64),
+        _ => return None,
+    })
 }
 
 fn data_view_prototype_property(key: &str) -> Value {
