@@ -106,51 +106,49 @@ impl RawOptions {
         };
         if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
             for key in OPTION_READ_ORDER {
-                let _ = crate::execute::get_property_result(options, key)?;
-            }
-        }
-        if let Some(Value::Object(properties)) = options {
-            for (key, value) in properties.iter() {
+                let value = crate::execute::get_property_result(options, key)?;
                 if matches!(value, Value::Undefined) {
                     continue;
                 }
-                match key.as_str() {
-                    "style" => raw.style = to_string_value(value),
-                    "currency" => raw.currency = Some(to_string_value(value).to_ascii_uppercase()),
-                    "currencyDisplay" => raw.currency_display = to_string_value(value),
-                    "currencySign" => raw.currency_sign = to_string_value(value),
-                    "unit" => raw.unit = Some(to_string_value(value)),
-                    "unitDisplay" => raw.unit_display = to_string_value(value),
+                match key {
+                    "style" => raw.style = crate::conversion::to_string(&value)?,
+                    "currency" => {
+                        raw.currency = Some(crate::conversion::to_string(&value)?.to_ascii_uppercase())
+                    }
+                    "currencyDisplay" => raw.currency_display = crate::conversion::to_string(&value)?,
+                    "currencySign" => raw.currency_sign = crate::conversion::to_string(&value)?,
+                    "unit" => raw.unit = Some(crate::conversion::to_string(&value)?),
+                    "unitDisplay" => raw.unit_display = crate::conversion::to_string(&value)?,
                     "minimumFractionDigits" => {
-                        raw.minimum_fraction_digits = to_string_value(value).parse().unwrap_or(0.0)
+                        raw.minimum_fraction_digits = crate::conversion::to_number(&value)?
                     }
                     "minimumIntegerDigits" => {
-                        raw.minimum_integer_digits = to_string_value(value).parse().unwrap_or(1.0)
+                        raw.minimum_integer_digits = crate::conversion::to_number(&value)?
                     }
                     "maximumFractionDigits" => {
-                        raw.maximum_fraction_digits = to_string_value(value).parse().unwrap_or(3.0)
+                        raw.maximum_fraction_digits = crate::conversion::to_number(&value)?
                     }
                     "useGrouping" => {
-                        let value = to_string_value(value);
+                        let value = crate::conversion::to_string(&value)?;
                         raw.use_grouping = grouping_enabled(&value);
                         raw.grouping_min2 = value == "min2";
                     }
-                    "notation" => raw.notation = to_string_value(value),
-                    "compactDisplay" => raw.compact_display = to_string_value(value),
-                    "roundingMode" => raw.rounding_mode = crate::conversion::to_string(value)?,
+                    "notation" => raw.notation = crate::conversion::to_string(&value)?,
+                    "compactDisplay" => raw.compact_display = crate::conversion::to_string(&value)?,
+                    "roundingMode" => raw.rounding_mode = crate::conversion::to_string(&value)?,
                     "roundingIncrement" => {
-                        raw.rounding_increment = crate::conversion::to_number(value)?
+                        raw.rounding_increment = crate::conversion::to_number(&value)?
                     }
-                    "roundingPriority" => raw.rounding_priority = to_string_value(value),
+                    "roundingPriority" => raw.rounding_priority = crate::conversion::to_string(&value)?,
                     "trailingZeroDisplay" => {
-                        raw.trailing_zero_display = crate::conversion::to_string(value)?
+                        raw.trailing_zero_display = crate::conversion::to_string(&value)?
                     }
-                    "signDisplay" => raw.sign_display = to_string_value(value),
+                    "signDisplay" => raw.sign_display = crate::conversion::to_string(&value)?,
                     "minimumSignificantDigits" => {
-                        raw.minimum_significant_digits = to_string_value(value).parse().unwrap_or(-1.0)
+                        raw.minimum_significant_digits = crate::conversion::to_number(&value)?
                     }
                     "maximumSignificantDigits" => {
-                        raw.maximum_significant_digits = to_string_value(value).parse().unwrap_or(-1.0)
+                        raw.maximum_significant_digits = crate::conversion::to_number(&value)?
                     }
                     _ => {}
                 }
@@ -344,6 +342,10 @@ impl NumberOptions {
             (
                 "roundingIncrement".to_string(),
                 Value::Number(self.rounding_increment as f64),
+            ),
+            (
+                "trailingZeroDisplay".to_string(),
+                Value::String(self.trailing_zero_display.clone()),
             ),
         ];
         if self.notation == "compact" {
