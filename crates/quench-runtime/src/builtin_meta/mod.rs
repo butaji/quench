@@ -6,6 +6,7 @@
 use crate::ops::Builtin;
 
 pub mod array;
+pub mod atomics;
 pub mod bigint;
 pub mod collections;
 pub mod dataview;

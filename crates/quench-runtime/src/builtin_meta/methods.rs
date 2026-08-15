@@ -3,8 +3,8 @@
 use crate::ops::Builtin;
 
 use super::{
-    array, bigint, collections, dataview, date, disposable, error, finalization_registry, function,
-    intl, json, math, number, object, promise, reflect, regexp, string, symbol, temporal,
+    array, atomics, bigint, collections, dataview, date, disposable, error, finalization_registry,
+    function, intl, json, math, number, object, promise, reflect, regexp, string, symbol, temporal,
 };
 
 pub fn function_name(builtin: Builtin) -> Option<&'static str> {
@@ -46,6 +46,7 @@ const NAME_PROVIDERS: &[fn(Builtin) -> Option<&'static str>] = &[
     json::fn_name,
     promise::fn_name,
     string::fn_name,
+    atomics::fn_name,
 ];
 
 const LENGTH_PROVIDERS: &[fn(Builtin) -> Option<f64>] = &[
@@ -69,6 +70,7 @@ const LENGTH_PROVIDERS: &[fn(Builtin) -> Option<f64>] = &[
     json::fn_len,
     promise::fn_len,
     string::fn_len,
+    atomics::fn_len,
 ];
 
 const SHORT_NAME_PROVIDERS: &[fn(Builtin) -> Option<&'static str>] = &[
@@ -92,6 +94,7 @@ const SHORT_NAME_PROVIDERS: &[fn(Builtin) -> Option<&'static str>] = &[
     json::short_name,
     promise::short_name,
     string::short_name,
+    atomics::short_name,
 ];
 
 fn lookup<T: Copy>(builtin: Builtin, providers: &[fn(Builtin) -> Option<T>]) -> Option<T> {
