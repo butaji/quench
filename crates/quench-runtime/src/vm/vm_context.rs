@@ -5,7 +5,8 @@ pub(crate) fn with_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> Opt
 }
 
 pub(crate) fn global_builtin_exists(key: &str) -> bool {
-    realm::global_builtin_exists(key) && !is_legacy_global(key)
+    (realm::global_builtin_exists(key) && !is_legacy_global(key))
+        || crate::globals::immutable_value(key).is_some()
 }
 
 pub(crate) fn global_builtin_exists_for_object(
