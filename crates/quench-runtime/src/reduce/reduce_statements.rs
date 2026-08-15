@@ -462,7 +462,7 @@ fn reduce_function_body(
         &function.params,
         facts,
         locals,
-        function.id.as_ref().map_or("", |id| id.name.as_str()),
+        "",
         functions::function_kind(function),
         function.r#async,
     )?;
