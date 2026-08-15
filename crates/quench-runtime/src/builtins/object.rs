@@ -297,6 +297,7 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::IntlLocalePrototype, "script") => Builtin::IntlLocaleScriptGetter,
         (Builtin::IntlLocalePrototype, "textInfo") => Builtin::IntlLocaleTextInfoGetter,
         (Builtin::IntlLocalePrototype, "variants") => Builtin::IntlLocaleVariantsGetter,
+        (Builtin::IntlNumberFormatPrototype, "format") => Builtin::IntlNumberFormatFormat,
         _ => return None,
     };
     let descriptor = match (builtin, key) {
