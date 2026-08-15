@@ -25,12 +25,9 @@ pub(crate) fn all(target: &Value) -> Result<Value, VmError> {
 
 pub(crate) fn keys_result(target: Option<&Value>) -> Result<Value, VmError> {
     let target = require_object(target)?;
-    Ok(Value::array(
-        own_enumerable_string_keys(target)
-            .into_iter()
-            .map(Value::String)
-            .collect(),
-    ))
+    let keys = own_enumerable_string_keys(target);
+    check_namespace_bindings(target, &keys)?;
+    Ok(Value::array(keys.into_iter().map(Value::String).collect()))
 }
 
 pub(crate) fn values(target: Option<&Value>, entries: bool) -> Result<Value, VmError> {
