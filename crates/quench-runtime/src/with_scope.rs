@@ -112,9 +112,27 @@ pub(crate) fn set_resolved(
             "{key} is not defined"
         )));
     }
+    if key == "length" && is_boxed_string_target(&target) {
+        return Ok(());
+    }
     let updated = crate::proxy::proxy_set(&target, key, &value, None)?;
     crate::locals::replace_value(&target, &updated);
     Ok(())
+}
+
+fn is_boxed_string_target(value: &Value) -> bool {
+    match value {
+        Value::Object(properties) => properties
+            .iter()
+            .any(|(name, value)| name == "_value" && matches!(value, Value::String(_))),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .is_some_and(|object| is_boxed_string_target(&Value::Object(object))),
+        Value::BindingCell(cell) => is_boxed_string_target(&cell.borrow()),
+        _ => false,
+    }
 }
 
 fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> {
