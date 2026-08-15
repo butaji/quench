@@ -14,7 +14,11 @@ pub(crate) fn execute_host_capability(
         context
             .borrow()
             .as_ref()
-            .is_some_and(|context| context.permits(descriptor))
+            .is_some_and(|context| {
+                context.permits(descriptor)
+                    || (kind == HostCapabilityKind::EvalScript
+                        && realm::context(capability.realm()).is_some())
+            })
     });
     if !permitted {
         return Err(VmError::NotCallable);
@@ -25,7 +29,10 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::CreateRealm if arguments.is_empty() => Ok(create_realm_value()),
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
-        HostCapabilityKind::EvalScript => run_eval_script(arguments),
+        HostCapabilityKind::EvalScript => realm::with_realm(capability.realm(), || {
+            run_eval_script(arguments)
+        })
+        .ok_or(VmError::NotCallable)?,
     }
 }
 
