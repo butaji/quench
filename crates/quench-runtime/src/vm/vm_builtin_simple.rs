@@ -30,6 +30,7 @@ fn is_simple_conversion(builtin: Builtin) -> bool {
             | Builtin::ObjectPrototypeValueOf
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
+            | Builtin::FunctionPrototypeHasInstance
             | Builtin::Object
             | Builtin::Date
             | Builtin::Function
@@ -137,6 +138,9 @@ fn execute_simple_conversion(
         Builtin::EncodeURIComponent => crate::builtins::encode_uri(arguments.first(), false),
         Builtin::DecodeURI => crate::builtins::decode_uri(arguments.first(), true),
         Builtin::DecodeURIComponent => crate::builtins::decode_uri(arguments.first(), false),
+        Builtin::FunctionPrototypeHasInstance => {
+            crate::vm::vm_arithmetic::function_has_instance(receiver, arguments)
+        }
         Builtin::IsFinite => is_finite_check(arguments.first(), receiver).map(Value::Boolean),
         Builtin::IsNaN => is_nan_check(arguments.first(), receiver).map(Value::Boolean),
         Builtin::SymbolToString => symbol_to_string(receiver),
