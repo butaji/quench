@@ -71,6 +71,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             Some(Value::Builtin(TemporalPlainDateTimePrototype))
         }
         (TemporalPlainDateTime, "from") => Some(Value::Builtin(TemporalPlainDateTimeFrom)),
+        (TemporalPlainDateTime, "compare") => Some(Value::Builtin(TemporalPlainDateTimeCompare)),
         (TemporalPlainDateTimePrototype, "constructor") => {
             Some(Value::Builtin(TemporalPlainDateTime))
         }
@@ -112,6 +113,12 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (TemporalPlainDateTimePrototype, "toJSON") => {
             Some(Value::Builtin(TemporalPlainDateTimeToJSON))
+        }
+        (TemporalPlainDateTimePrototype, "equals") => {
+            Some(Value::Builtin(TemporalPlainDateTimeEquals))
+        }
+        (TemporalPlainDateTimePrototype, "valueOf") => {
+            Some(Value::Builtin(TemporalPlainDateTimeValueOf))
         }
         (TemporalPlainTime, "prototype") => Some(Value::Builtin(TemporalPlainTimePrototype)),
         (TemporalPlainTime, "from") => Some(Value::Builtin(TemporalPlainTimeFrom)),
