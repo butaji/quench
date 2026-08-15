@@ -187,6 +187,7 @@ pub enum Builtin {
     ObjectPrototypeLookupGetter,
     ObjectPrototypeLookupSetter,
     ObjectGetOwnPropertyDescriptor,
+    ObjectGetOwnPropertyDescriptors,
     ArrayPrototype,
     ParseFloat,
     ParseInt,
