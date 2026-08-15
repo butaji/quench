@@ -120,6 +120,7 @@ pub(crate) fn property(key: &str) -> Value {
         "drop" => Value::Builtin(crate::ops::Builtin::IteratorDrop),
         "map" => Value::Builtin(crate::ops::Builtin::IteratorMap),
         "every" => Value::Builtin(crate::ops::Builtin::IteratorEvery),
+        "some" => Value::Builtin(crate::ops::Builtin::IteratorSome),
         "Symbol.iterator" => Value::Builtin(crate::ops::Builtin::IteratorSelf),
         _ => Value::Undefined,
     }
