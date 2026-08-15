@@ -123,6 +123,18 @@ fn function_instanceof(value: &Value) -> bool {
         || matches!(value, Value::Builtin(_) if instanceof_callable(value))
 }
 
+pub(crate) fn function_has_instance(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let constructor = receiver.unwrap_or(&Value::Undefined);
+    if !instanceof_callable(constructor) {
+        return Ok(Value::Boolean(false));
+    }
+    let value = arguments.first().unwrap_or(&Value::Undefined);
+    Ok(Value::Boolean(ordinary_instanceof(value, constructor)?))
+}
+
 fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     let prototype = crate::execute::get_property_result(constructor, "prototype")?;
     if !crate::value::is_object(&prototype) {
