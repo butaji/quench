@@ -213,6 +213,14 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = builtin_special_descriptor(builtin, key) {
         return Some(descriptor);
     }
+    if builtin == Builtin::AsyncGeneratorFunctionPrototype
+        && matches!(key, "constructor" | "prototype" | "Symbol.toStringTag")
+    {
+        let property = super::property(builtin, key);
+        if !matches!(property, Value::Undefined) {
+            return Some(descriptor_object_with_flags(property, false, false, true));
+        }
+    }
     if key == "BYTES_PER_ELEMENT" {
         if let Some(size) = typed_array_bytes_per_element(builtin) {
             return Some(descriptor_object_with_flags(
