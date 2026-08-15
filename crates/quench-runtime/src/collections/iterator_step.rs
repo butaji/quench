@@ -52,6 +52,12 @@ fn step_target_state(
             kind,
             done,
         } => StepTarget::Value(iterator_map::step(data, index, kind, done)),
+        state => return step_target_tail(state),
+    })
+}
+
+fn step_target_tail(state: &mut IteratorState) -> Result<StepTarget, crate::execute::VmError> {
+    Ok(match state {
         IteratorState::RegExpString {
             regexp,
             input,
@@ -68,6 +74,7 @@ fn step_target_state(
         IteratorState::Protocol { iterator, next, .. } => {
             StepTarget::Protocol(iterator.clone(), next.clone())
         }
+        _ => StepTarget::Value(None),
     })
 }
 
