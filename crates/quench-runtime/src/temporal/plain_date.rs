@@ -246,6 +246,17 @@ fn date_fields(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
 
 fn date_like_fields(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
     match value {
+        Some(Value::Object(object))
+            if object.iter().any(|(key, value)| {
+                key == "_temporal_kind" && value == &Value::String("PlainDate".into())
+            }) =>
+        {
+            Ok((
+                field_number(object, "year")?,
+                field_number(object, "month")?,
+                field_number(object, "day")?,
+            ))
+        }
         Some(Value::Object(_) | Value::String(_)) => {
             let date = from(value, None)?;
             date_fields(Some(&date))
