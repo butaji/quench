@@ -8,6 +8,7 @@ pub(crate) struct Locale {
     pub language: String,
     pub script: Option<String>,
     pub region: Option<String>,
+    pub variants: Vec<String>,
     pub calendar: Option<String>,
     pub collation: Option<String>,
     pub case_first: Option<String>,
@@ -27,6 +28,10 @@ impl Locale {
         if let Some(region) = &self.region {
             base.push('-');
             base.push_str(region);
+        }
+        for variant in &self.variants {
+            base.push('-');
+            base.push_str(variant);
         }
         base
     }
@@ -66,6 +71,7 @@ fn parse_canonical(tag: &str) -> Locale {
         language: parts.first().map(|p| p.to_string()).unwrap_or_default(),
         script: None,
         region: None,
+        variants: Vec::new(),
         calendar: None,
         collation: None,
         case_first: None,
@@ -87,6 +93,13 @@ fn parse_canonical(tag: &str) -> Locale {
         .is_some_and(|p| p.len() == 2 || (p.len() == 3 && p.chars().all(|c| c.is_ascii_digit())))
     {
         locale.region = Some(parts[index].to_string());
+        index += 1;
+    }
+    while parts
+        .get(index)
+        .is_some_and(|part| part.len() >= 4 && !part.starts_with('u'))
+    {
+        locale.variants.push(parts[index].to_string());
         index += 1;
     }
     parse_extensions(&mut locale, &parts[index..]);
