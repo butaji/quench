@@ -23,6 +23,7 @@ pub struct ImportBinding {
     pub source: String,
     pub imported: String,
     pub local: String,
+    pub deferred: bool,
 }
 
 /// One local binding exposed under an exported module name.
@@ -75,6 +76,7 @@ impl ModuleMetadata {
                             source: source.clone(),
                             imported,
                             local,
+                            deferred: matches!(import.phase, Some(ImportPhase::Defer)),
                         });
                     }
                 }
