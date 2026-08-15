@@ -203,6 +203,10 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
 }
 fn function_prototype_property(key: &str) -> Value {
     let value = builtin_property(Builtin::FunctionPrototype, key);
+    value_or_object_prototype(value, key)
+}
+
+fn value_or_object_prototype(value: Value, key: &str) -> Value {
     if matches!(value, Value::Undefined) {
         return builtin_property(Builtin::ObjectPrototype, key);
     }
