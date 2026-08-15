@@ -635,6 +635,7 @@ impl Test262Host for RuntimeHost {
         source: &str,
         path: &Path,
     ) -> Result<(), String> {
+        quench_runtime::vm::reset_current_global();
         let scripts = harness
             .iter()
             .map(|source| ScriptSource {
