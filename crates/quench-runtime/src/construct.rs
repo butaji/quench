@@ -513,9 +513,9 @@ fn construct_error(
         _ => "Error",
     };
 
-    let prototype = crate::builtin_meta::instance_prototype(*builtin)
-        .map(Value::Builtin)
-        .unwrap_or(Value::Builtin(crate::ops::Builtin::ErrorPrototype));
+    let constructor =
+        crate::vm::intrinsic_for_realm(crate::vm::current_context_or_default().realm(), *builtin);
+    let prototype = crate::execute::get_property(&constructor, "prototype");
     let mut properties = vec![
         (
             crate::builtins::descriptor_key("name"),
