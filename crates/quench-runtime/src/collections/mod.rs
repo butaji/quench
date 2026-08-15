@@ -197,7 +197,7 @@ fn iterator_every(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         )?;
         index = index.saturating_add(1);
         if !crate::execute::is_truthy(&result) {
-            let _ = close_direct_receiver(Some(&source));
+            close_direct_receiver(Some(&source))?;
             return Ok(Value::Boolean(false));
         }
     }
@@ -224,7 +224,7 @@ fn iterator_some(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
         )?;
         index = index.saturating_add(1);
         if crate::execute::is_truthy(&result) {
-            let _ = close_direct_receiver(Some(&source));
+            close_direct_receiver(Some(&source))?;
             return Ok(Value::Boolean(true));
         }
     }
@@ -251,7 +251,7 @@ fn iterator_find(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
         )?;
         index = index.saturating_add(1);
         if crate::execute::is_truthy(&result) {
-            let _ = close_direct_receiver(Some(&source));
+            close_direct_receiver(Some(&source))?;
             return Ok(value);
         }
     }
@@ -269,11 +269,12 @@ fn close_direct_receiver(receiver: Option<&Value>) -> Result<(), VmError> {
             executing: false,
         }),
     }));
-    let _ = crate::collections::iterator::close(
-        wrapper,
-        crate::completion::Completion::Throw(Value::Undefined),
-    );
-    Ok(())
+    let completion =
+        crate::collections::iterator::close(wrapper, crate::completion::Completion::Normal)?;
+    match completion {
+        crate::completion::Completion::Throw(value) => Err(VmError::Thrown(value)),
+        _ => Ok(()),
+    }
 }
 
 fn iterator_source(receiver: Option<&Value>, method: &str) -> Result<Value, VmError> {
