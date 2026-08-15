@@ -238,6 +238,7 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
             }
             Ok(dedupe(out))
         }
+        Value::Null => Err(runtime_error("TypeError: invalid locales")),
         _ => Ok(vec![default_locale()]),
     }
 }
@@ -273,7 +274,10 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 /// Canonicalize a single BCP-47 language tag.
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let tag = tag.trim();
-    if tag.is_empty() || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+    if tag.is_empty()
+        || tag.eq_ignore_ascii_case("nan")
+        || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
     let mut parts = tag.split('-');
