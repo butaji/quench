@@ -407,6 +407,7 @@ pub enum Builtin {
     TemporalPlainTimeToLocaleString,
     TemporalPlainTimeAdd,
     TemporalPlainTimeSubtract,
+    TemporalPlainTimeWith,
     IntlGetCanonicalLocales,
     IntlSupportedValuesOf,
     IntlLocale,

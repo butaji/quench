@@ -60,6 +60,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainTimeSubtract => {
             Some(add(_receiver, arguments.first(), -1))
         }
+        crate::ops::Builtin::TemporalPlainTimeWith => Some(with(_receiver, arguments.first())),
         _ => None,
     }
 }
@@ -310,6 +311,48 @@ fn duration_number(value: &Value, name: &str) -> Result<i64, VmError> {
     crate::execute::get_property_result(value, name)
         .and_then(|value| crate::conversion::to_number(&value))
         .map(|value| value as i64)
+}
+
+fn with(receiver: Option<&Value>, fields: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
+    let fields = fields
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid time-like object"))?;
+    let names = [
+        "hour",
+        "minute",
+        "second",
+        "millisecond",
+        "microsecond",
+        "nanosecond",
+    ];
+    let current = names
+        .iter()
+        .map(|name| crate::execute::get_property_result(receiver, name))
+        .collect::<Result<Vec<_>, _>>()?;
+    let replacements = names
+        .iter()
+        .map(|name| crate::execute::get_property_result(fields, name))
+        .collect::<Result<Vec<_>, _>>()?;
+    if replacements
+        .iter()
+        .all(|value| matches!(value, Value::Undefined))
+    {
+        return Err(crate::value::error::throw_type_error("No time fields"));
+    }
+    let values = current
+        .into_iter()
+        .zip(replacements)
+        .map(|(old, new)| {
+            if matches!(new, Value::Undefined) {
+                old
+            } else {
+                new
+            }
+        })
+        .collect::<Vec<_>>();
+    construct(&values)
 }
 
 fn time_fields(value: &Value) -> Result<i64, VmError> {
