@@ -41,6 +41,14 @@ fn process_promise(promise: &Rc<PromiseData>) {
     let state = promise.state.borrow().clone();
     let then_actions = std::mem::take(&mut *promise.then_actions.borrow_mut());
     let promise_key = Rc::as_ptr(promise) as usize;
+    process_then_actions(then_actions, &state);
+    let continuations = std::mem::take(&mut *promise.continuations.borrow_mut());
+    for continuation in continuations {
+        process_continuation(continuation, &state);
+    }
+}
+
+fn process_then_actions(then_actions: Vec<(Option<Value>, Option<Value>)>, state: &PromiseState) {
     for (on_fulfilled, on_rejected) in then_actions {
         let result_promise = THEN_RESULTS.with(|results| {
             let mut results = results.borrow_mut();
@@ -73,10 +81,6 @@ fn process_promise(promise: &Rc<PromiseData>) {
             Err(VmError::Thrown(reason)) => reject_promise(&result_promise, reason),
             Err(_) => reject_promise(&result_promise, Value::Undefined),
         }
-    }
-    let continuations = std::mem::take(&mut *promise.continuations.borrow_mut());
-    for continuation in continuations {
-        process_continuation(continuation, &state);
     }
 }
 
