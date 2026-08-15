@@ -295,9 +295,7 @@ fn reduce_default_expression(
                 name: "default".to_string(),
             });
         }
-        let slot = *next_slot;
-        *next_slot = next_slot.saturating_add(1);
-        locals.insert("default".to_string(), slot);
+        let slot = default_slot(next_slot, locals);
         ops.push(Op::DeclareEvalBinding {
             name: "default".to_string(),
             slot,
@@ -432,9 +430,7 @@ fn alias_default(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) {
-    let slot = *next_slot;
-    *next_slot = next_slot.saturating_add(1);
-    locals.insert("default".to_string(), slot);
+    let slot = default_slot(next_slot, locals);
     let register = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::DeclareEvalBinding {
@@ -451,6 +447,16 @@ fn alias_default(
     });
 }
 
+fn default_slot(next_slot: &mut u16, locals: &mut HashMap<String, u16>) -> u16 {
+    if let Some(slot) = locals.get("default").copied() {
+        return slot;
+    }
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    locals.insert("default".to_string(), slot);
+    slot
+}
+
 fn store_default(
     src: u16,
     ops: &mut Vec<Op>,
@@ -464,9 +470,7 @@ fn store_default(
             name: "default".to_string(),
         });
     }
-    let slot = *next_slot;
-    *next_slot = next_slot.saturating_add(1);
-    locals.insert("default".to_string(), slot);
+    let slot = default_slot(next_slot, locals);
     ops.push(Op::DeclareEvalBinding {
         name: "default".to_string(),
         slot,
