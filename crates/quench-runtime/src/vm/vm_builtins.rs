@@ -290,10 +290,12 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
             "Stack value must be a string",
         ));
     }
-    if let Some(setter) = own_stack_setter(value)? {
+    if !matches!(value, Value::Proxy(_)) {
+        if let Some(setter) = own_stack_setter(value)? {
         let argument = stack.clone();
         crate::functions::execute_target(&setter, value, std::slice::from_ref(&argument))?;
         return Ok(Value::Undefined);
+        }
     }
     if matches!(value, Value::Proxy(_)) {
         define_proxy_stack(value, stack.clone())?;
