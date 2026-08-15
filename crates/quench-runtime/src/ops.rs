@@ -361,6 +361,8 @@ pub enum Builtin {
     Temporal,
     TemporalInstant,
     TemporalInstantPrototype,
+    TemporalInstantFrom,
+    TemporalInstantEpochNanosecondsGetter,
     TemporalZonedDateTime,
     TemporalZonedDateTimePrototype,
     TemporalDuration,
