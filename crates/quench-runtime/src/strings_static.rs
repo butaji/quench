@@ -62,6 +62,33 @@ pub(crate) fn source_text(value: &Value) -> Option<String> {
     Some(source)
 }
 
+pub(crate) fn source_value(source: &str) -> Value {
+    let mut units = Vec::new();
+    let mut chars = source.chars().peekable();
+    let mut has_surrogate = false;
+    while let Some(character) = chars.next() {
+        if character == '\\' && chars.next_if_eq(&'u').is_some() {
+            let digits: String = chars.by_ref().take(4).collect();
+            if digits.len() == 4 {
+                if let Ok(unit) = u16::from_str_radix(&digits, 16) {
+                    has_surrogate |= (0xD800..=0xDFFF).contains(&unit);
+                    units.push(unit);
+                    continue;
+                }
+            }
+            units.extend("\\u".encode_utf16(&mut [0; 2]));
+            units.extend(digits.encode_utf16(&mut [0; 4]));
+            continue;
+        }
+        units.extend(character.encode_utf16(&mut [0; 2]));
+    }
+    if has_surrogate {
+        Value::StringUnits(std::rc::Rc::new(units))
+    } else {
+        Value::String(source.to_string())
+    }
+}
+
 /// Whether two string values hold identical UTF-16 code units.
 pub(crate) fn units_equal(left: &Value, right: &Value) -> bool {
     match (units_of(left), units_of(right)) {
