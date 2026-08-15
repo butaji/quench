@@ -103,6 +103,13 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             _ => None,
         })
         .unwrap_or(1.0);
+    let rounding_mode = options
+        .and_then(|value| crate::execute::get_property_result(value, "roundingMode").ok())
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or_else(|| "ceil".into());
     if smallest == "hours" {
         let hours = object_number(object, "hours");
         let rounded = (hours / increment).ceil() * increment;
@@ -110,7 +117,33 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         values[4] = rounded;
         return construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>());
     }
+    if smallest == "days" {
+        let total = object_number(object, "days")
+            + object_number(object, "hours") / 24.0
+            + object_number(object, "minutes") / 1_440.0;
+        let days = round_duration(total / increment, &rounding_mode) * increment;
+        let mut values = [0.0; 10];
+        values[3] = days;
+        return construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>());
+    }
+    if smallest == "months" {
+        let total = object_number(object, "months")
+            + object_number(object, "days") / 30.0
+            + object_number(object, "hours") / 720.0;
+        let months = round_duration(total / increment, &rounding_mode) * increment;
+        let mut values = [0.0; 10];
+        values[1] = months;
+        return construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>());
+    }
     Ok(Value::Object(object.clone()))
+}
+
+fn round_duration(value: f64, mode: &str) -> f64 {
+    if mode == "halfTrunc" {
+        value.floor()
+    } else {
+        value.ceil()
+    }
 }
 
 fn combine(
