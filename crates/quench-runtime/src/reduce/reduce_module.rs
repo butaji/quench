@@ -345,14 +345,33 @@ fn reduce_default_class_declaration<'a>(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    reduce_module_exported_decl!(
-        class class,
-        ops,
-        facts,
-        next_register,
-        next_slot,
-        locals
-    )
+    let register = crate::classes::reduce_expression(class, ops, facts, next_register, locals)
+        .ok_or_else(|| vec!["Unsupported class body".to_string()])?;
+    if let Some(identifier) = &class.id {
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        locals.insert(identifier.name.to_string(), slot);
+        ops.push(Op::DeclareEvalBinding {
+            name: identifier.name.to_string(),
+            slot,
+        });
+        ops.push(Op::StoreLocal {
+            slot,
+            src: register,
+        });
+    }
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    locals.insert("default".to_string(), slot);
+    ops.push(Op::DeclareEvalBinding {
+        name: "default".to_string(),
+        slot,
+    });
+    ops.push(Op::StoreLocal {
+        slot,
+        src: register,
+    });
+    Ok(None)
 }
 
 fn reduce_class(
