@@ -384,7 +384,14 @@ fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
 fn builtin_property_is_writable(builtin: Builtin, key: &str) -> bool {
     if matches!(
         builtin,
-        Builtin::ErrorPrototype | Builtin::AggregateErrorPrototype
+        Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
     ) && matches!(key, "name" | "message")
     {
         return true;

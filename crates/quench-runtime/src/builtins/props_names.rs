@@ -19,9 +19,9 @@ fn generator_name(builtin: Builtin) -> Option<&'static str> {
 fn error_name(builtin: Builtin) -> Option<&'static str> {
     use Builtin::*;
     Some(match builtin {
-        Error => "Error", TypeError => "TypeError", RangeError => "RangeError",
-        ReferenceError => "ReferenceError", SyntaxError => "SyntaxError", EvalError => "EvalError",
-        URIError => "URIError", AggregateError | AggregateErrorPrototype => "AggregateError", SuppressedError => "SuppressedError", _ => return None,
+        Error => "Error", TypeError | TypeErrorPrototype => "TypeError", RangeError | RangeErrorPrototype => "RangeError",
+        ReferenceError | ReferenceErrorPrototype => "ReferenceError", SyntaxError | SyntaxErrorPrototype => "SyntaxError", EvalError | EvalErrorPrototype => "EvalError",
+        URIError | URIErrorPrototype => "URIError", AggregateError | AggregateErrorPrototype => "AggregateError", SuppressedError => "SuppressedError", _ => return None,
     })
 }
 fn object_prototype_method(key: &str) -> Option<crate::ops::Builtin> {
