@@ -12,6 +12,18 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             "Duration fields must be integral",
         ));
     }
+    let total_seconds = values[3] * 86_400.0
+        + values[4] * 3_600.0
+        + values[5] * 60.0
+        + values[6]
+        + values[7] / 1_000.0
+        + values[8] / 1_000_000.0
+        + values[9] / 1_000_000_000.0;
+    if total_seconds.abs() > 9_007_199_254_740_991.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Duration is outside the supported range",
+        ));
+    }
     let sign = values
         .iter()
         .find(|value| **value != 0.0)
