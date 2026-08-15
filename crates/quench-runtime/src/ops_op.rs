@@ -47,6 +47,10 @@ pub enum Op {
         slot: u16,
         src: u16,
     },
+    AliasLocal {
+        slot: u16,
+        source: u16,
+    },
     StoreFunctionName {
         slot: u16,
         src: u16,
