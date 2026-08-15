@@ -160,6 +160,9 @@ pub(crate) fn descriptor(
         return Ok(Value::Undefined);
     };
     let key = crate::conversion::to_property_key(key)?;
+    if let Some(id) = crate::vm::deferred_namespace_id(value, &key) {
+        crate::vm::execute_deferred_module(id)?;
+    }
     if crate::builtins::namespace_uninitialized(value, &key) {
         return Err(crate::value::error::throw_reference_error(
             "Cannot access an uninitialized module binding",

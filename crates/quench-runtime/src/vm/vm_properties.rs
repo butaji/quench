@@ -223,6 +223,10 @@ pub(crate) fn get_property_with_receiver(
             "Cannot read property `{key}` of null or undefined"
         )));
     }
+    if let Some(id) = deferred_namespace_id(value, key) {
+        crate::vm::execute_deferred_module(id)?;
+        return get_property_with_receiver(value, key, receiver);
+    }
     if crate::builtins::namespace_uninitialized(value, key) {
         return Err(crate::value::error::throw_reference_error(
             "Cannot access an uninitialized module binding",
@@ -296,6 +300,19 @@ pub(crate) fn get_property_with_receiver(
         return Ok(Value::Undefined);
     }
     invoke_accessor(&getter, receiver)
+}
+
+pub(crate) fn deferred_namespace_id(value: &Value, key: &str) -> Option<u32> {
+    let Value::Object(properties) = value else {
+        return None;
+    };
+    let marker = format!("\0quench:deferred:\0{key}");
+    properties.iter().rev().find_map(|(name, value)| {
+        (name == &marker).then_some(match value {
+            Value::Number(id) => Some(*id as u32),
+            _ => None,
+        })
+    })?
 }
 
 /// Invoke a getter using the receiver as `this`. The getter's own

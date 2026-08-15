@@ -26,6 +26,7 @@ pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
     crate::globals::builtin(key).map(Value::Builtin)
 }
 type ObjectProperties = Rc<crate::value::ObjectData>;
+type DeferredCallback = Rc<dyn Fn(u32) -> Result<Value, VmError>>;
 #[derive(Clone)]
 pub struct VmContext {
     output_sink: Option<OutputSink>,
@@ -46,6 +47,27 @@ impl Default for VmContext {
 thread_local! {
     static CURRENT_CONTEXT: RefCell<Option<VmContext>> = const { RefCell::new(None) };
     static GLOBAL_OBJECT: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
+    static DEFERRED_MODULE_CALLBACK: RefCell<Option<DeferredCallback>> = const { RefCell::new(None) };
+}
+
+pub struct DeferredModuleCallbackGuard {
+    previous: Option<DeferredCallback>,
+}
+
+pub fn install_deferred_module_callback(callback: DeferredCallback) -> DeferredModuleCallbackGuard {
+    let previous = DEFERRED_MODULE_CALLBACK.with(|slot| slot.replace(Some(callback)));
+    DeferredModuleCallbackGuard { previous }
+}
+
+impl Drop for DeferredModuleCallbackGuard {
+    fn drop(&mut self) {
+        DEFERRED_MODULE_CALLBACK.with(|slot| slot.replace(self.previous.take()));
+    }
+}
+
+pub(crate) fn execute_deferred_module(id: u32) -> Result<Value, VmError> {
+    let callback = DEFERRED_MODULE_CALLBACK.with(|slot| slot.borrow().clone());
+    callback.map_or(Err(VmError::NotCallable), |callback| callback(id))
 }
 struct ContextGuard {
     previous: Option<VmContext>,
