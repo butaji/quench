@@ -322,6 +322,19 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
                 ));
             }
         }
+        if let Value::String(smallest_unit) =
+            crate::execute::get_property_result(options, "smallestUnit")?
+        {
+            let unit = smallest_unit.strip_suffix('s').unwrap_or(&smallest_unit);
+            if !matches!(
+                unit,
+                "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
+            ) {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid smallestUnit",
+                ));
+            }
+        }
     }
     let values = NAMES
         .iter()
