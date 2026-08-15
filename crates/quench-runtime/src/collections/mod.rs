@@ -32,6 +32,7 @@ fn execute_core(
     match builtin {
         IteratorConcat => Some(iterator_concat(arguments)),
         IteratorFrom => Some(iterator_from(arguments)),
+        Iterator => Some(constructor_requires_new("Iterator")),
         IteratorReturn => Some(iterator::return_(receiver, arguments)),
         IteratorPrototypeConstructorGetter => Some(Ok(Value::Builtin(Builtin::Iterator))),
         IteratorPrototypeConstructorSetter => {
