@@ -123,6 +123,9 @@ fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> 
     if set_if_bound(key, &value)? {
         return Ok(());
     }
+    if crate::globals::immutable_value(key).is_some() {
+        return reject_immutable_global(strict);
+    }
     if crate::locals::set_eval_named(key, value.clone())
         || crate::locals::set_named(key, value.clone())
     {
@@ -235,6 +238,9 @@ fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Re
     if set_if_bound(key, &value)? {
         return Ok(());
     }
+    if crate::globals::immutable_value(key).is_some() {
+        return reject_immutable_global(strict);
+    }
     if crate::locals::set_named(key, value.clone()) {
         return Ok(());
     }
@@ -247,6 +253,16 @@ fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Re
     let updated = crate::builtins::set_property(global.clone(), key, value);
     crate::vm::synchronize_global_object(registers, &global, &updated);
     Ok(())
+}
+
+fn reject_immutable_global(strict: bool) -> Result<(), VmError> {
+    if strict {
+        Err(crate::value::error::throw_type_error(
+            "Cannot assign to immutable global property",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn check_strict_name(key: &str) -> Result<(), VmError> {

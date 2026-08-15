@@ -7,6 +7,7 @@ pub struct ArrayBufferData {
     pub max_byte_length: Option<usize>,
     pub immutable: bool,
     prototype: RefCell<Option<Value>>,
+    properties: RefCell<Vec<(String, Value)>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +22,7 @@ impl ArrayBufferData {
             max_byte_length: None,
             immutable: false,
             prototype: RefCell::new(None),
+            properties: RefCell::new(Vec::new()),
         }
     }
 
@@ -44,6 +46,21 @@ impl ArrayBufferData {
 
     pub(crate) fn set_prototype(&self, prototype: Value) {
         self.prototype.replace(Some(prototype));
+    }
+
+    pub(crate) fn own_property(&self, key: &str) -> Option<Value> {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.clone())
+    }
+
+    pub(crate) fn set_own_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        properties.retain(|(name, _)| name != key);
+        properties.push((key.to_string(), value));
     }
 
     pub fn detach(&self) {
