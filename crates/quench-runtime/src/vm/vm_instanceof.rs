@@ -36,10 +36,7 @@ fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
-    ) && own_constructor(value)
-        .as_ref()
-        .and_then(intrinsic_builtin)
-        == Some(constructor)
+    ) && own_constructor(value) == Some(Value::Builtin(constructor))
 }
 
 fn intrinsic_builtin(value: &Value) -> Option<Builtin> {
@@ -88,15 +85,6 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         (Value::Object(properties), Builtin::WeakRef) => {
             properties.iter().any(|(name, _)| name == "\0weakref")
         }
-        (Value::Object(properties), Builtin::ShadowRealm) => properties.iter().any(|(name, value)| {
-            name == "\0prototype"
-                && *value == Value::Builtin(Builtin::ShadowRealmPrototype)
-        }),
-        (Value::Object(properties), Builtin::TemporalPlainDate) => {
-            has_property(properties, "year")
-                && has_property(properties, "month")
-                && has_property(properties, "day")
-        }
         _ => return None,
     })
 }
@@ -115,10 +103,6 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
         || own_constructor(value)
             .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
         || is_error_subclass(value, constructor))
-}
-
-fn has_property(properties: &crate::value::ObjectData, key: &str) -> bool {
-    properties.iter().any(|(name, _)| name == key)
 }
 
 fn is_error_subclass(value: &Value, constructor: &Value) -> bool {
