@@ -74,7 +74,7 @@ fn property_for_value(value: &Value, key: &str) -> Value {
         Function(_) if matches!(key, "apply" | "call" | "bind") => {
             bind_function_property(value, key)
         }
-        Function(function) => function_property(function, key),
+        Function(function) => function_property(value, function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
         Map(data) => map_property(data, key),
         Set(data) if key == "size" => Value::Number(data.values.borrow().len() as f64),
@@ -188,7 +188,11 @@ fn generator_property(value: &Value, key: &str) -> Value {
     bind_method(value, Value::Builtin(builtin))
 }
 
-fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
+fn function_property(
+    receiver: &Value,
+    function: &crate::value::FunctionValue,
+    key: &str,
+) -> Value {
     if key == "constructor" {
         let builtin = function_constructor(function);
         return crate::vm::intrinsic_for_global(&function.captures.get(0), builtin)
@@ -202,7 +206,7 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then(|| property_value(value)))
-        .map(|prototype| get_property(&prototype, key));
+        .and_then(|prototype| get_property_with_receiver(&prototype, key, receiver).ok());
     inherited.unwrap_or_else(|| function_prototype_property(key))
 }
 fn function_prototype_property(key: &str) -> Value {
@@ -306,10 +310,21 @@ fn array_early_access(
 }
 
 fn property_from_descriptor(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
+    if matches!(value, Value::Function(_)) && is_legacy_regexp_key(key) {
+        return crate::regexp::legacy_getter(Some(receiver));
+    }
     let descriptor =
         crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))?;
     descriptor_result(&descriptor, receiver, value, key)
         .unwrap_or_else(|| accessor_property(value, key, receiver))
+}
+
+fn is_legacy_regexp_key(key: &str) -> bool {
+    key == "$_"
+        || matches!(key, "input" | "lastMatch" | "lastParen" | "leftContext" | "rightContext")
+        || key.strip_prefix('$').is_some_and(|suffix| {
+            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+        })
 }
 
 fn accessor_property(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
