@@ -28,14 +28,13 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlLocaleGetNumberingSystems => {
             Ok(make_array(vec![Value::String("latn".to_string())]))
         }
-        _ => prototype_method_middle(builtin, receiver, &slot),
+        _ => prototype_method_middle(builtin, receiver),
     }
 }
 
 fn prototype_method_middle(
     builtin: crate::ops::Builtin,
     receiver: Option<&Value>,
-    _slot: &str,
 ) -> Result<Value, VmError> {
     match builtin {
         crate::ops::Builtin::IntlLocaleGetTimeZones => {
