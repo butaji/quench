@@ -96,7 +96,7 @@ fn bound_function_property(
 }
 
 fn intrinsic_target_is_abstract_module_source(bound: &crate::value::BoundFunctionValue) -> bool {
-    realm::is_intrinsic(bound) && bound.target == Value::Builtin(Builtin::AbstractModuleSource)
+    bound.target == Value::Builtin(Builtin::AbstractModuleSource)
 }
 
 fn intrinsic_bound_property(bound: &crate::value::BoundFunctionValue, key: &str) -> Value {
