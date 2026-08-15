@@ -9,6 +9,7 @@ use super::{
 
 pub(crate) struct RelativeOptions {
     locale: String,
+    numbering_system: String,
     style: String,
     numeric: String,
 }
@@ -31,6 +32,7 @@ impl RelativeOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         let mut formatter = RelativeOptions {
             locale,
+            numbering_system: "latn".to_string(),
             style: "long".to_string(),
             numeric: "always".to_string(),
         };
@@ -54,6 +56,9 @@ impl RelativeOptions {
                         } else {
                             return Err(runtime_error("RangeError: invalid numeric"));
                         }
+                    }
+                    "numberingSystem" if super::NUMBERING_SYSTEMS.contains(&text.as_str()) => {
+                        formatter.numbering_system = text;
                     }
                     _ => {}
                 }
@@ -88,7 +93,7 @@ impl RelativeOptions {
             ("numeric".to_string(), Value::String(self.numeric.clone())),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(self.numbering_system.clone()),
             ),
         ])
     }
@@ -594,7 +599,9 @@ pub(crate) fn prototype_method(
             ("numeric".to_string(), Value::String(numeric)),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(
+                    slot_string(&slots, "numberingSystem").unwrap_or_else(|| "latn".to_string()),
+                ),
             ),
         ])),
         _ => Err(runtime_error("TypeError: method not found")),

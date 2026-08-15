@@ -205,32 +205,7 @@ fn remove_locale_extension(locale: &str, unwanted: &str) -> String {
 }
 
 fn valid_numbering_system(value: &str) -> bool {
-    matches!(
-        value,
-        "adlm"
-            | "arab"
-            | "arabext"
-            | "bali"
-            | "beng"
-            | "deva"
-            | "fullwide"
-            | "gujr"
-            | "guru"
-            | "hanidec"
-            | "khmr"
-            | "knda"
-            | "laoo"
-            | "latn"
-            | "limb"
-            | "mlym"
-            | "mong"
-            | "mymr"
-            | "orya"
-            | "tamldec"
-            | "telu"
-            | "thai"
-            | "tibt"
-    )
+    super::NUMBERING_SYSTEMS.contains(&value)
 }
 
 impl DateTimeOptions {

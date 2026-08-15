@@ -736,8 +736,19 @@ fn supported_currencies() -> Vec<Value> {
 }
 
 fn supported_numbering_systems() -> Vec<Value> {
-    strings(&["latn"])
+    strings(NUMBERING_SYSTEMS)
 }
+
+pub(crate) const NUMBERING_SYSTEMS: &[&str] = &[
+    "adlm", "ahom", "arab", "arabext", "bali", "beng", "bhks", "brah", "cakm", "cham", "deva",
+    "diak", "fullwide", "gara", "gong", "gonm", "gujr", "gukh", "guru", "hanidec", "hmng", "hmnp",
+    "java", "kali", "kawi", "khmr", "knda", "krai", "lana", "lanatham", "laoo", "latn", "lepc",
+    "limb", "mathbold", "mathdbl", "mathmono", "mathsanb", "mathsans", "mlym", "modi", "mong",
+    "mroo", "mtei", "mymr", "mymrepka", "mymrpao", "mymrshan", "mymrtlng", "nagm", "newa", "nkoo",
+    "olck", "onao", "orya", "osma", "outlined", "rohg", "saur", "segment", "shrd", "sind", "sinh",
+    "sora", "sund", "sunu", "takr", "talu", "tamldec", "telu", "thai", "tibt", "tirh", "tnsa",
+    "tols", "vaii", "wara", "wcho",
+];
 
 fn supported_time_zones() -> Vec<Value> {
     strings(&[
