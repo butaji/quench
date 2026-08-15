@@ -223,10 +223,29 @@ fn primitive_constructor(value: &Value) -> Option<Builtin> {
 }
 
 fn generator_property(value: &Value, key: &str) -> Value {
+    let is_async = matches!(value, Value::Generator(generator) if generator.function.is_async);
     let builtin = match key {
-        "next" => crate::ops::Builtin::GeneratorNext,
-        "return" => crate::ops::Builtin::GeneratorReturn,
-        "throw" => crate::ops::Builtin::GeneratorThrow,
+        "next" => {
+            if is_async {
+                crate::ops::Builtin::AsyncGeneratorNext
+            } else {
+                crate::ops::Builtin::GeneratorNext
+            }
+        }
+        "return" => {
+            if is_async {
+                crate::ops::Builtin::AsyncGeneratorReturn
+            } else {
+                crate::ops::Builtin::GeneratorReturn
+            }
+        }
+        "throw" => {
+            if is_async {
+                crate::ops::Builtin::AsyncGeneratorThrow
+            } else {
+                crate::ops::Builtin::GeneratorThrow
+            }
+        }
         "toArray" => crate::ops::Builtin::IteratorToArray,
         "map" => crate::ops::Builtin::IteratorMap,
         _ => return Value::Undefined,
