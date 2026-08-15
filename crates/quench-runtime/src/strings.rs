@@ -55,49 +55,6 @@ pub(crate) fn char_at_units(units: &[u16], index: usize) -> Option<Value> {
     }
 }
 
-/// The ECMAScript length of `s`: its count of UTF-16 code units.
-pub(crate) fn utf16_len(s: &str) -> usize {
-    s.encode_utf16().count()
-}
-
-/// The UTF-16 code unit at `index`, if any.
-pub(crate) fn utf16_code_unit(s: &str, index: usize) -> Option<u16> {
-    s.encode_utf16().nth(index)
-}
-
-/// The character (code point) at UTF-16 code-unit `index`, as a string.
-pub(crate) fn char_at_utf16(s: &str, index: usize) -> Option<String> {
-    let units: Vec<u16> = s.encode_utf16().collect();
-    let unit = *units.get(index)?;
-    let code = code_point(&units, index);
-    if is_surrogate(code) {
-        Some(String::from_utf16_lossy(&[unit]))
-    } else {
-        Some(char::from_u32(code).unwrap().to_string())
-    }
-}
-
-/// Converts a byte offset into `s` to a UTF-16 code-unit offset.
-pub(crate) fn byte_to_utf16(s: &str, byte: usize) -> usize {
-    s.get(..byte)
-        .map_or(0, |prefix| prefix.encode_utf16().count())
-}
-
-/// Converts a UTF-16 code-unit offset into its corresponding UTF-8 byte offset.
-pub(crate) fn utf16_byte_index(s: &str, index: usize) -> usize {
-    let mut units = 0;
-    for (byte, character) in s.char_indices() {
-        if units >= index {
-            return byte;
-        }
-        units += character.len_utf16();
-        if units >= index {
-            return byte + character.len_utf8();
-        }
-    }
-    s.len()
-}
-
 /// The code point beginning at `index` within `units`, folding a valid
 /// surrogate pair and otherwise yielding the lone code unit.
 fn code_point(units: &[u16], index: usize) -> u32 {
