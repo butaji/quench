@@ -106,7 +106,13 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
 }
 
 fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
-    let updated = crate::builtins::set_property(value.clone(), "stack", stack);
+    let descriptor = vec![
+        ("value".to_string(), stack),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ];
+    let updated = crate::builtins::define_own_property(value, "stack", &descriptor)?;
     crate::locals::replace_value(value, &updated);
     Ok(())
 }
