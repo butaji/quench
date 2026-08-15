@@ -341,6 +341,19 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if let Some(descriptor) = builtin_descriptor_special(builtin, key) {
+        return Some(descriptor);
+    }
+    if let Some(descriptor) = intrinsic_accessor(builtin, key) {
+        return Some(descriptor);
+    }
+    if builtin == Builtin::SymbolPrototype && key == "description" {
+        return Some(accessor_descriptor(Builtin::SymbolDescriptionGetter));
+    }
+    None
+}
+
+fn builtin_descriptor_special(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::FunctionPrototype && matches!(key, "caller" | "arguments") {
         let thrower = crate::vm::realm_intrinsic(Builtin::ThrowTypeError);
         return Some(Value::Object(Rc::new(ObjectData::new(vec![
@@ -381,12 +394,6 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             false,
             true,
         ));
-    }
-    if let Some(descriptor) = intrinsic_accessor(builtin, key) {
-        return Some(descriptor);
-    }
-    if builtin == Builtin::SymbolPrototype && key == "description" {
-        return Some(accessor_descriptor(Builtin::SymbolDescriptionGetter));
     }
     if builtin == Builtin::Symbol && key == "unscopables" {
         return super::special_property(builtin, key)
