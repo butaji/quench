@@ -31,11 +31,7 @@ pub(crate) fn has_restricted_function_property(value: &Value, key: &str) -> bool
     is_restricted && !properties.iter().any(|(name, _)| name == key)
 }
 
-fn object_prototype_property(
-    receiver: &Value,
-    properties: &[(String, Value)],
-    key: &str,
-) -> Value {
+fn object_prototype_property(receiver: &Value, properties: &[(String, Value)], key: &str) -> Value {
     properties
         .iter()
         .rev()
@@ -50,34 +46,8 @@ pub(crate) fn object_property(
     receiver: &Value,
     key: &str,
 ) -> Value {
-    if properties
-        .iter()
-        .any(|(name, _)| name == &crate::builtins::deleted_key(key))
-    {
-        return Value::Undefined;
-    }
-    if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
-        return property_value(value);
-    }
-    if let Some(realm) = realm::id_for_global(properties) {
-        return global_property(properties, key, Some(realm));
-    }
-    if GLOBAL_OBJECT.with(|global| {
-        global
-            .borrow()
-            .as_ref()
-            .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
-    }) {
-        return global_property(properties, key, None);
-    }
-    if let Some(value) = boxed_string_property(properties, key) {
+    if let Some(value) = direct_object_property(properties, key) {
         return value;
-    }
-    if properties
-        .iter()
-        .any(|(name, value)| name == "\0prototype" && matches!(value, Value::Null))
-    {
-        return Value::Undefined;
     }
     let inherited = object_prototype_property(receiver, properties, key);
     if !matches!(inherited, Value::Undefined) {
@@ -90,10 +60,37 @@ pub(crate) fn object_property(
     crate::builtins::property(prototype, key)
 }
 
-fn boxed_string_property(
-    properties: &Rc<crate::value::ObjectData>,
-    key: &str,
-) -> Option<Value> {
+fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
+    if properties
+        .iter()
+        .any(|(name, _)| name == &crate::builtins::deleted_key(key))
+    {
+        return Some(Value::Undefined);
+    }
+    if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
+        return Some(property_value(value));
+    }
+    if let Some(realm) = realm::id_for_global(properties) {
+        return Some(global_property(properties, key, Some(realm)));
+    }
+    if GLOBAL_OBJECT.with(|global| {
+        global
+            .borrow()
+            .as_ref()
+            .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
+    }) {
+        return Some(global_property(properties, key, None));
+    }
+    if let Some(value) = boxed_string_property(properties, key) {
+        return Some(value);
+    }
+    let null_prototype = properties
+        .iter()
+        .any(|(name, value)| name == "\0prototype" && matches!(value, Value::Null));
+    null_prototype.then_some(Value::Undefined)
+}
+
+fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
     let Some((_, Value::String(value))) = properties.iter().find(|(name, _)| name == "_value")
     else {
         return None;
@@ -145,7 +142,9 @@ fn global_property(
     }
     if key == "constructor" {
         return realm
-            .map(|realm| realm::intrinsic(realm, Builtin::Object).unwrap_or(Value::Builtin(Builtin::Object)))
+            .map(|realm| {
+                realm::intrinsic(realm, Builtin::Object).unwrap_or(Value::Builtin(Builtin::Object))
+            })
             .unwrap_or_else(|| crate::builtins::property(Builtin::ObjectPrototype, key));
     }
     if realm.is_none() {

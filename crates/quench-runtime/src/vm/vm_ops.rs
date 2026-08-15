@@ -193,51 +193,79 @@ fn tail_dispatch(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
+    if let Some(result) = tail_object_dispatch(builtin, arguments, receiver) {
+        return result;
+    }
+    if let Some(result) = tail_conversion_dispatch(builtin, arguments) {
+        return result;
+    }
+    if let Some(result) = tail_constructor_dispatch(builtin, arguments) {
+        return result;
+    }
+    Ok(Value::Undefined)
+}
+
+fn tail_object_dispatch(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+    receiver: Option<&Value>,
+) -> Option<Result<Value, VmError>> {
     use crate::ops::Builtin;
-    Ok(match builtin {
-        Builtin::ObjectIs => Value::Boolean(crate::builtins::same_value(
+    let result = match builtin {
+        Builtin::ObjectIs => Ok(Value::Boolean(crate::builtins::same_value(
             arguments.first(),
             arguments.get(1),
-        )),
-        Builtin::ObjectIsExtensible => crate::properties::is_extensible_value(arguments.first())?,
-        Builtin::ObjectIsFrozen => crate::properties::integrity_level(arguments.first(), true)?,
-        Builtin::ObjectIsSealed => crate::properties::integrity_level(arguments.first(), false)?,
-        Builtin::ObjectFreeze => crate::properties::integrity_apply(arguments.first(), true)?,
-        Builtin::ObjectSeal => crate::properties::integrity_apply(arguments.first(), false)?,
+        ))),
+        Builtin::ObjectIsExtensible => crate::properties::is_extensible_value(arguments.first()),
+        Builtin::ObjectIsFrozen => crate::properties::integrity_level(arguments.first(), true),
+        Builtin::ObjectIsSealed => crate::properties::integrity_level(arguments.first(), false),
+        Builtin::ObjectFreeze => crate::properties::integrity_apply(arguments.first(), true),
+        Builtin::ObjectSeal => crate::properties::integrity_apply(arguments.first(), false),
         Builtin::ObjectPreventExtensions => {
-            crate::properties::prevent_extensions(arguments.first())?
+            crate::properties::prevent_extensions(arguments.first())
         }
         Builtin::ObjectGetPrototypeOf => {
-            crate::builtins::object::get_prototype_of(arguments.first())?
+            crate::builtins::object::get_prototype_of(arguments.first())
         }
-        Builtin::ObjectHasOwnProperty | Builtin::ObjectGetOwnPropertyDescriptor => {
-            crate::builtins::object::object_special(builtin, receiver, arguments)
-        }
-        Builtin::ParseFloat => Value::Number(parse_float(arguments.first())?),
-        Builtin::ParseInt => Value::Number(parse_int(arguments)?),
+        Builtin::ObjectHasOwnProperty | Builtin::ObjectGetOwnPropertyDescriptor => Ok(
+            crate::builtins::object::object_special(builtin, receiver, arguments),
+        ),
+        _ => return None,
+    };
+    Some(result)
+}
+
+fn tail_conversion_dispatch(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    use crate::ops::Builtin;
+    let result = match builtin {
+        Builtin::ParseFloat => parse_float(arguments.first()).map(Value::Number),
+        Builtin::ParseInt => parse_int(arguments).map(Value::Number),
         Builtin::String => match arguments.first() {
-            Some(value) => Value::String(crate::conversion::to_string_explicit(value)?),
-            None => Value::String(String::new()),
+            Some(value) => crate::conversion::to_string_explicit(value).map(Value::String),
+            None => Ok(Value::String(String::new())),
         },
-        Builtin::Unescape => crate::builtins::unescape(arguments.first()),
-        Builtin::DataView => {
-            return Err(crate::value::error::throw_type_error(
-                "Constructor DataView requires 'new'",
-            ))
-        }
-        Builtin::SharedArrayBuffer => {
-            return Err(crate::value::error::throw_type_error(
-                "Constructor SharedArrayBuffer requires 'new'",
-            ))
-        }
-        Builtin::WeakRef => {
-            return Err(crate::value::error::throw_type_error(
-                "Constructor WeakRef requires 'new'",
-            ))
-        }
-        Builtin::MathPow => crate::builtins::math_pow(arguments)?,
-        _ => Value::Undefined,
-    })
+        Builtin::Unescape => Ok(crate::builtins::unescape(arguments.first())),
+        Builtin::MathPow => crate::builtins::math_pow(arguments),
+        _ => return None,
+    };
+    Some(result)
+}
+
+fn tail_constructor_dispatch(
+    builtin: crate::ops::Builtin,
+    _arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    use crate::ops::Builtin;
+    let message = match builtin {
+        Builtin::DataView => "Constructor DataView requires 'new'",
+        Builtin::SharedArrayBuffer => "Constructor SharedArrayBuffer requires 'new'",
+        Builtin::WeakRef => "Constructor WeakRef requires 'new'",
+        _ => return None,
+    };
+    Some(Err(crate::value::error::throw_type_error(message)))
 }
 
 pub fn execute_host_capability(
