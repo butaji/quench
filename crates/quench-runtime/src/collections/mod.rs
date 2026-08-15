@@ -32,6 +32,7 @@ fn execute_core(
     match builtin {
         IteratorConcat => Some(iterator::concat(arguments)),
         IteratorFrom => Some(iterator::from(arguments)),
+        IteratorZip => Some(iterator::zip(arguments)),
         IteratorToArray => Some(iterator::to_array(receiver)),
         IteratorMap => Some(iterator::map(receiver, arguments)),
         Map => Some(constructor_requires_new("Map")),
