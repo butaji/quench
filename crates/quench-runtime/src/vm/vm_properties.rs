@@ -407,7 +407,7 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
     }
     if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "AbstractModuleSource"
     {
-        return Value::Builtin(Builtin::AbstractModuleSource);
+        return Value::Builtin(Builtin::Object);
     }
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
