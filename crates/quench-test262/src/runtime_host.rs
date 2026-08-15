@@ -158,7 +158,9 @@ fn link_star_exports(
                 continue;
             }
             if from_unit.has_star_export(&name) {
-                from_unit.mark_ambiguous_export(&name);
+                if !from_unit.same_star_export(&name, &cell) {
+                    from_unit.mark_ambiguous_export(&name);
+                }
             } else if !from_unit.is_ambiguous_export(&name) {
                 from_unit.link_star_export(&name, cell);
             }
@@ -314,6 +316,13 @@ impl LinkedModule {
 
     fn has_star_export(&self, name: &str) -> bool {
         self.star_exports.borrow().contains(name)
+    }
+
+    fn same_star_export(&self, name: &str, cell: &ModuleBindingCell) -> bool {
+        self.linked_exports
+            .borrow()
+            .get(name)
+            .is_some_and(|existing| Rc::ptr_eq(&existing.shared(), &cell.shared()))
     }
 
     fn has_local_export(&self, name: &str) -> bool {
