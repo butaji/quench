@@ -41,6 +41,8 @@ pub enum HostCapabilityKind {
     CreateRealm,
     EvalScript,
     DetachArrayBuffer,
+    DeferredModule,
+    DynamicImport,
 }
 
 /// Non-JavaScript capability descriptor; exposure is owned by the host.
@@ -98,6 +100,7 @@ pub enum Constant {
     Number(f64),
     Boolean(bool),
     String(String),
+    StringUnits(Vec<u16>),
     BigInt(String),
     Null,
     Undefined,

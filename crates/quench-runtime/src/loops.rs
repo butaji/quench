@@ -217,34 +217,19 @@ fn unpack_for_in<'a>(
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let keys = for_in_keys(crate::execute::read_register(registers, *object)?);
+    let keys = for_in_keys(crate::execute::read_register(registers, *object)?)?;
     Ok((label, *slot, body, *per_iteration, keys))
 }
 
-fn for_in_keys(value: crate::value::Value) -> Vec<String> {
-    let value = crate::locals::resolved_replacement(value);
+fn for_in_keys(value: crate::value::Value) -> Result<Vec<String>, crate::execute::VmError> {
     match value {
-        value @ (crate::value::Value::Object(_)
-        | crate::value::Value::ObjectAlias(_)
-        | crate::value::Value::Function(_)
-        | crate::value::Value::BoundFunction(_)) => {
-            crate::own_keys::enumerable_key_strings(Some(&value))
+        value @ (crate::value::Value::Object(_) | crate::value::Value::ObjectAlias(_)) => {
+            crate::own_keys::enumerable_key_strings_result(Some(&value))
         }
-        value @ crate::value::Value::Array(_) => {
-            crate::own_keys::enumerable_key_strings(Some(&value))
-        }
-        crate::value::Value::Builtin(builtin) => crate::builtins::own_property_names(builtin)
-            .iter()
-            .filter(|key| {
-                crate::builtins::descriptor_flag(
-                    &crate::value::Value::Builtin(builtin),
-                    key,
-                    "enumerable",
-                ) == Some(true)
-            })
-            .map(|key| (*key).to_string())
-            .collect(),
-        _ => Vec::new(),
+        crate::value::Value::Array(values) => crate::own_keys::enumerable_key_strings_result(Some(
+            &crate::value::Value::Array(values),
+        )),
+        _ => Ok(Vec::new()),
     }
 }
 

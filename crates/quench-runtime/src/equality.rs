@@ -116,6 +116,11 @@ fn is_equality_object(value: &Value) -> bool {
 
 pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
+        (Value::Builtin(left), Value::String(right))
+        | (Value::String(right), Value::Builtin(left)) => {
+            crate::intl::tolocale::symbol::name(*left)
+                .is_some_and(|name| right == name || right == &format!("{name}\0"))
+        }
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
         (Value::ObjectAlias(left), Value::Object(right))

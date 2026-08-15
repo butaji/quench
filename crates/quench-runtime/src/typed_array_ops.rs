@@ -356,9 +356,9 @@ fn resize_buffer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
     }
     let length = crate::intl::tolocale::value::to_number_result(arguments.first())?;
     let length = crate::construct::to_index(length)?;
-    if *buffer.detached.borrow() {
+    if buffer.immutable {
         return Err(crate::value::error::throw_type_error(
-            "Cannot resize a detached ArrayBuffer",
+            "Cannot resize an immutable ArrayBuffer",
         ));
     }
     buffer

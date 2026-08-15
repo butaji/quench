@@ -299,9 +299,9 @@ fn construct_typed_builtin(
 }
 
 fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let source = arguments
+    let source_value = arguments
         .first()
-        .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
+        .map_or_else(|| Ok(Value::String(String::new())), regexp_source)?;
     let flags = arguments
         .get(1)
         .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
@@ -313,10 +313,10 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
             "\0prototype".to_string(),
             Value::Builtin(crate::ops::Builtin::RegExpPrototype),
         ),
-        ("source".to_string(), Value::String(source.clone())),
+        ("source".to_string(), source_value.clone()),
         (
             crate::builtins::descriptor_key("source"),
-            regexp_data_descriptor(false, true, Value::String(source)),
+            regexp_data_descriptor(false, true, source_value),
         ),
         ("flags".to_string(), Value::String(flags.clone())),
         (
@@ -333,18 +333,15 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     Ok(Value::Object(Rc::new(ObjectData::new(entries))))
 }
 
-fn validate_regexp_pattern(source: &str, flags: &str) -> Result<(), crate::execute::VmError> {
-    crate::regexp::validate_flags(flags)
-        .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
-    crate::regexp::validate_literal(source)
-        .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
-    crate::regexp::validate_pattern(source)
-        .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
-    if flags.contains('u') {
-        crate::regexp::validate_unicode(source, flags)
-            .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
+fn regexp_source(value: &Value) -> Result<Value, crate::execute::VmError> {
+    let primitive = crate::conversion::to_primitive(value, "string")?;
+    if matches!(primitive, Value::String(_) | Value::StringUnits(_)) {
+        return Ok(match primitive {
+            Value::String(source) => crate::strings::decode_surrogate_escapes(&source),
+            value => value,
+        });
     }
-    Ok(())
+    crate::conversion::to_string(&primitive).map(Value::String)
 }
 
 fn regexp_data_descriptor(writable: bool, configurable: bool, value: Value) -> Value {
@@ -666,7 +663,8 @@ fn construct_function(
     }
     if is_default_derived_constructor(function) {
         let super_constructor = derived_constructor(function)?;
-        return construct_with_new_target(&super_constructor, target, arguments);
+        let receiver = construct_with_new_target(&super_constructor, target, arguments)?;
+        return initialize_instance_fields(function, receiver);
     }
     if derived_constructor(function).is_ok() {
         let _context = crate::super_scope::Guard::install(function, &Value::Undefined);

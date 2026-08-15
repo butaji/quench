@@ -73,7 +73,10 @@ pub(crate) fn build_registers(
         environment.mark_immutable_slot(arguments_slot.saturating_add(3));
     }
     let register_count = function.ops().len().max(32);
-    (vec![crate::value::Value::Undefined; register_count], environment)
+    (
+        vec![crate::value::Value::Undefined; register_count],
+        environment,
+    )
 }
 
 /// Execute a constructor and return its result plus the final `this` value.
@@ -338,24 +341,43 @@ fn to_integer_or_infinity(value: f64) -> f64 {
     if value.is_infinite() {
         return f64::INFINITY;
     }
-    if value == -0.0 { 0.0 } else { value.trunc() }
+    if value == -0.0 {
+        0.0
+    } else {
+        value.trunc()
+    }
 }
 
 fn length_descriptor(length: f64) -> crate::value::Value {
     crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
         ("value".to_string(), crate::value::Value::Number(length)),
         ("writable".to_string(), crate::value::Value::Boolean(false)),
-        ("enumerable".to_string(), crate::value::Value::Boolean(false)),
-        ("configurable".to_string(), crate::value::Value::Boolean(true)),
+        (
+            "enumerable".to_string(),
+            crate::value::Value::Boolean(false),
+        ),
+        (
+            "configurable".to_string(),
+            crate::value::Value::Boolean(true),
+        ),
     ])))
 }
 
 fn name_descriptor(value: &str) -> crate::value::Value {
     crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-        ("value".to_string(), crate::value::Value::String(value.to_string())),
+        (
+            "value".to_string(),
+            crate::value::Value::String(value.to_string()),
+        ),
         ("writable".to_string(), crate::value::Value::Boolean(false)),
-        ("enumerable".to_string(), crate::value::Value::Boolean(false)),
-        ("configurable".to_string(), crate::value::Value::Boolean(true)),
+        (
+            "enumerable".to_string(),
+            crate::value::Value::Boolean(false),
+        ),
+        (
+            "configurable".to_string(),
+            crate::value::Value::Boolean(true),
+        ),
     ])))
 }
 
@@ -375,14 +397,14 @@ pub(crate) fn function_builtin(
         crate::ops::Builtin::ArrayShift => Ok(crate::builtins::array_shift(receiver)),
         crate::ops::Builtin::ArrayReverse => Ok(crate::builtins::array_reverse(receiver)),
         crate::ops::Builtin::ArrayPop => Ok(crate::builtins::array_pop(receiver)),
-        crate::ops::Builtin::ArrayUnshift => Ok(crate::builtins::array_unshift(receiver, arguments)),
+        crate::ops::Builtin::ArrayUnshift => {
+            Ok(crate::builtins::array_unshift(receiver, arguments))
+        }
         crate::ops::Builtin::ArrayFill => Ok(crate::builtins::array_fill(receiver, arguments)),
         crate::ops::Builtin::ArrayCopyWithin => {
             Ok(crate::builtins::array_copy_within(receiver, arguments))
         }
-        crate::ops::Builtin::ArrayFindLast => {
-            crate::builtins::array_find_last(receiver, arguments)
-        }
+        crate::ops::Builtin::ArrayFindLast => crate::builtins::array_find_last(receiver, arguments),
         crate::ops::Builtin::ArrayFindLastIndex => {
             crate::builtins::array_find_last_index(receiver, arguments)
         }
