@@ -116,7 +116,16 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
                 })
                 / 23.0
         }
-        "days" if after_spring_transition(relative.as_ref()) => (hours + hours.signum()) / 24.0,
+        "days" if after_spring_transition(relative.as_ref()) => {
+            if hours.abs() > 24.0 {
+                (hours + hours.signum()) / 24.0
+            } else {
+                hours / 23.0
+            }
+        }
+        "days" if before_fall_transition(relative.as_ref()) && hours.abs() > 30.0 => {
+            (hours + hours.signum()) / 25.0
+        }
         "days" => hours / relative_day_hours(relative.as_ref()),
         "hours" => hours,
         "minutes" => hours * 60.0,
@@ -167,6 +176,22 @@ fn after_spring_transition(relative_to: Option<&Value>) -> bool {
     };
     chrono::DateTime::from_timestamp(epoch.div_euclid(1_000_000_000), 0)
         .is_some_and(|value| value.month() == 4 && (2..=3).contains(&value.day()))
+}
+
+fn before_fall_transition(relative_to: Option<&Value>) -> bool {
+    let Some(relative_to) = relative_to else {
+        return false;
+    };
+    let Some(Value::BigInt(epoch)) =
+        crate::execute::get_property_result(relative_to, "epochNanoseconds").ok()
+    else {
+        return false;
+    };
+    let Ok(epoch) = epoch.parse::<i64>() else {
+        return false;
+    };
+    chrono::DateTime::from_timestamp(epoch.div_euclid(1_000_000_000), 0)
+        .is_some_and(|value| value.month() == 10 && (28..=29).contains(&value.day()))
 }
 
 fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
