@@ -147,7 +147,7 @@ fn calendar_alias(value: &str) -> String {
     match value {
         "islamicc" => "islamic-civil".to_string(),
         "ethiopic-amete-alem" => "ethioaa".to_string(),
-        other => canonicalize(other).unwrap_or_else(|_| other.to_string()),
+        other => other.to_ascii_lowercase(),
     }
 }
 
