@@ -38,6 +38,10 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::AgentGetReport => Ok(agent_get_report()),
         HostCapabilityKind::AgentLeaving => Ok(Value::Undefined),
         HostCapabilityKind::AgentReceiveBroadcast => agent_receive_broadcast(arguments),
+        HostCapabilityKind::AgentSleep
+        | HostCapabilityKind::AgentTryYield
+        | HostCapabilityKind::AgentTrySleep
+        | HostCapabilityKind::AgentSetTimeout => Ok(Value::Undefined),
     }
 }
 
