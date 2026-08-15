@@ -385,6 +385,7 @@ pub enum Builtin {
     TemporalPlainDateEquals,
     TemporalPlainDateCompare,
     TemporalPlainDateValueOf,
+    TemporalPlainDateToLocaleString,
     TemporalPlainDateAdd,
     TemporalPlainDateSubtract,
     TemporalPlainDateUntil,

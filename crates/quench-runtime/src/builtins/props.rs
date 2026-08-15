@@ -94,6 +94,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (TemporalPlainDatePrototype, "equals") => Some(Value::Builtin(TemporalPlainDateEquals)),
         (TemporalPlainDatePrototype, "valueOf") => Some(Value::Builtin(TemporalPlainDateValueOf)),
+        (TemporalPlainDatePrototype, "toLocaleString") => {
+            Some(Value::Builtin(TemporalPlainDateToLocaleString))
+        }
         (TemporalPlainDatePrototype, "add") => Some(Value::Builtin(TemporalPlainDateAdd)),
         (TemporalPlainDatePrototype, "subtract") => Some(Value::Builtin(TemporalPlainDateSubtract)),
         (TemporalPlainDatePrototype, "until") => Some(Value::Builtin(TemporalPlainDateUntil)),

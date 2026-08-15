@@ -23,7 +23,8 @@ pub(crate) fn execute(
                 crate::value::error::throw_type_error("Cannot convert PlainDate to a number"),
             )),
             crate::ops::Builtin::TemporalPlainDateToString
-            | crate::ops::Builtin::TemporalPlainDateToJSON => Some(to_string(receiver)),
+            | crate::ops::Builtin::TemporalPlainDateToJSON
+            | crate::ops::Builtin::TemporalPlainDateToLocaleString => Some(to_string(receiver)),
             crate::ops::Builtin::TemporalPlainDateCalendarIdGetter
             | crate::ops::Builtin::TemporalPlainDateDayOfWeekGetter
             | crate::ops::Builtin::TemporalPlainDateDayOfYearGetter
