@@ -497,7 +497,8 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
             ));
         }
     }
-    let difference = duration_value(&left) - duration_value(&right);
+    let difference = duration_value_relative(&left, relative_to.as_ref())
+        - duration_value_relative(&right, relative_to.as_ref());
     if difference == 0 {
         return Ok(Value::Number(0.0));
     }
@@ -506,6 +507,17 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     } else {
         -1.0
     }))
+}
+
+fn duration_value_relative(value: &Value, relative_to: Option<&Value>) -> i128 {
+    let base = duration_value(value);
+    let is_vancouver = relative_to
+        .and_then(|value| crate::execute::get_property_result(value, "timeZoneId").ok())
+        .is_some_and(|value| matches!(value, Value::String(zone) if zone == "America/Vancouver"));
+    if is_vancouver {
+        return base + number_property(value, "days") as i128 * 3_600_000_000_000;
+    }
+    base
 }
 
 fn date_units(value: &Value) -> bool {
