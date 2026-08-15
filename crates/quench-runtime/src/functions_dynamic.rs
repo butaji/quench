@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use oxc::{allocator::Allocator, parser::Parser, span::SourceType};
+use oxc::{allocator::Allocator, ast::visit::Visit, parser::Parser, span::SourceType};
 
 use crate::{execute::VmError, facts::ProgramDb, ops::FunctionKind, value::Value};
 
@@ -42,6 +42,12 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
         .body
         .as_ref()
         .ok_or_else(|| syntax_error("Invalid function source"))?;
+    if is_async
+        && matches!(kind, FunctionKind::Generator)
+        && forbidden_parameter_expression(&function.params)
+    {
+        return Err(syntax_error("Invalid async generator parameters"));
+    }
     let (parameters, count) = crate::functions::function_parameters(function)
         .map_err(|_| syntax_error("Invalid function parameters"))?;
     let strictness = crate::reduce_support::function_strictness(body, false);
@@ -67,6 +73,26 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     let value = dynamic_value(ops, count, length, strictness, kind, is_async);
     mark_dynamic(&value);
     Ok(value)
+}
+
+fn forbidden_parameter_expression(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    struct Validator {
+        forbidden: bool,
+    }
+
+    impl<'a> Visit<'a> for Validator {
+        fn visit_await_expression(&mut self, _: &oxc::ast::ast::AwaitExpression<'a>) {
+            self.forbidden = true;
+        }
+
+        fn visit_yield_expression(&mut self, _: &oxc::ast::ast::YieldExpression<'a>) {
+            self.forbidden = true;
+        }
+    }
+
+    let mut validator = Validator { forbidden: false };
+    validator.visit_formal_parameters(parameters);
+    validator.forbidden
 }
 
 fn dynamic_value(
