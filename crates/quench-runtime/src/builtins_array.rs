@@ -9,6 +9,11 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
             (delete_object_property(properties, key), true)
         }
         Value::Object(properties)
+            if boxed_string_non_configurable(&properties, key) =>
+        {
+            (Value::Object(properties), false)
+        }
+        Value::Object(properties)
             if descriptor_flag_in(&properties, key, "configurable") == Some(false) =>
         {
             (Value::Object(properties), false)
@@ -49,6 +54,13 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         }
         value => (value, true),
     }
+}
+
+fn boxed_string_non_configurable(properties: &Rc<crate::value::ObjectData>, key: &str) -> bool {
+    let is_boxed_string = properties
+        .iter()
+        .any(|(name, value)| name == "_value" && matches!(value, Value::String(_)));
+    is_boxed_string && (key == "length" || key.parse::<usize>().is_ok())
 }
 
 fn delete_object_alias_property(
