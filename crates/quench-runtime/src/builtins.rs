@@ -121,7 +121,10 @@ pub(crate) fn async_generator_prototype() -> Value {
             return value.clone();
         }
         let mut value = Value::Object(Rc::new(ObjectData::new(vec![
-            ("next".to_string(), Value::Builtin(Builtin::GeneratorNext)),
+            (
+                "next".to_string(),
+                Value::Builtin(Builtin::AsyncGeneratorNext),
+            ),
             (
                 "return".to_string(),
                 Value::Builtin(Builtin::GeneratorReturn),
@@ -146,7 +149,7 @@ pub(crate) fn async_generator_prototype() -> Value {
             ("\0prototype".to_string(), async_iterator_prototype()),
         ])));
         for (key, method) in [
-            ("next", Builtin::GeneratorNext),
+            ("next", Builtin::AsyncGeneratorNext),
             ("return", Builtin::GeneratorReturn),
             ("throw", Builtin::GeneratorThrow),
         ] {
