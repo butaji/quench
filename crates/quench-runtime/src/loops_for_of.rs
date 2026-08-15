@@ -15,11 +15,21 @@ fn prepend_for_of_binding(
     *next_register = next_register.saturating_add(1);
     let mut binding = vec![Op::LoadLocal { dst: source, slot }];
     let bound = match pattern {
-        ForOfPattern::Binding(pattern) => {
-            crate::binding_patterns::bind(pattern, source, &mut binding, facts, next_register, locals)
-        }
+        ForOfPattern::Binding(pattern) => crate::binding_patterns::bind(
+            pattern,
+            source,
+            &mut binding,
+            facts,
+            next_register,
+            locals,
+        ),
         ForOfPattern::Assignment(target) => crate::binding_patterns::assign_target(
-            target, source, &mut binding, facts, next_register, locals,
+            target,
+            source,
+            &mut binding,
+            facts,
+            next_register,
+            locals,
         ),
     };
     bound.ok_or_else(|| vec!["Unsupported for-of binding pattern".to_string()])?;
@@ -34,17 +44,8 @@ fn for_of_slot<'a>(
     locals: &mut HashMap<String, u16>,
 ) -> Result<(u16, bool, Option<ForOfPattern<'a>>), Vec<String>> {
     let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
-        if matches!(
-            left,
-            oxc::ast::ast::ForStatementLeft::ArrayAssignmentTarget(_)
-                | oxc::ast::ast::ForStatementLeft::ObjectAssignmentTarget(_)
-        ) {
-            let slot = *next_slot;
-            *next_slot = next_slot.saturating_add(1);
-            let target = left
-                .as_assignment_target()
-                .ok_or_else(|| vec!["Unsupported for-of assignment target".to_string()])?;
-            return Ok((slot, false, Some(ForOfPattern::Assignment(target))));
+        if let Some(result) = assignment_slot(left, next_slot)? {
+            return Ok(result);
         }
         let (slot, per_iteration) = for_in_slot(left, next_slot, locals)?;
         return Ok((slot, per_iteration, None));
@@ -71,6 +72,25 @@ fn for_of_slot<'a>(
         declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var,
         Some(ForOfPattern::Binding(&declarator.id)),
     ))
+}
+
+fn assignment_slot<'a>(
+    left: &'a oxc::ast::ast::ForStatementLeft<'a>,
+    next_slot: &mut u16,
+) -> Result<Option<(u16, bool, Option<ForOfPattern<'a>>)>, Vec<String>> {
+    if !matches!(
+        left,
+        oxc::ast::ast::ForStatementLeft::ArrayAssignmentTarget(_)
+            | oxc::ast::ast::ForStatementLeft::ObjectAssignmentTarget(_)
+    ) {
+        return Ok(None);
+    }
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    let target = left
+        .as_assignment_target()
+        .ok_or_else(|| vec!["Unsupported for-of assignment target".to_string()])?;
+    Ok(Some((slot, false, Some(ForOfPattern::Assignment(target)))))
 }
 
 fn named_slot(
