@@ -1,7 +1,6 @@
 //! `Intl.Collator`.
 
 use crate::{execute::VmError, value::Value};
-use unicode_normalization::UnicodeNormalization;
 
 use super::{
     default_locale, make_object, resolve_locales, runtime_error, slot_bool, slot_string,
@@ -10,8 +9,7 @@ use super::{
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let raw_locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let (mut locale, extension) = normalize_locale_extensions(&raw_locale);
+    let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
     let mut usage = "sort".to_string();
     let mut sensitivity = "variant".to_string();
     let mut ignore_punctuation = locale.starts_with("th");
@@ -50,12 +48,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                     "ignorePunctuation".to_string(),
                     Value::Boolean(options.ignore_punctuation),
                 ),
-                ("collation".to_string(), Value::String(collation)),
             ]),
-        ),
-        (
-            "\0prototype".to_string(),
-            Value::Builtin(crate::ops::Builtin::IntlCollatorPrototype),
         ),
     ]))
 }
@@ -124,12 +117,10 @@ fn remove_conflicting_extension(locale: &str, key: &str, value: &str) -> String 
     let Some(index) = parts.iter().position(|part| part.eq_ignore_ascii_case(key)) else {
         return locale.to_string();
     };
-    let next = parts.get(index + 1).copied();
-    let extension_value = next.filter(|part| part.len() != 2).unwrap_or("true");
+    let extension_value = parts.get(index + 1).copied().unwrap_or("true");
     if extension_value.eq_ignore_ascii_case(value) {
         return locale.to_string();
     }
-    let remove_count = usize::from(next.is_some_and(|part| part.len() != 2)) + 1;
     let result = parts[..index]
         .iter()
         .chain(parts.get(index + remove_count..).unwrap_or_default().iter())
@@ -234,17 +225,8 @@ fn strip_unicode_key(locale: &str, key: &str) -> String {
         .collect::<Vec<_>>()
         .join("-")
         .trim_end_matches("-u")
-        .to_string()
-}
-
-fn truthy_option(value: &Value) -> bool {
-    match value {
-        Value::Undefined | Value::Null => false,
-        Value::Boolean(value) => *value,
-        Value::Number(value) => *value != 0.0 && !value.is_nan(),
-        Value::String(value) => !value.is_empty(),
-        _ => true,
-    }
+        .to_string();
+    result
 }
 
 pub(crate) fn prototype_method(
@@ -258,7 +240,7 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlCollatorCompare => {
             let left = to_string_value(arguments.first().unwrap_or(&Value::Undefined));
             let right = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
-            Ok(Value::Number(compare(&left, &right, &locale, &slots)))
+            Ok(Value::Number(compare(&left, &right, &locale)))
         }
         crate::ops::Builtin::IntlCollatorResolvedOptions => Ok(make_object(vec![
             ("locale".to_string(), Value::String(locale)),
@@ -278,9 +260,7 @@ pub(crate) fn prototype_method(
             ),
             (
                 "collation".to_string(),
-                Value::String(
-                    slot_string(&slots, "collation").unwrap_or_else(|| "default".to_string()),
-                ),
+                Value::String("default".to_string()),
             ),
             (
                 "numeric".to_string(),
@@ -301,56 +281,13 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
     super::intl_slots(receiver)
 }
 
-fn compare(left: &str, right: &str, locale: &str, slots: &[(String, Value)]) -> f64 {
+fn compare(left: &str, right: &str, locale: &str) -> f64 {
     let _ = locale;
-    let left = comparison_key(left, locale, slots);
-    let right = comparison_key(right, locale, slots);
-    match left.cmp(&right) {
+    match left.cmp(right) {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => 0.0,
         std::cmp::Ordering::Greater => 1.0,
     }
-}
-
-fn comparison_key(value: &str, locale: &str, slots: &[(String, Value)]) -> String {
-    let ignore_punctuation = slot_bool(slots, "ignorePunctuation").unwrap_or(false);
-    let sensitivity = slot_string(slots, "sensitivity").unwrap_or_else(|| "variant".to_string());
-    let normalized = value.nfd();
-    let mut key = String::new();
-    let mut secondary = String::new();
-    for ch in normalized {
-        if ignore_punctuation && !ch.is_alphanumeric() {
-            continue;
-        }
-        if matches!(sensitivity.as_str(), "base" | "case") && matches!(ch, '\u{0300}'..='\u{036f}')
-        {
-            continue;
-        }
-        key.extend(ch.to_lowercase());
-        if sensitivity == "case" {
-            secondary.push(if ch.is_uppercase() { 'U' } else { 'l' });
-        } else if sensitivity == "variant" {
-            secondary.push(ch);
-        }
-    }
-    if locale.starts_with("de") && slot_string(slots, "usage").as_deref() == Some("sort") {
-        key = key
-            .replace("a\u{308}", "ae")
-            .replace("o\u{308}", "oe")
-            .replace("u\u{308}", "ue");
-        secondary = secondary
-            .replace("A\u{308}", "A!")
-            .replace("O\u{308}", "O!")
-            .replace("U\u{308}", "U!")
-            .replace("a\u{308}", "a!")
-            .replace("o\u{308}", "o!")
-            .replace("u\u{308}", "u!");
-    }
-    if !secondary.is_empty() {
-        key.push('\0');
-        key.push_str(&secondary);
-    }
-    key
 }
 
 pub(crate) fn dispatch(

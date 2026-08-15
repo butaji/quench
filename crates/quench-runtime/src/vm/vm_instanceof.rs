@@ -98,15 +98,9 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         | (Value::Uint32Array(_), Builtin::Uint32Array)
         | (Value::Promise(_), Builtin::Promise) => true,
         (Value::Object(properties), Builtin::Date)
-            if properties.iter().any(|(name, _)| name == "timeValue") =>
-        {
-            true
-        }
+            if properties.iter().any(|(name, _)| name == "timeValue") => true,
         (Value::Object(properties), Builtin::RegExp)
-            if properties.iter().any(|(name, _)| name == "source") =>
-        {
-            true
-        }
+            if properties.iter().any(|(name, _)| name == "source") => true,
         (Value::Map(data), Builtin::Map) if !data.weak => true,
         (Value::Map(data), Builtin::WeakMap) if data.weak => true,
         (Value::ArrayBuffer(data), Builtin::SharedArrayBuffer) if data.shared => true,
@@ -114,6 +108,15 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         (Value::Set(data), Builtin::WeakSet) if data.weak => true,
         (Value::Object(properties), Builtin::WeakRef) => {
             properties.iter().any(|(name, _)| name == "\0weakref")
+        }
+        (Value::Object(properties), Builtin::ShadowRealm) => properties.iter().any(|(name, value)| {
+            name == "\0prototype"
+                && *value == Value::Builtin(Builtin::ShadowRealmPrototype)
+        }),
+        (Value::Object(properties), Builtin::TemporalPlainDate) => {
+            has_property(properties, "year")
+                && has_property(properties, "month")
+                && has_property(properties, "day")
         }
         _ => return None,
     })
@@ -129,28 +132,14 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
     if !crate::value::is_object(&prototype) {
         return Err(type_error("Function has non-object prototype"));
     }
-    Ok(prototype_chain_contains(value, &prototype)?
+    Ok(prototype_chain_contains(value, &prototype)
         || own_constructor(value)
             .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
         || is_error_subclass(value, constructor))
 }
 
-pub(crate) fn function_has_instance(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
-    let constructor = receiver.unwrap_or(&Value::Undefined);
-    if !instanceof_callable(constructor) {
-        return Ok(Value::Boolean(false));
-    }
-    let value = arguments.first().unwrap_or(&Value::Undefined);
-    if !crate::value::is_object(value) {
-        return Ok(Value::Boolean(false));
-    }
-    if let Some(result) = builtin_instanceof(value, constructor) {
-        return Ok(Value::Boolean(result));
-    }
-    Ok(Value::Boolean(ordinary_instanceof(value, constructor)?))
+fn has_property(properties: &crate::value::ObjectData, key: &str) -> bool {
+    properties.iter().any(|(name, _)| name == key)
 }
 
 fn is_error_subclass(value: &Value, constructor: &Value) -> bool {
@@ -197,11 +186,14 @@ fn instanceof_callable(value: &Value) -> bool {
     }
 }
 
-fn prototype_chain_contains(value: &Value, expected: &Value) -> Result<bool, VmError> {
-    let mut current = crate::builtins::object::get_prototype_of(Some(value))?;
+fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
+    let mut current = internal_prototype(value);
     for _ in 0..1_024 {
-        if matches!(current, Value::Null) {
-            return Ok(false);
+        let Some(prototype) = current else {
+            return false;
+        };
+        if crate::builtins::same_value(Some(&prototype), Some(expected)) {
+            return true;
         }
         if crate::builtins::same_value(Some(&current), Some(expected)) {
             return Ok(true);
@@ -323,7 +315,6 @@ fn custom_object_prototype(value: &Value) -> Option<Value> {
             .map(|(_, prototype)| prototype.clone()),
         _ => None,
     }
-    Ok(false)
 }
 
 fn own_constructor(value: &Value) -> Option<Value> {

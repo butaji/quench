@@ -18,6 +18,14 @@ fn string_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     match pattern { Value::Object(_) => crate::regexp::exec(Some(pattern), &[Value::String(value.clone())]), _ => Ok(Value::Null) }
 }
 
+fn number(value: &Value) -> Option<f64> {
+    match value {
+        Value::Number(value) => Some(*value),
+        Value::String(value) => value.parse().ok(),
+        _ => None,
+    }
+}
+
 fn to_string(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
@@ -26,13 +34,5 @@ fn to_string(value: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Undefined => "undefined".to_string(),
         _ => "[object Object]".to_string(),
-    }
-}
-
-fn number(value: &Value) -> Option<f64> {
-    match value {
-        Value::Number(value) => Some(*value),
-        Value::String(value) => value.parse().ok(),
-        _ => None,
     }
 }

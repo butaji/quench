@@ -186,6 +186,8 @@ fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
         "parseInt" => Some(crate::ops::Builtin::ParseInt),
         "String" => Some(crate::ops::Builtin::String),
         "Symbol" => Some(crate::ops::Builtin::Symbol),
+        "Temporal" => Some(crate::ops::Builtin::Temporal),
+        "ShadowRealm" => Some(crate::ops::Builtin::ShadowRealm),
         "unescape" => Some(crate::ops::Builtin::Unescape),
         "encodeURI" => Some(crate::ops::Builtin::EncodeURI),
         "encodeURIComponent" => Some(crate::ops::Builtin::EncodeURIComponent),

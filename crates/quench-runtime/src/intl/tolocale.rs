@@ -2,7 +2,6 @@
 
 use super::{resolve_locales, runtime_error, to_string_value};
 use crate::{execute::VmError, ops::Builtin, value::Value};
-use chrono::{DateTime, Utc};
 
 mod date_kind;
 pub(crate) mod parse_num;
@@ -440,15 +439,9 @@ pub(crate) fn dispatch(
         Builtin::NumberToLocaleString => number_to_locale_string(receiver, arguments),
         Builtin::StringToLocaleLowerCase => string_to_locale_case(receiver, false),
         Builtin::StringToLocaleUpperCase => string_to_locale_case(receiver, true),
-        Builtin::DateToLocaleString => {
-            date_to_locale_string(DateLocaleKind::String, receiver, arguments)
-        }
-        Builtin::DateToLocaleDateString => {
-            date_to_locale_string(DateLocaleKind::Date, receiver, arguments)
-        }
-        Builtin::DateToLocaleTimeString => {
-            date_to_locale_string(DateLocaleKind::Time, receiver, arguments)
-        }
+        Builtin::DateToLocaleString => date_to_locale_string(DateLocaleKind::String, arguments),
+        Builtin::DateToLocaleDateString => date_to_locale_string(DateLocaleKind::Date, arguments),
+        Builtin::DateToLocaleTimeString => date_to_locale_string(DateLocaleKind::Time, arguments),
         _ => return None,
     };
     Some(result)
@@ -488,7 +481,7 @@ fn element_to_locale_string(
     options: Option<&Value>,
 ) -> Result<String, VmError> {
     match value {
-        Value::Number(number) => Ok(format_number(*number, locales, arguments.get(1))),
+        Value::Number(number) => Ok(format_number(*number, locales, options)),
         Value::Null | Value::Undefined => Ok(String::new()),
         _ => locale_element_call(value, original_locales, options),
     }
@@ -556,17 +549,14 @@ fn number_resolved(locale: String, options: Option<&Value>) -> Vec<(String, Valu
             match key.as_str() {
                 "minimumFractionDigits" => {
                     if let Ok(number) = value.parse() {
-                        set_number_option(&mut properties, "minimumFractionDigits", number);
+                        properties
+                            .push(("minimumFractionDigits".to_string(), Value::Number(number)));
                     }
                 }
                 "maximumFractionDigits" => {
                     if let Ok(number) = value.parse() {
-                        set_number_option(&mut properties, "maximumFractionDigits", number);
-                    }
-                }
-                "minimumSignificantDigits" | "maximumSignificantDigits" => {
-                    if let Ok(number) = value.parse() {
-                        set_number_option(&mut properties, key, number);
+                        properties
+                            .push(("maximumFractionDigits".to_string(), Value::Number(number)));
                     }
                 }
                 _ => {}
@@ -574,14 +564,6 @@ fn number_resolved(locale: String, options: Option<&Value>) -> Vec<(String, Valu
         }
     }
     properties
-}
-
-fn set_number_option(properties: &mut Vec<(String, Value)>, key: &str, value: f64) {
-    if let Some((_, current)) = properties.iter_mut().find(|(name, _)| name == key) {
-        *current = Value::Number(value);
-    } else {
-        properties.push((key.to_string(), Value::Number(value)));
-    }
 }
 
 pub(crate) fn string_to_locale_case(
@@ -678,66 +660,8 @@ fn case_turkish(value: &str, upper: bool) -> String {
 
 pub(crate) fn date_to_locale_string(
     kind: DateLocaleKind,
-    receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(Value::Object(properties)) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Date.prototype.toLocaleString called on non-Date",
-        ));
-    };
-    if !properties.iter().any(|(key, value)| {
-        key == "timeValue"
-            || matches!(
-                (key.as_str(), value),
-                ("\0prototype", Value::Builtin(Builtin::DatePrototype))
-            )
-    }) {
-        return Err(crate::value::error::throw_type_error(
-            "Date.prototype.toLocaleString called on non-Date",
-        ));
-    }
-    let millis = crate::date::extract_time(receiver);
-    if !millis.is_finite() {
-        return Ok(Value::String(kind.default().to_string()));
-    }
-    if DateTime::<Utc>::from_timestamp_millis(millis as i64).is_none() {
-        return Ok(Value::String(kind.default().to_string()));
-    }
-    let locales = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let options = date_options(kind, arguments.get(1));
-    let formatter = super::datetime::construct(&[locales, options])?;
-    super::datetime::prototype_method(
-        Builtin::IntlDateTimeFormatFormat,
-        &[Value::Number(millis)],
-        Some(&formatter),
-    )
-}
-
-fn date_options(kind: DateLocaleKind, supplied: Option<&Value>) -> Value {
-    let defaults = match kind {
-        DateLocaleKind::String => ["year", "month", "day", "hour", "minute", "second"],
-        DateLocaleKind::Date => ["year", "month", "day", "", "", ""],
-        DateLocaleKind::Time => ["", "", "", "hour", "minute", "second"],
-    };
-    let supplied_properties = match supplied {
-        Some(Value::Object(properties)) => properties.properties.clone(),
-        _ => Vec::new(),
-    };
-    let has_component = supplied_properties.iter().any(|(key, _)| {
-        matches!(
-            key.as_str(),
-            "year" | "month" | "day" | "hour" | "minute" | "second"
-        )
-    });
-    if has_component {
-        return super::make_object(supplied_properties);
-    }
-    let mut properties = defaults
-        .iter()
-        .filter(|key| !key.is_empty())
-        .map(|key| ((*key).to_string(), Value::String("numeric".to_string())))
-        .collect::<Vec<_>>();
-    properties.extend(supplied_properties);
-    super::make_object(properties)
+    let _ = arguments;
+    Ok(Value::String(kind.default().to_string()))
 }

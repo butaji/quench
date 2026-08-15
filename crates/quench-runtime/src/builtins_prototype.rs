@@ -50,10 +50,7 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::BigInt(_)) => "BigInt",
         Some(Value::Array(_)) => "Array",
         Some(Value::Object(properties)) => {
-            if properties
-                .iter()
-                .any(|(key, _)| key == crate::builtins::ERROR_SLOT)
-            {
+            if properties.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT) {
                 return "Error";
             }
             boxed_object_tag(properties).unwrap_or("Object")
@@ -115,9 +112,7 @@ fn boxed_object_tag(properties: &crate::value::ObjectData) -> Option<&'static st
     })
 }
 
-pub(crate) fn function_prototype_to_string(
-    receiver: Option<&Value>,
-) -> Result<Value, crate::execute::VmError> {
+pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
     match receiver {
         Some(Value::Builtin(builtin)) => Value::String(format!("function {}() {{ [native code] }}", builtin_name(*builtin))),
         Some(Value::BoundFunction(bound)) => match &bound.target {
@@ -129,19 +124,6 @@ pub(crate) fn function_prototype_to_string(
         Some(Value::Function(_)) => Value::String("function () { [native code] }".to_string()),
         _ => Value::String(String::new()),
     }
-}
-
-fn native_function_source(builtin: crate::ops::Builtin) -> String {
-    let raw = builtin_name(builtin)
-        .rsplit('.')
-        .next()
-        .unwrap_or(builtin_name(builtin));
-    let name: String = raw
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
-        .collect();
-    let name = if name.is_empty() { "anonymous".to_string() } else { name };
-    format!("function {name}() {{ [native code] }}")
 }
 
 pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {
