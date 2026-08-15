@@ -215,7 +215,8 @@ fn resolve_export_cell(
         } else {
             &binding.imported
         };
-        let cell = resolve_export_cell(graph, units, target, imported, seen)
+        let mut branch_seen = seen.clone();
+        let cell = resolve_export_cell(graph, units, target, imported, &mut branch_seen)
             .or_else(|| units.get(&target)?.export_cell(imported))?;
         if result
             .as_ref()
