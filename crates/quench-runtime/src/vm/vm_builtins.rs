@@ -116,6 +116,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::NumberToExponential
             | Builtin::Object
             | Builtin::Date
+            | Builtin::TemporalDuration
             | Builtin::Error
             | Builtin::RangeError
             | Builtin::ReferenceError
@@ -200,6 +201,9 @@ fn execute_simple_builtin(
         | Builtin::ErrorPrototypeStackSetter => Ok(error_builtin(builtin, arguments, receiver)?),
         Builtin::Object => Ok(crate::builtins::object(arguments)),
         Builtin::Date => Ok(crate::date::call()),
+        Builtin::TemporalDuration => Err(crate::value::error::throw_type_error(
+            "Temporal.Duration requires new",
+        )),
         _ => Ok(Value::Undefined),
     }
 }

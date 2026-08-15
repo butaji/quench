@@ -4,7 +4,7 @@ use crate::ops::Builtin;
 
 use super::{
     array, bigint, collections, dataview, date, disposable, error, finalization_registry, function,
-    intl, json, math, number, object, promise, reflect, regexp, string, symbol,
+    intl, json, math, number, object, promise, reflect, regexp, string, symbol, temporal,
 };
 
 pub fn function_name(builtin: Builtin) -> Option<&'static str> {
@@ -45,6 +45,9 @@ pub fn function_name(builtin: Builtin) -> Option<&'static str> {
         return Some(v);
     }
     if let Some(v) = intl::fn_name(builtin) {
+        return Some(v);
+    }
+    if let Some(v) = temporal::fn_name(builtin) {
         return Some(v);
     }
     if let Some(v) = reflect::fn_name(builtin) {
@@ -150,6 +153,9 @@ pub fn short_name(builtin: Builtin) -> Option<&'static str> {
         return Some(v);
     }
     if let Some(v) = intl::short_name(builtin) {
+        return Some(v);
+    }
+    if let Some(v) = temporal::short_name(builtin) {
         return Some(v);
     }
     if let Some(v) = reflect::short_name(builtin) {

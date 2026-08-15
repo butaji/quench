@@ -25,6 +25,7 @@ pub mod reflect;
 pub mod regexp;
 pub mod string;
 pub mod symbol;
+pub mod temporal;
 
 /// Returns the constructor name for a builtin.
 ///
@@ -84,6 +85,7 @@ fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::IntlPluralRules => "Intl.PluralRules",
         Builtin::IntlRelativeTimeFormat => "Intl.RelativeTimeFormat",
         Builtin::IntlSegmenter => "Intl.Segmenter",
+        Builtin::TemporalDuration => "Temporal.Duration",
         _ => return None,
     })
 }
@@ -124,6 +126,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::RegExp => Some(Builtin::RegExpPrototype),
         Builtin::String => Some(Builtin::ObjectPrototype),
         Builtin::Symbol => Some(Builtin::ObjectPrototype),
+        Builtin::TemporalDuration => Some(Builtin::TemporalDurationPrototype),
         Builtin::IntlCollator => Some(Builtin::IntlCollatorPrototype),
         Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatPrototype),
         Builtin::IntlDisplayNames => Some(Builtin::IntlDisplayNamesPrototype),
@@ -203,6 +206,7 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::SymbolPrototype
             | Builtin::StringPrototype
             | Builtin::BigIntPrototype
+            | Builtin::TemporalDurationPrototype
     )
 }
 
@@ -252,6 +256,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::Proxy => Some(2.0),
         Builtin::Promise => Some(1.0),
         Builtin::Date => Some(7.0),
+        Builtin::TemporalDuration => Some(0.0),
         Builtin::DisposableStack => Some(0.0),
         Builtin::AsyncDisposableStack => Some(0.0),
         Builtin::FinalizationRegistry => Some(1.0),
