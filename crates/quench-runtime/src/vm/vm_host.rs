@@ -28,7 +28,11 @@ pub(crate) fn execute_host_capability(
         context
             .borrow()
             .as_ref()
-            .is_some_and(|context| context.permits(descriptor))
+            .is_some_and(|context| {
+                context.permits(descriptor)
+                    || (kind == HostCapabilityKind::EvalScript
+                        && realm::context(capability.realm()).is_some())
+            })
     });
     if !permitted {
         return Err(VmError::NotCallable);
@@ -39,19 +43,10 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::CreateRealm if arguments.is_empty() => Ok(create_realm_value()),
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
-        HostCapabilityKind::EvalScript => run_eval_script(arguments),
-        HostCapabilityKind::Agent => Err(type_error("$262.agent is not callable")),
-        HostCapabilityKind::AgentStart => agent_start(arguments),
-        HostCapabilityKind::AgentBroadcast => agent_broadcast(arguments),
-        HostCapabilityKind::AgentReport => agent_report(arguments),
-        HostCapabilityKind::AgentGetReport => Ok(agent_get_report()),
-        HostCapabilityKind::AgentLeaving => Ok(Value::Undefined),
-        HostCapabilityKind::AgentReceiveBroadcast => agent_receive_broadcast(arguments),
-        HostCapabilityKind::AgentSleep
-        | HostCapabilityKind::AgentTryYield
-        | HostCapabilityKind::AgentTrySleep => agent_sleep(arguments),
-        HostCapabilityKind::AgentSetTimeout => Ok(Value::Undefined),
-        HostCapabilityKind::AgentMonotonicNow => Ok(agent_monotonic_now()),
+        HostCapabilityKind::EvalScript => realm::with_realm(capability.realm(), || {
+            run_eval_script(arguments)
+        })
+        .ok_or(VmError::NotCallable)?,
     }
 }
 
@@ -164,10 +159,16 @@ fn create_realm_value() -> Value {
         return Value::Undefined;
     }
     let global = realm::global(realm).unwrap_or(Value::Undefined);
-    Value::Object(Rc::new(crate::value::ObjectData::new(vec![(
-        "global".to_string(),
-        global,
-    )])))
+    let eval_script = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(Builtin::HostCapability(HostCapabilityKind::EvalScript)),
+        receiver: Value::HostCapability(token),
+        arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
+    }));
+    Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("global".to_string(), global),
+        ("evalScript".to_string(), eval_script),
+    ])))
 }
 
 fn current_global_value() -> Result<Value, VmError> {

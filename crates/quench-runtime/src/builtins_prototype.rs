@@ -78,18 +78,19 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::Builtin(Builtin::StringPrototype)) => "String",
         Some(Value::Builtin(Builtin::SymbolPrototype)) => "Symbol",
         Some(Value::Builtin(Builtin::BigIntPrototype)) => "BigInt",
-        Some(Value::Builtin(Builtin::ErrorPrototype)) => "Error",
-        Some(
-            Value::Builtin(
-                Builtin::EvalErrorPrototype
-                | Builtin::RangeErrorPrototype
-                | Builtin::ReferenceErrorPrototype
-                | Builtin::SyntaxErrorPrototype
-                | Builtin::TypeErrorPrototype
-                | Builtin::URIErrorPrototype
-                | Builtin::AggregateErrorPrototype,
-            ),
-        ) => "Object",
+        Some(Value::Builtin(
+            Builtin::Intl
+            | Builtin::IntlLocalePrototype
+            | Builtin::IntlNumberFormatPrototype
+            | Builtin::IntlPluralRulesPrototype
+            | Builtin::IntlDateTimeFormatPrototype
+            | Builtin::IntlCollatorPrototype
+            | Builtin::IntlListFormatPrototype
+            | Builtin::IntlRelativeTimeFormatPrototype
+            | Builtin::IntlSegmenterPrototype
+            | Builtin::IntlDisplayNamesPrototype
+            | Builtin::IntlDurationFormatPrototype,
+        )) => "Object",
         Some(Value::Builtin(_)) => "Function",
         Some(Value::Proxy(_)) => "Object",
         Some(Value::Promise(_)) => "Promise",

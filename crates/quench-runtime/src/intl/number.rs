@@ -137,6 +137,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
+        validate_locale_matcher(options)?;
         let raw = RawOptions::from_value(options);
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
@@ -150,8 +151,29 @@ impl NumberOptions {
             minimum_fraction_digits,
         );
         let minimum_fraction_digits = minimum_fraction_digits.min(maximum_fraction_digits);
+        if !matches!(
+            raw.style.as_str(),
+            "decimal" | "percent" | "currency" | "unit"
+        ) {
+            return Err(crate::value::error::throw_range_error("invalid style"));
+        }
+        if raw.style == "currency" {
+            let Some(currency) = raw.currency.as_deref() else {
+                return Err(crate::value::error::throw_type_error(
+                    "currency is required",
+                ));
+            };
+            if currency.len() != 3 || !currency.chars().all(|value| value.is_ascii_alphabetic()) {
+                return Err(crate::value::error::throw_range_error("invalid currency"));
+            }
+        }
         if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
             return Err(crate::value::error::throw_range_error("invalid unit"));
+        }
+        if raw.maximum_significant_digits.is_infinite() || raw.maximum_significant_digits == 0.0 {
+            return Err(crate::value::error::throw_range_error(
+                "invalid maximumSignificantDigits",
+            ));
         }
         Ok(NumberOptions {
             locale,
@@ -282,10 +304,42 @@ impl NumberOptions {
     }
 }
 
+fn validate_locale_matcher(options: Option<&Value>) -> Result<(), VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(());
+    };
+    let value = crate::execute::get_property_result(options, "localeMatcher")?;
+    if matches!(value, Value::Undefined) {
+        return Ok(());
+    }
+    let matcher = crate::conversion::to_string(&value)?;
+    if !matches!(matcher.as_str(), "lookup" | "best fit") {
+        return Err(crate::value::error::throw_range_error(
+            "invalid localeMatcher",
+        ));
+    }
+    Ok(())
+}
+
 fn valid_unit(unit: Option<&str>) -> bool {
     matches!(
         unit,
-        Some("percent" | "meter" | "kilometer" | "kilometer-per-hour")
+        Some(
+            "percent"
+                | "meter"
+                | "kilometer"
+                | "kilometer-per-hour"
+                | "year"
+                | "month"
+                | "week"
+                | "day"
+                | "hour"
+                | "minute"
+                | "second"
+                | "millisecond"
+                | "microsecond"
+                | "nanosecond"
+        )
     )
 }
 
@@ -934,7 +988,13 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 }
 
 fn to_number_result(value: Option<&Value>) -> Result<f64, VmError> {
-    crate::conversion::to_number(value.unwrap_or(&Value::Undefined))
+    let value = value.unwrap_or(&Value::Undefined);
+    if let Value::BigInt(value) = value {
+        return value
+            .parse::<f64>()
+            .map_err(|_| crate::value::error::throw_type_error("Cannot convert BigInt to number"));
+    }
+    crate::conversion::to_number(value)
 }
 
 pub(crate) fn to_number(value: Option<&Value>) -> f64 {

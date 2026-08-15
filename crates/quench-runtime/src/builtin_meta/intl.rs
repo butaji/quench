@@ -31,6 +31,7 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
         Builtin::IntlDateTimeFormatSupportedLocalesOf => {
             Some("Intl.DateTimeFormat.supportedLocalesOf")
         }
+        Builtin::IntlCollatorSupportedLocalesOf => Some("Intl.Collator.supportedLocalesOf"),
         Builtin::IntlSegmenterSupportedLocalesOf => Some("Intl.Segmenter.supportedLocalesOf"),
         Builtin::IntlListFormatSupportedLocalesOf => Some("Intl.ListFormat.supportedLocalesOf"),
         Builtin::IntlLocaleBaseNameGetter => Some("get baseName"),
@@ -59,7 +60,7 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
         Builtin::IntlPluralRulesResolvedOptions => {
             Some("Intl.PluralRules.prototype.resolvedOptions")
         }
-        Builtin::IntlDateTimeFormatFormat => Some("Intl.DateTimeFormat.prototype.format"),
+        Builtin::IntlDateTimeFormatFormat => Some("get format"),
         Builtin::IntlDateTimeFormatFormatToParts => {
             Some("Intl.DateTimeFormat.prototype.formatToParts")
         }
@@ -76,7 +77,17 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
 
 const fn intl_name_group_b(b: Builtin) -> Option<&'static str> {
     match b {
-        Builtin::IntlCollatorCompare => Some("Intl.Collator.prototype.compare"),
+        Builtin::IntlCollatorCompare => Some("get compare"),
+        Builtin::IntlDurationFormatFormat => Some("Intl.DurationFormat.prototype.format"),
+        Builtin::IntlDurationFormatSupportedLocalesOf => {
+            Some("Intl.DurationFormat.supportedLocalesOf")
+        }
+        Builtin::IntlDurationFormatFormatToParts => {
+            Some("Intl.DurationFormat.prototype.formatToParts")
+        }
+        Builtin::IntlDurationFormatResolvedOptions => {
+            Some("Intl.DurationFormat.prototype.resolvedOptions")
+        }
         Builtin::IntlCollatorResolvedOptions => Some("Intl.Collator.prototype.resolvedOptions"),
         Builtin::IntlListFormatFormat => Some("Intl.ListFormat.prototype.format"),
         Builtin::IntlListFormatFormatToParts => Some("Intl.ListFormat.prototype.formatToParts"),
@@ -128,6 +139,8 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlLocaleTextInfoGetter
         | Builtin::IntlLocaleVariantsGetter => Some(0.0),
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(1.0),
+        Builtin::IntlCollatorSupportedLocalesOf => Some(1.0),
+        Builtin::IntlDurationFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(1.0),
         Builtin::IntlListFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlNumberFormatFormat => Some(1.0),
@@ -135,24 +148,28 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlPluralRulesSelect
         | Builtin::IntlPluralRulesResolvedOptions
         | Builtin::IntlDateTimeFormatFormat
-        | Builtin::IntlDateTimeFormatFormatToParts
         | Builtin::IntlDateTimeFormatResolvedOptions
         | Builtin::IntlCollatorCompare
         | Builtin::IntlCollatorResolvedOptions
+        | Builtin::IntlDurationFormatResolvedOptions
         | Builtin::IntlSegmenterSegment
         | Builtin::IntlSegmenterSegmentsIterator
         | Builtin::IntlSegmenterSegmentsContaining
         | Builtin::IntlSegmenterResolvedOptions
         | Builtin::IntlDisplayNamesOf
-        | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
-        Builtin::IntlNumberFormatFormatToParts => Some(1.0),
+        | Builtin::IntlDisplayNamesResolvedOptions
+        | Builtin::IntlListFormatResolvedOptions => Some(0.0),
+        Builtin::IntlNumberFormatFormatToParts | Builtin::IntlDateTimeFormatFormatToParts => {
+            Some(1.0)
+        }
         Builtin::IntlNumberFormatFormatRange
         | Builtin::IntlNumberFormatFormatRangeToParts
         | Builtin::IntlDateTimeFormatFormatRange
         | Builtin::IntlDateTimeFormatFormatRangeToParts => Some(2.0),
         Builtin::IntlListFormatFormat
         | Builtin::IntlListFormatFormatToParts
-        | Builtin::IntlListFormatResolvedOptions
+        | Builtin::IntlDurationFormatFormat
+        | Builtin::IntlDurationFormatFormatToParts
         | Builtin::IntlRelativeTimeFormatFormat
         | Builtin::IntlRelativeTimeFormatFormatToParts
         | Builtin::IntlRelativeTimeFormatResolvedOptions => Some(1.0),
@@ -162,6 +179,8 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
 
 const fn intl_short_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::IntlGetCanonicalLocales => Some("getCanonicalLocales"),
+        Builtin::IntlSupportedValuesOf => Some("supportedValuesOf"),
         Builtin::IntlLocaleToString => Some("toString"),
         Builtin::IntlLocaleMaximize => Some("maximize"),
         Builtin::IntlLocaleMinimize => Some("minimize"),
@@ -186,6 +205,7 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleTextInfoGetter => Some("textInfo"),
         Builtin::IntlLocaleVariantsGetter => Some("variants"),
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some("supportedLocalesOf"),
+        Builtin::IntlCollatorSupportedLocalesOf => Some("supportedLocalesOf"),
         Builtin::IntlSegmenterSupportedLocalesOf => Some("supportedLocalesOf"),
         Builtin::IntlListFormatSupportedLocalesOf => Some("supportedLocalesOf"),
         Builtin::IntlNumberFormatFormat => Some(""),
@@ -195,12 +215,15 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlNumberFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlPluralRulesSelect => Some("select"),
         Builtin::IntlPluralRulesResolvedOptions => Some("resolvedOptions"),
-        Builtin::IntlDateTimeFormatFormat => Some("format"),
+        Builtin::IntlDateTimeFormatFormat => Some("get format"),
         Builtin::IntlDateTimeFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlDateTimeFormatFormatRange => Some("formatRange"),
         Builtin::IntlDateTimeFormatFormatRangeToParts => Some("formatRangeToParts"),
         Builtin::IntlDateTimeFormatResolvedOptions => Some("resolvedOptions"),
-        Builtin::IntlCollatorCompare => Some("compare"),
+        Builtin::IntlCollatorCompare => Some("get compare"),
+        Builtin::IntlDurationFormatFormat => Some("format"),
+        Builtin::IntlDurationFormatFormatToParts => Some("formatToParts"),
+        Builtin::IntlDurationFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlCollatorResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlListFormatFormat => Some("format"),
         Builtin::IntlListFormatFormatToParts => Some("formatToParts"),
@@ -214,6 +237,7 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlSegmenterResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlDisplayNamesOf => Some("of"),
         Builtin::IntlDisplayNamesResolvedOptions => Some("resolvedOptions"),
+        Builtin::IntlDurationFormatSupportedLocalesOf => Some("supportedLocalesOf"),
         _ => None,
     }
 }

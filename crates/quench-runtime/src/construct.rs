@@ -91,16 +91,12 @@ fn construct_with_new_target(
     let result = match target {
         Value::Proxy(_) => crate::proxy::proxy_construct(target, arguments, Some(new_target)),
         Value::Builtin(builtin) => {
-            if *builtin == crate::ops::Builtin::Iterator
-                && crate::builtins::same_value(Some(target), Some(new_target))
+            if is_intl_constructor(*builtin)
+                && !crate::builtins::same_value(Some(target), Some(new_target))
             {
-                return Err(type_error("Iterator is not constructable directly"));
+                crate::execute::get_property_result(new_target, "prototype")?;
             }
-            let value = if *builtin == crate::ops::Builtin::Iterator {
-                crate::builtins::object(arguments)
-            } else {
-                construct_builtin(*builtin, arguments)?
-            };
+            let value = construct_builtin(*builtin, arguments)?;
             let value = with_new_target_prototype(value, target, new_target)?;
             if let Value::DataView(view) = &value {
                 if *view.buffer.detached.borrow() {
@@ -328,6 +324,23 @@ fn construct_typed_builtin(
         BigUint64Array => construct_biguint64_array(arguments),
         _ => return None,
     })
+}
+
+fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
+    use crate::ops::Builtin;
+    matches!(
+        builtin,
+        Builtin::IntlNumberFormat
+            | Builtin::IntlDateTimeFormat
+            | Builtin::IntlCollator
+            | Builtin::IntlPluralRules
+            | Builtin::IntlListFormat
+            | Builtin::IntlRelativeTimeFormat
+            | Builtin::IntlSegmenter
+            | Builtin::IntlDisplayNames
+            | Builtin::IntlDurationFormat
+            | Builtin::IntlLocale
+    )
 }
 
 fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -577,6 +590,7 @@ fn construct_error(
         crate::ops::Builtin::URIError => "URIError",
         crate::ops::Builtin::AggregateError => "AggregateError",
         crate::ops::Builtin::TypeError => "TypeError",
+        crate::ops::Builtin::Error => "Error",
         _ => "Error",
     };
 
