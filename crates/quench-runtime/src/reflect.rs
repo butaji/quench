@@ -30,7 +30,7 @@ pub(crate) fn builtin(
             && !direct_syntax_error
             && matches!(error, VmError::Thrown(_))
         {
-            crate::value::error::throw_type_error("ShadowRealm evaluation threw a value")
+            shadow_type_error("ShadowRealm evaluation threw a value")
         } else {
             error
         }
@@ -41,7 +41,7 @@ pub(crate) fn builtin(
         return wrap_shadow_function(&result, realm);
     }
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && crate::value::is_object(&result) {
-        return Err(crate::value::error::throw_type_error(
+        return Err(shadow_type_error(
             "ShadowRealm evaluation must return a primitive",
         ));
     }
@@ -87,9 +87,25 @@ fn wrap_shadow_function(
 }
 
 fn shadow_property(target: &Value, key: &str) -> Result<Value, VmError> {
-    crate::execute::get_property_result(target, key).map_err(|_| {
-        crate::value::error::throw_type_error("ShadowRealm wrapped function metadata failed")
-    })
+    let result = if matches!(target, Value::Proxy(_)) {
+        crate::proxy::proxy_get_own_property_descriptor(target, key)
+            .and_then(|_| crate::execute::get_property_result(target, key))
+    } else {
+        crate::execute::get_property_result(target, key)
+    };
+    result.map_err(|_| shadow_type_error("ShadowRealm wrapped function metadata failed"))
+}
+
+fn shadow_type_error(message: &str) -> VmError {
+    let error = crate::builtins::error(
+        crate::ops::Builtin::TypeError,
+        &[Value::String(message.to_string())],
+    );
+    VmError::Thrown(crate::builtins::set_property(
+        error,
+        "constructor",
+        Value::Builtin(crate::ops::Builtin::TypeError),
+    ))
 }
 
 fn is_shadow_realm_receiver(receiver: Option<&Value>) -> bool {
