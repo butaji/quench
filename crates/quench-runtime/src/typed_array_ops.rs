@@ -183,16 +183,16 @@ fn resize_buffer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
             "resize requires an ArrayBuffer",
         ));
     };
+    if buffer.immutable {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot resize an immutable ArrayBuffer",
+        ));
+    }
     let length = crate::intl::tolocale::value::to_number_result(arguments.first())?;
     let length = crate::construct::to_index(length)?;
     if *buffer.detached.borrow() {
         return Err(crate::value::error::throw_type_error(
             "Cannot resize a detached ArrayBuffer",
-        ));
-    }
-    if buffer.immutable {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot resize an immutable ArrayBuffer",
         ));
     }
     if buffer.max_byte_length.is_none() {
