@@ -180,6 +180,7 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "AsyncDisposableStack" => AsyncDisposableStack,
         "FinalizationRegistry" => FinalizationRegistry,
         "Intl" => Intl,
+        "Temporal" => Temporal,
         _ => return global_builtin_error(key),
     })
 }
