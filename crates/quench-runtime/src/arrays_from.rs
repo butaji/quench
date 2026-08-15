@@ -118,6 +118,9 @@ fn mapper(arguments: &[Value]) -> Result<Option<Value>, crate::execute::VmError>
 }
 
 fn has_iterator(source: &Value) -> Result<bool, crate::execute::VmError> {
+    if matches!(source, Value::Generator(_)) {
+        return Ok(true);
+    }
     let method = crate::execute::get_property_result(source, "Symbol.iterator")?;
     Ok(!matches!(method, Value::Undefined | Value::Null))
 }

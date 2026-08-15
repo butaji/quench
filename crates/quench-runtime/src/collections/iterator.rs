@@ -283,6 +283,9 @@ pub(crate) fn for_each_iterable<F>(
 where
     F: FnMut(Value) -> Result<(), crate::execute::VmError>,
 {
+    if matches!(value, Value::Generator(_)) {
+        return for_each_generator(value, callback);
+    }
     let iterator = open(value)?;
     loop {
         let Some(item) = step_value(&iterator)? else {
@@ -297,6 +300,21 @@ where
             }
             return Err(error);
         }
+    }
+}
+
+fn for_each_generator<F>(generator: Value, mut callback: F) -> Result<(), crate::execute::VmError>
+where
+    F: FnMut(Value) -> Result<(), crate::execute::VmError>,
+{
+    loop {
+        let result = crate::generator::next(Some(&generator), &[])?;
+        let done = crate::execute::get_property_result(&result, "done")?;
+        if crate::execute::is_truthy(&done) {
+            return Ok(());
+        }
+        let value = crate::execute::get_property_result(&result, "value")?;
+        callback(value)?;
     }
 }
 pub enum DelegationResult {
