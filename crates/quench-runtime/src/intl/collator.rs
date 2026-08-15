@@ -73,13 +73,18 @@ fn apply_properties(
     options: &mut CollatorOptions,
     properties: &[(String, Value)],
 ) -> Result<(), VmError> {
+    apply_string_properties(options, properties)?;
+    apply_boolean_properties(options, properties);
+    Ok(())
+}
+
+fn apply_string_properties(
+    options: &mut CollatorOptions,
+    properties: &[(String, Value)],
+) -> Result<(), VmError> {
     if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
         options.usage = to_string_value(value);
         validate_option(&options.usage, &["sort", "search"], "usage")?;
-    }
-    if let Some((_, Value::Boolean(value))) = properties.iter().find(|(name, _)| name == "numeric")
-    {
-        options.numeric = *value;
     }
     if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
         options.case_first = to_string_value(value);
@@ -97,13 +102,20 @@ fn apply_properties(
             "sensitivity",
         )?;
     }
+    Ok(())
+}
+
+fn apply_boolean_properties(options: &mut CollatorOptions, properties: &[(String, Value)]) {
+    if let Some((_, Value::Boolean(value))) = properties.iter().find(|(name, _)| name == "numeric")
+    {
+        options.numeric = *value;
+    }
     if let Some((_, Value::Boolean(value))) = properties
         .iter()
         .find(|(name, _)| name == "ignorePunctuation")
     {
         options.ignore_punctuation = *value;
     }
-    Ok(())
 }
 
 fn validate_option(value: &str, allowed: &[&str], name: &str) -> Result<(), VmError> {
