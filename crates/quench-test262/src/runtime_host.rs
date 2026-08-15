@@ -211,14 +211,20 @@ fn resolved_export_cell(
         let target = graph.resolve(id, &binding.source)?;
         return resolved_export_cell(units, graph, target, &binding.imported, seen);
     }
-    metadata
+    let matches = metadata
         .reexports
         .iter()
         .filter(|binding| binding.imported == "*all*")
-        .find_map(|binding| {
+        .filter_map(|binding| {
             let target = graph.resolve(id, &binding.source)?;
             resolved_export_cell(units, graph, target, name, &mut seen.clone())
         })
+        .collect::<Vec<_>>();
+    let first = matches.first()?.clone();
+    matches
+        .iter()
+        .all(|candidate| Rc::ptr_eq(&candidate.shared(), &first.shared()))
+        .then_some(first)
 }
 
 fn link_star_exports(
