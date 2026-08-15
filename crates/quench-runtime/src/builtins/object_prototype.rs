@@ -362,7 +362,6 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
-            | Builtin::AsyncFunctionPrototype
             | Builtin::ShadowRealmPrototype
     )
 }
