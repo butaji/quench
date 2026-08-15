@@ -18,7 +18,16 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result
     let target = crate::execute::read_register(registers, *object)?;
     let key = crate::conversion::to_property_key(&crate::execute::read_register(registers, *key)?)?;
     let value = crate::execute::read_register(registers, *value)?;
-    let descriptor = descriptor(*kind, value, *enumerable);
+    let descriptor = if key == "undefined" {
+        vec![
+            ("value".to_string(), value),
+            ("writable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(false)),
+        ]
+    } else {
+        descriptor(*kind, value, *enumerable)
+    };
     let result = crate::builtins::define_own_property(&target, &key, &descriptor)?;
     crate::super_scope::attach_home_objects(&result);
     crate::locals::replace_value(&target, &result);
@@ -109,7 +118,7 @@ fn accessor_bound(
 }
 
 fn accessor_builtin(builtin: Builtin, key: &str, field: &str) -> Option<Value> {
-    if builtin == Builtin::ErrorPrototype && key == "stack" && field == "set" {
+    if is_native_error_prototype(builtin) && key == "stack" && field == "set" {
         return Some(Value::Builtin(Builtin::ErrorPrototypeStackSetter));
     }
     static_accessor(builtin, field_key(key))
@@ -129,6 +138,20 @@ fn accessor_builtin(builtin: Builtin, key: &str, field: &str) -> Option<Value> {
         .or_else(|| {
             builtin_prototype(builtin).and_then(|prototype| accessor_value(&prototype, key, field))
         })
+}
+
+fn is_native_error_prototype(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::TypeErrorPrototype
+    )
 }
 
 /// Accessor properties that are intrinsic to a builtin itself (get-only, no
@@ -214,6 +237,13 @@ fn builtin_prototype(builtin: Builtin) -> Option<Value> {
         | Builtin::RegExpPrototype
         | Builtin::DatePrototype
         | Builtin::ErrorPrototype
+        | Builtin::RangeErrorPrototype
+        | Builtin::ReferenceErrorPrototype
+        | Builtin::SyntaxErrorPrototype
+        | Builtin::EvalErrorPrototype
+        | Builtin::URIErrorPrototype
+        | Builtin::AggregateErrorPrototype
+        | Builtin::TypeErrorPrototype
         | Builtin::SymbolPrototype
         | Builtin::PromisePrototype
         | Builtin::MapPrototype
