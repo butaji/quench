@@ -125,7 +125,7 @@ fn link_reexports(
         let metadata = unit_metadata(units, id)?;
         for binding in &metadata.reexports {
             let target = resolve_reexport(graph, id, &binding.source)?;
-            link_reexport(units, id, target, binding)?;
+            link_reexport(graph, units, id, target, binding)?;
         }
     }
     Ok(())
@@ -148,6 +148,7 @@ fn resolve_reexport(graph: &ModuleGraph, from: ModuleId, source: &str) -> Result
 }
 
 fn link_reexport(
+    graph: &ModuleGraph,
     units: &HashMap<ModuleId, LinkedModule>,
     from: ModuleId,
     target: ModuleId,
@@ -156,12 +157,55 @@ fn link_reexport(
     if binding.imported == "*all*" {
         return link_star_exports(units, from, target);
     }
-    let cell = import_cell(units, target, &binding.imported, true)?;
+    if binding.imported == "*" {
+        let cell = namespace_cell(units, target)?;
+        units
+            .get(&from)
+            .ok_or_else(|| "module unit missing".to_string())?
+            .link_export(&binding.exported, cell);
+        return Ok(());
+    }
+    let cell = resolved_export_cell(units, graph, target, &binding.imported, &mut Vec::new())
+        .ok_or_else(|| format!("SyntaxError: export {} missing", binding.imported))?;
     units
         .get(&from)
         .ok_or_else(|| "module unit missing".to_string())?
         .link_export(&binding.exported, cell);
     Ok(())
+}
+
+fn resolved_export_cell(
+    units: &HashMap<ModuleId, LinkedModule>,
+    graph: &ModuleGraph,
+    id: ModuleId,
+    name: &str,
+    seen: &mut Vec<(ModuleId, String)>,
+) -> Option<ModuleBindingCell> {
+    let key = (id, name.to_string());
+    if seen.contains(&key) {
+        return None;
+    }
+    seen.push(key);
+    if let Some(cell) = units.get(&id)?.export_cell(name) {
+        return Some(cell);
+    }
+    let metadata = units.get(&id)?.program.module_metadata.as_ref()?;
+    if let Some(binding) = metadata
+        .reexports
+        .iter()
+        .find(|binding| binding.exported == name && binding.imported != "*all*")
+    {
+        let target = graph.resolve(id, &binding.source)?;
+        return resolved_export_cell(units, graph, target, &binding.imported, seen);
+    }
+    metadata
+        .reexports
+        .iter()
+        .filter(|binding| binding.imported == "*all*")
+        .find_map(|binding| {
+            let target = graph.resolve(id, &binding.source)?;
+            resolved_export_cell(units, graph, target, name, &mut seen.clone())
+        })
 }
 
 fn link_star_exports(
