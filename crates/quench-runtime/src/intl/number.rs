@@ -157,7 +157,9 @@ impl RawOptions {
                         raw.resolved_grouping = match &value {
                             Value::Boolean(true) => "always",
                             Value::Boolean(false) | Value::Null => "false",
+                            Value::Number(value) if *value == 0.0 => "false",
                             Value::String(value) => match value.as_str() {
+                                "" => "false",
                                 "auto" | "min2" | "always" => value,
                                 _ => "auto",
                             },
