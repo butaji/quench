@@ -444,7 +444,7 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
 }
 
-fn has_regexp_internal_slot(value: &Value) -> bool {
+pub(crate) fn has_regexp_internal_slot(value: &Value) -> bool {
     matches!(
         value,
         Value::Object(properties)
