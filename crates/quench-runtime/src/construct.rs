@@ -345,9 +345,10 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
 }
 
 fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let source = arguments
-        .first()
-        .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
+    let source = match arguments.first() {
+        None | Some(Value::Undefined) => String::new(),
+        Some(value) => crate::conversion::to_string(value)?,
+    };
     let flags = arguments
         .get(1)
         .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
