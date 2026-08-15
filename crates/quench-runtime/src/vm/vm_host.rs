@@ -14,7 +14,11 @@ pub(crate) fn execute_host_capability(
         context
             .borrow()
             .as_ref()
-            .is_some_and(|context| context.permits(descriptor))
+            .is_some_and(|context| {
+                context.permits(descriptor)
+                    || (kind == HostCapabilityKind::EvalScript
+                        && realm::context(capability.realm()).is_some())
+            })
     });
     if !permitted {
         return Err(VmError::NotCallable);
@@ -25,7 +29,10 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::CreateRealm if arguments.is_empty() => Ok(create_realm_value()),
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
-        HostCapabilityKind::EvalScript => run_eval_script(arguments),
+        HostCapabilityKind::EvalScript => realm::with_realm(capability.realm(), || {
+            run_eval_script(arguments)
+        })
+        .ok_or(VmError::NotCallable)?,
     }
 }
 
@@ -76,10 +83,16 @@ fn create_realm_value() -> Value {
         return Value::Undefined;
     }
     let global = realm::global(realm).unwrap_or(Value::Undefined);
-    Value::Object(Rc::new(crate::value::ObjectData::new(vec![(
-        "global".to_string(),
-        global,
-    )])))
+    let eval_script = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(Builtin::HostCapability(HostCapabilityKind::EvalScript)),
+        receiver: Value::HostCapability(token),
+        arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
+    }));
+    Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("global".to_string(), global),
+        ("evalScript".to_string(), eval_script),
+    ])))
 }
 
 fn current_global_value() -> Result<Value, VmError> {
