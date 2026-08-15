@@ -31,8 +31,82 @@ pub(crate) fn execute(
             crate::ops::Builtin::TemporalPlainDateEquals => {
                 Some(equals(receiver, arguments.first()))
             }
+            crate::ops::Builtin::TemporalPlainDateAdd => {
+                Some(add(receiver, arguments.first(), 1.0))
+            }
+            crate::ops::Builtin::TemporalPlainDateSubtract => {
+                Some(add(receiver, arguments.first(), -1.0))
+            }
             _ => None,
         })
+}
+
+fn add(
+    receiver: Option<&Value>,
+    duration: Option<&Value>,
+    direction: f64,
+) -> Result<Value, VmError> {
+    let Value::Object(date) =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDate"))?
+    else {
+        return Err(crate::value::error::throw_type_error("Not a PlainDate"));
+    };
+    let Value::Object(duration) =
+        duration.ok_or_else(|| crate::value::error::throw_type_error("Invalid duration"))?
+    else {
+        return Err(crate::value::error::throw_type_error("Invalid duration"));
+    };
+    let years = object_number(duration, "years") * direction;
+    let months = object_number(duration, "months") * direction;
+    let weeks = object_number(duration, "weeks") * direction;
+    let days = object_number(duration, "days") * direction;
+    let year = field_number(date, "year")? + years;
+    let month_total = field_number(date, "month")? - 1.0 + months;
+    let year = year + (month_total / 12.0).floor();
+    let month = month_total.rem_euclid(12.0) + 1.0;
+    let day = field_number(date, "day")?.min(days_in_month(year, month)?);
+    shift_days(year, month, day, weeks * 7.0 + days)
+}
+
+fn object_number(object: &crate::value::ObjectData, name: &str) -> f64 {
+    object
+        .iter()
+        .find(|(key, _)| key == name)
+        .and_then(|(_, value)| match value {
+            Value::Number(value) => Some(*value),
+            _ => None,
+        })
+        .unwrap_or(0.0)
+}
+
+fn shift_days(mut year: f64, mut month: f64, mut day: f64, delta: f64) -> Result<Value, VmError> {
+    let mut remaining = delta as i64;
+    while remaining != 0 {
+        if remaining > 0 {
+            day += 1.0;
+            if day > days_in_month(year, month)? {
+                day = 1.0;
+                month += 1.0;
+            }
+            if month > 12.0 {
+                month = 1.0;
+                year += 1.0;
+            }
+            remaining -= 1;
+        } else {
+            day -= 1.0;
+            if day < 1.0 {
+                month -= 1.0;
+                if month < 1.0 {
+                    month = 12.0;
+                    year -= 1.0;
+                }
+                day = days_in_month(year, month)?;
+            }
+            remaining += 1;
+        }
+    }
+    make_date(year, month, day, None)
 }
 
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
