@@ -64,18 +64,45 @@ fn duration_receiver(receiver: Option<&Value>) -> Result<&crate::value::ObjectDa
             "Temporal.Duration.prototype.abs called on incompatible receiver",
         ));
     };
-    let branded = object.iter().any(|(key, value)| {
-        key == "\0prototype"
-            && matches!(
-                value,
-                Value::Builtin(crate::ops::Builtin::TemporalDurationPrototype)
-            )
-    });
+    let branded = matches!(
+        crate::builtins::object::is_prototype_of(
+            Some(&Value::Builtin(
+                crate::ops::Builtin::TemporalDurationPrototype
+            )),
+            &[Value::Object(object.clone())],
+        )?,
+        Value::Boolean(true)
+    ) && has_duration_slots(object);
     branded.then_some(object.as_ref()).ok_or_else(|| {
         crate::value::error::throw_type_error(
             "Temporal.Duration.prototype.abs called on incompatible receiver",
         )
     })
+}
+
+fn has_duration_slots(object: &crate::value::ObjectData) -> bool {
+    let fields = [
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ];
+    fields.iter().all(|name| {
+        object
+            .iter()
+            .any(|(key, value)| key == *name && matches!(value, Value::Number(_)))
+    }) && object
+        .iter()
+        .any(|(key, value)| key == "sign" && matches!(value, Value::Number(_)))
+        && object
+            .iter()
+            .any(|(key, value)| key == "blank" && matches!(value, Value::Boolean(_)))
 }
 
 fn absolute_fields(object: &crate::value::ObjectData) -> Vec<Value> {
