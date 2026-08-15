@@ -28,6 +28,24 @@ fn typed_array_index(key: &str) -> Option<usize> {
     (index.to_string() == key).then_some(index)
 }
 
+pub(crate) fn is_view(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::DataView(_)
+            | Value::Float64Array(_)
+            | Value::Float32Array(_)
+            | Value::Int8Array(_)
+            | Value::Int16Array(_)
+            | Value::Int32Array(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
+            | Value::Uint32Array(_)
+            | Value::Uint8Array(_)
+            | Value::Uint8ClampedArray(_)
+            | Value::Uint16Array(_)
+    )
+}
+
 pub(crate) fn set_property(
     target: &Value,
     key: &str,
