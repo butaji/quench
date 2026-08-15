@@ -214,9 +214,14 @@ fn construct_result(
     length: usize,
     iterable: bool,
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(constructor) = receiver.filter(|value| crate::conversion::is_callable(value)) else {
+    let Some(constructor) = receiver else {
         return Ok(Value::array(Vec::new()));
     };
+    if !crate::conversion::is_callable(constructor) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray.from receiver is not a constructor",
+        ));
+    }
     let arguments = if iterable {
         Vec::new()
     } else {
