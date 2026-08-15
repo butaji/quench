@@ -164,7 +164,6 @@ pub(crate) fn execute_set_property(
     let target = crate::execute::read_register(registers, object)?.clone();
     reject_nullish_property_write(&target)?;
     reject_restricted_property_write(&target, &key)?;
-    crate::super_scope::trigger_deferred(&target, &key)?;
     if crate::builtins::is_module_namespace(&target) {
         return write_failure(strict);
     }
