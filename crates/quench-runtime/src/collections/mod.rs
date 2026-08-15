@@ -175,13 +175,18 @@ fn close_direct_receiver(receiver: Option<&Value>) -> Result<(), VmError> {
     let Some(receiver) = receiver else {
         return Ok(());
     };
-    let Ok(method) = crate::execute::get_property_result(receiver, "return") else {
-        return Ok(());
-    };
-    if std::env::var_os("QUENCH_TRACE_CLOSE").is_some() {
-        return Err(VmError::EvalError(format!("close method {method:?}")));
-    }
-    let _ = crate::functions::execute_target(&method, receiver, &[]);
+    let wrapper = Value::Iterator(std::rc::Rc::new(crate::value::IteratorData {
+        state: std::cell::RefCell::new(crate::value::IteratorState::Protocol {
+            iterator: receiver.clone(),
+            next: Value::Undefined,
+            done: false,
+            executing: false,
+        }),
+    }));
+    let _ = crate::collections::iterator::close(
+        wrapper,
+        crate::completion::Completion::Throw(Value::Undefined),
+    );
     Ok(())
 }
 
