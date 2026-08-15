@@ -34,17 +34,12 @@ fn descriptor_object(value: Value) -> Option<Value> {
 fn descriptor_fields(
     descriptor: &Value,
 ) -> Result<Vec<(String, Value)>, crate::execute::VmError> {
-    ["get", "set", "value", "writable", "enumerable", "configurable"]
-        .into_iter()
-        .filter(|field| {
-            let key = Value::String(field.to_string());
-            crate::builtins::object::descriptor(Some(descriptor), Some(&key))
-                .ok()
-                .is_some_and(|value| !matches!(value, Value::Undefined))
-        })
-        .map(|field| {
-            crate::execute::get_property_result(descriptor, field)
-                .map(|value| (field.to_string(), value))
-        })
-        .collect()
+    let mut fields = Vec::new();
+    for field in ["get", "set", "value", "writable", "enumerable", "configurable"] {
+        let value = crate::execute::get_property_result(descriptor, field)?;
+        if !matches!(value, Value::Undefined) {
+            fields.push((field.to_string(), value));
+        }
+    }
+    Ok(fields)
 }
