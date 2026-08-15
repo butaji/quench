@@ -432,6 +432,7 @@ fn builtin_method3_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (BooleanPrototype, "valueOf") => Some(BooleanValueOf),
         (BooleanPrototype, "toString") => Some(BooleanToString),
         (BooleanPrototype, "constructor") => Some(Boolean),
+        (NumberPrototype, "constructor") => Some(Number),
         (ObjectPrototype, "constructor") => Some(Object),
         (ObjectPrototype, "toLocaleString") => Some(ObjectPrototypeToString),
         (Symbol, "prototype") => Some(SymbolPrototype),
