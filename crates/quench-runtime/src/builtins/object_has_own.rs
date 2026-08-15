@@ -127,8 +127,18 @@ fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return false;
     }
-    (is_typed_array_constructor_own(builtin) && key == "BYTES_PER_ELEMENT")
-        || (builtin == Builtin::Object && key == "hasOwn")
+    if builtin == Builtin::AsyncFunctionPrototype && matches!(key, "length" | "name") {
+        return false;
+    }
+    if builtin == Builtin::AsyncGeneratorFunctionPrototype && matches!(key, "length" | "name") {
+        return false;
+    }
+    if builtin == Builtin::AsyncGeneratorPrototype
+        && matches!(key, "constructor" | "next" | "return" | "throw" | "Symbol.toStringTag")
+    {
+        return true;
+    }
+    (builtin == Builtin::Object && key == "hasOwn")
         || builtin_descriptor(builtin, key).is_some()
         || super::callable_property(builtin, key).is_some()
         || super::special_property(builtin, key).is_some()

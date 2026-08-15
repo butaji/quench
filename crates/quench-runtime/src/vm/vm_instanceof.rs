@@ -83,6 +83,7 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         );
     }
     Some(match (value, constructor) {
+        (Value::Generator(_), Builtin::Object) => true,
         (Value::Array(values), Builtin::Array) if !values.is_arguments() => true,
         (Value::BigInt64Array(_), Builtin::BigInt64Array)
         | (Value::BigUint64Array(_), Builtin::BigUint64Array)
@@ -225,7 +226,13 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::Generator(generator) => generator_instance_prototype(generator),
         Value::Iterator(_) => Some(crate::collections::iterator::prototype_of(value)),
         Value::Builtin(builtin) => builtin_prototype_parent(*builtin),
-        Value::Function(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
+        Value::Function(function) => function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
+            .or(Some(Value::Builtin(Builtin::FunctionPrototype))),
         Value::BoundFunction(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
         _ => None,
     }
@@ -249,15 +256,25 @@ fn generator_instance_prototype(generator: &crate::value::GeneratorData) -> Opti
 fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
     if matches!(
         builtin,
-        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype
+        Builtin::GeneratorFunctionPrototype
+            | Builtin::AsyncGeneratorFunctionPrototype
+            | Builtin::AsyncFunctionPrototype
+            | Builtin::AsyncIteratorPrototype
     ) {
         return Some(Value::Builtin(Builtin::FunctionPrototype));
+    }
+    if matches!(
+        builtin,
+        Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction
+    ) {
+        return Some(Value::Builtin(Builtin::Function));
     }
     if matches!(
         builtin,
         Builtin::ArrayIteratorPrototype
             | Builtin::SetIteratorPrototype
             | Builtin::MapIteratorPrototype
+            | Builtin::AsyncIteratorPrototype
     ) {
         return Some(Value::Builtin(Builtin::IteratorPrototype));
     }

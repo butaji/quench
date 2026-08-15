@@ -9,8 +9,25 @@ pub(crate) fn construct(
     kind: FunctionKind,
     is_async: bool,
 ) -> Result<Value, VmError> {
-    let source = function_source(arguments, kind, is_async)?;
+    if is_async && kind == FunctionKind::Generator && invalid_async_generator_parameters(arguments)
+    {
+        return Err(syntax_error("Invalid async generator parameters"));
+    }
+    let source = function_source(arguments, kind, is_async);
     reduce_dynamic(&source, kind, is_async)
+}
+
+fn invalid_async_generator_parameters(arguments: &[Value]) -> bool {
+    arguments
+        .get(..arguments.len().saturating_sub(1))
+        .is_some_and(|parameters| {
+            parameters.iter().any(|value| {
+                let source = to_string(value);
+                source
+                    .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                    .any(|token| matches!(token, "await" | "yield"))
+            })
+        })
 }
 
 pub(crate) fn construct_builtin(
@@ -68,7 +85,7 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     let (ops, _) = reduced.ok_or_else(|| invalid("Unsupported function source"))?;
     let length = crate::function_parameters::expected_argument_count(&function.params);
     let value = dynamic_value(ops, count, length, strictness, kind, is_async);
-    set_dynamic_name(&value);
+    let _ = crate::builtins::set_function_name(&value, "anonymous");
     mark_dynamic(&value);
     Ok(value)
 }

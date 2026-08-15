@@ -127,18 +127,18 @@ pub(crate) fn compact_scale(value: f64, locale: &str, display: &str) -> i32 {
         return 0;
     }
     let magnitude = value.abs().log10().floor() as i32;
-    compact_locale_scale(magnitude, locale, display)
+    regional_scale(magnitude, locale, display)
 }
 
-fn compact_locale_scale(magnitude: i32, locale: &str, display: &str) -> i32 {
+fn regional_scale(magnitude: i32, locale: &str, display: &str) -> i32 {
     if locale.starts_with("en-IN") {
-        return threshold(magnitude, &[(5, 5), (3, 3)]);
+        return threshold(magnitude, &[5, 3]);
     }
     if locale.starts_with("ja") || locale.starts_with("zh") {
-        return threshold(magnitude, &[(8, 8), (4, 4)]);
+        return threshold(magnitude, &[8, 4]);
     }
     if locale.starts_with("ko") {
-        return threshold(magnitude, &[(8, 8), (4, 4), (3, 3)]);
+        return threshold(magnitude, &[8, 4, 3]);
     }
     if locale.starts_with("de") {
         return if display == "long" {
@@ -147,13 +147,14 @@ fn compact_locale_scale(magnitude: i32, locale: &str, display: &str) -> i32 {
             threshold(magnitude, &[(6, 6)])
         };
     }
-    threshold(magnitude, &[(9, 9), (6, 6), (3, 3)])
+    threshold(magnitude, &[9, 6, 3])
 }
 
-fn threshold(magnitude: i32, thresholds: &[(i32, i32)]) -> i32 {
-    thresholds
+fn threshold(magnitude: i32, values: &[i32]) -> i32 {
+    values
         .iter()
-        .find_map(|(minimum, scale)| (magnitude >= *minimum).then_some(*scale))
+        .copied()
+        .find(|threshold| magnitude >= *threshold)
         .unwrap_or(0)
 }
 

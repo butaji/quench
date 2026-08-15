@@ -55,7 +55,7 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         BigInt64Array(_) | BigUint64Array(_) => vm_typed_bigint::property(value, key),
         DataView(view) => data_view_property(view, key),
         Object(properties) => object_property(properties, value, key),
-        ObjectAlias(alias) => object_alias_property(alias, value, key),
+        ObjectAlias(alias) => object_alias_property(alias, key, value),
         String(value) if crate::conversion::is_symbol_string(value) => Value::Undefined,
         String(value) => string_property(value, key),
         StringUnits(units) => string_units_property(units, key),
@@ -231,15 +231,6 @@ pub(crate) fn get_property_with_receiver(
             "Cannot read property `{key}` of null or undefined"
         )));
     }
-    if let Some(id) = consume_deferred_namespace_marker(value, key) {
-        crate::vm::execute_deferred_module(id)?;
-        return get_property_with_receiver(value, key, receiver);
-    }
-    if crate::builtins::namespace_uninitialized(value, key) {
-        return Err(crate::value::error::throw_reference_error(
-            "Cannot access an uninitialized module binding",
-        ));
-    }
     if let Some(result) = special_property(value, key, receiver) {
         return result;
     }
@@ -288,22 +279,11 @@ pub(crate) fn get_property_with_receiver(
         }
     }
     if key == "stack"
-        && matches!(
-            value,
-            Value::Builtin(
-                Builtin::RangeErrorPrototype
-                    | Builtin::ReferenceErrorPrototype
-                    | Builtin::SyntaxErrorPrototype
-                    | Builtin::EvalErrorPrototype
-                    | Builtin::URIErrorPrototype
-                    | Builtin::AggregateErrorPrototype
-                    | Builtin::TypeErrorPrototype
-                    | Builtin::SuppressedErrorPrototype
-            )
-        )
+        && crate::vm::has_error_slot(value)
+        && crate::properties::inherits_error_prototype(value)
     {
         return crate::vm::execute_builtin_with_receiver(
-            Builtin::ErrorPrototypeStackGetter,
+            crate::ops::Builtin::ErrorPrototypeStackGetter,
             &[],
             Some(receiver),
         );
@@ -318,95 +298,48 @@ pub(crate) fn get_property_with_receiver(
     invoke_accessor(&getter, receiver)
 }
 
+fn inherited_property(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
+    let prototype = crate::builtins::object::get_prototype_of(Some(value))?;
+    if !matches!(prototype, Value::Null)
+        && !crate::builtins::same_value(Some(value), Some(&prototype))
+    {
+        let inherited = get_property_with_receiver(&prototype, key, receiver)?;
+        if !matches!(inherited, Value::Undefined) {
+            return Ok(inherited);
+        }
+    }
+    Ok(receiver_property(value, key, receiver))
+}
+
 fn special_property(value: &Value, key: &str, receiver: &Value) -> Option<Result<Value, VmError>> {
     if matches!(value, Value::Proxy(_)) {
         return Some(crate::proxy::proxy_get(value, key, Some(receiver)));
     }
     if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
-        return Some(Err(crate::value::error::throw_type_error(
-            "'callee' is unavailable on strict arguments",
-        )));
+        return Some(Err(crate::value::error::throw_type_error("'callee' is unavailable on strict arguments")));
     }
     if has_restricted_function_property(value, key) {
-        return Some(Err(crate::value::error::throw_type_error(
-            "'caller' and 'arguments' are unavailable on this function",
-        )));
+        return Some(Err(crate::value::error::throw_type_error("'caller' and 'arguments' are unavailable on this function")));
     }
     if let Some(getter) = array_accessor(value, key, "get") {
-        return Some(accessor_result(&getter, receiver));
+        return Some(if matches!(getter, Value::Undefined) { Ok(Value::Undefined) } else { invoke_accessor(&getter, receiver) });
     }
-    if let Some(getter) = array_prototype_getter(value, key) {
-        return Some(accessor_result(&getter, receiver));
+    if let Some(result) = array_special(value, key, receiver) {
+        return Some(result);
     }
-    crate::disposable_stack::accessor(value, key, receiver)
-        .or_else(|| data_view_instance_accessor(value, key))
+    crate::disposable_stack::accessor(value, key, receiver).or_else(|| data_view_instance_accessor(value, key))
 }
 
-fn accessor_result(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
-    if matches!(getter, Value::Undefined) {
-        Ok(Value::Undefined)
-    } else {
-        invoke_accessor(getter, receiver)
-    }
-}
-
-fn array_prototype_getter(value: &Value, key: &str) -> Option<Value> {
+fn array_special(value: &Value, key: &str, receiver: &Value) -> Option<Result<Value, VmError>> {
     let Value::Array(values) = value else { return None };
     let has_own = key == "length"
-        || crate::arrays::array_index(key)
-            .is_some_and(|index| values.has_index(index as usize))
+        || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
         || values.descriptor(key).is_some()
         || values.property(key).is_some();
-    (!has_own).then(|| crate::arrays::prototype_override_getter(key)).flatten()
-}
-
-pub(crate) fn consume_deferred_namespace_marker(value: &Value, key: &str) -> Option<u32> {
-    if key == "then"
-        || key == "Symbol.toStringTag"
-        || crate::conversion::is_symbol_string(key)
-    {
-        return None;
-    }
-    if let Value::BindingCell(cell) = value {
-        return consume_deferred_namespace_marker(&cell.borrow(), key);
-    }
-    if let Value::ObjectAlias(alias) = value {
-        let object = alias.0.borrow().upgrade().map(Value::Object)?;
-        return consume_deferred_namespace_marker(&object, key);
-    }
-    let Value::Object(properties) = value else { return None };
-    let marker = format!("\0quench:deferred:\0{key}");
-    let id = properties.iter().rev().find_map(|(name, value)| {
-        if name == "\0quench:deferred-module" {
-            return deferred_marker_id(value);
-        }
-        if name != &marker {
-            return None;
-        }
-        deferred_marker_id(value)
-    })?;
-    Some(id)
-}
-
-fn deferred_marker_id(value: &Value) -> Option<u32> {
-    let Value::BindingCell(cell) = value else {
-        return None;
-    };
-    let Value::Number(id) = cell.borrow().clone() else {
-        return None;
-    };
-    Some(id as u32)
-}
-
-pub(crate) fn deferred_namespace_operation(value: &Value) -> Option<u32> {
-    let Value::Object(properties) = value else {
-        return None;
-    };
-    let key = properties.iter().find_map(|(name, _)| {
-        name.strip_prefix("\0quench:deferred:\0")
-            .map(str::to_string)
-    })?;
-    consume_deferred_namespace_marker(value, &key)
+    if has_own { return None; }
+    crate::arrays::prototype_override_getter(key).map(|getter| {
+        if matches!(getter, Value::Undefined) { Ok(Value::Undefined) } else { invoke_accessor(&getter, receiver) }
+    })
 }
 
 /// Invoke a getter using the receiver as `this`. The getter's own
@@ -541,6 +474,15 @@ fn bound_function_property(
     {
         return value.clone();
     }
+    if key == "prototype" {
+        if let Some(prototype) = intrinsic_error_prototype(value, bound) {
+            bound
+                .properties
+                .borrow_mut()
+                .push((key.to_string(), prototype.clone()));
+            return prototype;
+        }
+    }
     if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
     } else if key == "length" && !realm::is_intrinsic(bound) {
@@ -559,6 +501,76 @@ fn bound_function_property(
         }
         function_prototype_property(key)
     }
+}
+
+fn intrinsic_error_prototype(
+    value: &Value,
+    bound: &crate::value::BoundFunctionValue,
+) -> Option<Value> {
+    if !realm::is_intrinsic(bound) {
+        return None;
+    }
+    let Value::Builtin(constructor) = bound.target else {
+        return None;
+    };
+    let prototype = crate::builtin_meta::prototype(constructor)?;
+    if !matches!(
+        prototype,
+        Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::TypeErrorPrototype
+    ) {
+        return None;
+    }
+    let mut properties = vec![
+        ("constructor".to_string(), value.clone()),
+        ("name".to_string(), crate::builtins::property(prototype, "name")),
+        ("message".to_string(), Value::String(String::new())),
+        ("toString".to_string(), Value::Builtin(Builtin::ErrorPrototypeToString)),
+        ("\0prototype".to_string(), if prototype == Builtin::ErrorPrototype {
+            Value::Builtin(Builtin::ObjectPrototype)
+        } else {
+            Value::Builtin(Builtin::ErrorPrototype)
+        }),
+    ];
+    if prototype == Builtin::ErrorPrototype {
+        properties.push((
+            crate::builtins::descriptor_key("stack"),
+            Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+                (
+                    "get".to_string(),
+                    error_accessor_function(
+                        Builtin::ErrorPrototypeStackGetter,
+                        bound.receiver.clone(),
+                    ),
+                ),
+                (
+                    "set".to_string(),
+                    error_accessor_function(
+                        Builtin::ErrorPrototypeStackSetter,
+                        bound.receiver.clone(),
+                    ),
+                ),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]))),
+        ));
+    }
+    Some(Value::Object(Rc::new(crate::value::ObjectData::new(properties))))
+}
+
+fn error_accessor_function(builtin: Builtin, receiver: Value) -> Value {
+    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(builtin),
+        receiver,
+        arguments: Vec::new(),
+        properties: std::cell::RefCell::new(Vec::new()),
+    }))
 }
 fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
