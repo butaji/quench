@@ -210,7 +210,12 @@ pub(crate) fn descriptor(
     };
     let value = crate::locals::resolved_replacement(value.clone());
     let key = crate::conversion::to_property_key(key)?;
-    let descriptor = match &value {
+    let descriptor = descriptor_for_value(&value, &key);
+    Ok(descriptor.unwrap_or(Value::Undefined))
+}
+
+fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
+    let descriptor = match value {
         Value::Object(properties) => {
             let global = Value::Object(properties.clone());
             let deleted = properties
@@ -244,7 +249,7 @@ pub(crate) fn descriptor(
         Value::DataView(view) => data_view_descriptor(view, &key),
         _ => None,
     };
-    Ok(descriptor.unwrap_or(Value::Undefined))
+    descriptor
 }
 
 fn is_child_realm_global(value: &Value) -> bool {
