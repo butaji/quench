@@ -204,11 +204,6 @@ fn write_result_element(
         ("enumerable".to_string(), Value::Boolean(true)),
         ("configurable".to_string(), Value::Boolean(true)),
     ];
-    if matches!(result, Value::Proxy(_)) {
-        let descriptor = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(descriptor)));
-        crate::builtins::define_property(&[result.clone(), Value::String(key), descriptor])?;
-        return Ok(result);
-    }
     let updated = crate::builtins::define_own_property(&result, &key, &descriptor)?;
     crate::locals::replace_value(&result, &updated);
     Ok(updated)
