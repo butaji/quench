@@ -226,7 +226,9 @@ fn for_in_keys(value: crate::value::Value) -> Vec<String> {
         value @ (crate::value::Value::Object(_) | crate::value::Value::ObjectAlias(_)) => {
             crate::own_keys::enumerable_key_strings(Some(&value))
         }
-        crate::value::Value::Array(values) => (0..values.len()).map(|i| i.to_string()).collect(),
+        crate::value::Value::Array(values) => {
+            crate::own_keys::enumerable_key_strings(Some(&crate::value::Value::Array(values)))
+        }
         _ => Vec::new(),
     }
 }
