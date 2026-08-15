@@ -1012,43 +1012,6 @@ impl NumberOptions {
                 Value::String(self.numbering_system.clone()),
             ),
             ("style".to_string(), Value::String(self.style.clone())),
-            (
-                "useGrouping".to_string(),
-                if self.resolved_grouping == "false" {
-                    Value::Boolean(false)
-                } else {
-                    Value::String(self.resolved_grouping.clone())
-                },
-            ),
-            (
-                "minimumIntegerDigits".to_string(),
-                Value::Number(self.minimum_integer_digits as f64),
-            ),
-            (
-                "minimumFractionDigits".to_string(),
-                Value::Number(self.minimum_fraction_digits as f64),
-            ),
-            (
-                "maximumFractionDigits".to_string(),
-                Value::Number(self.maximum_fraction_digits as f64),
-            ),
-            ("notation".to_string(), Value::String(self.notation.clone())),
-            (
-                "signDisplay".to_string(),
-                Value::String(self.sign_display.clone()),
-            ),
-            (
-                "roundingMode".to_string(),
-                Value::String(self.rounding_mode.clone()),
-            ),
-            (
-                "roundingIncrement".to_string(),
-                Value::Number(self.rounding_increment as f64),
-            ),
-            (
-                "trailingZeroDisplay".to_string(),
-                Value::String(self.trailing_zero_display.clone()),
-            ),
         ];
         if let Some(currency) = &self.currency {
             properties.push(("currency".to_string(), Value::String(currency.clone())));
@@ -1068,6 +1031,20 @@ impl NumberOptions {
                 Value::String(self.unit_display.clone()),
             ));
         }
+        properties.extend([
+            (
+                "minimumIntegerDigits".to_string(),
+                Value::Number(self.minimum_integer_digits as f64),
+            ),
+            (
+                "minimumFractionDigits".to_string(),
+                Value::Number(self.minimum_fraction_digits as f64),
+            ),
+            (
+                "maximumFractionDigits".to_string(),
+                Value::Number(self.maximum_fraction_digits as f64),
+            ),
+        ]);
         if let Some(value) = self.minimum_significant_digits {
             properties.push((
                 "minimumSignificantDigits".to_string(),
@@ -1080,15 +1057,45 @@ impl NumberOptions {
                 Value::Number(value as f64),
             ));
         }
+        properties.extend([
+            (
+                "useGrouping".to_string(),
+                if self.resolved_grouping == "false" {
+                    Value::Boolean(false)
+                } else {
+                    Value::String(self.resolved_grouping.clone())
+                },
+            ),
+            ("notation".to_string(), Value::String(self.notation.clone())),
+        ]);
         if self.notation == "compact" {
-            properties.insert(
-                8,
-                (
-                    "compactDisplay".to_string(),
-                    Value::String(self.compact_display.clone()),
-                ),
-            );
+            properties.push((
+                "compactDisplay".to_string(),
+                Value::String(self.compact_display.clone()),
+            ));
         }
+        properties.extend([
+            (
+                "signDisplay".to_string(),
+                Value::String(self.sign_display.clone()),
+            ),
+            (
+                "roundingIncrement".to_string(),
+                Value::Number(self.rounding_increment as f64),
+            ),
+            (
+                "roundingMode".to_string(),
+                Value::String(self.rounding_mode.clone()),
+            ),
+            (
+                "roundingPriority".to_string(),
+                Value::String(self.rounding_priority.clone()),
+            ),
+            (
+                "trailingZeroDisplay".to_string(),
+                Value::String(self.trailing_zero_display.clone()),
+            ),
+        ]);
         make_object(properties)
     }
 }
