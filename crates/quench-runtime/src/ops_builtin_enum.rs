@@ -112,7 +112,7 @@ pub enum Builtin {
     SymbolFor, SymbolKeyFor,
     Unescape, EncodeURI,
     EncodeURIComponent, DecodeURI,
-    DecodeURIComponent, Math, Atomics, AtomicsAdd,
+    DecodeURIComponent, Math, Atomics, AtomicsAdd, AtomicsAnd,
     MathPow, Function,
     AsyncFunction, GeneratorFunction,
     AsyncGeneratorFunction, FunctionPrototype, AsyncFunctionPrototype,
