@@ -2,122 +2,15 @@ use crate::execute::VmError;
 use crate::value::Value;
 
 pub(crate) fn builtin(
-    builtin: crate::ops::Builtin,
+    _builtin: crate::ops::Builtin,
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     let Some(value) = arguments.first() else {
         return Ok(Value::Undefined);
     };
-    if builtin == crate::ops::Builtin::ShadowRealmEvaluate && !is_shadow_realm_receiver(receiver) {
-        return Err(crate::value::error::throw_type_error(
-            "ShadowRealm.prototype.evaluate called on incompatible receiver",
-        ));
-    }
-    if builtin == crate::ops::Builtin::ShadowRealmEvaluate && !matches!(value, Value::String(_)) {
-        return Err(crate::value::error::throw_type_error(
-            "ShadowRealm.prototype.evaluate requires a string",
-        ));
-    }
     let realm = crate::vm::realm_id_for_intrinsic_receiver(receiver);
-    let direct_syntax_error = matches!(
-        value,
-        Value::String(source)
-            if crate::reduce::reduce_eval_source(source, false, true, false, &[], &[]).is_err()
-    );
-    let result = evaluate(value, false, realm).map_err(|error| {
-        if builtin == crate::ops::Builtin::ShadowRealmEvaluate
-            && !direct_syntax_error
-            && matches!(error, VmError::Thrown(_))
-        {
-            crate::value::error::throw_type_error("ShadowRealm evaluation threw a value")
-        } else {
-            error
-        }
-    })?;
-    if builtin == crate::ops::Builtin::ShadowRealmEvaluate
-        && crate::conversion::is_callable(&result)
-    {
-        return wrap_shadow_function(&result, realm);
-    }
-    if builtin == crate::ops::Builtin::ShadowRealmEvaluate && crate::value::is_object(&result) {
-        return Err(crate::value::error::throw_type_error(
-            "ShadowRealm evaluation must return a primitive",
-        ));
-    }
-    Ok(result)
-}
-
-fn wrap_shadow_function(
-    target: &Value,
-    realm: Option<crate::ops::RealmId>,
-) -> Result<Value, VmError> {
-    let name = match shadow_property(target, "name")? {
-        Value::String(value) if !crate::conversion::is_symbol_string(&value) => value,
-        _ => String::new(),
-    };
-    let length = match shadow_property(target, "length")? {
-        Value::Number(value) if value.is_finite() => value.max(0.0).trunc(),
-        Value::Number(value) if value.is_infinite() && value.is_sign_positive() => value,
-        _ => 0.0,
-    };
-    let mut properties = vec![
-        ("name".to_string(), Value::String(name.clone())),
-        (
-            crate::builtins::descriptor_key("name"),
-            name_descriptor(&name),
-        ),
-        ("length".to_string(), Value::Number(length)),
-        (
-            crate::builtins::descriptor_key("length"),
-            length_descriptor(length),
-        ),
-    ];
-    if let Some(realm) = realm.and_then(crate::vm::realm_token) {
-        properties.push(("\0realm".to_string(), realm));
-    }
-    Ok(Value::BoundFunction(std::rc::Rc::new(
-        crate::value::BoundFunctionValue {
-            target: target.clone(),
-            receiver: Value::Undefined,
-            arguments: Vec::new(),
-            properties: std::cell::RefCell::new(properties),
-        },
-    )))
-}
-
-fn shadow_property(target: &Value, key: &str) -> Result<Value, VmError> {
-    crate::execute::get_property_result(target, key).map_err(|_| {
-        crate::value::error::throw_type_error("ShadowRealm wrapped function metadata failed")
-    })
-}
-
-fn is_shadow_realm_receiver(receiver: Option<&Value>) -> bool {
-    matches!(
-        receiver,
-        Some(Value::Object(properties))
-            if properties.iter().any(|(key, value)| {
-                key == "\0prototype"
-                    && *value == Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype)
-            })
-    )
-}
-
-fn name_descriptor(value: &str) -> Value {
-    descriptor(Value::String(value.to_string()))
-}
-
-fn length_descriptor(value: f64) -> Value {
-    descriptor(Value::Number(value))
-}
-
-fn descriptor(value: Value) -> Value {
-    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-        ("value".to_string(), value),
-        ("writable".to_string(), Value::Boolean(false)),
-        ("enumerable".to_string(), Value::Boolean(false)),
-        ("configurable".to_string(), Value::Boolean(true)),
-    ])))
+    evaluate(value, false, realm)
 }
 
 pub(crate) fn execute_eval(
