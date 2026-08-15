@@ -157,7 +157,8 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlSegmenterSegmentsContaining
         | Builtin::IntlSegmenterResolvedOptions
         | Builtin::IntlDisplayNamesOf
-        | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
+        | Builtin::IntlDisplayNamesResolvedOptions
+        | Builtin::IntlListFormatResolvedOptions => Some(0.0),
         Builtin::IntlNumberFormatFormatToParts | Builtin::IntlDateTimeFormatFormatToParts => {
             Some(1.0)
         }
@@ -167,7 +168,6 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlDateTimeFormatFormatRangeToParts => Some(2.0),
         Builtin::IntlListFormatFormat
         | Builtin::IntlListFormatFormatToParts
-        | Builtin::IntlListFormatResolvedOptions
         | Builtin::IntlDurationFormatFormat
         | Builtin::IntlDurationFormatFormatToParts
         | Builtin::IntlRelativeTimeFormatFormat
