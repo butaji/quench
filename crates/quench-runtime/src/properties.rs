@@ -162,6 +162,7 @@ pub(crate) fn execute_set_property(
 ) -> Result<(), crate::execute::VmError> {
     let (object, key, src, strict) = set_property_parts(registers, op)?;
     let target = crate::execute::read_register(registers, object)?.clone();
+    let target = primitive_write_target(&target)?;
     reject_nullish_property_write(&target)?;
     reject_restricted_property_write(&target, &key)?;
     if rejects_new_property(&target, &key) {
@@ -183,6 +184,19 @@ pub(crate) fn execute_set_property(
         return Ok(());
     }
     finish_set_property(registers, object, &target, &key, value, strict)
+}
+
+fn primitive_write_target(
+    target: &crate::value::Value,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    match target {
+        crate::value::Value::Number(_)
+        | crate::value::Value::Boolean(_)
+        | crate::value::Value::String(_)
+        | crate::value::Value::StringUnits(_)
+        | crate::value::Value::BigInt(_) => crate::construct::to_object(target),
+        _ => Ok(target.clone()),
+    }
 }
 
 fn finish_set_property(
