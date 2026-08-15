@@ -253,21 +253,26 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
         })
         .unwrap_or("short");
     if style == "digital" {
+        let subsecond =
+            milliseconds.abs() * 1_000_000 + microseconds.abs() * 1_000 + nanoseconds.abs();
+        let seconds = seconds + subsecond / 1_000_000_000;
+        let remainder = subsecond % 1_000_000_000;
         let mut clock = if hours == 0 {
             format!("{minutes:02}:{seconds:02}")
         } else {
             format!("{hours}:{minutes:02}:{seconds:02}")
         };
-        if let Some(fraction) = digital_fraction(slots, milliseconds, microseconds, nanoseconds) {
+        if let Some(fraction) = digital_fraction(slots, remainder) {
             clock.push_str(&fraction);
         }
         return if days == 0 {
             Ok(if negative { format!("-{clock}") } else { clock })
         } else {
+            let day_text = format_days(days);
             Ok(if negative {
-                format!("-{days} day, {clock}")
+                format!("-{day_text}, {clock}")
             } else {
-                format!("{days} day, {clock}")
+                format!("{day_text}, {clock}")
             })
         };
     }
@@ -305,19 +310,21 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
     Ok(parts.join(", "))
 }
 
-fn digital_fraction(
-    slots: &[(String, Value)],
-    milliseconds: i64,
-    microseconds: i64,
-    nanoseconds: i64,
-) -> Option<String> {
+fn format_days(days: i64) -> String {
+    let text = days.to_string();
+    let grouped = text
+        .as_bytes()
+        .rchunks(3)
+        .rev()
+        .map(|chunk| String::from_utf8_lossy(chunk).into_owned())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{grouped} {}", if days == 1 { "day" } else { "days" })
+}
+
+fn digital_fraction(slots: &[(String, Value)], nanoseconds: i64) -> Option<String> {
     let digits = slot_number(slots, "fractionalDigits");
-    let raw = format!(
-        "{:03}{:03}{:03}",
-        milliseconds.abs(),
-        microseconds.abs(),
-        nanoseconds.abs()
-    );
+    let raw = format!("{nanoseconds:09}");
     let count = digits.map_or_else(|| raw.trim_end_matches('0').len(), |value| value as usize);
     (count > 0).then(|| format!(".{}", &raw[..count.min(9)]))
 }
