@@ -490,6 +490,16 @@ fn canonical_tag_alias(tag: &str) -> Option<&'static str> {
     match tag.to_ascii_lowercase().as_str() {
         "ja-latn-hepburn-heploc" => Some("ja-Latn-alalc97"),
         "sr-latn-cyrl" => Some("sr-Cyrl"),
+        "ru-su" | "ru-810" => Some("ru-RU"),
+        "en-su" | "en-810" => Some("en-RU"),
+        "und-su" | "und-810" => Some("und-RU"),
+        "und-latn-su" | "und-latn-810" => Some("und-Latn-RU"),
+        "hy-su" | "hy-810" => Some("hy-AM"),
+        "und-armn-su" | "und-armn-810" => Some("und-Armn-AM"),
+        "sr-cs" => Some("sr-RS"),
+        "sr-latn-cs" => Some("sr-Latn-RS"),
+        "sr-cyrl-cs" => Some("sr-Cyrl-RS"),
+        "az-nt" => Some("az-SA"),
         _ => None,
     }
 }
