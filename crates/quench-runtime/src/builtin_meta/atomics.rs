@@ -6,15 +6,18 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::AtomicsAnd => "Atomics.and",
         Builtin::AtomicsOr => "Atomics.or",
         Builtin::AtomicsSub => "Atomics.sub",
+        Builtin::AtomicsXor => "Atomics.xor",
         _ => return None,
     })
 }
 
 pub const fn fn_len(builtin: Builtin) -> Option<f64> {
     match builtin {
-        Builtin::AtomicsAdd | Builtin::AtomicsAnd | Builtin::AtomicsOr | Builtin::AtomicsSub => {
-            Some(3.0)
-        }
+        Builtin::AtomicsAdd
+        | Builtin::AtomicsAnd
+        | Builtin::AtomicsOr
+        | Builtin::AtomicsSub
+        | Builtin::AtomicsXor => Some(3.0),
         _ => None,
     }
 }
@@ -25,6 +28,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::AtomicsAnd => "and",
         Builtin::AtomicsOr => "or",
         Builtin::AtomicsSub => "sub",
+        Builtin::AtomicsXor => "xor",
         _ => return None,
     })
 }
