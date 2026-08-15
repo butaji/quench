@@ -164,14 +164,36 @@ fn regexp_source_and_flags(
         .filter(|value| !matches!(value, Value::Undefined))
         .cloned()
         .unwrap_or_else(|| Value::String(String::new()));
-    let flags = arguments
-        .get(1)
-        .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
+    let flags = regexp_constructor_flags(arguments)?;
+    let source_value = regexp_constructor_source(&source_value)?;
     let source = crate::strings::source_text(&source_value)
         .or_else(|| crate::conversion::to_string(&source_value).ok())
         .unwrap_or_default();
     let observable_source = crate::strings::source_value(&source);
     Ok((source, observable_source, flags))
+}
+
+fn regexp_constructor_source(value: &Value) -> Result<Value, crate::execute::VmError> {
+    if crate::regexp::has_regexp_internal_slot(value) {
+        return crate::execute::get_property_result(value, "source");
+    }
+    Ok(value.clone())
+}
+
+fn regexp_constructor_flags(arguments: &[Value]) -> Result<String, crate::execute::VmError> {
+    if let Some(pattern) = arguments.first().filter(|value| {
+        crate::regexp::has_regexp_internal_slot(value)
+            && arguments
+                .get(1)
+                .is_none_or(|flags| matches!(flags, Value::Undefined))
+    }) {
+        return crate::execute::get_property_result(pattern, "flags")
+            .and_then(|value| crate::conversion::to_string(&value));
+    }
+    arguments
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map_or_else(|| Ok(String::new()), crate::conversion::to_string)
 }
 
 fn regexp_data_descriptor(writable: bool, configurable: bool, value: Value) -> Value {
