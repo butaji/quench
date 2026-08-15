@@ -27,13 +27,18 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     }
     validate(&fields)?;
     let month_code = format!("M{:02}", fields[1] as u32);
+    let calendar = arguments
+        .get(9)
+        .filter(|value| matches!(value, Value::String(_)))
+        .cloned()
+        .unwrap_or_else(|| Value::String("iso8601".into()));
     let properties = NAMES
         .into_iter()
         .zip(fields)
         .map(|(name, value)| (name.into(), Value::Number(value)))
         .chain([
             ("monthCode".into(), Value::String(month_code)),
-            ("calendarId".into(), Value::String("iso8601".into())),
+            ("calendarId".into(), calendar),
             (
                 "\0prototype".into(),
                 Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype),
@@ -139,6 +144,36 @@ pub(crate) fn execute(
 }
 
 fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let calendar =
+        receiver.and_then(|value| match value {
+            Value::Object(object) => object.iter().find(|(key, _)| key == "calendarId").and_then(
+                |(_, value)| match value {
+                    Value::String(value) => Some(value.as_str()),
+                    _ => None,
+                },
+            ),
+            _ => None,
+        });
+    if arguments.get(1).is_none() && !matches!(calendar, Some("iso8601") | Some("gregory") | None) {
+        return Err(crate::value::error::throw_range_error("Calendar mismatch"));
+    }
+    if let (Some(Value::Object(object)), Some(options)) = (receiver, arguments.get(1)) {
+        if let Value::String(option_calendar) =
+            crate::execute::get_property_result(options, "calendar")?
+        {
+            let actual = object
+                .iter()
+                .find(|(key, _)| key == "calendarId")
+                .and_then(|(_, value)| match value {
+                    Value::String(value) => Some(value.as_str()),
+                    _ => None,
+                })
+                .unwrap_or("iso8601");
+            if option_calendar != actual {
+                return Err(crate::value::error::throw_range_error("Calendar mismatch"));
+            }
+        }
+    }
     let formatter = crate::intl::datetime::construct(arguments)?;
     crate::intl::datetime::prototype_method(
         crate::ops::Builtin::IntlDateTimeFormatFormat,
