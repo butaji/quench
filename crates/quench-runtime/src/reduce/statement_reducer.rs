@@ -46,6 +46,26 @@ impl StatementReducer {
                         .insert(format!("\0lexical-predeclared:{name}"), slot);
                 }
             }
+            let vars = exported_var_names(statements);
+            for name in vars {
+                let reserved = crate::reduce_support::reserve_names(
+                    std::slice::from_ref(&name),
+                    &mut self.locals,
+                    &mut self.next_slot,
+                );
+                for (_, slot) in reserved {
+                    let register = self.next_register;
+                    self.next_register = self.next_register.saturating_add(1);
+                    self.ops.push(Op::Const {
+                        dst: register,
+                        value: crate::ops::Constant::Undefined,
+                    });
+                    self.ops.push(Op::StoreLocal {
+                        slot,
+                        src: register,
+                    });
+                }
+            }
             for statement in statements {
                 if let Statement::ImportDeclaration(import) = statement {
                     if let Some(specifiers) = &import.specifiers {
@@ -167,6 +187,30 @@ fn exported_lexical_names(statements: &[Statement<'_>]) -> Vec<String> {
                 }
             }
             _ => {}
+        }
+    }
+    names
+}
+
+fn exported_var_names(statements: &[Statement<'_>]) -> Vec<String> {
+    let mut names = Vec::new();
+    for statement in statements {
+        let Statement::ExportNamedDeclaration(export) = statement else {
+            continue;
+        };
+        let Some(oxc::ast::ast::Declaration::VariableDeclaration(variable)) = &export.declaration
+        else {
+            continue;
+        };
+        if variable.kind != oxc::ast::ast::VariableDeclarationKind::Var {
+            continue;
+        }
+        for declarator in &variable.declarations {
+            if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+                &declarator.id.kind
+            {
+                names.push(identifier.name.to_string());
+            }
         }
     }
     names
