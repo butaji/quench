@@ -72,13 +72,22 @@ fn zip_mode(options: &Value) -> Result<u8, crate::execute::VmError> {
         ));
     }
     let mode = crate::execute::get_property_result(options, "mode")?;
-    match mode {
-        Value::Undefined => Ok(0),
-        Value::String(value) if value == "shortest" => Ok(0),
-        Value::String(value) if value == "longest" => Ok(1),
-        Value::String(value) if value == "strict" => Ok(2),
-        _ => Err(crate::value::error::throw_type_error("Iterator.zip mode")),
+    let mode = match mode {
+        Value::Undefined => 0,
+        Value::String(value) if value == "shortest" => 0,
+        Value::String(value) if value == "longest" => 1,
+        Value::String(value) if value == "strict" => 2,
+        _ => return Err(crate::value::error::throw_type_error("Iterator.zip mode")),
+    };
+    if mode == 1 {
+        let padding = crate::execute::get_property_result(options, "padding")?;
+        if !matches!(padding, Value::Undefined) && !crate::value::is_object(&padding) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.zip padding",
+            ));
+        }
     }
+    Ok(mode)
 }
 
 fn array_values(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
