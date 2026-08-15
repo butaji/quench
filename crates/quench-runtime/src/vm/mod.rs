@@ -11,6 +11,10 @@ mod scope;
 mod vm_arithmetic;
 pub(crate) mod vm_ops;
 mod vm_typed_bigint;
+
+pub fn reset_host_agent_state() {
+    reset_agent_state();
+}
 pub use crate::intl::tolocale::value::is_truthy;
 pub use scope::ExecutionScope;
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
