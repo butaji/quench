@@ -37,15 +37,21 @@ fn descriptor_fields(
 ) -> Result<Vec<(String, Value)>, crate::execute::VmError> {
     let mut fields = Vec::new();
     for field in ["get", "set", "value", "writable", "enumerable", "configurable"] {
-        let value = crate::execute::get_property_result(descriptor, field)?;
-        if !matches!(value, Value::Undefined) {
-            let value = if matches!(field, "writable" | "enumerable" | "configurable") {
-                Value::Boolean(crate::execute::is_truthy(&value))
-            } else {
-                value
-            };
-            fields.push((field.to_string(), value));
+        let key = Value::String(field.to_string());
+        let present = !matches!(
+            crate::builtins::object::descriptor(Some(descriptor), Some(&key))?,
+            Value::Undefined
+        );
+        if !present {
+            continue;
         }
+        let value = crate::execute::get_property_result(descriptor, field)?;
+        let value = if matches!(field, "writable" | "enumerable" | "configurable") {
+            Value::Boolean(crate::execute::is_truthy(&value))
+        } else {
+            value
+        };
+        fields.push((field.to_string(), value));
     }
     validate_accessor_fields(&fields)?;
     Ok(fields)
