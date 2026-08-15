@@ -496,7 +496,31 @@ fn format_number(slots: &[(String, Value)], number: f64) -> String {
     if let Some(value) = fractional_format(slots, number) {
         return value;
     }
+    if let Some(value) = date_component_format(slots, number) {
+        return value;
+    }
     range_text(number)
+}
+
+fn date_component_format(slots: &[(String, Value)], number: f64) -> Option<String> {
+    if !slot_string(slots, "year").is_some()
+        && !slot_string(slots, "month").is_some()
+        && !slot_string(slots, "day").is_some()
+    {
+        return None;
+    }
+    let date = Utc.timestamp_millis_opt(number.trunc() as i64).single()?;
+    let mut parts = Vec::new();
+    if slot_string(slots, "year").is_some() {
+        parts.push(format!("{:04}", date.year()));
+    }
+    if slot_string(slots, "month").is_some() {
+        parts.push(format!("{:02}", date.month()));
+    }
+    if slot_string(slots, "day").is_some() {
+        parts.push(format!("{:02}", date.day()));
+    }
+    Some(parts.join("-"))
 }
 
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
