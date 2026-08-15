@@ -79,7 +79,8 @@ impl RawOptions {
         };
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
-                let value = to_string_value(value);
+                let value =
+                    crate::conversion::to_string(value).unwrap_or_else(|_| to_string_value(value));
                 match key.as_str() {
                     "style" => raw.style = value,
                     "currency" => raw.currency = Some(value.to_ascii_uppercase()),
@@ -314,25 +315,7 @@ fn validate_locale_matcher(options: Option<&Value>) -> Result<(), VmError> {
 }
 
 fn valid_unit(unit: Option<&str>) -> bool {
-    matches!(
-        unit,
-        Some(
-            "percent"
-                | "meter"
-                | "kilometer"
-                | "kilometer-per-hour"
-                | "year"
-                | "month"
-                | "week"
-                | "day"
-                | "hour"
-                | "minute"
-                | "second"
-                | "millisecond"
-                | "microsecond"
-                | "nanosecond"
-        )
-    )
+    unit.is_some_and(|value| value == "kilometer-per-hour" || super::UNITS.contains(&value))
 }
 
 fn grouping_enabled(value: &str) -> bool {
@@ -764,7 +747,7 @@ impl NumberOptions {
     }
 
     fn resolved(&self) -> Value {
-        make_object(vec![
+        let mut properties = vec![
             ("locale".to_string(), Value::String(self.locale.clone())),
             (
                 "numberingSystem".to_string(),
@@ -797,7 +780,30 @@ impl NumberOptions {
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
             ),
-        ])
+        ];
+        if self.style == "currency" {
+            if let Some(currency) = &self.currency {
+                properties.push(("currency".to_string(), Value::String(currency.clone())));
+                properties.push((
+                    "currencyDisplay".to_string(),
+                    Value::String(self.currency_display.clone()),
+                ));
+                properties.push((
+                    "currencySign".to_string(),
+                    Value::String(self.currency_sign.clone()),
+                ));
+            }
+        }
+        if self.style == "unit" {
+            if let Some(unit) = &self.unit {
+                properties.push(("unit".to_string(), Value::String(unit.clone())));
+                properties.push((
+                    "unitDisplay".to_string(),
+                    Value::String(self.unit_display.clone()),
+                ));
+            }
+        }
+        make_object(properties)
     }
 }
 

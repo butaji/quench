@@ -771,7 +771,7 @@ fn supported_time_zones() -> Vec<Value> {
     ])
 }
 
-const UNITS: &[&str] = &[
+pub(crate) const UNITS: &[&str] = &[
     "acre",
     "bit",
     "byte",
