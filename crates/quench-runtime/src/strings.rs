@@ -516,67 +516,6 @@ pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {
     )
 }
 
-pub(crate) fn replace(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-    all: bool,
-) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::String(value)) = receiver else {
-        return Ok(Value::String(String::new()));
-    };
-    let pattern = arguments.first().map_or_else(String::new, to_string);
-    let Some(replacement) = arguments.get(1) else {
-        let result = if all {
-            value.replace(&pattern, "")
-        } else {
-            value.replacen(&pattern, "", 1)
-        };
-        return Ok(Value::String(result));
-    };
-    let result = if crate::conversion::is_callable(replacement) {
-        apply_callable_replacement(value, pattern, replacement, all)?
-    } else {
-        let template = to_string(replacement);
-        if all {
-            value.replace(&pattern, &template)
-        } else {
-            value.replacen(&pattern, &template, 1)
-        }
-    };
-    Ok(Value::String(result))
-}
-
-fn apply_callable_replacement(
-    value: &str,
-    pattern: String,
-    replacement: &Value,
-    all: bool,
-) -> Result<String, crate::execute::VmError> {
-    let mut result = String::new();
-    let mut rest = value;
-    while let Some(index) = rest.find(&pattern) {
-        let matched = rest[..index + pattern.len()].to_string();
-        let suffix_start = index + pattern.len();
-        let offset = value.len() - rest.len() + index;
-        let callback_args = [
-            Value::String(matched.clone()),
-            Value::Number(offset as f64),
-            Value::String(value.to_string()),
-        ];
-        let replaced =
-            crate::functions::execute_target(replacement, &Value::Undefined, &callback_args)?;
-        result.push_str(&matched[..index]);
-        result.push_str(&to_string(&replaced));
-        rest = &rest[suffix_start..];
-        if !all {
-            result.push_str(rest);
-            return Ok(result);
-        }
-    }
-    result.push_str(rest);
-    Ok(result)
-}
-
 include!("strings_tail.rs");
 
 include!("strings_search.rs");
