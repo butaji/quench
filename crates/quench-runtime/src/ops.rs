@@ -154,6 +154,7 @@ pub enum Builtin {
     ArrayForEach,
     FunctionCall,
     FunctionApply,
+    FunctionPrototypeHasInstance,
     Boolean,
     BooleanValueOf,
     BooleanToString,
