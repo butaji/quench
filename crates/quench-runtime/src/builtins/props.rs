@@ -255,6 +255,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
+        (FunctionPrototype, "Symbol.hasInstance") => Some(FunctionPrototypeHasInstance),
         (FunctionCall, "bind") => Some(FunctionBind),
         (Object, "prototype") => Some(ObjectPrototype),
         (Object, "fromEntries") => Some(ObjectFromEntries),
@@ -536,6 +537,9 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     }
 }
 pub(crate) fn is_builtin_deletable(builtin: Builtin, key: &str) -> bool {
+    if builtin == Builtin::FunctionPrototype && key == "Symbol.hasInstance" {
+        return false;
+    }
     if key == "prototype" && builtin != Builtin::GeneratorFunctionPrototype {
         return false;
     }
