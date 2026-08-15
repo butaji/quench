@@ -462,7 +462,7 @@ fn canonicalize_subtags(
                 script_done = true;
             }
             Subtag::Region => {
-                out.push(part.to_ascii_uppercase());
+                out.push(region_alias(part));
                 region_done = true;
             }
             Subtag::Variant => {
@@ -473,6 +473,13 @@ fn canonicalize_subtags(
         }
     }
     Ok(out)
+}
+
+fn region_alias(region: &str) -> String {
+    match region.to_ascii_uppercase().as_str() {
+        "SU" => "AM".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn titlecase_script(part: &str) -> String {
