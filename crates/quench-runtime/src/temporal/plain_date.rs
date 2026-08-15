@@ -16,7 +16,24 @@ pub(crate) fn execute(
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
-    let Some(Value::String(text)) = value else {
+    let Some(value) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
+    };
+    if let Value::Object(object) = value {
+        let year = field_number(object, "year")?;
+        let day = field_number(object, "day")?;
+        let month = field_number(object, "month").or_else(|_| {
+            let code = field(object, "monthCode")?;
+            let Value::String(code) = code else {
+                return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+            };
+            code.strip_prefix('M')
+                .and_then(|value| value.parse().ok())
+                .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))
+        })?;
+        return Ok(date_object(year, month, day));
+    }
+    let Value::String(text) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
     let date = text.split('T').next().unwrap_or(text);
@@ -63,6 +80,23 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         .parse()
         .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
     Ok(date_object(year, month, day))
+}
+
+fn field(object: &crate::value::ObjectData, name: &str) -> Result<Value, VmError> {
+    object
+        .iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.clone())
+        .ok_or_else(|| crate::value::error::throw_type_error("Missing PlainDate field"))
+}
+
+fn field_number(object: &crate::value::ObjectData, name: &str) -> Result<f64, VmError> {
+    match field(object, name)? {
+        Value::Number(value) => Ok(value),
+        _ => Err(crate::value::error::throw_type_error(
+            "Invalid PlainDate field",
+        )),
+    }
 }
 
 fn number(value: Option<&Value>) -> Result<f64, VmError> {
