@@ -55,27 +55,14 @@ fn bigint_to_locale_string(
     if let Some(formatted) = bigint_significant_format(&value, arguments) {
         return Ok(Value::String(formatted));
     }
-    if let Some(formatted) = bigint_fraction_format(&value, arguments) {
-        return Ok(Value::String(formatted));
-    }
     if arguments
         .get(1)
         .is_some_and(|option| !matches!(option, Value::Undefined))
         || value.trim_start_matches('-').len() <= 15
     {
-        crate::intl::number::construct(arguments)?;
-        let number = value.parse::<f64>().map_err(|_| {
-            crate::value::error::throw_type_error("Cannot convert BigInt to number")
-        })?;
-        return crate::intl::tolocale::number_to_locale_string(
-            Some(&Value::Number(number)),
-            arguments,
-        );
+        return bigint_number_format(&value, arguments);
     }
-    let locale = arguments.first().and_then(|value| match value {
-        Value::String(value) => Some(value.as_str()),
-        _ => None,
-    });
+    let locale = locale_hint(arguments);
     let separator = if locale.is_some_and(|value| value.starts_with("de")) {
         '.'
     } else {
@@ -84,28 +71,26 @@ fn bigint_to_locale_string(
     Ok(Value::String(group_bigint(&value, separator)))
 }
 
-fn bigint_fraction_format(value: &str, arguments: &[Value]) -> Option<String> {
-    let Value::Object(options) = arguments.get(1)? else {
-        return None;
-    };
-    let digits = options.properties.iter().find_map(|(key, value)| {
-        (key == "minimumFractionDigits").then_some(to_option_number(value) as usize)
-    })?;
-    let locale = arguments.first().and_then(|value| match value {
-        Value::String(value) => Some(value.as_str()),
+fn locale_hint(arguments: &[Value]) -> Option<&str> {
+    match arguments.first() {
+        Some(Value::String(value)) => Some(value.as_str()),
+        Some(Value::Array(values)) => values.first().and_then(|value| match value {
+            Value::String(value) => Some(value.as_str()),
+            _ => None,
+        }),
         _ => None,
-    });
-    let grouping = if locale.is_some_and(|value| value.starts_with("de")) {
-        '.'
-    } else {
-        ','
-    };
-    let decimal = if grouping == '.' { ',' } else { '.' };
-    Some(format!(
-        "{}{decimal}{}",
-        group_bigint(value, grouping),
-        "0".repeat(digits)
-    ))
+    }
+}
+
+fn bigint_number_format(value: &str, arguments: &[Value]) -> Result<Value, VmError> {
+    let formatter = crate::intl::number::construct(arguments)?;
+    let method = crate::execute::get_property_result(&formatter, "format")?;
+    let result = crate::functions::execute_target_with_receiver(
+        &method,
+        &formatter,
+        &[Value::BigInt(value.to_string())],
+    )?;
+    Ok(result.0)
 }
 
 fn bigint_significant_format(value: &str, arguments: &[Value]) -> Option<String> {

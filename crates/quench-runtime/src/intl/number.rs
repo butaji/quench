@@ -924,7 +924,13 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 }
 
 fn to_number_result(value: Option<&Value>) -> Result<f64, VmError> {
-    crate::conversion::to_number(value.unwrap_or(&Value::Undefined))
+    let value = value.unwrap_or(&Value::Undefined);
+    if let Value::BigInt(value) = value {
+        return value
+            .parse::<f64>()
+            .map_err(|_| crate::value::error::throw_type_error("Cannot convert BigInt to number"));
+    }
+    crate::conversion::to_number(value)
 }
 
 pub(crate) fn to_number(value: Option<&Value>) -> f64 {
