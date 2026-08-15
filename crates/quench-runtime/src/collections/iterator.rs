@@ -15,7 +15,7 @@ pub(crate) use iterator_step::step_value;
 pub(crate) use iterator_values::{
     from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_array,
     make_regexp_string, make_string, make_typed, make_typed_keys, next, next_map, next_set,
-    property_for, prototype_of,
+    property_for, prototype_of, result,
 };
 
 pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -101,11 +101,9 @@ pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError
     let method = crate::execute::get_property_result(&value, "Symbol.iterator")?;
     if matches!(method, Value::Null | Value::Undefined) {
         let next = crate::execute::get_property_result(&value, "next")?;
-        if !crate::conversion::is_callable(&next) {
-            return Err(crate::value::error::throw_type_error(
-                "Iterator.from requires an iterable or iterator",
-            ));
-        }
+        let next = crate::conversion::is_callable(&next)
+            .then_some(next)
+            .unwrap_or(Value::Undefined);
         return Ok(make_protocol_with_next(value, next));
     }
     open(value)
@@ -153,6 +151,26 @@ pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::exec
         ));
     }
     next(receiver)
+}
+pub(crate) fn return_iterator(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Iterator(data)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator return called on incompatible receiver",
+        ));
+    };
+    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let completion = close(
+        receiver.cloned().unwrap_or(Value::Undefined),
+        crate::completion::Completion::Normal,
+    )?;
+    mark_done(data);
+    match completion {
+        crate::completion::Completion::Normal => Ok(result(value, true)),
+        completion => completion.into_vm_error().map(|_| result(value, true)),
+    }
 }
 fn make_protocol(iterator: Value) -> Value {
     make_protocol_with_next(iterator, Value::Undefined)
