@@ -389,7 +389,11 @@ fn to_integer_or_infinity(value: f64) -> f64 {
     if value.is_infinite() {
         return f64::INFINITY;
     }
-    if value == -0.0 { 0.0 } else { value.trunc() }
+    if value == -0.0 {
+        0.0
+    } else {
+        value.trunc()
+    }
 }
 
 fn length_descriptor(length: f64) -> crate::value::Value {

@@ -6,7 +6,21 @@ pub(crate) fn descriptor_flag(target: &Value, key: &str, field: &str) -> Option<
         return Some(false);
     }
     match target {
-        Value::Object(properties) => descriptor_flag_in(properties, key, field),
+        Value::Object(properties) => {
+            if let Some(Value::String(value)) = properties
+                .iter()
+                .find_map(|(name, value)| (name == "_value").then_some(value))
+            {
+                if value
+                    .parse::<usize>()
+                    .is_err()
+                    && key.parse::<usize>().is_ok_and(|index| index < crate::strings::utf16_len(value))
+                {
+                    return Some(field == "enumerable" || field == "value");
+                }
+            }
+            descriptor_flag_in(properties, key, field)
+        }
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()

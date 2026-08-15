@@ -473,6 +473,31 @@ impl NumberOptions {
         if self.minimum_fraction_digits > 0 && !significant_selected {
             text = pad_locale_fraction(&text, self.minimum_fraction_digits, &self.locale);
         }
+        let negative = text.starts_with('-');
+        if number.is_nan() && self.locale.starts_with("zh") {
+            text = "非數值".to_string();
+        }
+        let zero = number == 0.0;
+        let rounded_zero = text
+            .trim_start_matches('-')
+            .chars()
+            .all(|character| matches!(character, '0' | '.' | ','));
+        let hide_negative = self.sign_display == "never"
+            || (self.sign_display == "auto"
+                && zero
+                && self.style == "currency"
+                && self.currency_sign != "accounting")
+            || (self.sign_display == "exceptZero" && rounded_zero)
+            || (self.sign_display == "negative" && rounded_zero);
+        if hide_negative && negative {
+            text.remove(0);
+        } else if !negative
+            && (!number.is_nan() || self.sign_display == "always")
+            && (self.sign_display == "always"
+                || (self.sign_display == "exceptZero" && !rounded_zero))
+        {
+            text.insert(0, '+');
+        }
         text = self.apply_sign(text, number);
         match self.style.as_str() {
             "percent" => text.push('%'),

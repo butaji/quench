@@ -29,7 +29,10 @@ fn compiled_regex(receiver: &Value) -> Result<(regress::Regex, String), VmError>
 /// Copy capture-group byte ranges out of a match so the borrow can end before
 /// a String is rebound.
 fn group_ranges(m: &regress::Match, passes: &mut Vec<Option<(usize, usize)>>) {
-    passes.extend(m.groups().map(|group| group.map(|range| (range.start, range.end))));
+    passes.extend(
+        m.groups()
+            .map(|group| group.map(|range| (range.start, range.end))),
+    );
 }
 
 fn to_string_argument(arguments: &[Value]) -> Result<String, VmError> {
@@ -90,7 +93,8 @@ pub(crate) fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmErro
     if !crate::conversion::is_callable(&method) {
         return exec(Some(receiver), &[Value::String(input.to_string())]);
     }
-    let result = crate::functions::execute_target(&method, receiver, &[Value::String(input.to_string())])?;
+    let result =
+        crate::functions::execute_target(&method, receiver, &[Value::String(input.to_string())])?;
     if matches!(result, Value::Null) || crate::value::is_object(&result) {
         return Ok(result);
     }
@@ -135,7 +139,8 @@ fn symbol_replace(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         return replace_with_callable(receiver, &s, &replacement);
     }
     let replacement = crate::conversion::to_string(&replacement)?;
-    let global = crate::execute::is_truthy(&crate::execute::get_property_result(receiver, "global")?);
+    let global =
+        crate::execute::is_truthy(&crate::execute::get_property_result(receiver, "global")?);
     if dynamic_exec(receiver, global) {
         return replace_with_exec(receiver, &s, &replacement, global);
     }
@@ -161,7 +166,9 @@ fn replace_with_exec(
     let mut next_source = 0;
     loop {
         let result = regexp_exec(receiver, input)?;
-        let Some((matched, index)) = exec_match(&result)? else { break };
+        let Some((matched, index)) = exec_match(&result)? else {
+            break;
+        };
         output.push_str(&input[next_source..index]);
         output.push_str(&expand_exec_template(replacement, input, index, &matched));
         next_source = index + matched.len();
@@ -179,7 +186,8 @@ fn exec_match(result: &Value) -> Result<Option<(String, usize)>, VmError> {
         return Ok(None);
     }
     let matched = crate::conversion::to_string(&crate::execute::get_property_result(result, "0")?)?;
-    let index = crate::conversion::to_number(&crate::execute::get_property_result(result, "index")?)?;
+    let index =
+        crate::conversion::to_number(&crate::execute::get_property_result(result, "index")?)?;
     Ok(Some((matched, to_length(index))))
 }
 
@@ -235,7 +243,10 @@ fn replace_with_template(receiver: &Value, s: &str, template: &str) -> Result<Va
     let mut rest = s.to_string();
     loop {
         let matched = find_match(&re, &rest, false)?;
-        let Some(m) = matched else { out.push_str(&rest); break };
+        let Some(m) = matched else {
+            out.push_str(&rest);
+            break;
+        };
         let start = m.start();
         let end = m.end();
         out.push_str(&rest[..start]);
@@ -257,7 +268,10 @@ fn replace_with_callable(receiver: &Value, s: &str, replacement: &Value) -> Resu
     let mut rest = s.to_string();
     loop {
         let matched = find_match(&re, &rest, false)?;
-        let Some(m) = matched else { out.push_str(&rest); break };
+        let Some(m) = matched else {
+            out.push_str(&rest);
+            break;
+        };
         let start = m.start();
         let end = m.end();
         let args = replacer_args(s, &rest, &m, end);
@@ -274,12 +288,7 @@ fn replace_with_callable(receiver: &Value, s: &str, replacement: &Value) -> Resu
     Ok(Value::String(out))
 }
 
-fn replacer_args(
-    s: &str,
-    rest: &str,
-    m: &regress::Match,
-    end: usize,
-) -> Vec<Value> {
+fn replacer_args(s: &str, rest: &str, m: &regress::Match, end: usize) -> Vec<Value> {
     let mut args = vec![
         Value::String(rest[m.start()..end].to_string()),
         Value::Number((s.len() - rest.len() + m.start()) as f64),
@@ -296,7 +305,10 @@ fn replacer_args(
 }
 
 fn next_char(text: &str, at: usize) -> usize {
-    text[at..].chars().next().map_or(text.len(), |c| at + c.len_utf8())
+    text[at..]
+        .chars()
+        .next()
+        .map_or(text.len(), |c| at + c.len_utf8())
 }
 
 fn expand_template(template: &str, input: &str, rest: &str, m: &regress::Match) -> String {
@@ -355,7 +367,9 @@ fn template_group(m: &regress::Match, rest: &str, digit: char) -> Option<String>
 }
 
 fn groups_at<'a>(m: &'a regress::Match) -> impl Iterator<Item = Option<(usize, usize)>> + 'a {
-    m.groups().map(|group| group.map(|range| (range.start, range.end)))
+    m.groups()
+        .skip(1)
+        .map(|group| group.map(|range| (range.start, range.end)))
 }
 
 // RegExp.prototype[Symbol.matchAll]
@@ -365,11 +379,8 @@ fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     let last_index = match_all_start(receiver, &input)?;
     let flags = match_all_flags(receiver)?;
     let matcher = match_all_matcher(receiver, &flags)?;
-    let matcher = crate::builtins::set_property(
-        matcher,
-        "lastIndex",
-        Value::Number(last_index as f64),
-    );
+    let matcher =
+        crate::builtins::set_property(matcher, "lastIndex", Value::Number(last_index as f64));
     Ok(crate::collections::iterator::make_regexp_string(
         matcher,
         input,
@@ -391,13 +402,10 @@ pub(crate) fn iterator_step(
         return Ok(None);
     }
     if global {
-        let matched = crate::conversion::to_string(&crate::execute::get_property_result(&result, "0")?)?;
+        let matched =
+            crate::conversion::to_string(&crate::execute::get_property_result(&result, "0")?)?;
         if matched.is_empty() {
             let index = extract_last_index(regexp)?;
-            if index >= crate::strings::utf16_len(input) {
-                *done = true;
-                return Ok(Some(result));
-            }
             set_last_index(regexp, advance_string_index(input, index, unicode) as f64)?;
         }
     } else {
@@ -430,13 +438,19 @@ fn match_all_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
     if matches!(species, Value::Undefined | Value::Null) {
         return default_match_all_matcher(receiver, flags);
     }
-    crate::construct::construct_value(&species, &[receiver.clone(), Value::String(flags.to_string())])
+    crate::construct::construct_value(
+        &species,
+        &[receiver.clone(), Value::String(flags.to_string())],
+    )
 }
 
 fn default_match_all_matcher(receiver: &Value, flags: &str) -> Result<Value, VmError> {
     crate::construct::construct_value(
         &Value::Builtin(crate::ops::Builtin::RegExp),
-        &[Value::String(extract_source(receiver)), Value::String(flags.to_string())],
+        &[
+            Value::String(extract_source(receiver)),
+            Value::String(flags.to_string()),
+        ],
     )
 }
 
