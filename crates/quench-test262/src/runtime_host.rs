@@ -384,6 +384,9 @@ impl LinkedModule {
     }
 
     fn export_is_uninitialized(&self, name: &str) -> bool {
+        if let Some(cell) = self.linked_exports.borrow().get(name) {
+            return ModuleBindingCell::is_uninitialized(&cell.get());
+        }
         let Some(slot) = self.export_slot(name) else {
             return false;
         };

@@ -165,6 +165,17 @@ pub(crate) fn enumerable_key_strings(target: Option<&Value>) -> Vec<String> {
     }
 }
 
+pub(crate) fn enumerable_key_strings_result(
+    target: Option<&Value>,
+) -> Result<Vec<String>, VmError> {
+    let Some(target) = target else {
+        return Ok(Vec::new());
+    };
+    let keys = own_enumerable_string_keys(target);
+    check_namespace_bindings(target, &keys)?;
+    Ok(keys)
+}
+
 fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
     let Some((_, Value::String(value))) = properties.iter().find(|(key, _)| key == "_value") else {
         return ordered(properties, symbols);
