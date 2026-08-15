@@ -151,7 +151,7 @@ fn is_decimal_braced(suffix: &str) -> bool {
 }
 
 fn is_atom_terminator(byte: u8) -> bool {
-    matches!(byte, b'^' | b'$' | b'|' | b'(' | b'.' | b'\\')
+    matches!(byte, b'^' | b'$' | b'|' | b'(' | b'\\')
 }
 
 fn validate_quantified_lookbehind(body: &str) -> Result<(), String> {
