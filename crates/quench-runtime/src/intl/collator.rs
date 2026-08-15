@@ -328,11 +328,18 @@ fn comparison_key(value: &str, locale: &str, slots: &[(String, Value)]) -> Strin
             secondary.push(ch);
         }
     }
-    if locale.starts_with("de") {
+    if locale.starts_with("de") && slot_string(slots, "usage").as_deref() == Some("sort") {
         key = key
             .replace("a\u{308}", "ae")
             .replace("o\u{308}", "oe")
             .replace("u\u{308}", "ue");
+        secondary = secondary
+            .replace("A\u{308}", "A!")
+            .replace("O\u{308}", "O!")
+            .replace("U\u{308}", "U!")
+            .replace("a\u{308}", "a!")
+            .replace("o\u{308}", "o!")
+            .replace("u\u{308}", "u!");
     }
     if !secondary.is_empty() {
         key.push('\0');
