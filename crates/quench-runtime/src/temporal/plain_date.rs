@@ -38,6 +38,10 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     let Some(Value::String(text)) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
+    let calendar_count = text.matches("[u-ca=").count();
+    if calendar_count > 1 || text.contains("[!u-ca=") && calendar_count > 0 {
+        return Err(crate::value::error::throw_range_error("Multiple calendars"));
+    }
     let date = text.split('T').next().unwrap_or(text);
     let parts = date.split('-').collect::<Vec<_>>();
     if parts.len() == 1 && date.len() == 8 {
@@ -50,7 +54,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         let day = date[6..]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        return Ok(date_object(year, month, day));
+        return checked_date_object(year, month, day);
     }
     if parts.len() != 3 {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
@@ -64,6 +68,19 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     let day = parts[2]
         .parse()
         .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+    checked_date_object(year, month, day)
+}
+
+fn checked_date_object(year: i32, month: i32, day: i32) -> Result<Value, VmError> {
+    let year = f64::from(year);
+    let month = f64::from(month);
+    let day = f64::from(day);
+    if !(-271_821.0..=275_760.0).contains(&year)
+        || !(1.0..=12.0).contains(&month)
+        || !(1.0..=days_in_month(year, month)).contains(&day)
+    {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
     Ok(date_object(year, month, day))
 }
 
