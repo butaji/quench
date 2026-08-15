@@ -32,6 +32,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         .filter(|value| matches!(value, Value::String(_)))
         .map(canonical_calendar)
         .unwrap_or_else(|| Value::String("iso8601".into()));
+    validate_calendar_id(&calendar)?;
     let properties = NAMES
         .into_iter()
         .zip(fields)
@@ -59,6 +60,35 @@ fn canonical_calendar(value: &Value) -> Value {
         "ethiopic-amete-alem" => "ethioaa".into(),
         value => value.into(),
     })
+}
+
+fn validate_calendar_id(value: &Value) -> Result<(), VmError> {
+    let Value::String(calendar) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    };
+    if matches!(
+        calendar.as_str(),
+        "buddhist"
+            | "chinese"
+            | "coptic"
+            | "dangi"
+            | "ethioaa"
+            | "ethiopic"
+            | "gregory"
+            | "hebrew"
+            | "indian"
+            | "iso8601"
+            | "islamic-civil"
+            | "islamic-tbla"
+            | "islamic-umalqura"
+            | "japanese"
+            | "persian"
+            | "roc"
+    ) {
+        Ok(())
+    } else {
+        Err(crate::value::error::throw_range_error("Invalid calendar"))
+    }
 }
 
 fn validate(fields: &[f64]) -> Result<(), VmError> {
