@@ -10,10 +10,7 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let mut style = "long".to_string();
-    let mut list_type = "conjunction".to_string();
-    apply_options(arguments.get(1), &mut style, &mut list_type)?;
-    validate_options(&style, &list_type)?;
+    let (style, list_type) = list_options(arguments.get(1))?;
     Ok(make_object(vec![
         (
             "format".to_string(),
@@ -38,38 +35,44 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     ]))
 }
 
-fn apply_options(
-    options: Option<&Value>,
-    style: &mut String,
-    list_type: &mut String,
-) -> Result<(), VmError> {
+fn list_options(options: Option<&Value>) -> Result<(String, String), VmError> {
+    let mut style = "long".to_string();
+    let mut list_type = "conjunction".to_string();
     let Some(options) = options else {
-        return Ok(());
+        return Ok((style, list_type));
     };
     if matches!(options, Value::Null) {
         return Err(crate::value::error::throw_type_error(
             "Cannot convert null or undefined to object",
         ));
     }
-    let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
-    if !matches!(matcher, Value::Undefined) {
-        let matcher = crate::conversion::to_string(&matcher)?;
-        if !matches!(matcher.as_str(), "lookup" | "best fit") {
-            return Err(runtime_error("RangeError: invalid localeMatcher"));
-        }
-    }
+    validate_matcher(options)?;
     let type_value = crate::execute::get_property_result(options, "type")?;
     if !matches!(type_value, Value::Undefined) {
-        *list_type = crate::conversion::to_string(&type_value)?;
+        list_type = crate::conversion::to_string(&type_value)?;
     }
     let style_value = crate::execute::get_property_result(options, "style")?;
     if !matches!(style_value, Value::Undefined) {
-        *style = crate::conversion::to_string(&style_value)?;
+        style = crate::conversion::to_string(&style_value)?;
     }
-    validate_options(style, list_type)
+    validate_list_options(&style, &list_type)?;
+    Ok((style, list_type))
 }
 
-fn validate_options(style: &str, list_type: &str) -> Result<(), VmError> {
+fn validate_matcher(options: &Value) -> Result<(), VmError> {
+    let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
+    if matches!(matcher, Value::Undefined) {
+        return Ok(());
+    }
+    let matcher = crate::conversion::to_string(&matcher)?;
+    if matches!(matcher.as_str(), "lookup" | "best fit") {
+        Ok(())
+    } else {
+        Err(runtime_error("RangeError: invalid localeMatcher"))
+    }
+}
+
+fn validate_list_options(style: &str, list_type: &str) -> Result<(), VmError> {
     if !matches!(style, "long" | "short" | "narrow") {
         return Err(runtime_error("RangeError: invalid style"));
     }
@@ -159,11 +162,11 @@ fn joiner_for(index: usize, length: usize, joiners: &(String, String, String)) -
 
 fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, String) {
     if style == "narrow" {
-        return narrow_joiners(list_type);
+        return repeated_joiner(if list_type == "unit" { " " } else { ", " });
     }
     let spanish = locale.starts_with("es");
     if list_type == "unit" && !spanish {
-        return comma_joiners();
+        return repeated_joiner(", ");
     }
     standard_joiners(style, list_type, spanish)
 }
@@ -183,19 +186,7 @@ fn comma_joiners() -> (String, String, String) {
 
 fn standard_joiners(style: &str, list_type: &str, spanish: bool) -> (String, String, String) {
     let disjunction = list_type == "disjunction";
-    let word = if style == "short" && !spanish && !disjunction {
-        " & "
-    } else if disjunction {
-        if spanish {
-            " o "
-        } else {
-            " or "
-        }
-    } else if spanish {
-        " y "
-    } else {
-        " and "
-    };
+    let word = join_word(style, spanish, disjunction);
     if list_type == "unit" && spanish && style == "short" {
         return (", ".to_string(), word.to_string(), ", ".to_string());
     }
@@ -211,6 +202,30 @@ fn standard_joiners(style: &str, list_type: &str, spanish: bool) -> (String, Str
         format!(",{}", word)
     };
     (", ".to_string(), word.to_string(), final_joiner)
+}
+
+fn repeated_joiner(separator: &str) -> (String, String, String) {
+    (
+        separator.to_string(),
+        separator.to_string(),
+        separator.to_string(),
+    )
+}
+
+fn join_word(style: &str, spanish: bool, disjunction: bool) -> &'static str {
+    if style == "short" && !spanish && !disjunction {
+        " & "
+    } else if disjunction {
+        if spanish {
+            " o "
+        } else {
+            " or "
+        }
+    } else if spanish {
+        " y "
+    } else {
+        " and "
+    }
 }
 
 fn format_list(items: &[String], locale: &str, style: &str, list_type: &str) -> String {

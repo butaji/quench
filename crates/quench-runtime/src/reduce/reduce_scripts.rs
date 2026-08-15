@@ -55,7 +55,7 @@ struct SourceUnit<'a> {
 
 fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>> {
     let allocator = Allocator::default();
-    let mut state = StatementReducer::new_with_global(SourceType::cjs(), false);
+    let mut state = StatementReducer::new_with_global(SourceType::cjs(), false, true);
     let mut totals = (0, 0);
     let mut last = None;
     let mut facts_out = ProgramDb::default();
@@ -73,6 +73,7 @@ fn reduce_units(units: &[SourceUnit<'_>]) -> Result<ResidualProgram, Vec<String>
         crate::reduce_support::validate_program(&parsed.program)?;
         let analysis = crate::semantic::analyze(&parsed.program)?;
         if unit.source_type.is_module() {
+            state.enter_module();
             module_metadata = Some(super::ModuleMetadata::from_statements(&parsed.program.body));
         }
         totals.0 += analysis.scope_count;

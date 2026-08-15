@@ -7,14 +7,13 @@ pub(crate) fn current_global_object() -> Value {
     if let Some(global) = registered_current_global() {
         return Value::Object(global);
     }
-    GLOBAL_OBJECT
-        .with(|global| {
-            global
-                .borrow()
-                .as_ref()
-                .map(|object| Value::Object(object.clone()))
-        })
-        .unwrap_or(Value::Undefined)
+    if let Some(global) = GLOBAL_OBJECT.with(|global| global.borrow().clone()) {
+        return Value::Object(global);
+    }
+    let global = Rc::new(ObjectData::new(Vec::new()));
+    GLOBAL_OBJECT.with(|slot| slot.replace(Some(global.clone())));
+    realm::initialize_current_global(global.clone());
+    Value::Object(global)
 }
 
 pub(crate) fn initialize_global_object(value: &Value) {
@@ -184,7 +183,7 @@ impl GlobalObjectGuard {
         }
         let previous = GLOBAL_OBJECT.with(|global| global.borrow().clone());
         Self {
-            restore: previous.is_none(),
+            restore: false,
             previous,
             realm: None,
         }

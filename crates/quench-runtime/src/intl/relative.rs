@@ -224,7 +224,7 @@ fn polish_number(value: f64) -> String {
 
 fn polish_word(unit: &str, style: &str, value: f64) -> String {
     if value.fract() != 0.0 {
-        return polish_fractional_word(unit, style).to_string();
+        return polish_fractional_word(unit, style);
     }
     let plural = polish_plural(value);
     if style != "long" {
@@ -243,20 +243,31 @@ fn polish_word(unit: &str, style: &str, value: f64) -> String {
     words[plural].to_string()
 }
 
-fn polish_fractional_word(unit: &str, style: &str) -> &'static str {
+fn polish_fractional_word(unit: &str, style: &str) -> String {
     if style != "long" {
         return match unit {
-            "second" if style == "narrow" => "s",
-            "second" => "sek.",
+            "second" => {
+                if style == "narrow" {
+                    "s"
+                } else {
+                    "sek."
+                }
+            }
             "minute" => "min",
-            "hour" if style == "narrow" => "g.",
-            "hour" => "godz.",
+            "hour" => {
+                if style == "narrow" {
+                    "g."
+                } else {
+                    "godz."
+                }
+            }
             "day" => "dnia",
             "week" => "tyg.",
             "month" => "mies.",
             "quarter" => "kw.",
             _ => "roku",
-        };
+        }
+        .to_string();
     }
     match unit {
         "day" => "dnia",
@@ -264,15 +275,26 @@ fn polish_fractional_word(unit: &str, style: &str) -> &'static str {
         "month" => "miesiąca",
         "quarter" => "kwartału",
         "year" => "roku",
-        "second" if style == "narrow" => "s",
-        "second" if style == "short" => "sek.",
-        "second" => "sekundy",
-        "minute" => "minuty",
-        "hour" if style == "narrow" => "g.",
-        "hour" if style == "short" => "godz.",
-        "hour" => "godziny",
+        "second" => match style {
+            "narrow" => "s",
+            "short" => "sek.",
+            _ => "sekundy",
+        },
+        "minute" => {
+            if style == "long" {
+                "minuty"
+            } else {
+                "min"
+            }
+        }
+        "hour" => match style {
+            "narrow" => "g.",
+            "short" => "godz.",
+            _ => "godziny",
+        },
         _ => "lat",
     }
+    .to_string()
 }
 
 fn polish_short_word(unit: &str, style: &str, plural: usize) -> String {

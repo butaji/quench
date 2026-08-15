@@ -35,7 +35,7 @@ pub(crate) fn execute_special(
             has_own_property_result(target, key)
         }
         Builtin::ObjectPropertyIsEnumerable => {
-            Ok(object_property_is_enumerable(receiver, arguments))
+            object_property_is_enumerable_result(receiver, arguments)
         }
         Builtin::ObjectPrototypeIsPrototypeOf => is_prototype_of(receiver, arguments),
         Builtin::ObjectGetOwnPropertyDescriptor => {
@@ -146,6 +146,22 @@ pub(crate) fn object_property_is_enumerable(
         crate::builtins::descriptor_flag(&receiver, &key, "enumerable").unwrap_or(true);
     Value::Boolean(owned && enumerable)
 }
+
+fn object_property_is_enumerable_result(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    if matches!(receiver, Some(Value::Builtin(_))) {
+        return Ok(Value::Boolean(false));
+    }
+    let (Some(receiver), Some(key)) = (receiver, arguments.first()) else {
+        return Ok(Value::Boolean(false));
+    };
+    let key = crate::properties::dynamic_property_key(key)?;
+    let owned = owns_property(receiver, &key)?;
+    let enumerable = crate::builtins::descriptor_flag(receiver, &key, "enumerable").unwrap_or(true);
+    Ok(Value::Boolean(owned && enumerable))
+}
 pub(crate) fn object_special(
     builtin: Builtin,
     receiver: Option<&Value>,
@@ -161,11 +177,13 @@ pub(crate) fn descriptor(
         return Ok(Value::Undefined);
     };
     let key = crate::conversion::to_property_key(key)?;
-    if let Value::Proxy(target) = value {
-        return crate::proxy::proxy_get_own_property_descriptor(
-            &Value::Proxy(target.clone()),
-            &key,
-        );
+    if let Some(id) = crate::vm::consume_deferred_namespace_marker(value, &key) {
+        crate::vm::execute_deferred_module(id)?;
+    }
+    if crate::builtins::namespace_uninitialized(value, &key) {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access an uninitialized module binding",
+        ));
     }
     let descriptor = match value {
         Value::Object(properties) => {

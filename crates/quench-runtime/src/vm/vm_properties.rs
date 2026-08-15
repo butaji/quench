@@ -223,24 +223,28 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    if let Value::BindingCell(cell) = value {
+        return get_property_with_receiver(&cell.borrow(), key, receiver);
+    }
     if matches!(value, Value::Null | Value::Undefined) {
         return Err(crate::value::error::throw_type_error(&format!(
             "Cannot read property `{key}` of null or undefined"
         )));
     }
+    if let Some(id) = consume_deferred_namespace_marker(value, key) {
+        crate::vm::execute_deferred_module(id)?;
+        return get_property_with_receiver(value, key, receiver);
+    }
+    if crate::builtins::namespace_uninitialized(value, key) {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access an uninitialized module binding",
+        ));
+    }
     if let Some(result) = special_property(value, key, receiver) {
         return result;
     }
-    let own_descriptor = crate::builtins::object::descriptor(
-        Some(value),
-        Some(&Value::String(key.to_string())),
-    )
-    .ok();
-    if key == "stack"
-        && matches!(own_descriptor, Some(Value::Undefined))
-        && crate::vm::has_error_slot(value)
-        && (crate::properties::inherits_error_prototype(receiver)
-            || is_error_subclass_receiver(receiver))
+    if let Ok(descriptor) =
+        crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))
     {
         return crate::vm::execute_builtin_with_receiver(
             Builtin::ErrorPrototypeStackGetter,
@@ -314,77 +318,95 @@ pub(crate) fn get_property_with_receiver(
     invoke_accessor(&getter, receiver)
 }
 
-fn is_error_subclass_receiver(value: &Value) -> bool {
-    let Ok(prototype) = crate::builtins::object::get_prototype_of(Some(value)) else {
-        return false;
-    };
-    let Ok(constructor) = crate::execute::get_property_result(&prototype, "constructor") else {
-        return false;
-    };
-    let Value::Function(function) = constructor else {
-        return false;
-    };
-    let Ok(super_constructor) = crate::construct::derived_constructor(&function) else {
-        return false;
-    };
-    matches!(
-        super_constructor,
-        Value::Builtin(
-            Builtin::Error
-                | Builtin::RangeError
-                | Builtin::ReferenceError
-                | Builtin::SyntaxError
-                | Builtin::EvalError
-                | Builtin::URIError
-                | Builtin::AggregateError
-                | Builtin::TypeError
-                | Builtin::SuppressedError
-        )
-    )
-}
-
-fn inherited_property(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
-    let prototype = crate::builtins::object::get_prototype_of(Some(value))?;
-    if !matches!(prototype, Value::Null)
-        && !crate::builtins::same_value(Some(value), Some(&prototype))
-    {
-        let inherited = get_property_with_receiver(&prototype, key, receiver)?;
-        if !matches!(inherited, Value::Undefined) {
-            return Ok(inherited);
-        }
-    }
-    Ok(receiver_property(value, key, receiver))
-}
-
 fn special_property(value: &Value, key: &str, receiver: &Value) -> Option<Result<Value, VmError>> {
     if matches!(value, Value::Proxy(_)) {
         return Some(crate::proxy::proxy_get(value, key, Some(receiver)));
     }
     if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
-        return Some(Err(crate::value::error::throw_type_error("'callee' is unavailable on strict arguments")));
+        return Some(Err(crate::value::error::throw_type_error(
+            "'callee' is unavailable on strict arguments",
+        )));
     }
     if has_restricted_function_property(value, key) {
-        return Some(Err(crate::value::error::throw_type_error("'caller' and 'arguments' are unavailable on this function")));
+        return Some(Err(crate::value::error::throw_type_error(
+            "'caller' and 'arguments' are unavailable on this function",
+        )));
     }
     if let Some(getter) = array_accessor(value, key, "get") {
-        return Some(if matches!(getter, Value::Undefined) { Ok(Value::Undefined) } else { invoke_accessor(&getter, receiver) });
+        return Some(accessor_result(&getter, receiver));
     }
-    if let Some(result) = array_special(value, key, receiver) {
-        return Some(result);
+    if let Some(getter) = array_prototype_getter(value, key) {
+        return Some(accessor_result(&getter, receiver));
     }
-    crate::disposable_stack::accessor(value, key, receiver).or_else(|| data_view_instance_accessor(value, key))
+    crate::disposable_stack::accessor(value, key, receiver)
+        .or_else(|| data_view_instance_accessor(value, key))
 }
 
-fn array_special(value: &Value, key: &str, receiver: &Value) -> Option<Result<Value, VmError>> {
+fn accessor_result(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
+    if matches!(getter, Value::Undefined) {
+        Ok(Value::Undefined)
+    } else {
+        invoke_accessor(getter, receiver)
+    }
+}
+
+fn array_prototype_getter(value: &Value, key: &str) -> Option<Value> {
     let Value::Array(values) = value else { return None };
     let has_own = key == "length"
-        || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+        || crate::arrays::array_index(key)
+            .is_some_and(|index| values.has_index(index as usize))
         || values.descriptor(key).is_some()
         || values.property(key).is_some();
-    if has_own { return None; }
-    crate::arrays::prototype_override_getter(key).map(|getter| {
-        if matches!(getter, Value::Undefined) { Ok(Value::Undefined) } else { invoke_accessor(&getter, receiver) }
-    })
+    (!has_own).then(|| crate::arrays::prototype_override_getter(key)).flatten()
+}
+
+pub(crate) fn consume_deferred_namespace_marker(value: &Value, key: &str) -> Option<u32> {
+    if key == "then"
+        || key == "Symbol.toStringTag"
+        || crate::conversion::is_symbol_string(key)
+    {
+        return None;
+    }
+    if let Value::BindingCell(cell) = value {
+        return consume_deferred_namespace_marker(&cell.borrow(), key);
+    }
+    if let Value::ObjectAlias(alias) = value {
+        let object = alias.0.borrow().upgrade().map(Value::Object)?;
+        return consume_deferred_namespace_marker(&object, key);
+    }
+    let Value::Object(properties) = value else { return None };
+    let marker = format!("\0quench:deferred:\0{key}");
+    let id = properties.iter().rev().find_map(|(name, value)| {
+        if name == "\0quench:deferred-module" {
+            return deferred_marker_id(value);
+        }
+        if name != &marker {
+            return None;
+        }
+        deferred_marker_id(value)
+    })?;
+    Some(id)
+}
+
+fn deferred_marker_id(value: &Value) -> Option<u32> {
+    let Value::BindingCell(cell) = value else {
+        return None;
+    };
+    let Value::Number(id) = cell.borrow().clone() else {
+        return None;
+    };
+    Some(id as u32)
+}
+
+pub(crate) fn deferred_namespace_operation(value: &Value) -> Option<u32> {
+    let Value::Object(properties) = value else {
+        return None;
+    };
+    let key = properties.iter().find_map(|(name, _)| {
+        name.strip_prefix("\0quench:deferred:\0")
+            .map(str::to_string)
+    })?;
+    consume_deferred_namespace_marker(value, &key)
 }
 
 /// Invoke a getter using the receiver as `this`. The getter's own
@@ -454,6 +476,9 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         .find_map(|(name, value)| (name == field).then(|| value.clone()))
 }
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    if capability.kind == HostCapabilityKind::GetGlobal && key == "AbstractModuleSource" {
+        return Value::Builtin(Builtin::Object);
+    }
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
     if matches!(property, Value::Builtin(_)) {
@@ -492,6 +517,296 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
         value,
         crate::builtins::property(Builtin::ObjectPrototype, key),
     )
+}
+fn bind_function_property(value: &Value, key: &str) -> Value {
+    let builtin = match key {
+        "apply" => Builtin::FunctionApply,
+        "call" => Builtin::FunctionCall,
+        "bind" => Builtin::FunctionBind,
+        _ => return Value::Undefined,
+    };
+    bind_method(value, Value::Builtin(builtin))
+}
+fn bound_function_property(
+    value: &Value,
+    bound: &crate::value::BoundFunctionValue,
+    key: &str,
+) -> Value {
+    if let Some((_, value)) = bound
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)
+    {
+        return value.clone();
+    }
+    if matches!(key, "apply" | "call" | "bind") {
+        bind_function_property(value, key)
+    } else if key == "length" && !realm::is_intrinsic(bound) {
+        match &bound.target {
+            Value::Builtin(builtin) => {
+                crate::builtins::props::callable(*builtin, key).unwrap_or(Value::Number(0.0))
+            }
+            target => get_property(target, key),
+        }
+    } else if key == "name" && !realm::is_intrinsic(bound) {
+        Value::String(String::new())
+    } else {
+        let result = get_property(&bound.target, key);
+        if !matches!(result, Value::Undefined) {
+            return result;
+        }
+        function_prototype_property(key)
+    }
+}
+fn bind_method(receiver: &Value, property: Value) -> Value {
+    let Value::Builtin(builtin) = property else {
+        return property;
+    };
+    let properties = if builtin == Builtin::IntlNumberFormatFormat {
+        RefCell::new(number_format_bound_properties())
+    } else {
+        RefCell::new(Vec::new())
+    };
+    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(builtin),
+        receiver: receiver.clone(),
+        arguments: Vec::new(),
+        properties,
+    }))
+}
+fn number_format_bound_properties() -> Vec<(String, Value)> {
+    [
+        ("length", Value::Number(1.0)),
+        ("name", Value::String(String::new())),
+    ]
+    .into_iter()
+    .flat_map(|(key, value)| {
+        let metadata = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ])));
+        [
+            (key.to_string(), value),
+            (crate::builtins::descriptor_key(key), metadata),
+        ]
+    })
+    .collect()
+}
+fn promise_property(value: &Value, key: &str) -> Value {
+    if key == "finally" {
+        return Value::Builtin(Builtin::PromiseFinally);
+    }
+    let Some(builtin @ (Builtin::PromiseThen | Builtin::PromiseCatch | Builtin::PromiseFinally)) =
+        (match crate::builtins::property(Builtin::PromisePrototype, key) {
+            Value::Builtin(builtin) => Some(builtin),
+            _ => None,
+        })
+    else {
+        return crate::builtins::property(Builtin::PromisePrototype, key);
+    };
+    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(builtin),
+        receiver: value.clone(),
+        arguments: Vec::new(),
+        properties: RefCell::new(Vec::new()),
+    }))
+}
+fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Value {
+    match key {
+        "byteLength" => Value::Number(buffer.byte_length() as f64),
+        "maxByteLength" => {
+            Value::Number(buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64)
+        }
+        "resizable" => Value::Boolean(buffer.max_byte_length.is_some()),
+        "immutable" => Value::Boolean(buffer.immutable),
+        "resize" => Value::Builtin(Builtin::ArrayBufferResize),
+        "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
+        _ => crate::builtins::property(Builtin::ArrayBuffer, key),
+    }
+}
+fn float64_array_property(view: &crate::value::Float64ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index)) {
+        return value;
+    }
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Float64ArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Float64ArrayPrototype, key),
+    }
+}
+fn float32_array_property(view: &crate::value::Float32ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Float32ArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Float32ArrayPrototype, key),
+    }
+}
+fn int8_array_property(view: &crate::value::Int8ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
+        "BYTES_PER_ELEMENT" => Value::Number(crate::value::Int8ArrayData::BYTES_PER_ELEMENT as f64),
+        _ => crate::builtins::property(Builtin::Int8ArrayPrototype, key),
+    }
+}
+fn int16_array_property(view: &crate::value::Int16ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Int16ArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Int16ArrayPrototype, key),
+    }
+}
+fn int32_array_property(view: &crate::value::Int32ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Int32ArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Int32ArrayPrototype, key),
+    }
+}
+fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Uint16ArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Uint16ArrayPrototype, key),
+    }
+}
+fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Uint8ArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Uint8ArrayPrototype, key),
+    }
+}
+fn uint32_array_property(view: &crate::value::Uint32ArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Uint32ArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Uint32ArrayPrototype, key),
+    }
+}
+fn uint8_clamped_array_property(view: &crate::value::Uint8ClampedArrayData, key: &str) -> Value {
+    if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
+        return value;
+    }
+    let detached = view.length != usize::MAX
+        && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+    match key {
+        "buffer" => Value::ArrayBuffer(view.buffer.clone()),
+        "byteLength" => Value::Number(if detached { 0 } else { view.byte_length() } as f64),
+        "byteOffset" => Value::Number(if detached { 0 } else { view.byte_offset } as f64),
+        "length" => Value::Number(if detached { 0 } else { view.logical_len() } as f64),
+        "BYTES_PER_ELEMENT" => {
+            Value::Number(crate::value::Uint8ClampedArrayData::BYTES_PER_ELEMENT as f64)
+        }
+        _ => crate::builtins::property(Builtin::Uint8ClampedArrayPrototype, key),
+    }
+}
+fn typed_index(key: &str, get: impl FnOnce(usize) -> Option<f64>) -> Option<Value> {
+    let index = key.parse().ok()?;
+    Some(get(index).map_or(Value::Undefined, Value::Number))
+}
+fn data_view_instance_accessor(value: &Value, key: &str) -> Option<Result<Value, VmError>> {
+    let Value::DataView(view) = value else {
+        return None;
+    };
+    if view.prototype().is_some() {
+        return None;
+    }
+    match key {
+        "buffer" => Some(Ok(Value::ArrayBuffer(view.buffer.clone()))),
+        "byteLength" | "byteOffset" => {
+            if view.is_detached() || view.is_out_of_bounds() {
+                return Some(Err(crate::value::error::throw_type_error(
+                    "Detached DataView",
+                )));
+            }
+            let value = if key == "byteLength" {
+                view.byte_length()
+            } else {
+                view.byte_offset
+            };
+            Some(Ok(Value::Number(value as f64)))
+        }
+        _ => None,
+    }
 }
 
 include!("vm_properties_tail.rs");

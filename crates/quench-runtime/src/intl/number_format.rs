@@ -132,31 +132,28 @@ pub(crate) fn compact_scale(value: f64, locale: &str, display: &str) -> i32 {
 
 fn compact_locale_scale(magnitude: i32, locale: &str, display: &str) -> i32 {
     if locale.starts_with("en-IN") {
-        return threshold_scale(magnitude, &[5, 3]);
+        return threshold(magnitude, &[(5, 5), (3, 3)]);
     }
     if locale.starts_with("ja") || locale.starts_with("zh") {
-        return threshold_scale(magnitude, &[8, 4]);
+        return threshold(magnitude, &[(8, 8), (4, 4)]);
     }
     if locale.starts_with("ko") {
-        return threshold_scale(magnitude, &[8, 4, 3]);
+        return threshold(magnitude, &[(8, 8), (4, 4), (3, 3)]);
     }
     if locale.starts_with("de") {
-        return if magnitude >= 6 {
-            6
-        } else if display == "long" && magnitude >= 3 {
-            3
+        return if display == "long" {
+            threshold(magnitude, &[(6, 6), (3, 3)])
         } else {
-            0
+            threshold(magnitude, &[(6, 6)])
         };
     }
-    threshold_scale(magnitude, &[9, 6, 3])
+    threshold(magnitude, &[(9, 9), (6, 6), (3, 3)])
 }
 
-fn threshold_scale(magnitude: i32, thresholds: &[i32]) -> i32 {
+fn threshold(magnitude: i32, thresholds: &[(i32, i32)]) -> i32 {
     thresholds
         .iter()
-        .copied()
-        .find(|threshold| magnitude >= *threshold)
+        .find_map(|(minimum, scale)| (magnitude >= *minimum).then_some(*scale))
         .unwrap_or(0)
 }
 
@@ -196,24 +193,6 @@ fn east_asian_suffix(magnitude: i32, locale: &str) -> &'static str {
         8 => "億",
         4 if locale.starts_with("zh-TW") => "萬",
         4 => "万",
-        _ => "",
-    }
-}
-
-fn korean_suffix(magnitude: i32) -> &'static str {
-    match magnitude {
-        8 => "억",
-        4 => "만",
-        3 => "천",
-        _ => "",
-    }
-}
-
-fn german_suffix(magnitude: i32, display: &str) -> &'static str {
-    match (magnitude, display) {
-        (6, "long") => " Millionen",
-        (3, "long") => " Tausend",
-        (6, _) => "\u{a0}Mio.",
         _ => "",
     }
 }
