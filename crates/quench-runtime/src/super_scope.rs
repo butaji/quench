@@ -128,6 +128,7 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
             let receiver = actual_receiver(&context)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
             trigger_deferred(&prototype, key)?;
+            trigger_deferred(&receiver, key)?;
             put_with_receiver(&prototype, key, value, &receiver)?;
             Ok(())
         }
@@ -140,6 +141,7 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
             let key_string = crate::properties::dynamic_property_key(&key_value)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
             trigger_deferred(&prototype, &key_string)?;
+            trigger_deferred(&receiver, &key_string)?;
             put_with_receiver(&prototype, &key_string, value, &receiver)?;
             Ok(())
         }
