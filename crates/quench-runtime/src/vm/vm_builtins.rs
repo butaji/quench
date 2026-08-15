@@ -279,7 +279,7 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         ));
     }
     if matches!(value, Value::Proxy(_)) {
-        define_proxy_stack(value, stack.clone())?;
+        set_proxy_stack(value, stack.clone())?;
         return Ok(Value::Undefined);
     }
     define_own_stack(value, stack.clone())?;
@@ -356,6 +356,28 @@ fn define_proxy_stack(value: &Value, stack: Value) -> Result<Value, VmError> {
         ));
     }
     Ok(result)
+}
+
+fn set_proxy_stack(value: &Value, stack: Value) -> Result<(), VmError> {
+    let key = "stack";
+    let own = crate::proxy::proxy_get_own_property_descriptor(value, key)?;
+    if matches!(own, Value::Undefined) {
+        let result = define_proxy_stack(value, stack)?;
+        return if matches!(result, Value::Boolean(false)) {
+            Err(crate::value::error::throw_type_error(
+                "Proxy defineProperty trap returned false",
+            ))
+        } else {
+            Ok(())
+        };
+    }
+    let result = crate::proxy::proxy_set(value, key, &stack, Some(value))?;
+    if matches!(result, Value::Boolean(false)) {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy set trap returned false",
+        ));
+    }
+    Ok(())
 }
 
 fn set_error_stack_home() -> Option<Value> {
