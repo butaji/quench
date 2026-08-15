@@ -2,7 +2,9 @@ use crate::{execute::VmError, value::Value};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let values = (0..10)
-        .map(|index| number(arguments.get(index)))
+        .map(|index| {
+            number(arguments.get(index)).map(|value| if value == 0.0 { 0.0 } else { value })
+        })
         .collect::<Result<Vec<_>, _>>()?;
     if values
         .iter()
