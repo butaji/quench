@@ -62,6 +62,7 @@ pub(crate) fn execute(
             Some(add(_receiver, arguments.first(), -1))
         }
         crate::ops::Builtin::TemporalPlainTimeWith => Some(with(_receiver, arguments.first())),
+        crate::ops::Builtin::TemporalPlainTimeRound => Some(round(_receiver, arguments.first())),
         _ => None,
     }
 }
@@ -354,6 +355,66 @@ fn with(receiver: Option<&Value>, fields: Option<&Value>) -> Result<Value, VmErr
         })
         .collect::<Vec<_>>();
     construct(&values)
+}
+
+fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
+    let options = options
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid rounding options"))?;
+    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
+    let Value::String(unit) = unit else {
+        return Err(crate::value::error::throw_range_error(
+            "Missing smallestUnit",
+        ));
+    };
+    let unit = unit.trim_end_matches('s');
+    let scale = match unit {
+        "hour" => 3_600_000_000_000_i64,
+        "minute" => 60_000_000_000,
+        "second" => 1_000_000_000,
+        "millisecond" => 1_000_000,
+        "microsecond" => 1_000,
+        "nanosecond" => 1,
+        _ => {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid smallestUnit",
+            ))
+        }
+    };
+    let increment = match crate::execute::get_property_result(options, "roundingIncrement")? {
+        Value::Undefined => 1,
+        value => crate::conversion::to_number(&value)? as i64,
+    };
+    if increment <= 0 || increment * scale > 86_400_000_000_000 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    let total = time_fields(receiver)?;
+    let quantum = increment * scale;
+    let rounded =
+        ((total as f64 / quantum as f64).round() as i64 * quantum).rem_euclid(86_400_000_000_000);
+    let values = time_parts(rounded);
+    construct(&values)
+}
+
+fn time_parts(total: i64) -> [Value; 6] {
+    let hour = total / 3_600_000_000_000;
+    let remainder = total % 3_600_000_000_000;
+    let minute = remainder / 60_000_000_000;
+    let remainder = remainder % 60_000_000_000;
+    let second = remainder / 1_000_000_000;
+    let remainder = remainder % 1_000_000_000;
+    [
+        Value::Number(hour as f64),
+        Value::Number(minute as f64),
+        Value::Number(second as f64),
+        Value::Number((remainder / 1_000_000) as f64),
+        Value::Number((remainder / 1_000 % 1_000) as f64),
+        Value::Number((remainder % 1_000) as f64),
+    ]
 }
 
 fn time_fields(value: &Value) -> Result<i64, VmError> {
