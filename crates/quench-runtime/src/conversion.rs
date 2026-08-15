@@ -1,9 +1,5 @@
 use crate::{execute::VmError, value::Value};
-use std::cell::Cell;
 
-thread_local! {
-    static PROPERTY_KEY_COERCION: Cell<bool> = const { Cell::new(false) };
-}
 pub(crate) fn to_property_key(value: &Value) -> Result<String, VmError> {
     if let Value::Builtin(builtin) = value {
         if let Some(name) = crate::intl::tolocale::symbol::name(*builtin) {
@@ -13,20 +9,13 @@ pub(crate) fn to_property_key(value: &Value) -> Result<String, VmError> {
             return Ok(name.to_string());
         }
     }
-    let previous = PROPERTY_KEY_COERCION.with(|flag| flag.replace(true));
-    let primitive = to_primitive(value, "string");
-    PROPERTY_KEY_COERCION.with(|flag| flag.set(previous));
-    let primitive = primitive?;
+    let primitive = to_primitive(value, "string")?;
     match primitive {
         Value::String(value) => Ok(value),
         Value::Number(value) => Ok(number_to_string(value)),
         Value::BigInt(value) => Ok(value),
         value => Ok(crate::intl::tolocale::value::to_string(Some(&value))),
     }
-}
-
-pub(crate) fn property_key_coercion() -> bool {
-    PROPERTY_KEY_COERCION.with(Cell::get)
 }
 
 pub(crate) fn number_to_string(value: f64) -> String {
@@ -202,10 +191,7 @@ pub(crate) fn is_callable(value: &Value) -> bool {
         Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => {
             false
         }
-        Value::Builtin(_) | Value::Function(_) => true,
-        Value::BoundFunction(bound) => {
-            !matches!(&bound.target, Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin))
-        }
+        Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => true,
         Value::Proxy(proxy) => is_callable(&proxy.target),
         _ => false,
     }
