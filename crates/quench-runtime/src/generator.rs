@@ -168,9 +168,9 @@ enum Resume {
 
 fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     let global = generator.function.captures.get(0);
-    if let Some(result) = crate::vm::with_global_realm(&global, || {
-        resume_in_realm(generator, resume.clone())
-    }) {
+    if let Some(result) =
+        crate::vm::with_global_realm(&global, || resume_in_realm(generator, resume.clone()))
+    {
         return result;
     }
     resume_in_realm(generator, resume)
@@ -294,6 +294,9 @@ fn resume_suspended_contexts(
         return resume_machine_frame(generator, state, completion).map(Some);
     }
     if let Some(completion) = resume_try_frame(generator, state, completion.clone())? {
+        if generator.machine.borrow().frame_count() > 0 && !completion.is_suspension() {
+            return resume_suspended_contexts(generator, state, &completion);
+        }
         return resume_machine_frame(generator, state, completion).map(Some);
     }
     if let Some(completion) = resume_branch_frame(generator, state, completion.clone())? {

@@ -118,9 +118,24 @@ fn push_nested_try_frame(
         start: range.start.saturating_add(next as u32),
         end: range.end,
     };
-    generator
-        .machine
-        .borrow_mut()
+    let outer_resume = store
+        .get(resume)
+        .and_then(|suffix| {
+            suffix
+                .iter()
+                .position(|op| matches!(op, crate::ops::Op::Yield { .. }))
+                .map(|index| crate::machine::CodeRange {
+                    code: resume.code,
+                    start: resume.start.saturating_add(index as u32 + 1),
+                    end: resume.end,
+                })
+        })
+        .unwrap_or(resume);
+    let mut machine = generator.machine.borrow_mut();
+    if let Some(crate::machine::Frame::Try { body_resume, .. }) = machine.frames.frames.last_mut() {
+        *body_resume = outer_resume;
+    }
+    machine
         .try_push_frame(crate::machine::Frame::Try {
             phase: crate::machine::TryPhase::Body,
             body: body.range,
