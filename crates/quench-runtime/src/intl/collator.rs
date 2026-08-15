@@ -173,17 +173,17 @@ fn resolved_options(slots: &[(String, Value)], locale: String) -> Value {
         ("locale".to_string(), Value::String(locale)),
         (
             "usage".to_string(),
-            Value::String(slot_string(&slots, "usage").unwrap_or_else(|| "sort".to_string())),
+            Value::String(slot_string(slots, "usage").unwrap_or_else(|| "sort".to_string())),
         ),
         (
             "sensitivity".to_string(),
             Value::String(
-                slot_string(&slots, "sensitivity").unwrap_or_else(|| "variant".to_string()),
+                slot_string(slots, "sensitivity").unwrap_or_else(|| "variant".to_string()),
             ),
         ),
         (
             "ignorePunctuation".to_string(),
-            Value::Boolean(slot_bool(&slots, "ignorePunctuation").unwrap_or(false)),
+            Value::Boolean(slot_bool(slots, "ignorePunctuation").unwrap_or(false)),
         ),
         (
             "collation".to_string(),
@@ -191,11 +191,11 @@ fn resolved_options(slots: &[(String, Value)], locale: String) -> Value {
         ),
         (
             "numeric".to_string(),
-            Value::Boolean(slot_bool(&slots, "numeric").unwrap_or(false)),
+            Value::Boolean(slot_bool(slots, "numeric").unwrap_or(false)),
         ),
         (
             "caseFirst".to_string(),
-            Value::String(slot_string(&slots, "caseFirst").unwrap_or_else(|| "false".to_string())),
+            Value::String(slot_string(slots, "caseFirst").unwrap_or_else(|| "false".to_string())),
         ),
     ])
 }
