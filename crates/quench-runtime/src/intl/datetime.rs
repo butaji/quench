@@ -5,8 +5,8 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 use crate::{conversion, execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
-    slot_string, to_string_value, SLOT,
+    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_bool,
+    slot_number, slot_string, to_string_value, SLOT,
 };
 
 /// Allowed values for each string-valued date/time component option.
@@ -223,15 +223,14 @@ impl DateTimeOptions {
         ];
         let has_hour = self.contains("hour");
         for (key, value) in &self.components {
-            if key == "hourCycle" && !has_hour {
-                continue;
-            }
             props.push((key.clone(), Value::String(value.clone())));
         }
         if has_hour {
             if let Some(hour12) = self.hour12 {
                 props.push(("hour12".to_string(), Value::Boolean(hour12)));
             }
+        } else if let Some(hour12) = self.hour12 {
+            props.push(("hour12".to_string(), Value::Boolean(hour12)));
         }
         if let Some(digits) = self.fractional_second_digits {
             props.push((
@@ -296,7 +295,34 @@ pub(crate) fn prototype_method(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    let slots = receiver_slots(receiver)?;
+    let mut slots = receiver_slots(receiver)?;
+    let temporal_input = arguments
+        .first()
+        .is_some_and(|value| matches!(value, Value::Object(object) if object.iter().any(|(key, _)| key == "epochNanoseconds")));
+    if temporal_input
+        && slot_string(&slots, "dateStyle").is_some()
+        && slot_string(&slots, "timeStyle").is_none()
+    {
+        let month_style = if slot_string(&slots, "dateStyle").as_deref() == Some("long") {
+            "long"
+        } else {
+            "numeric"
+        };
+        for (name, style) in [
+            ("year", "numeric"),
+            ("month", month_style),
+            ("day", "numeric"),
+        ] {
+            slots.push((name.to_string(), Value::String(style.into())));
+        }
+    }
+    if temporal_input
+        && (slot_string(&slots, "hour").is_none() || slot_string(&slots, "timeStyle").is_some())
+    {
+        for name in ["hour", "minute", "second"] {
+            slots.push((name.to_string(), Value::String("numeric".into())));
+        }
+    }
     match builtin {
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
             let input = arguments.first().unwrap_or(&Value::Undefined);
@@ -307,6 +333,9 @@ pub(crate) fn prototype_method(
             if let Some(value) = proleptic_year_format(&slots, number) {
                 return Ok(Value::String(value));
             }
+            if let Some(parts) = component_parts(&slots, number) {
+                return Ok(Value::String(format_parts(&parts)));
+            }
             if let Some(value) = fractional_format(&slots, number) {
                 return Ok(Value::String(value));
             }
@@ -316,6 +345,9 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlDateTimeFormatFormatToParts => {
             let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
             if let Some(value) = day_period_parts(&slots, number) {
+                return Ok(make_array(value));
+            }
+            if let Some(value) = component_parts(&slots, number) {
                 return Ok(make_array(value));
             }
             let value = range_text(number);
@@ -360,6 +392,117 @@ fn day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>
         ("type".to_string(), Value::String("dayPeriod".to_string())),
         ("value".to_string(), Value::String(value)),
     ])])
+}
+
+fn component_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    let seconds = (number / 1_000.0).trunc() as i64;
+    let date = DateTime::<Utc>::from_timestamp(seconds, 0)?;
+    let mut parts = Vec::new();
+    for (name, kind) in [
+        ("year", "year"),
+        ("month", "month"),
+        ("day", "day"),
+        ("hour", "hour"),
+        ("minute", "minute"),
+        ("second", "second"),
+    ] {
+        if slot_string(slots, name).is_none() {
+            continue;
+        }
+        let value = match name {
+            "year" => date.year().to_string(),
+            "month" if slot_string(slots, "month") == Some("long".into()) => {
+                if slot_string(slots, "calendar")
+                    .is_some_and(|calendar| calendar.contains("islamic"))
+                    || slot_string(slots, "locale").is_some_and(|locale| locale.contains("islamic"))
+                {
+                    "Ramadan".into()
+                } else {
+                    [
+                        "January",
+                        "February",
+                        "March",
+                        "April",
+                        "May",
+                        "June",
+                        "July",
+                        "August",
+                        "September",
+                        "October",
+                        "November",
+                        "December",
+                    ][date.month0() as usize]
+                        .into()
+                }
+            }
+            "month" => date.month().to_string(),
+            "day" => date.day().to_string(),
+            "hour"
+                if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h23")
+                    || slot_bool(slots, "hour12") == Some(false)
+                    || slot_string(slots, "hour").as_deref() == Some("2-digit") =>
+            {
+                format!("{:02}", date.hour())
+            }
+            "hour" if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h24") => {
+                if date.hour() == 0 {
+                    "24".into()
+                } else {
+                    format!("{:02}", date.hour())
+                }
+            }
+            "hour"
+                if slot_bool(slots, "hour12") == Some(true)
+                    || slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h12") =>
+            {
+                let hour = date.hour() % 12;
+                format!("{}", if hour == 0 { 12 } else { hour })
+            }
+            "hour" if slot_string(slots, "hourCycle").is_some_and(|cycle| cycle == "h11") => {
+                (date.hour() % 12).to_string()
+            }
+            "hour" => date.hour().to_string(),
+            "minute" => format!("{:02}", date.minute()),
+            _ => format!("{:02}", date.second()),
+        };
+        parts.push(make_object(vec![
+            ("type".to_string(), Value::String(kind.to_string())),
+            ("value".to_string(), Value::String(value)),
+        ]));
+        if name == "hour" && slot_string(slots, "locale").is_some_and(|locale| locale == "en-US") {
+            parts.push(make_object(vec![
+                ("type".to_string(), Value::String("dayPeriod".into())),
+                (
+                    "value".to_string(),
+                    Value::String(day_period_name(date.hour(), true)),
+                ),
+            ]));
+        }
+    }
+    (!parts.is_empty()).then_some(parts)
+}
+
+fn part_value(part: &Value) -> Option<String> {
+    crate::execute::get_property_result(part, "value")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+}
+
+fn format_parts(parts: &[Value]) -> String {
+    let mut result = String::new();
+    for part in parts {
+        let kind = crate::execute::get_property_result(part, "type").ok();
+        let value = part_value(part).unwrap_or_default();
+        if !result.is_empty() {
+            let colon = matches!(kind, Some(Value::String(ref kind)) if kind == "minute" || kind == "second");
+            result.push(if colon { ':' } else { ' ' });
+        }
+        result.push_str(&value);
+    }
+    result
 }
 
 fn day_period_name(hour: u32, with_prefix: bool) -> String {
