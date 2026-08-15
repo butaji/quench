@@ -140,6 +140,9 @@ fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return false;
     }
+    if builtin == Builtin::AsyncFunctionPrototype && matches!(key, "length" | "name") {
+        return false;
+    }
     (builtin == Builtin::Object && key == "hasOwn")
         || builtin_descriptor(builtin, key).is_some()
         || super::callable_property(builtin, key).is_some()
