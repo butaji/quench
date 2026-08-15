@@ -151,6 +151,7 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
         ],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => &["constructor", "toString", "valueOf", "Symbol.toStringTag"],
+        Builtin::AsyncGeneratorFunctionPrototype => &["constructor", "Symbol.toStringTag"],
         Builtin::Error => &["length", "name", "prototype", "isError"],
         Builtin::ThrowTypeError => &["length", "name"],
         _ => &[],
