@@ -22,6 +22,9 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
             Value::Builtin(Builtin::TypedArray)
         }
+        Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => {
+            Value::Builtin(Builtin::TypedArray)
+        }
         Value::Builtin(builtin) if is_intrinsic_prototype(*builtin) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
@@ -332,5 +335,22 @@ fn is_typed_array_constructor(builtin: Builtin) -> bool {
             | Builtin::Uint16Array
             | Builtin::Uint32Array
             | Builtin::Uint8ClampedArray
+    )
+}
+
+fn is_typed_array_prototype(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::Float64ArrayPrototype
+            | Builtin::Float32ArrayPrototype
+            | Builtin::Int8ArrayPrototype
+            | Builtin::Int16ArrayPrototype
+            | Builtin::Int32ArrayPrototype
+            | Builtin::Uint8ArrayPrototype
+            | Builtin::Uint16ArrayPrototype
+            | Builtin::Uint32ArrayPrototype
+            | Builtin::Uint8ClampedArrayPrototype
+            | Builtin::BigInt64ArrayPrototype
+            | Builtin::BigUint64ArrayPrototype
     )
 }
