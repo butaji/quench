@@ -30,6 +30,9 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalInstantToLocaleString => {
             Some(to_locale_string(receiver, arguments))
         }
+        crate::ops::Builtin::TemporalInstantToZonedDateTimeISO => {
+            Some(to_zoned_date_time_iso(receiver, arguments.first()))
+        }
         crate::ops::Builtin::TemporalInstantEquals => Some(equals(receiver, arguments.first())),
         crate::ops::Builtin::TemporalInstantAdd => Some(arithmetic(receiver, arguments.first(), 1)),
         crate::ops::Builtin::TemporalInstantSubtract => {
@@ -48,6 +51,32 @@ fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         std::slice::from_ref(instant),
         Some(&formatter),
     )
+}
+
+fn to_zoned_date_time_iso(
+    receiver: Option<&Value>,
+    time_zone: Option<&Value>,
+) -> Result<Value, VmError> {
+    let epoch = get_epoch(receiver)?;
+    let zone = match time_zone {
+        Some(Value::String(value)) if value.contains('[') => value
+            .rsplit_once('[')
+            .and_then(|(_, value)| value.strip_suffix(']'))
+            .unwrap_or(value),
+        Some(Value::String(value)) => value.as_str(),
+        _ => return Err(crate::value::error::throw_type_error("Invalid time zone")),
+    };
+    Ok(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            ("epochNanoseconds".into(), epoch),
+            ("timeZoneId".into(), Value::String(zone.into())),
+            ("calendarId".into(), Value::String("iso8601".into())),
+            (
+                "\0prototype".into(),
+                Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype),
+            ),
+        ]),
+    )))
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
