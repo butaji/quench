@@ -439,6 +439,10 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
     let Value::Array(values) = value else {
         return None;
     };
+    array_accessor_value(values, key, field)
+}
+
+fn array_accessor_value(values: &crate::value::ArrayData, key: &str, field: &str) -> Option<Value> {
     let Value::Object(descriptor) = values.descriptor(key)? else {
         return None;
     };
