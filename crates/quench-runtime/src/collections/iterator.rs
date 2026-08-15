@@ -13,8 +13,8 @@ mod iterator_values;
 pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpdateGuard};
 pub(crate) use iterator_step::step_value;
 pub(crate) use iterator_values::{
-    from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_array,
-    make_regexp_string, make_string, next, next_map, next_set, property_for, prototype_of,
+    from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_regexp_string,
+    make_string, next, next_map, next_set, property_for, prototype_of,
 };
 
 pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -282,11 +282,10 @@ pub fn delegate_next(
         match &mut *state {
             IteratorState::Native {
                 values,
-                receiver,
                 index,
                 done,
             } => {
-                return Ok(native_delegation_step(values, receiver.as_ref(), index, done));
+                return Ok(native_delegation_step(values, index, done));
             }
             IteratorState::Set { .. }
             | IteratorState::Map { .. }
@@ -348,11 +347,10 @@ fn close_after_missing_throw(
 }
 fn native_delegation_step(
     values: &[Value],
-    receiver: Option<&Rc<crate::value::ArrayData>>,
     index: &mut usize,
     done: &mut bool,
 ) -> DelegationResult {
-    let value = native_step(values, receiver, index, done).unwrap_or(Value::Undefined);
+    let value = native_step(values, index, done).unwrap_or(Value::Undefined);
     if *done {
         DelegationResult::Done(value)
     } else {
@@ -409,18 +407,11 @@ fn get_method(iterator: &Value, name: &str) -> Result<Option<Value>, crate::exec
 fn missing_throw_method() -> crate::execute::VmError {
     crate::value::error::throw_type_error("delegated iterator has no throw method")
 }
-pub(super) fn native_step(
-    values: &[Value],
-    receiver: Option<&Rc<crate::value::ArrayData>>,
-    index: &mut usize,
-    done: &mut bool,
-) -> Option<Value> {
+pub(super) fn native_step(values: &[Value], index: &mut usize, done: &mut bool) -> Option<Value> {
     if *done {
         return None;
     }
-    let value = receiver
-        .and_then(|data| data.get_index(*index))
-        .or_else(|| values.get(*index).cloned());
+    let value = values.get(*index).cloned();
     *index = index.saturating_add(1);
     *done = value.is_none();
     value
