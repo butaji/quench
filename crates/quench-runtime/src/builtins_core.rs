@@ -132,6 +132,7 @@ pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value
     let mut result = values.to_vec();
     result.extend_from_slice(arguments);
     let length = result.len();
+    values.append_live(arguments);
     crate::locals::replace_value(receiver, &Value::array(result));
     Value::Number(length as f64)
 }
