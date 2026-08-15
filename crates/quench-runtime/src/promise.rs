@@ -377,6 +377,9 @@ fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
             }
             Ok(Value::Undefined)
         }
+        Some(constructor) if crate::conversion::is_callable(constructor) => {
+            promise_constructor::reject(constructor, arguments)
+        }
         Some(_) => Err(VmError::NotCallable),
         None => Ok(promise_reject(arguments)),
     }
