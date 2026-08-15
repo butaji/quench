@@ -164,16 +164,28 @@ pub(crate) fn legacy_getter(receiver: Option<&Value>) -> Result<Value, VmError> 
 }
 
 fn escape(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(text)) = arguments.first() else {
-        return Err(crate::value::error::throw_type_error(
-            "RegExp.escape requires a string",
-        ));
-    };
+    let value = arguments.first().unwrap_or(&Value::Undefined);
+    if let Value::StringUnits(units) = value {
+        return Ok(Value::String(escape_units(units)));
+    }
+    let text = crate::conversion::to_string(value)?;
     let mut escaped = String::new();
     for (index, ch) in text.chars().enumerate() {
         escape_character(&mut escaped, ch, index == 0);
     }
     Ok(Value::String(escaped))
+}
+
+fn escape_units(units: &[u16]) -> String {
+    let mut escaped = String::new();
+    for (index, unit) in units.iter().enumerate() {
+        if (0xD800..=0xDFFF).contains(unit) {
+            escaped.push_str(&format!("\\u{unit:04x}"));
+        } else if let Some(ch) = char::from_u32(u32::from(*unit)) {
+            escape_character(&mut escaped, ch, index == 0);
+        }
+    }
+    escaped
 }
 
 fn escape_character(output: &mut String, ch: char, first: bool) {
