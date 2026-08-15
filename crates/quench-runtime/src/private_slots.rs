@@ -24,6 +24,20 @@ pub(crate) fn get(value: &Value, name: &PrivateName) -> Result<Value, VmError> {
     }
 }
 
+pub(crate) fn execute_has(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    let Op::HasPrivate { dst, object, name } = op else {
+        return Err(VmError::MissingReturn);
+    };
+    let object = crate::execute::read_register(registers, *object)?;
+    let name = resolve(*name)?;
+    let result = slots(&object)?
+        .borrow()
+        .iter()
+        .any(|(candidate, _)| candidate == &name);
+    crate::execute::write_value(registers, *dst, Value::Boolean(result));
+    Ok(())
+}
+
 pub(crate) fn define_accessor(
     value: &Value,
     name: PrivateName,
@@ -109,6 +123,9 @@ pub(crate) fn define(value: &Value, name: PrivateName, initial: Value) -> Result
 }
 
 fn define_slot(value: &Value, name: PrivateName, slot: PrivateSlot) -> Result<(), VmError> {
+    if crate::builtins::is_module_namespace(value) {
+        return Err(private_brand_error());
+    }
     let slots = slots(value)?;
     let mut slots = slots.borrow_mut();
     if slots.iter().any(|(id, _)| id == &name) {
