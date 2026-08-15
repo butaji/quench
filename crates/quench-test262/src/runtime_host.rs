@@ -82,8 +82,10 @@ impl LinkedModuleGraph {
             }
             link_reexports(graph, &units, id)?;
         }
-        for id in graph.dependency_order(root)? {
-            link_reexports(graph, &units, id)?;
+        for _ in 0..units.len() {
+            for id in graph.dependency_order(root)? {
+                link_reexports(graph, &units, id)?;
+            }
         }
         Ok(Self { units })
     }
