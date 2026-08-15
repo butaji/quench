@@ -4,6 +4,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     path::Path,
+    rc::Rc,
     sync::OnceLock,
 };
 
@@ -73,7 +74,7 @@ impl LinkedModuleGraph {
                 let target = graph
                     .resolve(id, &binding.source)
                     .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-                let cell = import_cell(&units, target, &binding.imported)?;
+                let cell = import_cell(graph, &units, target, &binding.imported)?;
                 units
                     .get(&id)
                     .ok_or_else(|| "module unit missing".to_string())?
@@ -107,7 +108,7 @@ fn link_reexports(
     let metadata = unit_metadata(units, id)?;
     for binding in &metadata.reexports {
         let target = resolve_reexport(graph, id, &binding.source)?;
-        link_reexport(units, id, target, binding)?;
+        link_reexport(graph, units, id, target, binding)?;
     }
     Ok(())
 }
@@ -129,6 +130,7 @@ fn resolve_reexport(graph: &ModuleGraph, from: ModuleId, source: &str) -> Result
 }
 
 fn link_reexport(
+    graph: &ModuleGraph,
     units: &HashMap<ModuleId, LinkedModule>,
     from: ModuleId,
     target: ModuleId,
@@ -137,7 +139,7 @@ fn link_reexport(
     if binding.imported == "*all*" {
         return link_star_exports(units, from, target);
     }
-    let cell = import_cell(units, target, &binding.imported)?;
+    let cell = import_cell(graph, units, target, &binding.imported)?;
     units
         .get(&from)
         .ok_or_else(|| "module unit missing".to_string())?
@@ -170,6 +172,7 @@ fn link_star_exports(
 }
 
 fn import_cell(
+    graph: &ModuleGraph,
     units: &std::collections::HashMap<ModuleId, LinkedModule>,
     target: ModuleId,
     imported: &str,
@@ -186,7 +189,43 @@ fn import_cell(
     units
         .get(&target)
         .and_then(|unit| unit.export_cell(imported))
+        .or_else(|| resolve_export_cell(graph, units, target, imported, &mut HashSet::new()))
         .ok_or_else(|| format!("SyntaxError: export {imported} missing"))
+}
+
+fn resolve_export_cell(
+    graph: &ModuleGraph,
+    units: &HashMap<ModuleId, LinkedModule>,
+    module: ModuleId,
+    name: &str,
+    seen: &mut HashSet<(ModuleId, String)>,
+) -> Option<ModuleBindingCell> {
+    if !seen.insert((module, name.to_string())) {
+        return None;
+    }
+    let metadata = unit_metadata(units, module).ok()?;
+    let mut result = None;
+    for binding in &metadata.reexports {
+        if binding.imported != "*all*" && binding.exported != name {
+            continue;
+        }
+        let target = graph.resolve(module, &binding.source)?;
+        let imported = if binding.imported == "*all*" {
+            name
+        } else {
+            &binding.imported
+        };
+        let cell = resolve_export_cell(graph, units, target, imported, seen)
+            .or_else(|| units.get(&target)?.export_cell(imported))?;
+        if result
+            .as_ref()
+            .is_some_and(|existing| !Rc::ptr_eq(&existing.shared(), &cell.shared()))
+        {
+            return None;
+        }
+        result = Some(cell);
+    }
+    result
 }
 
 fn namespace_cell(
