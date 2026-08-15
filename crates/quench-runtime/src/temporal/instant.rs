@@ -28,6 +28,10 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalInstantToString
         | crate::ops::Builtin::TemporalInstantToJSON => Some(to_string(receiver)),
         crate::ops::Builtin::TemporalInstantEquals => Some(equals(receiver, arguments.first())),
+        crate::ops::Builtin::TemporalInstantAdd => Some(arithmetic(receiver, arguments.first(), 1)),
+        crate::ops::Builtin::TemporalInstantSubtract => {
+            Some(arithmetic(receiver, arguments.first(), -1))
+        }
         _ => None,
     }
 }
@@ -82,6 +86,54 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
     let left = get_epoch(receiver)?;
     let right = get_epoch(other)?;
     Ok(Value::Boolean(left == right))
+}
+
+fn arithmetic(
+    receiver: Option<&Value>,
+    duration: Option<&Value>,
+    direction: i128,
+) -> Result<Value, VmError> {
+    let epoch = get_epoch(receiver)?;
+    let Value::BigInt(epoch) = epoch else {
+        return Err(crate::value::error::throw_type_error("Invalid instant"));
+    };
+    let duration = crate::temporal::duration::from(duration)?;
+    let delta = duration_nanos(&duration)?;
+    let epoch = epoch
+        .parse::<i128>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?
+        + direction * delta;
+    construct(&[Value::BigInt(epoch.to_string())])
+}
+
+fn duration_nanos(duration: &Value) -> Result<i128, VmError> {
+    for name in ["years", "months", "weeks"] {
+        if duration_number(duration, name)? != 0.0 {
+            return Err(crate::value::error::throw_range_error(
+                "Date units are not supported for Instant arithmetic",
+            ));
+        }
+    }
+    let units = [
+        ("days", 86_400_000_000_000_i128),
+        ("hours", 3_600_000_000_000),
+        ("minutes", 60_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
+    ];
+    units.into_iter().try_fold(0_i128, |total, (name, scale)| {
+        let value = duration_number(duration, name)? as i128;
+        Ok(total + value * scale)
+    })
+}
+
+fn duration_number(duration: &Value, name: &str) -> Result<f64, VmError> {
+    match crate::execute::get_property_result(duration, name)? {
+        Value::Number(value) => Ok(value),
+        _ => Ok(0.0),
+    }
 }
 
 fn epoch_nanos(text: &str) -> Result<i128, VmError> {

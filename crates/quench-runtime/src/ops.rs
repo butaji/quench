@@ -366,6 +366,8 @@ pub enum Builtin {
     TemporalInstantToString,
     TemporalInstantToJSON,
     TemporalInstantEquals,
+    TemporalInstantAdd,
+    TemporalInstantSubtract,
     TemporalZonedDateTime,
     TemporalZonedDateTimePrototype,
     TemporalDuration,
