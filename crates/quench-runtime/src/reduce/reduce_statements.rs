@@ -135,7 +135,7 @@ fn reduce_statements(
     global: bool,
     facts: &mut ProgramDb,
 ) -> Result<ReducedStatements, Vec<String>> {
-    let mut state = StatementReducer::new_with_global(source_type, global);
+    let mut state = StatementReducer::new_with_global(source_type, global, source_type.is_module());
     let last = state.append(statements, facts, true)?;
     Ok((
         crate::reduce_support::finish_program(state.ops, last)?,
