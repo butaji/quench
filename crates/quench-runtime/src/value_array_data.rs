@@ -164,6 +164,18 @@ impl ArrayData {
                 || self.mapped.get(index).and_then(Option::as_ref).is_some())
     }
 
+    pub(crate) fn next_index(&self, start: usize, length: usize) -> Option<usize> {
+        let dense_end = self.values.len().min(length);
+        (start..dense_end)
+            .find(|&index| self.has_index(index))
+            .or_else(|| {
+                self.properties.iter().filter_map(|(key, _)| {
+                    let index = crate::arrays::array_index(key)? as usize;
+                    (index >= start && index < length && self.has_index(index)).then_some(index)
+                }).min()
+            })
+    }
+
     pub(crate) fn snapshot(&self) -> Vec<Value> {
         (0..self.length)
             .map(|index| self.get_index(index).unwrap_or(Value::Undefined))
