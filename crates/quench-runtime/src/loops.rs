@@ -217,19 +217,19 @@ fn unpack_for_in<'a>(
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let keys = for_in_keys(crate::execute::read_register(registers, *object)?);
+    let keys = for_in_keys(crate::execute::read_register(registers, *object)?)?;
     Ok((label, *slot, body, *per_iteration, keys))
 }
 
-fn for_in_keys(value: crate::value::Value) -> Vec<String> {
+fn for_in_keys(value: crate::value::Value) -> Result<Vec<String>, crate::execute::VmError> {
     match value {
         value @ (crate::value::Value::Object(_) | crate::value::Value::ObjectAlias(_)) => {
-            crate::own_keys::enumerable_key_strings(Some(&value))
+            crate::own_keys::enumerable_key_strings_result(Some(&value))
         }
-        crate::value::Value::Array(values) => {
-            crate::own_keys::enumerable_key_strings(Some(&crate::value::Value::Array(values)))
-        }
-        _ => Vec::new(),
+        crate::value::Value::Array(values) => crate::own_keys::enumerable_key_strings_result(Some(
+            &crate::value::Value::Array(values),
+        )),
+        _ => Ok(Vec::new()),
     }
 }
 
