@@ -287,6 +287,9 @@ impl DateTimeOptions {
         } else if !self.contains("hourCycle") {
             self.set_component("hourCycle", "h23".to_string());
         }
+        if self.hour12.is_none() {
+            self.hour12 = Some(false);
+        }
     }
 
     fn build_object(&self) -> Value {
