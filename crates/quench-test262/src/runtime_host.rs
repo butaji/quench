@@ -1081,6 +1081,7 @@ impl LinkedModule {
             .iter()
             .position(|op| matches!(op, quench_runtime::ops::Op::Await { .. }))
             .map_or(self.program.ops().len() - start, |index| index + 1);
+        let _step_guard = quench_runtime::vm::install_async_module_step();
         let (completion, next) = self
             .scope
             .execute_completion_step(
@@ -1092,7 +1093,7 @@ impl LinkedModule {
         let stopped_at_await = end < self.program.ops().len() - start;
         match completion {
             quench_runtime::completion::Completion::Suspend(_) => {
-                self.async_next.set(Some(start + next));
+                self.async_next.set(Some(start + next.saturating_sub(1)));
                 Ok(Value::Undefined)
             }
             quench_runtime::completion::Completion::Normal if stopped_at_await => {
