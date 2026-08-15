@@ -90,6 +90,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateTimeSubtract => {
             Some(add(_receiver, arguments.first(), -1.0))
         }
+        crate::ops::Builtin::TemporalPlainDateTimeWith => Some(with(_receiver, arguments.first())),
         _ => None,
     }
 }
@@ -170,6 +171,30 @@ fn number_property(value: &Value, name: &str) -> f64 {
         .ok()
         .and_then(|value| crate::conversion::to_number(&value).ok())
         .unwrap_or(0.0)
+}
+
+fn with(receiver: Option<&Value>, changes: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let changes = changes
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid date-time"))?;
+    let mut values = fields(receiver)?;
+    let month_code = crate::execute::get_property_result(changes, "monthCode")?;
+    if !matches!(month_code, Value::Undefined) {
+        values[1] = crate::conversion::to_number(&month_code_number(&month_code)?)?;
+    }
+    for (index, name) in NAMES.iter().enumerate() {
+        let value = crate::execute::get_property_result(changes, name)?;
+        if !matches!(value, Value::Undefined) {
+            values[index] = if *name == "monthCode" {
+                crate::conversion::to_number(&month_code_number(&value)?)?
+            } else {
+                crate::conversion::to_number(&value)?
+            };
+        }
+    }
+    construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
 }
 
 fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
