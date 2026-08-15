@@ -45,6 +45,7 @@ fn validate_proxy_arguments(target: &Value, handler: &Value) -> Result<(), VmErr
 
 fn create_revoke_function(proxy: Value) -> Value {
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(Builtin::ProxyRevoke),
         receiver: proxy,
         arguments: Vec::new(),
@@ -144,6 +145,7 @@ fn proxy_target_property(
         };
         return Ok(Value::BoundFunction(Rc::new(
             crate::value::BoundFunctionValue {
+                realm: crate::vm::current_context_or_default().realm(),
                 target: Value::Builtin(builtin),
                 receiver: receiver.clone(),
                 arguments: Vec::new(),

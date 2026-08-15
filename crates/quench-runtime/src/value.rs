@@ -481,6 +481,7 @@ pub struct FunctionValue {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoundFunctionValue {
+    pub(crate) realm: crate::ops::RealmId,
     pub target: Value,
     pub receiver: Value,
     pub arguments: Vec<Value>,
