@@ -457,8 +457,17 @@ fn has_error_slot(value: &Value) -> bool {
 
 fn error_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     let value = error_receiver(receiver, "Error.prototype.toString")?;
-    let name = match crate::execute::get_property_result(value, "name")? {
+    let name_value = crate::execute::get_property_result(value, "name")?;
+    let name_missing = matches!(
+        crate::builtins::object::descriptor(
+            Some(value),
+            Some(&Value::String("name".to_string()))
+        )?,
+        Value::Undefined
+    );
+    let name = match name_value {
         Value::Undefined => "Error".to_string(),
+        Value::String(name) if name.is_empty() && name_missing => "Error".to_string(),
         value => crate::conversion::to_string(&value)?,
     };
     let message = match crate::execute::get_property_result(value, "message")? {
