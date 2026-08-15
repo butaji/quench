@@ -46,7 +46,7 @@ pub(crate) fn construct_builtin(
 
 fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Value, VmError> {
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
+    let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
     if parsed.panicked || !parsed.errors.is_empty() {
         return Err(syntax_error("Invalid function source"));
     }
