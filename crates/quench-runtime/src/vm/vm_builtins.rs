@@ -297,6 +297,24 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
             return Ok(Value::Undefined);
         }
     }
+    if matches!(value, Value::Proxy(_)) && proxy_has_own_stack(value)? {
+        let result = crate::proxy::proxy_set(value, "stack", stack, Some(value))?;
+        if matches!(result, Value::Boolean(false)) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy set trap returned false",
+            ));
+        }
+        return Ok(Value::Undefined);
+    }
+    if matches!(value, Value::Proxy(_)) && proxy_has_own_stack(value)? {
+        let result = crate::proxy::proxy_set(value, "stack", stack, Some(value))?;
+        if matches!(result, Value::Boolean(false)) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy set trap returned false",
+            ));
+        }
+        return Ok(Value::Undefined);
+    }
     if matches!(value, Value::Proxy(_)) {
         define_proxy_stack(value, stack.clone())?;
         return Ok(Value::Undefined);
@@ -341,6 +359,15 @@ fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
             return Err(crate::value::error::throw_type_error(
                 "Cannot assign to read only property 'stack'",
             ));
+        }
+        if matches!(value, Value::Proxy(_)) {
+            let result = crate::proxy::proxy_set(value, "stack", &stack, Some(value))?;
+            if matches!(result, Value::Boolean(false)) {
+                return Err(crate::value::error::throw_type_error(
+                    "Proxy set trap returned false",
+                ));
+            }
+            return Ok(());
         }
         crate::builtins::define_own_property(value, "stack", &[("value".to_string(), stack)])?
     } else {
@@ -415,7 +442,7 @@ fn set_error_stack_home() -> Option<Value> {
     Some(value)
 }
 
-fn has_error_slot(value: &Value) -> bool {
+pub(crate) fn has_error_slot(value: &Value) -> bool {
     match value {
         Value::Object(value) => value
             .iter()
