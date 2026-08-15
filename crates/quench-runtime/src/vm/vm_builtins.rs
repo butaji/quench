@@ -282,7 +282,7 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         crate::builtins::object::descriptor(Some(value), Some(&key))?,
         Value::Undefined
     ) {
-        crate::builtins::set_property(value.clone(), "stack", stack.clone());
+        define_own_stack(value, stack.clone())?;
     } else {
         define_own_stack(value, stack.clone())?;
     }
