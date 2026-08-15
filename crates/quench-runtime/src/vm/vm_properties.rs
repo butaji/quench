@@ -223,7 +223,7 @@ pub(crate) fn get_property_with_receiver(
             "Cannot read property `{key}` of null or undefined"
         )));
     }
-    if let Some(id) = deferred_namespace_id(value, key) {
+    if let Some(id) = consume_deferred_namespace_marker(value, key) {
         crate::vm::execute_deferred_module(id)?;
         return get_property_with_receiver(value, key, receiver);
     }
@@ -302,17 +302,27 @@ pub(crate) fn get_property_with_receiver(
     invoke_accessor(&getter, receiver)
 }
 
-pub(crate) fn deferred_namespace_id(value: &Value, key: &str) -> Option<u32> {
+pub(crate) fn consume_deferred_namespace_marker(value: &Value, key: &str) -> Option<u32> {
     let Value::Object(properties) = value else {
         return None;
     };
     let marker = format!("\0quench:deferred:\0{key}");
-    properties.iter().rev().find_map(|(name, value)| {
-        (name == &marker).then_some(match value {
-            Value::Number(id) => Some(*id as u32),
-            _ => None,
-        })
-    })?
+    let id = properties.iter().rev().find_map(|(name, value)| {
+        if name != &marker {
+            return None;
+        }
+        let Value::BindingCell(cell) = value else { return None };
+        let Value::Number(id) = cell.borrow().clone() else { return None };
+        Some(id as u32)
+    })?;
+    for (name, value) in properties.iter() {
+        if name.starts_with("\0quench:deferred:\0") {
+            if let Value::BindingCell(cell) = value {
+                cell.replace(Value::Undefined);
+            }
+        }
+    }
+    Some(id)
 }
 
 /// Invoke a getter using the receiver as `this`. The getter's own
