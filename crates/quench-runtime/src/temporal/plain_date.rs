@@ -37,8 +37,102 @@ pub(crate) fn execute(
             crate::ops::Builtin::TemporalPlainDateSubtract => {
                 Some(add(receiver, arguments.first(), -1.0))
             }
+            crate::ops::Builtin::TemporalPlainDateUntil => Some(difference(
+                receiver,
+                arguments.first(),
+                arguments.get(1),
+                1.0,
+            )),
+            crate::ops::Builtin::TemporalPlainDateSince => Some(difference(
+                receiver,
+                arguments.first(),
+                arguments.get(1),
+                -1.0,
+            )),
             _ => None,
         })
+}
+
+fn difference(
+    receiver: Option<&Value>,
+    other: Option<&Value>,
+    options: Option<&Value>,
+    direction: f64,
+) -> Result<Value, VmError> {
+    let left = date_fields(receiver)?;
+    let right = date_fields(other)?;
+    let mut days = (date_serial(right.0, right.1, right.2) - date_serial(left.0, left.1, left.2))
+        as f64
+        * direction;
+    let unit = options.and_then(|value| field_object_string(value, "largestUnit"));
+    let mut years = 0.0;
+    let mut months = 0.0;
+    let mut weeks = 0.0;
+    if matches!(unit.as_deref(), Some("years") | Some("months")) {
+        let total = (right.0 - left.0) * 12.0 + right.1 - left.1;
+        let sign = total.signum();
+        let total = total.abs();
+        if unit.as_deref() == Some("years") {
+            years = (total / 12.0).floor() * sign;
+            months = total % 12.0 * sign;
+        } else {
+            months = total * sign;
+        }
+        let month_total = left.1 - 1.0 + years * 12.0 + months;
+        let anchor_year = left.0 + (month_total / 12.0).floor();
+        let anchor_month = month_total.rem_euclid(12.0) + 1.0;
+        let anchor = make_date(anchor_year, anchor_month, left.2, None)?;
+        let fields = date_fields(Some(&anchor))?;
+        days = (date_serial(right.0, right.1, right.2) - date_serial(fields.0, fields.1, fields.2))
+            as f64
+            * direction;
+    } else if unit.as_deref() == Some("weeks") {
+        weeks = (days / 7.0).trunc();
+        days %= 7.0;
+    }
+    let values = [
+        Value::Number(years * direction),
+        Value::Number(months * direction),
+        Value::Number(weeks),
+        Value::Number(days),
+    ];
+    crate::temporal::duration::construct(&values)
+}
+
+fn date_fields(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
+    let Value::Object(object) =
+        value.ok_or_else(|| crate::value::error::throw_type_error("Invalid PlainDate"))?
+    else {
+        return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
+    };
+    Ok((
+        field_number(object, "year")?,
+        field_number(object, "month")?,
+        field_number(object, "day")?,
+    ))
+}
+
+fn field_object_string(value: &Value, name: &str) -> Option<String> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    match field(object, name).ok()? {
+        Value::String(value) => Some(value),
+        _ => None,
+    }
+}
+
+fn date_serial(year: f64, month: f64, day: f64) -> i64 {
+    let mut year = year as i64;
+    let month = month as i64;
+    if month <= 2 {
+        year -= 1;
+    }
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let month_index = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_index + 2) / 5 + day as i64 - 1;
+    era * 146097 + year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year
 }
 
 fn add(

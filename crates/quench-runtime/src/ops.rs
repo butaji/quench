@@ -380,6 +380,8 @@ pub enum Builtin {
     TemporalPlainDateEquals,
     TemporalPlainDateAdd,
     TemporalPlainDateSubtract,
+    TemporalPlainDateUntil,
+    TemporalPlainDateSince,
     IntlGetCanonicalLocales,
     IntlSupportedValuesOf,
     IntlLocale,

@@ -33,6 +33,8 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateEquals => Some("Temporal.PlainDate.prototype.equals"),
         Builtin::TemporalPlainDateAdd => Some("Temporal.PlainDate.prototype.add"),
         Builtin::TemporalPlainDateSubtract => Some("Temporal.PlainDate.prototype.subtract"),
+        Builtin::TemporalPlainDateUntil => Some("Temporal.PlainDate.prototype.until"),
+        Builtin::TemporalPlainDateSince => Some("Temporal.PlainDate.prototype.since"),
         _ => None,
     }
 }
@@ -58,6 +60,8 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateEquals => Some("equals"),
         Builtin::TemporalPlainDateAdd => Some("add"),
         Builtin::TemporalPlainDateSubtract => Some("subtract"),
+        Builtin::TemporalPlainDateUntil => Some("until"),
+        Builtin::TemporalPlainDateSince => Some("since"),
         _ => None,
     }
 }
