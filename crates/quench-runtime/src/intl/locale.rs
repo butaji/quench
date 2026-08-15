@@ -422,9 +422,13 @@ fn maximize(tag: &str) -> String {
         .map_or((tag, String::new()), |(a, b)| (a, format!("-u{b}")));
     let parts: Vec<&str> = base.split('-').collect();
     let script = parts.iter().skip(1).find(|part| part.len() == 4).copied();
-    let region = parts.iter().skip(1).find(|part| {
-        part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
-    }).copied();
+    let region = parts
+        .iter()
+        .skip(1)
+        .find(|part| {
+            part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
+        })
+        .copied();
     let language = if parts.first().copied() == Some("und") {
         undefined_language(script, region)
     } else {

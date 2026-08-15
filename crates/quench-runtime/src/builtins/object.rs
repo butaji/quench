@@ -175,10 +175,7 @@ pub(crate) fn descriptor(
                     .unwrap_or_else(|| crate::execute::get_property(&global, &key));
                 let immutable = crate::globals::is_global_constant(&key);
                 Some(descriptor_object_with_flags(
-                    value,
-                    !immutable,
-                    false,
-                    !immutable,
+                    value, !immutable, false, !immutable,
                 ))
             } else {
                 object_descriptor(properties, &key)

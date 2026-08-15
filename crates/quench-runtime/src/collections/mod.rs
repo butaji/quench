@@ -63,7 +63,9 @@ fn execute_core(
 
 fn iterator_to_array(receiver: Option<&Value>) -> Result<Value, VmError> {
     let Some(receiver) = receiver else {
-        return Err(crate::value::error::throw_type_error("Iterator receiver required"));
+        return Err(crate::value::error::throw_type_error(
+            "Iterator receiver required",
+        ));
     };
     let iterator = iterator::open(receiver.clone())?;
     Ok(Value::array(iterator::collect(&iterator)?))
@@ -79,26 +81,34 @@ fn iterator_from(arguments: &[Value]) -> Result<Value, VmError> {
         return iterator::open(value.clone());
     }
     if !crate::value::is_object(value) {
-        return Err(crate::value::error::throw_type_error("value is not iterable"));
+        return Err(crate::value::error::throw_type_error(
+            "value is not iterable",
+        ));
     }
     let method = crate::execute::get_property_result(value, "Symbol.iterator")?;
     if crate::conversion::is_callable(&method) {
         return iterator::open(value.clone());
     }
     if !matches!(method, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error("value is not iterable"));
+        return Err(crate::value::error::throw_type_error(
+            "value is not iterable",
+        ));
     }
     let next = crate::execute::get_property_result(value, "next")?;
     if !crate::conversion::is_callable(&next) {
-        return Err(crate::value::error::throw_type_error("value is not iterable"));
+        return Err(crate::value::error::throw_type_error(
+            "value is not iterable",
+        ));
     }
-    Ok(Value::Iterator(std::rc::Rc::new(crate::value::IteratorData {
-        state: std::cell::RefCell::new(crate::value::IteratorState::Protocol {
-            iterator: value.clone(),
-            next,
-            done: false,
-        }),
-    })))
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::Protocol {
+                iterator: value.clone(),
+                next,
+                done: false,
+            }),
+        },
+    )))
 }
 
 fn iterator_concat(arguments: &[Value]) -> Result<Value, VmError> {
