@@ -48,6 +48,7 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::String(_)) => "String",
         Some(Value::StringUnits(_)) => "String",
         Some(Value::BigInt(_)) => "BigInt",
+        Some(Value::Array(values)) if values.is_arguments() => "Arguments",
         Some(Value::Array(_)) => "Array",
         Some(Value::Object(properties)) => {
             if properties.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT) {
