@@ -621,7 +621,7 @@ fn construct_error(
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
 }
 
-fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
+pub(crate) fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
     match value {
         Value::Object(_)
         | Value::Array(_)
