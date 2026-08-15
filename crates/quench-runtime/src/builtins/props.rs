@@ -409,6 +409,7 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Set, "prototype") => Some(SetPrototype),
         (FunctionPrototype, "toString") => Some(FunctionPrototypeToString),
         (FunctionPrototype, "valueOf") => Some(FunctionPrototypeValueOf),
+        (FunctionPrototype, "Symbol.hasInstance") => Some(FunctionPrototypeHasInstance),
         (RegExpPrototype, "toString") => Some(RegExpPrototypeToString),
         _ => builtin_method3(builtin, key),
     }
@@ -480,6 +481,9 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     }
 }
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
+    if _builtin == Builtin::FunctionPrototype && key == "Symbol.hasInstance" {
+        return false;
+    }
     if _builtin == Builtin::Number && props_number::constant(key).is_some() {
         return false;
     }
