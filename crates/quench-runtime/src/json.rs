@@ -24,12 +24,18 @@ fn from_json(value: serde_json::Value) -> Value {
         serde_json::Value::Array(values) => {
             Value::array(values.into_iter().map(from_json).collect())
         }
-        serde_json::Value::Object(values) => Value::Object(Rc::new(crate::value::ObjectData::new(
-            values
-                .into_iter()
-                .map(|(key, value)| (key, from_json(value)))
-                .collect(),
-        ))),
+        serde_json::Value::Object(values) => {
+            let mut properties = vec![(
+                "\0prototype".to_string(),
+                Value::Builtin(Builtin::ObjectPrototype),
+            )];
+            properties.extend(
+                values
+                    .into_iter()
+                    .map(|(key, value)| (key, from_json(value))),
+            );
+            Value::Object(Rc::new(crate::value::ObjectData::new(properties)))
+        }
     }
 }
 
@@ -102,4 +108,21 @@ fn is_raw_json(value: Option<&Value>) -> Value {
         _ => false,
     };
     Value::Boolean(is_raw)
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::parse;
+    use crate::{ops::Builtin, value::Value};
+
+    #[test]
+    fn parsed_objects_have_object_prototype() {
+        let Value::Object(object) = parse("{\"x\":1}").expect("JSON parses") else {
+            panic!("expected object")
+        };
+        assert!(matches!(
+            object.iter().find(|(key, _)| key == "\0prototype"),
+            Some((_, Value::Builtin(Builtin::ObjectPrototype)))
+        ));
+    }
 }
