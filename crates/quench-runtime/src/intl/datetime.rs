@@ -1461,7 +1461,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlDateTimeFormat => Some(construct_call(arguments, receiver)),
+        crate::ops::Builtin::IntlDateTimeFormat => Some(construct_or_legacy(arguments, receiver)),
         crate::ops::Builtin::IntlDateTimeFormatFormat
         | crate::ops::Builtin::IntlDateTimeFormatFormatToParts
         | crate::ops::Builtin::IntlDateTimeFormatFormatRange
@@ -1473,23 +1473,17 @@ pub(crate) fn dispatch(
     }
 }
 
-fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
-    let (legacy_receiver, constructor_arguments) = match receiver {
-        Some(value) if crate::value::is_object(value) => (receiver, arguments),
-        Some(Value::HostCapability(_))
-            if arguments.first().is_some_and(crate::value::is_object) =>
-        {
-            (arguments.first(), &arguments[1..])
-        }
-        _ => return construct(arguments),
-    };
-    let formatter = construct(constructor_arguments)?;
-    let slots = crate::execute::get_property(&formatter, SLOT);
-    let symbol = format!(
-        "Symbol.IntlLegacyConstructedSymbol\0{}",
-        LEGACY_SYMBOL_ID.fetch_add(1, Ordering::Relaxed)
-    );
-    let receiver = legacy_receiver.cloned().unwrap_or(Value::Undefined);
-    let receiver = crate::builtins::set_property(receiver, SLOT, slots.clone());
-    Ok(crate::builtins::set_property(receiver, &symbol, slots))
+fn construct_or_legacy(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    if !matches!(receiver, Some(Value::Object(_))) {
+        return construct(arguments);
+    }
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let id = FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let symbol = format!("Symbol.IntlLegacyConstructedSymbol\0{id}");
+    Ok(crate::builtins::set_property(
+        receiver.cloned().unwrap_or(Value::Undefined),
+        &symbol,
+        Value::Boolean(true),
+    ))
 }
