@@ -213,7 +213,10 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             }
             "numeric" => locale.numeric = normalize_numeric(&value, &text)?,
             "firstDayOfWeek" => {
-                let _ = option_value(&text, "firstDayOfWeek")?;
+                let value = option_value(&text, "firstDayOfWeek")?;
+                if !(3..=15).contains(&value.len()) {
+                    return Err(runtime_error("RangeError: invalid firstDayOfWeek"));
+                }
             }
             "language" | "region" | "script" | "variants" => {
                 let _ = option_value(&text, key)?;
