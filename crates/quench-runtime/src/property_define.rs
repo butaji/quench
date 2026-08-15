@@ -112,7 +112,13 @@ fn accessor_bound(
 }
 
 fn accessor_builtin(builtin: Builtin, key: &str, field: &str) -> Option<Value> {
-    if is_native_error_prototype(builtin) && key == "stack" && field == "set" {
+    if builtin == Builtin::IntlNumberFormatPrototype
+        && key == "format"
+        && field == "get"
+    {
+        return Some(Value::Builtin(Builtin::IntlNumberFormatFormat));
+    }
+    if builtin == Builtin::ErrorPrototype && key == "stack" && field == "set" {
         return Some(Value::Builtin(Builtin::ErrorPrototypeStackSetter));
     }
     static_accessor(builtin, field_key(key))

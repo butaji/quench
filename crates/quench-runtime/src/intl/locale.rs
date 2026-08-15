@@ -60,7 +60,8 @@ fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value
 
 fn locale_tag(value: &Value) -> Result<String, VmError> {
     match value {
-        Value::String(_) | Value::Object(_) => crate::conversion::to_string(value),
+        Value::String(_) => Ok(to_string_value(value)),
+        Value::Object(_) => crate::conversion::to_string(value),
         _ => Err(runtime_error("TypeError: locale tag must be a string")),
     }
 }
@@ -187,22 +188,19 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok(locale);
     };
-    if !matches!(options, Value::Object(_) | Value::Proxy(_)) {
-        return Ok(locale);
-    }
-    for key in [
+    const OPTION_ORDER: [&str; 10] = [
+        "language",
+        "script",
+        "region",
+        "variants",
         "calendar",
         "collation",
-        "caseFirst",
         "hourCycle",
-        "numberingSystem",
+        "caseFirst",
         "numeric",
-        "firstDayOfWeek",
-        "language",
-        "region",
-        "script",
-        "variants",
-    ] {
+        "numberingSystem",
+    ];
+    for key in OPTION_ORDER {
         let value = crate::execute::get_property_result(options, key)?;
         if matches!(value, Value::Undefined) {
             continue;
@@ -246,15 +244,9 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
                     normalize_first_day(&normalized)?
                 });
             }
-            "language" => {
-                locale.language = canonicalize(&option_value(&text, key)?)?
-                    .split('-')
-                    .next()
-                    .unwrap_or(&text)
-                    .to_string()
-            }
+            "language" => locale.language = option_value(&text, key)?,
             "region" => locale.region = Some(option_value(&text, key)?.to_ascii_uppercase()),
-            "script" => locale.script = Some(text),
+            "script" => locale.script = Some(option_value(&text, key)?),
             "variants" => {
                 let _ = option_value(&text, key)?;
             }
@@ -664,7 +656,13 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlLocale => Some(construct_call(arguments, receiver)),
+        crate::ops::Builtin::IntlLocale => Some(
+            receiver.map_or_else(|| construct(arguments), |_| {
+                Err(crate::value::error::throw_type_error(
+                    "Intl.Locale requires 'new'",
+                ))
+            }),
+        ),
         crate::ops::Builtin::IntlLocaleToString
         | crate::ops::Builtin::IntlLocaleMaximize
         | crate::ops::Builtin::IntlLocaleMinimize

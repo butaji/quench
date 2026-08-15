@@ -23,14 +23,7 @@ fn prototype_for_value(value: &Value) -> Value {
     }
     match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
-        Value::Builtin(
-            Builtin::Intl
-            | Builtin::Math
-            | Builtin::Reflect
-            | Builtin::Json
-            | Builtin::DisposableStackPrototype
-            | Builtin::AsyncDisposableStackPrototype,
-        ) => {
+        Value::Builtin(Builtin::Intl | Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
@@ -76,6 +69,13 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::SymbolPrototype)
         }
         Value::Object(properties) => internal_prototype(properties, Builtin::ObjectPrototype),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map_or(Value::Null, |properties| {
+                internal_prototype(&properties.properties, Builtin::ObjectPrototype)
+            }),
         Value::Float64Array(_) => Value::Builtin(Builtin::Float64ArrayPrototype),
         Value::Float32Array(_) => Value::Builtin(Builtin::Float32ArrayPrototype),
         Value::Int8Array(_) => Value::Builtin(Builtin::Int8ArrayPrototype),
@@ -359,16 +359,15 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
+            | Builtin::IntlCollatorPrototype
+            | Builtin::IntlDateTimeFormatPrototype
+            | Builtin::IntlDisplayNamesPrototype
+            | Builtin::IntlListFormatPrototype
             | Builtin::IntlLocalePrototype
             | Builtin::IntlNumberFormatPrototype
             | Builtin::IntlPluralRulesPrototype
-            | Builtin::IntlDateTimeFormatPrototype
-            | Builtin::IntlCollatorPrototype
-            | Builtin::IntlListFormatPrototype
             | Builtin::IntlRelativeTimeFormatPrototype
             | Builtin::IntlSegmenterPrototype
-            | Builtin::IntlDisplayNamesPrototype
-            | Builtin::IntlDurationFormatPrototype
     )
 }
 
