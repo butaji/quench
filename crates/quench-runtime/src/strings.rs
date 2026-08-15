@@ -215,6 +215,17 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringCharCodeAt => char_code_at(receiver, arguments),
         crate::ops::Builtin::StringIndexOf => index_of(receiver, arguments),
         crate::ops::Builtin::StringLastIndexOf => last_index_of(receiver, arguments),
+        _ => return execute_builtin_tail(builtin, receiver, arguments),
+    };
+    Some(result)
+}
+
+fn execute_builtin_tail(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, crate::execute::VmError>> {
+    let result = match builtin {
         crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
         crate::ops::Builtin::StringSubstring => Ok(substring(receiver, arguments)),
         crate::ops::Builtin::StringConcat => concat(receiver, arguments),
