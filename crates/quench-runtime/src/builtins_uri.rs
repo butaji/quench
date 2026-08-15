@@ -118,12 +118,15 @@ fn percent_run(units: &[u16], index: &mut usize) -> Result<(Vec<u8>, Vec<String>
 fn append_decoded(escapes: &[String], preserve_reserved: bool, text: &str, decoded: &mut Vec<u16>) {
     let mut index = 0;
     for character in text.chars() {
+        let width = character.len_utf8();
         if preserve_reserved && URI_RESERVED.contains(character) {
-            decoded.extend(escapes[index].encode_utf16());
+            for escape in &escapes[index..index + width] {
+                decoded.extend(escape.encode_utf16());
+            }
         } else {
             decoded.extend(character.to_string().encode_utf16());
         }
-        index += character.len_utf8();
+        index += width;
     }
 }
 
