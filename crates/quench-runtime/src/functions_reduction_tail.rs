@@ -32,6 +32,11 @@ fn attach_prototype(value: &crate::value::Value) {
 }
 
 fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue>) {
+    let function_prototype = if function.is_async {
+        crate::ops::Builtin::AsyncGeneratorFunctionPrototype
+    } else {
+        crate::ops::Builtin::GeneratorFunctionPrototype
+    };
     let generator =
         crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![(
             "\0prototype".to_string(),
@@ -42,7 +47,7 @@ fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue
             ("prototype".to_string(), generator.clone()),
             (
                 "\0prototype".to_string(),
-                crate::value::Value::Builtin(crate::ops::Builtin::FunctionPrototype),
+                crate::value::Value::Builtin(function_prototype),
             ),
         ])));
     let instance = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
