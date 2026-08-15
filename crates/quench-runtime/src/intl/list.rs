@@ -16,6 +16,11 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined))
     {
+        if !matches!(options, Value::Object(_) | Value::Proxy(_)) {
+            return Err(crate::value::error::throw_type_error(
+                "ListFormat options must be an object",
+            ));
+        }
         if matches!(options, Value::Null) {
             return Err(crate::value::error::throw_type_error(
                 "Cannot convert null or undefined to object",
