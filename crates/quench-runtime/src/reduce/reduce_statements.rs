@@ -450,6 +450,51 @@ pub fn reduce_function_declaration(
     });
     Ok(())
 }
+
+pub fn reduce_default_function_declaration(
+    function: &oxc::ast::ast::Function<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
+    let Some(body) = function.body.as_ref() else {
+        return Err(vec!["Function without body".to_string()]);
+    };
+    let slot = declaration_slot("default", next_slot, locals);
+    let (_, parameter_count) = crate::function_parameters::bindings(&function.params)?;
+    let (body_ops, captures) = functions::reduce_named_declaration(
+        body,
+        &function.params,
+        facts,
+        locals,
+        "default",
+        functions::function_kind(function),
+        function.r#async,
+    )?;
+    let register = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(function_declaration_op(
+        register,
+        body_ops,
+        parameter_count,
+        captures,
+        function_metadata(
+            function,
+            crate::reduce_support::function_strictness(body, facts.strict),
+        ),
+    ));
+    ops.push(Op::SetFunctionName {
+        function: register,
+        name: "default".to_string(),
+    });
+    ops.push(Op::StoreLocal {
+        slot,
+        src: register,
+    });
+    Ok(())
+}
 fn reduce_function_body(
     function: &oxc::ast::ast::Function<'_>,
     body: &oxc::ast::ast::FunctionBody<'_>,

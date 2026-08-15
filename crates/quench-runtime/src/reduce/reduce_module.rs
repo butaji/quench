@@ -333,6 +333,17 @@ fn reduce_default_function_declaration<'a>(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
+    if function.id.is_none() {
+        return crate::reduce::reduce_statements::reduce_default_function_declaration(
+            function,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            locals,
+        )
+        .map(|_| None);
+    }
     reduce_exported_default!(
         function function,
         ops,
