@@ -35,7 +35,7 @@ pub(crate) fn prototype_method(
 fn prototype_method_middle(
     builtin: crate::ops::Builtin,
     receiver: Option<&Value>,
-    slot: &str,
+    _slot: &str,
 ) -> Result<Value, VmError> {
     match builtin {
         crate::ops::Builtin::IntlLocaleGetTimeZones => {
