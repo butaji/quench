@@ -48,7 +48,9 @@ fn symbol_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
         Some(Value::String(value)) if crate::conversion::is_symbol_string(value) => {
             Ok(Value::String(value.clone()))
         }
-        Some(Value::Builtin(builtin)) if crate::intl::tolocale::symbol::name(*builtin).is_some() => {
+        Some(Value::Builtin(builtin))
+            if crate::intl::tolocale::symbol::name(*builtin).is_some() =>
+        {
             Ok(Value::Builtin(*builtin))
         }
         Some(value @ Value::Object(_)) => wrapped_symbol(value),
@@ -60,7 +62,9 @@ fn symbol_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
 
 fn symbol_to_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let value = symbol_value_of(receiver)?;
-    Ok(Value::String(crate::intl::tolocale::value::to_string(Some(&value))))
+    Ok(Value::String(crate::intl::tolocale::value::to_string(
+        Some(&value),
+    )))
 }
 
 fn symbol_description(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -73,7 +77,9 @@ fn symbol_description(receiver: Option<&Value>) -> Result<Value, crate::execute:
         .strip_prefix("Symbol.for.")
         .or_else(|| symbol.strip_prefix("Symbol."))
         .and_then(|value| value.rsplit_once('\0').map(|(value, _)| value))
-        .ok_or_else(|| crate::value::error::throw_type_error("Symbol description requires a symbol"))?;
+        .ok_or_else(|| {
+            crate::value::error::throw_type_error("Symbol description requires a symbol")
+        })?;
     if description == "\u{1}" {
         return Ok(Value::Undefined);
     }
@@ -99,6 +105,16 @@ fn string_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
         }
         Some(Value::StringUnits(value)) => Ok(crate::strings::from_units((**value).clone())),
         Some(value @ Value::Object(_)) => wrapped_string(value),
+        Some(Value::ObjectAlias(alias)) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(|object| wrapped_string(&Value::Object(object)))
+            .unwrap_or_else(|| {
+                Err(crate::value::error::throw_type_error(
+                    "String.prototype.valueOf called on incompatible receiver",
+                ))
+            }),
         _ => Err(crate::value::error::throw_type_error(
             "String.prototype.valueOf called on incompatible receiver",
         )),
@@ -115,9 +131,9 @@ fn number_is_integer(value: Option<&Value>) -> bool {
 fn number_is_safe_integer(value: Option<&Value>) -> bool {
     const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
     number_is_integer(value)
-        && value.is_some_and(|value| {
-            matches!(value, Value::Number(value) if value.abs() <= MAX_SAFE_INTEGER)
-        })
+        && value.is_some_and(
+            |value| matches!(value, Value::Number(value) if value.abs() <= MAX_SAFE_INTEGER),
+        )
 }
 
 fn number_predicate(builtin: Builtin, value: Option<&Value>) -> bool {
@@ -136,8 +152,14 @@ fn simple_prelude(
     if builtin == Builtin::WeakRefDeref {
         return Some(weak_ref_deref(receiver));
     }
-    if matches!(builtin, Builtin::NumberIsInteger | Builtin::NumberIsSafeInteger) {
-        return Some(Ok(Value::Boolean(number_predicate(builtin, arguments.first()))));
+    if matches!(
+        builtin,
+        Builtin::NumberIsInteger | Builtin::NumberIsSafeInteger
+    ) {
+        return Some(Ok(Value::Boolean(number_predicate(
+            builtin,
+            arguments.first(),
+        ))));
     }
     crate::functions_dynamic::construct_builtin(builtin, arguments)
 }

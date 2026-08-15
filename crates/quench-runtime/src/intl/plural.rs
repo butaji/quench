@@ -59,13 +59,13 @@ fn plural_options(option: Option<&Value>) -> Result<(String, Option<String>, Str
         .iter()
         .map(|key| read_option(option, key))
         .collect::<Result<Vec<_>, _>>()?;
-    let notation = match option_text(&values[2])?.as_str() {
-        "" => "standard".to_string(),
-        value => value.to_string(),
+    let notation = match &values[2] {
+        Value::Undefined => "standard".to_string(),
+        value => option_text(value)?,
     };
     if !matches!(
         notation.as_str(),
-        "standard" | "compact" | "scientific" | "engineering" | ""
+        "standard" | "compact" | "scientific" | "engineering"
     ) {
         return Err(runtime_error("RangeError: invalid notation"));
     }
