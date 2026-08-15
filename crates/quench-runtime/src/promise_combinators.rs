@@ -1,7 +1,21 @@
-fn promise_combinator(kind: PromiseAggregateKind, arguments: &[Value]) -> Result<Value, VmError> {
-    let source = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let values = crate::collections::iterator::collect_iterable(source)?;
+fn promise_combinator(
+    kind: PromiseAggregateKind,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
     let result = Rc::new(PromiseData::default());
+    if let Err(error) = get_promise_resolve(receiver) {
+        reject_with_completion(&result, error);
+        return Ok(Value::Promise(result));
+    }
+    let source = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let values = match crate::collections::iterator::collect_iterable(source) {
+        Ok(values) => values,
+        Err(error) => {
+            reject_with_completion(&result, error);
+            return Ok(Value::Promise(result));
+        }
+    };
     let aggregate = Rc::new(PromiseAggregate {
         kind,
         result: Rc::clone(&result),
@@ -16,6 +30,19 @@ fn promise_combinator(kind: PromiseAggregateKind, arguments: &[Value]) -> Result
         finish_empty_aggregate(&aggregate);
     }
     Ok(Value::Promise(result))
+}
+
+fn get_promise_resolve(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    crate::execute::get_property_result(receiver, "resolve")
+}
+
+fn reject_with_completion(promise: &Rc<PromiseData>, error: VmError) {
+    let reason = match error {
+        VmError::Thrown(reason) => reason,
+        _ => Value::Undefined,
+    };
+    reject_promise(promise, reason);
 }
 
 fn register_aggregate_value(aggregate: &Rc<PromiseAggregate>, index: usize, value: Value) {
