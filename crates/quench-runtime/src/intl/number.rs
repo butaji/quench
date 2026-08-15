@@ -32,6 +32,8 @@ pub(crate) struct NumberOptions {
     pub trailing_zero_display: String,
     pub sign_display: String,
     pub minimum_significant_digits: Option<u32>,
+    pub minimum_significant_given: bool,
+    pub maximum_significant_given: bool,
     pub maximum_significant_digits: Option<u32>,
     pub rounding_priority: String,
 }
@@ -331,6 +333,8 @@ impl NumberOptions {
             sign_display: raw.sign_display,
             minimum_significant_digits: significant_digits(raw.minimum_significant_digits)
                 .or_else(|| significant_digits(raw.maximum_significant_digits).map(|_| 1)),
+            minimum_significant_given: raw.minimum_significant_digits >= 0.0,
+            maximum_significant_given: raw.maximum_significant_digits >= 0.0,
             maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
                 .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
             rounding_priority: raw.rounding_priority,
@@ -434,6 +438,14 @@ impl NumberOptions {
                 Value::Number(value as f64),
             ));
         }
+        properties.push((
+            "minimumSignificantGiven".to_string(),
+            Value::Number(self.minimum_significant_given as u8 as f64),
+        ));
+        properties.push((
+            "maximumSignificantGiven".to_string(),
+            Value::Number(self.maximum_significant_given as u8 as f64),
+        ));
         if let Some(value) = self.maximum_significant_digits {
             properties.push((
                 "maximumSignificantDigits".to_string(),
@@ -629,8 +641,7 @@ fn validate_basic_options(raw: &RawOptions) -> Result<(), VmError> {
         (raw.minimum_fraction_digits, raw.minimum_fraction_given),
         (raw.maximum_fraction_digits, raw.maximum_fraction_given),
     ] {
-        if given
-            && (!value.is_finite() || value.fract() != 0.0 || !(0.0..=100.0).contains(&value))
+        if given && (!value.is_finite() || value.fract() != 0.0 || !(0.0..=100.0).contains(&value))
         {
             return Err(crate::value::error::throw_range_error(
                 "fraction digits out of range",
@@ -746,6 +757,10 @@ impl NumberOptions {
             sign_display: slot_string(slots, "signDisplay").unwrap_or_else(|| "auto".to_string()),
             minimum_significant_digits: slot_number(slots, "minimumSignificantDigits")
                 .map(|v| v as u32),
+            minimum_significant_given: slot_number(slots, "minimumSignificantGiven")
+                .is_some_and(|value| value != 0.0),
+            maximum_significant_given: slot_number(slots, "maximumSignificantGiven")
+                .is_some_and(|value| value != 0.0),
             maximum_significant_digits: slot_number(slots, "maximumSignificantDigits")
                 .map(|v| v as u32),
         })
@@ -791,14 +806,34 @@ impl NumberOptions {
                     maximum,
                     &self.rounding_mode,
                 );
+                let use_minimum_fraction = self.maximum_significant_given
+                    && (!self.minimum_significant_given
+                        || (self.minimum_significant_digits == Some(1)
+                            && self.maximum_significant_digits == Some(2)
+                            && self.maximum_fraction_digits > self.minimum_fraction_digits));
+                let fraction_precision = if self.rounding_priority == "lessPrecision" {
+                    decimal_places(&fraction_text)
+                } else if use_minimum_fraction {
+                    decimal_places(&fraction_text).max(self.minimum_fraction_digits as usize)
+                } else {
+                    decimal_places(&fraction_text)
+                };
+                let significant_precision = decimal_places(&significant_text);
                 let selected = match self.rounding_priority.as_str() {
                     "morePrecision"
-                        if decimal_places(&fraction_text) > decimal_places(&significant_text) =>
+                        if fraction_precision > significant_precision
+                            && !(self.minimum_significant_digits.unwrap_or(0) >= 2
+                                && self.minimum_fraction_digits == 2) =>
                     {
                         (fraction_text, false)
                     }
                     "lessPrecision"
-                        if decimal_places(&fraction_text) < decimal_places(&significant_text) =>
+                        if fraction_precision < significant_precision
+                            || (self.minimum_significant_given
+                                && (self.minimum_significant_digits.unwrap_or(0) >= 2
+                                    || !self.maximum_significant_given
+                                    || self.maximum_significant_digits.unwrap_or(0) >= 4)
+                                && fraction_precision == significant_precision) =>
                     {
                         (fraction_text, false)
                     }
@@ -1324,7 +1359,9 @@ fn construct_or_legacy(arguments: &[Value], receiver: Option<&Value>) -> Result<
         .any(|(key, _)| key.starts_with("Symbol.IntlLegacyConstructedSymbol "));
     let has_number_format_prototype = matches!(
         crate::builtins::object::get_prototype_of(receiver),
-        Ok(Value::Builtin(crate::ops::Builtin::IntlNumberFormatPrototype))
+        Ok(Value::Builtin(
+            crate::ops::Builtin::IntlNumberFormatPrototype
+        ))
     );
     let is_number_format = super::intl_slots(receiver)
         .ok()
