@@ -224,70 +224,66 @@ fn polish_number(value: f64) -> String {
 
 fn polish_word(unit: &str, style: &str, value: f64) -> String {
     if value.fract() != 0.0 {
-        if style != "long" {
-            return match unit {
-                "second" => {
-                    if style == "narrow" {
-                        "s"
-                    } else {
-                        "sek."
-                    }
-                }
-                "minute" => "min",
-                "hour" => {
-                    if style == "narrow" {
-                        "g."
-                    } else {
-                        "godz."
-                    }
-                }
-                "day" => "dnia",
-                "week" => "tyg.",
-                "month" => "mies.",
-                "quarter" => "kw.",
-                _ => "roku",
-            }
-            .to_string();
-        }
-        return match unit {
-            "day" => "dnia",
-            "week" => "tygodnia",
-            "month" => "miesiąca",
-            "quarter" => "kwartału",
-            "year" => "roku",
-            "second" => {
-                if style == "narrow" {
-                    "s"
-                } else if style == "short" {
-                    "sek."
-                } else {
-                    "sekundy"
-                }
-            }
-            "minute" => {
-                if style == "long" {
-                    "minuty"
-                } else {
-                    "min"
-                }
-            }
-            "hour" => {
-                if style == "narrow" {
-                    "g."
-                } else if style == "short" {
-                    "godz."
-                } else {
-                    "godziny"
-                }
-            }
-            _ => "lat",
-        }
-        .to_string();
+        return polish_fractional(unit, style).to_string();
     }
     let plural = polish_plural(value);
     if style != "long" {
         return polish_short_word(unit, style, plural);
     }
+    polish_long_word(unit, plural).to_string()
+}
+
+fn polish_fractional(unit: &str, style: &str) -> &'static str {
+    if style != "long" {
+        return match unit {
+            "second" if style == "narrow" => "s",
+            "second" => "sek.",
+            "minute" => "min",
+            "hour" if style == "narrow" => "g.",
+            "hour" => "godz.",
+            "day" => "dnia",
+            "week" => "tyg.",
+            "month" => "mies.",
+            "quarter" => "kw.",
+            _ => "roku",
+        };
+    }
+    match unit {
+        "day" => "dnia",
+        "week" => "tygodnia",
+        "month" => "miesiąca",
+        "quarter" => "kwartału",
+        "year" => "roku",
+        "second" => {
+            if style == "narrow" {
+                "s"
+            } else if style == "short" {
+                "sek."
+            } else {
+                "sekundy"
+            }
+        }
+        "minute" => {
+            if style == "long" {
+                "minuty"
+            } else {
+                "min"
+            }
+        }
+        "hour" => {
+            if style == "narrow" {
+                "g."
+            } else if style == "short" {
+                "godz."
+            } else {
+                "godziny"
+            }
+        }
+        _ => "lat",
+    }
+}
+
+fn polish_long_word(unit: &str, plural: usize) -> &'static str {
     let words = match unit {
         "second" => ["sekundę", "sekundy", "sekund"],
         "minute" => ["minutę", "minuty", "minut"],
@@ -298,7 +294,7 @@ fn polish_word(unit: &str, style: &str, value: f64) -> String {
         "quarter" => ["kwartał", "kwartały", "kwartałów"],
         _ => ["rok", "lata", "lat"],
     };
-    words[plural].to_string()
+    words[plural]
 }
 
 fn polish_short_word(unit: &str, style: &str, plural: usize) -> String {
