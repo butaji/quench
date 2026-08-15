@@ -53,6 +53,22 @@ fn prototype_for_value(value: &Value) -> Value {
 fn prototype_for_value_tail(value: &Value) -> Value {
     match value {
         Value::Function(function) => {
+            if function.is_async {
+                if let Some((_, prototype)) = function
+                    .properties
+                    .borrow()
+                    .iter()
+                    .rev()
+                    .find(|(name, _)| name == "\0prototype")
+                {
+                    return prototype.clone();
+                }
+                return crate::vm::realm_id_for_global_value(&function.captures.get(0))
+                    .map(|realm| {
+                        crate::vm::realm_intrinsic_for(realm, Builtin::AsyncFunctionPrototype)
+                    })
+                    .unwrap_or(Value::Builtin(Builtin::AsyncFunctionPrototype));
+            }
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
         }
         Value::Builtin(Builtin::AsyncFunction) => Value::Builtin(Builtin::Function),
