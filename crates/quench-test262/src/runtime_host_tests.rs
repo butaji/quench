@@ -42,12 +42,12 @@ fn imported_named_default_function_is_callable() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(
         PathBuf::from("entry.js"),
-        "import f from './entry.js'; export default function fName() { return 1; }"
+        "import f from './entry.js'; assert.sameValue(f(), 1); export default function fName() { return 1; }"
             .to_string(),
     );
     graph.add_dependency(
         PathBuf::from("entry.js"),
-        "import f from './entry.js'; export default function fName() { return 1; }"
+        "import f from './entry.js'; assert.sameValue(f(), 1); export default function fName() { return 1; }"
             .to_string(),
     );
     let linked = LinkedModuleGraph::compile_with_entry_prefix(
