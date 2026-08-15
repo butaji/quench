@@ -351,9 +351,9 @@ impl LinkedModule {
 
     pub fn compile_bytes(bytes: &[u8]) -> Result<Self, String> {
         let mut module = Self::compile("export default null;")?;
-        let buffer = std::rc::Rc::new(quench_runtime::value::ArrayBufferData::new(0));
+        let buffer = quench_runtime::value::ArrayBufferData::new(0);
         *buffer.bytes.borrow_mut() = bytes.to_vec();
-        buffer.immutable = true;
+        let buffer = std::rc::Rc::new(buffer.transfer_to_immutable());
         let view = quench_runtime::value::Uint8ArrayData::new(buffer, 0, bytes.len());
         module.fixed_exports.push((
             "default".to_string(),
