@@ -31,6 +31,15 @@ impl StatementReducer {
         program_scope: bool,
     ) -> Result<Option<u16>, Vec<String>> {
         if !self.script {
+            let mut lexical = crate::semantic_early::lexically_declared_names_in(statements);
+            lexical.extend(exported_lexical_names(statements));
+            for (_, slot) in crate::reduce_support::reserve_names(
+                &lexical,
+                &mut self.locals,
+                &mut self.next_slot,
+            ) {
+                self.ops.push(Op::MarkUninitialized { slot });
+            }
             crate::reduce_support::predeclare_functions(
                 statements,
                 &mut self.locals,
@@ -85,6 +94,38 @@ impl StatementReducer {
             .max(crate::reduce_support::register_base(&self.locals));
         append_scoped_statements(self, statements, facts, program_scope, global_script)
     }
+}
+
+fn exported_lexical_names(statements: &[Statement<'_>]) -> Vec<String> {
+    let mut names = Vec::new();
+    for statement in statements {
+        let Statement::ExportNamedDeclaration(export) = statement else {
+            continue;
+        };
+        let Some(declaration) = &export.declaration else {
+            continue;
+        };
+        match declaration {
+            oxc::ast::ast::Declaration::ClassDeclaration(class) => {
+                if let Some(identifier) = &class.id {
+                    names.push(identifier.name.to_string());
+                }
+            }
+            oxc::ast::ast::Declaration::VariableDeclaration(variable)
+                if variable.kind != oxc::ast::ast::VariableDeclarationKind::Var =>
+            {
+                for declarator in &variable.declarations {
+                    if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+                        &declarator.id.kind
+                    {
+                        names.push(identifier.name.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    names
 }
 
 fn initialize_statement_locals(source_type: SourceType) -> HashMap<String, u16> {
