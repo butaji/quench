@@ -552,6 +552,12 @@ fn canonicalize_time_zone(time_zone: &str) -> String {
     if let Some(offset) = normalize_offset(time_zone) {
         return offset;
     }
+    if let Some(zone) = chrono_tz::TZ_VARIANTS
+        .iter()
+        .find(|zone| zone.name().eq_ignore_ascii_case(time_zone))
+    {
+        return zone.name().to_string();
+    }
     if time_zone.is_empty() {
         "UTC".to_string()
     } else {
@@ -567,6 +573,12 @@ fn valid_time_zone_name(time_zone: &str) -> bool {
         return true;
     }
     if normalize_offset(time_zone).is_some() {
+        return true;
+    }
+    if chrono_tz::TZ_VARIANTS
+        .iter()
+        .any(|zone| zone.name().eq_ignore_ascii_case(time_zone))
+    {
         return true;
     }
     time_zone.contains('/') && !matches!(time_zone, "ACT" | "invalid")
