@@ -35,6 +35,27 @@ pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
     Ok(make(Vec::new()))
 }
 
+pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if matches!(value, Value::Iterator(_) | Value::Generator(_)) {
+        return Ok(value);
+    }
+    if !crate::value::is_object(&value) {
+        return open(value);
+    }
+    let method = crate::execute::get_property_result(&value, "Symbol.iterator")?;
+    if matches!(method, Value::Null | Value::Undefined) {
+        let next = crate::execute::get_property_result(&value, "next")?;
+        if !crate::conversion::is_callable(&next) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.from requires an iterable or iterator",
+            ));
+        }
+        return Ok(make_protocol(value));
+    }
+    open(value)
+}
+
 pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let branded = matches!(receiver, Some(Value::Iterator(data)) if matches!(
         &*data.state.borrow(), IteratorState::String { .. }
