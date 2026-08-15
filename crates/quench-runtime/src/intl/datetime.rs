@@ -469,12 +469,54 @@ fn range_number(value: &Value) -> Result<f64, VmError> {
             .parse::<i128>()
             .map(|value| value as f64 / 1_000_000.0)
             .map_err(|_| runtime_error("RangeError: date value is not finite"))?,
+        Value::Object(object) => temporal_epoch_millis(object)
+            .ok_or_else(|| runtime_error("RangeError: date value is not finite"))?,
         _ => conversion::to_number(value)?,
     };
     if !number.is_finite() || number.abs() > 8_640_000_000_000_000.0 {
         return Err(runtime_error("RangeError: date value is not finite"));
     }
     Ok(number.trunc())
+}
+
+fn temporal_epoch_millis(object: &crate::value::ObjectData) -> Option<f64> {
+    if let Some((_, Value::Number(value))) = object.iter().find(|(key, _)| key == "timeValue") {
+        return Some(*value);
+    }
+    let epoch = object
+        .iter()
+        .find(|(key, _)| key == "epochNanoseconds")
+        .and_then(|(_, value)| match value {
+            Value::BigInt(value) => value.parse::<i128>().ok(),
+            _ => None,
+        });
+    if let Some(epoch) = epoch {
+        return Some(epoch as f64 / 1_000_000.0);
+    }
+    let field = |name| {
+        object
+            .iter()
+            .find(|(key, _)| key == name)
+            .and_then(|(_, value)| match value {
+                Value::Number(value) => Some(*value),
+                _ => None,
+            })
+    };
+    let (Some(year), Some(month), Some(day)) = (field("year"), field("month"), field("day")) else {
+        return Some(0.0);
+    };
+    let date = chrono::NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)?;
+    let time = chrono::NaiveTime::from_hms_milli_opt(
+        field("hour").unwrap_or(0.0) as u32,
+        field("minute").unwrap_or(0.0) as u32,
+        field("second").unwrap_or(0.0) as u32,
+        field("millisecond").unwrap_or(0.0) as u32,
+    )?;
+    Some(
+        chrono::NaiveDateTime::new(date, time)
+            .and_utc()
+            .timestamp_millis() as f64,
+    )
 }
 
 fn range_text(number: f64) -> String {
