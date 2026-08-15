@@ -23,7 +23,7 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
         Expression::StringLiteral(string) => Some(Literal {
             span: string.span,
             fact: FactConstant::String(string.value.to_string()),
-            op: Constant::String(string.value.to_string()),
+            op: string_constant(string),
         }),
         Expression::NullLiteral(null) => Some(Literal {
             span: null.span,
@@ -42,6 +42,18 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
             reduce_template_literal(template)
         }
         _ => None,
+    }
+}
+
+fn string_constant(string: &oxc::ast::ast::StringLiteral<'_>) -> Constant {
+    let raw = string.raw.as_ref().map_or("", |raw| raw.as_str());
+    let body = raw
+        .strip_prefix(['\'', '"'])
+        .and_then(|value| value.strip_suffix(['\'', '"']))
+        .unwrap_or(raw);
+    match crate::strings::decode_surrogate_escapes(body) {
+        crate::value::Value::StringUnits(units) => Constant::StringUnits((*units).clone()),
+        _ => Constant::String(string.value.to_string()),
     }
 }
 
