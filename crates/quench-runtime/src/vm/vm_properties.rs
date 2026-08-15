@@ -370,6 +370,18 @@ fn special_property(
 fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
     match getter {
         Value::Function(function) => crate::functions::execute(function, receiver, &[]),
+        Value::BoundFunction(bound)
+            if matches!(
+                bound.target,
+                Value::Builtin(
+                    Builtin::ErrorPrototypeStackGetter | Builtin::ErrorPrototypeStackSetter
+                )
+            ) => {
+                let Value::Builtin(builtin) = bound.target else {
+                    unreachable!()
+                };
+                crate::vm::execute_builtin_with_receiver(builtin, &[], Some(receiver))
+            }
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &[]),
         Value::Builtin(builtin) => {
             crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
@@ -503,6 +515,9 @@ fn bound_function_property(
     {
         return value.clone();
     }
+    if let Some(prototype) = bound_realm_prototype(bound, key) {
+        return prototype;
+    }
     if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
     } else if key == "length" && !realm::is_intrinsic(bound) {
@@ -521,6 +536,22 @@ fn bound_function_property(
         }
         function_prototype_property(key)
     }
+}
+
+fn bound_realm_prototype(
+    bound: &crate::value::BoundFunctionValue,
+    key: &str,
+) -> Option<Value> {
+    if key != "prototype" {
+        return None;
+    }
+    let (Value::Builtin(builtin), Value::HostCapability(capability)) =
+        (&bound.target, &bound.receiver)
+    else {
+        return None;
+    };
+    let prototype = crate::builtin_meta::prototype(*builtin)?;
+    Some(crate::vm::intrinsic_for_realm(capability.realm(), prototype))
 }
 fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
