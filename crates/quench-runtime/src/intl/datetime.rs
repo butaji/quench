@@ -355,7 +355,7 @@ pub(crate) fn prototype_method(
                 return Ok(Value::String(value));
             }
             if let Some(parts) = component_parts(&slots, number) {
-                return Ok(Value::String(format_parts(&parts)));
+                return Ok(Value::String(format_parts(&parts, &slots)));
             }
             if let Some(value) = fractional_format(&slots, number) {
                 return Ok(Value::String(value));
@@ -521,7 +521,12 @@ fn part_value(part: &Value) -> Option<String> {
         })
 }
 
-fn format_parts(parts: &[Value]) -> String {
+fn format_parts(parts: &[Value], slots: &[(String, Value)]) -> String {
+    if slot_string(slots, "locale").is_some_and(|locale| locale.starts_with("en"))
+        && has_date_and_time(parts)
+    {
+        return format_english_date_time(parts);
+    }
     let mut result = String::new();
     for part in parts {
         let kind = crate::execute::get_property_result(part, "type").ok();
@@ -533,6 +538,39 @@ fn format_parts(parts: &[Value]) -> String {
         result.push_str(&value);
     }
     result
+}
+
+fn has_date_and_time(parts: &[Value]) -> bool {
+    ["year", "month", "day", "hour", "minute", "second"]
+        .iter()
+        .all(|kind| {
+            parts.iter().any(|part| {
+                crate::execute::get_property_result(part, "type")
+                    .is_ok_and(|value| value == Value::String((*kind).into()))
+            })
+        })
+}
+
+fn format_english_date_time(parts: &[Value]) -> String {
+    let value = |kind: &str| {
+        parts
+            .iter()
+            .find(|part| {
+                crate::execute::get_property_result(part, "type")
+                    .is_ok_and(|value| value == Value::String(kind.into()))
+            })
+            .and_then(part_value)
+            .unwrap_or_default()
+    };
+    format!(
+        "{}/{}/{}, {}:{}:{}",
+        value("month"),
+        value("day"),
+        value("year"),
+        value("hour"),
+        value("minute"),
+        value("second")
+    )
 }
 
 fn day_period_name(hour: u32, with_prefix: bool) -> String {
