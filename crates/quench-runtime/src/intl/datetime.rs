@@ -827,6 +827,9 @@ fn grouped_year(year: i64) -> String {
 }
 
 fn range_number(value: &Value) -> Result<f64, VmError> {
+    if matches!(value, Value::Undefined) {
+        return Ok(Utc::now().timestamp_millis() as f64);
+    }
     let number = conversion::to_number(value)?;
     if !number.is_finite() || number.abs() > 8_640_000_000_000_000.0 {
         return Err(runtime_error("RangeError: date value is not finite"));
