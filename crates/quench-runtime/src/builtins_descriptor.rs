@@ -37,7 +37,9 @@ fn array_flag(values: &crate::value::ArrayData, key: &str, field: &str) -> Optio
     let Some(descriptor) = values.descriptor(key) else {
         return argument_property_flag(values, key, field);
     };
-    let Value::Object(descriptor) = descriptor else { return None };
+    let Value::Object(descriptor) = descriptor else {
+        return None;
+    };
     descriptor
         .iter()
         .rev()
@@ -82,8 +84,8 @@ fn complete_descriptor(descriptor: &[(String, Value)], current: &Value) -> Vec<(
     let requested_data = descriptor
         .iter()
         .any(|(name, _)| matches!(name.as_str(), "value" | "writable"));
-    let current_accessor = descriptor_value(current, "get").is_some()
-        || descriptor_value(current, "set").is_some();
+    let current_accessor =
+        descriptor_value(current, "get").is_some() || descriptor_value(current, "set").is_some();
     let accessor = requested_accessor || (!requested_data && current_accessor);
     let fields = if accessor {
         ["get", "set", "enumerable", "configurable"]
@@ -98,10 +100,17 @@ fn complete_descriptor(descriptor: &[(String, Value)], current: &Value) -> Vec<(
                 .iter()
                 .rev()
                 .find(|(field, _)| field == name)
-                .map_or(default, |(_, value)| value.clone());
+                .map_or(default, |(_, value)| complete_descriptor_value(name, value));
             (name.to_string(), value)
         })
         .collect()
+}
+
+fn complete_descriptor_value(name: &str, value: &Value) -> Value {
+    if matches!(name, "writable" | "enumerable" | "configurable") {
+        return Value::Boolean(crate::execute::is_truthy(value));
+    }
+    value.clone()
 }
 
 fn descriptor_default(current: &Value, name: &str) -> Value {
@@ -135,10 +144,7 @@ fn validate_redefinition(
     }
     if descriptor_value(current, "writable") == Some(&Value::Boolean(false))
         && descriptor_value_in(requested, "value").is_some_and(|requested_value| {
-            !crate::builtins::same_value(
-                Some(requested_value),
-                descriptor_value(current, "value"),
-            )
+            !crate::builtins::same_value(Some(requested_value), descriptor_value(current, "value"))
         })
     {
         return Err(cannot_redefine());
@@ -147,8 +153,8 @@ fn validate_redefinition(
 }
 
 fn changes_descriptor_kind(current: &Value, requested: &[(String, Value)]) -> bool {
-    let current_accessor = descriptor_value(current, "get").is_some()
-        || descriptor_value(current, "set").is_some();
+    let current_accessor =
+        descriptor_value(current, "get").is_some() || descriptor_value(current, "set").is_some();
     let requests_accessor = descriptor_value_in(requested, "get").is_some()
         || descriptor_value_in(requested, "set").is_some();
     let requests_data = descriptor_value_in(requested, "value").is_some()
@@ -157,7 +163,9 @@ fn changes_descriptor_kind(current: &Value, requested: &[(String, Value)]) -> bo
 }
 
 fn descriptor_value<'a>(descriptor: &'a Value, field: &str) -> Option<&'a Value> {
-    let Value::Object(properties) = descriptor else { return None };
+    let Value::Object(properties) = descriptor else {
+        return None;
+    };
     descriptor_value_in(properties, field)
 }
 
