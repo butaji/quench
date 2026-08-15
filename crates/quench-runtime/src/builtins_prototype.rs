@@ -51,13 +51,22 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::Array(values)) if values.is_arguments() => "Arguments",
         Some(Value::Array(_)) => "Array",
         Some(Value::Object(properties)) => {
-            if properties.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT) {
+            if properties
+                .iter()
+                .any(|(key, _)| key == crate::builtins::ERROR_SLOT)
+            {
                 return "Error";
             }
             boxed_object_tag(properties).unwrap_or("Object")
         }
         Some(Value::ArrayBuffer(_)) => "ArrayBuffer",
         Some(Value::DataView(_)) => "DataView",
+        _ => prototype_tag_tail(receiver),
+    }
+}
+
+fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
+    match receiver {
         Some(Value::Float32Array(_)) => "Float32Array",
         Some(Value::Float64Array(_)) => "Float64Array",
         Some(Value::Int16Array(_)) => "Int16Array",
@@ -112,8 +121,13 @@ fn boxed_object_tag(properties: &crate::value::ObjectData) -> Option<&'static st
 
 pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
     match receiver {
-        Some(Value::Builtin(builtin)) => Value::String(format!("function {}() {{ [native code] }}", builtin_name(*builtin))),
-        Some(Value::Function(_)) | Some(Value::BoundFunction(_)) => Value::String("function () {{ [native code] }}".to_string()),
+        Some(Value::Builtin(builtin)) => Value::String(format!(
+            "function {}() {{ [native code] }}",
+            builtin_name(*builtin)
+        )),
+        Some(Value::Function(_)) | Some(Value::BoundFunction(_)) => {
+            Value::String("function () {{ [native code] }}".to_string())
+        }
         _ => Value::String(String::new()),
     }
 }
