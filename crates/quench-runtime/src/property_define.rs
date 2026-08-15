@@ -167,6 +167,30 @@ fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::IntlLocalePrototype, "script") => Builtin::IntlLocaleScriptGetter,
         (Builtin::IntlLocalePrototype, "textInfo") => Builtin::IntlLocaleTextInfoGetter,
         (Builtin::IntlLocalePrototype, "variants") => Builtin::IntlLocaleVariantsGetter,
+        (Builtin::TemporalPlainDatePrototype, "calendarId") => {
+            Builtin::TemporalPlainDateCalendarIdGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "dayOfWeek") => {
+            Builtin::TemporalPlainDateDayOfWeekGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "dayOfYear") => {
+            Builtin::TemporalPlainDateDayOfYearGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "daysInMonth") => {
+            Builtin::TemporalPlainDateDaysInMonthGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "daysInWeek") => {
+            Builtin::TemporalPlainDateDaysInWeekGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "daysInYear") => {
+            Builtin::TemporalPlainDateDaysInYearGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "inLeapYear") => {
+            Builtin::TemporalPlainDateInLeapYearGetter
+        }
+        (Builtin::TemporalPlainDatePrototype, "monthsInYear") => {
+            Builtin::TemporalPlainDateMonthsInYearGetter
+        }
         _ => return None,
     };
     Some(Value::Object(std::rc::Rc::new(
