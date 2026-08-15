@@ -227,23 +227,8 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
-    if matches!(value, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(&format!(
-            "Cannot read property `{key}` of null or undefined"
-        )));
-    }
-    if matches!(value, Value::Proxy(_)) {
-        return crate::proxy::proxy_get(value, key, Some(receiver));
-    }
-    if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
-        return Err(crate::value::error::throw_type_error(
-            "'callee' is unavailable on strict arguments",
-        ));
-    }
-    if has_restricted_function_property(value, key) {
-        return Err(crate::value::error::throw_type_error(
-            "'caller' and 'arguments' are unavailable on this function",
-        ));
+    if let Some(result) = special_property(value, key, receiver) {
+        return result;
     }
     if let Some(getter) = array_accessor(value, key, "get") {
         if matches!(getter, Value::Undefined) {
@@ -302,6 +287,32 @@ pub(crate) fn get_property_with_receiver(
     invoke_accessor(&getter, receiver)
 }
 
+fn special_property(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Some(Err(crate::value::error::throw_type_error(&format!(
+            "Cannot read property `{key}` of null or undefined"
+        ))));
+    }
+    if matches!(value, Value::Proxy(_)) {
+        return Some(crate::proxy::proxy_get(value, key, Some(receiver)));
+    }
+    if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
+        return Some(Err(crate::value::error::throw_type_error(
+            "'callee' is unavailable on strict arguments",
+        )));
+    }
+    if has_restricted_function_property(value, key) {
+        return Some(Err(crate::value::error::throw_type_error(
+            "'caller' and 'arguments' are unavailable on this function",
+        )));
+    }
+    None
+}
+
 /// Invoke a getter using the receiver as `this`. The getter's own
 /// `OrdinaryCallEvaluate` semantics handle ToObject coercion for sloppy
 /// functions; strict functions keep the receiver as-is.
@@ -318,29 +329,7 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     let property = get_property(value, key);
-    if matches!(value, Value::Builtin(_)) {
-        return property;
-    }
-    if matches!(value, Value::Object(_)) && crate::vm::is_global_object(value) {
-        return property;
-    }
-    if matches!(value, Value::HostCapability(_)) && key == "AbstractModuleSource" {
-        return property;
-    }
-    if matches!(
-        property,
-        Value::Builtin(
-            Builtin::IntlNumberFormatFormatToParts
-                | Builtin::IntlNumberFormatFormatRange
-                | Builtin::IntlNumberFormatFormatRangeToParts
-        )
-    ) {
-        return property;
-    }
-    if matches!(key, "constructor" | "prototype") {
-        return property;
-    }
-    if same_property_receiver(value, receiver) {
+    if receiver_uses_property(value, key, receiver, &property) {
         return property;
     }
     match property {
@@ -352,6 +341,15 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
         }
         other => other,
     }
+}
+
+fn receiver_uses_property(value: &Value, key: &str, receiver: &Value, property: &Value) -> bool {
+    matches!(value, Value::Builtin(_))
+        || matches!(value, Value::Object(_)) && crate::vm::is_global_object(value)
+        || matches!(value, Value::HostCapability(_)) && key == "AbstractModuleSource"
+        || matches!(property, Value::Builtin(Builtin::IntlNumberFormatFormatToParts | Builtin::IntlNumberFormatFormatRange | Builtin::IntlNumberFormatFormatRangeToParts))
+        || matches!(key, "constructor" | "prototype")
+        || same_property_receiver(value, receiver)
 }
 /// Accessor getters/setters carry their `this` at invocation time; binding
 /// them to the object they were read from (e.g. a property descriptor's
