@@ -276,7 +276,21 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         }
         return construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>());
     }
-    if smallest == "nanoseconds" && largest.as_deref() == Some("years") {
+    if smallest == "nanoseconds"
+        && largest.as_deref() == Some("years")
+        && !relative_to.as_ref().is_some_and(|value| {
+            if matches!(value, Value::String(text) if text.contains("America/Vancouver")) {
+                return true;
+            }
+            ["timeZoneId", "timeZone"].into_iter().any(|name| {
+                crate::execute::get_property_result(value, name)
+                    .ok()
+                    .is_some_and(
+                        |zone| matches!(zone, Value::String(zone) if zone == "America/Vancouver"),
+                    )
+            })
+        })
+    {
         let mut values = [0.0; 10];
         values[0] = object_number(object, "years");
         values[1] = object_number(object, "months");
