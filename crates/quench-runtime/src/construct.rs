@@ -231,6 +231,12 @@ fn construct_builtin(
         | crate::ops::Builtin::TemporalPlainMonthDay => {
             crate::temporal::construct_calendar_object(builtin, arguments)
         }
+        crate::ops::Builtin::IntlDurationFormat => Ok(Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(vec![(
+                "\0prototype".into(),
+                Value::Builtin(crate::ops::Builtin::IntlDurationFormatPrototype),
+            )]),
+        ))),
         _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::vm::not_callable()),
@@ -298,6 +304,7 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
             | Builtin::IntlRelativeTimeFormat
             | Builtin::IntlSegmenter
             | Builtin::IntlDisplayNames
+            | Builtin::IntlDurationFormat
             | Builtin::IntlLocale
     )
 }
