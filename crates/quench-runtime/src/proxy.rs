@@ -120,7 +120,7 @@ pub(crate) fn proxy_get(
                 &trap,
                 &[
                     proxy.target.clone(),
-                    Value::String(prop.to_string()),
+                    crate::conversion::property_key_value(prop),
                     receiver.clone(),
                 ],
                 Some(&proxy.handler),
