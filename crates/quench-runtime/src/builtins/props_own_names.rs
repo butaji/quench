@@ -28,6 +28,18 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
         }
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => &["constructor", "toString", "valueOf", "Symbol.toStringTag"],
+        Builtin::DatePrototype => &[
+            "constructor", "toString", "toDateString", "toTimeString", "toUTCString",
+            "toGMTString", "toISOString", "toJSON", "Symbol.toPrimitive", "valueOf",
+            "getTime", "getFullYear", "getUTCFullYear", "getMonth", "getUTCMonth",
+            "getDate", "getUTCDate", "getDay", "getUTCDay", "getHours", "getUTCHours",
+            "getMinutes", "getUTCMinutes", "getSeconds", "getUTCSeconds", "getMilliseconds",
+            "getUTCMilliseconds", "getTimezoneOffset", "setTime", "setMilliseconds",
+            "setUTCMilliseconds", "setSeconds", "setUTCSeconds", "setMinutes", "setUTCMinutes",
+            "setHours", "setUTCHours", "setDate", "setUTCDate", "setMonth", "setUTCMonth",
+            "setFullYear", "setUTCFullYear", "setYear", "getYear", "toLocaleString",
+            "toLocaleDateString", "toLocaleTimeString",
+        ],
         Builtin::Error => &["length", "name", "prototype", "isError"],
         Builtin::ErrorPrototype => &[
             "constructor",
