@@ -159,6 +159,14 @@ fn map_property(data: &crate::value::MapData, key: &str) -> Value {
     if key == "constructor" {
         return map_constructor(data.weak);
     }
+    map_collection_property(data, key)
+}
+
+fn map_constructor(weak: bool) -> Value {
+    Value::Builtin(if weak { Builtin::WeakMap } else { Builtin::Map })
+}
+
+fn map_collection_property(data: &crate::value::MapData, key: &str) -> Value {
     if key == "size" && !data.weak {
         return Value::Number(data.keys.borrow().len() as f64);
     }
@@ -167,10 +175,6 @@ fn map_property(data: &crate::value::MapData, key: &str) -> Value {
     } else {
         crate::collections::map::property(key)
     }
-}
-
-fn map_constructor(weak: bool) -> Value {
-    Value::Builtin(if weak { Builtin::WeakMap } else { Builtin::Map })
 }
 /// Look up a property on the boxed prototype for a primitive value.
 ///
