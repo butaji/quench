@@ -129,6 +129,14 @@ pub(crate) fn async_generator_prototype() -> Value {
                 "Symbol.asyncDispose".to_string(),
                 Value::Builtin(Builtin::AsyncIteratorDispose),
             ),
+            (
+                "Symbol.toStringTag".to_string(),
+                Value::String("AsyncGenerator".to_string()),
+            ),
+            (
+                "constructor".to_string(),
+                crate::vm::realm_intrinsic(Builtin::AsyncGeneratorFunctionPrototype),
+            ),
             ("\0prototype".to_string(), async_iterator_prototype()),
         ])));
         for key in ["Symbol.asyncIterator", "Symbol.asyncDispose"] {
@@ -147,6 +155,29 @@ pub(crate) fn async_generator_prototype() -> Value {
                 ],
             );
         }
+        store_descriptor_metadata(
+            &mut value,
+            "Symbol.toStringTag",
+            &[
+                ("value".to_string(), Value::String("AsyncGenerator".to_string())),
+                ("writable".to_string(), Value::Boolean(false)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ],
+        );
+        store_descriptor_metadata(
+            &mut value,
+            "constructor",
+            &[
+                (
+                    "value".to_string(),
+                    crate::vm::realm_intrinsic(Builtin::AsyncGeneratorFunctionPrototype),
+                ),
+                ("writable".to_string(), Value::Boolean(false)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ],
+        );
         cell.borrow_mut().insert(realm, value.clone());
         value
     })
