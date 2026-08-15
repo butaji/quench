@@ -73,7 +73,11 @@ fn agent_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn agent_report(arguments: &[Value]) -> Result<Value, VmError> {
-    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let value = match arguments.first().cloned().unwrap_or(Value::Undefined) {
+        Value::BigInt(value) => Value::String(value),
+        Value::Number(value) => Value::String(crate::conversion::to_string(&Value::Number(value))?),
+        value => value,
+    };
     crate::atomics::record_agent_report(value);
     AGENT_REPORTS.with(|reports| reports.borrow_mut().push(Value::Undefined));
     Ok(Value::Undefined)
