@@ -150,7 +150,7 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
     super::intl_slots(receiver)
 }
 
-fn compare(left: &str, right: &str, locale: &str) -> f64 {
+pub(crate) fn compare(left: &str, right: &str, locale: &str) -> f64 {
     let _ = locale;
     match left.cmp(right) {
         std::cmp::Ordering::Less => -1.0,
