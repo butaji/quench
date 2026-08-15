@@ -36,36 +36,57 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn plural_options(option: Option<&Value>) -> Result<(String, Option<String>, String), VmError> {
-    let Some(Value::Object(properties)) = option else {
+    let Some(option) = option.filter(|value| !matches!(value, Value::Undefined | Value::Null))
+    else {
         return Ok(("standard".to_string(), None, "cardinal".to_string()));
     };
-    let mut notation = "standard".to_string();
-    let mut compact_display = None;
-    for (key, value) in properties.iter() {
-        let text = super::to_string_value(value);
-        match key.as_str() {
-            "notation"
-                if matches!(
-                    text.as_str(),
-                    "standard" | "compact" | "scientific" | "engineering"
-                ) =>
-            {
-                notation = text
-            }
-            "notation" => return Err(runtime_error("RangeError: invalid notation")),
-            "compactDisplay" if matches!(text.as_str(), "short" | "long") => {
-                compact_display = Some(text)
-            }
-            "compactDisplay" => return Err(runtime_error("RangeError: invalid compactDisplay")),
-            _ => {}
-        }
-    }
-    let plural_type = properties
+    let keys = [
+        "localeMatcher",
+        "type",
+        "notation",
+        "compactDisplay",
+        "minimumIntegerDigits",
+        "minimumFractionDigits",
+        "maximumFractionDigits",
+        "minimumSignificantDigits",
+        "maximumSignificantDigits",
+        "roundingIncrement",
+        "roundingMode",
+        "roundingPriority",
+        "trailingZeroDisplay",
+    ];
+    let values = keys
         .iter()
-        .find(|(key, _)| key == "type")
-        .map(|(_, value)| super::to_string_value(value))
-        .unwrap_or_else(|| "cardinal".to_string());
+        .map(|key| read_option(option, key))
+        .collect::<Result<Vec<_>, _>>()?;
+    let notation = match option_text(&values[2])?.as_str() {
+        "" => "standard".to_string(),
+        value => value.to_string(),
+    };
+    if !matches!(
+        notation.as_str(),
+        "standard" | "compact" | "scientific" | "engineering" | ""
+    ) {
+        return Err(runtime_error("RangeError: invalid notation"));
+    }
+    let compact = option_text(&values[3])?;
+    let compact_display = matches!(compact.as_str(), "short" | "long").then_some(compact);
+    let plural_type = match option_text(&values[1])?.as_str() {
+        "" => "cardinal".to_string(),
+        value => value.to_string(),
+    };
     Ok((notation, compact_display, plural_type))
+}
+
+fn read_option(option: &Value, key: &str) -> Result<Value, VmError> {
+    crate::execute::get_property_result(option, key)
+}
+
+fn option_text(value: &Value) -> Result<String, VmError> {
+    match value {
+        Value::Undefined => Ok(String::new()),
+        value => crate::conversion::to_string(value),
+    }
 }
 
 pub(crate) fn prototype_method(
