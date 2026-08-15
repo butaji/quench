@@ -279,6 +279,18 @@ pub(crate) fn execute_target(
         crate::value::Value::Function(function) => {
             execute_in_function_realm(function, receiver, arguments)
         }
+        crate::value::Value::BoundFunction(bound)
+            if crate::vm::is_intrinsic_bound(bound)
+                && matches!(bound.target, crate::value::Value::Builtin(_)) =>
+        {
+            let crate::value::Value::Builtin(builtin) = bound.target else {
+                unreachable!()
+            };
+            crate::vm::with_realm(bound.realm, || {
+                execute_builtin_target(builtin, Some(receiver), arguments)
+            })
+            .unwrap_or_else(|| execute_builtin_target(builtin, Some(receiver), arguments))
+        }
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(target, receiver, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
