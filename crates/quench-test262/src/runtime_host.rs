@@ -200,7 +200,7 @@ fn namespace_cell(
         })
         .collect();
     Ok(ModuleBindingCell::new(
-        quench_runtime::value::Value::module_namespace(properties),
+        quench_runtime::value::Value::object(properties),
     ))
 }
 
