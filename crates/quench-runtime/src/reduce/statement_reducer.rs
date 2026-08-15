@@ -55,11 +55,14 @@ impl StatementReducer {
                                 oxc::ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(value) => value.local.name.to_string(),
                                 oxc::ast::ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(value) => value.local.name.to_string(),
                             };
-                            crate::reduce_support::reserve_names(
+                            let reserved = crate::reduce_support::reserve_names(
                                 &[name],
                                 &mut self.locals,
                                 &mut self.next_slot,
                             );
+                            for (_, slot) in reserved {
+                                self.ops.push(Op::MarkImmutable { slot });
+                            }
                         }
                     }
                 }
