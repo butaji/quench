@@ -319,7 +319,7 @@ fn slot(value: &Value, name: &str) -> Option<Rc<RefCell<Value>>> {
     };
     object
         .iter()
-        .find_map(|(key, value)| (key == name).then(|| value))
+        .find_map(|(key, value)| (key == name).then_some(value))
         .and_then(|value| {
             if let Value::BindingCell(cell) = value {
                 Some(Rc::clone(cell))
