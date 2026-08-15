@@ -71,18 +71,6 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
     if constructor == Builtin::Function {
         return Some(function_instanceof(value));
     }
-    if constructor == Builtin::AsyncGeneratorFunction {
-        return Some(
-            matches!(
-                value,
-                Value::Function(function)
-                    if function.is_async && matches!(function.kind, crate::ops::FunctionKind::Generator)
-            ) || matches!(
-                value,
-                Value::Generator(generator) if generator.function.is_async
-            ),
-        );
-    }
     Some(match (value, constructor) {
         (Value::Array(values), Builtin::Array) if !values.is_arguments() => true,
         (Value::BigInt64Array(_), Builtin::BigInt64Array)

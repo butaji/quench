@@ -3,7 +3,7 @@
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn parse_number(value: &str) -> f64 {
-    let value = trim_js_whitespace(value);
+    let value = value.trim();
     if value.is_empty() {
         return 0.0;
     }

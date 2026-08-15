@@ -16,9 +16,6 @@ pub(crate) fn array_fill(receiver: Option<&Value>, arguments: &[Value]) -> Value
 
 fn fill_index(value: Option<&Value>, length: usize, default: usize) -> usize {
     let Some(value) = value else { return default; };
-    if matches!(value, Value::Undefined) {
-        return default;
-    }
     let number = crate::intl::tolocale::value::to_number(Some(value));
     if number.is_nan() { return 0; }
     if number.is_sign_negative() {

@@ -40,7 +40,7 @@ pub(crate) fn concat(
 
 /// `ArraySpeciesCreate`: the species-constructed result, or `None` for the
 /// default plain array.
-pub(crate) fn concat_species(this: &Value) -> Result<Option<Value>, crate::execute::VmError> {
+fn concat_species(this: &Value) -> Result<Option<Value>, crate::execute::VmError> {
     if !matches!(this, Value::Array(_)) {
         return Ok(None);
     }
