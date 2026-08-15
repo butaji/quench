@@ -13,5 +13,6 @@ pub enum IteratorState {
     Drop { iterator: Value, remaining: u64, done: bool },
     MapHelper { iterator: Value, callback: Value, index: u64, done: bool, executing: bool },
     FilterHelper { iterator: Value, callback: Value, index: u64, done: bool, executing: bool },
+    Take { iterator: Value, remaining: u64, done: bool },
     RegExpString { regexp: Value, input: String, global: bool, unicode: bool, done: bool },
 }

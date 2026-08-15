@@ -541,6 +541,7 @@ pub enum Builtin {
     IteratorSome,
     IteratorFind,
     IteratorFilter,
+    IteratorTake,
     SetIteratorNext,
     MapIteratorNext,
     IteratorSelf,

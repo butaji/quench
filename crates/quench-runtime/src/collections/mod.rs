@@ -51,6 +51,7 @@ fn execute_core(
         IteratorSome => Some(iterator_some(receiver, arguments)),
         IteratorFind => Some(iterator_find(receiver, arguments)),
         IteratorFilter => Some(iterator_filter(receiver, arguments)),
+        IteratorTake => Some(iterator_take(receiver, arguments)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
@@ -276,6 +277,45 @@ fn iterator_filter(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
                 index: 0,
                 done: false,
                 executing: false,
+            }),
+        },
+    )))
+}
+
+fn iterator_take(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    validate_iterator_receiver(receiver, "take")?;
+    if arguments.is_empty() {
+        let _ = close_direct_receiver(receiver);
+        return Err(crate::value::error::throw_range_error(
+            "Invalid iterator take count",
+        ));
+    }
+    let count = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let number = match crate::conversion::to_number(&count) {
+        Ok(number) => number,
+        Err(error) => {
+            let _ = close_direct_receiver(receiver);
+            return Err(error);
+        }
+    };
+    let integer = number.trunc();
+    if number.is_nan() || integer < 0.0 {
+        let _ = close_direct_receiver(receiver);
+        return Err(crate::value::error::throw_range_error(
+            "Invalid iterator take count",
+        ));
+    }
+    let source = iterator_source(receiver, "take")?;
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::Take {
+                iterator: source,
+                remaining: if integer.is_infinite() {
+                    u64::MAX
+                } else {
+                    integer as u64
+                },
+                done: false,
             }),
         },
     )))
