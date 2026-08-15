@@ -13,7 +13,7 @@ fn array_mutation_builtin(
         ArrayPop => Some(Ok(crate::builtins::array_pop(receiver))),
         ArrayUnshift => Some(Ok(crate::builtins::array_unshift(receiver, arguments))),
         ArrayFill => Some(Ok(crate::builtins::array_fill(receiver, arguments))),
-        ArrayCopyWithin => Some(Ok(crate::builtins::array_copy_within(receiver, arguments))),
+        ArrayCopyWithin => Some(crate::builtins::array_copy_within(receiver, arguments)),
         ArrayFindLast => Some(crate::builtins::array_find_last(receiver, arguments)),
         ArrayFindLastIndex => Some(crate::builtins::array_find_last_index(receiver, arguments)),
         ArrayToSorted => Some(Ok(crate::builtins::array_to_sorted(receiver, arguments))),
