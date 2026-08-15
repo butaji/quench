@@ -91,6 +91,10 @@ fn get_property_value_tail(value: &Value, key: &str) -> Value {
 
 fn iterator_property(value: &Value, key: &str) -> Value {
     let property = crate::collections::iterator::property_for(value, key);
+    iterator_property_value(value, property)
+}
+
+fn iterator_property_value(value: &Value, property: Value) -> Value {
     if matches!(
         property,
         Value::Builtin(
