@@ -49,6 +49,11 @@ pub(crate) fn execute(
         | crate::ops::Builtin::TemporalPlainTimeNanosecondGetter => {
             Some(accessor(builtin, _receiver))
         }
+        crate::ops::Builtin::TemporalPlainTimeToString
+        | crate::ops::Builtin::TemporalPlainTimeToJSON => Some(to_string(_receiver)),
+        crate::ops::Builtin::TemporalPlainTimeValueOf => Some(Err(
+            crate::value::error::throw_type_error("Cannot convert PlainTime to a number"),
+        )),
         _ => None,
     }
 }
@@ -65,6 +70,36 @@ fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Va
         _ => "nanosecond",
     };
     crate::execute::get_property_result(receiver, names)
+}
+
+fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
+    let fields = [
+        "hour",
+        "minute",
+        "second",
+        "millisecond",
+        "microsecond",
+        "nanosecond",
+    ]
+    .iter()
+    .map(|name| crate::execute::get_property_result(receiver, name))
+    .collect::<Result<Vec<_>, _>>()?;
+    let values = fields
+        .iter()
+        .map(|value| crate::conversion::to_number(value).map(|value| value as u32))
+        .collect::<Result<Vec<_>, _>>()?;
+    let fraction = values[3] * 1_000_000 + values[4] * 1_000 + values[5];
+    let suffix = if fraction == 0 {
+        String::new()
+    } else {
+        format!(".{fraction:09}").trim_end_matches('0').to_string()
+    };
+    Ok(Value::String(format!(
+        "{:02}:{:02}:{:02}{suffix}",
+        values[0], values[1], values[2]
+    )))
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
