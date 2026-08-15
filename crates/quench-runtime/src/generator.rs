@@ -162,10 +162,10 @@ pub(crate) fn async_next(receiver: Option<&Value>, arguments: &[Value]) -> Resul
     }
     if *generator.executing.borrow() {
         let promise = Rc::new(crate::value::PromiseData::default());
-        generator.async_next_queue.borrow_mut().push_back((
-            first_argument(arguments),
-            Rc::clone(&promise),
-        ));
+        generator
+            .async_next_queue
+            .borrow_mut()
+            .push_back((first_argument(arguments), Rc::clone(&promise)));
         return Ok(Value::Promise(promise));
     }
     *generator.executing.borrow_mut() = true;
@@ -205,6 +205,19 @@ pub(crate) fn return_(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
     }
     completion
 }
+
+pub(crate) fn async_return(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    if matches!(receiver, Some(Value::Generator(generator)) if generator.function.is_async) {
+        return return_(receiver, arguments);
+    }
+    let error = crate::value::error::throw_type_error(
+        "AsyncGenerator.return called on incompatible receiver",
+    );
+    Ok(crate::promise::from_async_completion(Err(error)))
+}
 pub(crate) fn throw(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_receiver(receiver, "throw")?;
     let completion = resume(generator, Resume::Throw(first_argument(arguments)));
@@ -218,6 +231,16 @@ pub(crate) fn throw(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         ));
     }
     completion
+}
+
+pub(crate) fn async_throw(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    if matches!(receiver, Some(Value::Generator(generator)) if generator.function.is_async) {
+        return throw(receiver, arguments);
+    }
+    let error = crate::value::error::throw_type_error(
+        "AsyncGenerator.throw called on incompatible receiver",
+    );
+    Ok(crate::promise::from_async_completion(Err(error)))
 }
 
 pub(crate) fn async_dispose(receiver: Option<&Value>) -> Result<Value, VmError> {

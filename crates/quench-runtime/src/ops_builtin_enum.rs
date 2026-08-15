@@ -286,6 +286,7 @@ pub enum Builtin {
     IteratorSelf, AsyncIteratorSelf, AsyncIteratorDispose,
     AsyncIteratorDisposeFulfilled, GeneratorNext,
     GeneratorReturn, GeneratorThrow, AsyncGeneratorNext,
+    AsyncGeneratorReturn, AsyncGeneratorThrow,
     Error, ErrorPrototype,
     RangeErrorPrototype, TypeErrorPrototype, EvalErrorPrototype,
     ReferenceErrorPrototype, SyntaxErrorPrototype, URIErrorPrototype,

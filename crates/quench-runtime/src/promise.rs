@@ -227,9 +227,7 @@ pub(crate) fn settle_async_generator_completion(
 ) {
     match completion {
         Ok(value) => resolve_promise(&promise, value),
-        Err(VmError::Suspended(awaited)) => {
-            register_async_generator(&awaited, generator, promise)
-        }
+        Err(VmError::Suspended(awaited)) => register_async_generator(&awaited, generator, promise),
         Err(VmError::Thrown(reason)) => reject_promise(&promise, reason),
         Err(_) => reject_promise(&promise, Value::Undefined),
     }

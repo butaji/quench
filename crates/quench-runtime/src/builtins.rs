@@ -127,9 +127,12 @@ pub(crate) fn async_generator_prototype() -> Value {
             ),
             (
                 "return".to_string(),
-                Value::Builtin(Builtin::GeneratorReturn),
+                Value::Builtin(Builtin::AsyncGeneratorReturn),
             ),
-            ("throw".to_string(), Value::Builtin(Builtin::GeneratorThrow)),
+            (
+                "throw".to_string(),
+                Value::Builtin(Builtin::AsyncGeneratorThrow),
+            ),
             (
                 "Symbol.asyncIterator".to_string(),
                 Value::Builtin(Builtin::AsyncIteratorSelf),
@@ -150,8 +153,8 @@ pub(crate) fn async_generator_prototype() -> Value {
         ])));
         for (key, method) in [
             ("next", Builtin::AsyncGeneratorNext),
-            ("return", Builtin::GeneratorReturn),
-            ("throw", Builtin::GeneratorThrow),
+            ("return", Builtin::AsyncGeneratorReturn),
+            ("throw", Builtin::AsyncGeneratorThrow),
         ] {
             store_descriptor_metadata(
                 &mut value,
