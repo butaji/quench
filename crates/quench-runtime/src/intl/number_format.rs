@@ -169,17 +169,7 @@ pub(crate) fn compact_fraction_digits(value: f64) -> u32 {
 
 pub(crate) fn compact_suffix(magnitude: i32, locale: &str, display: &str) -> &'static str {
     if locale.starts_with("ja") || locale.starts_with("zh") {
-        return match magnitude {
-            8 => "億",
-            4 => {
-                if locale.starts_with("zh-TW") {
-                    "萬"
-                } else {
-                    "万"
-                }
-            }
-            _ => "",
-        };
+        return east_asian_suffix(magnitude, locale);
     }
     if locale.starts_with("ko") {
         return match magnitude {
@@ -207,6 +197,15 @@ pub(crate) fn compact_suffix(magnitude: i32, locale: &str, display: &str) -> &'s
         3 => "K",
         6 => "M",
         9 => "B",
+        _ => "",
+    }
+}
+
+fn east_asian_suffix(magnitude: i32, locale: &str) -> &'static str {
+    match magnitude {
+        8 => "億",
+        4 if locale.starts_with("zh-TW") => "萬",
+        4 => "万",
         _ => "",
     }
 }
