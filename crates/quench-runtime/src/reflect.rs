@@ -191,6 +191,22 @@ pub(crate) fn shadow_wrapped_object_error(realm: crate::ops::RealmId) -> VmError
     )
 }
 
+pub(crate) fn shadow_wrapped_argument_error() -> VmError {
+    let constructor = crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError);
+    shadow_type_error_with_constructor(
+        "ShadowRealm wrapped function argument must be primitive or callable",
+        constructor,
+    )
+}
+
+pub(crate) fn shadow_wrapped_exception_error() -> VmError {
+    let constructor = crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError);
+    shadow_type_error_with_constructor(
+        "ShadowRealm wrapped function threw an exception",
+        constructor,
+    )
+}
+
 fn is_shadow_realm_receiver(receiver: Option<&Value>) -> bool {
     matches!(
         receiver,
