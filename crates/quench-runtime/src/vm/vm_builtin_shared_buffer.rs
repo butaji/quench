@@ -35,7 +35,7 @@ pub(crate) fn execute_shared_array_buffer_builtin(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let Some(Value::ArrayBuffer(buffer)) = receiver.filter(|value| {
-        matches!(value, Value::ArrayBuffer(data) if (data.shared || builtin == Builtin::SharedArrayBufferSlice) && !matches!(
+        matches!(value, Value::ArrayBuffer(data) if (data.shared == (builtin == Builtin::SharedArrayBufferSlice)) && !matches!(
             builtin,
             Builtin::ArrayBufferByteLengthGetter
                 | Builtin::ArrayBufferDetachedGetter
@@ -86,7 +86,9 @@ pub(crate) fn execute_shared_array_buffer_builtin(
                 .map_err(|_| crate::value::error::throw_range_error("Invalid grow length"))?;
             Ok(Value::Undefined)
         }
-        Builtin::SharedArrayBufferSlice => shared_array_buffer_slice(receiver, buffer, arguments),
+        Builtin::ArrayBufferSlice | Builtin::SharedArrayBufferSlice => {
+            shared_array_buffer_slice(receiver, buffer, arguments)
+        }
         _ => Err(type_error("Unknown SharedArrayBuffer builtin")),
     }
 }
@@ -98,22 +100,29 @@ fn shared_array_buffer_slice(
 ) -> Result<Value, VmError> {
     let length = buffer.byte_length() as i64;
     let start = slice_index(arguments.first(), length)?.unwrap_or(0);
-    ensure_slice_source(buffer, start)?;
     let end = slice_index(arguments.get(1), length)?
         .unwrap_or(length)
         .max(start);
     ensure_slice_source(buffer, end)?;
-    let bytes = buffer.bytes.borrow()[start as usize..end as usize].to_vec();
     let species = array_buffer_species(receiver)?;
     if !crate::conversion::is_callable(&species) {
         return Err(type_error(
             "SharedArrayBuffer species must be a constructor",
         ));
     }
-    let result = crate::construct::construct_value(&species, &[Value::Number(bytes.len() as f64)])?;
+    let result =
+        crate::construct::construct_value(&species, &[Value::Number((end - start) as f64)])?;
     let Value::ArrayBuffer(result) = result else {
         return Err(type_error("SharedArrayBuffer species must return a buffer"));
     };
+    if result.immutable {
+        return Err(type_error(
+            "ArrayBuffer species returned an immutable buffer",
+        ));
+    }
+    ensure_slice_source(buffer, start)?;
+    ensure_slice_source(buffer, end)?;
+    let bytes = buffer.bytes.borrow()[start as usize..end as usize].to_vec();
     let same_buffer = matches!(receiver, Some(Value::ArrayBuffer(source)) if std::rc::Rc::ptr_eq(source, &result));
     if same_buffer || result.bytes.borrow().len() < bytes.len() {
         return Err(type_error(
@@ -142,7 +151,6 @@ pub(crate) fn slice_to_immutable(
     }
     let length = buffer.byte_length() as i64;
     let start = slice_index(arguments.first(), length)?.unwrap_or(0);
-    ensure_slice_source(buffer, start)?;
     let end = slice_index(arguments.get(1), length)?
         .unwrap_or(length)
         .max(start);
