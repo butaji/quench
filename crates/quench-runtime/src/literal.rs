@@ -43,7 +43,7 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
 
 fn string_literal(string: &oxc::ast::ast::StringLiteral<'_>) -> Option<Literal> {
     let value = string.value.to_string();
-    let op = decode_unicode_escapes(&value)
+    let op = decode_unicode_escapes(&value, string.raw.as_str())
         .map_or_else(|| Constant::String(value.clone()), Constant::StringUnits);
     Some(Literal {
         span: string.span,
@@ -52,8 +52,8 @@ fn string_literal(string: &oxc::ast::ast::StringLiteral<'_>) -> Option<Literal> 
     })
 }
 
-fn decode_unicode_escapes(value: &str) -> Option<Vec<u16>> {
-    if !value.contains("\\u") {
+fn decode_unicode_escapes(value: &str, raw: &str) -> Option<Vec<u16>> {
+    if !has_unicode_escape(raw) {
         return None;
     }
     let mut units = Vec::new();
@@ -73,6 +73,20 @@ fn decode_unicode_escapes(value: &str) -> Option<Vec<u16>> {
         units.push(unit);
     }
     Some(units)
+}
+
+fn has_unicode_escape(raw: &str) -> bool {
+    let mut escaped = false;
+    for character in raw.chars() {
+        if character == 'u' && escaped {
+            return true;
+        }
+        escaped = character == '\\' && !escaped;
+        if character != '\\' {
+            escaped = false;
+        }
+    }
+    false
 }
 
 fn reduce_template_literal(template: &oxc::ast::ast::TemplateLiteral<'_>) -> Option<Literal> {
