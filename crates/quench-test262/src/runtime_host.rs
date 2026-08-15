@@ -428,6 +428,10 @@ fn host_context() -> &'static VmContext {
                 HostCapabilityKind::AgentGetReport,
                 HostCapabilityKind::AgentLeaving,
                 HostCapabilityKind::AgentReceiveBroadcast,
+                HostCapabilityKind::AgentSleep,
+                HostCapabilityKind::AgentTryYield,
+                HostCapabilityKind::AgentTrySleep,
+                HostCapabilityKind::AgentSetTimeout,
             ],
         )
         .with_host_capability(
