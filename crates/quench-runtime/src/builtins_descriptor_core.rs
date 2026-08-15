@@ -40,9 +40,7 @@ fn same_value_objects(left: &Value, right: &Value) -> bool {
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
         (Value::Generator(left), Value::Generator(right)) => Rc::ptr_eq(left, right),
         (Value::BoundFunction(left), Value::BoundFunction(right)) => Rc::ptr_eq(left, right),
-        (Value::StringUnits(_), Value::String(_))
-        | (Value::String(_), Value::StringUnits(_))
-        | (Value::StringUnits(_), Value::StringUnits(_)) => {
+        (Value::StringUnits(_), Value::String(_)) | (Value::String(_), Value::StringUnits(_)) => {
             crate::strings::units_equal(left, right)
         }
         _ => left == right,
