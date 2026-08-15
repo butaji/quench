@@ -117,6 +117,15 @@ fn imported_javascript_module_preserves_harness_globals() {
 }
 
 #[test]
+fn namespace_reexport_metadata_records_exported_name() {
+    let metadata =
+        quench_runtime::reduce::inspect_module_source("export * as foo from './dep.js';")
+            .expect("module metadata");
+    assert_eq!(metadata.exported_names, vec!["foo"]);
+    assert_eq!(metadata.reexports[0].imported, "*");
+}
+
+#[test]
 fn linked_import_reads_the_exporters_live_default_cell() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(
