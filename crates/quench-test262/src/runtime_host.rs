@@ -176,6 +176,12 @@ fn import_cell(
     if imported == "*" {
         return namespace_cell(units, target);
     }
+    if imported == "source" {
+        return units
+            .get(&target)
+            .and_then(|unit| unit.export_cell("default"))
+            .ok_or_else(|| "SyntaxError: module source missing".to_string());
+    }
     units
         .get(&target)
         .and_then(|unit| unit.export_cell(imported))
@@ -429,6 +435,12 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
     let metadata = inspect_module_source(&source).map_err(|errors| errors.join("; "))?;
     for specifier in metadata.import_specifiers {
         if graph.resolve(from, &specifier).is_some() {
+            continue;
+        }
+        if specifier == "<module source>" {
+            let dependency = graph
+                .add_text_dependency(Path::new("<module source>").to_path_buf(), String::new());
+            graph.link(from, dependency)?;
             continue;
         }
         let path = base.join(&specifier);

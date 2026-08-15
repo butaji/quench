@@ -81,6 +81,11 @@ impl ModuleMetadata {
                                 value,
                             ) => ("*".to_string(), value.local.name.to_string()),
                         };
+                        let imported = if import.phase == Some(oxc::ast::ast::ImportPhase::Source) {
+                            "source".to_string()
+                        } else {
+                            imported
+                        };
                         self.imports.push(ImportBinding {
                             source: source.clone(),
                             imported,
