@@ -57,6 +57,8 @@ impl LinkedModuleGraph {
                 LinkedModule::compile_json(&unit.source)?
             } else if unit.kind == ModuleKind::Text {
                 LinkedModule::compile_text(&unit.source)?
+            } else if unit.kind == ModuleKind::Bytes {
+                LinkedModule::compile_bytes(unit.bytes.as_deref().unwrap_or_default())?
             } else {
                 LinkedModule::compile(&unit.source)?
             };
@@ -268,6 +270,15 @@ impl LinkedModule {
         Self::compile(&format!("export default {literal};"))
     }
 
+    pub fn compile_bytes(bytes: &[u8]) -> Result<Self, String> {
+        let values = bytes
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        Self::compile(&format!("export default new Uint8Array([{values}]);"))
+    }
+
     pub fn bind_import(&self, local: &str, cell: ModuleBindingCell) -> Result<(), String> {
         let slot = self
             .program
@@ -477,6 +488,11 @@ fn add_module_source(
         .iter()
         .find(|(source, _)| source == specifier)
         .map(|(_, attribute)| attribute.as_str());
+    if resource_type == Some("type=bytes") {
+        let bytes =
+            std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
+        return Ok(graph.add_bytes_dependency(path, bytes));
+    }
     let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("module {}: {error}", path.display()))?;
     if path
