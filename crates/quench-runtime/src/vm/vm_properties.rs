@@ -416,6 +416,15 @@ fn bound_function_property(
     {
         return value.clone();
     }
+    if key == "prototype" {
+        if let Some(prototype) = intrinsic_error_prototype(value, bound) {
+            bound
+                .properties
+                .borrow_mut()
+                .push((key.to_string(), prototype.clone()));
+            return prototype;
+        }
+    }
     if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
     } else if key == "length" && !realm::is_intrinsic(bound) {
@@ -434,6 +443,55 @@ fn bound_function_property(
         }
         function_prototype_property(key)
     }
+}
+
+fn intrinsic_error_prototype(
+    value: &Value,
+    bound: &crate::value::BoundFunctionValue,
+) -> Option<Value> {
+    if !realm::is_intrinsic(bound) {
+        return None;
+    }
+    let Value::Builtin(constructor) = bound.target else {
+        return None;
+    };
+    let prototype = crate::builtin_meta::prototype(constructor)?;
+    if !matches!(
+        prototype,
+        Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::TypeErrorPrototype
+    ) {
+        return None;
+    }
+    let mut properties = vec![
+        ("constructor".to_string(), value.clone()),
+        ("name".to_string(), crate::builtins::property(prototype, "name")),
+        ("message".to_string(), Value::String(String::new())),
+        ("toString".to_string(), Value::Builtin(Builtin::ErrorPrototypeToString)),
+        ("\0prototype".to_string(), if prototype == Builtin::ErrorPrototype {
+            Value::Builtin(Builtin::ObjectPrototype)
+        } else {
+            Value::Builtin(Builtin::ErrorPrototype)
+        }),
+    ];
+    if prototype == Builtin::ErrorPrototype {
+        properties.push((
+            crate::builtins::descriptor_key("stack"),
+            Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+                ("get".to_string(), Value::Builtin(Builtin::ErrorPrototypeStackGetter)),
+                ("set".to_string(), Value::Builtin(Builtin::ErrorPrototypeStackSetter)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]))),
+        ));
+    }
+    Some(Value::Object(Rc::new(crate::value::ObjectData::new(properties))))
 }
 fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
