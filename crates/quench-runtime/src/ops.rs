@@ -383,6 +383,7 @@ pub enum Builtin {
     TemporalPlainDateInLeapYearGetter,
     TemporalPlainDateMonthsInYearGetter,
     TemporalPlainDateEquals,
+    TemporalPlainDateCompare,
     TemporalPlainDateAdd,
     TemporalPlainDateSubtract,
     TemporalPlainDateUntil,
