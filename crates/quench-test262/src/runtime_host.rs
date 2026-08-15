@@ -529,7 +529,7 @@ fn add_module_source(
         .iter()
         .find(|(source, _)| source == specifier)
         .map(|(_, attribute)| attribute.as_str());
-    if resource_type == Some("type=bytes") {
+    if resource_type.is_some_and(|value| resource_type_name(value) == Some("bytes")) {
         let bytes =
             std::fs::read(&path).map_err(|error| format!("module {}: {error}", path.display()))?;
         return Ok(graph.add_bytes_dependency(path, bytes));
@@ -542,10 +542,15 @@ fn add_module_source(
     {
         return Ok(graph.add_json_dependency(path, source));
     }
-    if resource_type == Some("type=text") {
+    if resource_type.is_some_and(|value| resource_type_name(value) == Some("text")) {
         return Ok(graph.add_text_dependency(path, source));
     }
     Ok(graph.add_dependency(path, source))
+}
+
+fn resource_type_name(attribute: &str) -> Option<&str> {
+    let (key, value) = attribute.split_once('=')?;
+    (key == "type").then(|| value.trim_matches(['\'', '"']))
 }
 
 fn run_source(source: &str) -> Result<(), String> {
