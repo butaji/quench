@@ -42,7 +42,7 @@ pub(crate) fn execute_builtin(
         ArrayFlat => flat(receiver, arguments),
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         ArrayAt => return Some(Ok(at(receiver, arguments))),
-        ArraySort => return Some(Ok(sort(receiver))),
+        ArraySort => return Some(sort(receiver, arguments)),
         ArrayToReversed => return Some(Ok(to_reversed(receiver))),
         ArraySplice => return Some(Ok(splice(receiver, arguments))),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
@@ -316,15 +316,48 @@ fn iterator_symbol_removed(key: &str) -> bool {
 
 include!("arrays_iterator.rs");
 
-fn sort(receiver: Option<&Value>) -> Value {
+fn sort(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let Some(receiver @ Value::Array(values)) = receiver else {
-        return Value::Undefined;
+        return Ok(Value::Undefined);
     };
     let mut sorted = values.to_vec();
-    sorted.sort_by_key(|value| crate::intl::tolocale::value::to_string(Some(value)));
+    let comparator = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined));
+    let mut failure = None;
+    sorted.sort_by(|left, right| match sort_compare(left, right, comparator) {
+        Ok(order) => order,
+        Err(error) => {
+            failure = Some(error);
+            std::cmp::Ordering::Equal
+        }
+    });
+    if let Some(error) = failure {
+        return Err(error);
+    }
     let result = Value::array(sorted);
     crate::locals::replace_value(receiver, &result);
-    result
+    Ok(result)
+}
+
+fn sort_compare(
+    left: &Value,
+    right: &Value,
+    comparator: Option<&Value>,
+) -> Result<std::cmp::Ordering, crate::execute::VmError> {
+    let Some(comparator) = comparator else {
+        return Ok(crate::intl::tolocale::value::to_string(Some(left))
+            .cmp(&crate::intl::tolocale::value::to_string(Some(right))));
+    };
+    let result = crate::functions::execute_target(
+        comparator,
+        &Value::Undefined,
+        &[left.clone(), right.clone()],
+    )?;
+    let number = crate::conversion::to_number(&result)?;
+    Ok(number
+        .partial_cmp(&0.0)
+        .unwrap_or(std::cmp::Ordering::Equal))
 }
 
 fn index(values: &crate::value::ArrayData, key: &str) -> Value {

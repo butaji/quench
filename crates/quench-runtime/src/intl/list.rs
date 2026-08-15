@@ -3,8 +3,7 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string,
-    to_string_value, SLOT,
+    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string, SLOT,
 };
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -12,7 +11,15 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
     let mut style = "long".to_string();
     let mut list_type = "conjunction".to_string();
-    if let Some(options) = arguments.get(1) {
+    if let Some(options) = arguments
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
+        if !matches!(options, Value::Object(_) | Value::Proxy(_)) {
+            return Err(crate::value::error::throw_type_error(
+                "ListFormat options must be an object",
+            ));
+        }
         if matches!(options, Value::Null) {
             return Err(crate::value::error::throw_type_error(
                 "Cannot convert null or undefined to object",
@@ -61,7 +68,20 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 ("type".to_string(), Value::String(list_type)),
             ]),
         ),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(crate::ops::Builtin::IntlListFormatPrototype),
+        ),
     ]))
+}
+
+fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    if receiver.is_some() {
+        return Err(crate::value::error::throw_type_error(
+            "Intl.ListFormat requires new",
+        ));
+    }
+    construct(arguments)
 }
 
 pub(crate) fn prototype_method(
@@ -101,9 +121,28 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 
 fn iterable_items(value: Option<&Value>) -> Result<Vec<String>, VmError> {
     let value = value.unwrap_or(&Value::Undefined);
+    if matches!(value, Value::Undefined) {
+        return Ok(Vec::new());
+    }
     let iterator = crate::collections::iterator::open(value.clone())?;
-    crate::collections::iterator::collect(&iterator)
-        .map(|values| values.iter().map(to_string_value).collect())
+    let mut items = Vec::new();
+    loop {
+        let Some(value) = crate::collections::iterator::step_value(&iterator)? else {
+            return Ok(items);
+        };
+        let Value::String(value) = value else {
+            let error =
+                crate::value::error::throw_type_error("ListFormat iterable values must be strings");
+            if let VmError::Thrown(reason) = &error {
+                let _ = crate::collections::iterator::close(
+                    iterator.clone(),
+                    crate::completion::Completion::Throw(reason.clone()),
+                );
+            }
+            return Err(error);
+        };
+        items.push(value);
+    }
 }
 
 fn format_parts(items: &[String], locale: &str, style: &str, list_type: &str) -> Vec<Value> {
@@ -209,7 +248,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlListFormat => Some(construct(arguments)),
+        crate::ops::Builtin::IntlListFormat => Some(construct_call(arguments, receiver)),
         crate::ops::Builtin::IntlListFormatFormat
         | crate::ops::Builtin::IntlListFormatFormatToParts
         | crate::ops::Builtin::IntlListFormatResolvedOptions => {

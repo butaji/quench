@@ -366,7 +366,21 @@ fn validate_duration_fields(properties: &[(String, Value)]) -> Result<(), VmErro
             "invalid duration record",
         ));
     }
+    if fields
+        .iter()
+        .any(|(_, value)| invalid_duration_field(value))
+    {
+        return Err(runtime_error("RangeError: invalid duration field"));
+    }
     Ok(())
+}
+
+fn invalid_duration_field(value: &Value) -> bool {
+    match value {
+        Value::Number(value) => !value.is_finite() || value.fract() != 0.0,
+        Value::Undefined => true,
+        _ => false,
+    }
 }
 
 fn format_days(days: i64) -> String {
