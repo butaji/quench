@@ -232,44 +232,7 @@ pub(crate) fn get_property_with_receiver(
             "Cannot access an uninitialized module binding",
         ));
     }
-    if matches!(value, Value::Proxy(_)) {
-        return crate::proxy::proxy_get(value, key, Some(receiver));
-    }
-    if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
-        return Err(crate::value::error::throw_type_error(
-            "'callee' is unavailable on strict arguments",
-        ));
-    }
-    if has_restricted_function_property(value, key) {
-        return Err(crate::value::error::throw_type_error(
-            "'caller' and 'arguments' are unavailable on this function",
-        ));
-    }
-    if let Some(getter) = array_accessor(value, key, "get") {
-        if matches!(getter, Value::Undefined) {
-            return Ok(Value::Undefined);
-        }
-        return invoke_accessor(&getter, receiver);
-    }
-    if let Value::Array(values) = value {
-        let has_own = key == "length"
-            || crate::arrays::array_index(key)
-                .is_some_and(|index| values.has_index(index as usize))
-            || values.descriptor(key).is_some()
-            || values.property(key).is_some();
-        if !has_own {
-            if let Some(getter) = crate::arrays::prototype_override_getter(key) {
-                if matches!(getter, Value::Undefined) {
-                    return Ok(Value::Undefined);
-                }
-                return invoke_accessor(&getter, receiver);
-            }
-        }
-    }
-    if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
-        return result;
-    }
-    if let Some(result) = data_view_instance_accessor(value, key) {
+    if let Some(result) = special_property(value, key, receiver) {
         return result;
     }
     if let Ok(descriptor) =
@@ -300,6 +263,48 @@ pub(crate) fn get_property_with_receiver(
         return Ok(Value::Undefined);
     }
     invoke_accessor(&getter, receiver)
+}
+
+fn special_property(value: &Value, key: &str, receiver: &Value) -> Option<Result<Value, VmError>> {
+    if matches!(value, Value::Proxy(_)) {
+        return Some(crate::proxy::proxy_get(value, key, Some(receiver)));
+    }
+    if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
+        return Some(Err(crate::value::error::throw_type_error(
+            "'callee' is unavailable on strict arguments",
+        )));
+    }
+    if has_restricted_function_property(value, key) {
+        return Some(Err(crate::value::error::throw_type_error(
+            "'caller' and 'arguments' are unavailable on this function",
+        )));
+    }
+    if let Some(getter) = array_accessor(value, key, "get") {
+        return Some(accessor_result(&getter, receiver));
+    }
+    if let Some(getter) = array_prototype_getter(value, key) {
+        return Some(accessor_result(&getter, receiver));
+    }
+    crate::disposable_stack::accessor(value, key, receiver)
+        .or_else(|| data_view_instance_accessor(value, key))
+}
+
+fn accessor_result(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
+    if matches!(getter, Value::Undefined) {
+        Ok(Value::Undefined)
+    } else {
+        invoke_accessor(getter, receiver)
+    }
+}
+
+fn array_prototype_getter(value: &Value, key: &str) -> Option<Value> {
+    let Value::Array(values) = value else { return None };
+    let has_own = key == "length"
+        || crate::arrays::array_index(key)
+            .is_some_and(|index| values.has_index(index as usize))
+        || values.descriptor(key).is_some()
+        || values.property(key).is_some();
+    (!has_own).then(|| crate::arrays::prototype_override_getter(key)).flatten()
 }
 
 pub(crate) fn consume_deferred_namespace_marker(value: &Value, key: &str) -> Option<u32> {
