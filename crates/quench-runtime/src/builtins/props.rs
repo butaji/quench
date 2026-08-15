@@ -295,6 +295,13 @@ fn array_method(key: &str) -> Option<Builtin> {
         "slice" => Some(ArraySlice),
         "concat" => Some(ArrayConcat),
         "flat" => Some(ArrayFlat),
+        _ => array_method_tail(key),
+    }
+}
+
+fn array_method_tail(key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    match key {
         "flatMap" => Some(ArrayFlatMap),
         "at" => Some(ArrayAt),
         "toReversed" => Some(ArrayToReversed),

@@ -129,7 +129,28 @@ pub(crate) fn math_pow(arguments: &[Value]) -> Result<Value, crate::execute::VmE
 
 include!("builtins_object_core.rs");
 pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
-    let (name, constructor, prototype) = match builtin {
+    let (name, constructor, prototype) = error_parts(builtin);
+    let constructor_builtin = constructor;
+    let constructor = crate::vm::realm_intrinsic(constructor_builtin);
+    let prototype_builtin =
+        crate::builtin_meta::instance_prototype(constructor_builtin).unwrap_or(prototype);
+    let prototype = crate::vm::realm_intrinsic(prototype_builtin);
+    let message = arguments.first().map_or_else(String::new, value_to_string);
+    let mut properties = vec![
+        ("name".to_string(), Value::String(name.to_string())),
+        ("message".to_string(), Value::String(message)),
+        ("constructor".to_string(), constructor),
+        (ERROR_SLOT.to_string(), Value::Boolean(true)),
+        ("\0prototype".to_string(), prototype),
+    ];
+    if let Some(Value::Object(existing)) = arguments.first() {
+        properties.extend(existing.properties.clone());
+    }
+    Value::Object(Rc::new(ObjectData::new(properties)))
+}
+
+fn error_parts(builtin: Builtin) -> (&'static str, Builtin, Builtin) {
+    match builtin {
         Builtin::RangeError => ("RangeError", Builtin::RangeError, Builtin::ErrorPrototype),
         Builtin::ReferenceError => (
             "ReferenceError",
@@ -152,24 +173,7 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         ),
         Builtin::Error => ("Error", Builtin::Error, Builtin::ErrorPrototype),
         _ => ("Error", Builtin::Error, Builtin::ErrorPrototype),
-    };
-    let constructor_builtin = constructor;
-    let constructor = crate::vm::realm_intrinsic(constructor_builtin);
-    let prototype_builtin =
-        crate::builtin_meta::instance_prototype(constructor_builtin).unwrap_or(prototype);
-    let prototype = crate::vm::realm_intrinsic(prototype_builtin);
-    let message = arguments.first().map_or_else(String::new, value_to_string);
-    let mut properties = vec![
-        ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), Value::String(message)),
-        ("constructor".to_string(), constructor),
-        (ERROR_SLOT.to_string(), Value::Boolean(true)),
-        ("\0prototype".to_string(), prototype),
-    ];
-    if let Some(Value::Object(existing)) = arguments.first() {
-        properties.extend(existing.properties.clone());
     }
-    Value::Object(Rc::new(ObjectData::new(properties)))
 }
 
 pub(crate) fn suppressed_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
