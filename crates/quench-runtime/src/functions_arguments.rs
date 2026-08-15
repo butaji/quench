@@ -189,6 +189,25 @@ pub(crate) fn execute_target(
             execute_builtin_target(*builtin, Some(receiver), arguments)
         }
         crate::value::Value::Function(function) => execute(function, receiver, arguments),
+        crate::value::Value::BoundFunction(bound)
+            if matches!(
+                bound.target,
+                crate::value::Value::Builtin(
+                    crate::ops::Builtin::ErrorPrototypeStackGetter
+                        | crate::ops::Builtin::ErrorPrototypeStackSetter
+                )
+            ) => {
+                let crate::value::Value::Builtin(builtin) = bound.target else {
+                    unreachable!()
+                };
+                let execute = || execute_builtin_target(builtin, Some(receiver), arguments);
+                if let crate::value::Value::HostCapability(token) = &bound.receiver {
+                    crate::vm::with_realm(token.realm(), execute)
+                        .unwrap_or_else(|| Err(crate::vm::not_callable()))
+                } else {
+                    execute()
+                }
+            }
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(target, receiver, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
