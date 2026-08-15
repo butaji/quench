@@ -217,6 +217,10 @@ fn construct_builtin(
         }
         crate::ops::Builtin::RegExp => construct_regexp(arguments),
         crate::ops::Builtin::TemporalDuration => crate::temporal::duration::construct(arguments),
+        crate::ops::Builtin::TemporalZonedDateTime => {
+            crate::temporal::execute(crate::ops::Builtin::TemporalZonedDateTime, None, arguments)
+                .unwrap_or_else(|| Err(crate::vm::not_callable()))
+        }
         crate::ops::Builtin::TemporalInstant => crate::temporal::instant::construct(arguments),
         crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
         crate::ops::Builtin::TemporalPlainDateTime => {
