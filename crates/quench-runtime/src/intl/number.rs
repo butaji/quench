@@ -862,26 +862,51 @@ fn format_localized_unit(text: &str, unit: Option<&str>, display: &str, locale: 
     if unit != Some("kilometer-per-hour") {
         return format_unit(text, unit, display);
     }
-    let (prefix, suffix) = match (locale, display) {
-        (locale, "long") if locale.starts_with("ja") => ("時速 ", " キロメートル"),
-        (locale, "long") if locale.starts_with("ko") => ("시속 ", "킬로미터"),
-        (locale, "long") if locale.starts_with("zh-TW") => ("每小時 ", " 公里"),
-        (locale, "narrow") if locale.starts_with("zh-TW") => ("", "公里/小時"),
-        (locale, _) if locale.starts_with("zh-TW") => ("", " 公里/小時"),
-        (locale, "long") if locale.starts_with("de") => ("", " Kilometer pro Stunde"),
-        (locale, "long") if locale.starts_with("en") => ("", " kilometers per hour"),
-        (locale, _) if locale.starts_with("ko") => ("", "km/h"),
-        _ => ("", " km/h"),
-    };
-    let text = if locale.starts_with("de") {
-        text.replace('.', ",")
-    } else {
-        text.to_string()
-    };
+    let (prefix, suffix) = localized_unit_parts(display, locale);
+    let text = localized_unit_text(text, locale);
     if display == "narrow" && !locale.starts_with("de") {
         format!("{prefix}{text}{}", suffix.trim_start())
     } else {
         format!("{prefix}{text}{suffix}")
+    }
+}
+
+fn localized_unit_parts(display: &str, locale: &str) -> (&'static str, &'static str) {
+    if display == "long" && locale.starts_with("ja") {
+        return ("時速 ", " キロメートル");
+    }
+    if locale.starts_with("ko") {
+        return if display == "long" {
+            ("시속 ", "킬로미터")
+        } else {
+            ("", "km/h")
+        };
+    }
+    if locale.starts_with("zh-TW") {
+        return zh_tw_unit_parts(display);
+    }
+    if display == "long" && locale.starts_with("de") {
+        return ("", " Kilometer pro Stunde");
+    }
+    if display == "long" && locale.starts_with("en") {
+        return ("", " kilometers per hour");
+    }
+    ("", " km/h")
+}
+
+fn zh_tw_unit_parts(display: &str) -> (&'static str, &'static str) {
+    match display {
+        "long" => ("每小時 ", " 公里"),
+        "narrow" => ("", "公里/小時"),
+        _ => ("", " 公里/小時"),
+    }
+}
+
+fn localized_unit_text(text: &str, locale: &str) -> String {
+    if locale.starts_with("de") {
+        text.replace('.', ",")
+    } else {
+        text.to_string()
     }
 }
 
