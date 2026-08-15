@@ -213,17 +213,17 @@ fn transfer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
             "transfer requires an ArrayBuffer",
         ));
     };
-    if buffer.shared || buffer.immutable || *buffer.detached.borrow() {
-        return Err(crate::value::error::throw_type_error(
-            "ArrayBuffer is not transferable",
-        ));
-    }
     let new_length = match arguments.first() {
         None | Some(Value::Undefined) => buffer.byte_length(),
         Some(value) => crate::construct::to_index(crate::intl::tolocale::value::to_number_result(
             Some(value),
         )?)?,
     };
+    if buffer.shared || buffer.immutable || *buffer.detached.borrow() {
+        return Err(crate::value::error::throw_type_error(
+            "ArrayBuffer is not transferable",
+        ));
+    }
     let Some(result) = crate::value::ArrayBufferData::try_new(new_length) else {
         return Err(crate::value::error::throw_range_error(
             "ArrayBuffer length is too large",
