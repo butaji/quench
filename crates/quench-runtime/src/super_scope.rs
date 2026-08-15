@@ -145,7 +145,7 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
     }
 }
 
-fn trigger_deferred(target: &Value, key: &str) -> Result<(), VmError> {
+pub(crate) fn trigger_deferred(target: &Value, key: &str) -> Result<(), VmError> {
     if let Some(id) = crate::vm::consume_deferred_namespace_marker(target, key) {
         crate::vm::execute_deferred_module(id)?;
     }
