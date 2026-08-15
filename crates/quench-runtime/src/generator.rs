@@ -150,6 +150,16 @@ pub(crate) fn next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
     }
     completion
 }
+
+pub(crate) fn async_next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    if matches!(receiver, Some(Value::Generator(generator)) if generator.function.is_async) {
+        return next(receiver, arguments);
+    }
+    let error = crate::value::error::throw_type_error(
+        "AsyncGenerator.next called on incompatible receiver",
+    );
+    Ok(crate::promise::from_async_completion(Err(error)))
+}
 pub(crate) fn return_(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_receiver(receiver, "return")?;
     resume(generator, Resume::Return(first_argument(arguments)))
