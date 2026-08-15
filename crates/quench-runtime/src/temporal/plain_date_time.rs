@@ -538,7 +538,13 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
     let Value::String(calendar) = value else {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     };
-    if calendar.eq_ignore_ascii_case("iso8601") {
+    let iso_string = calendar
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_digit())
+        && calendar.contains('-')
+        && (!calendar.contains('[') || calendar.contains("[u-ca=iso8601]"));
+    if calendar.eq_ignore_ascii_case("iso8601") || iso_string {
         Ok(())
     } else {
         Err(crate::value::error::throw_range_error("Invalid calendar"))
