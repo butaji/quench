@@ -273,31 +273,6 @@ fn namespace_cell(
         "\0quench:non_extensible".to_string(),
         quench_runtime::value::Value::Boolean(true),
     ));
-    properties.push((
-        "Symbol.toStringTag".to_string(),
-        quench_runtime::value::Value::String("Module".to_string()),
-    ));
-    properties.push((
-        "\0quench:descriptor:\0Symbol.toStringTag".to_string(),
-        quench_runtime::value::Value::object(vec![
-            (
-                "value".to_string(),
-                quench_runtime::value::Value::String("Module".to_string()),
-            ),
-            (
-                "writable".to_string(),
-                quench_runtime::value::Value::Boolean(false),
-            ),
-            (
-                "enumerable".to_string(),
-                quench_runtime::value::Value::Boolean(false),
-            ),
-            (
-                "configurable".to_string(),
-                quench_runtime::value::Value::Boolean(false),
-            ),
-        ]),
-    ));
     for name in unit.export_names() {
         if let Some(cell) = unit.export_cell(&name) {
             properties.push((
@@ -450,31 +425,6 @@ impl LinkedModule {
         properties.push((
             "\0quench:non_extensible".to_string(),
             quench_runtime::value::Value::Boolean(true),
-        ));
-        properties.push((
-            "Symbol.toStringTag".to_string(),
-            quench_runtime::value::Value::String("Module".to_string()),
-        ));
-        properties.push((
-            "\0quench:descriptor:\0Symbol.toStringTag".to_string(),
-            quench_runtime::value::Value::object(vec![
-                (
-                    "value".to_string(),
-                    quench_runtime::value::Value::String("Module".to_string()),
-                ),
-                (
-                    "writable".to_string(),
-                    quench_runtime::value::Value::Boolean(false),
-                ),
-                (
-                    "enumerable".to_string(),
-                    quench_runtime::value::Value::Boolean(false),
-                ),
-                (
-                    "configurable".to_string(),
-                    quench_runtime::value::Value::Boolean(false),
-                ),
-            ]),
         ));
         for name in self.export_names() {
             if let Some(cell) = self.export_cell(&name) {
