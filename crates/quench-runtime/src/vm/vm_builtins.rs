@@ -191,6 +191,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::FunctionPrototypeValueOf
             | Builtin::FunctionPrototypeHasInstance
             | Builtin::RegExpPrototypeToString
+            | Builtin::RegExpCompile
             | Builtin::RegExpSourceGetter
             | Builtin::RegExpFlagsGetter
             | Builtin::RegExpGlobalGetter
@@ -277,6 +278,7 @@ fn execute_simple_builtin(
             crate::vm::vm_arithmetic::function_has_instance(receiver, arguments)
         }
         Builtin::RegExpPrototypeToString => regexp_prototype_to_string(receiver),
+        Builtin::RegExpCompile => crate::regexp::compile_method_for_vm(receiver, arguments),
         Builtin::RegExpSourceGetter => regexp_prototype_accessor(receiver, "source"),
         Builtin::RegExpFlagsGetter => regexp_prototype_accessor(receiver, "flags"),
         Builtin::RegExpGlobalGetter => regexp_prototype_accessor(receiver, "global"),
