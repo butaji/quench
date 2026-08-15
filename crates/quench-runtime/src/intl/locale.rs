@@ -206,6 +206,10 @@ fn build_object(locale: Locale) -> Value {
     let mut properties = base_properties(&locale);
     properties.extend(method_properties());
     properties.push(("__intl".to_string(), locale_slot(&locale)));
+    properties.push((
+        "\0prototype".to_string(),
+        Value::Builtin(crate::ops::Builtin::IntlLocalePrototype),
+    ));
     make_object(properties)
 }
 
