@@ -369,7 +369,19 @@ impl DateTimeOptions {
         if self.contains("dateStyle") || self.contains("timeStyle") {
             return;
         }
-        if self.contains("year") || self.contains("month") || self.contains("day") {
+        if [
+            "year",
+            "month",
+            "day",
+            "dayPeriod",
+            "hour",
+            "minute",
+            "second",
+            "timeZoneName",
+        ]
+        .iter()
+        .any(|key| self.contains(key))
+        {
             return;
         }
         for key in ["year", "month", "day"] {
