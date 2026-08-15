@@ -75,7 +75,7 @@ pub(crate) fn prototype_method(
                 slot_string(&slots, "granularity").unwrap_or_else(|| "grapheme".to_string());
             let input = arguments.first().unwrap_or(&Value::Undefined);
             if let Value::StringUnits(units) = input {
-                return Ok(single_segment(Value::StringUnits(units.clone())));
+                return Ok(units_segment(Value::StringUnits(units.clone())));
             }
             let text = crate::conversion::to_string(input)?;
             Ok(segment(&text, &granularity, &locale))
@@ -122,16 +122,38 @@ fn segment(text: &str, granularity: &str, locale: &str) -> Value {
     ])
 }
 
+fn units_segment(input: Value) -> Value {
+    let Value::StringUnits(units) = &input else {
+        return single_segment(input);
+    };
+    let mut entries = Vec::new();
+    let mut start = 0;
+    while start < units.len() {
+        let end = if start + 1 < units.len()
+            && (0xd800..=0xdbff).contains(&units[start])
+            && (0xdc00..=0xdfff).contains(&units[start + 1])
+        {
+            start + 2
+        } else {
+            start + 1
+        };
+        entries.push(unit_segment_entry(
+            Value::StringUnits(std::rc::Rc::new(units[start..end].to_vec())),
+            start,
+            input.clone(),
+        ));
+        start = end;
+    }
+    segments_object(entries)
+}
+
 fn single_segment(input: Value) -> Value {
+    segments_object(vec![unit_segment_entry(input.clone(), 0, input)])
+}
+
+fn segments_object(entries: Vec<Value>) -> Value {
     make_object(vec![
-        (
-            "__segments".to_string(),
-            Value::array(vec![make_object(vec![
-                ("segment".to_string(), input.clone()),
-                ("index".to_string(), Value::Number(0.0)),
-                ("input".to_string(), input),
-            ])]),
-        ),
+        ("__segments".to_string(), Value::array(entries)),
         (
             "Symbol.iterator".to_string(),
             Value::Builtin(crate::ops::Builtin::IntlSegmenterSegmentsIterator),
@@ -140,6 +162,14 @@ fn single_segment(input: Value) -> Value {
             "containing".to_string(),
             Value::Builtin(crate::ops::Builtin::IntlSegmenterSegmentsContaining),
         ),
+    ])
+}
+
+fn unit_segment_entry(segment: Value, index: usize, input: Value) -> Value {
+    make_object(vec![
+        ("segment".to_string(), segment),
+        ("index".to_string(), Value::Number(index as f64)),
+        ("input".to_string(), input),
     ])
 }
 
@@ -231,7 +261,7 @@ fn word_segments(text: &str) -> Vec<Value> {
     for (index, character) in text.char_indices() {
         let previous = text[..index].chars().next_back();
         let next_kind = if is_combining_mark(character) || previous == Some('\u{200d}') {
-            kind.unwrap_or(0)
+            kind.unwrap_or(2)
         } else if decimal_point(text, index, character) {
             1
         } else {
