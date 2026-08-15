@@ -40,6 +40,12 @@ impl StatementReducer {
             ) {
                 self.ops.push(Op::MarkUninitialized { slot });
             }
+            for name in lexical {
+                if let Some(slot) = self.locals.get(&name).copied() {
+                    self.locals
+                        .insert(format!("\0lexical-predeclared:{name}"), slot);
+                }
+            }
             for statement in statements {
                 if let Statement::ImportDeclaration(import) = statement {
                     if let Some(specifiers) = &import.specifiers {
