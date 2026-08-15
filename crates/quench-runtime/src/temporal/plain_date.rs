@@ -122,7 +122,7 @@ fn has_unknown_critical_annotation(text: &str) -> bool {
 }
 
 fn date_part(text: &str) -> &str {
-    text.split(['T', '[']).next().unwrap_or(text)
+    text.split(['T', 't', ' ', '[']).next().unwrap_or(text)
 }
 
 fn checked_date_object(year: i32, month: i32, day: i32) -> Result<Value, VmError> {
