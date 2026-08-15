@@ -128,6 +128,8 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::String => Some(Builtin::ObjectPrototype),
         Builtin::Symbol => Some(Builtin::ObjectPrototype),
         Builtin::TemporalDuration => Some(Builtin::TemporalDurationPrototype),
+        Builtin::TemporalInstant => Some(Builtin::TemporalInstantPrototype),
+        Builtin::TemporalZonedDateTime => Some(Builtin::TemporalZonedDateTimePrototype),
         Builtin::TemporalPlainDate => Some(Builtin::TemporalPlainDatePrototype),
         Builtin::TemporalPlainTime => Some(Builtin::TemporalPlainTimePrototype),
         Builtin::IntlCollator => Some(Builtin::IntlCollatorPrototype),
@@ -210,6 +212,8 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::StringPrototype
             | Builtin::BigIntPrototype
             | Builtin::TemporalDurationPrototype
+            | Builtin::TemporalInstantPrototype
+            | Builtin::TemporalZonedDateTimePrototype
             | Builtin::TemporalPlainDatePrototype
             | Builtin::TemporalPlainTimePrototype
     )

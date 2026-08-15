@@ -57,6 +57,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     }
     match (builtin, key) {
         (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
+        (Temporal, "Instant") => Some(Value::Builtin(TemporalInstant)),
+        (Temporal, "ZonedDateTime") => Some(Value::Builtin(TemporalZonedDateTime)),
         (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
         (Temporal, "PlainDateTime") => Some(Value::Builtin(TemporalPlainDateTime)),
         (Temporal, "PlainTime") => Some(Value::Builtin(TemporalPlainTime)),
@@ -64,6 +66,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
         (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
         (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
+        (TemporalInstant, "prototype") => Some(Value::Builtin(TemporalInstantPrototype)),
+        (TemporalZonedDateTime, "prototype") => {
+            Some(Value::Builtin(TemporalZonedDateTimePrototype))
+        }
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
         (TemporalPlainDate, "compare") => Some(Value::Builtin(TemporalPlainDateCompare)),

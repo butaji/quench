@@ -217,6 +217,12 @@ fn construct_builtin(
         }
         crate::ops::Builtin::RegExp => construct_regexp(arguments),
         crate::ops::Builtin::TemporalDuration => crate::temporal::duration::construct(arguments),
+        crate::ops::Builtin::TemporalInstant => Ok(Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(vec![(
+                "\0prototype".into(),
+                Value::Builtin(crate::ops::Builtin::TemporalInstantPrototype),
+            )]),
+        ))),
         crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
         crate::ops::Builtin::TemporalPlainDateTime => {
             crate::temporal::plain_date_time::construct(arguments)
