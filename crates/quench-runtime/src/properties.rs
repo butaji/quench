@@ -182,7 +182,18 @@ pub(crate) fn execute_set_property(
         )?;
         return Ok(());
     }
-    if let Some(setter) = crate::property_define::accessor(&target, &key, "set") {
+    finish_set_property(registers, object, &target, &key, value, strict)
+}
+
+fn finish_set_property(
+    registers: &mut Vec<crate::value::Value>,
+    object: u16,
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+    strict: bool,
+) -> Result<(), crate::execute::VmError> {
+    if let Some(setter) = crate::property_define::accessor(target, key, "set") {
         if matches!(setter, crate::value::Value::Undefined) {
             return write_failure(strict);
         }
@@ -211,7 +222,7 @@ pub(crate) fn execute_set_property(
         }
         return set_builtin_property(registers, object, &target, &key, value);
     }
-    finish_property_write(registers, object, &target, &key, value);
+    finish_property_write(registers, object, target, key, value);
     Ok(())
 }
 
