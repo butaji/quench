@@ -1,11 +1,13 @@
 //! `toLocaleString` family and number/string formatting helpers.
-
 use super::{resolve_locales, runtime_error, to_string_value};
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
 mod date_kind;
 pub(crate) mod parse_num;
 pub(crate) use date_kind::DateLocaleKind;
+mod array_values;
+mod date;
+mod locale_number;
 
 #[path = "tolocale_number.rs"]
 mod number;
@@ -59,14 +61,12 @@ pub(crate) mod value {
             Some(Value::BindingCell(value)) => to_string(Some(&value.borrow())),
         }
     }
-
     fn object_string(value: &Value) -> String {
         match value {
             Value::Null => "null".to_string(),
             _ => "[object Object]".to_string(),
         }
     }
-
     fn array_to_string(values: &[Value]) -> String {
         values
             .iter()
@@ -77,7 +77,6 @@ pub(crate) mod value {
             .collect::<Vec<_>>()
             .join(",")
     }
-
     fn symbol_string(value: &str) -> String {
         let Some((symbol, _identity)) = value.split_once('\0') else {
             return value.to_string();
@@ -103,8 +102,13 @@ pub(crate) mod value {
                 super::parse_num::parse_number(&String::from_utf16_lossy(value))
             }
             Some(Value::Object(properties)) => boxed_number(properties),
-            Some(
-                Value::Array(_)
+            Some(value) if is_non_numeric(value) => f64::NAN,
+        }
+    }
+    fn is_non_numeric(value: &Value) -> bool {
+        matches!(
+            value,
+            Value::Array(_)
                 | Value::ArrayBuffer(_)
                 | Value::DataView(_)
                 | Value::Float32Array(_)
@@ -127,11 +131,10 @@ pub(crate) mod value {
                 | Value::Set(_)
                 | Value::Generator(_)
                 | Value::BigInt(_)
-                | Value::ObjectAlias(_),
-            )
-            | Some(Value::HostCapability(_))
-            | Some(Value::Iterator(_)) => f64::NAN,
-        }
+                | Value::ObjectAlias(_)
+                | Value::HostCapability(_)
+                | Value::Iterator(_)
+        )
     }
     fn boxed_number(properties: &[(String, Value)]) -> f64 {
         properties
@@ -177,7 +180,6 @@ pub(crate) mod value {
             Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_) => true,
         }
     }
-
     pub(crate) fn type_of(value: &Value) -> &'static str {
         match value {
             Value::BindingCell(value) => type_of(&value.borrow()),
@@ -371,16 +373,23 @@ pub(crate) mod symbol {
         ))
     }
 }
-
 /// `Array.prototype.toLocaleString`.
 pub(crate) fn array_to_locale_string(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(Value::Array(values)) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.toLocaleString called on non-array",
-        ));
+    let values = match receiver {
+        Some(Value::Array(values)) => values.iter().cloned().collect(),
+        Some(value) => array_values::typed_values(value).ok_or_else(|| {
+            crate::value::error::throw_type_error(
+                "Array.prototype.toLocaleString called on non-array",
+            )
+        })?,
+        None => {
+            return Err(crate::value::error::throw_type_error(
+                "called on null or undefined",
+            ))
+        }
     };
     let locales = resolve_locales(arguments)?;
     let options = arguments.get(1);
@@ -397,16 +406,50 @@ pub(crate) fn dispatch(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     let result = match builtin {
+        Builtin::StringLocaleCompare => string_locale_compare(receiver, arguments),
         Builtin::ArrayToLocaleString => array_to_locale_string(receiver, arguments),
-        Builtin::NumberToLocaleString => number_to_locale_string(receiver, arguments),
-        Builtin::StringToLocaleLowerCase => string_to_locale_case(receiver, false),
-        Builtin::StringToLocaleUpperCase => string_to_locale_case(receiver, true),
-        Builtin::DateToLocaleString => date_to_locale_string(DateLocaleKind::String, arguments),
-        Builtin::DateToLocaleDateString => date_to_locale_string(DateLocaleKind::Date, arguments),
-        Builtin::DateToLocaleTimeString => date_to_locale_string(DateLocaleKind::Time, arguments),
+        Builtin::NumberToLocaleString => locale_number::to_locale_string(receiver, arguments),
+        Builtin::StringToLocaleLowerCase => string_to_locale_case(receiver, arguments, false),
+        Builtin::StringToLocaleUpperCase => string_to_locale_case(receiver, arguments, true),
+        Builtin::DateToLocaleString => {
+            date::to_locale_string(DateLocaleKind::String, receiver, arguments)
+        }
+        Builtin::DateToLocaleDateString => {
+            date::to_locale_string(DateLocaleKind::Date, receiver, arguments)
+        }
+        Builtin::DateToLocaleTimeString => {
+            date::to_locale_string(DateLocaleKind::Time, receiver, arguments)
+        }
         _ => return None,
     };
     Some(result)
+}
+
+fn string_locale_compare(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(crate::vm::not_callable)?;
+    if matches!(receiver, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "String.prototype.localeCompare called on null or undefined",
+        ));
+    }
+    let left = crate::conversion::to_string(receiver)?;
+    let right =
+        crate::conversion::to_string(arguments.first().map_or(&Value::Undefined, |value| value))?;
+    let collator_arguments = arguments
+        .get(1..)
+        .map_or_else(Vec::new, |values| values.to_vec());
+    crate::intl::collator::construct(&collator_arguments)?;
+    let result = match left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase()) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => match (left == right, left.cmp(&right)) {
+            (true, _) => 0.0,
+            (false, std::cmp::Ordering::Less) => 1.0,
+            (false, std::cmp::Ordering::Greater) => -1.0,
+            (false, std::cmp::Ordering::Equal) => 0.0,
+        },
+        std::cmp::Ordering::Greater => 1.0,
+    };
+    Ok(Value::Number(result))
 }
 
 fn element_to_locale_string(
@@ -439,77 +482,19 @@ fn locale_element_call(
     Ok(to_string_value(value))
 }
 
-pub(crate) fn number_to_locale_string(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
-    let number = match receiver {
-        Some(Value::Number(number)) => *number,
-        _ => return Err(runtime_error("TypeError: Number.prototype.toLocaleString")),
-    };
-    let locales = resolve_locales(arguments)?;
-    Ok(Value::String(format_number(
-        number,
-        &locales,
-        arguments.get(1),
-    )))
-}
-fn format_number(number: f64, locales: &[String], options: Option<&Value>) -> String {
-    let locale = locales.first().cloned().unwrap_or_else(|| "en".to_string());
-    let resolved = number_resolved(locale, options);
-    number::format_resolved(number, &resolved)
-}
-fn number_resolved(locale: String, options: Option<&Value>) -> Vec<(String, Value)> {
-    let mut properties = vec![
-        ("locale".to_string(), Value::String(locale)),
-        ("style".to_string(), Value::String("decimal".to_string())),
-        ("useGrouping".to_string(), Value::Boolean(true)),
-        ("minimumIntegerDigits".to_string(), Value::Number(1.0)),
-        ("minimumFractionDigits".to_string(), Value::Number(0.0)),
-        ("maximumFractionDigits".to_string(), Value::Number(3.0)),
-    ];
-    if let Some(Value::Object(option_map)) = options {
-        for (key, value) in option_map.iter() {
-            let value = to_string_value(value);
-            match key.as_str() {
-                "minimumFractionDigits" => {
-                    if let Ok(number) = value.parse() {
-                        properties
-                            .push(("minimumFractionDigits".to_string(), Value::Number(number)));
-                    }
-                }
-                "maximumFractionDigits" => {
-                    if let Ok(number) = value.parse() {
-                        properties
-                            .push(("maximumFractionDigits".to_string(), Value::Number(number)));
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    properties
-}
-
 pub(crate) fn string_to_locale_case(
     receiver: Option<&Value>,
+    arguments: &[Value],
     upper: bool,
 ) -> Result<Value, VmError> {
     let Some(Value::String(value)) = receiver else {
         return Err(runtime_error("TypeError: String.prototype.toLocale*Case"));
     };
-    let result = if upper {
-        value.to_uppercase()
-    } else {
-        value.to_lowercase()
-    };
+    let locale = resolve_locales(arguments)?
+        .first()
+        .cloned()
+        .unwrap_or_default();
+    let result = case::locale_case(value, &locale, upper);
     Ok(Value::String(result))
 }
-
-pub(crate) fn date_to_locale_string(
-    kind: DateLocaleKind,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
-    let _ = arguments;
-    Ok(Value::String(kind.default().to_string()))
-}
+mod case;

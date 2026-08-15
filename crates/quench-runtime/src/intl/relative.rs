@@ -1,23 +1,65 @@
 //! `Intl.RelativeTimeFormat`.
-
 use crate::{execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string,
-    to_string_value, SLOT,
+    default_locale, make_array, make_instance, make_object, resolve_locales, runtime_error,
+    slot_string, SLOT,
 };
-
+mod polish;
 pub(crate) struct RelativeOptions {
     locale: String,
     style: String,
     numeric: String,
+    numbering_system: String,
+}
+fn apply_unicode_extension(formatter: &mut RelativeOptions) -> (Option<String>, Option<String>) {
+    let mut unicode_locale = None;
+    let mut unicode_numbering = None;
+    if let Some((base, extension)) = formatter.locale.split_once("-u-") {
+        let parts: Vec<&str> = extension.split('-').collect();
+        if let Some(value) = parts
+            .windows(2)
+            .find(|pair| pair[0] == "nu")
+            .map(|pair| pair[1])
+        {
+            unicode_numbering = Some(value.to_string());
+            if matches!(value, "arab" | "latn") {
+                formatter.numbering_system = value.to_string();
+                unicode_locale = Some(formatter.locale.clone());
+            }
+        }
+        formatter.locale = base.to_string();
+    }
+    (unicode_locale, unicode_numbering)
+}
+
+fn read_options(options: Option<&Value>, formatter: &mut RelativeOptions) -> Result<(), VmError> {
+    if matches!(options, Some(Value::Null)) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert null to object",
+        ));
+    }
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(());
+    };
+    let source = match options {
+        Value::Object(properties) => Value::Object(properties.clone()),
+        _ => Value::Builtin(crate::ops::Builtin::ObjectPrototype),
+    };
+    for key in ["localeMatcher", "numberingSystem", "style", "numeric"] {
+        let value = crate::execute::get_property_result(&source, key)?;
+        if !matches!(value, Value::Undefined) {
+            apply_option(formatter, key, &value)?;
+        }
+    }
+    Ok(())
 }
 
 /// A single formatted part: a type, its text, and whether it carries the unit.
-struct Part {
-    ty: &'static str,
-    value: String,
-    unit: bool,
+pub(super) struct Part {
+    pub(super) ty: &'static str,
+    pub(super) value: String,
+    pub(super) unit: bool,
 }
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -33,30 +75,13 @@ impl RelativeOptions {
             locale,
             style: "long".to_string(),
             numeric: "always".to_string(),
+            numbering_system: "latn".to_string(),
         };
-        if let Some(Value::Object(properties)) = options {
-            for (key, value) in properties.iter() {
-                if matches!(value, Value::Undefined) {
-                    continue;
-                }
-                let text = to_string_value(value);
-                match key.as_str() {
-                    "style" => {
-                        if let Some(style) = valid_enum(&text, &["long", "short", "narrow"]) {
-                            formatter.style = style;
-                        } else {
-                            return Err(runtime_error("RangeError: invalid style"));
-                        }
-                    }
-                    "numeric" => {
-                        if let Some(numeric) = valid_enum(&text, &["always", "auto"]) {
-                            formatter.numeric = numeric;
-                        } else {
-                            return Err(runtime_error("RangeError: invalid numeric"));
-                        }
-                    }
-                    _ => {}
-                }
+        let (unicode_locale, unicode_numbering) = apply_unicode_extension(&mut formatter);
+        read_options(options, &mut formatter)?;
+        if let (Some(locale), Some(numbering)) = (unicode_locale, unicode_numbering) {
+            if formatter.numbering_system == numbering {
+                formatter.locale = locale;
             }
         }
         Ok(formatter)
@@ -78,7 +103,7 @@ impl RelativeOptions {
             ),
             (SLOT.to_string(), self.slot()),
         ];
-        make_object(properties)
+        make_instance(crate::ops::Builtin::IntlRelativeTimeFormat, properties)
     }
 
     fn slot(&self) -> Value {
@@ -88,10 +113,51 @@ impl RelativeOptions {
             ("numeric".to_string(), Value::String(self.numeric.clone())),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(self.numbering_system.clone()),
             ),
         ])
     }
+}
+
+fn apply_option(formatter: &mut RelativeOptions, key: &str, value: &Value) -> Result<(), VmError> {
+    let text = crate::conversion::to_string(value)?;
+    match key {
+        "localeMatcher" if matches!(text.as_str(), "lookup" | "best fit") => Ok(()),
+        "localeMatcher" => Err(runtime_error("RangeError: invalid localeMatcher")),
+        "style" => set_enum(
+            &mut formatter.style,
+            &text,
+            &["long", "short", "narrow"],
+            "style",
+        ),
+        "numeric" => set_enum(
+            &mut formatter.numeric,
+            &text,
+            &["always", "auto"],
+            "numeric",
+        ),
+        "numberingSystem" => set_numbering_system(formatter, text),
+        _ => Ok(()),
+    }
+}
+
+fn set_enum(target: &mut String, text: &str, allowed: &[&str], name: &str) -> Result<(), VmError> {
+    let value = valid_enum(text, allowed).ok_or_else(|| match name {
+        "style" => runtime_error("RangeError: invalid style"),
+        _ => runtime_error("RangeError: invalid numeric"),
+    })?;
+    *target = value;
+    Ok(())
+}
+
+fn set_numbering_system(formatter: &mut RelativeOptions, text: String) -> Result<(), VmError> {
+    if !valid_numbering_system(&text) {
+        return Err(runtime_error("RangeError: invalid numberingSystem"));
+    }
+    if matches!(text.as_str(), "arab" | "latn") {
+        formatter.numbering_system = text;
+    }
+    Ok(())
 }
 
 fn valid_enum(text: &str, allowed: &[&str]) -> Option<String> {
@@ -100,6 +166,16 @@ fn valid_enum(text: &str, allowed: &[&str]) -> Option<String> {
     } else {
         None
     }
+}
+
+fn valid_numbering_system(text: &str) -> bool {
+    !text.is_empty()
+        && text.split('-').all(|part| {
+            (3..=8).contains(&part.len())
+                && part
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        })
 }
 
 fn singularize(unit: &str) -> String {
@@ -178,179 +254,9 @@ fn phrase_parts(value: f64, unit: &str, style: &str, numeric: &str, locale: &str
         }
     }
     if locale.starts_with("pl") {
-        polish_parts(value, unit, style)
+        polish::parts(value, unit, style)
     } else {
         numeric_parts(value, unit, style)
-    }
-}
-
-fn polish_parts(value: f64, unit: &str, style: &str) -> Vec<Part> {
-    let negative = value < 0.0 || (value == 0.0 && value.is_sign_negative());
-    let text = polish_number(value.abs());
-    let mut parts = number_parts(&text);
-    for part in &mut parts {
-        part.unit = true;
-    }
-    let word = polish_word(unit, style, value.abs());
-    let prefix = if negative { "" } else { "za " };
-    let suffix = if negative { " temu" } else { "" };
-    let mut result = Vec::new();
-    if !prefix.is_empty() {
-        result.push(Part {
-            ty: "literal",
-            value: prefix.to_string(),
-            unit: false,
-        });
-    }
-    result.extend(parts);
-    result.push(Part {
-        ty: "literal",
-        value: format!(" {word}{suffix}"),
-        unit: false,
-    });
-    result
-}
-
-fn polish_number(value: f64) -> String {
-    let grouped = grouped_number(value)
-        .replace(',', "\u{a0}")
-        .replace('.', "|");
-    if value < 10_000.0 {
-        grouped.replace('\u{a0}', "")
-    } else {
-        grouped
-    }
-}
-
-fn polish_word(unit: &str, style: &str, value: f64) -> String {
-    if value.fract() != 0.0 {
-        if style != "long" {
-            return polish_fractional_short_word(unit, style);
-        }
-        return polish_fractional_long_word(unit, style);
-    }
-    let plural = polish_plural(value);
-    if style != "long" {
-        return polish_short_word(unit, style, plural);
-    }
-    polish_long_word(unit, plural)
-}
-
-fn polish_fractional_short_word(unit: &str, style: &str) -> String {
-    match unit {
-        "second" => {
-            if style == "narrow" {
-                "s"
-            } else {
-                "sek."
-            }
-        }
-        "minute" => "min",
-        "hour" => {
-            if style == "narrow" {
-                "g."
-            } else {
-                "godz."
-            }
-        }
-        "day" => "dnia",
-        "week" => "tyg.",
-        "month" => "mies.",
-        "quarter" => "kw.",
-        _ => "roku",
-    }
-    .to_string()
-}
-
-fn polish_fractional_long_word(unit: &str, style: &str) -> String {
-    match unit {
-        "day" => "dnia",
-        "week" => "tygodnia",
-        "month" => "miesiąca",
-        "quarter" => "kwartału",
-        "year" => "roku",
-        "second" => {
-            if style == "narrow" {
-                "s"
-            } else if style == "short" {
-                "sek."
-            } else {
-                "sekundy"
-            }
-        }
-        "minute" => {
-            if style == "long" {
-                "minuty"
-            } else {
-                "min"
-            }
-        }
-        "hour" => {
-            if style == "narrow" {
-                "g."
-            } else if style == "short" {
-                "godz."
-            } else {
-                "godziny"
-            }
-        }
-        _ => "lat",
-    }
-    .to_string()
-}
-
-fn polish_long_word(unit: &str, plural: usize) -> String {
-    let words = match unit {
-        "second" => ["sekundę", "sekundy", "sekund"],
-        "minute" => ["minutę", "minuty", "minut"],
-        "hour" => ["godzinę", "godziny", "godzin"],
-        "day" => ["dzień", "dni", "dni"],
-        "week" => ["tydzień", "tygodnie", "tygodni"],
-        "month" => ["miesiąc", "miesiące", "miesięcy"],
-        "quarter" => ["kwartał", "kwartały", "kwartałów"],
-        _ => ["rok", "lata", "lat"],
-    };
-    words[plural].to_string()
-}
-
-fn polish_short_word(unit: &str, style: &str, plural: usize) -> String {
-    let words = match unit {
-        "second" => {
-            if style == "narrow" {
-                ["s", "s", "s"]
-            } else {
-                ["sek.", "sek.", "sek."]
-            }
-        }
-        "minute" => ["min", "min", "min"],
-        "hour" => {
-            if style == "narrow" {
-                ["g.", "g.", "g."]
-            } else {
-                ["godz.", "godz.", "godz."]
-            }
-        }
-        "day" => ["dzień", "dni", "dni"],
-        "week" => ["tydz.", "tyg.", "tyg."],
-        "month" => ["mies.", "mies.", "mies."],
-        "quarter" => ["kw.", "kw.", "kw."],
-        _ => ["rok", "lata", "lat"],
-    };
-    words[plural].to_string()
-}
-
-fn polish_plural(value: f64) -> usize {
-    if value == 1.0 {
-        return 0;
-    }
-    let integer = value as u64;
-    if value.fract() == 0.0
-        && (2..=4).contains(&(integer % 10))
-        && !(12..=14).contains(&(integer % 100))
-    {
-        1
-    } else {
-        2
     }
 }
 
@@ -423,7 +329,7 @@ fn numeric_parts(value: f64, unit: &str, style: &str) -> Vec<Part> {
         part.unit = true;
     }
     parts.extend(number);
-    let word = unit_word(unit, style, magnitude != 1.0);
+    let word = polish::unit_word(unit, style, magnitude != 1.0);
     if negative {
         parts.push(Part {
             ty: "literal",
@@ -440,7 +346,7 @@ fn numeric_parts(value: f64, unit: &str, style: &str) -> Vec<Part> {
     parts
 }
 
-fn grouped_number(value: f64) -> String {
+pub(super) fn grouped_number(value: f64) -> String {
     if value.is_nan() {
         return "NaN".to_string();
     }
@@ -478,7 +384,7 @@ fn group_integer(text: &str) -> String {
     grouped
 }
 
-fn number_parts(text: &str) -> Vec<Part> {
+pub(super) fn number_parts(text: &str) -> Vec<Part> {
     let mut parts = Vec::new();
     let mut digits = String::new();
     let mut fractional = false;
@@ -526,58 +432,6 @@ fn flush_digits(parts: &mut Vec<Part>, digits: &mut String, fractional: bool) {
     });
 }
 
-fn unit_word(unit: &str, style: &str, plural: bool) -> String {
-    if style == "short" || style == "narrow" {
-        short_word(unit, plural)
-    } else {
-        long_word(unit, plural)
-    }
-}
-
-fn short_word(unit: &str, plural: bool) -> String {
-    const WORDS: &[(&str, bool, &str)] = &[
-        ("second", false, "sec."),
-        ("second", true, "sec."),
-        ("minute", false, "min."),
-        ("minute", true, "min."),
-        ("hour", false, "hr."),
-        ("hour", true, "hr."),
-        ("week", false, "wk."),
-        ("week", true, "wk."),
-        ("month", false, "mo."),
-        ("month", true, "mo."),
-        ("year", false, "yr."),
-        ("year", true, "yr."),
-        ("day", false, "day"),
-        ("day", true, "days"),
-        ("quarter", false, "qtr."),
-        ("quarter", true, "qtrs."),
-    ];
-    WORDS
-        .iter()
-        .find(|(name, is_plural, _)| *name == unit && *is_plural == plural)
-        .map_or_else(|| long_word(unit, plural), |(_, _, word)| word.to_string())
-}
-
-fn long_word(unit: &str, plural: bool) -> String {
-    let (single, multi) = match unit {
-        "second" => ("second", "seconds"),
-        "minute" => ("minute", "minutes"),
-        "hour" => ("hour", "hours"),
-        "day" => ("day", "days"),
-        "week" => ("week", "weeks"),
-        "month" => ("month", "months"),
-        "quarter" => ("quarter", "quarters"),
-        "year" => ("year", "years"),
-        _ => (unit, unit),
-    };
-    if plural {
-        multi.to_string()
-    } else {
-        single.to_string()
-    }
-}
-
 pub(crate) fn prototype_method(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
@@ -589,15 +443,25 @@ pub(crate) fn prototype_method(
     let numeric = slot_string(&slots, "numeric").unwrap_or_else(|| "always".to_string());
     match builtin {
         crate::ops::Builtin::IntlRelativeTimeFormatFormat => {
-            let value = super::number::to_number(arguments.first());
-            let unit = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
+            let value = super::tolocale::value::to_number_result(arguments.first())?;
+            let unit = crate::conversion::to_string(
+                arguments.get(1).map_or(&Value::Undefined, |value| value),
+            )?;
+            if !value.is_finite() {
+                return Err(runtime_error("RangeError: value must be finite"));
+            }
             Ok(Value::String(format_relative(
                 value, &unit, &style, &numeric, &locale,
             )?))
         }
         crate::ops::Builtin::IntlRelativeTimeFormatFormatToParts => {
-            let value = super::number::to_number(arguments.first());
-            let unit = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
+            let value = super::tolocale::value::to_number_result(arguments.first())?;
+            let unit = crate::conversion::to_string(
+                arguments.get(1).map_or(&Value::Undefined, |value| value),
+            )?;
+            if !value.is_finite() {
+                return Err(runtime_error("RangeError: value must be finite"));
+            }
             parts_value(value, &unit, &style, &numeric, &locale)
         }
         crate::ops::Builtin::IntlRelativeTimeFormatResolvedOptions => Ok(make_object(vec![
@@ -606,7 +470,9 @@ pub(crate) fn prototype_method(
             ("numeric".to_string(), Value::String(numeric)),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(
+                    slot_string(&slots, "numberingSystem").unwrap_or_else(|| "latn".to_string()),
+                ),
             ),
         ])),
         _ => Err(runtime_error("TypeError: method not found")),
@@ -616,7 +482,6 @@ pub(crate) fn prototype_method(
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
     super::intl_slots(receiver)
 }
-
 pub(crate) fn dispatch(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
