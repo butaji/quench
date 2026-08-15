@@ -234,10 +234,8 @@ fn find_match<'a>(
     sticky: bool,
 ) -> Result<Option<regress::Match>, VmError> {
     catch_unwind(AssertUnwindSafe(|| {
-        let units: Vec<u16> = text.encode_utf16().collect();
         regex
-            .find_from_utf16(&units, 0)
-            .next()
+            .find(text)
             .filter(|matched| !sticky || matched.start() == 0)
     }))
     .map_err(|_| VmError::EvalError("invalid regular expression execution".to_string()))
@@ -279,7 +277,9 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         .flatten();
     let matched = found.is_some();
     if flags.contains('g') || flags.contains('y') {
-        let new_index = found.map_or(0, |match_| match_.end() + search_start);
+        let new_index = found.map_or(0, |match_| {
+            crate::strings::byte_to_utf16(&s, match_.end() + search_start)
+        });
         set_last_index(receiver, new_index as f64)?;
     }
     Ok(Value::Boolean(matched))
@@ -333,12 +333,12 @@ fn build_match_result(
     search_start: usize,
     flags: &str,
 ) -> Result<Value, VmError> {
-    let new_index = m.end() + search_start;
+    let new_index = crate::strings::byte_to_utf16(s, m.end() + search_start);
     if flags.contains('g') || flags.contains('y') {
         set_last_index(receiver, new_index as f64)?;
     }
     let values = match_values(s, &m, search_start);
-    let index = Value::Number((m.start() + search_start) as f64);
+    let index = Value::Number(crate::strings::byte_to_utf16(s, m.start() + search_start) as f64);
     Ok(match_result(values, index, s))
 }
 
@@ -347,17 +347,15 @@ fn match_values(text: &str, m: &regress::Match, offset: usize) -> Vec<Value> {
         .groups()
         .map(|group| match group {
             Some(range) => {
-                let start = crate::strings::utf16_byte_index(text, offset + range.start);
-                let end = crate::strings::utf16_byte_index(text, offset + range.end);
-                Value::String(text[start..end].to_string())
+                Value::String(text[offset + range.start..offset + range.end].to_string())
             }
             None => Value::Undefined,
         })
         .collect::<Vec<_>>();
     if values.is_empty() {
-        let start = crate::strings::utf16_byte_index(text, offset + m.start());
-        let end = crate::strings::utf16_byte_index(text, offset + m.end());
-        values.push(Value::String(text[start..end].to_string()));
+        values.push(Value::String(
+            text[offset + m.start()..offset + m.end()].to_string(),
+        ));
     }
     values
 }
