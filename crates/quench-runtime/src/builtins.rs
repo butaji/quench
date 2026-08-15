@@ -600,7 +600,6 @@ pub(crate) fn define_own_property(
     descriptor: &[(String, Value)],
 ) -> Result<Value, crate::execute::VmError> {
     let key_value = Value::String(key.to_string());
-    crate::super_scope::trigger_deferred(target, key)?;
     let current = crate::builtins::object::descriptor(Some(target), Some(&key_value))?;
     if is_module_namespace(target) {
         return define_namespace_property(target, key, descriptor, &current);
