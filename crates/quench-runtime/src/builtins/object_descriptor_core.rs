@@ -271,6 +271,14 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::GeneratorFunctionPrototype && key == "prototype" {
+        return Some(descriptor_object_with_flags(
+            Value::Builtin(Builtin::ObjectPrototype),
+            false,
+            false,
+            true,
+        ));
+    }
     if builtin == Builtin::SymbolPrototype && key == "description" {
         return Some(accessor_descriptor(Builtin::SymbolDescriptionGetter));
     }
