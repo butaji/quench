@@ -264,26 +264,8 @@ fn early_property_access(
             "'caller' and 'arguments' are unavailable on this function",
         )));
     }
-    if let Some(getter) = array_accessor(value, key, "get") {
-        if matches!(getter, Value::Undefined) {
-            return Some(Ok(Value::Undefined));
-        }
-        return Some(invoke_accessor(&getter, receiver));
-    }
-    if let Value::Array(values) = value {
-        let has_own = key == "length"
-            || crate::arrays::array_index(key)
-                .is_some_and(|index| values.has_index(index as usize))
-            || values.descriptor(key).is_some()
-            || values.property(key).is_some();
-        if !has_own {
-            if let Some(getter) = crate::arrays::prototype_override_getter(key) {
-                if matches!(getter, Value::Undefined) {
-                    return Some(Ok(Value::Undefined));
-                }
-                return Some(invoke_accessor(&getter, receiver));
-            }
-        }
+    if let Some(result) = array_early_access(value, key, receiver) {
+        return Some(result);
     }
     if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
         return Some(result);
@@ -294,6 +276,33 @@ fn early_property_access(
     None
 }
 
+fn array_early_access(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
+    if let Some(getter) = array_accessor(value, key, "get") {
+        return Some(match getter {
+            Value::Undefined => Ok(Value::Undefined),
+            getter => invoke_accessor(&getter, receiver),
+        });
+    }
+    let Value::Array(values) = value else {
+        return None;
+    };
+    let has_own = key == "length"
+        || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+        || values.descriptor(key).is_some()
+        || values.property(key).is_some();
+    if has_own {
+        return None;
+    }
+    crate::arrays::prototype_override_getter(key).map(|getter| match getter {
+        Value::Undefined => Ok(Value::Undefined),
+        getter => invoke_accessor(&getter, receiver),
+    })
+}
+
 fn property_from_descriptor(
     value: &Value,
     key: &str,
@@ -301,17 +310,17 @@ fn property_from_descriptor(
 ) -> Result<Value, VmError> {
     let descriptor =
         crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))?;
-    if let Some(result) = descriptor_result(&descriptor, receiver, value, key) {
-        return result;
-    }
+    descriptor_result(&descriptor, receiver, value, key)
+        .unwrap_or_else(|| accessor_property(value, key, receiver))
+}
+
+fn accessor_property(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
     let getter = crate::property_define::accessor(value, key, "get");
-    let Some(getter) = getter else {
-        return Ok(receiver_property(value, key, receiver));
-    };
-    if matches!(getter, Value::Undefined) {
-        return Ok(Value::Undefined);
+    match getter {
+        None => Ok(receiver_property(value, key, receiver)),
+        Some(Value::Undefined) => Ok(Value::Undefined),
+        Some(getter) => invoke_accessor(&getter, receiver),
     }
-    invoke_accessor(&getter, receiver)
 }
 
 fn descriptor_result(
