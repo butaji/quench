@@ -145,7 +145,16 @@ fn filter_step(
             &[value.clone(), Value::Number(index as f64)],
         );
         set_filter_executing(data, false);
-        let selected = selected?;
+        let selected = match selected {
+            Ok(selected) => selected,
+            Err(error) => {
+                let close = crate::collections::iterator::return_(Some(&iterator), &[]);
+                return Err(match close {
+                    Err(close_error) => close_error,
+                    Ok(_) => error,
+                });
+            }
+        };
         index = index.saturating_add(1);
         set_filter_index(data, index);
         if crate::execute::is_truthy(&selected) {
