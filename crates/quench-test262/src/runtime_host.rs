@@ -770,13 +770,22 @@ impl Test262Host for RuntimeHost {
         path: &Path,
     ) -> Result<(), String> {
         quench_runtime::vm::reset_current_global();
-        reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
+        let scripts = harness
+            .iter()
+            .map(|source| ScriptSource {
+                source,
+                strict: false,
+            })
+            .collect::<Vec<_>>();
+        let harness_program =
+            reduce_script_sources(&scripts).map_err(|errors| errors.join("; "))?;
+        execute_program(&harness_program)?;
+        reduce_module_source(source).map_err(|errors| errors.join("; "))?;
         let mut graph = module_graph(path, source)?;
         let entry = graph
             .entry()
             .ok_or_else(|| "module graph missing entry".to_string())?;
-        let linked =
-            LinkedModuleGraph::compile_with_entry_prefix(&mut graph, Some(entry), harness)?;
+        let linked = LinkedModuleGraph::compile_with_entry_prefix(&mut graph, Some(entry), &[])?;
         quench_runtime::builtins::reset_intrinsic_prototype_state();
         linked.execute(&graph, entry)
     }
