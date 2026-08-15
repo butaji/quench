@@ -129,6 +129,11 @@ fn maximize(tag: &str) -> String {
         script.unwrap_or(default_script),
         region.unwrap_or(default_region)
     );
+    append_extensions(&mut result, &parts, &extension);
+    result
+}
+
+fn append_extensions(result: &mut String, parts: &[&str], extension: &str) {
     for part in parts.iter().skip(1) {
         if part.len() != 4
             && !(part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit())))
@@ -137,8 +142,7 @@ fn maximize(tag: &str) -> String {
             result.push_str(part);
         }
     }
-    result.push_str(&extension);
-    result
+    result.push_str(extension);
 }
 
 fn undefined_language(script: Option<&str>, region: Option<&str>) -> &'static str {
