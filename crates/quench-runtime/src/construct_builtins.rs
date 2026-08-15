@@ -26,6 +26,15 @@ fn construct_builtin_match(
             crate::finalization_registry::construct(arguments)
         }
         crate::ops::Builtin::RegExp => construct_regexp(arguments),
+        _ => construct_builtin_tail(builtin, arguments),
+    }
+}
+
+fn construct_builtin_tail(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    match builtin {
         crate::ops::Builtin::TemporalDuration => crate::temporal::duration::construct(arguments),
         crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
         crate::ops::Builtin::ShadowRealm => {
