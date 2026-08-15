@@ -327,6 +327,8 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::TemporalPlainDatePrototype, "calendarId") => {
             Builtin::TemporalPlainDateCalendarIdGetter
         }
+        (Builtin::TemporalPlainDatePrototype, "era") => Builtin::TemporalPlainDateEraGetter,
+        (Builtin::TemporalPlainDatePrototype, "eraYear") => Builtin::TemporalPlainDateEraYearGetter,
         (Builtin::TemporalInstantPrototype, "epochNanoseconds") => {
             Builtin::TemporalInstantEpochNanosecondsGetter
         }

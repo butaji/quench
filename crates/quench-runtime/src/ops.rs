@@ -410,6 +410,8 @@ pub enum Builtin {
     TemporalPlainDateToString,
     TemporalPlainDateToJSON,
     TemporalPlainDateCalendarIdGetter,
+    TemporalPlainDateEraGetter,
+    TemporalPlainDateEraYearGetter,
     TemporalPlainDateYearGetter,
     TemporalPlainDateMonthGetter,
     TemporalPlainDateMonthCodeGetter,
