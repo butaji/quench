@@ -13,6 +13,15 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
         Builtin::ErrorPrototype => {
             &["constructor", "name", "message", "cause", "stack", "toString"]
         }
+        Builtin::RangeErrorPrototype
+        | Builtin::ReferenceErrorPrototype
+        | Builtin::SyntaxErrorPrototype
+        | Builtin::EvalErrorPrototype
+        | Builtin::URIErrorPrototype
+        | Builtin::AggregateErrorPrototype
+        | Builtin::TypeErrorPrototype => {
+            &["constructor", "name", "message", "stack", "toString"]
+        }
         Builtin::SuppressedErrorPrototype => &["constructor", "name", "message", "toString"],
         Builtin::DisposableStack => &["length", "name", "prototype"],
         Builtin::DisposableStackPrototype => &[
