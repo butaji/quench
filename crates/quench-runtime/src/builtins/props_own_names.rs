@@ -168,6 +168,13 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
 
 fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::ArrayBufferPrototype => &[
+            "constructor",
+            "byteLength",
+            "resize",
+            "transferToImmutable",
+            "Symbol.toStringTag",
+        ],
         Builtin::SharedArrayBufferPrototype => &[
             "constructor",
             "byteLength",
