@@ -298,16 +298,7 @@ pub(crate) fn format_number_rounded(value: f64, max_fraction: u32, increment: u3
 
 pub(crate) fn format_significant(value: f64, minimum: u32, maximum: u32, mode: &str) -> String {
     if value == 0.0 {
-        let zero = if minimum > 1 {
-            format!("{:.*}", (minimum - 1) as usize, 0.0)
-        } else {
-            "0".to_string()
-        };
-        return if value.is_sign_negative() {
-            format!("-{zero}")
-        } else {
-            zero
-        };
+        return format_zero_significant(value, minimum);
     }
     if let Some(text) = format_large_significant(value, minimum, maximum, mode) {
         return text;
@@ -322,7 +313,24 @@ pub(crate) fn format_significant(value: f64, minimum: u32, maximum: u32, mode: &
         round_units(value / quantum, mode) * quantum
     };
     let decimals = decimal_places.max(0) as usize;
-    let mut text = format!("{:.*}", decimals, rounded);
+    let text = format!("{:.*}", decimals, rounded);
+    finish_significant(text, minimum)
+}
+
+fn format_zero_significant(value: f64, minimum: u32) -> String {
+    let zero = if minimum > 1 {
+        format!("{:.*}", (minimum - 1) as usize, 0.0)
+    } else {
+        "0".to_string()
+    };
+    if value.is_sign_negative() {
+        format!("-{zero}")
+    } else {
+        zero
+    }
+}
+
+fn finish_significant(mut text: String, minimum: u32) -> String {
     if let Some((whole, fraction)) = text.split_once('.') {
         let mut fraction = fraction.trim_end_matches('0').to_string();
         let required = minimum.saturating_sub(whole.trim_start_matches('-').len() as u32);
