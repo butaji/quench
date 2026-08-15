@@ -14,6 +14,7 @@ use quench_runtime::reduce::{
     inspect_module_source, reduce_module_sequence, reduce_module_source, reduce_script_sources,
     reduce_source, ScriptSource,
 };
+use quench_runtime::value::Value;
 use quench_runtime::vm::{execute_with_context, ExecutionScope, VmContext};
 
 use crate::module_graph::{ModuleGraph, ModuleId, ModuleKind};
@@ -396,10 +397,36 @@ impl LinkedModule {
             self.linked_exports
                 .borrow_mut()
                 .insert(name.to_string(), cell);
+            self.refresh_namespace_export(name);
         } else {
             self.linked_exports.borrow_mut().remove(name);
             self.ambiguous_exports.borrow_mut().insert(name.to_string());
         }
+    }
+
+    fn refresh_namespace_export(&self, name: &str) {
+        let Some(namespace) = self.namespace.borrow().as_ref().cloned() else {
+            return;
+        };
+        let Some(cell) = self.linked_exports.borrow().get(name).cloned() else {
+            return;
+        };
+        let Value::Object(properties) = namespace.get() else {
+            return;
+        };
+        let value = Value::BindingCell(cell.shared());
+        let descriptor_key = format!("\0quench:descriptor:\0{name}");
+        let mut entries = properties.iter().cloned().collect::<Vec<_>>();
+        let descriptor = Value::object(vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(false)),
+        ]);
+        entries.retain(|(key, _)| key != name && key != &descriptor_key);
+        entries.push((name.to_string(), value));
+        entries.push((descriptor_key, descriptor));
+        namespace.set(Value::object(entries));
     }
 
     fn reset_links(&self) {
