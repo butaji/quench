@@ -38,12 +38,6 @@ fn validate_constructor(receiver: Option<&Value>) -> Result<(), VmError> {
             "Promise constructor must be callable",
         ));
     }
-    let resolve = crate::execute::get_property_result(constructor, "resolve")?;
-    if !crate::conversion::is_callable(&resolve) {
-        return Err(crate::value::error::throw_type_error(
-            "Promise resolve must be callable",
-        ));
-    }
     Ok(())
 }
 
