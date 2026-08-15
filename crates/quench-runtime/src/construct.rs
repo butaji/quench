@@ -239,6 +239,9 @@ fn construct_builtin(
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         crate::ops::Builtin::DisposableStack => crate::disposable_stack::construct(),
         crate::ops::Builtin::AsyncDisposableStack => crate::disposable_stack::construct_async(),
+        crate::ops::Builtin::AbstractModuleSource => Err(crate::value::error::throw_type_error(
+            "AbstractModuleSource is abstract",
+        )),
         crate::ops::Builtin::FinalizationRegistry => {
             crate::finalization_registry::construct(arguments)
         }

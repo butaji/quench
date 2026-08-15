@@ -9,6 +9,7 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
     };
     match step_target(data)? {
         StepTarget::Value(value) => Ok(value),
+        StepTarget::ArrayLike(value, index) => array_like_step(data, value, index),
         StepTarget::Protocol(iterator, cached) => {
             let next = resolve_next(data, &iterator, cached)?;
             let result = iterator_protocol::call_next(data, &next, &iterator)?;
@@ -19,6 +20,7 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
 
 enum StepTarget {
     Value(Option<Value>),
+    ArrayLike(Value, usize),
     Protocol(Value, Value),
 }
 
@@ -30,6 +32,10 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
             index,
             done,
         } => StepTarget::Value(native_step(values, index, done)),
+        IteratorState::ArrayLike { value, index, done } if !*done => {
+            StepTarget::ArrayLike(value.clone(), *index)
+        }
+        IteratorState::ArrayLike { .. } => StepTarget::Value(None),
         IteratorState::Set {
             data,
             index,
@@ -59,6 +65,29 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
             StepTarget::Protocol(iterator.clone(), next.clone())
         }
     })
+}
+
+fn array_like_step(
+    data: &IteratorData,
+    value: Value,
+    index: usize,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    let length_value = crate::execute::get_property_result(&value, "length")?;
+    let length = crate::conversion::to_number(&length_value)?;
+    let length = if length.is_finite() && length > 0.0 {
+        length.floor().min(9_007_199_254_740_991.0) as usize
+    } else {
+        0
+    };
+    if index >= length {
+        mark_done(data);
+        return Ok(None);
+    }
+    let result = crate::execute::get_property_result(&value, &index.to_string())?;
+    if let IteratorState::ArrayLike { index, .. } = &mut *data.state.borrow_mut() {
+        *index += 1;
+    }
+    Ok(Some(result))
 }
 
 fn resolve_next(

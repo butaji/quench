@@ -4,7 +4,7 @@ use crate::{
     ops::Op,
     value::{GeneratorData, GeneratorState, Value},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::{
     cell::{Ref, RefCell, RefMut},
     rc::Rc,
@@ -59,6 +59,7 @@ pub(crate) fn create(
         done: RefCell::new(false),
         state: RefCell::new(state),
         pending_yield: RefCell::new(false),
+        async_queue: RefCell::new(VecDeque::new()),
     })))
 }
 
@@ -142,6 +143,17 @@ fn require_normal_parameter_completion(
 }
 pub(crate) fn next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_handle(receiver, "next")?;
+    if generator.function.is_async && is_executing(&generator) {
+        let promise = crate::promise::new_promise();
+        let Value::Promise(result) = promise.clone() else {
+            return Err(VmError::MissingReturn);
+        };
+        generator
+            .async_queue
+            .borrow_mut()
+            .push_back((first_argument(arguments), result));
+        return Ok(promise);
+    }
     let completion = resume(&generator, Resume::Next(first_argument(arguments)));
     if generator.function.is_async {
         return Ok(crate::promise::from_async_generator_completion(
