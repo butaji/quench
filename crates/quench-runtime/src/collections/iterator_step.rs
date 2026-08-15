@@ -81,17 +81,38 @@ fn mapped_step(
     if *done {
         return Ok(None);
     }
-    let Some(value) = super::step_value(iterator)? else {
-        *done = true;
-        return Ok(None);
+    let value = match super::step_value(iterator) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            *done = true;
+            return Ok(None);
+        }
+        Err(error) => return Err(close_mapped_error(iterator, error)),
     };
-    let result = crate::functions::execute_target(
+    let result = match crate::functions::execute_target(
         mapper,
         &Value::Undefined,
         &[value, Value::Number(*index as f64), iterator.clone()],
-    )?;
+    ) {
+        Ok(result) => result,
+        Err(error) => return Err(close_mapped_error(iterator, error)),
+    };
     *index += 1;
     Ok(Some(result))
+}
+
+fn close_mapped_error(iterator: &Value, error: crate::execute::VmError) -> crate::execute::VmError {
+    let completion = match crate::completion::Completion::from_vm_error(error.clone()) {
+        Ok(completion) => completion,
+        Err(_) => return error,
+    };
+    match super::close(iterator.clone(), completion) {
+        Ok(completion) => match completion.into_vm_error() {
+            Err(error) => error,
+            Ok(_) => error,
+        },
+        Err(close_error) => close_error,
+    }
 }
 
 fn step_target_tail(state: &mut IteratorState) -> Result<StepTarget, crate::execute::VmError> {
