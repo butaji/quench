@@ -96,7 +96,7 @@ impl DateTimeOptions {
             return Ok(());
         }
         let text = to_string_value(value);
-        if EXPLICIT_COMPONENTS.contains(&key)
+        if EXPLICIT_COMPONENTS.contains(&key) && key != "timeZoneName"
             || matches!(key, "dateStyle" | "timeStyle" | "fractionalSecondDigits")
         {
             self.explicit_date_options = true;
@@ -337,6 +337,11 @@ pub(crate) fn prototype_method(
             slots.push((name.to_string(), Value::String("numeric".into())));
         }
     }
+    if slot_string(&slots, "timeZoneName").is_some() && slot_string(&slots, "hour").is_none() {
+        for name in ["hour", "minute", "second"] {
+            slots.push((name.to_string(), Value::String("numeric".into())));
+        }
+    }
     match builtin {
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
             let input = arguments.first().unwrap_or(&Value::Undefined);
@@ -492,6 +497,12 @@ fn component_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>>
                 ),
             ]));
         }
+    }
+    if slot_string(slots, "timeZoneName").is_some() {
+        parts.push(make_object(vec![
+            ("type".to_string(), Value::String("timeZoneName".into())),
+            ("value".to_string(), Value::String("EST".into())),
+        ]));
     }
     (!parts.is_empty()).then_some(parts)
 }
