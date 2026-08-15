@@ -21,7 +21,7 @@ main coordinator  ->  ../quench
 workers 01..10     ->  ../quench-branch-01 ... ../quench-branch-10
 ```
 
-Before assigning work, the coordinator checks the actual layout with `git worktree list --porcelain` and checks every target worktree is clean. Workers never commit on, rebase, or otherwise modify `main`. The coordinator is the only writer to `main` and the only person who consolidates changes.
+Before assigning work, the coordinator checks the actual layout with `git worktree list --porcelain` and checks every target worktree is clean. Workers never commit on, rebase, or otherwise modify `main`. The coordinator is the only writer to `main` and the only person who consolidates changes. After every consolidation, each worker updates and rebases its own assigned branch onto the published `main` SHA before accepting another assignment; the coordinator verifies that base in the assignment handoff.
 
 Use the ten workers continuously. Start with disjoint stage ranges from `docs/STAGES.md`, balancing by current failure volume rather than stage count. When failures reveal a common semantic cause, regroup related stages under one explicit owner. A worker may fix a clearly shared root cause that its investigation proves necessary; otherwise it reports the family to Herdr and the coordinator reassigns it. No two workers edit the same semantic area without an explicit coordinator decision.
 
@@ -29,7 +29,7 @@ Use the ten workers continuously. Start with disjoint stage ranges from `docs/ST
 
 Every assignment follows this loop:
 
-1. Update the worker branch from the current coordinator-provided `main` base. Do not start from a stale baseline.
+1. Update and rebase the worker's assigned branch from the current coordinator-provided `main` SHA. Do not start from a stale baseline; report the resulting base SHA to Herdr before the baseline run.
 2. Run the canonical stage runner for the owned range, normally:
 
    ```bash
