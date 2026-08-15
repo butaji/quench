@@ -19,6 +19,8 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "until", "since",
         ],
         Builtin::TemporalPlainDate => &["length", "name", "prototype", "from"],
+        Builtin::TemporalPlainDateTime => &["length", "name", "prototype", "from"],
+        Builtin::TemporalPlainDateTimePrototype => &["constructor", "calendarId"],
         Builtin::TemporalPlainDatePrototype => &[
             "constructor", "calendarId", "era", "eraYear", "year", "month", "monthCode",
             "day", "dayOfWeek", "dayOfYear", "weekOfYear", "daysInWeek", "daysInMonth",
