@@ -571,6 +571,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     let (date, time) = main
         .split_once('T')
         .or_else(|| main.split_once('t'))
+        .or_else(|| main.split_once(' '))
         .unwrap_or((main, "00:00"));
     validate_time_offset(time)?;
     let time = time.split(['+', '-']).next().unwrap_or(time);
@@ -630,10 +631,13 @@ fn validate_time_offset(time: &str) -> Result<(), VmError> {
         return Ok(());
     };
     let offset = &time[index + 1..];
+    let offset = offset
+        .split_once(['.', ','])
+        .map_or(offset, |(prefix, _)| prefix);
     let valid = offset
         .chars()
         .all(|character| character.is_ascii_digit() || character == ':')
-        && matches!(offset.len(), 2 | 4 | 5);
+        && matches!(offset.len(), 2 | 4 | 5 | 6 | 8);
     if valid {
         Ok(())
     } else {
@@ -658,7 +662,10 @@ fn validate_annotations(text: &str) -> Result<(), VmError> {
             .split('[')
             .next()
             .unwrap_or(annotation);
-        if annotation.starts_with('!') && !annotation.starts_with("!u-ca=") {
+        if annotation.starts_with('!')
+            && annotation.contains('=')
+            && !annotation.starts_with("!u-ca=")
+        {
             return Err(crate::value::error::throw_range_error("Invalid annotation"));
         }
         if annotation.starts_with("u-ca=") || annotation.starts_with("!u-ca=") {
