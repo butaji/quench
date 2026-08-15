@@ -550,12 +550,31 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             field
         });
     }
+    if !overflow_reject(options) {
+        constrain_date_fields(&mut fields)?;
+    }
     if matches!(fields.get(5), Some(Value::Number(value)) if *value == 60.0)
         && matches!(options.and_then(|value| crate::execute::get_property_result(value, "overflow").ok()), Some(Value::String(value)) if value == "reject")
     {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
     construct(&fields)
+}
+
+fn overflow_reject(options: Option<&Value>) -> bool {
+    options
+        .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
+        .is_some_and(|value| matches!(value, Value::String(value) if value == "reject"))
+}
+
+fn constrain_date_fields(fields: &mut [Value]) -> Result<(), VmError> {
+    let year = crate::conversion::to_number(&fields[0])?;
+    let month = crate::conversion::to_number(&fields[1])?.clamp(1.0, 12.0);
+    fields[1] = Value::Number(month);
+    let max_day = days_in_month(year as i32, month as u32);
+    let day = crate::conversion::to_number(&fields[2])?.clamp(1.0, max_day as f64);
+    fields[2] = Value::Number(day);
+    Ok(())
 }
 
 fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
@@ -621,6 +640,12 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         else {
             continue;
         };
+        if calendar.len() >= 10
+            && calendar.as_bytes().get(4) == Some(&b'-')
+            && calendar.as_bytes().get(7) == Some(&b'-')
+        {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
         if !calendar_checked {
             validate_calendar(&Value::String(calendar.to_string()))?;
             calendar_checked = true;
