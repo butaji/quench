@@ -18,6 +18,22 @@ pub fn reset_host_agent_state() {
 pub use crate::intl::tolocale::value::is_truthy;
 pub use scope::ExecutionScope;
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+thread_local! {
+    static ERROR_REALM: Cell<Option<RealmId>> = const { Cell::new(None) };
+}
+
+pub(crate) fn with_error_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> T {
+    let previous = ERROR_REALM.with(|slot| slot.replace(Some(realm)));
+    let result = callback();
+    ERROR_REALM.with(|slot| slot.set(previous));
+    result
+}
+
+pub(crate) fn current_error_realm() -> Option<RealmId> {
+    ERROR_REALM.with(Cell::get)
+}
+
 pub(crate) fn with_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> Option<T> {
     realm::with_realm(realm, callback)
 }
@@ -27,12 +43,59 @@ pub(crate) fn global_builtin_exists(key: &str) -> bool {
 }
 
 pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
-    crate::globals::builtin(key).map(Value::Builtin)
+    crate::globals::builtin(key).map(realm_intrinsic)
 }
 
-pub fn reset_current_global() {
-    GLOBAL_OBJECT.with(|global| global.replace(None));
+pub(crate) fn intrinsic_for_global(global: &Value, builtin: Builtin) -> Option<Value> {
+    let Value::Object(object) = global else {
+        return None;
+    };
+    realm::id_for_global(object).and_then(|id| realm::intrinsic(id, builtin))
 }
+
+pub(crate) fn with_global_realm<T>(global: &Value, callback: impl FnOnce() -> T) -> Option<T> {
+    let Value::Object(object) = global else {
+        return None;
+    };
+    realm::id_for_global(object).and_then(|id| realm::with_realm(id, callback))
+}
+
+pub(crate) fn realm_id_for_global(global: &Value) -> Option<RealmId> {
+    let Value::Object(object) = global else {
+        return None;
+    };
+    realm::id_for_global(object)
+}
+
+pub(crate) fn is_intrinsic_bound(bound: &crate::value::BoundFunctionValue) -> bool {
+    realm::is_intrinsic(bound)
+}
+
+pub(crate) fn current_global_for(value: &Value) -> Option<Value> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    realm::current_global_for(object).map(Value::Object)
+}
+
+pub(crate) fn intrinsic_for_realm(realm: RealmId, builtin: Builtin) -> Value {
+    realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
+}
+
+pub(crate) fn realm_intrinsic(builtin: Builtin) -> Value {
+    let realm = current_realm_id();
+    realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
+}
+
+pub(crate) fn current_realm_id() -> RealmId {
+    match current_global_object() {
+        Value::Object(global) => {
+            realm::id_for_global(&global).unwrap_or_else(|| current_context_or_default().realm())
+        }
+        _ => current_context_or_default().realm(),
+    }
+}
+
 type ObjectProperties = Rc<crate::value::ObjectData>;
 type DeferredCallback = Rc<dyn Fn(u32) -> Result<Value, VmError>>;
 #[derive(Clone)]
@@ -498,9 +561,15 @@ pub(crate) fn bare_call_receiver(
         && matches!(function.strictness, FunctionStrictness::Sloppy)
     {
         if matches!(this_value, Value::Undefined | Value::Null) {
-            return current_global_object();
+            let global = function.captures.get(0);
+            return if matches!(global, Value::Object(_)) {
+                global
+            } else {
+                current_global_object()
+            };
         }
-        return to_object_value(this_value);
+        let global = function.captures.get(0);
+        return to_object_value_in_realm(this_value, &global);
     }
     this_value.clone()
 }
@@ -540,6 +609,23 @@ pub(crate) fn to_object_value(this_value: &Value) -> Value {
         Value::BigInt(_) => boxed_primitive(this_value, crate::ops::Builtin::BigInt),
         Value::Null | Value::Undefined | Value::BindingCell(_) => this_value.clone(),
     }
+}
+
+fn to_object_value_in_realm(this_value: &Value, global: &Value) -> Value {
+    let constructor = match this_value {
+        Value::Boolean(_) => "Boolean",
+        Value::Number(_) => "Number",
+        Value::String(_) | Value::StringUnits(_) => "String",
+        Value::BigInt(_) => "BigInt",
+        _ => return to_object_value(this_value),
+    };
+    let constructor = crate::execute::get_property(global, constructor);
+    let prototype = crate::execute::get_property(&constructor, "prototype");
+    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("_value".to_string(), this_value.clone()),
+        ("constructor".to_string(), constructor),
+        ("\0prototype".to_string(), prototype),
+    ])))
 }
 
 fn boxed_primitive(value: &Value, constructor: crate::ops::Builtin) -> Value {
@@ -643,6 +729,7 @@ fn is_object_special(builtin: Builtin) -> bool {
         Builtin::ObjectHasOwnProperty
             | Builtin::ObjectHasOwn
             | Builtin::ObjectGetOwnPropertyDescriptor
+            | Builtin::ObjectGetOwnPropertyDescriptors
             | Builtin::ObjectGetOwnPropertyNames
             | Builtin::ObjectGetOwnPropertySymbols
             | Builtin::ObjectKeys

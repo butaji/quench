@@ -132,13 +132,13 @@ pub(crate) fn compact_scale(value: f64, locale: &str, display: &str) -> i32 {
 
 fn regional_scale(magnitude: i32, locale: &str, display: &str) -> i32 {
     if locale.starts_with("en-IN") {
-        return threshold(magnitude, &[5, 3]);
+        return threshold_scale(magnitude, &[5, 3]);
     }
     if locale.starts_with("ja") || locale.starts_with("zh") {
-        return threshold(magnitude, &[8, 4]);
+        return threshold_scale(magnitude, &[8, 4]);
     }
     if locale.starts_with("ko") {
-        return threshold(magnitude, &[8, 4, 3]);
+        return threshold_scale(magnitude, &[8, 4, 3]);
     }
     if locale.starts_with("de") {
         return if display == "long" {
@@ -158,6 +158,14 @@ fn threshold(magnitude: i32, values: &[i32]) -> i32 {
         .unwrap_or(0)
 }
 
+fn threshold_scale(magnitude: i32, thresholds: &[i32]) -> i32 {
+    thresholds
+        .iter()
+        .copied()
+        .find(|threshold| magnitude >= *threshold)
+        .unwrap_or(0)
+}
+
 pub(crate) fn compact_fraction_digits(value: f64) -> u32 {
     if value == 0.0 || !value.is_finite() {
         return 0;
@@ -167,7 +175,7 @@ pub(crate) fn compact_fraction_digits(value: f64) -> u32 {
 
 pub(crate) fn compact_suffix(magnitude: i32, locale: &str, display: &str) -> &'static str {
     if locale.starts_with("ja") || locale.starts_with("zh") {
-        return east_asian_suffix(magnitude, locale);
+        return asian_suffix(magnitude, locale);
     }
     if locale.starts_with("ko") {
         return korean_suffix(magnitude);
@@ -189,11 +197,20 @@ pub(crate) fn compact_suffix(magnitude: i32, locale: &str, display: &str) -> &'s
     }
 }
 
-fn east_asian_suffix(magnitude: i32, locale: &str) -> &'static str {
+fn asian_suffix(magnitude: i32, locale: &str) -> &'static str {
     match magnitude {
         8 => "億",
         4 if locale.starts_with("zh-TW") => "萬",
         4 => "万",
+        _ => "",
+    }
+}
+
+fn korean_suffix(magnitude: i32) -> &'static str {
+    match magnitude {
+        8 => "억",
+        4 => "만",
+        3 => "천",
         _ => "",
     }
 }

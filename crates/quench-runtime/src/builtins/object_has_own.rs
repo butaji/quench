@@ -93,7 +93,7 @@ fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
         || (!deleted
             && crate::vm::is_global_object(&Value::Object(properties.clone()))
             && (crate::vm::global_builtin_exists(key)
-                || crate::globals::immutable_value(key).is_some()))
+                || matches!(key, "undefined" | "Infinity" | "NaN")))
 }
 
 fn boxed_string_owns(properties: &[(String, Value)], key: &str) -> bool {

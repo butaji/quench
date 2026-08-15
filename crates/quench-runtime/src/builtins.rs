@@ -414,11 +414,7 @@ fn boxed_object(value: &Value) -> Value {
 
 pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     let (name, constructor, _prototype) = match builtin {
-        Builtin::RangeError => (
-            "RangeError",
-            Builtin::RangeError,
-            Builtin::RangeErrorPrototype,
-        ),
+        Builtin::RangeError => ("RangeError", Builtin::RangeError, Builtin::ErrorPrototype),
         Builtin::ReferenceError => (
             "ReferenceError",
             Builtin::ReferenceError,
@@ -445,23 +441,47 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         Builtin::Error => ("Error", Builtin::Error, Builtin::ErrorPrototype),
         _ => ("Error", Builtin::Error, Builtin::ErrorPrototype),
     };
-    let message = arguments.first().map_or_else(String::new, value_to_string);
-    let constructor_value = crate::vm::intrinsic_for_realm(
-        crate::vm::current_context_or_default().realm(),
-        constructor,
-    );
-    let prototype = crate::execute::get_property(&constructor_value, "prototype");
+    let realm = crate::vm::current_error_realm().unwrap_or_else(crate::vm::current_realm_id);
+    let intrinsic = crate::vm::intrinsic_for_realm(realm, constructor);
+    let error_realm = match &intrinsic {
+        Value::BoundFunction(bound) => bound.realm,
+        _ => realm,
+    };
+    let prototype_value = crate::execute::get_property(&intrinsic, "prototype");
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), Value::String(message)),
-        ("constructor".to_string(), constructor_value),
+        ("constructor".to_string(), intrinsic),
         (ERROR_SLOT.to_string(), Value::Boolean(true)),
-        ("\0prototype".to_string(), prototype),
+        (
+            "\0realm".to_string(),
+            Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
+                crate::ops::HostCapabilityRef {
+                    realm: error_realm,
+                    kind: crate::ops::HostCapabilityKind::GetGlobal,
+                },
+            ))),
+        ),
+        ("\0prototype".to_string(), prototype_value),
     ];
+    if let Some(message) = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(value_to_string)
+    {
+        properties.push(("message".to_string(), Value::String(message)));
+    }
     if let Some(Value::Object(existing)) = arguments.first() {
         properties.extend(existing.properties.clone());
     }
     Value::Object(Rc::new(ObjectData::new(properties)))
+}
+
+pub(crate) fn type_error_in_realm(realm: crate::ops::RealmId, message: &str) -> Value {
+    let arguments = [Value::String(message.to_string())];
+    crate::vm::with_error_realm(realm, || {
+        crate::vm::with_realm(realm, || error(Builtin::TypeError, &arguments))
+    })
+    .unwrap_or_else(|| error(Builtin::TypeError, &arguments))
 }
 
 pub(crate) fn suppressed_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {

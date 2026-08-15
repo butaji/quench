@@ -26,6 +26,7 @@ fn typed_array_static_property(builtin: Builtin, key: &str) -> Option<Value> {
     };
     Some(Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
+            realm: crate::vm::current_context_or_default().realm(),
             target: Value::Builtin(target),
             receiver: Value::Builtin(builtin),
             arguments: Vec::new(),
@@ -37,7 +38,11 @@ fn typed_array_static_property(builtin: Builtin, key: &str) -> Option<Value> {
 fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     if builtin == TypedArray && matches!(key, "from" | "of") {
-        return Some(if key == "from" { TypedArrayFrom } else { TypedArrayOf });
+        return Some(if key == "from" {
+            TypedArrayFrom
+        } else {
+            TypedArrayOf
+        });
     }
     if key == "from" && is_typed_array_constructor(builtin) {
         return Some(TypedArrayFrom);

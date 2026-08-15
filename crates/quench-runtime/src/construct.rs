@@ -189,6 +189,7 @@ fn construct_bound(
                 return Err(crate::vm::not_callable());
             }
             let value = construct_bound_in_realm(bound, *builtin, &combined)?;
+            install_dynamic_global(bound, &value);
             with_new_target_prototype(value, &Value::Builtin(*builtin), &new_target)?
         }
         Value::Function(function) => construct_function(function, &new_target, &combined)?,
@@ -205,6 +206,25 @@ fn construct_bound(
     } else {
         value
     })
+}
+
+fn install_dynamic_global(bound: &crate::value::BoundFunctionValue, value: &Value) {
+    let Value::Function(function) = value else {
+        return;
+    };
+    let dynamic = function
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == "\0dynamic_function");
+    if !dynamic {
+        return;
+    }
+    if let Some(Some(global)) =
+        crate::vm::with_realm(bound.realm, || Some(crate::vm::current_global_object()))
+    {
+        function.captures.set(0, global);
+    }
 }
 fn construct_builtin(
     builtin: crate::ops::Builtin,
@@ -542,13 +562,9 @@ fn construct_error(
         crate::ops::Builtin::URIError => "URIError",
         crate::ops::Builtin::AggregateError => "AggregateError",
         crate::ops::Builtin::TypeError => "TypeError",
-        crate::ops::Builtin::Error => "Error",
         _ => "Error",
     };
 
-    let constructor =
-        crate::vm::intrinsic_for_realm(crate::vm::current_context_or_default().realm(), *builtin);
-    let prototype = crate::execute::get_property(&constructor, "prototype");
     let mut properties = vec![
         (
             crate::builtins::descriptor_key("name"),
@@ -559,27 +575,20 @@ fn construct_error(
             crate::builtins::ERROR_SLOT.to_string(),
             Value::Boolean(true),
         ),
-        ("\0prototype".to_string(), prototype),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(
+                crate::builtin_meta::instance_prototype(*builtin)
+                    .unwrap_or(crate::ops::Builtin::ErrorPrototype),
+            ),
+        ),
     ];
     if let Some(message) = arguments
         .first()
         .filter(|value| !matches!(value, Value::Undefined))
+        .map(crate::conversion::to_string)
+        .transpose()?
     {
-        properties.push((
-            "message".to_string(),
-            Value::String(crate::conversion::to_string(message)?),
-        ));
-    }
-
-    if let Some(message) = arguments
-        .first()
-        .filter(|value| !matches!(value, Value::Undefined))
-    {
-        let message = crate::conversion::to_string(message)?;
-        properties.push((
-            crate::builtins::descriptor_key("message"),
-            error_data_descriptor(Value::String(message.clone())),
-        ));
         properties.push(("message".to_string(), Value::String(message)));
     }
 
@@ -601,87 +610,18 @@ fn construct_error(
                 non_enumerable_descriptor(value),
             ));
         }
-        let cause = crate::execute::get_property_result(&options, "cause")?;
-        properties.push((
-            crate::builtins::descriptor_key("cause"),
-            error_data_descriptor(cause.clone()),
-        ));
-        properties.push(("cause".to_string(), cause));
     }
 
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
 }
 
-fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let mut properties = error_properties(
-        "AggregateError",
-        crate::ops::Builtin::AggregateErrorPrototype,
-    );
-    properties
-        .retain(|(key, _)| key != "message" && key != &crate::builtins::descriptor_key("message"));
-    let message = arguments
-        .get(1)
-        .filter(|value| !matches!(value, Value::Undefined))
-        .map(crate::conversion::to_string)
-        .transpose()?
-        .map(Value::String);
-    if let Some(message) = message {
-        push_error_property(&mut properties, "message", message);
-    }
-    let errors = arguments
-        .first()
-        .ok_or_else(|| crate::value::error::throw_type_error("value is not iterable"))?;
-    let iterator_method = crate::execute::get_property_result(errors, "Symbol.iterator")?;
-    if matches!(iterator_method, Value::Undefined) && !matches!(errors, Value::Array(_)) {
-        return Err(crate::value::error::throw_type_error(
-            "value is not iterable",
-        ));
-    }
-    let iterator = crate::collections::iterator::open(errors.clone())?;
-    let mut values = Vec::new();
-    while let Some(value) = crate::collections::iterator::step_value(&iterator)? {
-        values.push(value);
-    }
-    push_error_property(&mut properties, "errors", Value::array(values));
-    if let Some(options) = arguments
-        .get(2)
-        .filter(|value| !matches!(value, Value::Undefined))
-    {
-        let options = to_object(options)?;
-        if crate::with_scope::has_property(&options, "cause")? {
-            push_error_property(
-                &mut properties,
-                "cause",
-                crate::execute::get_property_result(&options, "cause")?,
-            );
-        }
-    }
-    Ok(Value::Object(Rc::new(ObjectData::new(properties))))
-}
-
-fn push_error_property(properties: &mut Vec<(String, Value)>, name: &str, value: Value) {
-    properties.push((name.to_string(), value.clone()));
-    properties.push((
-        crate::builtins::descriptor_key(name),
-        Value::Object(Rc::new(ObjectData::new(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]))),
-    ));
-}
-
-fn error_properties(name: &str, prototype: crate::ops::Builtin) -> Vec<(String, Value)> {
-    vec![
-        ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), Value::String(String::new())),
-        (
-            crate::builtins::ERROR_SLOT.to_string(),
-            Value::Boolean(true),
-        ),
-        ("\0prototype".to_string(), Value::Builtin(prototype)),
-    ]
+fn non_enumerable_descriptor(value: &Value) -> Value {
+    Value::Object(std::rc::Rc::new(ObjectData::new(vec![
+        ("value".to_string(), value.clone()),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])))
 }
 
 fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
@@ -762,6 +702,11 @@ fn construct_function(
         if crate::value::is_object(&final_this) {
             return Ok(final_this);
         }
+        if !matches!(result, Value::Undefined) {
+            return Err(crate::value::error::throw_type_error(
+                "Derived constructor returned a non-object",
+            ));
+        }
         return Err(crate::value::error::throw_reference_error(
             "Derived constructor did not initialize this",
         ));
@@ -788,6 +733,16 @@ include!("construct_instance_fields.rs");
 pub(crate) fn derived_constructor(
     function: &crate::value::FunctionValue,
 ) -> Result<Value, crate::execute::VmError> {
+    let derived = function
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == "\0derived_constructor");
+    if !derived {
+        return Err(crate::value::error::throw_reference_error(
+            "super is unavailable",
+        ));
+    }
     function
         .properties
         .borrow()

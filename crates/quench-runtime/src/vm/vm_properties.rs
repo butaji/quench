@@ -28,10 +28,14 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     primitive_prototype_property(value, key)
 }
 fn get_property_value(value: &Value, key: &str) -> Value {
-    use Value::*;
     if let Some(found) = crate::typed_array_prototype::own_property(value, key) {
         return found;
     }
+    property_for_value(value, key)
+}
+
+fn property_for_value(value: &Value, key: &str) -> Value {
+    use Value::*;
     match value {
         Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => {
             bind_callable_property(
@@ -61,9 +65,13 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         StringUnits(units) => string_units_property(units, key),
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
-        Function(_) if matches!(key, "apply" | "call" | "bind") => {
-            bind_function_property(value, key)
+        Function(function)
+            if function.realm == crate::ops::RealmId::ROOT
+                && matches!(key, "apply" | "call" | "bind") =>
+        {
+            function_prototype_method(function.realm, key)
         }
+        Function(_) if matches!(key, "apply" | "call" | "bind") => bind_function_property(value, key),
         Function(function) => function_property(function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
         Map(data) => map_property(data, key),
@@ -78,6 +86,15 @@ fn get_property_value(value: &Value, key: &str) -> Value {
     }
 }
 
+fn function_prototype_method(realm: crate::ops::RealmId, key: &str) -> Value {
+    let builtin = match key {
+        "apply" => Builtin::FunctionApply,
+        "call" => Builtin::FunctionCall,
+        "bind" => Builtin::FunctionBind,
+        _ => return Value::Undefined,
+    };
+    crate::vm::intrinsic_for_realm(realm, builtin)
+}
 
 fn iterator_property(value: &Value, key: &str) -> Value {
     let property = crate::collections::iterator::property_for(value, key);
@@ -178,7 +195,9 @@ fn generator_property(value: &Value, key: &str) -> Value {
 
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     if key == "constructor" {
-        return Value::Builtin(function_constructor(function));
+        let builtin = function_constructor(function);
+        return crate::vm::intrinsic_for_global(&function.captures.get(0), builtin)
+            .unwrap_or(Value::Builtin(builtin));
     }
     let properties = function.properties.borrow();
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
@@ -223,13 +242,21 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
-    if let Value::BindingCell(cell) = value {
-        return get_property_with_receiver(&cell.borrow(), key, receiver);
+    if let Some(result) = early_property_access(value, key, receiver) {
+        return result;
     }
+    property_from_descriptor(value, key, receiver)
+}
+
+fn early_property_access(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
     if matches!(value, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(&format!(
+        return Some(Err(crate::value::error::throw_type_error(&format!(
             "Cannot read property `{key}` of null or undefined"
-        )));
+        ))));
     }
     if crate::builtins::namespace_uninitialized(value, key) {
         return Err(crate::value::error::throw_reference_error(
@@ -237,106 +264,96 @@ pub(crate) fn get_property_with_receiver(
         ));
     }
     if matches!(value, Value::Proxy(_)) {
-        return crate::proxy::proxy_get(value, key, Some(receiver));
+        return Some(crate::proxy::proxy_get(value, key, Some(receiver)));
     }
     if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
-        return Err(crate::value::error::throw_type_error(
+        return Some(Err(crate::value::error::throw_type_error(
             "'callee' is unavailable on strict arguments",
-        ));
+        )));
     }
     if has_restricted_function_property(value, key) {
-        return Err(crate::value::error::throw_type_error(
+        return Some(Err(crate::value::error::throw_type_error(
             "'caller' and 'arguments' are unavailable on this function",
-        ));
+        )));
     }
-    if let Some(getter) = array_accessor(value, key, "get") {
-        if matches!(getter, Value::Undefined) {
-            return Ok(Value::Undefined);
-        }
-        return invoke_accessor(&getter, receiver);
-    }
-    if let Value::Array(values) = value {
-        let has_own = key == "length"
-            || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
-            || values.descriptor(key).is_some()
-            || values.property(key).is_some();
-        if !has_own {
-            if let Some(getter) = crate::arrays::prototype_override_getter(key) {
-                if matches!(getter, Value::Undefined) {
-                    return Ok(Value::Undefined);
-                }
-                return invoke_accessor(&getter, receiver);
-            }
-        }
+    if let Some(result) = array_early_access(value, key, receiver) {
+        return Some(result);
     }
     if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
-        return result;
+        return Some(result);
     }
     if let Some(result) = data_view_instance_accessor(value, key) {
-        return result;
+        return Some(result);
     }
-    if let Ok(descriptor) =
-        crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))
-    {
-        return crate::vm::execute_builtin_with_receiver(
-            Builtin::ErrorPrototypeStackGetter,
-            &[],
-            Some(receiver),
-        );
+    None
+}
+
+fn array_early_access(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
+    if let Some(getter) = array_accessor(value, key, "get") {
+        return Some(match getter {
+            Value::Undefined => Ok(Value::Undefined),
+            getter => invoke_accessor(&getter, receiver),
+        });
     }
-    if key == "stack"
-        && crate::vm::has_error_slot(value)
-        && !crate::vm::has_error_slot(receiver)
-    {
-        return Ok(Value::Undefined);
-    }
-    if key == "stack"
-        && matches!(own_descriptor, Some(Value::Undefined))
-        && crate::vm::has_error_slot(value)
-        && crate::properties::inherits_error_prototype(value)
-    {
-        return crate::vm::execute_builtin_with_receiver(
-            Builtin::ErrorPrototypeStackGetter,
-            &[],
-            Some(receiver),
-        );
-    }
-    if let Some(descriptor) = own_descriptor {
-        if !matches!(descriptor, Value::Undefined) {
-            if let Value::Object(descriptor) = descriptor {
-                if let Some((_, getter)) = descriptor
-                    .iter()
-                    .rev()
-                    .find_map(|(name, value)| (name == "get").then_some((name, value)))
-                {
-                    return if matches!(getter, Value::Undefined) {
-                        Ok(Value::Undefined)
-                    } else {
-                        invoke_accessor(getter, receiver)
-                    };
-                }
-            }
-            return Ok(receiver_property(value, key, receiver));
-        }
-    }
-    if key == "stack"
-        && crate::vm::has_error_slot(value)
-        && crate::properties::inherits_error_prototype(value)
-    {
-        return crate::vm::execute_builtin_with_receiver(
-            crate::ops::Builtin::ErrorPrototypeStackGetter,
-            &[],
-            Some(receiver),
-        );
-    }
-    let getter = crate::property_define::accessor(value, key, "get");
-    let Some(getter) = getter else {
-        return inherited_property(value, key, receiver);
+    let Value::Array(values) = value else {
+        return None;
     };
-    if matches!(getter, Value::Undefined) {
-        return Ok(Value::Undefined);
+    let has_own = key == "length"
+        || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+        || values.descriptor(key).is_some()
+        || values.property(key).is_some();
+    if has_own {
+        return None;
     }
-    invoke_accessor(&getter, receiver)
+    crate::arrays::prototype_override_getter(key).map(|getter| match getter {
+        Value::Undefined => Ok(Value::Undefined),
+        getter => invoke_accessor(&getter, receiver),
+    })
+}
+
+fn property_from_descriptor(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Result<Value, VmError> {
+    let descriptor =
+        crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))?;
+    descriptor_result(&descriptor, receiver, value, key)
+        .unwrap_or_else(|| accessor_property(value, key, receiver))
+}
+
+fn accessor_property(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
+    let getter = crate::property_define::accessor(value, key, "get");
+    match getter {
+        None => Ok(receiver_property(value, key, receiver)),
+        Some(Value::Undefined) => Ok(Value::Undefined),
+        Some(getter) => invoke_accessor(&getter, receiver),
+    }
+}
+
+fn descriptor_result(
+    descriptor: &Value,
+    receiver: &Value,
+    value: &Value,
+    key: &str,
+) -> Option<Result<Value, VmError>> {
+    let Value::Object(descriptor) = descriptor else {
+        return (!matches!(descriptor, Value::Undefined))
+            .then_some(Ok(receiver_property(value, key, receiver)));
+    };
+    let getter = descriptor
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "get").then_some(value));
+    Some(match getter {
+        Some(Value::Undefined) => Ok(Value::Undefined),
+        Some(getter) => invoke_accessor(getter, receiver),
+        None => Ok(receiver_property(value, key, receiver)),
+    })
 }
 
 fn inherited_property(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
@@ -440,6 +457,29 @@ fn receiver_property(value: &Value, key: &str, _receiver: &Value) -> Value {
 /// Accessor getters/setters carry their `this` at invocation time; binding
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
+fn is_accessor_builtin(builtin: Builtin) -> bool {
+    if builtin == Builtin::ThrowTypeError {
+        return true;
+    }
+    let name = crate::builtins::builtin_name(builtin);
+    name.starts_with("get ") || name.starts_with("set ")
+}
+fn same_property_receiver(value: &Value, receiver: &Value) -> bool {
+    match (value, receiver) {
+        (Value::Builtin(left), Value::Builtin(right)) => left == right,
+        (Value::Object(left), Value::Object(right)) => std::rc::Rc::ptr_eq(left, right),
+        (Value::Map(left), Value::Map(right)) => std::rc::Rc::ptr_eq(left, right),
+        (Value::Set(left), Value::Set(right)) => std::rc::Rc::ptr_eq(left, right),
+        (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
+        (Value::Number(_), Value::Number(_))
+        | (Value::Boolean(_), Value::Boolean(_))
+        | (Value::BigInt(_), Value::BigInt(_))
+        | (Value::String(_), Value::String(_))
+        | (Value::StringUnits(_), Value::StringUnits(_)) => value == receiver,
+        _ => false,
+    }
+}
+
 pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
     let Value::Array(values) = value else {
         return None;
@@ -519,13 +559,17 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     )
 }
 fn bind_function_property(value: &Value, key: &str) -> Value {
-    let builtin = match key {
+    let builtin = function_builtin_property(key);
+    bind_method(value, Value::Builtin(builtin))
+}
+
+fn function_builtin_property(key: &str) -> Builtin {
+    match key {
         "apply" => Builtin::FunctionApply,
         "call" => Builtin::FunctionCall,
         "bind" => Builtin::FunctionBind,
-        _ => return Value::Undefined,
-    };
-    bind_method(value, Value::Builtin(builtin))
+        _ => Builtin::FunctionCall,
+    }
 }
 fn bound_function_property(
     value: &Value,
@@ -541,32 +585,60 @@ fn bound_function_property(
     {
         return value.clone();
     }
-    if key == "prototype" {
-        if let Some(prototype) = intrinsic_error_prototype(value, bound) {
-            bound
-                .properties
-                .borrow_mut()
-                .push((key.to_string(), prototype.clone()));
-            return prototype;
-        }
+    match key {
+        "apply" | "call" | "bind" => bound_method(value, bound, key),
+        "length" => bound_length(bound),
+        "name" => bound_name(bound),
+        "prototype" => bound_prototype(bound),
+        _ => bound_other_property(bound, key),
     }
-    if matches!(key, "apply" | "call" | "bind") {
-        bind_function_property(value, key)
-    } else if key == "length" && !realm::is_intrinsic(bound) {
-        match &bound.target {
-            Value::Builtin(builtin) => {
-                crate::builtins::props::callable(*builtin, key).unwrap_or(Value::Number(0.0))
-            }
-            target => get_property(target, key),
+}
+
+fn bound_method(value: &Value, bound: &crate::value::BoundFunctionValue, key: &str) -> Value {
+    if realm::is_intrinsic(bound)
+        && matches!(bound.target, Value::Builtin(Builtin::FunctionPrototype))
+    {
+        return crate::vm::intrinsic_for_realm(bound.realm, function_builtin_property(key));
+    }
+    bind_function_property(value, key)
+}
+
+fn bound_length(bound: &crate::value::BoundFunctionValue) -> Value {
+    if realm::is_intrinsic(bound) {
+        return Value::Undefined;
+    }
+    match &bound.target {
+        Value::Builtin(builtin) => {
+            crate::builtins::props::callable(*builtin, "length").unwrap_or(Value::Number(0.0))
         }
-    } else if key == "name" && !realm::is_intrinsic(bound) {
-        Value::String(String::new())
+        target => get_property(target, "length"),
+    }
+}
+
+fn bound_name(bound: &crate::value::BoundFunctionValue) -> Value {
+    if realm::is_intrinsic(bound) {
+        get_property(&bound.target, "name")
     } else {
-        let result = get_property(&bound.target, key);
-        if !matches!(result, Value::Undefined) {
-            return result;
-        }
-        function_prototype_property(key)
+        Value::String(String::new())
+    }
+}
+
+fn bound_prototype(bound: &crate::value::BoundFunctionValue) -> Value {
+    if matches!(bound.target, Value::Builtin(Builtin::Function)) {
+        return crate::vm::intrinsic_for_realm(bound.realm, Builtin::FunctionPrototype);
+    }
+    match get_property(&bound.target, "prototype") {
+        Value::Builtin(builtin) => realm::intrinsic_value(bound, builtin)
+            .unwrap_or_else(|| crate::vm::intrinsic_for_realm(bound.realm, builtin)),
+        result => result,
+    }
+}
+
+fn bound_other_property(bound: &crate::value::BoundFunctionValue, key: &str) -> Value {
+    match get_property(&bound.target, key) {
+        Value::Builtin(builtin) => crate::vm::intrinsic_for_realm(bound.realm, builtin),
+        result if !matches!(result, Value::Undefined) => result,
+        _ => function_prototype_property(key),
     }
 }
 
@@ -643,17 +715,52 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
     };
-    let properties = if builtin == Builtin::IntlNumberFormatFormat {
+    let properties = if matches!(
+        builtin,
+        Builtin::GeneratorNext | Builtin::GeneratorReturn | Builtin::GeneratorThrow
+    ) {
+        let name = crate::builtins::builtin_name(builtin).to_string();
+        RefCell::new(vec![
+            ("length".to_string(), Value::Number(1.0)),
+            ("name".to_string(), Value::String(name)),
+            (
+                crate::builtins::descriptor_key("length"),
+                bound_function_descriptor(Value::Number(1.0)),
+            ),
+            (
+                crate::builtins::descriptor_key("name"),
+                bound_function_descriptor(Value::String(
+                    crate::builtins::builtin_name(builtin).to_string(),
+                )),
+            ),
+        ])
+    } else if builtin == Builtin::IntlNumberFormatFormat {
         RefCell::new(number_format_bound_properties())
     } else {
         RefCell::new(Vec::new())
     };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: match receiver {
+            Value::BoundFunction(bound) => bound.realm,
+            Value::Function(function) => crate::vm::realm_id_for_global(&function.captures.get(0))
+                .unwrap_or_else(|| crate::vm::current_context_or_default().realm()),
+            _ => crate::vm::realm_id_for_intrinsic_receiver(Some(receiver))
+                .unwrap_or_else(|| crate::vm::current_context_or_default().realm()),
+        },
         target: Value::Builtin(builtin),
         receiver: receiver.clone(),
         arguments: Vec::new(),
         properties,
     }))
+}
+
+fn bound_function_descriptor(value: Value) -> Value {
+    Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(false)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])))
 }
 fn number_format_bound_properties() -> Vec<(String, Value)> {
     [
@@ -688,6 +795,7 @@ fn promise_property(value: &Value, key: &str) -> Value {
         return crate::builtins::property(Builtin::PromisePrototype, key);
     };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
         receiver: value.clone(),
         arguments: Vec::new(),

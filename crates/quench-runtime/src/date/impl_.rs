@@ -35,8 +35,10 @@ pub fn execute(
     if builtin == Builtin::DateSetMonth {
         return Some(super::setter::set_month(receiver, arguments));
     }
-    if builtin == Builtin::DateSetTime {
-        return Some(super::setter::set_time(receiver, arguments));
+    match builtin {
+        Builtin::DateSetTime => return Some(super::setter::set_time(receiver, arguments)),
+        Builtin::DateSetYear => return Some(date_set_year_result(receiver, arguments)),
+        _ => {}
     }
     if let Some(result) = super::setter::set_time_components(builtin, receiver, arguments) {
         return Some(result);
@@ -394,6 +396,34 @@ fn date_set_year(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
     let current = super::setter::time_value(receiver)?;
     let year = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
     let year = year.trunc();
+    let year = if (0.0..=99.0).contains(&year) {
+        year + 1900.0
+    } else {
+        year
+    };
+    let (_, m, d, h, min, s, ms) =
+        chrono_utils::local_components(current).unwrap_or((2000, 1, 1, 0, 0, 0, 0));
+    let result = chrono_utils::make_local_ms(
+        year,
+        (m - 1) as f64,
+        d as f64,
+        h as f64,
+        min as f64,
+        s as f64,
+        ms as f64,
+    );
+    store_time(receiver.unwrap_or(&Value::Undefined), result);
+    Ok(Value::Number(chrono_utils::time_clip(result)))
+}
+
+fn date_set_year_result(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let current = super::setter::time_value(receiver)?;
+    let year = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    if year.is_nan() {
+        store_time(receiver.unwrap_or(&Value::Undefined), f64::NAN);
+        return Ok(Value::Number(f64::NAN));
+    }
+    let year = helpers::to_int32(&Value::Number(year));
     let year = if (0.0..=99.0).contains(&year) {
         year + 1900.0
     } else {
