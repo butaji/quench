@@ -254,7 +254,7 @@ fn namespace_cell(
         unit.refresh_namespace();
         return Ok(cell);
     }
-    let properties = unit
+    let mut properties: Vec<(String, quench_runtime::value::Value)> = unit
         .export_names()
         .iter()
         .filter_map(|name| unit.export_cell(name).map(|cell| (name.clone(), cell)))
@@ -265,6 +265,14 @@ fn namespace_cell(
             )
         })
         .collect();
+    properties.push((
+        "\0prototype".to_string(),
+        quench_runtime::value::Value::Null,
+    ));
+    properties.push((
+        "Symbol.toStringTag".to_string(),
+        quench_runtime::value::Value::String("Module".to_string()),
+    ));
     let cell = ModuleBindingCell::new(quench_runtime::value::Value::object(properties));
     *unit.namespace_cell.borrow_mut() = Some(cell.clone());
     Ok(cell)
@@ -385,7 +393,7 @@ impl LinkedModule {
         let Some(cell) = self.namespace_cell.borrow().clone() else {
             return;
         };
-        let properties = self
+        let mut properties: Vec<(String, quench_runtime::value::Value)> = self
             .export_names()
             .iter()
             .filter_map(|name| self.export_cell(name).map(|value| (name.clone(), value)))
@@ -396,6 +404,14 @@ impl LinkedModule {
                 )
             })
             .collect();
+        properties.push((
+            "\0prototype".to_string(),
+            quench_runtime::value::Value::Null,
+        ));
+        properties.push((
+            "Symbol.toStringTag".to_string(),
+            quench_runtime::value::Value::String("Module".to_string()),
+        ));
         cell.set(quench_runtime::value::Value::object(properties));
     }
 
