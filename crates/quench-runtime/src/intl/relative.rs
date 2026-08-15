@@ -3,14 +3,15 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string,
-    to_string_value, SLOT,
+    default_locale, make_array, make_instance, make_object, resolve_locales, runtime_error,
+    slot_string, SLOT,
 };
 
 pub(crate) struct RelativeOptions {
     locale: String,
     style: String,
     numeric: String,
+    numbering_system: String,
 }
 
 /// A single formatted part: a type, its text, and whether it carries the unit.
@@ -33,30 +34,45 @@ impl RelativeOptions {
             locale,
             style: "long".to_string(),
             numeric: "always".to_string(),
+            numbering_system: "latn".to_string(),
         };
-        if let Some(Value::Object(properties)) = options {
-            for (key, value) in properties.iter() {
-                if matches!(value, Value::Undefined) {
-                    continue;
+        let mut unicode_locale = None;
+        let mut unicode_numbering = None;
+        if let Some((base, extension)) = formatter.locale.split_once("-u-") {
+            let parts: Vec<&str> = extension.split('-').collect();
+            if let Some(value) = parts
+                .windows(2)
+                .find(|pair| pair[0] == "nu")
+                .map(|pair| pair[1])
+            {
+                unicode_numbering = Some(value.to_string());
+                if matches!(value, "arab" | "latn") {
+                    formatter.numbering_system = value.to_string();
+                    unicode_locale = Some(formatter.locale.clone());
                 }
-                let text = to_string_value(value);
-                match key.as_str() {
-                    "style" => {
-                        if let Some(style) = valid_enum(&text, &["long", "short", "narrow"]) {
-                            formatter.style = style;
-                        } else {
-                            return Err(runtime_error("RangeError: invalid style"));
-                        }
-                    }
-                    "numeric" => {
-                        if let Some(numeric) = valid_enum(&text, &["always", "auto"]) {
-                            formatter.numeric = numeric;
-                        } else {
-                            return Err(runtime_error("RangeError: invalid numeric"));
-                        }
-                    }
-                    _ => {}
+            }
+            formatter.locale = base.to_string();
+        }
+        if matches!(options, Some(Value::Null)) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot convert null to object",
+            ));
+        }
+        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+            let source = match options {
+                Value::Object(properties) => Value::Object(properties.clone()),
+                _ => Value::Builtin(crate::ops::Builtin::ObjectPrototype),
+            };
+            for key in ["localeMatcher", "numberingSystem", "style", "numeric"] {
+                let value = crate::execute::get_property_result(&source, key)?;
+                if !matches!(value, Value::Undefined) {
+                    apply_option(&mut formatter, key, &value)?;
                 }
+            }
+        }
+        if let (Some(locale), Some(numbering)) = (unicode_locale, unicode_numbering) {
+            if formatter.numbering_system == numbering {
+                formatter.locale = locale;
             }
         }
         Ok(formatter)
@@ -78,7 +94,7 @@ impl RelativeOptions {
             ),
             (SLOT.to_string(), self.slot()),
         ];
-        make_object(properties)
+        make_instance(crate::ops::Builtin::IntlRelativeTimeFormat, properties)
     }
 
     fn slot(&self) -> Value {
@@ -88,10 +104,51 @@ impl RelativeOptions {
             ("numeric".to_string(), Value::String(self.numeric.clone())),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(self.numbering_system.clone()),
             ),
         ])
     }
+}
+
+fn apply_option(formatter: &mut RelativeOptions, key: &str, value: &Value) -> Result<(), VmError> {
+    let text = crate::conversion::to_string(value)?;
+    match key {
+        "localeMatcher" if matches!(text.as_str(), "lookup" | "best fit") => Ok(()),
+        "localeMatcher" => Err(runtime_error("RangeError: invalid localeMatcher")),
+        "style" => set_enum(
+            &mut formatter.style,
+            &text,
+            &["long", "short", "narrow"],
+            "style",
+        ),
+        "numeric" => set_enum(
+            &mut formatter.numeric,
+            &text,
+            &["always", "auto"],
+            "numeric",
+        ),
+        "numberingSystem" => set_numbering_system(formatter, text),
+        _ => Ok(()),
+    }
+}
+
+fn set_enum(target: &mut String, text: &str, allowed: &[&str], name: &str) -> Result<(), VmError> {
+    let value = valid_enum(text, allowed).ok_or_else(|| match name {
+        "style" => runtime_error("RangeError: invalid style"),
+        _ => runtime_error("RangeError: invalid numeric"),
+    })?;
+    *target = value;
+    Ok(())
+}
+
+fn set_numbering_system(formatter: &mut RelativeOptions, text: String) -> Result<(), VmError> {
+    if !valid_numbering_system(&text) {
+        return Err(runtime_error("RangeError: invalid numberingSystem"));
+    }
+    if matches!(text.as_str(), "arab" | "latn") {
+        formatter.numbering_system = text;
+    }
+    Ok(())
 }
 
 fn valid_enum(text: &str, allowed: &[&str]) -> Option<String> {
@@ -100,6 +157,16 @@ fn valid_enum(text: &str, allowed: &[&str]) -> Option<String> {
     } else {
         None
     }
+}
+
+fn valid_numbering_system(text: &str) -> bool {
+    !text.is_empty()
+        && text.split('-').all(|part| {
+            (3..=8).contains(&part.len())
+                && part
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        })
 }
 
 fn singularize(unit: &str) -> String {
@@ -587,15 +654,25 @@ pub(crate) fn prototype_method(
     let numeric = slot_string(&slots, "numeric").unwrap_or_else(|| "always".to_string());
     match builtin {
         crate::ops::Builtin::IntlRelativeTimeFormatFormat => {
-            let value = super::number::to_number(arguments.first());
-            let unit = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
+            let value = super::tolocale::value::to_number_result(arguments.first())?;
+            let unit = crate::conversion::to_string(
+                arguments.get(1).map_or(&Value::Undefined, |value| value),
+            )?;
+            if !value.is_finite() {
+                return Err(runtime_error("RangeError: value must be finite"));
+            }
             Ok(Value::String(format_relative(
                 value, &unit, &style, &numeric, &locale,
             )?))
         }
         crate::ops::Builtin::IntlRelativeTimeFormatFormatToParts => {
-            let value = super::number::to_number(arguments.first());
-            let unit = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
+            let value = super::tolocale::value::to_number_result(arguments.first())?;
+            let unit = crate::conversion::to_string(
+                arguments.get(1).map_or(&Value::Undefined, |value| value),
+            )?;
+            if !value.is_finite() {
+                return Err(runtime_error("RangeError: value must be finite"));
+            }
             parts_value(value, &unit, &style, &numeric, &locale)
         }
         crate::ops::Builtin::IntlRelativeTimeFormatResolvedOptions => Ok(make_object(vec![
@@ -604,7 +681,9 @@ pub(crate) fn prototype_method(
             ("numeric".to_string(), Value::String(numeric)),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(
+                    slot_string(&slots, "numberingSystem").unwrap_or_else(|| "latn".to_string()),
+                ),
             ),
         ])),
         _ => Err(runtime_error("TypeError: method not found")),

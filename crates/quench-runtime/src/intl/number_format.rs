@@ -146,6 +146,7 @@ fn compact_locale_scale(magnitude: i32, locale: &str, display: &str) -> i32 {
         } else {
             threshold(magnitude, &[(6, 6)])
         };
+        return scale_from_thresholds(magnitude, thresholds);
     }
     threshold_scale(magnitude, &[9, 6, 3])
 }

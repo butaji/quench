@@ -504,6 +504,10 @@ impl DateTimeOptions {
                 Value::String(self.time_zone.clone()),
             ),
         ];
+        props.push((
+            "__explicitDateOptions".to_string(),
+            Value::Boolean(self.explicit_date_options),
+        ));
         let has_hour = self.contains("hour");
         if has_hour {
             if let Some(value) = self.component_value("hourCycle") {
@@ -512,6 +516,8 @@ impl DateTimeOptions {
             if let Some(hour12) = self.hour12 {
                 props.push(("hour12".to_string(), Value::Boolean(hour12)));
             }
+        } else if let Some(hour12) = self.hour12 {
+            props.push(("hour12".to_string(), Value::Boolean(hour12)));
         }
         for (key, value) in &self.components {
             if key == "hourCycle" || (!has_hour && key == "hour12") {
@@ -652,7 +658,41 @@ pub(crate) fn prototype_method(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    let slots = receiver_slots(receiver)?;
+    let mut slots = receiver_slots(receiver)?;
+    let temporal_input = arguments
+        .first()
+        .is_some_and(|value| matches!(value, Value::Object(object) if object.iter().any(|(key, _)| key == "epochNanoseconds")));
+    let no_options = slot_bool(&slots, "__explicitDateOptions") != Some(true);
+    if slot_string(&slots, "dateStyle").is_some() && slot_string(&slots, "timeStyle").is_none() {
+        let month_style = if slot_string(&slots, "dateStyle").as_deref() == Some("long") {
+            "long"
+        } else {
+            "numeric"
+        };
+        for (name, style) in [
+            ("year", "numeric"),
+            ("month", month_style),
+            ("day", "numeric"),
+        ] {
+            slots.push((name.to_string(), Value::String(style.into())));
+        }
+    }
+    if (temporal_input || slot_string(&slots, "timeStyle").is_some())
+        && (slot_string(&slots, "hour").is_none() || slot_string(&slots, "timeStyle").is_some())
+        && (no_options
+            || !["year", "month", "day", "weekday", "era"]
+                .iter()
+                .any(|name| slot_string(&slots, name).is_some()))
+    {
+        for name in ["hour", "minute", "second"] {
+            slots.push((name.to_string(), Value::String("numeric".into())));
+        }
+    }
+    if slot_string(&slots, "timeZoneName").is_some() && slot_string(&slots, "hour").is_none() {
+        for name in ["hour", "minute", "second"] {
+            slots.push((name.to_string(), Value::String("numeric".into())));
+        }
+    }
     match builtin {
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
             let input = arguments.first().unwrap_or(&Value::Undefined);
@@ -1415,6 +1455,53 @@ fn range_number(value: &Value) -> Result<f64, VmError> {
         return Err(runtime_error("RangeError: date value is not finite"));
     }
     Ok(number.trunc())
+}
+
+fn temporal_epoch_millis(object: &crate::value::ObjectData) -> Option<f64> {
+    if let Some((_, value)) = object.iter().find(|(key, _)| key == "timeValue") {
+        return match value {
+            Value::Number(value) => Some(*value),
+            Value::BindingCell(cell) => match &*cell.borrow() {
+                Value::Number(value) => Some(*value),
+                _ => None,
+            },
+            _ => None,
+        };
+    }
+    let epoch = object
+        .iter()
+        .find(|(key, _)| key == "epochNanoseconds")
+        .and_then(|(_, value)| match value {
+            Value::BigInt(value) => value.parse::<i128>().ok(),
+            _ => None,
+        });
+    if let Some(epoch) = epoch {
+        return Some(epoch as f64 / 1_000_000.0);
+    }
+    let field = |name| {
+        object
+            .iter()
+            .find(|(key, _)| key == name)
+            .and_then(|(_, value)| match value {
+                Value::Number(value) => Some(*value),
+                _ => None,
+            })
+    };
+    let (Some(year), Some(month), Some(day)) = (field("year"), field("month"), field("day")) else {
+        return Some(0.0);
+    };
+    let date = chrono::NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)?;
+    let time = chrono::NaiveTime::from_hms_milli_opt(
+        field("hour").unwrap_or(0.0) as u32,
+        field("minute").unwrap_or(0.0) as u32,
+        field("second").unwrap_or(0.0) as u32,
+        field("millisecond").unwrap_or(0.0) as u32,
+    )?;
+    Some(
+        chrono::NaiveDateTime::new(date, time)
+            .and_utc()
+            .timestamp_millis() as f64,
+    )
 }
 
 fn range_text(number: f64) -> String {
