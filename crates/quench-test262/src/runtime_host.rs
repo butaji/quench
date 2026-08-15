@@ -34,8 +34,11 @@ pub struct LinkedModule {
     namespace: RefCell<Option<ModuleBindingCell>>,
     deferred_namespace: RefCell<Option<ModuleBindingCell>>,
     executed: Cell<bool>,
+    started: Cell<bool>,
     evaluating: Cell<bool>,
     error: RefCell<Option<Value>>,
+    async_next: Cell<Option<usize>>,
+    async_registers: RefCell<Vec<Value>>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -116,6 +119,7 @@ impl LinkedModuleGraph {
                         .filter(|unit| unit.is_executed())
                     {
                         unit.complete_deferred_namespace();
+                        unit.clear_deferred_markers();
                     }
                     Ok(Value::Undefined)
                 }
@@ -172,13 +176,53 @@ impl LinkedModuleGraph {
                 .ok_or_else(|| "module unit missing".to_string())?
                 .instantiate()?;
         }
-        for id in order {
-            self.units
-                .get(&id)
-                .ok_or_else(|| "module unit missing".to_string())?
-                .execute()?;
+        let mut completed = HashSet::new();
+        while completed.len() < order.len() {
+            let mut progressed = false;
+            for id in &order {
+                if completed.contains(id) || !self.ready_for_execution(graph, *id) {
+                    continue;
+                }
+                let unit = self
+                    .units
+                    .get(id)
+                    .ok_or_else(|| "module unit missing".to_string())?;
+                unit.execute()?;
+                completed.insert(*id);
+                progressed = true;
+            }
+            self.resume_async_modules_once()?;
+            if !progressed && !self.has_pending_async() {
+                return Err("module evaluation made no progress".to_string());
+            }
+        }
+        while self.has_pending_async() {
+            self.resume_async_modules_once()?;
         }
         Ok(())
+    }
+
+    fn ready_for_execution(&self, graph: &ModuleGraph, id: ModuleId) -> bool {
+        graph.dependencies(id).into_iter().all(|dependency| {
+            self.units
+                .get(&dependency)
+                .map_or(true, |unit| unit.async_next.get().is_none())
+        })
+    }
+
+    fn resume_async_modules_once(&self) -> Result<(), String> {
+        for unit in self.units.values() {
+            if unit.async_next.get().is_some() {
+                unit.resume_async()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn has_pending_async(&self) -> bool {
+        self.units
+            .values()
+            .any(|unit| unit.async_next.get().is_some())
     }
 
     pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
@@ -644,8 +688,11 @@ impl LinkedModule {
             namespace: RefCell::new(None),
             deferred_namespace: RefCell::new(None),
             executed: Cell::new(false),
+            started: Cell::new(false),
             evaluating: Cell::new(false),
             error: RefCell::new(None),
+            async_next: Cell::new(None),
+            async_registers: RefCell::new(Vec::new()),
         })
     }
 
@@ -661,8 +708,11 @@ impl LinkedModule {
             namespace: RefCell::new(None),
             deferred_namespace: RefCell::new(None),
             executed: Cell::new(false),
+            started: Cell::new(false),
             evaluating: Cell::new(false),
             error: RefCell::new(None),
+            async_next: Cell::new(None),
+            async_registers: RefCell::new(Vec::new()),
         })
     }
 
@@ -929,6 +979,9 @@ impl LinkedModule {
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
+        if self.started.replace(true) {
+            return Ok(Value::Undefined);
+        }
         if self.executed.get() {
             return Ok(Value::Undefined);
         }
@@ -936,7 +989,9 @@ impl LinkedModule {
             return Ok(Value::Undefined);
         }
         let result = self.execute_inner();
-        self.evaluating.set(false);
+        if self.async_next.get().is_none() || result.is_err() {
+            self.evaluating.set(false);
+        }
         result
     }
 
@@ -974,6 +1029,26 @@ impl LinkedModule {
         }
     }
 
+    fn clear_deferred_markers(&self) {
+        let namespaces = [
+            self.deferred_namespace.borrow().as_ref().cloned(),
+            self.namespace.borrow().as_ref().cloned(),
+        ];
+        for namespace in namespaces.into_iter().flatten() {
+            let Value::Object(properties) = namespace.get() else {
+                continue;
+            };
+            for (key, value) in properties.iter() {
+                if !key.starts_with("\0quench:deferred:") && key != "\0quench:deferred-module" {
+                    continue;
+                }
+                if let Value::BindingCell(cell) = value {
+                    cell.replace(Value::Undefined);
+                }
+            }
+        }
+    }
+
     fn execute_inner(&self) -> Result<quench_runtime::value::Value, String> {
         let start = self
             .program
@@ -982,10 +1057,102 @@ impl LinkedModule {
             .position(|op| matches!(op, quench_runtime::ops::Op::ModuleEvaluationStart))
             .map_or(0, |index| index + 1);
         let mut registers = Vec::new();
-        let result = self
+        let result = if self.has_top_level_await() {
+            self.execute_async_step(start, &mut registers)?
+        } else {
+            self.scope
+                .execute(&self.program.ops()[start..], &mut registers, host_context())
+                .map_err(|error| self.record_error(error))?
+        };
+        if self.async_next.get().is_some() {
+            self.async_registers.replace(registers);
+            return Ok(result);
+        }
+        self.finish_execution()?;
+        Ok(result)
+    }
+
+    fn execute_async_step(
+        &self,
+        start: usize,
+        registers: &mut Vec<Value>,
+    ) -> Result<Value, String> {
+        let end = self.program.ops()[start..]
+            .iter()
+            .position(|op| matches!(op, quench_runtime::ops::Op::Await { .. }))
+            .map_or(self.program.ops().len() - start, |index| index + 1);
+        let (completion, next) = self
             .scope
-            .execute(&self.program.ops()[start..], &mut registers, host_context())
+            .execute_completion_step(
+                &self.program.ops()[start..start + end],
+                registers,
+                host_context(),
+            )
             .map_err(|error| self.record_error(error))?;
+        let stopped_at_await = end < self.program.ops().len() - start;
+        match completion {
+            quench_runtime::completion::Completion::Suspend(_) => {
+                self.async_next.set(Some(start + next));
+                Ok(Value::Undefined)
+            }
+            quench_runtime::completion::Completion::Normal if stopped_at_await => {
+                self.async_next.set(Some(start + next));
+                Ok(Value::Undefined)
+            }
+            completion => completion
+                .into_vm_error()
+                .map_err(|error| self.record_error(error)),
+        }
+    }
+
+    fn resume_async(&self) -> Result<(), String> {
+        let Some(start) = self.async_next.take() else {
+            return Ok(());
+        };
+        let mut registers = self.async_registers.take();
+        let end = self.program.ops()[start..]
+            .iter()
+            .position(|op| matches!(op, quench_runtime::ops::Op::Await { .. }))
+            .map_or(self.program.ops().len() - start, |index| index + 1);
+        let (completion, next) = self
+            .scope
+            .execute_completion_step(
+                &self.program.ops()[start..start + end],
+                &mut registers,
+                host_context(),
+            )
+            .map_err(|error| self.record_error(error))?;
+        match completion {
+            quench_runtime::completion::Completion::Normal => {
+                if end < self.program.ops().len() - start {
+                    self.async_next.set(Some(start + next));
+                    self.async_registers.replace(registers);
+                } else {
+                    self.finish_execution()?;
+                    self.evaluating.set(false);
+                }
+                Ok(())
+            }
+            quench_runtime::completion::Completion::Suspend(_) => {
+                self.async_next.set(Some(start + next));
+                self.async_registers.replace(registers);
+                Ok(())
+            }
+            completion => completion
+                .into_vm_error()
+                .map_err(|error| self.record_error(error))
+                .map(|_| ()),
+        }
+    }
+
+    fn has_top_level_await(&self) -> bool {
+        self.program
+            .module_metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.has_top_level_await)
+    }
+
+    fn finish_execution(&self) -> Result<(), String> {
         for (name, value) in &self.fixed_exports {
             let cell = self
                 .export_cell(name)
@@ -994,7 +1161,7 @@ impl LinkedModule {
         }
         self.executed.set(true);
         self.clear_namespace_tdz();
-        Ok(result)
+        Ok(())
     }
 
     fn record_error(&self, error: quench_runtime::execute::VmError) -> String {

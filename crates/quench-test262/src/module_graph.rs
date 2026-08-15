@@ -92,6 +92,16 @@ impl ModuleGraph {
         self.units.get(id.0 as usize).filter(|unit| unit.id == id)
     }
 
+    pub fn dependencies(&self, id: ModuleId) -> Vec<ModuleId> {
+        self.edges
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .filter(|dependency| !self.deferred_edges.contains(&(id, **dependency)))
+            .copied()
+            .collect()
+    }
+
     pub fn units(&self) -> &[ModuleUnit] {
         &self.units
     }
