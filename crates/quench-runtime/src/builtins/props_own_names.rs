@@ -191,6 +191,12 @@ fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str]
             "Symbol.toStringTag",
         ],
         Builtin::ErrorPrototype => &["constructor", "name", "message", "stack", "toString"],
+        Builtin::RangeErrorPrototype
+        | Builtin::TypeErrorPrototype
+        | Builtin::EvalErrorPrototype
+        | Builtin::ReferenceErrorPrototype
+        | Builtin::SyntaxErrorPrototype
+        | Builtin::URIErrorPrototype => &["constructor", "name", "message"],
         Builtin::AggregateErrorPrototype => &["constructor", "name", "message"],
         Builtin::SuppressedErrorPrototype => &["constructor", "name", "message", "toString"],
         _ => own_property_names_tail(builtin),

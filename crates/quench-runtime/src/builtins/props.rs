@@ -193,7 +193,15 @@ fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
                 | Builtin::URIError
                 | Builtin::TypeError
         ))
-    .then_some(Builtin::ErrorPrototype)
+    .then_some(match builtin {
+        Builtin::RangeError => Builtin::RangeErrorPrototype,
+        Builtin::TypeError => Builtin::TypeErrorPrototype,
+        Builtin::ReferenceError => Builtin::ReferenceErrorPrototype,
+        Builtin::SyntaxError => Builtin::SyntaxErrorPrototype,
+        Builtin::EvalError => Builtin::EvalErrorPrototype,
+        Builtin::URIError => Builtin::URIErrorPrototype,
+        _ => Builtin::ErrorPrototype,
+    })
     .or_else(|| {
         (builtin == Builtin::AggregateError && key == "prototype")
             .then_some(Builtin::AggregateErrorPrototype)
