@@ -164,8 +164,8 @@ fn regexp_source_and_flags(
         .filter(|value| !matches!(value, Value::Undefined))
         .cloned()
         .unwrap_or_else(|| Value::String(String::new()));
-    let flags = regexp_constructor_flags(arguments)?;
     let source_value = regexp_constructor_source(&source_value)?;
+    let flags = regexp_constructor_flags(arguments)?;
     let source = crate::strings::source_text(&source_value)
         .map(Ok)
         .unwrap_or_else(|| crate::conversion::to_string(&source_value))?;
@@ -174,26 +174,38 @@ fn regexp_source_and_flags(
 }
 
 fn regexp_constructor_source(value: &Value) -> Result<Value, crate::execute::VmError> {
-    if crate::regexp::has_regexp_internal_slot(value) {
+    if is_regexp_pattern(value)? {
         return crate::execute::get_property_result(value, "source");
     }
     Ok(value.clone())
 }
 
 fn regexp_constructor_flags(arguments: &[Value]) -> Result<String, crate::execute::VmError> {
-    if let Some(pattern) = arguments.first().filter(|value| {
-        crate::regexp::has_regexp_internal_slot(value)
-            && arguments
-                .get(1)
-                .is_none_or(|flags| matches!(flags, Value::Undefined))
-    }) {
+    let inherits_flags = arguments
+        .get(1)
+        .is_none_or(|flags| matches!(flags, Value::Undefined));
+    if let Some(pattern) = arguments.first() {
+        if inherits_flags && is_regexp_pattern(pattern)? {
         return crate::execute::get_property_result(pattern, "flags")
             .and_then(|value| crate::conversion::to_string(&value));
+        }
     }
     arguments
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined))
         .map_or_else(|| Ok(String::new()), crate::conversion::to_string)
+}
+
+fn is_regexp_pattern(value: &Value) -> Result<bool, crate::execute::VmError> {
+    if crate::regexp::has_regexp_internal_slot(value) {
+        return Ok(true);
+    }
+    if !crate::value::is_object(value) {
+        return Ok(false);
+    }
+    Ok(crate::execute::is_truthy(
+        &crate::execute::get_property_result(value, "Symbol.match")?,
+    ))
 }
 
 fn regexp_data_descriptor(writable: bool, configurable: bool, value: Value) -> Value {
