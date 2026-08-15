@@ -276,7 +276,9 @@ impl LinkedModule {
             .map(u8::to_string)
             .collect::<Vec<_>>()
             .join(",");
-        Self::compile(&format!("export default new Uint8Array([{values}]);"))
+        Self::compile(&format!(
+            "const buffer = new Uint8Array([{values}]).buffer.transferToImmutable(); export default new Uint8Array(buffer);"
+        ))
     }
 
     pub fn bind_import(&self, local: &str, cell: ModuleBindingCell) -> Result<(), String> {

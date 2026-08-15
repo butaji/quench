@@ -167,6 +167,11 @@ fn resize_buffer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
     };
     let length = crate::intl::tolocale::value::to_number_result(arguments.first())?;
     let length = crate::construct::to_index(length)?;
+    if buffer.immutable {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot resize an immutable ArrayBuffer",
+        ));
+    }
     buffer
         .resize(length)
         .map_err(|_| crate::value::error::throw_range_error("Invalid ArrayBuffer resize"))?;
