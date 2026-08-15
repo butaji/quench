@@ -219,9 +219,7 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
 fn validate_flags(flags: &str) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for flag in flags.chars() {
-        if !matches!(flag, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y')
-            || !seen.insert(flag)
-        {
+        if !matches!(flag, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y') || !seen.insert(flag) {
             return Err("invalid regular expression flags".to_string());
         }
     }
