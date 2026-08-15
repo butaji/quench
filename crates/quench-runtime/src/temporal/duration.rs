@@ -4,6 +4,14 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let values = (0..10)
         .map(|index| number(arguments.get(index)))
         .collect::<Vec<_>>();
+    if values
+        .iter()
+        .any(|value| !value.is_finite() || value.fract() != 0.0)
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Duration fields must be integral",
+        ));
+    }
     let sign = values
         .iter()
         .find(|value| **value != 0.0)
