@@ -486,10 +486,11 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
             arguments.get(2).unwrap_or(&Value::Undefined),
         );
     }
-    let Some(Value::Object(descriptor)) = arguments.get(2) else {
+    let Some(descriptor) = arguments.get(2) else {
         return Ok(target.clone());
     };
-    let result = define_own_property(target, &key, descriptor)?;
+    let descriptor = descriptor_fields(descriptor)?;
+    let result = define_own_property(target, &key, &descriptor)?;
     crate::locals::replace_value(target, &result);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
