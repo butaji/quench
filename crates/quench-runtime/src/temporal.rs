@@ -17,11 +17,41 @@ pub(crate) fn execute(
     if builtin == crate::ops::Builtin::TemporalZonedDateTimeToString {
         return Some(zoned_date_time_to_string(receiver));
     }
+    if builtin == crate::ops::Builtin::TemporalZonedDateTimeFrom {
+        return Some(zoned_date_time_from(arguments.first()));
+    }
     duration::execute(builtin, receiver, arguments)
         .or_else(|| instant::execute(builtin, receiver, arguments))
         .or_else(|| plain_date::execute(builtin, receiver, arguments))
         .or_else(|| plain_date_time::execute(builtin, receiver, arguments))
         .or_else(|| plain_time::execute(builtin, receiver, arguments))
+}
+
+fn zoned_date_time_from(
+    value: Option<&crate::value::Value>,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let Some(crate::value::Value::String(text)) = value else {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid ZonedDateTime",
+        ));
+    };
+    let (main, annotation) = text
+        .split_once('[')
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
+    let zone = annotation
+        .strip_suffix(']')
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
+    let date_time = chrono::NaiveDateTime::parse_from_str(main, "%Y-%m-%dT%H:%M:%S")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(main, "%Y-%m-%dT%H:%M"))
+        .map_err(|_| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
+    let epoch = date_time
+        .and_utc()
+        .timestamp_nanos_opt()
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
+    zoned_date_time_construct(&[
+        crate::value::Value::BigInt(epoch.to_string()),
+        crate::value::Value::String(zone.to_string()),
+    ])
 }
 
 fn zoned_date_time_to_string(

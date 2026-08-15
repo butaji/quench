@@ -511,9 +511,16 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn duration_value_relative(value: &Value, relative_to: Option<&Value>) -> i128 {
     let base = duration_value(value);
-    let is_vancouver = relative_to
-        .and_then(|value| crate::execute::get_property_result(value, "timeZoneId").ok())
-        .is_some_and(|value| matches!(value, Value::String(zone) if zone == "America/Vancouver"));
+    let is_vancouver = relative_to.is_some_and(|value| match value {
+        Value::String(value) => value.contains("America/Vancouver"),
+        _ => ["timeZoneId", "timeZone"].into_iter().any(|name| {
+            crate::execute::get_property_result(value, name)
+                .ok()
+                .is_some_and(
+                    |value| matches!(value, Value::String(zone) if zone == "America/Vancouver"),
+                )
+        }),
+    });
     if is_vancouver {
         return base + number_property(value, "days") as i128 * 3_600_000_000_000;
     }
