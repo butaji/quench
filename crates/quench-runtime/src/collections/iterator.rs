@@ -48,7 +48,7 @@ pub(crate) fn zip(arguments: &[Value]) -> Result<Value, crate::execute::VmError>
     let inputs = arguments.first().cloned().unwrap_or(Value::Undefined);
     let options = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     let mode = zip_mode(&options)?;
-    let values = array_values(&inputs)?;
+    let values = collect_iterable(inputs)?;
     let iterators = values
         .into_iter()
         .map(|value| from(std::slice::from_ref(&value)))
@@ -88,15 +88,6 @@ fn zip_mode(options: &Value) -> Result<u8, crate::execute::VmError> {
         }
     }
     Ok(mode)
-}
-
-fn array_values(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
-    let Value::Array(array) = value else {
-        return Err(crate::value::error::throw_type_error("Iterator.zip inputs"));
-    };
-    Ok((0..array.logical_len())
-        .map(|index| array.get_index(index).unwrap_or(Value::Undefined))
-        .collect())
 }
 
 pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
