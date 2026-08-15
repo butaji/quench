@@ -183,11 +183,28 @@ impl ModuleMetadata {
 struct DynamicImportCollector {
     specifiers: Vec<String>,
     has_await: bool,
+    function_depth: usize,
 }
 
 impl<'a> oxc::ast::visit::Visit<'a> for DynamicImportCollector {
+    fn enter_scope(
+        &mut self,
+        flags: oxc::syntax::scope::ScopeFlags,
+        _scope_id: &std::cell::Cell<Option<oxc::syntax::scope::ScopeId>>,
+    ) {
+        if flags.contains(oxc::syntax::scope::ScopeFlags::Function) {
+            self.function_depth += 1;
+        }
+    }
+
+    fn leave_scope(&mut self) {
+        if self.function_depth > 0 {
+            self.function_depth -= 1;
+        }
+    }
+
     fn visit_await_expression(&mut self, await_expression: &oxc::ast::ast::AwaitExpression<'a>) {
-        self.has_await = true;
+        self.has_await |= self.function_depth == 0;
         oxc::ast::visit::walk::walk_await_expression(self, await_expression);
     }
 
