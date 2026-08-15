@@ -107,16 +107,19 @@ impl LinkedModuleGraph {
             move |specifier, deferred, options| {
                 let graph = unsafe { &*module_graph_ptr };
                 let kind = dynamic_module_kind(&options);
-                let target = graph
+                let Some(target) = graph
                     .resolve_kind(entry, &specifier, kind)
                     .or_else(|| graph.resolve_kind(entry, &specifier, ModuleKind::Json))
                     .or_else(|| graph.resolve_kind(entry, &specifier, ModuleKind::Text))
                     .or_else(|| graph.resolve_kind(entry, &specifier, ModuleKind::JavaScript))
-                    .ok_or_else(|| {
-                        quench_runtime::execute::VmError::EvalError(
-                            "Cannot resolve dynamic import".to_string(),
-                        )
-                    })?;
+                else {
+                    let reason = dynamic_import_error("Cannot resolve dynamic import");
+                    return Ok(Value::Promise(Rc::new(
+                        quench_runtime::value::PromiseData::new(
+                            quench_runtime::value::PromiseState::Rejected(reason),
+                        ),
+                    )));
+                };
                 if !deferred {
                     if let Err(error) = unsafe { (&*graph_ptr).execute(graph, target) } {
                         let reason = dynamic_import_error(&error);
