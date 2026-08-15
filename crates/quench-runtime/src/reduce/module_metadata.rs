@@ -11,6 +11,7 @@ use oxc::ast::ast::{
 pub struct ModuleMetadata {
     pub import_specifiers: Vec<String>,
     pub imports: Vec<ImportBinding>,
+    pub import_attributes: Vec<(String, String)>,
     pub exports: Vec<ExportBinding>,
     pub reexports: Vec<ReexportBinding>,
     pub exported_names: Vec<String>,
@@ -71,6 +72,20 @@ impl ModuleMetadata {
                             imported,
                             local,
                         });
+                    }
+                }
+                if let Some(with_clause) = &import.with_clause {
+                    for attribute in &with_clause.with_entries {
+                        let key = match &attribute.key {
+                            oxc::ast::ast::ImportAttributeKey::Identifier(key) => {
+                                key.name.to_string()
+                            }
+                            oxc::ast::ast::ImportAttributeKey::StringLiteral(key) => {
+                                key.value.to_string()
+                            }
+                        };
+                        self.import_attributes
+                            .push((source.clone(), format!("{key}={}", attribute.value.value)));
                     }
                 }
             }
