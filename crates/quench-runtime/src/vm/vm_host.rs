@@ -54,6 +54,7 @@ fn agent_sleep(arguments: &[Value]) -> Result<Value, VmError> {
     if delay.is_finite() && delay > 0.0 {
         std::thread::sleep(std::time::Duration::from_secs_f64(delay / 1_000.0));
     }
+    crate::atomics::expire_async_waiters();
     Ok(Value::Undefined)
 }
 
