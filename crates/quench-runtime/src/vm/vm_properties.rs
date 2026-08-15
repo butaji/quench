@@ -41,6 +41,9 @@ fn get_property_value(value: &Value, key: &str) -> Value {
             )
         }
         Builtin(builtin) => bind_callable_property(value, *builtin, key),
+        Array(values) if key == "toLocaleString" => {
+            bind_method(value, crate::arrays::property(values, key))
+        }
         Array(values) => crate::arrays::property(values, key),
         ArrayBuffer(buffer) => array_buffer_property(buffer, key),
         Float64Array(view) => float64_array_property(view, key),
