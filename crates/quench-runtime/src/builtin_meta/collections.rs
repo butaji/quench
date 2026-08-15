@@ -15,9 +15,7 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         return set_property(key);
     }
     match (builtin, key) {
-        (SetIteratorPrototype | MapIteratorPrototype, k) => {
-            return iterator_prototype_property(builtin, k);
-        }
+        (SetIteratorPrototype | MapIteratorPrototype, k) => iterator_prototype_property(builtin, k),
         (WeakMapPrototype, "set") => Some(Value::Builtin(WeakMapSet)),
         (WeakMapPrototype, "get") => Some(Value::Builtin(WeakMapGet)),
         (WeakMapPrototype, "has") => Some(Value::Builtin(WeakMapHas)),

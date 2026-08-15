@@ -510,11 +510,7 @@ impl NumberOptions {
         }
         text = apply_minimum_integer(&text, self.minimum_integer_digits);
         if self.minimum_fraction_digits > 0 && !significant_selected {
-            text = pad_locale_fraction(
-                &text,
-                self.minimum_fraction_digits,
-                &self.locale,
-            );
+            text = pad_locale_fraction(&text, self.minimum_fraction_digits, &self.locale);
         }
         let negative = text.starts_with('-');
         if number.is_nan() && self.locale.starts_with("zh") {
@@ -604,13 +600,13 @@ impl NumberOptions {
             parts.push(crate::intl::number_format::percent_part());
             return parts;
         }
-        if self.style == "decimal" && self.unit.is_none() {
-            if number.is_infinite()
+        if self.style == "decimal"
+            && self.unit.is_none()
+            && (number.is_infinite()
                 || number.is_nan()
-                || (formatted.starts_with(['-', '+']) && !formatted.contains('.'))
-            {
-                return numeric_parts(&formatted, &self.locale);
-            }
+                || (formatted.starts_with(['-', '+']) && !formatted.contains('.')))
+        {
+            return numeric_parts(&formatted, &self.locale);
         }
         numeric_parts(&self.format_number(number), &self.locale)
     }
@@ -796,7 +792,9 @@ fn pad_locale_fraction(text: &str, minimum: u32, locale: &str) -> String {
     let (sign, rest) = text
         .strip_prefix(['-', '+'])
         .map_or(("", text), |rest| (&text[..1], rest));
-    let fraction_digits = rest.split_once(',').map_or(0, |(_, fraction)| fraction.len());
+    let fraction_digits = rest
+        .split_once(',')
+        .map_or(0, |(_, fraction)| fraction.len());
     if fraction_digits >= minimum as usize {
         return text.to_string();
     }

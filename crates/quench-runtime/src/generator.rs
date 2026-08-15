@@ -192,10 +192,7 @@ pub(crate) fn async_return(
     async_completion(receiver, Resume::Return(first_argument(arguments)))
 }
 
-pub(crate) fn async_throw(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, VmError> {
+pub(crate) fn async_throw(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     async_completion(receiver, Resume::Throw(first_argument(arguments)))
 }
 
@@ -226,10 +223,7 @@ fn is_executing(generator: &GeneratorData) -> bool {
         .is_some_and(|state| state.suspension.is_none())
 }
 
-pub(crate) fn resume_async_next(
-    generator: &GeneratorData,
-    value: Value,
-) -> Result<Value, VmError> {
+pub(crate) fn resume_async_next(generator: &GeneratorData, value: Value) -> Result<Value, VmError> {
     resume(generator, Resume::Next(value))
 }
 pub(crate) fn return_(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
