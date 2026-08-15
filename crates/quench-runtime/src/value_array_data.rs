@@ -88,7 +88,11 @@ impl ArrayData {
         index < self.length
             && self.deleted.get(index) != Some(&true)
             && (index < self.values.len()
-                || self.mapped.get(index).and_then(Option::as_ref).is_some())
+                || self
+                    .mapped
+                    .get(index)
+                    .and_then(Option::as_ref)
+                    .is_some())
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
@@ -121,10 +125,7 @@ impl ArrayData {
     }
 
     pub(crate) fn descriptor_keys(&self) -> Vec<String> {
-        self.descriptors
-            .iter()
-            .map(|(key, _)| key.clone())
-            .collect()
+        self.descriptors.iter().map(|(key, _)| key.clone()).collect()
     }
 
     pub(crate) fn property(&self, key: &str) -> Option<Value> {
@@ -194,21 +195,6 @@ impl Value {
     /// Create an ordinary JavaScript object from own data properties.
     pub fn object(properties: ObjectProperties) -> Self {
         Self::Object(Rc::new(ObjectData::new(properties)))
-    }
-
-    pub fn module_namespace(properties: ObjectProperties) -> Self {
-        let mut own = Vec::with_capacity(properties.len().saturating_mul(2));
-        for (name, value) in properties {
-            let descriptor = Self::object(vec![
-                ("value".to_string(), value.clone()),
-                ("writable".to_string(), Self::Boolean(true)),
-                ("enumerable".to_string(), Self::Boolean(true)),
-                ("configurable".to_string(), Self::Boolean(false)),
-            ]);
-            own.push((name.clone(), value));
-            own.push((crate::builtins::descriptor_key(&name), descriptor));
-        }
-        Self::Object(Rc::new(ObjectData::new(own)))
     }
 
     pub(crate) fn array(values: Vec<Value>) -> Self {
