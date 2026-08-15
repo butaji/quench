@@ -176,6 +176,21 @@ pub(crate) fn enumerable_key_strings_result(
     Ok(keys)
 }
 
+fn check_namespace_bindings(target: &Value, keys: &[String]) -> Result<(), VmError> {
+    if !crate::builtins::is_module_namespace(target) {
+        return Ok(());
+    }
+    if keys
+        .iter()
+        .any(|key| crate::builtins::namespace_uninitialized(target, key))
+    {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access an uninitialized module binding",
+        ));
+    }
+    Ok(())
+}
+
 fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
     let Some((_, Value::String(value))) = properties.iter().find(|(key, _)| key == "_value") else {
         return ordered(properties, symbols);
