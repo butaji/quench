@@ -212,6 +212,13 @@ pub fn reduce_expression(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     match expression {
+        Expression::PrivateInExpression(private) => {
+            let object = reduce_expression(&private.right, ops, facts, next_register, locals)?;
+            let dst = take_register(next_register);
+            let name = facts.private_name(private.left.span)?;
+            ops.push(Op::HasPrivate { dst, object, name });
+            return Some(dst);
+        }
         Expression::TaggedTemplateExpression(tagged) => {
             return super::tagged_template::reduce(tagged, ops, facts, next_register, locals);
         }

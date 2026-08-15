@@ -28,6 +28,7 @@ fn run_simple_single_op(
         ValidateClassHeritage { .. } => run_class_heritage(registers, op)?,
         GetClassPrototype { .. } => run_class_prototype(registers, op)?,
         CheckSuperThis => crate::super_scope::check_initialized_this()?,
+        HasPrivate { .. } => crate::private_slots::execute_has(registers, op)?,
         AppendInstanceField(_) => crate::classes::append_instance_field(registers, op)?,
         DeleteProperty { .. } => run_delete_property(registers, op)?,
         MakeFunction { .. } | MakeFunctionWithKind { .. } => {
