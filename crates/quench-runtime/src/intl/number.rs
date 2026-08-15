@@ -918,11 +918,7 @@ impl NumberOptions {
         }
         text = apply_minimum_integer(&text, self.minimum_integer_digits);
         if self.minimum_fraction_digits > 0 && !significant_selected {
-            text = if !self.use_grouping && !text.contains(['.', ',']) {
-                pad_fraction(&text, self.minimum_fraction_digits)
-            } else {
-                pad_locale_fraction(&text, self.minimum_fraction_digits, &self.locale)
-            };
+            text = pad_locale_fraction(&text, self.minimum_fraction_digits, &self.locale);
         }
         let negative = text.starts_with('-');
         if number.is_nan() && self.locale.starts_with("zh") {
@@ -1423,7 +1419,7 @@ fn format_localized_unit(text: &str, unit: Option<&str>, display: &str, locale: 
     if unit != Some("kilometer-per-hour") {
         return format_unit(text, unit, display);
     }
-    let (prefix, suffix) = localized_speed_unit(locale, display);
+    let (prefix, suffix) = localized_unit_affixes(locale, display);
     let text = if locale.starts_with("de") {
         text.replace('.', ",")
     } else {
@@ -1436,7 +1432,7 @@ fn format_localized_unit(text: &str, unit: Option<&str>, display: &str, locale: 
     }
 }
 
-fn localized_speed_unit(locale: &str, display: &str) -> (&'static str, &'static str) {
+fn localized_unit_affixes(locale: &str, display: &str) -> (&'static str, &'static str) {
     match (locale, display) {
         (locale, "long") if locale.starts_with("ja") => ("時速 ", " キロメートル"),
         (locale, "long") if locale.starts_with("ko") => ("시속 ", "킬로미터"),

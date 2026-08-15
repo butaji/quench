@@ -4,7 +4,7 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
         return name;
     }
     if let Some(name) = metadata_builtin_name(builtin) {
-        return name;
+        return name.strip_prefix("Intl.").unwrap_or(name);
     }
     match builtin {
         Eval => "eval", Escape => "escape", Unescape => "unescape", EncodeURI => "encodeURI", EncodeURIComponent => "encodeURIComponent", DecodeURI => "decodeURI", DecodeURIComponent => "decodeURIComponent", Array => "Array", ArrayBuffer => "ArrayBuffer",
@@ -31,7 +31,8 @@ fn intl_constructor_short_name(builtin: Builtin) -> Option<&'static str> {
 }
 
 fn metadata_builtin_name(builtin: Builtin) -> Option<&'static str> {
-    crate::builtin_meta::methods::short_name(builtin)
+    crate::builtin_meta::intl::short_name(builtin)
+        .or_else(|| crate::builtin_meta::methods::short_name(builtin))
         .or_else(|| crate::builtin_meta::methods::function_name(builtin))
         .or_else(|| data_view_name::data_view_name(builtin))
         .or_else(|| error_name(builtin))

@@ -122,22 +122,7 @@ fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
         "calendar" => code.split('-').all(|part| {
             (3..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
         }),
-        "dateTimeField" => matches!(
-            code,
-            "era"
-                | "year"
-                | "quarter"
-                | "month"
-                | "weekOfYear"
-                | "weekday"
-                | "day"
-                | "dayPeriod"
-                | "hour"
-                | "minute"
-                | "second"
-                | "fractionalSecond"
-                | "timeZoneName"
-        ),
+        "dateTimeField" => !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric()),
         _ => false,
     };
     if valid {

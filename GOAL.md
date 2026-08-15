@@ -1,10 +1,9 @@
-# Goal: residual stages 104–106
+# Goal: stages 108–113
 
-Stage 107 (NumberFormat) is verified at 249/249. Bring the remaining test262
-stages 104–106 to 100% through the canonical runner: ListFormat, Locale, and
-Number. Preserve locale-list processing,
-constructor/prototype identity, accessor metadata, option property-get order,
-formatting and resolvedOptions key order, and exact completion/error behavior.
-Do not edit test262 or the harness. Re-run stages 104–107 and earlier
-regressions after each fix; finish with clean format/clippy checks and
-committed verified changes.
+Bring test262 stages 108–113 to 100% passing through the canonical runner:
+PluralRules, RelativeTimeFormat, Segmenter, String, Temporal, and TypedArray.
+Preserve ECMA-402 option validation and getter order, locale behavior,
+formatting, prototype/accessor descriptors, completion/error ordering, and
+typed-array integration. Fix shared canonical semantics; never alter the
+harness or test262. Re-run owned stages and earlier regressions after each
+fix, finish quality checks, and commit verified changes.
