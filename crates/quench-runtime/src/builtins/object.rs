@@ -43,6 +43,7 @@ pub(crate) fn execute_special(
             require_object_coercible(target)?;
             descriptor(target, key)
         }
+        Builtin::ObjectGetOwnPropertyDescriptors => own_descriptors(arguments.first()),
         Builtin::ObjectGetOwnPropertyNames => object_proxy_names(arguments.first(), false),
         Builtin::ObjectGetOwnPropertySymbols => object_proxy_names(arguments.first(), true),
         Builtin::ObjectKeys => object_keys(arguments.first()),
@@ -55,6 +56,32 @@ pub(crate) fn execute_special(
         Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => legacy_accessor_special(builtin, receiver, arguments),
     }
+}
+
+fn own_descriptors(target: Option<&Value>) -> Result<Value, VmError> {
+    let target = target.ok_or_else(|| {
+        crate::value::error::throw_type_error("Cannot convert undefined or null to object")
+    })?;
+    if !crate::value::is_object(target) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert value to object",
+        ));
+    }
+    let keys = crate::own_keys::all(target)?;
+    let Value::Array(keys) = keys else {
+        return Ok(Value::Object(Rc::new(ObjectData::new(Vec::new()))));
+    };
+    let mut properties = Vec::new();
+    for index in 0..keys.logical_len() {
+        let Some(key) = keys.get(index) else { continue };
+        let descriptor = descriptor(Some(target), Some(key))?;
+        if matches!(descriptor, Value::Undefined) {
+            continue;
+        }
+        let name = crate::conversion::to_property_key(key)?;
+        properties.push((name, descriptor));
+    }
+    Ok(Value::Object(Rc::new(ObjectData::new(properties))))
 }
 fn legacy_accessor_special(
     builtin: Builtin,
@@ -191,11 +218,10 @@ pub(crate) fn descriptor(
             if !deleted
                 && crate::vm::is_global_object(&global)
                 && (crate::vm::global_builtin_exists(&key)
-                    || crate::globals::immutable_value(&key).is_some())
+                    || matches!(key.as_str(), "undefined" | "Infinity" | "NaN"))
             {
-                let value = crate::globals::immutable_value(&key)
-                    .unwrap_or_else(|| crate::execute::get_property(&global, &key));
-                let immutable = crate::globals::immutable_value(&key).is_some();
+                let value = crate::execute::get_property(&global, &key);
+                let immutable = matches!(key.as_str(), "undefined" | "Infinity" | "NaN");
                 Some(descriptor_object_with_flags(
                     value, !immutable, false, !immutable,
                 ))
@@ -336,6 +362,7 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
             Builtin::AbstractModuleSourceToStringTagGetter
         }
         (Builtin::ErrorPrototype, "stack") => Builtin::ErrorPrototypeStackGetter,
+        (Builtin::FunctionPrototype, "caller" | "arguments") => Builtin::ThrowTypeError,
         (Builtin::IntlLocalePrototype, "baseName") => Builtin::IntlLocaleBaseNameGetter,
         (Builtin::IntlLocalePrototype, "calendar") => Builtin::IntlLocaleCalendarGetter,
         (Builtin::IntlLocalePrototype, "caseFirst") => Builtin::IntlLocaleCaseFirstGetter,
@@ -354,6 +381,9 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         _ => return None,
     };
     let descriptor = match (builtin, key) {
+        (Builtin::FunctionPrototype, "caller" | "arguments") => {
+            accessor_descriptor_with_setter(Builtin::ThrowTypeError, Some(Builtin::ThrowTypeError))
+        }
         (Builtin::ErrorPrototype, "stack") => accessor_descriptor_with_setter(
             Builtin::ErrorPrototypeStackGetter,
             Some(Builtin::ErrorPrototypeStackSetter),
@@ -364,35 +394,50 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
-    if matches!(
-        builtin,
-        Builtin::ErrorPrototype
-            | Builtin::RangeErrorPrototype
-            | Builtin::ReferenceErrorPrototype
-            | Builtin::SyntaxErrorPrototype
-            | Builtin::EvalErrorPrototype
-            | Builtin::URIErrorPrototype
-            | Builtin::AggregateErrorPrototype
-            | Builtin::TypeErrorPrototype
-            | Builtin::SuppressedErrorPrototype
-    ) && key == "name"
-    {
-        let value = match builtin {
-            Builtin::RangeErrorPrototype => "RangeError",
-            Builtin::ReferenceErrorPrototype => "ReferenceError",
-            Builtin::SyntaxErrorPrototype => "SyntaxError",
-            Builtin::EvalErrorPrototype => "EvalError",
-            Builtin::URIErrorPrototype => "URIError",
-            Builtin::AggregateErrorPrototype => "AggregateError",
-            Builtin::TypeErrorPrototype => "TypeError",
-            Builtin::SuppressedErrorPrototype => "SuppressedError",
-            _ => "Error",
-        };
+    if let Some(descriptor) = builtin_descriptor_special(builtin, key) {
+        return Some(descriptor);
+    }
+    if let Some(descriptor) = intrinsic_accessor(builtin, key) {
+        return Some(descriptor);
+    }
+    if builtin == Builtin::SymbolPrototype && key == "description" {
+        return Some(accessor_descriptor(Builtin::SymbolDescriptionGetter));
+    }
+    None
+}
+
+fn builtin_descriptor_special(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::FunctionPrototype && matches!(key, "caller" | "arguments") {
+        let thrower = crate::vm::realm_intrinsic(Builtin::ThrowTypeError);
+        return Some(Value::Object(Rc::new(ObjectData::new(vec![
+            ("get".to_string(), thrower.clone()),
+            ("set".to_string(), thrower),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]))));
+    }
+    if builtin == Builtin::ThrowTypeError && key == "length" {
         return Some(descriptor_object_with_flags(
-            Value::String(value.to_string()),
-            true,
+            Value::Number(0.0),
             false,
-            true,
+            false,
+            false,
+        ));
+    }
+    if builtin == Builtin::ThrowTypeError && key == "name" {
+        return Some(descriptor_object_with_flags(
+            Value::String(String::new()),
+            false,
+            false,
+            false,
+        ));
+    }
+    if builtin == Builtin::FunctionPrototype && key == "Symbol.hasInstance" {
+        return Some(descriptor_object_with_flags(
+            super::special_property(builtin, key)?,
+            false,
+            false,
+            false,
         ));
     }
     if builtin == Builtin::Object && key == "hasOwn" {
@@ -403,16 +448,14 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             true,
         ));
     }
-    if let Some(descriptor) = intrinsic_accessor(builtin, key) {
-        return Some(descriptor);
-    }
-    if builtin == Builtin::SymbolPrototype && key == "description" {
-        return Some(accessor_descriptor(Builtin::SymbolDescriptionGetter));
-    }
     if builtin == Builtin::Symbol && key == "unscopables" {
         return super::special_property(builtin, key)
             .map(|property| descriptor_object_with_flags(property, false, false, false));
     }
+    builtin_descriptor_general(builtin, key)
+}
+
+fn builtin_descriptor_general(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, key) {
         return Some(public_descriptor(&descriptor));
     }
@@ -435,33 +478,45 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             true,
         ));
     }
+    if key == "name" {
+        if let Some(name) = error_prototype_name(builtin) {
+            return Some(descriptor_object_with_flags(
+                Value::String(name.to_string()),
+                true,
+                false,
+                true,
+            ));
+        }
+    }
     let property = super::callable_property(builtin, key)
         .or_else(|| super::special_property(builtin, key))
         .or_else(|| match super::property(builtin, key) {
             Value::Undefined => None,
             value => Some(value),
         })?;
-    let writable = (!matches!(
+    let writable = ((!matches!(
         key,
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
-    ) || (key == "name"
+    )) || (key == "name"
         && matches!(
             builtin,
             Builtin::ErrorPrototype
+                | Builtin::EvalErrorPrototype
                 | Builtin::RangeErrorPrototype
                 | Builtin::ReferenceErrorPrototype
                 | Builtin::SyntaxErrorPrototype
-                | Builtin::EvalErrorPrototype
+                | Builtin::TypeErrorPrototype
                 | Builtin::URIErrorPrototype
                 | Builtin::AggregateErrorPrototype
-                | Builtin::TypeErrorPrototype
                 | Builtin::SuppressedErrorPrototype
         )))
         && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);
-    let configurable = !matches!(key, "prototype" | "unscopables")
-        && !is_well_known_symbol_property(builtin, key)
-        && builtin_property_configurable(builtin, key)
+    let configurable = ((key == "prototype" && builtin_property_configurable(builtin, key))
+        || (!matches!(key, "prototype" | "unscopables")
+            && !is_well_known_symbol_property(builtin, key)
+            && builtin_property_configurable(builtin, key)
+            && !crate::conversion::is_symbol(&property)))
         && !crate::conversion::is_symbol(&property);
     Some(descriptor_object_with_flags(
         property,
@@ -469,6 +524,19 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         false,
         configurable,
     ))
+}
+fn error_prototype_name(builtin: Builtin) -> Option<&'static str> {
+    Some(match builtin {
+        Builtin::ErrorPrototype => "Error",
+        Builtin::EvalErrorPrototype => "EvalError",
+        Builtin::RangeErrorPrototype => "RangeError",
+        Builtin::ReferenceErrorPrototype => "ReferenceError",
+        Builtin::SyntaxErrorPrototype => "SyntaxError",
+        Builtin::TypeErrorPrototype => "TypeError",
+        Builtin::URIErrorPrototype => "URIError",
+        Builtin::AggregateErrorPrototype => "AggregateError",
+        _ => return None,
+    })
 }
 fn accessor_descriptor(getter: Builtin) -> Value {
     Value::Object(Rc::new(ObjectData::new(vec![

@@ -129,10 +129,28 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
     if !crate::value::is_object(&prototype) {
         return Err(type_error("Function has non-object prototype"));
     }
-    Ok(prototype_chain_contains(value, &prototype)
+    Ok(prototype_chain_contains(value, &prototype)?
         || own_constructor(value)
             .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
         || is_error_subclass(value, constructor))
+}
+
+pub(crate) fn function_has_instance(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let constructor = receiver.unwrap_or(&Value::Undefined);
+    if !instanceof_callable(constructor) {
+        return Ok(Value::Boolean(false));
+    }
+    let value = arguments.first().unwrap_or(&Value::Undefined);
+    if !crate::value::is_object(value) {
+        return Ok(Value::Boolean(false));
+    }
+    if let Some(result) = builtin_instanceof(value, constructor) {
+        return Ok(Value::Boolean(result));
+    }
+    Ok(Value::Boolean(ordinary_instanceof(value, constructor)?))
 }
 
 fn is_error_subclass(value: &Value, constructor: &Value) -> bool {
@@ -179,158 +197,18 @@ fn instanceof_callable(value: &Value) -> bool {
     }
 }
 
-fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
-    let mut current = internal_prototype(value);
+fn prototype_chain_contains(value: &Value, expected: &Value) -> Result<bool, VmError> {
+    let mut current = crate::builtins::object::get_prototype_of(Some(value))?;
     for _ in 0..1_024 {
-        let Some(prototype) = current else {
-            return false;
-        };
-        if crate::builtins::same_value(Some(&prototype), Some(expected)) {
-            return true;
+        if matches!(current, Value::Null) {
+            return Ok(false);
         }
-        current = internal_prototype(&prototype);
-    }
-    false
-}
-
-fn internal_prototype(value: &Value) -> Option<Value> {
-    if let Some(prototype) = crate::typed_array_prototype::get(value) {
-        return Some(prototype);
-    }
-    if let Some(prototype) = custom_object_prototype(value) {
-        return Some(prototype);
-    }
-    match value {
-        Value::Object(_) => Some(Value::Builtin(Builtin::ObjectPrototype)),
-        Value::Array(values) if values.is_arguments() => {
-            Some(Value::Builtin(Builtin::ObjectPrototype))
+        if crate::builtins::same_value(Some(&current), Some(expected)) {
+            return Ok(true);
         }
-        Value::Array(values) => values
-            .property("\0prototype")
-            .or_else(|| Some(Value::Builtin(Builtin::ArrayPrototype))),
-        Value::ArrayBuffer(buffer) => buffer_prototype(buffer),
-        Value::DataView(view) => view
-            .prototype()
-            .or_else(|| Some(Value::Builtin(Builtin::DataViewPrototype))),
-        Value::Map(data) => map_prototype(data),
-        Value::Set(data) => data.prototype().or_else(|| {
-            Some(Value::Builtin(if data.weak {
-                Builtin::WeakSetPrototype
-            } else {
-                Builtin::SetPrototype
-            }))
-        }),
-        Value::Promise(data) => data
-            .prototype()
-            .or_else(|| Some(Value::Builtin(Builtin::PromisePrototype))),
-        Value::Generator(generator) => generator_instance_prototype(generator),
-        Value::Iterator(_) => Some(crate::collections::iterator::prototype_of(value)),
-        Value::Builtin(builtin) => builtin_prototype_parent(*builtin),
-        Value::Function(function) => function
-            .properties
-            .borrow()
-            .iter()
-            .rev()
-            .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-            .or(Some(Value::Builtin(Builtin::FunctionPrototype))),
-        Value::BoundFunction(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
-        _ => None,
+        current = crate::builtins::object::get_prototype_of(Some(&current))?;
     }
-}
-
-fn generator_instance_prototype(generator: &crate::value::GeneratorData) -> Option<Value> {
-    let properties = generator.function.properties.borrow();
-    let prototype = properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "prototype").then(|| value.clone()));
-    prototype.filter(crate::value::is_object).or_else(|| {
-        properties
-            .iter()
-            .rev()
-            .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-            .map(|value| crate::execute::get_property(&value, "prototype"))
-    })
-}
-
-fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
-    if matches!(
-        builtin,
-        Builtin::GeneratorFunctionPrototype
-            | Builtin::AsyncGeneratorFunctionPrototype
-            | Builtin::AsyncFunctionPrototype
-            | Builtin::AsyncIteratorPrototype
-    ) {
-        return Some(Value::Builtin(Builtin::FunctionPrototype));
-    }
-    if matches!(
-        builtin,
-        Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction
-    ) {
-        return Some(Value::Builtin(Builtin::Function));
-    }
-    if matches!(
-        builtin,
-        Builtin::ArrayIteratorPrototype
-            | Builtin::SetIteratorPrototype
-            | Builtin::MapIteratorPrototype
-            | Builtin::AsyncIteratorPrototype
-    ) {
-        return Some(Value::Builtin(Builtin::IteratorPrototype));
-    }
-    if builtin == Builtin::IteratorPrototype {
-        return Some(Value::Builtin(Builtin::ObjectPrototype));
-    }
-    matches!(
-        builtin,
-        Builtin::FunctionPrototype
-            | Builtin::MapPrototype
-            | Builtin::SetPrototype
-            | Builtin::WeakMapPrototype
-            | Builtin::WeakSetPrototype
-            | Builtin::SharedArrayBufferPrototype
-            | Builtin::WeakRefPrototype
-            | Builtin::DisposableStackPrototype
-    )
-    .then_some(Value::Builtin(Builtin::ObjectPrototype))
-}
-
-fn map_prototype(data: &crate::value::MapData) -> Option<Value> {
-    data.prototype().or_else(|| {
-        Some(Value::Builtin(if data.weak {
-            Builtin::WeakMapPrototype
-        } else {
-            Builtin::MapPrototype
-        }))
-    })
-}
-
-fn buffer_prototype(data: &crate::value::ArrayBufferData) -> Option<Value> {
-    data.prototype().or_else(|| {
-        Some(Value::Builtin(if data.shared {
-            Builtin::SharedArrayBufferPrototype
-        } else {
-            Builtin::ArrayBufferPrototype
-        }))
-    })
-}
-
-fn custom_object_prototype(value: &Value) -> Option<Value> {
-    match value {
-        Value::Object(properties) => properties
-            .iter()
-            .rev()
-            .find(|(name, _)| name == "\0prototype")
-            .map(|(_, prototype)| prototype.clone()),
-        Value::Function(function) => function
-            .properties
-            .borrow()
-            .iter()
-            .rev()
-            .find(|(name, _)| name == "\0prototype")
-            .map(|(_, prototype)| prototype.clone()),
-        _ => None,
-    }
+    Ok(false)
 }
 
 fn own_constructor(value: &Value) -> Option<Value> {

@@ -1,7 +1,9 @@
-# Goal: stage 20 residuals
+# Goal: stages 82–94
 
-Bring test262 stage 20 (`language/module-code`) to 100% through the canonical
-runner, starting from the current 597/599 baseline. Fix only shared module
-linking, evaluation, completion, and error-ordering semantics; do not alter
-test262 or the harness. Re-run stage 20 and earlier regressions, verify strict
-format/clippy, and commit the verified result.
+Bring test262 stages 82–94 to 100% through the canonical runner: decodeURI,
+decodeURIComponent, encodeURI, encodeURIComponent, eval, global, isFinite,
+isNaN, parseFloat, parseInt, undefined, Error, and FinalizationRegistry.
+Preserve coercion, direct-eval strictness, URI validation, completion ordering,
+realms, descriptors, and observable errors. Do not edit test262 or the harness.
+Run owned stages plus regressions, strict format/clippy, and commit verified
+work.

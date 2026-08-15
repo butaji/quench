@@ -322,6 +322,7 @@ pub(crate) fn rejects_new_property(target: &crate::value::Value, key: &str) -> b
 
 pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
     match target {
+        crate::value::Value::Builtin(crate::ops::Builtin::ThrowTypeError) => false,
         crate::value::Value::Object(properties) => {
             !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)
         }

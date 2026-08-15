@@ -23,7 +23,26 @@ fn prototype_for_value(value: &Value) -> Value {
     }
     match value {
         Value::Builtin(Builtin::ObjectPrototype) => Value::Null,
-        Value::Builtin(Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::Atomics | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype | Builtin::AbstractModuleSourcePrototype) => {
+        Value::Builtin(
+            Builtin::Error
+            | Builtin::EvalError
+            | Builtin::RangeError
+            | Builtin::ReferenceError
+            | Builtin::SyntaxError
+            | Builtin::TypeError
+            | Builtin::URIError
+            | Builtin::AggregateError,
+        ) => Value::Builtin(Builtin::Error),
+        Value::Builtin(
+            Builtin::EvalErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype,
+        ) => Value::Builtin(Builtin::ErrorPrototype),
+        Value::Builtin(Builtin::Math | Builtin::Reflect | Builtin::Json | Builtin::DisposableStackPrototype | Builtin::AsyncDisposableStackPrototype) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
@@ -53,6 +72,9 @@ fn prototype_for_value(value: &Value) -> Value {
             | Builtin::TypeErrorPrototype,
         ) => Value::Builtin(Builtin::ErrorPrototype),
         Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::SetIteratorPrototype | Builtin::MapIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
+        Value::Function(function) if function.kind == crate::ops::FunctionKind::Generator => {
+            Value::Builtin(Builtin::GeneratorFunctionPrototype)
+        }
         Value::Function(function) => {
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
         }
@@ -328,7 +350,17 @@ fn add_group_value(
 pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::NumberPrototype
+        Builtin::ObjectPrototype
+            | Builtin::ArrayPrototype
+            | Builtin::NumberPrototype
+            | Builtin::RegExpPrototype
+            | Builtin::DatePrototype
+            | Builtin::IteratorPrototype
+            | Builtin::ArrayIteratorPrototype
+            | Builtin::SetIteratorPrototype
+            | Builtin::MapIteratorPrototype
+            | Builtin::RegExpStringIteratorPrototype
+            | Builtin::PromisePrototype
             | Builtin::BooleanPrototype
             | Builtin::StringPrototype
             | Builtin::MapPrototype
@@ -339,13 +371,16 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
-            | Builtin::AsyncFunctionPrototype
+            | Builtin::GeneratorFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype
-            | Builtin::AsyncGeneratorPrototype
-            | Builtin::AsyncIteratorPrototype
             | Builtin::ErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::URIErrorPrototype
             | Builtin::AggregateErrorPrototype
-            | Builtin::SuppressedErrorPrototype
     )
 }
 

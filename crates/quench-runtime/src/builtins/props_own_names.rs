@@ -1,21 +1,63 @@
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
-        Builtin::Atomics => &[
-            "add", "and", "compareExchange", "exchange", "isLockFree", "load", "notify",
-            "or", "pause", "store", "sub", "wait", "waitAsync", "xor", "Symbol.toStringTag",
+        Builtin::Function
+        | Builtin::AsyncFunction
+        | Builtin::GeneratorFunction
+        | Builtin::AsyncGeneratorFunction => &["length", "name", "prototype"],
+        Builtin::FunctionPrototype => &[
+            "length",
+            "name",
+            "arguments",
+            "caller",
+            "constructor",
+            "apply",
+            "bind",
+            "call",
+            "toString",
+            "Symbol.hasInstance",
         ],
-        Builtin::AbstractModuleSource => &["length", "name", "prototype"],
-        Builtin::AbstractModuleSourcePrototype => &["constructor", "Symbol.toStringTag"],
+        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype => &[
+            "constructor",
+            "prototype",
+            "toString",
+            "valueOf",
+            "Symbol.toStringTag",
+        ],
+        Builtin::GeneratorNext | Builtin::GeneratorReturn | Builtin::GeneratorThrow => {
+            &["length", "name"]
+        }
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => &["constructor", "toString", "valueOf", "Symbol.toStringTag"],
+        Builtin::DatePrototype => &[
+            "constructor", "toString", "toDateString", "toTimeString", "toUTCString",
+            "toGMTString", "toISOString", "toJSON", "Symbol.toPrimitive", "valueOf",
+            "getTime", "getFullYear", "getUTCFullYear", "getMonth", "getUTCMonth",
+            "getDate", "getUTCDate", "getDay", "getUTCDay", "getHours", "getUTCHours",
+            "getMinutes", "getUTCMinutes", "getSeconds", "getUTCSeconds", "getMilliseconds",
+            "getUTCMilliseconds", "getTimezoneOffset", "setTime", "setMilliseconds",
+            "setUTCMilliseconds", "setSeconds", "setUTCSeconds", "setMinutes", "setUTCMinutes",
+            "setHours", "setUTCHours", "setDate", "setUTCDate", "setMonth", "setUTCMonth",
+            "setFullYear", "setUTCFullYear", "setYear", "getYear", "toLocaleString",
+            "toLocaleDateString", "toLocaleTimeString",
+        ],
         Builtin::Error => &["length", "name", "prototype", "isError"],
         Builtin::ErrorPrototype => &[
             "constructor",
             "name",
             "message",
+            "cause",
             "stack",
             "toString",
         ],
+        Builtin::EvalErrorPrototype
+        | Builtin::RangeErrorPrototype
+        | Builtin::ReferenceErrorPrototype
+        | Builtin::SyntaxErrorPrototype
+        | Builtin::TypeErrorPrototype
+        | Builtin::URIErrorPrototype
+        | Builtin::AggregateErrorPrototype => {
+            &["constructor", "name", "message", "toString"]
+        }
         Builtin::SuppressedErrorPrototype => &["constructor", "name", "message", "toString"],
         Builtin::DisposableStack => &["length", "name", "prototype"],
         Builtin::DisposableStackPrototype => &[
