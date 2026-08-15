@@ -67,21 +67,21 @@ fn agent_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
     let buffer = arguments.first().cloned().unwrap_or(Value::Undefined);
     let callbacks = AGENT_CALLBACKS.with(|callbacks| callbacks.borrow().clone());
     for callback in callbacks {
-        crate::functions::execute_target(&callback, &Value::Undefined, &[buffer.clone()])?;
+        crate::functions::execute_target(&callback, &Value::Undefined, std::slice::from_ref(&buffer))?;
     }
     Ok(Value::Undefined)
 }
 
 fn agent_report(arguments: &[Value]) -> Result<Value, VmError> {
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
-    AGENT_REPORTS.with(|reports| reports.borrow_mut().push(value));
+    crate::atomics::record_agent_report(value);
+    AGENT_REPORTS.with(|reports| reports.borrow_mut().push(Value::Undefined));
     Ok(Value::Undefined)
 }
 
 fn agent_get_report() -> Value {
-    AGENT_REPORTS
-        .with(|reports| reports.borrow_mut().pop())
-        .unwrap_or(Value::Undefined)
+    let _ = AGENT_REPORTS.with(|reports| reports.borrow_mut().pop());
+    crate::atomics::take_agent_report()
 }
 
 fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
