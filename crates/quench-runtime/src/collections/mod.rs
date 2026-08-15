@@ -32,6 +32,7 @@ fn execute_core(
     match builtin {
         IteratorConcat => Some(iterator_concat(arguments)),
         IteratorFrom => Some(iterator_from(arguments)),
+        IteratorReturn => Some(iterator::return_(receiver, arguments)),
         IteratorToArray => Some(iterator_to_array(receiver)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
@@ -95,11 +96,6 @@ fn iterator_from(arguments: &[Value]) -> Result<Value, VmError> {
         ));
     }
     let next = crate::execute::get_property_result(value, "next")?;
-    if !crate::conversion::is_callable(&next) {
-        return Err(crate::value::error::throw_type_error(
-            "value is not iterable",
-        ));
-    }
     Ok(Value::Iterator(std::rc::Rc::new(
         crate::value::IteratorData {
             state: std::cell::RefCell::new(crate::value::IteratorState::Protocol {

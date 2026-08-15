@@ -530,6 +530,7 @@ pub enum Builtin {
     WeakRefPrototype,
     WeakRefDeref,
     IteratorNext,
+    IteratorReturn,
     IteratorConcat,
     IteratorFrom,
     IteratorToArray,
