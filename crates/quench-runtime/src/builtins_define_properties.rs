@@ -37,12 +37,7 @@ fn descriptor_fields(
 ) -> Result<Vec<(String, Value)>, crate::execute::VmError> {
     let mut fields = Vec::new();
     for field in ["get", "set", "value", "writable", "enumerable", "configurable"] {
-        let key = Value::String(field.to_string());
-        let present = !matches!(
-            crate::builtins::object::descriptor(Some(descriptor), Some(&key))?,
-            Value::Undefined
-        );
-        if !present {
+        if !crate::with_scope::has_property(descriptor, field)? {
             continue;
         }
         let value = crate::execute::get_property_result(descriptor, field)?;
