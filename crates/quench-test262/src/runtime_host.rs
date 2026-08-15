@@ -31,6 +31,7 @@ pub struct LinkedModule {
     star_exports: RefCell<HashSet<String>>,
     ambiguous_exports: RefCell<HashSet<String>>,
     namespace_cell: RefCell<Option<ModuleBindingCell>>,
+    module_source: ModuleBindingCell,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -195,7 +196,7 @@ fn import_cell(
     if imported == "source" {
         return units
             .get(&target)
-            .and_then(|unit| unit.export_cell("default"))
+            .map(|unit| unit.module_source.clone())
             .ok_or_else(|| "SyntaxError: module source missing".to_string());
     }
     units
@@ -316,6 +317,7 @@ impl LinkedModule {
             star_exports: RefCell::new(HashSet::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace_cell: RefCell::new(None),
+            module_source: module_source_cell(),
         })
     }
 
@@ -329,6 +331,7 @@ impl LinkedModule {
             star_exports: RefCell::new(HashSet::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace_cell: RefCell::new(None),
+            module_source: module_source_cell(),
         })
     }
 
@@ -380,15 +383,17 @@ impl LinkedModule {
         if let Some(cell) = self.linked_exports.borrow().get(name) {
             return Some(cell.clone());
         }
-        let local = self
+        let binding = self
             .program
             .module_metadata
             .as_ref()?
             .exports
             .iter()
-            .find(|binding| binding.exported == name)?
-            .local
-            .as_str();
+            .find(|binding| binding.exported == name)?;
+        if binding.source {
+            return Some(self.module_source.clone());
+        }
+        let local = binding.local.as_str();
         self.program
             .local_slots
             .get(local)
@@ -521,6 +526,15 @@ impl LinkedModule {
         }
         Ok(result)
     }
+}
+
+fn module_source_cell() -> ModuleBindingCell {
+    ModuleBindingCell::new(quench_runtime::value::Value::object(vec![(
+        "\0prototype".to_string(),
+        quench_runtime::value::Value::Builtin(
+            quench_runtime::ops::Builtin::AbstractModuleSourcePrototype,
+        ),
+    )]))
 }
 
 impl Test262Host for RuntimeHost {
