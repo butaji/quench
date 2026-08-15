@@ -67,6 +67,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (ShadowRealmPrototype, "constructor") => Some(Value::Builtin(ShadowRealm)),
         (ShadowRealm, "prototype") => Some(Value::Builtin(ShadowRealmPrototype)),
         (ShadowRealmPrototype, "evaluate") => Some(Value::Builtin(ShadowRealmEvaluate)),
+        (ShadowRealmPrototype, "Symbol.toStringTag") => Some(Value::String("ShadowRealm".into())),
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
