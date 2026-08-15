@@ -13,6 +13,25 @@ const DESCRIPTOR_PREFIX: &str = "\0quench:descriptor:\0";
 const DELETED_PREFIX: &str = "\0quench:deleted:\0";
 pub(crate) const ERROR_SLOT: &str = "\0error_slot";
 
+thread_local! {
+    static ASYNC_GENERATOR_PROTOTYPE: std::cell::RefCell<Option<Value>> =
+        std::cell::RefCell::new(None);
+}
+
+pub(crate) fn async_generator_prototype() -> Value {
+    ASYNC_GENERATOR_PROTOTYPE.with(|cell| {
+        if let Some(value) = cell.borrow().as_ref() {
+            return value.clone();
+        }
+        let value = Value::Object(Rc::new(ObjectData::new(vec![(
+            "\0prototype".to_string(),
+            Value::Builtin(Builtin::ObjectPrototype),
+        )])));
+        *cell.borrow_mut() = Some(value.clone());
+        value
+    })
+}
+
 pub(crate) fn deleted_key(key: &str) -> String {
     format!("{DELETED_PREFIX}{key}")
 }
