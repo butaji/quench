@@ -98,6 +98,7 @@ fn concat_step(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
                 index,
                 current,
                 done,
+                ..
             } = &mut *state
             else {
                 return Ok(StepTarget::Value(None));

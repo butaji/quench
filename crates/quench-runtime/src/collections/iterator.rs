@@ -48,12 +48,19 @@ pub(crate) fn return_(
             IteratorState::Concat {
                 current: Some(iterator),
                 done,
+                executing,
                 ..
             } => {
+                if *executing {
+                    return Err(crate::value::error::throw_type_error(
+                        "Iterator is already executing",
+                    ));
+                }
                 if *done {
                     return Ok(iterator_result(Value::Undefined, true));
                 }
                 *done = true;
+                *executing = true;
                 (iterator.clone(), Vec::new())
             }
             IteratorState::Concat { done, .. } => {
@@ -65,12 +72,24 @@ pub(crate) fn return_(
     };
     let method = crate::execute::get_property_result(&iterator, "return")?;
     if matches!(method, Value::Undefined | Value::Null) {
+        clear_concat_executing(receiver);
         return Ok(iterator_result(Value::Undefined, true));
     }
     if !crate::conversion::is_callable(&method) {
+        clear_concat_executing(receiver);
         return Err(crate::vm::not_callable());
     }
-    crate::functions::execute_target(&method, &iterator, &arguments)
+    let result = crate::functions::execute_target(&method, &iterator, &arguments);
+    clear_concat_executing(receiver);
+    result
+}
+
+fn clear_concat_executing(receiver: &Value) {
+    if let Value::Iterator(data) = receiver {
+        if let IteratorState::Concat { executing, .. } = &mut *data.state.borrow_mut() {
+            *executing = false;
+        }
+    }
 }
 
 fn iterator_result(value: Value, done: bool) -> Value {

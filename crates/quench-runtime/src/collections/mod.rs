@@ -166,6 +166,7 @@ fn iterator_concat(arguments: &[Value]) -> Result<Value, VmError> {
                 index: 0,
                 current: None,
                 done: false,
+                executing: false,
             }),
         },
     )))
