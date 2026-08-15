@@ -124,5 +124,10 @@ mod regression_tests {
             object.iter().find(|(key, _)| key == "\0prototype"),
             Some((_, Value::Builtin(Builtin::ObjectPrototype)))
         ));
+        assert_eq!(
+            crate::builtins::object::get_prototype_of(Some(&Value::Object(object)))
+                .expect("prototype lookup"),
+            Value::Builtin(Builtin::ObjectPrototype)
+        );
     }
 }
