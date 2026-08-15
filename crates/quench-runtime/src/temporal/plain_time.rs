@@ -66,14 +66,82 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     .iter()
     .map(|name| crate::execute::get_property_result(value, name))
     .collect::<Result<Vec<_>, _>>()?;
-    if matches!(values.first(), Some(Value::Undefined)) {
+    if values.iter().all(|value| matches!(value, Value::Undefined)) {
         return Err(crate::value::error::throw_type_error("Missing hour"));
     }
     construct(&values)
 }
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
-    let time = text.split('[').next().unwrap_or(text);
+    let mut time = text.split('[').next().unwrap_or(text);
+    if let Some((_, suffix)) = time.rsplit_once(|character| character == 'T' || character == 't') {
+        time = suffix;
+    }
+    if let Some((_, suffix)) = time.rsplit_once(' ') {
+        time = suffix;
+    }
+    if let Some((prefix, _)) = time.split_once('+') {
+        time = prefix;
+    } else if let Some(index) = time.rfind('-') {
+        if index > 0 {
+            time = &time[..index];
+        }
+    }
+    time = time
+        .strip_prefix('T')
+        .or_else(|| time.strip_prefix('t'))
+        .unwrap_or(time);
+    if time.len() <= 2 && !time.contains(':') {
+        time = match time {
+            "0" => "00:00",
+            "1" => "01:00",
+            "2" => "02:00",
+            "3" => "03:00",
+            "4" => "04:00",
+            "5" => "05:00",
+            "6" => "06:00",
+            "7" => "07:00",
+            "8" => "08:00",
+            "9" => "09:00",
+            "10" => "10:00",
+            "11" => "11:00",
+            "12" => "12:00",
+            "13" => "13:00",
+            "14" => "14:00",
+            "15" => "15:00",
+            "16" => "16:00",
+            "17" => "17:00",
+            "18" => "18:00",
+            "19" => "19:00",
+            "20" => "20:00",
+            "21" => "21:00",
+            "22" => "22:00",
+            "23" => "23:00",
+            _ => time,
+        };
+    }
+    let compact = !time.contains(':') && time.len() >= 4;
+    let time = if compact {
+        let fraction = time.find(['.', ',']).unwrap_or(time.len());
+        let digits = &time[..fraction];
+        if digits.len() < 4 {
+            return Err(crate::value::error::throw_range_error("Invalid time"));
+        }
+        let seconds = if digits.len() >= 6 {
+            &digits[4..6]
+        } else {
+            "00"
+        };
+        format!(
+            "{}:{}:{}{}",
+            &digits[..2],
+            &digits[2..4],
+            seconds,
+            &time[fraction..]
+        )
+    } else {
+        time.to_string()
+    };
     let parts = time.split(':').collect::<Vec<_>>();
     if parts.len() < 2 || parts.len() > 3 {
         return Err(crate::value::error::throw_range_error("Invalid time"));
@@ -85,15 +153,20 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         .parse::<f64>()
         .map_err(|_| crate::value::error::throw_range_error("Invalid time"))?;
     let (second, fraction) = parts.get(2).map_or((0.0, 0.0), |part| {
-        part.split_once('.').map_or_else(
-            || (part.parse().unwrap_or(f64::NAN), 0.0),
-            |(whole, fraction)| {
-                let second = whole.parse().unwrap_or(f64::NAN);
-                let digits = fraction.chars().take(9).collect::<String>();
-                let nanos = format!("{digits:0<9}").parse::<f64>().unwrap_or(f64::NAN);
-                (second, nanos)
-            },
-        )
+        part.split_once('.')
+            .or_else(|| part.split_once(','))
+            .map_or_else(
+                || (part.parse().unwrap_or(f64::NAN), 0.0),
+                |(whole, fraction)| {
+                    let second = whole.parse().unwrap_or(f64::NAN);
+                    if fraction.chars().count() > 9 {
+                        return (f64::NAN, f64::NAN);
+                    }
+                    let digits = fraction.chars().take(9).collect::<String>();
+                    let nanos = format!("{digits:0<9}").parse::<f64>().unwrap_or(f64::NAN);
+                    (second, nanos)
+                },
+            )
     });
     construct(&[
         Value::Number(hour),
