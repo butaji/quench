@@ -1,6 +1,9 @@
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
+    if let Value::Builtin(Builtin::AbstractModuleSource) = property {
+        return crate::vm::realm_intrinsic_for(capability.realm, Builtin::AbstractModuleSource);
+    }
     if matches!(property, Value::Builtin(_)) {
         return bind_method(value, property);
     }
