@@ -347,6 +347,9 @@ pub fn test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     let s = argument_string(arguments)?;
     let (source, flags, last_index) = extract_regex_parts(receiver)?;
     let (search_start, search_string) = prepare_search(&s, &flags, last_index);
+    if source.is_empty() {
+        return Ok(empty_match_result(&s, search_start));
+    }
     let pattern = if source.is_empty() { "(?:)" } else { &source };
     let re_flags = build_re_flags(&flags);
     let re = compile(pattern, &re_flags).map_err(VmError::EvalError)?;
@@ -393,6 +396,16 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
         }
         Ok(Value::Null)
     }
+}
+
+fn empty_match_result(input: &str, offset: usize) -> Value {
+    let index = Value::Number(crate::strings::byte_to_utf16(input, offset) as f64);
+    let result = crate::builtins::set_property(
+        Value::array(vec![Value::String(String::new())]),
+        "index",
+        index,
+    );
+    crate::builtins::set_property(result, "input", Value::String(input.to_string()))
 }
 
 fn has_regexp_internal_slot(value: &Value) -> bool {
