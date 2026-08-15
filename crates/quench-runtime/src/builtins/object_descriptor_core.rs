@@ -167,23 +167,22 @@ fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
         (Builtin::DataViewPrototype, "byteLength") => Builtin::DataViewByteLengthGetter,
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
-        (Builtin::SharedArrayBufferPrototype, "byteLength") => {
-            Builtin::SharedArrayBufferByteLengthGetter
-        }
-        (Builtin::SharedArrayBufferPrototype, "growable") => {
-            Builtin::SharedArrayBufferGrowableGetter
-        }
-        (Builtin::SharedArrayBufferPrototype, "maxByteLength") => {
-            Builtin::SharedArrayBufferMaxByteLengthGetter
-        }
-        (Builtin::DisposableStackPrototype, "disposed") => Builtin::DisposableStackDisposed,
-        (Builtin::AsyncDisposableStackPrototype, "disposed") => {
-            Builtin::AsyncDisposableStackDisposed
-        }
-        (Builtin::ErrorPrototype, "stack") => Builtin::ErrorPrototypeStackGetter,
-        _ => return intrinsic_getter_tail(builtin, key),
+        _ => return intrinsic_getter_extended(builtin, key),
     };
     Some(getter)
+}
+
+fn intrinsic_getter_extended(builtin: Builtin, key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    Some(match (builtin, key) {
+        (SharedArrayBufferPrototype, "byteLength") => SharedArrayBufferByteLengthGetter,
+        (SharedArrayBufferPrototype, "growable") => SharedArrayBufferGrowableGetter,
+        (SharedArrayBufferPrototype, "maxByteLength") => SharedArrayBufferMaxByteLengthGetter,
+        (DisposableStackPrototype, "disposed") => DisposableStackDisposed,
+        (AsyncDisposableStackPrototype, "disposed") => AsyncDisposableStackDisposed,
+        (ErrorPrototype, "stack") => ErrorPrototypeStackGetter,
+        _ => return intrinsic_getter_tail(builtin, key),
+    })
 }
 
 fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
