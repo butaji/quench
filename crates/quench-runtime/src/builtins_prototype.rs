@@ -97,7 +97,18 @@ fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
         Some(Value::Map(_)) | Some(Value::Set(_)) => "Object",
         Some(Value::Generator(_)) => "Generator",
         Some(Value::BindingCell(cell)) => return prototype_tag(Some(&cell.borrow())),
-        Some(Value::HostCapability(_) | Value::Iterator(_) | Value::ObjectAlias(_)) => "Object",
+        Some(Value::ObjectAlias(alias)) => {
+            if alias.0.borrow().upgrade().is_some_and(|properties| {
+                properties
+                    .iter()
+                    .any(|(key, _)| key == crate::builtins::ERROR_SLOT)
+            }) {
+                "Error"
+            } else {
+                "Object"
+            }
+        }
+        Some(Value::HostCapability(_) | Value::Iterator(_)) => "Object",
         Some(_) => "Object",
     }
 }
