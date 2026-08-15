@@ -215,6 +215,9 @@ fn stateful_builtin(
         Builtin::AtomicsXor => Some(Err(crate::value::error::throw_type_error(
             "Atomics.xor requires a valid typed array",
         ))),
+        Builtin::AtomicsCompareExchange => Some(Err(crate::value::error::throw_type_error(
+            "Atomics.compareExchange requires a valid typed array",
+        ))),
         _ => None,
     }
 }
