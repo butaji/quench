@@ -125,6 +125,13 @@ pub fn reduce_declaration(
 ) -> Result<(), Vec<String>> {
     for declarator in &declaration.declarations {
         allocate_pattern_slots(&declarator.id, declaration.kind, next_slot, locals);
+        if declaration.kind == VariableDeclarationKind::Const {
+            for name in crate::binding_patterns::names(&declarator.id) {
+                if let Some(slot) = locals.get(&name).copied() {
+                    ops.push(Op::MarkImmutable { slot });
+                }
+            }
+        }
         if declaration.kind == VariableDeclarationKind::Var && declarator.init.is_none() {
             continue;
         }
