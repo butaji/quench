@@ -212,9 +212,6 @@ fn construct_builtin(
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         crate::ops::Builtin::DisposableStack => crate::disposable_stack::construct(),
         crate::ops::Builtin::AsyncDisposableStack => crate::disposable_stack::construct_async(),
-        crate::ops::Builtin::AbstractModuleSource => Err(crate::value::error::throw_type_error(
-            "AbstractModuleSource is abstract",
-        )),
         crate::ops::Builtin::FinalizationRegistry => {
             crate::finalization_registry::construct(arguments)
         }
@@ -291,9 +288,9 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
 }
 
 fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let source = arguments
+    let source_value = arguments
         .first()
-        .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
+        .map_or_else(|| Ok(Value::String(String::new())), regexp_source)?;
     let flags = arguments
         .get(1)
         .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
@@ -304,10 +301,10 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
             "\0prototype".to_string(),
             Value::Builtin(crate::ops::Builtin::RegExpPrototype),
         ),
-        ("source".to_string(), Value::String(source.clone())),
+        ("source".to_string(), source_value.clone()),
         (
             crate::builtins::descriptor_key("source"),
-            regexp_data_descriptor(false, true, Value::String(source)),
+            regexp_data_descriptor(false, true, source_value),
         ),
         ("flags".to_string(), Value::String(flags.clone())),
         (
@@ -322,6 +319,17 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     ];
     entries.extend(regexp_flag_entries(&flags));
     Ok(Value::Object(Rc::new(ObjectData::new(entries))))
+}
+
+fn regexp_source(value: &Value) -> Result<Value, crate::execute::VmError> {
+    let primitive = crate::conversion::to_primitive(value, "string")?;
+    if matches!(primitive, Value::String(_) | Value::StringUnits(_)) {
+        return Ok(match primitive {
+            Value::String(source) => crate::strings::decode_surrogate_escapes(&source),
+            value => value,
+        });
+    }
+    crate::conversion::to_string(&primitive).map(Value::String)
 }
 
 fn regexp_data_descriptor(writable: bool, configurable: bool, value: Value) -> Value {
@@ -498,9 +506,6 @@ fn construct_error(
     if *builtin == crate::ops::Builtin::SuppressedError {
         return crate::builtins::suppressed_error(arguments);
     }
-    if *builtin == crate::ops::Builtin::AggregateError {
-        return construct_aggregate_error(arguments);
-    }
 
     let name = match builtin {
         crate::ops::Builtin::RangeError => "RangeError",
@@ -510,7 +515,6 @@ fn construct_error(
         crate::ops::Builtin::URIError => "URIError",
         crate::ops::Builtin::AggregateError => "AggregateError",
         crate::ops::Builtin::TypeError => "TypeError",
-        crate::ops::Builtin::Error => "Error",
         _ => "Error",
     };
 
@@ -543,78 +547,6 @@ fn construct_error(
     }
 
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
-}
-
-fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let mut properties = error_properties(
-        "AggregateError",
-        crate::ops::Builtin::AggregateErrorPrototype,
-    );
-    properties
-        .retain(|(key, _)| key != "message" && key != &crate::builtins::descriptor_key("message"));
-    let message = arguments
-        .get(1)
-        .filter(|value| !matches!(value, Value::Undefined))
-        .map(crate::conversion::to_string)
-        .transpose()?
-        .map(Value::String);
-    if let Some(message) = message {
-        push_error_property(&mut properties, "message", message);
-    }
-    let errors = arguments
-        .first()
-        .ok_or_else(|| crate::value::error::throw_type_error("value is not iterable"))?;
-    let iterator_method = crate::execute::get_property_result(errors, "Symbol.iterator")?;
-    if matches!(iterator_method, Value::Undefined) && !matches!(errors, Value::Array(_)) {
-        return Err(crate::value::error::throw_type_error(
-            "value is not iterable",
-        ));
-    }
-    let iterator = crate::collections::iterator::open(errors.clone())?;
-    let mut values = Vec::new();
-    while let Some(value) = crate::collections::iterator::step_value(&iterator)? {
-        values.push(value);
-    }
-    push_error_property(&mut properties, "errors", Value::array(values));
-    if let Some(options) = arguments
-        .get(2)
-        .filter(|value| !matches!(value, Value::Undefined))
-    {
-        let options = to_object(options)?;
-        if crate::with_scope::has_property(&options, "cause")? {
-            push_error_property(
-                &mut properties,
-                "cause",
-                crate::execute::get_property_result(&options, "cause")?,
-            );
-        }
-    }
-    Ok(Value::Object(Rc::new(ObjectData::new(properties))))
-}
-
-fn push_error_property(properties: &mut Vec<(String, Value)>, name: &str, value: Value) {
-    properties.push((name.to_string(), value.clone()));
-    properties.push((
-        crate::builtins::descriptor_key(name),
-        Value::Object(Rc::new(ObjectData::new(vec![
-            ("value".to_string(), value),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]))),
-    ));
-}
-
-fn error_properties(name: &str, prototype: crate::ops::Builtin) -> Vec<(String, Value)> {
-    vec![
-        ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), Value::String(String::new())),
-        (
-            crate::builtins::ERROR_SLOT.to_string(),
-            Value::Boolean(true),
-        ),
-        ("\0prototype".to_string(), Value::Builtin(prototype)),
-    ]
 }
 
 fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
@@ -682,7 +614,8 @@ fn construct_function(
     }
     if is_default_derived_constructor(function) {
         let super_constructor = derived_constructor(function)?;
-        return construct_with_new_target(&super_constructor, target, arguments);
+        let receiver = construct_with_new_target(&super_constructor, target, arguments)?;
+        return initialize_instance_fields(function, receiver);
     }
     if derived_constructor(function).is_ok() {
         let _context = crate::super_scope::Guard::install(function, &Value::Undefined);
