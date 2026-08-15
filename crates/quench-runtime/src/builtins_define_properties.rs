@@ -32,7 +32,7 @@ fn descriptor_object(value: Value) -> Option<Value> {
     crate::value::is_object(&value).then_some(value)
 }
 
-fn descriptor_fields(
+pub(crate) fn descriptor_fields(
     descriptor: &Value,
 ) -> Result<Vec<(String, Value)>, crate::execute::VmError> {
     let mut fields = Vec::new();
