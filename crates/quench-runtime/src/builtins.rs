@@ -18,9 +18,56 @@ thread_local! {
     static GENERATOR_PROTOTYPES:
         std::cell::RefCell<HashMap<crate::ops::RealmId, Value>> =
         std::cell::RefCell::new(HashMap::new());
+    static ASYNC_ITERATOR_PROTOTYPES:
+        std::cell::RefCell<HashMap<crate::ops::RealmId, Value>> =
+        std::cell::RefCell::new(HashMap::new());
     static ASYNC_GENERATOR_PROTOTYPES:
         std::cell::RefCell<HashMap<crate::ops::RealmId, Value>> =
         std::cell::RefCell::new(HashMap::new());
+}
+
+pub(crate) fn async_iterator_prototype() -> Value {
+    let realm = crate::vm::current_context_or_default().realm();
+    ASYNC_ITERATOR_PROTOTYPES.with(|cell| {
+        if let Some(value) = cell.borrow().get(&realm) {
+            return value.clone();
+        }
+        let mut value = Value::Object(Rc::new(ObjectData::new(vec![
+            (
+                "Symbol.asyncIterator".to_string(),
+                Value::Builtin(Builtin::AsyncIteratorSelf),
+            ),
+            (
+                "Symbol.asyncDispose".to_string(),
+                Value::Builtin(Builtin::AsyncIteratorDispose),
+            ),
+            (
+                "\0prototype".to_string(),
+                Value::Builtin(Builtin::ObjectPrototype),
+            ),
+        ])));
+        for (key, method) in [
+            ("Symbol.asyncIterator", Builtin::AsyncIteratorSelf),
+            ("Symbol.asyncDispose", Builtin::AsyncIteratorDispose),
+        ] {
+            store_descriptor_metadata(
+                &mut value,
+                key,
+                &async_iterator_descriptor(Value::Builtin(method)),
+            );
+        }
+        cell.borrow_mut().insert(realm, value.clone());
+        value
+    })
+}
+
+fn async_iterator_descriptor(value: Value) -> Vec<(String, Value)> {
+    vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ]
 }
 
 pub(crate) fn generator_prototype() -> Value {
