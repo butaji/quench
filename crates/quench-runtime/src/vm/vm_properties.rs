@@ -41,9 +41,6 @@ fn get_property_value(value: &Value, key: &str) -> Value {
             )
         }
         Builtin(builtin) => bind_callable_property(value, *builtin, key),
-        Array(values) if key == "toLocaleString" => {
-            bind_method(value, crate::arrays::property(values, key))
-        }
         Array(values) => crate::arrays::property(values, key),
         ArrayBuffer(buffer) => array_buffer_property(buffer, key),
         Float64Array(view) => float64_array_property(view, key),
@@ -86,7 +83,10 @@ fn iterator_property(value: &Value, key: &str) -> Value {
     if matches!(
         property,
         Value::Builtin(
-            Builtin::RegExpStringIteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext
+            Builtin::RegExpStringIteratorNext
+                | Builtin::StringIteratorNext
+                | Builtin::SetIteratorNext
+                | Builtin::MapIteratorNext
         )
     ) {
         return property;
@@ -226,37 +226,6 @@ pub(crate) fn get_property_with_receiver(
     if matches!(value, Value::Proxy(_)) {
         return crate::proxy::proxy_get(value, key, Some(receiver));
     }
-    if let Value::Object(properties) = value {
-        let is_date_time_prototype = properties.iter().any(|(name, prototype)| {
-            name == "\0prototype"
-                && matches!(
-                    prototype,
-                    Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatPrototype)
-                )
-        });
-        if is_date_time_prototype
-            && matches!(
-                key,
-                "format" | "formatToParts" | "formatRange" | "formatRangeToParts" | "resolvedOptions"
-            )
-            && !crate::intl::intl_object(value)
-        {
-            return Err(crate::value::error::throw_type_error(
-                "Intl.DateTimeFormat receiver is not initialized",
-            ));
-        }
-    }
-    if matches!(
-        value,
-        Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatPrototype)
-    ) && matches!(key, "format" | "formatToParts" | "formatRange" | "formatRangeToParts" | "resolvedOptions")
-        && matches!(receiver, Value::Object(_) | Value::ObjectAlias(_))
-        && !crate::intl::intl_object(receiver)
-    {
-        return Err(crate::value::error::throw_type_error(
-            "Intl.DateTimeFormat receiver is not initialized",
-        ));
-    }
     if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
         return Err(crate::value::error::throw_type_error(
             "'callee' is unavailable on strict arguments",
@@ -298,14 +267,6 @@ pub(crate) fn get_property_with_receiver(
     {
         if !matches!(descriptor, Value::Undefined) {
             if let Value::Object(descriptor) = descriptor {
-                if descriptor.iter().any(|(name, _)| name == "value") {
-                    let property = get_property(value, key);
-                    return Ok(if crate::intl::intl_object(value) {
-                        receiver_property(value, key, receiver)
-                    } else {
-                        property
-                    });
-                }
                 if let Some((_, getter)) = descriptor
                     .iter()
                     .rev()
@@ -348,6 +309,11 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     let property = get_property(value, key);
+    if let Value::Object(properties) = value {
+        if properties.iter().rev().any(|(name, _)| name == key) {
+            return property;
+        }
+    }
     if matches!(value, Value::Builtin(_)) {
         return property;
     }
@@ -360,9 +326,6 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
             Builtin::IntlNumberFormatFormatToParts
                 | Builtin::IntlNumberFormatFormatRange
                 | Builtin::IntlNumberFormatFormatRangeToParts
-                | Builtin::IntlDurationFormatFormat
-                | Builtin::IntlDurationFormatFormatToParts
-                | Builtin::IntlDurationFormatResolvedOptions
         )
     ) {
         return property;
@@ -376,6 +339,7 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     match property {
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)
+                && !is_iterator_next_builtin(builtin)
                 && crate::intl::tolocale::symbol::name(builtin).is_none() =>
         {
             bind_method(receiver, property)
@@ -383,16 +347,21 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
         other => other,
     }
 }
+
+fn is_iterator_next_builtin(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::RegExpStringIteratorNext
+            | Builtin::StringIteratorNext
+            | Builtin::SetIteratorNext
+            | Builtin::MapIteratorNext
+    )
+}
+
 /// Accessor getters/setters carry their `this` at invocation time; binding
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
 fn is_accessor_builtin(builtin: Builtin) -> bool {
-    if matches!(
-        builtin,
-        Builtin::IntlCollatorCompare | Builtin::IntlDateTimeFormatFormat
-    ) {
-        return false;
-    }
     let name = crate::builtins::builtin_name(builtin);
     name.starts_with("get ") || name.starts_with("set ")
 }
@@ -468,6 +437,12 @@ fn bound_function_property(
     bound: &crate::value::BoundFunctionValue,
     key: &str,
 ) -> Value {
+    let shadow_wrapper = bound
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == "\0realm")
+        && !realm::is_intrinsic(bound);
     if let Some((_, value)) = bound
         .properties
         .borrow()
@@ -488,6 +463,8 @@ fn bound_function_property(
         }
     } else if key == "name" && !realm::is_intrinsic(bound) {
         Value::String(String::new())
+    } else if shadow_wrapper {
+        function_prototype_property(key)
     } else {
         let result = get_property(&bound.target, key);
         if !matches!(result, Value::Undefined) {
@@ -502,69 +479,16 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     };
     let properties = if builtin == Builtin::IntlNumberFormatFormat {
         RefCell::new(number_format_bound_properties())
-    } else if builtin == Builtin::IntlCollatorCompare {
-        RefCell::new(collator_compare_bound_properties(is_accessor_descriptor(receiver)))
-    } else if builtin == Builtin::IntlDateTimeFormatFormat {
-        RefCell::new(datetime_format_bound_properties(is_accessor_descriptor(receiver)))
     } else {
         RefCell::new(Vec::new())
     };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
         receiver: receiver.clone(),
         arguments: Vec::new(),
         properties,
     }))
-}
-
-fn datetime_format_bound_properties(accessor: bool) -> Vec<(String, Value)> {
-    [
-        ("length", Value::Number(if accessor { 0.0 } else { 1.0 })),
-        ("name", Value::String(if accessor { "get format" } else { "" }.to_string())),
-    ]
-    .into_iter()
-    .flat_map(|(key, value)| {
-        let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
-            ("value".to_string(), value.clone()),
-            ("writable".to_string(), Value::Boolean(false)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ])));
-        [
-            (key.to_string(), value),
-            (crate::builtins::descriptor_key(key), descriptor),
-        ]
-    })
-    .collect()
-}
-
-fn collator_compare_bound_properties(accessor: bool) -> Vec<(String, Value)> {
-    [
-        ("length", Value::Number(if accessor { 0.0 } else { 2.0 })),
-        ("name", Value::String(if accessor { "get compare" } else { "" }.to_string())),
-    ]
-    .into_iter()
-    .flat_map(|(key, value)| {
-        let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
-            ("value".to_string(), value.clone()),
-            ("writable".to_string(), Value::Boolean(false)),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ])));
-        [
-            (key.to_string(), value),
-            (crate::builtins::descriptor_key(key), descriptor),
-        ]
-    })
-    .collect()
-}
-
-fn is_accessor_descriptor(receiver: &Value) -> bool {
-    let Value::Object(properties) = receiver else {
-        return false;
-    };
-    properties.iter().any(|(key, _)| key == "enumerable")
-        && properties.iter().any(|(key, _)| key == "get")
 }
 fn number_format_bound_properties() -> Vec<(String, Value)> {
     [
@@ -599,6 +523,7 @@ fn promise_property(value: &Value, key: &str) -> Value {
         return crate::builtins::property(Builtin::PromisePrototype, key);
     };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
         receiver: value.clone(),
         arguments: Vec::new(),
@@ -606,12 +531,25 @@ fn promise_property(value: &Value, key: &str) -> Value {
     }))
 }
 fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Value {
+    if let Some(value) = buffer.own_property(key) {
+        return value;
+    }
+    if key == "constructor" && buffer.shared {
+        return Value::Builtin(Builtin::SharedArrayBuffer);
+    }
+    if key == "grow" && buffer.shared {
+        return Value::Builtin(Builtin::SharedArrayBufferGrow);
+    }
+    if key == "slice" && buffer.shared {
+        return Value::Builtin(Builtin::SharedArrayBufferSlice);
+    }
     match key {
         "byteLength" => Value::Number(buffer.byte_length() as f64),
         "maxByteLength" => {
             Value::Number(buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64)
         }
         "resizable" => Value::Boolean(buffer.max_byte_length.is_some()),
+        "growable" => Value::Boolean(buffer.shared && buffer.max_byte_length.is_some()),
         "resize" => Value::Builtin(Builtin::ArrayBufferResize),
         "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),

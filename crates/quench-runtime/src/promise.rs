@@ -299,6 +299,7 @@ fn resolve_value(value: Value) -> Value {
 
 fn bound_settler(target: Builtin, promise: &Rc<PromiseData>) -> Value {
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(target),
         receiver: Value::Promise(Rc::clone(promise)),
         arguments: Vec::new(),
@@ -368,12 +369,14 @@ fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
 pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
     let promise = new_promise();
     let resolve = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(Builtin::PromiseResolve),
         receiver: promise.clone(),
         arguments: Vec::new(),
         properties: RefCell::new(Vec::new()),
     }));
     let reject = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(Builtin::PromiseReject),
         receiver: promise.clone(),
         arguments: Vec::new(),
@@ -447,12 +450,12 @@ pub fn execute_builtin(
         Builtin::Promise => Ok(new_promise()),
         Builtin::PromiseResolve => resolve_receiver(receiver, arguments),
         Builtin::PromiseReject => reject_receiver(receiver, arguments),
-        Builtin::PromiseAll => promise_combinator(PromiseAggregateKind::All, receiver, arguments),
+        Builtin::PromiseAll => promise_combinator(PromiseAggregateKind::All, arguments),
         Builtin::PromiseAllSettled => {
-            promise_combinator(PromiseAggregateKind::AllSettled, receiver, arguments)
+            promise_combinator(PromiseAggregateKind::AllSettled, arguments)
         }
-        Builtin::PromiseAny => promise_combinator(PromiseAggregateKind::Any, receiver, arguments),
-        Builtin::PromiseRace => promise_combinator(PromiseAggregateKind::Race, receiver, arguments),
+        Builtin::PromiseAny => promise_combinator(PromiseAggregateKind::Any, arguments),
+        Builtin::PromiseRace => promise_combinator(PromiseAggregateKind::Race, arguments),
         Builtin::PromiseWithResolvers => with_resolvers(receiver),
         Builtin::PromiseTry => promise_try(receiver, arguments),
         Builtin::PromiseThen => promise_then(receiver, arguments),

@@ -212,11 +212,19 @@ fn construct_bound(
         )?,
         _ => return Err(crate::vm::not_callable()),
     };
-    Ok(if let Value::HostCapability(capability) = &bound.receiver {
-        crate::builtins::set_property(value, "\0realm", Value::HostCapability(capability.clone()))
-    } else {
-        value
-    })
+    if let Value::HostCapability(capability) = &bound.receiver {
+        let value = crate::builtins::set_property(
+            value,
+            "\0realm",
+            Value::HostCapability(capability.clone()),
+        );
+        return Ok(crate::builtins::set_property(
+            value,
+            "\0creation_realm",
+            Value::HostCapability(capability.clone()),
+        ));
+    }
+    Ok(value)
 }
 fn construct_builtin(
     builtin: crate::ops::Builtin,

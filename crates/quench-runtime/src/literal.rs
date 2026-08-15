@@ -20,11 +20,7 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
             fact: FactConstant::Boolean(boolean.value),
             op: Constant::Boolean(boolean.value),
         }),
-        Expression::StringLiteral(string) => Some(Literal {
-            span: string.span,
-            fact: FactConstant::String(string.value.to_string()),
-            op: Constant::String(string.value.to_string()),
-        }),
+        Expression::StringLiteral(string) => string_literal(string),
         Expression::NullLiteral(null) => Some(Literal {
             span: null.span,
             fact: FactConstant::Null,
@@ -43,6 +39,40 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
         }
         _ => None,
     }
+}
+
+fn string_literal(string: &oxc::ast::ast::StringLiteral<'_>) -> Option<Literal> {
+    let value = string.value.to_string();
+    let op = decode_unicode_escapes(&value)
+        .map_or_else(|| Constant::String(value.clone()), Constant::StringUnits);
+    Some(Literal {
+        span: string.span,
+        fact: FactConstant::String(value),
+        op,
+    })
+}
+
+fn decode_unicode_escapes(value: &str) -> Option<Vec<u16>> {
+    if !value.contains("\\u") {
+        return None;
+    }
+    let mut units = Vec::new();
+    let mut chars = value.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character != '\\' || chars.next_if_eq(&'u').is_none() {
+            let mut encoded = [0; 2];
+            let count = character.encode_utf16(&mut encoded).len();
+            units.extend_from_slice(&encoded[..count]);
+            continue;
+        }
+        let digits: String = chars.by_ref().take(4).collect();
+        if digits.len() != 4 {
+            return None;
+        }
+        let unit = u16::from_str_radix(&digits, 16).ok()?;
+        units.push(unit);
+    }
+    Some(units)
 }
 
 fn reduce_template_literal(template: &oxc::ast::ast::TemplateLiteral<'_>) -> Option<Literal> {
