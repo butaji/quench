@@ -245,12 +245,25 @@ pub(crate) fn get_property_with_receiver(
     }
     let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
-        return Ok(receiver_property(value, key, receiver));
+        return inherited_property(value, key, receiver);
     };
     if matches!(getter, Value::Undefined) {
         return Ok(Value::Undefined);
     }
     invoke_accessor(&getter, receiver)
+}
+
+fn inherited_property(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
+    let prototype = crate::builtins::object::get_prototype_of(Some(value))?;
+    if !matches!(prototype, Value::Null)
+        && !crate::builtins::same_value(Some(value), Some(&prototype))
+    {
+        let inherited = get_property_with_receiver(&prototype, key, receiver)?;
+        if !matches!(inherited, Value::Undefined) {
+            return Ok(inherited);
+        }
+    }
+    Ok(receiver_property(value, key, receiver))
 }
 
 fn special_property(value: &Value, key: &str, receiver: &Value) -> Option<Result<Value, VmError>> {
