@@ -264,6 +264,7 @@ fn segments_iterator(receiver: Option<&Value>) -> Result<Value, VmError> {
         state: RefCell::new(IteratorState::Native {
             values,
             receiver: None,
+            typed_receiver: None,
             index: 0,
             done: false,
         }),
