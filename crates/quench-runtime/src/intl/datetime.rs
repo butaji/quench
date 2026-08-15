@@ -110,6 +110,7 @@ impl DateTimeOptions {
             return Ok(());
         }
         match key {
+            "dateStyle" | "timeStyle" => self.set_component(key, text),
             "hour12" => self.hour12 = Some(text == "true"),
             "timeZone" => {
                 if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
@@ -311,10 +312,7 @@ pub(crate) fn prototype_method(
         .first()
         .is_some_and(|value| matches!(value, Value::Object(object) if object.iter().any(|(key, _)| key == "epochNanoseconds")));
     let no_options = slot_bool(&slots, "__explicitDateOptions") != Some(true);
-    if temporal_input
-        && slot_string(&slots, "dateStyle").is_some()
-        && slot_string(&slots, "timeStyle").is_none()
-    {
+    if slot_string(&slots, "dateStyle").is_some() && slot_string(&slots, "timeStyle").is_none() {
         let month_style = if slot_string(&slots, "dateStyle").as_deref() == Some("long") {
             "long"
         } else {
