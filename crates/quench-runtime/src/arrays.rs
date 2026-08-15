@@ -249,6 +249,12 @@ fn array_method_core(key: &str) -> Option<crate::ops::Builtin> {
         "toSorted" => crate::ops::Builtin::ArrayToSorted,
         "splice" => crate::ops::Builtin::ArraySplice,
         "reduce" => crate::ops::Builtin::ArrayReduce,
+        _ => return array_method_tail(key),
+    })
+}
+
+fn array_method_tail(key: &str) -> Option<crate::ops::Builtin> {
+    Some(match key {
         "reduceRight" => crate::ops::Builtin::ArrayReduceRight,
         "toLocaleString" => crate::ops::Builtin::ArrayToLocaleString,
         "values" => crate::ops::Builtin::ArrayIterator,
