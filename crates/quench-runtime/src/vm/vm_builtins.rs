@@ -106,6 +106,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::ObjectPrototypeValueOf
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
+            | Builtin::FunctionPrototypeHasInstance
             | Builtin::RegExpPrototypeToString
             | Builtin::Function
             | Builtin::AsyncFunction
@@ -177,6 +178,9 @@ fn execute_simple_builtin(
         Builtin::ObjectPrototypeValueOf => crate::builtins::prototype_value_of(receiver),
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
             function_prototype_builtin(builtin, receiver)
+        }
+        Builtin::FunctionPrototypeHasInstance => {
+            crate::vm::vm_arithmetic::function_has_instance(receiver, arguments)
         }
         Builtin::RegExpPrototypeToString => regexp_prototype_to_string(receiver),
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {

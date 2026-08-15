@@ -74,9 +74,15 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         | (Value::BigUint64Array(_), Builtin::BigUint64Array)
         | (Value::Promise(_), Builtin::Promise) => true,
         (Value::Object(properties), Builtin::Date)
-            if properties.iter().any(|(name, _)| name == "timeValue") => true,
+            if properties.iter().any(|(name, _)| name == "timeValue") =>
+        {
+            true
+        }
         (Value::Object(properties), Builtin::RegExp)
-            if properties.iter().any(|(name, _)| name == "source") => true,
+            if properties.iter().any(|(name, _)| name == "source") =>
+        {
+            true
+        }
         (Value::Map(data), Builtin::Map) if !data.weak => true,
         (Value::Map(data), Builtin::WeakMap) if data.weak => true,
         (Value::ArrayBuffer(data), Builtin::SharedArrayBuffer) if data.shared => true,
@@ -103,6 +109,20 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
         || own_constructor(value)
             .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
         || is_error_subclass(value, constructor))
+}
+
+pub(crate) fn function_has_instance(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let constructor = receiver.unwrap_or(&Value::Undefined);
+    if !instanceof_callable(constructor) {
+        return Err(type_error(
+            "Function.prototype[@@hasInstance] called on non-callable",
+        ));
+    }
+    let value = arguments.first().unwrap_or(&Value::Undefined);
+    Ok(Value::Boolean(ordinary_instanceof(value, constructor)?))
 }
 
 fn is_error_subclass(value: &Value, constructor: &Value) -> bool {
@@ -197,9 +217,7 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::Iterator(_) => Some(crate::collections::iterator::prototype_of(value)),
         Value::Builtin(builtin) => builtin_prototype_parent(*builtin),
         Value::Function(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
-        Value::BoundFunction(_) => {
-            Some(Value::Builtin(Builtin::FunctionPrototype))
-        }
+        Value::BoundFunction(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
         _ => None,
     }
 }
@@ -222,8 +240,7 @@ fn generator_instance_prototype(generator: &crate::value::GeneratorData) -> Opti
 fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
     if matches!(
         builtin,
-        Builtin::GeneratorFunctionPrototype
-            | Builtin::AsyncGeneratorFunctionPrototype
+        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype
     ) {
         return Some(Value::Builtin(Builtin::FunctionPrototype));
     }

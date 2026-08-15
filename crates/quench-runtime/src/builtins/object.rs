@@ -310,6 +310,14 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::FunctionPrototype && key == "Symbol.hasInstance" {
+        return Some(descriptor_object_with_flags(
+            super::special_property(builtin, key)?,
+            false,
+            false,
+            false,
+        ));
+    }
     if builtin == Builtin::Object && key == "hasOwn" {
         return Some(descriptor_object_with_flags(
             Value::Builtin(Builtin::ObjectHasOwn),
