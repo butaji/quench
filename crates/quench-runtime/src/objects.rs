@@ -58,9 +58,6 @@ fn reduce_property(
                 return Some(());
             }
             set_property_name(property, key, value, ops)?;
-            if property.method || !matches!(property.kind, PropertyKind::Init) {
-                ops.push(Op::RemoveFunctionPrototype { function: value });
-            }
             define_property(ops, object, key, value, property.kind);
         }
         ObjectPropertyKind::SpreadProperty(spread) => {

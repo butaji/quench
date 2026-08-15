@@ -14,6 +14,21 @@ pub struct ArrayBufferData {
 pub struct ResizeError;
 
 impl ArrayBufferData {
+    pub fn try_new(byte_length: usize) -> Option<Self> {
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(byte_length).ok()?;
+        bytes.resize(byte_length, 0);
+        Some(Self {
+            shared: false,
+            bytes: Rc::new(RefCell::new(bytes)),
+            detached: Rc::new(RefCell::new(false)),
+            max_byte_length: None,
+            immutable: false,
+            prototype: RefCell::new(None),
+            properties: RefCell::new(Vec::new()),
+        })
+    }
+
     pub fn new(byte_length: usize) -> Self {
         Self {
             shared: false,
@@ -24,6 +39,12 @@ impl ArrayBufferData {
             prototype: RefCell::new(None),
             properties: RefCell::new(Vec::new()),
         }
+    }
+
+    pub fn try_new_resizable(byte_length: usize, max_byte_length: usize) -> Option<Self> {
+        let mut buffer = Self::try_new(byte_length)?;
+        buffer.max_byte_length = Some(max_byte_length);
+        Some(buffer)
     }
 
     pub fn new_resizable(byte_length: usize, max_byte_length: usize) -> Self {
@@ -84,6 +105,20 @@ impl ArrayBufferData {
         buffer.bytes = Rc::new(RefCell::new(bytes));
         buffer.immutable = true;
         buffer
+    }
+
+    pub(crate) fn own_property(&self, key: &str) -> Option<Value> {
+        self.properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == key).then(|| value.clone()))
+    }
+
+    pub(crate) fn set_own_property(&self, key: &str, value: Value) {
+        let mut properties = self.properties.borrow_mut();
+        properties.retain(|(name, _)| name != key);
+        properties.push((key.to_string(), value));
     }
 }
 
