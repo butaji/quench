@@ -170,21 +170,7 @@ pub(crate) fn execute_bound(
         crate::value::Value::Builtin(builtin) => {
             execute_builtin_target(*builtin, Some(&bound.receiver), &combined)
         }
-        crate::value::Value::Function(function) => {
-            let realm = bound.properties.borrow().iter().rev().find_map(|(key, value)| {
-                (key == "\0realm").then(|| match value {
-                    crate::value::Value::HostCapability(token) => token.realm(),
-                    _ => crate::ops::RealmId::ROOT,
-                })
-            });
-            match realm {
-                Some(realm) if realm != crate::ops::RealmId::ROOT => {
-                    crate::vm::with_realm(realm, || execute(function, &bound.receiver, &combined))
-                        .unwrap_or_else(|| execute(function, &bound.receiver, &combined))
-                }
-                _ => execute(function, &bound.receiver, &combined),
-            }
-        }
+        crate::value::Value::Function(function) => execute(function, &bound.receiver, &combined),
         crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
         crate::value::Value::Proxy(_) => {
             crate::proxy::proxy_apply(&bound.target, &bound.receiver, &combined)
@@ -202,39 +188,10 @@ pub(crate) fn execute_target(
         crate::value::Value::Builtin(builtin) if crate::conversion::is_callable(target) => {
             execute_builtin_target(*builtin, Some(receiver), arguments)
         }
-        crate::value::Value::Function(function) => execute_in_function_realm(
-            function,
-            receiver,
-            arguments,
-        ),
+        crate::value::Value::Function(function) => execute(function, receiver, arguments),
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(target, receiver, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
-    }
-}
-
-fn execute_in_function_realm(
-    function: &std::rc::Rc<crate::value::FunctionValue>,
-    receiver: &crate::value::Value,
-    arguments: &[crate::value::Value],
-) -> Result<crate::value::Value, crate::execute::VmError> {
-    let realm = function
-        .properties
-        .borrow()
-        .iter()
-        .rev()
-        .find_map(|(key, value)| {
-            (key == "\0realm").then(|| match value {
-                crate::value::Value::HostCapability(token) => token.realm(),
-                _ => crate::ops::RealmId::ROOT,
-            })
-        });
-    match realm {
-        Some(realm) if realm != crate::ops::RealmId::ROOT => crate::vm::with_realm(realm, || {
-            execute(function, receiver, arguments)
-        })
-        .unwrap_or_else(|| execute(function, receiver, arguments)),
-        _ => execute(function, receiver, arguments),
     }
 }
 
@@ -258,14 +215,6 @@ fn execute_function_call(
         .first()
         .cloned()
         .unwrap_or(crate::value::Value::Undefined);
-    if let crate::value::Value::BoundFunction(bound) = receiver {
-        if matches!(
-            bound.target,
-            crate::value::Value::Builtin(crate::ops::Builtin::ShadowRealmEvaluate)
-        ) {
-            return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
-        }
-    }
     execute_target(receiver, &this, arguments.get(1..).unwrap_or_default())
 }
 
