@@ -72,6 +72,7 @@ impl LinkedModuleGraph {
             };
             units.insert(unit.id, module);
         }
+        bind_namespace_imports(graph, &units)?;
         bind_imports(graph, &units, true)?;
         for unit in units.values() {
             unit.reset_links();
@@ -260,6 +261,31 @@ impl LinkedModuleGraph {
     pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
         self.units.get(&unit)?.export_cell(name)
     }
+}
+
+fn bind_namespace_imports(
+    graph: &ModuleGraph,
+    units: &HashMap<ModuleId, LinkedModule>,
+) -> Result<(), String> {
+    for id in units.keys().copied().collect::<Vec<_>>() {
+        let metadata = unit_metadata(units, id)?;
+        for binding in metadata
+            .imports
+            .iter()
+            .filter(|binding| binding.imported == "*")
+        {
+            let kind = import_kind(metadata, &binding.source);
+            let target = graph
+                .resolve_kind(id, &binding.source, kind)
+                .ok_or_else(|| format!("unresolved module {}", binding.source))?;
+            let cell = namespace_cell(units, target, binding.deferred)?;
+            units
+                .get(&id)
+                .ok_or_else(|| "module unit missing".to_string())?
+                .bind_import(&binding.local, cell)?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_reexports(
