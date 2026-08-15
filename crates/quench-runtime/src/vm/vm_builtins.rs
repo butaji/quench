@@ -4,9 +4,42 @@ fn early_dispatch(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     crate::intl::tolocale::symbol::dispatch(builtin, arguments, receiver)
+        .or_else(|| {
+            (builtin == Builtin::AtomicsAdd
+                || builtin == Builtin::AtomicsSub
+                || builtin == Builtin::AtomicsExchange
+                || builtin == Builtin::AtomicsOr
+                || builtin == Builtin::AtomicsXor
+                || builtin == Builtin::AtomicsIsLockFree
+                || builtin == Builtin::AtomicsPause
+                || builtin == Builtin::AtomicsStore
+                || builtin == Builtin::AtomicsLoad
+                || builtin == Builtin::AtomicsAnd
+                || builtin == Builtin::AtomicsCompareExchange)
+                .then(|| crate::atomics::execute(builtin, receiver, arguments))
+        })
         .or_else(|| crate::json::execute(builtin, arguments))
         .or_else(|| crate::typed_array_ops::execute(builtin, receiver, arguments))
         .or_else(|| crate::arrays::execute_builtin(builtin, receiver, arguments))
+        .or_else(|| {
+            (builtin == Builtin::ArrayBufferIsView).then(|| {
+                Ok(Value::Boolean(matches!(
+                    arguments.first(),
+                    Some(Value::DataView(_))
+                        | Some(Value::Float32Array(_))
+                        | Some(Value::Float64Array(_))
+                        | Some(Value::Int8Array(_))
+                        | Some(Value::Int16Array(_))
+                        | Some(Value::Int32Array(_))
+                        | Some(Value::Uint8Array(_))
+                        | Some(Value::Uint8ClampedArray(_))
+                        | Some(Value::Uint16Array(_))
+                        | Some(Value::Uint32Array(_))
+                        | Some(Value::BigInt64Array(_))
+                        | Some(Value::BigUint64Array(_))
+                )))
+            })
+        })
         .or_else(|| crate::intl::tolocale::dispatch(builtin, receiver, arguments))
         .or_else(|| crate::collections::execute_builtin(builtin, receiver, arguments))
         .or_else(|| crate::promise::execute_builtin(builtin, receiver, arguments))
@@ -553,6 +586,56 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewByteLengthGetter
             | Builtin::DataViewByteOffsetGetter
     )
+}
+pub(crate) fn execute_array_buffer_byte_length(
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(type_error(
+            "ArrayBuffer.prototype.byteLength called on incompatible receiver",
+        ));
+    };
+    Ok(Value::Number(buffer.byte_length() as f64))
+}
+
+pub(crate) fn execute_array_buffer_detached(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(type_error(
+            "ArrayBuffer.prototype.detached called on incompatible receiver",
+        ));
+    };
+    Ok(Value::Boolean(*buffer.detached.borrow()))
+}
+
+pub(crate) fn execute_array_buffer_max_byte_length(
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(type_error(
+            "ArrayBuffer.prototype.maxByteLength called on incompatible receiver",
+        ));
+    };
+    Ok(Value::Number(
+        buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64,
+    ))
+}
+
+pub(crate) fn execute_array_buffer_resizable(
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(type_error("ArrayBuffer.prototype.resizable called on incompatible receiver"));
+    };
+    Ok(Value::Boolean(buffer.max_byte_length.is_some()))
+}
+
+pub(crate) fn execute_array_buffer_immutable(
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(type_error("ArrayBuffer.prototype.immutable called on incompatible receiver"));
+    };
+    Ok(Value::Boolean(buffer.immutable))
 }
 fn is_number_receiver(receiver: Option<&Value>) -> bool {
     matches!(receiver, Some(Value::Builtin(Builtin::Number)))

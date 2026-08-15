@@ -87,7 +87,8 @@ fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
         || boxed_string_owns(properties, key)
         || (!deleted
             && crate::vm::is_global_object(&Value::Object(properties.clone()))
-            && crate::vm::global_builtin_exists(key))
+            && (crate::vm::global_builtin_exists(key)
+                || crate::globals::immutable_value(key).is_some()))
 }
 
 fn boxed_string_owns(properties: &[(String, Value)], key: &str) -> bool {
@@ -121,10 +122,27 @@ fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return false;
     }
-    (builtin == Builtin::Object && key == "hasOwn")
+    (is_typed_array_constructor_own(builtin) && key == "BYTES_PER_ELEMENT")
+        || (builtin == Builtin::Object && key == "hasOwn")
         || builtin_descriptor(builtin, key).is_some()
         || super::callable_property(builtin, key).is_some()
         || super::special_property(builtin, key).is_some()
+}
+fn is_typed_array_constructor_own(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::Float64Array
+            | Builtin::Float32Array
+            | Builtin::Int8Array
+            | Builtin::Int16Array
+            | Builtin::Int32Array
+            | Builtin::Uint8Array
+            | Builtin::Uint16Array
+            | Builtin::Uint32Array
+            | Builtin::Uint8ClampedArray
+            | Builtin::BigInt64Array
+            | Builtin::BigUint64Array
+    )
 }
 fn valid_index(key: &str, len: usize) -> bool {
     key.parse::<usize>().is_ok_and(|index| index < len)
