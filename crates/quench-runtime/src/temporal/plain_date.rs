@@ -4,9 +4,22 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
     let month = number(arguments.get(1))?;
     let day = number(arguments.get(2))?;
+    if let Some(calendar) = arguments.get(3) {
+        if !matches!(calendar, Value::Undefined | Value::String(_)) {
+            return Err(crate::value::error::throw_type_error("Invalid calendar"));
+        }
+        if matches!(calendar, Value::String(value) if !value.eq_ignore_ascii_case("iso8601")) {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
+    }
     if !(-271_821.0..=275_760.0).contains(&year)
         || !(1.0..=12.0).contains(&month)
         || !(1.0..=days_in_month(year, month)).contains(&day)
+    {
+        return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
+    }
+    if (year == -271_821.0 && (month < 4.0 || month == 4.0 && day < 19.0))
+        || (year == 275_760.0 && (month > 9.0 || month == 9.0 && day > 13.0))
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
