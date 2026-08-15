@@ -42,6 +42,16 @@ thread_local! {
     static LAST_WOKEN_WAIT: RefCell<Option<WaitHandle>> = const { RefCell::new(None) };
 }
 
+pub(crate) fn reset_agent_state() {
+    AGENT_REPORTS.with(|reports| reports.borrow_mut().clear());
+    SYNC_WAITERS.with(|waiters| waiters.borrow_mut().clear());
+    WAITERS.with(|waiters| waiters.borrow_mut().clear());
+    AGENT_LOCKS.with(|locks| locks.borrow_mut().clear());
+    IN_AGENT_CALLBACK.with(|active| active.set(false));
+    CURRENT_WAIT_STATE.with(|state| state.borrow_mut().take());
+    LAST_WOKEN_WAIT.with(|state| state.borrow_mut().take());
+}
+
 thread_local! {
     static WAITERS: RefCell<Vec<Waiter>> = const { RefCell::new(Vec::new()) };
 }

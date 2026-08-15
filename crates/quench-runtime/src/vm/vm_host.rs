@@ -6,6 +6,12 @@ thread_local! {
     static AGENT_REPORTS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
 }
 
+pub(crate) fn reset_agent_state() {
+    AGENT_CALLBACKS.with(|callbacks| callbacks.borrow_mut().clear());
+    AGENT_REPORTS.with(|reports| reports.borrow_mut().clear());
+    crate::atomics::reset_agent_state();
+}
+
 pub(crate) fn execute_host_capability(
     kind: HostCapabilityKind,
     receiver: Option<&Value>,

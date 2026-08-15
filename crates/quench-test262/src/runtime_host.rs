@@ -397,13 +397,16 @@ fn execute_program(
     program: &quench_runtime::reduce::ResidualProgram,
     can_block: bool,
 ) -> Result<(), String> {
+    quench_runtime::vm::reset_host_agent_state();
     quench_runtime::builtins::reset_intrinsic_prototype_state();
-    execute_with_context(
+    let result = execute_with_context(
         program.ops(),
         &host_context().clone().with_can_block(can_block),
     )
     .map(|_| ())
-    .map_err(|error| format!("residual VM error: {}", error.render()))
+    .map_err(|error| format!("residual VM error: {}", error.render()));
+    quench_runtime::vm::reset_host_agent_state();
+    result
 }
 
 fn run_module_source(source: &str) -> Result<(), String> {
