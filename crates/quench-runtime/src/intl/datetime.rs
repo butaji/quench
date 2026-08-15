@@ -584,6 +584,13 @@ fn literal_part(value: &str) -> Value {
     ])
 }
 
+fn component_part(kind: &str, value: &str) -> Value {
+    make_object(vec![
+        ("type".to_string(), Value::String(kind.to_string())),
+        ("value".to_string(), Value::String(value.to_string())),
+    ])
+}
+
 pub(crate) fn prototype_method(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
@@ -687,6 +694,24 @@ fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
 }
 
 fn day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    let style = slot_string(slots, "dayPeriod")?;
+    if slot_string(slots, "hour").is_some() {
+        let hour = Local
+            .timestamp_opt((number / 1_000.0).trunc() as i64, 0)
+            .single()?
+            .hour();
+        let display_hour = if hour % 12 == 0 { 12 } else { hour % 12 };
+        let name = if style == "narrow" {
+            day_period_name(hour, true)
+        } else {
+            day_period_name(hour, false)
+        };
+        return Some(vec![
+            component_part("hour", &display_hour.to_string()),
+            literal_part(" "),
+            component_part("dayPeriod", &name),
+        ]);
+    }
     let value = day_period_format(slots, number)?;
     Some(vec![make_object(vec![
         ("type".to_string(), Value::String("dayPeriod".to_string())),
