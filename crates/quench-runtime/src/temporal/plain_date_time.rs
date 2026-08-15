@@ -501,8 +501,13 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
     if let Value::String(text) = value {
-        return parse_string(text);
+        let result = parse_string(text);
+        if result.is_ok() {
+            validate_options(options)?;
+        }
+        return result;
     }
+    validate_options(options)?;
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
@@ -548,6 +553,28 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
     construct(&fields)
+}
+
+fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok(());
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error("Invalid options"));
+    }
+    let overflow = crate::execute::get_property_result(options, "overflow")?;
+    if matches!(overflow, Value::Undefined) {
+        return Ok(());
+    }
+    if crate::conversion::is_symbol(&overflow) {
+        return Err(crate::value::error::throw_type_error("Invalid overflow"));
+    }
+    let overflow = crate::conversion::to_string(&overflow)?;
+    if overflow == "constrain" || overflow == "reject" {
+        Ok(())
+    } else {
+        Err(crate::value::error::throw_range_error("Invalid overflow"))
+    }
 }
 
 fn month_code_number(value: &Value) -> Result<Value, VmError> {
