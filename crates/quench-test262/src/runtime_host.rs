@@ -308,13 +308,13 @@ impl Test262Host for RuntimeHost {
             .collect::<Vec<_>>();
         scripts.push(ScriptSource { source, strict });
         let program = reduce_script_sources(&scripts).map_err(|errors| errors.join("; "))?;
-        execute_program(&program)
+        execute_program(&program, !source.contains("CanBlockIsFalse"))
     }
 
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
         let program =
             reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
-        execute_program(&program)
+        execute_program(&program, !source.contains("CanBlockIsFalse"))
     }
 
     fn run_harnessed_module_at(
@@ -390,19 +390,25 @@ fn add_module_source(
 
 fn run_source(source: &str) -> Result<(), String> {
     let program = reduce_source(source).map_err(|errors| errors.join("; "))?;
-    execute_program(&program)
+    execute_program(&program, !source.contains("CanBlockIsFalse"))
 }
 
-fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<(), String> {
+fn execute_program(
+    program: &quench_runtime::reduce::ResidualProgram,
+    can_block: bool,
+) -> Result<(), String> {
     quench_runtime::builtins::reset_intrinsic_prototype_state();
-    execute_with_context(program.ops(), host_context())
-        .map(|_| ())
-        .map_err(|error| format!("residual VM error: {}", error.render()))
+    execute_with_context(
+        program.ops(),
+        &host_context().clone().with_can_block(can_block),
+    )
+    .map(|_| ())
+    .map_err(|error| format!("residual VM error: {}", error.render()))
 }
 
 fn run_module_source(source: &str) -> Result<(), String> {
     let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
-    execute_program(&program)
+    execute_program(&program, !source.contains("CanBlockIsFalse"))
 }
 
 fn host_context() -> &'static VmContext {
