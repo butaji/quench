@@ -16,41 +16,15 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let mut numeric = false;
     let mut case_first = "false".to_string();
     if let Some(Value::Object(properties)) = arguments.get(1) {
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
-            usage = to_string_value(value);
-            if !matches!(usage.as_str(), "sort" | "search") {
-                return Err(runtime_error("RangeError: invalid usage"));
-            }
-        }
-        if let Some((_, Value::Boolean(value))) =
-            properties.iter().find(|(name, _)| name == "numeric")
-        {
-            numeric = *value;
-        }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
-            case_first = to_string_value(value);
-            if !matches!(case_first.as_str(), "upper" | "lower" | "false") {
-                return Err(runtime_error("RangeError: invalid caseFirst"));
-            }
-        }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
-            sensitivity = to_string_value(value);
-            if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
-                return Err(runtime_error("RangeError: invalid sensitivity"));
-            }
-        }
-        if case_first != "false" {
-            locale = remove_conflicting_extension(&locale, "kf", &case_first);
-        }
-        if numeric {
-            locale = remove_conflicting_extension(&locale, "kn", "true");
-        }
-        if let Some((_, Value::Boolean(value))) = properties
-            .iter()
-            .find(|(name, _)| name == "ignorePunctuation")
-        {
-            ignore_punctuation = *value;
-        }
+        apply_options(
+            properties,
+            &mut locale,
+            &mut usage,
+            &mut sensitivity,
+            &mut ignore_punctuation,
+            &mut numeric,
+            &mut case_first,
+        )?;
     }
     Ok(make_object(vec![
         (
@@ -76,6 +50,70 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ]),
         ),
     ]))
+}
+
+fn apply_options(
+    properties: &crate::value::ObjectData,
+    locale: &mut String,
+    usage: &mut String,
+    sensitivity: &mut String,
+    ignore_punctuation: &mut bool,
+    numeric: &mut bool,
+    case_first: &mut String,
+) -> Result<(), VmError> {
+    apply_string_options(properties, usage, sensitivity, case_first)?;
+    apply_boolean_options(properties, numeric, ignore_punctuation);
+    if *case_first != "false" {
+        *locale = remove_conflicting_extension(locale, "kf", case_first);
+    }
+    if *numeric {
+        *locale = remove_conflicting_extension(locale, "kn", "true");
+    }
+    Ok(())
+}
+
+fn apply_string_options(
+    properties: &crate::value::ObjectData,
+    usage: &mut String,
+    sensitivity: &mut String,
+    case_first: &mut String,
+) -> Result<(), VmError> {
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
+        *usage = to_string_value(value);
+        if !matches!(usage.as_str(), "sort" | "search") {
+            return Err(runtime_error("RangeError: invalid usage"));
+        }
+    }
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
+        *case_first = to_string_value(value);
+        if !matches!(case_first.as_str(), "upper" | "lower" | "false") {
+            return Err(runtime_error("RangeError: invalid caseFirst"));
+        }
+    }
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
+        *sensitivity = to_string_value(value);
+        if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
+            return Err(runtime_error("RangeError: invalid sensitivity"));
+        }
+    }
+    Ok(())
+}
+
+fn apply_boolean_options(
+    properties: &crate::value::ObjectData,
+    numeric: &mut bool,
+    ignore_punctuation: &mut bool,
+) {
+    if let Some((_, Value::Boolean(value))) = properties.iter().find(|(name, _)| name == "numeric")
+    {
+        *numeric = *value;
+    }
+    if let Some((_, Value::Boolean(value))) = properties
+        .iter()
+        .find(|(name, _)| name == "ignorePunctuation")
+    {
+        *ignore_punctuation = *value;
+    }
 }
 
 fn remove_conflicting_extension(locale: &str, key: &str, value: &str) -> String {
