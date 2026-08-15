@@ -2,6 +2,7 @@
 
 use super::{resolve_locales, runtime_error, to_string_value};
 use crate::{execute::VmError, ops::Builtin, value::Value};
+include!("tolocale_more.rs");
 
 mod date_kind;
 pub(crate) mod parse_num;
@@ -490,20 +491,3 @@ fn number_resolved(locale: String, options: Option<&Value>) -> Vec<(String, Valu
     }
     properties
 }
-
-pub(crate) fn string_to_locale_case(
-    receiver: Option<&Value>,
-    upper: bool,
-) -> Result<Value, VmError> {
-    let Some(Value::String(value)) = receiver else {
-        return Err(runtime_error("TypeError: String.prototype.toLocale*Case"));
-    };
-    let result = if upper {
-        value.to_uppercase()
-    } else {
-        value.to_lowercase()
-    };
-    Ok(Value::String(result))
-}
-
-include!("tolocale_more.rs");

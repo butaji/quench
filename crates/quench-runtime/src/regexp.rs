@@ -2,6 +2,7 @@ use regress::{Flags, Regex};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::{execute::VmError, ops::Builtin, value::Value};
+include!("regexp_more.rs");
 
 pub fn validate_literal(body: &str) -> Result<(), String> {
     let mut index = 0;
@@ -481,22 +482,3 @@ fn extract_source(receiver: &Value) -> String {
         _ => String::new(),
     }
 }
-
-fn extract_flags(receiver: &Value) -> String {
-    match receiver {
-        Value::Object(props) => props
-            .iter()
-            .find(|(k, _)| k == "flags")
-            .and_then(|(_, v)| {
-                if let Value::String(s) = v {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default(),
-        _ => String::new(),
-    }
-}
-
-include!("regexp_more.rs");
