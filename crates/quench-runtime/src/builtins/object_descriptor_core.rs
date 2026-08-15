@@ -282,6 +282,16 @@ fn builtin_descriptor_for_property(builtin: Builtin, key: &str) -> Option<Value>
 }
 
 fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::AbstractModuleSourcePrototype && key == "Symbol.toStringTag" {
+        return Some(Value::Object(Rc::new(ObjectData::new(vec![
+            (
+                "get".to_string(),
+                Value::Builtin(Builtin::FunctionPrototype),
+            ),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]))));
+    }
     if builtin == Builtin::FunctionPrototype && matches!(key, "caller" | "arguments") {
         let thrower = crate::vm::realm_intrinsic(Builtin::ThrowTypeError);
         return Some(Value::Object(Rc::new(ObjectData::new(vec![
