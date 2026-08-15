@@ -100,14 +100,11 @@ fn link_reexports(
     graph: &ModuleGraph,
     units: &HashMap<ModuleId, LinkedModule>,
 ) -> Result<(), String> {
-    let entry = graph
-        .entry()
-        .ok_or_else(|| "module graph missing entry".to_string())?;
-    for id in graph.dependency_order(entry)? {
-        let metadata = unit_metadata(units, id)?;
+    for unit in graph.units() {
+        let metadata = unit_metadata(units, unit.id)?;
         for binding in &metadata.reexports {
-            let target = resolve_reexport(graph, id, &binding.source)?;
-            link_reexport(units, id, target, binding)?;
+            let target = resolve_reexport(graph, unit.id, &binding.source)?;
+            link_reexport(units, unit.id, target, binding)?;
         }
     }
     Ok(())
@@ -151,10 +148,7 @@ fn link_star_exports(
     from: ModuleId,
     target: ModuleId,
 ) -> Result<(), String> {
-    let names = units
-        .get(&target)
-        .ok_or_else(|| "module unit missing".to_string())?
-        .export_names();
+    let names = unit_metadata(units, target)?.exported_names.clone();
     let from_unit = units
         .get(&from)
         .ok_or_else(|| "module unit missing".to_string())?;
