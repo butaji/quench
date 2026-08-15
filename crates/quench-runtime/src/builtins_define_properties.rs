@@ -22,14 +22,32 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
                     "Property descriptor must be an object",
                 ));
             };
+            let descriptor = descriptor_fields(&descriptor)?;
             define_own_property(&target, &key, &descriptor)
         })
 }
 
-fn descriptor_object(value: Value) -> Option<std::rc::Rc<crate::value::ObjectData>> {
+fn descriptor_object(value: Value) -> Option<Value> {
     match value {
-        Value::Object(properties) => Some(properties),
-        Value::ObjectAlias(alias) => alias.0.borrow().upgrade(),
+        Value::Object(_) | Value::ObjectAlias(_) => Some(value),
         _ => None,
     }
+}
+
+fn descriptor_fields(
+    descriptor: &Value,
+) -> Result<Vec<(String, Value)>, crate::execute::VmError> {
+    ["get", "set", "value", "writable", "enumerable", "configurable"]
+        .into_iter()
+        .filter(|field| {
+            let key = Value::String(field.to_string());
+            crate::builtins::object::descriptor(Some(descriptor), Some(&key))
+                .ok()
+                .is_some_and(|value| !matches!(value, Value::Undefined))
+        })
+        .map(|field| {
+            crate::execute::get_property_result(descriptor, field)
+                .map(|value| (field.to_string(), value))
+        })
+        .collect()
 }
