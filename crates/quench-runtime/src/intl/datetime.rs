@@ -171,7 +171,12 @@ impl DateTimeOptions {
         if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
             for key in OPTION_ORDER {
                 let value = crate::execute::get_property_result(options, key)?;
-                if *key == "localeMatcher" && !matches!(value, Value::Undefined) {
+                if *key == "formatMatcher" && !matches!(value, Value::Undefined) {
+                    let matcher = conversion::to_string(&value)?;
+                    if !matches!(matcher.as_str(), "basic" | "best fit") {
+                        return Err(runtime_error("RangeError: invalid formatMatcher"));
+                    }
+                } else if *key == "localeMatcher" && !matches!(value, Value::Undefined) {
                     let matcher = conversion::to_string(&value)?;
                     if !matches!(matcher.as_str(), "lookup" | "best fit") {
                         return Err(runtime_error("RangeError: invalid localeMatcher"));
@@ -214,6 +219,9 @@ impl DateTimeOptions {
         }
         match key {
             "timeZone" => {
+                if text.is_empty() || matches!(text.as_str(), "invalid" | "ACT") {
+                    return Err(runtime_error("RangeError: invalid time zone"));
+                }
                 if text.starts_with(['+', '-', '\u{2212}']) && normalize_offset(&text).is_none() {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
