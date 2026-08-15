@@ -109,6 +109,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorConcat => Some("Iterator.concat"),
         Builtin::IteratorFrom => Some("Iterator.from"),
         Builtin::IteratorToArray => Some("Iterator.prototype.toArray"),
+        Builtin::IteratorDrop => Some("Iterator.prototype.drop"),
         Builtin::IteratorReturn => Some("Iterator.prototype[Symbol.dispose]"),
         Builtin::IteratorSelf => Some("Iterator.prototype[Symbol.iterator]"),
         Builtin::IteratorPrototypeConstructorGetter => Some("get Iterator.prototype.constructor"),
@@ -175,6 +176,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::IteratorConcat => Some(0.0),
         Builtin::IteratorFrom => Some(1.0),
         Builtin::IteratorToArray => Some(0.0),
+        Builtin::IteratorDrop => Some(1.0),
         Builtin::IteratorReturn => Some(0.0),
         Builtin::IteratorSelf => Some(0.0),
         Builtin::IteratorPrototypeConstructorGetter
@@ -224,6 +226,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorConcat => Some("concat"),
         Builtin::IteratorFrom => Some("from"),
         Builtin::IteratorToArray => Some("toArray"),
+        Builtin::IteratorDrop => Some("drop"),
         Builtin::IteratorReturn => Some("[Symbol.dispose]"),
         Builtin::IteratorSelf => Some("[Symbol.iterator]"),
         Builtin::IteratorPrototypeConstructorGetter => Some("get constructor"),

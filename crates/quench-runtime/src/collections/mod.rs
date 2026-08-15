@@ -45,6 +45,7 @@ fn execute_core(
             "Symbol.toStringTag",
         )),
         IteratorToArray => Some(iterator_to_array(receiver)),
+        IteratorDrop => Some(iterator_drop(receiver, arguments)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
@@ -106,6 +107,36 @@ fn iterator_to_array(receiver: Option<&Value>) -> Result<Value, VmError> {
     };
     let iterator = iterator::open(receiver.clone())?;
     Ok(Value::array(iterator::collect(&iterator)?))
+}
+
+fn iterator_drop(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(receiver @ (Value::Iterator(_) | Value::Generator(_))) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.drop called on incompatible receiver",
+        ));
+    };
+    let count = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let number = crate::conversion::to_number(&count)?;
+    let integer = number.trunc();
+    if number.is_nan() || integer < 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid iterator drop count",
+        ));
+    }
+    let remaining = if integer.is_infinite() {
+        u64::MAX
+    } else {
+        integer as u64
+    };
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::Drop {
+                iterator: receiver.clone(),
+                remaining,
+                done: false,
+            }),
+        },
+    )))
 }
 
 fn iterator_from(arguments: &[Value]) -> Result<Value, VmError> {
