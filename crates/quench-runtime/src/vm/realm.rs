@@ -19,7 +19,6 @@ struct RealmState {
 }
 
 struct ExecutionGuard {
-    state: Rc<RealmState>,
     previous: Option<ObjectProperties>,
 }
 
@@ -121,8 +120,13 @@ pub(super) fn execute(id: RealmId, ops: &[Op]) -> Result<Value, VmError> {
 pub(super) fn with_realm<T>(id: RealmId, callback: impl FnOnce() -> T) -> Option<T> {
     let state = state(id)?;
     let context = state.context.clone();
+    let global = Value::Object(state.global.borrow().clone());
+    let environment = crate::environment::Environment::new();
+    environment.set(0, global);
     let _context = super::ContextGuard::install(&context);
-    let _realm = ExecutionGuard::install(state);
+    let _realm = ExecutionGuard::install(Rc::clone(&state));
+    let _environment = crate::locals::EnvironmentGuard::install(environment);
+    let _global_lexical = crate::locals::GlobalLexicalGuard::install(crate::locals::current());
     Some(callback())
 }
 
@@ -142,6 +146,7 @@ pub(super) fn intrinsic(id: RealmId, builtin: Builtin) -> Option<Value> {
         return Some(value);
     }
     let value = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: id,
         target: Value::Builtin(builtin),
         receiver: Value::HostCapability(Rc::clone(&state.token)),
         arguments: Vec::new(),
@@ -157,6 +162,7 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "Array" => Array,
         "Iterator" => Iterator,
         "ArrayBuffer" => ArrayBuffer,
+        "SharedArrayBuffer" => SharedArrayBuffer,
         "DataView" => DataView,
         "Float32Array" => Float32Array,
         "Float64Array" => Float64Array,
@@ -177,10 +183,10 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "BigInt" => BigInt,
         "String" => String,
         "Date" => Date,
-        "Intl" => Intl,
         "DisposableStack" => DisposableStack,
         "AsyncDisposableStack" => AsyncDisposableStack,
         "FinalizationRegistry" => FinalizationRegistry,
+        "ShadowRealm" => ShadowRealm,
         _ => return global_builtin_error(key),
     })
 }
@@ -241,16 +247,15 @@ impl ExecutionGuard {
     fn install(state: Rc<RealmState>) -> Self {
         let global = state.global.borrow().clone();
         let previous = super::GLOBAL_OBJECT.with(|slot| slot.replace(Some(global)));
-        Self { state, previous }
+        Self { previous }
     }
 }
 
 impl Drop for ExecutionGuard {
     fn drop(&mut self) {
-        let current = super::GLOBAL_OBJECT.with(|slot| slot.replace(self.previous.take()));
-        if let Some(current) = current {
-            self.state.global.replace(current);
-        }
+        super::GLOBAL_OBJECT.with(|slot| {
+            slot.replace(self.previous.take());
+        });
     }
 }
 

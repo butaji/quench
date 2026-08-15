@@ -56,9 +56,27 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
-        (Intl, "Symbol.toStringTag") => Some(Value::String("Intl".into())),
+        (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
+        (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
+        (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
+        (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
+        (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
+        (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
+        (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
+        (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
+        (ShadowRealmPrototype, "constructor") => Some(Value::Builtin(ShadowRealm)),
+        (ShadowRealm, "prototype") => Some(Value::Builtin(ShadowRealmPrototype)),
+        (ShadowRealmPrototype, "evaluate") => Some(Value::Builtin(ShadowRealmEvaluate)),
+        (ShadowRealmPrototype, "importValue") => Some(Value::Builtin(ShadowRealmImportValue)),
+        (ShadowRealmPrototype, "Symbol.toStringTag") => Some(Value::String("ShadowRealm".into())),
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
+        }
+        (SharedArrayBufferPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("SharedArrayBuffer".into()))
+        }
+        (StringIteratorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("String Iterator".into()))
         }
         (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
@@ -73,26 +91,6 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             collections_prop(builtin, k)
         }
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
-        (IntlCollatorPrototype, "constructor") => Some(Value::Builtin(IntlCollator)),
-        (IntlCollatorPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.Collator".to_string()))
-        }
-        (IntlDateTimeFormatPrototype, "constructor") => Some(Value::Builtin(IntlDateTimeFormat)),
-        (IntlDateTimeFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.DateTimeFormat".to_string()))
-        }
-        (IntlDurationFormatPrototype, "constructor") => Some(Value::Builtin(IntlDurationFormat)),
-        (IntlDurationFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.DurationFormat".to_string()))
-        }
-        (IntlDisplayNamesPrototype, "constructor") => Some(Value::Builtin(IntlDisplayNames)),
-        (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.DisplayNames".to_string()))
-        }
-        (IntlListFormatPrototype, "constructor") => Some(Value::Builtin(IntlListFormat)),
-        (IntlListFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.ListFormat".to_string()))
-        }
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
         (FinalizationRegistry, "prototype") => Some(Value::Builtin(FinalizationRegistryPrototype)),
         (FinalizationRegistryPrototype, "Symbol.toStringTag") => {
@@ -243,6 +241,12 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
         (ArrayBufferPrototype, "resize") => Some(ArrayBufferResize),
         (ArrayBufferPrototype, "transferToImmutable") => Some(ArrayBufferTransferToImmutable),
+        (SharedArrayBufferPrototype, "constructor") => Some(SharedArrayBuffer),
+        (SharedArrayBufferPrototype, "byteLength") => Some(SharedArrayBufferByteLengthGetter),
+        (SharedArrayBufferPrototype, "growable") => Some(SharedArrayBufferGrowableGetter),
+        (SharedArrayBufferPrototype, "maxByteLength") => Some(SharedArrayBufferMaxByteLengthGetter),
+        (SharedArrayBufferPrototype, "grow") => Some(SharedArrayBufferGrow),
+        (SharedArrayBufferPrototype, "slice") => Some(SharedArrayBufferSlice),
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),
         (Function, "prototype") => Some(FunctionPrototype),
@@ -279,6 +283,7 @@ fn regexp_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "Symbol.split") => RegExpSymbolSplit,
         (RegExpPrototype, "Symbol.matchAll") => RegExpSymbolMatchAll,
         (RegExpStringIteratorPrototype, "next") => RegExpStringIteratorNext,
+        (StringIteratorPrototype, "next") => StringIteratorNext,
         _ => return None,
     })
 }
@@ -451,6 +456,7 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Object, "defineProperty") => Some(ObjectDefineProperty),
         (Object, "defineProperties") => Some(ObjectDefineProperties),
         (Object, "getOwnPropertyDescriptor") => Some(ObjectGetOwnPropertyDescriptor),
+        (Object, "getOwnPropertyDescriptors") => Some(ObjectGetOwnPropertyDescriptors),
         (Object, "keys") => Some(ObjectKeys),
         (Object, "values") => Some(ObjectValues),
         (Object, "entries") => Some(ObjectEntries),
@@ -511,8 +517,7 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (BigInt, "asUintN") => Some(BigIntAsUintN),
         (BigIntPrototype, "valueOf") => Some(BigIntValueOf),
         (BigIntPrototype, "constructor") => Some(BigInt),
-        (BigIntPrototype, "toString") => Some(BigIntToString),
-        (BigIntPrototype, "toLocaleString") => Some(BigIntToLocaleString),
+        (BigIntPrototype, "toString" | "toLocaleString") => Some(BigIntToString),
         _ => None,
     }
 }
@@ -529,6 +534,12 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     }
 }
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
+    if matches!(
+        (_builtin, key),
+        (Builtin::ThrowTypeError, "length" | "name")
+    ) {
+        return false;
+    }
     if key == "prototype" {
         return false;
     }

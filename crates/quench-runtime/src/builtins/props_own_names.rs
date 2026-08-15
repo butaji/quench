@@ -1,52 +1,41 @@
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
-        Builtin::IntlListFormat => &["length", "name", "prototype", "supportedLocalesOf"],
-        Builtin::IntlListFormatPrototype => &[
-            "constructor",
-            "format",
-            "formatToParts",
-            "resolvedOptions",
-            "Symbol.toStringTag",
+        Builtin::Temporal => &["Duration", "PlainDate"],
+        Builtin::TemporalDuration => &["length", "name", "prototype", "from", "compare"],
+        Builtin::TemporalDurationPrototype => &[
+            "constructor", "years", "months", "weeks", "days", "hours", "minutes", "seconds",
+            "milliseconds", "microseconds", "nanoseconds", "sign", "blank", "toString",
+            "toJSON", "valueOf",
         ],
-        Builtin::IntlDateTimeFormat => &[
-            "length", "name", "prototype", "supportedLocalesOf",
+        Builtin::TemporalPlainDate => &["length", "name", "prototype", "from"],
+        Builtin::TemporalPlainDatePrototype => &[
+            "constructor", "calendarId", "era", "eraYear", "year", "month", "monthCode", "day",
+            "dayOfWeek", "dayOfYear", "weekOfYear", "daysInWeek", "daysInMonth", "daysInYear",
+            "monthsInYear", "inLeapYear", "toString", "toJSON", "toLocaleString", "valueOf",
         ],
-        Builtin::IntlDateTimeFormatPrototype => &[
-            "constructor",
-            "format",
-            "formatToParts",
-            "formatRange",
-            "formatRangeToParts",
-            "resolvedOptions",
-            "Symbol.toStringTag",
-        ],
-        Builtin::IntlCollator => &[
-            "length", "name", "prototype", "supportedLocalesOf",
-        ],
-        Builtin::IntlCollatorPrototype => &[
-            "constructor", "compare", "resolvedOptions", "Symbol.toStringTag",
-        ],
-        Builtin::IntlDurationFormat => &[
-            "length", "name", "prototype", "supportedLocalesOf",
-        ],
-        Builtin::IntlDurationFormatPrototype => &[
-            "constructor", "format", "formatToParts", "resolvedOptions", "Symbol.toStringTag",
-        ],
+        Builtin::ShadowRealm => &["length", "name", "prototype"],
+        Builtin::ShadowRealmPrototype => {
+            &["constructor", "evaluate", "importValue", "Symbol.toStringTag"]
+        }
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => {
-            &[
-                "constructor",
-                "toString",
-                "toLocaleString",
-                "valueOf",
-                "Symbol.toStringTag",
-            ]
+            &["constructor", "toString", "valueOf", "Symbol.toStringTag"]
         }
         Builtin::Error => &[
             "length",
             "name",
             "prototype",
             "isError",
+        ],
+        Builtin::ThrowTypeError => &["length", "name"],
+        Builtin::SharedArrayBufferPrototype => &[
+            "constructor",
+            "byteLength",
+            "slice",
+            "grow",
+            "growable",
+            "maxByteLength",
+            "Symbol.toStringTag",
         ],
         Builtin::ErrorPrototype => {
             &["constructor", "name", "message", "cause", "stack", "toString"]
