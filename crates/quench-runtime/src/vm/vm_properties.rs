@@ -470,20 +470,8 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
         return bind_function_property(value, key);
     }
-    if key == "stack"
-        && matches!(
-            builtin,
-            Builtin::RangeErrorPrototype
-                | Builtin::ReferenceErrorPrototype
-                | Builtin::SyntaxErrorPrototype
-                | Builtin::EvalErrorPrototype
-                | Builtin::URIErrorPrototype
-                | Builtin::AggregateErrorPrototype
-                | Builtin::TypeErrorPrototype
-                | Builtin::SuppressedErrorPrototype
-        )
-    {
-        return crate::vm::get_property(&Value::Builtin(Builtin::ErrorPrototype), key);
+    if let Some(result) = native_error_stack_property(builtin, key) {
+        return result;
     }
     if crate::builtin_meta::is_prototype(builtin) {
         return crate::builtins::property(Builtin::ObjectPrototype, key);
@@ -497,6 +485,29 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
         crate::builtins::property(Builtin::ObjectPrototype, key),
     )
 }
+
+fn native_error_stack_property(builtin: Builtin, key: &str) -> Option<Value> {
+    if key != "stack"
+        || !matches!(
+            builtin,
+            Builtin::RangeErrorPrototype
+                | Builtin::ReferenceErrorPrototype
+                | Builtin::SyntaxErrorPrototype
+                | Builtin::EvalErrorPrototype
+                | Builtin::URIErrorPrototype
+                | Builtin::AggregateErrorPrototype
+                | Builtin::TypeErrorPrototype
+                | Builtin::SuppressedErrorPrototype
+        )
+    {
+        return None;
+    }
+    Some(crate::vm::get_property(
+        &Value::Builtin(Builtin::ErrorPrototype),
+        key,
+    ))
+}
+
 fn bind_function_property(value: &Value, key: &str) -> Value {
     let builtin = match key {
         "apply" => Builtin::FunctionApply,
