@@ -98,6 +98,7 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
 
 include!("builtins_escape.rs");
 include!("builtins_uri.rs");
+include!("builtins_tail.rs");
 
 pub(crate) fn array(arguments: &[Value]) -> Value {
     if let [Value::Number(length)] = arguments {
@@ -498,4 +499,3 @@ pub(crate) fn same_value_zero(left: &Value, right: &Value) -> bool {
     }
     same_value(Some(left), Some(right))
 }
-include!("builtins_tail.rs");
