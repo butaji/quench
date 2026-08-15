@@ -13,6 +13,22 @@ fn default_export_cell_observes_module_execution() {
 }
 
 #[test]
+fn uninitialized_export_cell_is_marked_before_module_execution() {
+    let module = LinkedModule::compile("export let value;").expect("module compiles");
+    assert!(module
+        .program
+        .ops()
+        .iter()
+        .any(|op| matches!(op, quench_runtime::ops::Op::MarkUninitialized { .. })));
+    let slot = module.export_slot("value").expect("export slot");
+    assert!(module.program.ops().iter().any(|op| {
+        matches!(op, quench_runtime::ops::Op::MarkUninitialized { slot: found } if *found == slot)
+    }));
+    let cell = module.export_cell("value").expect("export cell");
+    assert!(quench_runtime::module_bindings::ModuleBindingCell::is_uninitialized(&cell.get()));
+}
+
+#[test]
 fn json_module_exports_recursive_runtime_values() {
     let module = LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
     let cell = module.export_cell("default").expect("default export cell");
