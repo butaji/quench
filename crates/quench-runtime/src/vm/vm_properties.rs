@@ -359,6 +359,9 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
             Builtin::IntlNumberFormatFormatToParts
                 | Builtin::IntlNumberFormatFormatRange
                 | Builtin::IntlNumberFormatFormatRangeToParts
+                | Builtin::IntlDurationFormatFormat
+                | Builtin::IntlDurationFormatFormatToParts
+                | Builtin::IntlDurationFormatResolvedOptions
         )
     ) {
         return property;
