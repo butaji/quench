@@ -1,4 +1,5 @@
 use crate::{execute::VmError, value::Value};
+use chrono::{Datelike, Duration as CalendarDuration, NaiveDate};
 
 const NAMES: [&str; 9] = [
     "year",
@@ -83,6 +84,12 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateTimeValueOf => Some(Err(
             crate::value::error::throw_type_error("Cannot convert PlainDateTime to a number"),
         )),
+        crate::ops::Builtin::TemporalPlainDateTimeAdd => {
+            Some(add(_receiver, arguments.first(), 1.0))
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeSubtract => {
+            Some(add(_receiver, arguments.first(), -1.0))
+        }
         _ => None,
     }
 }
@@ -128,6 +135,41 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
     Ok(Value::Boolean(fields(receiver)? == fields(&from(other)?)?))
+}
+
+fn add(
+    receiver: Option<&Value>,
+    duration: Option<&Value>,
+    direction: f64,
+) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let duration = crate::temporal::duration::from(duration)?;
+    let mut values = fields(receiver)?;
+    let months = (number_property(&duration, "years") * 12.0
+        + number_property(&duration, "months"))
+        * direction;
+    let total = values[0] * 12.0 + values[1] - 1.0 + months;
+    values[0] = (total / 12.0).floor();
+    values[1] = total.rem_euclid(12.0) + 1.0;
+    let days = (number_property(&duration, "weeks") * 7.0 + number_property(&duration, "days"))
+        * direction;
+    if days != 0.0 {
+        let date = NaiveDate::from_ymd_opt(values[0] as i32, values[1] as u32, values[2] as u32)
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?
+            + CalendarDuration::days(days as i64);
+        values[0] = date.year() as f64;
+        values[1] = date.month() as f64;
+        values[2] = date.day() as f64;
+    }
+    construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
+}
+
+fn number_property(value: &Value, name: &str) -> f64 {
+    crate::execute::get_property_result(value, name)
+        .ok()
+        .and_then(|value| crate::conversion::to_number(&value).ok())
+        .unwrap_or(0.0)
 }
 
 fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
