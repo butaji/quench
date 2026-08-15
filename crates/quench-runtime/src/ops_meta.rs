@@ -42,6 +42,7 @@ pub enum HostCapabilityKind {
     EvalScript,
     DetachArrayBuffer,
     DeferredModule,
+    DynamicImport,
 }
 
 /// Non-JavaScript capability descriptor; exposure is owned by the host.
