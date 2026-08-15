@@ -19,6 +19,9 @@ pub(crate) fn execute(
             crate::ops::Builtin::TemporalPlainDateCompare => {
                 Some(compare(arguments.first(), arguments.get(1)))
             }
+            crate::ops::Builtin::TemporalPlainDateValueOf => Some(Err(
+                crate::value::error::throw_type_error("Cannot convert PlainDate to a number"),
+            )),
             crate::ops::Builtin::TemporalPlainDateToString
             | crate::ops::Builtin::TemporalPlainDateToJSON => Some(to_string(receiver)),
             crate::ops::Builtin::TemporalPlainDateCalendarIdGetter
