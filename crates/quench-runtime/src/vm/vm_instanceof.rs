@@ -150,7 +150,7 @@ fn instanceof_callable(value: &Value) -> bool {
 }
 
 fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
-    let mut current = internal_prototype(value);
+    let mut current = internal_prototype(value).map(resolve_object_alias);
     for _ in 0..1_024 {
         let Some(prototype) = current else {
             return false;
@@ -158,9 +158,22 @@ fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
         if crate::builtins::same_value(Some(&prototype), Some(expected)) {
             return true;
         }
-        current = internal_prototype(&prototype);
+        current = internal_prototype(&prototype).map(resolve_object_alias);
     }
     false
+}
+
+fn resolve_object_alias(value: Value) -> Value {
+    let Value::ObjectAlias(alias) = value else {
+        return value;
+    };
+    let object = alias
+        .0
+        .borrow()
+        .upgrade()
+        .map(Value::Object)
+        .unwrap_or(Value::Null);
+    object
 }
 
 fn internal_prototype(value: &Value) -> Option<Value> {
