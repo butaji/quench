@@ -4,13 +4,20 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
     let month = number(arguments.get(1))?;
     let day = number(arguments.get(2))?;
-    if let Some(calendar @ Value::String(_)) = arguments.get(3) {
-        validate_constructor_calendar(calendar)?;
+    let calendar = if let Some(calendar @ Value::String(_)) = arguments.get(3) {
+        Some(canonical_calendar(calendar)?)
     } else if matches!(arguments.get(3), Some(value) if !matches!(value, Value::Undefined)) {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
-    }
+    } else {
+        None
+    };
     validate_date(year, month, day)?;
-    Ok(date_object(year, month, day))
+    Ok(date_object_with_calendar(
+        year,
+        month,
+        day,
+        calendar.as_deref().unwrap_or("iso8601"),
+    ))
 }
 
 fn validate_constructor_calendar(value: &Value) -> Result<(), VmError> {
@@ -20,11 +27,26 @@ fn validate_constructor_calendar(value: &Value) -> Result<(), VmError> {
     let Value::String(calendar) = value else {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     };
-    if calendar.eq_ignore_ascii_case("iso8601") {
+    if matches!(
+        calendar.to_ascii_lowercase().as_str(),
+        "iso8601" | "islamicc" | "islamic-civil" | "ethiopic-amete-alem" | "ethioaa"
+    ) {
         Ok(())
     } else {
         Err(crate::value::error::throw_range_error("Invalid calendar"))
     }
+}
+
+fn canonical_calendar(value: &Value) -> Result<String, VmError> {
+    validate_constructor_calendar(value)?;
+    let Value::String(calendar) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    };
+    Ok(match calendar.to_ascii_lowercase().as_str() {
+        "islamicc" => "islamic-civil".into(),
+        "ethiopic-amete-alem" => "ethioaa".into(),
+        value => value.into(),
+    })
 }
 
 pub(crate) fn execute(
@@ -700,6 +722,10 @@ fn number(value: Option<&Value>) -> Result<f64, VmError> {
 }
 
 fn date_object(year: f64, month: f64, day: f64) -> Value {
+    date_object_with_calendar(year, month, day, "iso8601")
+}
+
+fn date_object_with_calendar(year: f64, month: f64, day: f64, calendar: &str) -> Value {
     Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
         ("year".into(), Value::Number(year)),
         ("month".into(), Value::Number(month)),
@@ -709,7 +735,7 @@ fn date_object(year: f64, month: f64, day: f64) -> Value {
         ("_year".into(), Value::Number(year)),
         ("_month".into(), Value::Number(month)),
         ("_day".into(), Value::Number(day)),
-        ("calendarId".into(), Value::String("iso8601".into())),
+        ("calendarId".into(), Value::String(calendar.into())),
         (
             "dayOfWeek".into(),
             Value::Number(day_of_week(year, month, day)),
