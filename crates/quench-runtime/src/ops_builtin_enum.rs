@@ -281,7 +281,7 @@ pub enum Builtin {
     WeakSetPrototype, WeakSetAdd,
     WeakSetHas, WeakSetDelete,
     WeakRef, WeakRefPrototype,
-    WeakRefDeref, IteratorNext,
+    WeakRefDeref, IteratorNext, IteratorReturn,
     SetIteratorNext, MapIteratorNext,
     IteratorSelf, AsyncIteratorSelf, AsyncIteratorDispose,
     AsyncIteratorDisposeFulfilled, GeneratorNext,
