@@ -98,7 +98,6 @@ pub enum Constant {
     Number(f64),
     Boolean(bool),
     String(String),
-    StringUnits(Vec<u16>),
     BigInt(String),
     Null,
     Undefined,
