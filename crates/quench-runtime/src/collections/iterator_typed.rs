@@ -42,10 +42,11 @@ pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::V
 pub(crate) fn typed_length(value: &Value) -> Result<usize, crate::execute::VmError> {
     macro_rules! length {
         ($data:expr) => {
-            collect_typed($data.logical_len(), $data.buffer.byte_length() < $data.byte_offset, |index| {
-                $data.get(index).map(|_| ())
-            })
-            .map(|values| values.len())
+            if $data.buffer.byte_length() < $data.byte_offset + $data.byte_length() {
+                Err(crate::collections::iterator::not_iterable())
+            } else {
+                Ok($data.logical_len())
+            }
         };
     }
     match value {
