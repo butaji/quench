@@ -268,11 +268,16 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
             ));
         }
     }
-    let Value::String(_) = stack else {
+    let Value::String(stack_value) = stack else {
         return Err(crate::value::error::throw_type_error(
             "Stack value must be a string",
         ));
     };
+    if crate::conversion::is_symbol_string(stack_value) {
+        return Err(crate::value::error::throw_type_error(
+            "Stack value must be a string",
+        ));
+    }
     if matches!(value, Value::Proxy(_)) {
         define_proxy_stack(value, stack.clone())?;
         return Ok(Value::Undefined);
