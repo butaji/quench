@@ -25,6 +25,28 @@ pub(crate) fn global_builtin_exists(key: &str) -> bool {
 pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
     crate::globals::builtin(key).map(Value::Builtin)
 }
+
+pub(crate) fn intrinsic_for_global(global: &Value, builtin: Builtin) -> Option<Value> {
+    let Value::Object(object) = global else {
+        return None;
+    };
+    realm::id_for_global(object).and_then(|id| realm::intrinsic(id, builtin))
+}
+
+pub(crate) fn with_global_realm<T>(global: &Value, callback: impl FnOnce() -> T) -> Option<T> {
+    let Value::Object(object) = global else {
+        return None;
+    };
+    realm::id_for_global(object).and_then(|id| realm::with_realm(id, callback))
+}
+
+pub(crate) fn current_global_for(value: &Value) -> Option<Value> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    realm::current_global_for(object).map(Value::Object)
+}
+
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {

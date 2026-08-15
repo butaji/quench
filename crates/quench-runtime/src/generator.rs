@@ -159,6 +159,7 @@ pub(crate) fn throw(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     let generator = generator_receiver(receiver, "throw")?;
     resume(generator, Resume::Throw(first_argument(arguments)))
 }
+#[derive(Clone)]
 enum Resume {
     Next(Value),
     Return(Value),
@@ -166,6 +167,22 @@ enum Resume {
 }
 
 fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
+    let global = generator.function.captures.get(0);
+    if let Some(result) = crate::vm::with_global_realm(&global, || {
+        resume_in_realm(generator, resume.clone())
+    }) {
+        return result;
+    }
+    resume_in_realm(generator, resume)
+}
+
+fn resume_in_realm(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
+    crate::vm::with_function_global(&generator.function.captures.get(0), || {
+        resume_with_global(generator, resume)
+    })
+}
+
+fn resume_with_global(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     if *generator.done.borrow() {
         return completed_resume(resume);
     }
