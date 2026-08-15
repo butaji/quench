@@ -55,7 +55,7 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         .collect()
 }
 
-fn script_property_names() -> [&'static str; 32] {
+fn script_property_names() -> [&'static str; 43] {
     [
         "Object",
         "Function",
@@ -89,6 +89,17 @@ fn script_property_names() -> [&'static str; 32] {
         "Symbol",
         "Temporal",
         "ShadowRealm",
+        "Float64Array",
+        "Float32Array",
+        "Int8Array",
+        "Int16Array",
+        "Int32Array",
+        "Uint8Array",
+        "Uint16Array",
+        "Uint32Array",
+        "Uint8ClampedArray",
+        "BigInt64Array",
+        "BigUint64Array",
     ]
 }
 
