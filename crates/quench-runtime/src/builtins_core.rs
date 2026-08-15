@@ -72,18 +72,28 @@ pub(crate) fn array_for_each(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Array(values)) = receiver else {
-        return Ok(Value::Undefined);
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.forEach called on null or undefined",
+        ));
     };
-    if let Some(callback) = arguments.first() {
-        let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-        for (index, value) in values.iter().enumerate() {
-            crate::functions::execute_target(
-                callback,
-                this_arg,
-                &[value.clone(), Value::Number(index as f64), Value::Undefined],
-            )?;
-        }
+    let Some(callback) = arguments.first() else {
+        return Err(crate::vm::not_callable());
+    };
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let length = map_length(receiver)?;
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
+    for index in 0..length {
+        let Some(value) = map_value(receiver, index)? else {
+            continue;
+        };
+        crate::functions::execute_target(
+            callback,
+            this_arg,
+            &[value, Value::Number(index as f64), receiver.clone()],
+        )?;
     }
     Ok(Value::Undefined)
 }
