@@ -46,8 +46,7 @@ pub(crate) fn realm_id_for_global_value(value: &Value) -> Option<RealmId> {
 }
 
 pub(crate) fn realm_intrinsic(builtin: Builtin) -> Value {
-    let realm = current_context_or_default().realm();
-    realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
+    realm_intrinsic_for(current_context_or_default().realm(), builtin)
 }
 
 pub(crate) fn realm_intrinsic_for(realm: RealmId, builtin: Builtin) -> Value {
