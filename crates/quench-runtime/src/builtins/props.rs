@@ -56,6 +56,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
+        (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
+        (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
+        (TemporalDurationPrototype, "constructor") => Some(Value::Builtin(TemporalDuration)),
         (IntlCollatorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.Collator".into()))
         }
