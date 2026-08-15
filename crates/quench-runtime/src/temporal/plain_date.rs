@@ -390,6 +390,16 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             "Invalid calendar annotation",
         ));
     }
+    let time_zone_annotations = text
+        .split('[')
+        .skip(1)
+        .filter(|part| !part.starts_with("u-ca=") && !part.starts_with("!u-ca="))
+        .count();
+    if time_zone_annotations > 1 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid time zone annotation",
+        ));
+    }
     let invalid_annotation = text.split('[').skip(1).any(|part| {
         if part.starts_with('!') && part.contains('=') && !part.starts_with("!u-ca=iso8601") {
             return true;
