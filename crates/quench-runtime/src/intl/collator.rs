@@ -58,9 +58,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                     .collation
                     .unwrap_or_else(|| "default".to_string());
             }
-            if collation == "eor" {
-                locale = strip_unicode_key(&locale, "co");
-            } else if collation == "default" {
+            if matches!(collation.as_str(), "eor" | "default") {
                 locale = strip_unicode_key(&locale, "co");
             }
         }
@@ -172,8 +170,9 @@ fn normalize_locale_extensions(locale: &str) -> (String, LocaleExtensions) {
         let value = extension.get(cursor + 1).copied();
         match key {
             "kn" => {
-                numeric =
-                    value.is_none_or(|item| item.len() == 1 || item.len() == 2 || item == "true");
+                numeric = value.map_or(true, |item| {
+                    item.len() == 1 || item.len() == 2 || item == "true"
+                });
                 if value != Some("false") {
                     retained.push("kn");
                 }
