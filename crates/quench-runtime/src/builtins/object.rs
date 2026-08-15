@@ -269,6 +269,15 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
 }
 fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
     let getter = match (builtin, key) {
+        (Builtin::RegExpPrototype, "source") => Builtin::RegExpSourceGetter,
+        (Builtin::RegExpPrototype, "flags") => Builtin::RegExpFlagsGetter,
+        (Builtin::RegExpPrototype, "global") => Builtin::RegExpGlobalGetter,
+        (Builtin::RegExpPrototype, "ignoreCase") => Builtin::RegExpIgnoreCaseGetter,
+        (Builtin::RegExpPrototype, "multiline") => Builtin::RegExpMultilineGetter,
+        (Builtin::RegExpPrototype, "dotAll") => Builtin::RegExpDotAllGetter,
+        (Builtin::RegExpPrototype, "unicode") => Builtin::RegExpUnicodeGetter,
+        (Builtin::RegExpPrototype, "sticky") => Builtin::RegExpStickyGetter,
+        (Builtin::RegExpPrototype, "hasIndices") => Builtin::RegExpHasIndicesGetter,
         (Builtin::Set, "Symbol.species") => Builtin::SetSpeciesGetter,
         (Builtin::Map, "Symbol.species") => Builtin::MapSpeciesGetter,
         (
