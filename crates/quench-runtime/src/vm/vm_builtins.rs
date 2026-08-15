@@ -401,11 +401,11 @@ fn has_error_slot(value: &Value) -> bool {
 
 fn error_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     let value = error_receiver(receiver, "Error.prototype.toString")?;
-    let name = match crate::execute::get_property_result(value, "name")? {
+    let name = match error_to_string_property(value, "name")? {
         Value::Undefined => "Error".to_string(),
         value => crate::conversion::to_string(&value)?,
     };
-    let message = match crate::execute::get_property_result(value, "message")? {
+    let message = match error_to_string_property(value, "message")? {
         Value::Undefined => String::new(),
         value => crate::conversion::to_string(&value)?,
     };
@@ -418,6 +418,25 @@ fn error_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     } else {
         Ok(Value::String(format!("{name}: {message}")))
     }
+}
+
+fn error_to_string_property(value: &Value, key: &str) -> Result<Value, VmError> {
+    let result = crate::execute::get_property_result(value, key)?;
+    if !matches!(value, Value::Object(_)) || !matches!(key, "name" | "message") {
+        return Ok(result);
+    }
+    let own = crate::builtins::object::descriptor(
+        Some(value),
+        Some(&Value::String(key.to_string())),
+    )?;
+    if !matches!(own, Value::Undefined) {
+        return Ok(result);
+    }
+    let prototype = crate::builtins::object::get_prototype_of(Some(value))?;
+    if matches!(prototype, Value::Builtin(Builtin::ObjectPrototype)) {
+        return Ok(Value::Undefined);
+    }
+    Ok(result)
 }
 
 fn error_is_error(value: Option<&Value>) -> Value {
