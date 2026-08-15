@@ -29,6 +29,10 @@ pub(crate) fn global_builtin_exists(key: &str) -> bool {
 pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
     crate::globals::builtin(key).map(Value::Builtin)
 }
+
+pub fn reset_current_global() {
+    GLOBAL_OBJECT.with(|global| global.replace(None));
+}
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
