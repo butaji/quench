@@ -371,13 +371,14 @@ pub(crate) fn flat_map(
         return Ok(Value::Array(values.clone()));
     };
     let mut mapped = Vec::new();
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
     for (index, value) in values.iter().enumerate() {
         let args = [
             value.clone(),
             Value::Number(index as f64),
             receiver.cloned().unwrap_or(Value::Undefined),
         ];
-        let result = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
+        let result = crate::functions::execute_target(callback, this_arg, &args)?;
         match result {
             Value::Array(nested) => mapped.extend(nested.iter().cloned()),
             value => mapped.push(value),
