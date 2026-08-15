@@ -539,6 +539,20 @@ fn validate_descriptor_kind(descriptor: &[(String, Value)]) -> Result<(), crate:
             "Invalid property descriptor",
         ));
     }
+    for field in ["get", "set"] {
+        let Some(value) = descriptor
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == field).then_some(value))
+        else {
+            continue;
+        };
+        if !matches!(value, Value::Undefined) && !crate::conversion::is_callable(value) {
+            return Err(crate::value::error::throw_type_error(
+                "Accessor descriptor must be callable",
+            ));
+        }
+    }
     Ok(())
 }
 fn store_descriptor_metadata(result: &mut Value, key: &str, descriptor: &[(String, Value)]) {
