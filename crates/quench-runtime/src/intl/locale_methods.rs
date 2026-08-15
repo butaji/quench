@@ -27,6 +27,16 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlLocaleGetNumberingSystems => {
             Ok(make_array(vec![Value::String("latn".to_string())]))
         }
+        _ => return prototype_method_middle(builtin, receiver, &slot),
+    }
+}
+
+fn prototype_method_middle(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&Value>,
+    slot: &str,
+) -> Result<Value, VmError> {
+    match builtin {
         crate::ops::Builtin::IntlLocaleGetTimeZones => {
             if slot_string(&super::intl_slots(receiver)?, "region").is_some() {
                 Ok(make_array(vec![Value::String("UTC".to_string())]))
@@ -48,7 +58,7 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlLocaleBaseNameGetter => Ok(Value::String(
             slot_string(&super::intl_slots(receiver)?, "base").unwrap_or_default(),
         )),
-        _ => return prototype_method_tail(builtin, receiver),
+        _ => prototype_method_tail(builtin, receiver),
     }
 }
 
