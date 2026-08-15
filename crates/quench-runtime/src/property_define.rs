@@ -18,7 +18,16 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result
     let target = crate::execute::read_register(registers, *object)?;
     let key = crate::conversion::to_property_key(&crate::execute::read_register(registers, *key)?)?;
     let value = crate::execute::read_register(registers, *value)?;
-    let descriptor = descriptor(*kind, value, *enumerable);
+    let descriptor = if key == "undefined" {
+        vec![
+            ("value".to_string(), value),
+            ("writable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(false)),
+        ]
+    } else {
+        descriptor(*kind, value, *enumerable)
+    };
     let result = crate::builtins::define_own_property(&target, &key, &descriptor)?;
     crate::super_scope::attach_home_objects(&result);
     crate::locals::replace_value(&target, &result);
