@@ -146,6 +146,9 @@ impl StatementReducer {
 fn exported_lexical_names(statements: &[Statement<'_>]) -> Vec<String> {
     let mut names = Vec::new();
     for statement in statements {
+        if matches!(statement, Statement::ExportDefaultDeclaration(_)) {
+            names.push("default".to_string());
+        }
         let Statement::ExportNamedDeclaration(export) = statement else {
             continue;
         };
