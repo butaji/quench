@@ -463,8 +463,8 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     let property = builtin_property(builtin, key);
-    if matches!(key, "prototype" | "constructor") {
-        return property;
+    if let Some(result) = builtin_constructor_property(key, property.clone()) {
+        return result;
     }
     if !matches!(property, Value::Undefined) {
         return property;
@@ -491,6 +491,18 @@ fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
         value,
         crate::builtins::property(Builtin::ObjectPrototype, key),
     )
+}
+
+fn builtin_constructor_property(key: &str, property: Value) -> Option<Value> {
+    match key {
+        "prototype" => Some(property),
+        "constructor" => Some(if matches!(property, Value::Undefined) {
+            Value::Builtin(Builtin::Function)
+        } else {
+            property
+        }),
+        _ => None,
+    }
 }
 fn bind_function_property(value: &Value, key: &str) -> Value {
     let builtin = match key {
