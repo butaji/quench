@@ -9,7 +9,7 @@ pub(crate) fn integrity_level(
         return Ok(crate::value::Value::Boolean(true));
     }
     if matches!(target, crate::value::Value::Proxy(_)) {
-        return crate::proxy::proxy_is_extensible(target);
+        return proxy_integrity_level(target, frozen);
     }
     if object_is_extensible(target) {
         return Ok(crate::value::Value::Boolean(false));
@@ -48,7 +48,7 @@ pub(crate) fn integrity_apply(
         return Err(crate::value::error::throw_type_error("Object expected"));
     };
     if matches!(target, crate::value::Value::Proxy(_)) {
-        return crate::proxy::proxy_prevent_extensions(target);
+        return proxy_integrity_apply(target, frozen);
     }
     match target {
         crate::value::Value::Object(properties) => {
@@ -69,6 +69,63 @@ pub(crate) fn integrity_apply(
         }
         _ => Ok(target.clone()),
     }
+}
+
+fn proxy_integrity_level(
+    target: &crate::value::Value,
+    frozen: bool,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    if crate::proxy::proxy_is_extensible(target)? == crate::value::Value::Boolean(true) {
+        return Ok(crate::value::Value::Boolean(false));
+    }
+    let keys = crate::proxy::proxy_own_keys(target)?;
+    let crate::value::Value::Array(keys) = keys else {
+        return Ok(crate::value::Value::Boolean(false));
+    };
+    for key in keys.snapshot() {
+        let crate::value::Value::String(key) = key else {
+            continue;
+        };
+        let descriptor = crate::proxy::proxy_get_own_property_descriptor(target, &key)?;
+        if descriptor_flag_field(Some(&descriptor), "configurable") != Some(false) {
+            return Ok(crate::value::Value::Boolean(false));
+        }
+        if frozen && descriptor_flag_field(Some(&descriptor), "writable") == Some(true) {
+            return Ok(crate::value::Value::Boolean(false));
+        }
+    }
+    Ok(crate::value::Value::Boolean(true))
+}
+
+fn proxy_integrity_apply(
+    target: &crate::value::Value,
+    frozen: bool,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    crate::proxy::proxy_prevent_extensions(target)?;
+    let crate::value::Value::Array(keys) = crate::proxy::proxy_own_keys(target)? else {
+        return Ok(target.clone());
+    };
+    for key in keys.snapshot() {
+        let crate::value::Value::String(key) = key else {
+            continue;
+        };
+        let current = crate::proxy::proxy_get_own_property_descriptor(target, &key)?;
+        if matches!(current, crate::value::Value::Undefined) {
+            continue;
+        }
+        let mut descriptor = vec![(
+            "configurable".to_string(),
+            crate::value::Value::Boolean(false),
+        )];
+        if frozen {
+            descriptor.push(("writable".to_string(), crate::value::Value::Boolean(false)));
+        }
+        let descriptor = crate::value::Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(descriptor),
+        ));
+        crate::proxy::proxy_define_property(target, &key, &descriptor)?;
+    }
+    Ok(target.clone())
 }
 
 fn integrity_function(properties: &mut crate::value::ObjectProperties, frozen: bool) {
