@@ -708,11 +708,11 @@ impl NumberOptions {
         }
         text = apply_minimum_integer(&text, self.minimum_integer_digits);
         if self.minimum_fraction_digits > 0 && !significant_selected {
-            text = pad_locale_fraction(
-                &text,
-                self.minimum_fraction_digits,
-                &self.locale,
-            );
+            text = if !self.use_grouping && !text.contains(['.', ',']) {
+                pad_fraction(&text, self.minimum_fraction_digits)
+            } else {
+                pad_locale_fraction(&text, self.minimum_fraction_digits, &self.locale)
+            };
         }
         let negative = text.starts_with('-');
         if number.is_nan() && self.locale.starts_with("zh") {
@@ -1027,6 +1027,9 @@ fn japanese_speed_parts(formatted: &str) -> Vec<Value> {
 
 fn pad_locale_fraction(text: &str, minimum: u32, locale: &str) -> String {
     if !locale.starts_with("de") && !locale.starts_with("pt") {
+        return pad_fraction(text, minimum);
+    }
+    if text.contains('.') {
         return pad_fraction(text, minimum);
     }
     let (sign, rest) = text
