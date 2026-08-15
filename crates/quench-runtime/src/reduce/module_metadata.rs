@@ -66,57 +66,52 @@ impl ModuleMetadata {
 
     fn visit_statement(&mut self, statement: &Statement<'_>) {
         match statement {
-            Statement::ImportDeclaration(import) => {
-                let source = import.source.value.to_string();
-                push_unique(&mut self.import_specifiers, &source);
-                if matches!(import.phase, Some(ImportPhase::Defer)) {
-                    push_unique(&mut self.deferred_imports, &source);
-                } else {
-                    push_unique(&mut self.eager_imports, &source);
-                }
-                if let Some(specifiers) = &import.specifiers {
-                    for specifier in specifiers {
-                        let (imported, local) = match specifier {
-                            oxc::ast::ast::ImportDeclarationSpecifier::ImportSpecifier(value) => (
-                                module_export_name(&value.imported),
-                                value.local.name.to_string(),
-                            ),
-                            oxc::ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(
-                                value,
-                            ) => ("default".to_string(), value.local.name.to_string()),
-                            oxc::ast::ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(
-                                value,
-                            ) => ("*".to_string(), value.local.name.to_string()),
-                        };
-                        self.imports.push(ImportBinding {
-                            source: source.clone(),
-                            imported,
-                            local,
-                            deferred: matches!(import.phase, Some(ImportPhase::Defer)),
-                            source_phase: matches!(import.phase, Some(ImportPhase::Source)),
-                        });
-                    }
-                }
-                if let Some(with_clause) = &import.with_clause {
-                    for attribute in &with_clause.with_entries {
-                        let key = match &attribute.key {
-                            oxc::ast::ast::ImportAttributeKey::Identifier(key) => {
-                                key.name.to_string()
-                            }
-                            oxc::ast::ast::ImportAttributeKey::StringLiteral(key) => {
-                                key.value.to_string()
-                            }
-                        };
-                        self.import_attributes
-                            .push((source.clone(), format!("{key}={}", attribute.value.value)));
-                    }
-                }
-            }
+            Statement::ImportDeclaration(import) => self.visit_import(import),
             Statement::ExportNamedDeclaration(export) => self.visit_named(export),
             Statement::ExportDefaultDeclaration(export) => self.visit_default(export),
             Statement::ExportAllDeclaration(export) => self.visit_all(export),
             _ => {}
         }
+    }
+
+    fn visit_import(&mut self, import: &oxc::ast::ast::ImportDeclaration<'_>) {
+        let source = import.source.value.to_string();
+        push_unique(&mut self.import_specifiers, &source);
+        self.record_import_phase(import.phase, &source);
+        if let Some(specifiers) = &import.specifiers {
+            self.imports.extend(specifiers.iter().map(|specifier| {
+                let (imported, local) = import_binding_names(specifier);
+                ImportBinding {
+                    source: source.clone(),
+                    imported,
+                    local,
+                    deferred: matches!(import.phase, Some(ImportPhase::Defer)),
+                    source_phase: matches!(import.phase, Some(ImportPhase::Source)),
+                }
+            }));
+        }
+        if let Some(with_clause) = &import.with_clause {
+            self.import_attributes
+                .extend(with_clause.with_entries.iter().map(|attribute| {
+                    (
+                        source.clone(),
+                        format!(
+                            "{}={}",
+                            import_attribute_key(attribute),
+                            attribute.value.value
+                        ),
+                    )
+                }));
+        }
+    }
+
+    fn record_import_phase(&mut self, phase: Option<ImportPhase>, source: &str) {
+        let imports = if matches!(phase, Some(ImportPhase::Defer)) {
+            &mut self.deferred_imports
+        } else {
+            &mut self.eager_imports
+        };
+        push_unique(imports, source);
     }
 
     fn visit_named(&mut self, export: &ExportNamedDeclaration<'_>) {
@@ -282,6 +277,30 @@ fn push_name(names: &mut Vec<String>, name: Option<&ModuleExportName<'_>>) {
             ModuleExportName::StringLiteral(literal) => literal.value.as_str(),
         };
         push_unique(names, value);
+    }
+}
+
+fn import_binding_names(
+    specifier: &oxc::ast::ast::ImportDeclarationSpecifier<'_>,
+) -> (String, String) {
+    match specifier {
+        oxc::ast::ast::ImportDeclarationSpecifier::ImportSpecifier(value) => (
+            module_export_name(&value.imported),
+            value.local.name.to_string(),
+        ),
+        oxc::ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(value) => {
+            ("default".to_string(), value.local.name.to_string())
+        }
+        oxc::ast::ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(value) => {
+            ("*".to_string(), value.local.name.to_string())
+        }
+    }
+}
+
+fn import_attribute_key(attribute: &oxc::ast::ast::ImportAttribute<'_>) -> String {
+    match &attribute.key {
+        oxc::ast::ast::ImportAttributeKey::Identifier(key) => key.name.to_string(),
+        oxc::ast::ast::ImportAttributeKey::StringLiteral(key) => key.value.to_string(),
     }
 }
 
