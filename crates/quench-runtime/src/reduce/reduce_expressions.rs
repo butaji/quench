@@ -307,6 +307,13 @@ fn reduce_in(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    if let Expression::PrivateFieldExpression(private) = &binary.left {
+        let object = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
+        let dst = take_register(next_register);
+        let name = facts.private_name(private.field.span)?;
+        ops.push(Op::HasPrivate { dst, object, name });
+        return Some(dst);
+    }
     let key = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
     let object = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
     let dst = take_register(next_register);
