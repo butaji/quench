@@ -161,7 +161,7 @@ impl LinkedModuleGraph {
                     }
                 }
                 namespace_cell(unsafe { &(*graph_ptr).units }, target, deferred)
-                    .map(|cell| cell.get())
+                    .map(|cell| fulfilled_import(cell.get()))
                     .map_err(quench_runtime::execute::VmError::EvalError)
             },
         ));
@@ -265,6 +265,12 @@ fn dynamic_import_error(error: &str) -> Value {
         quench_runtime::ops::Builtin::TypeError,
         &[Value::String(message.to_string())],
     )
+}
+
+fn fulfilled_import(value: Value) -> Value {
+    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Fulfilled(value),
+    )))
 }
 
 fn dynamic_module_kind(options: &Value) -> ModuleKind {
