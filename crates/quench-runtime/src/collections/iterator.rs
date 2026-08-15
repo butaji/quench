@@ -16,6 +16,41 @@ pub(crate) use iterator_values::{
     from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_regexp_string,
     next, next_map, next_set, property_for, prototype_of,
 };
+
+pub(crate) fn return_(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::Iterator(data)) = receiver else {
+        return Err(crate::vm::not_callable());
+    };
+    let iterator = {
+        let mut state = data.state.borrow_mut();
+        let IteratorState::Protocol { iterator, done, .. } = &mut *state else {
+            return Ok(iterator_result(Value::Undefined, true));
+        };
+        if *done {
+            return Ok(iterator_result(Value::Undefined, true));
+        }
+        *done = true;
+        iterator.clone()
+    };
+    let method = crate::execute::get_property_result(&iterator, "return")?;
+    if matches!(method, Value::Undefined | Value::Null) {
+        return Ok(iterator_result(Value::Undefined, true));
+    }
+    if !crate::conversion::is_callable(&method) {
+        return Err(crate::vm::not_callable());
+    }
+    crate::functions::execute_target(&method, &iterator, arguments)
+}
+
+fn iterator_result(value: Value, done: bool) -> Value {
+    Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), value),
+        ("done".to_string(), Value::Boolean(done)),
+    ])))
+}
 fn make_protocol(iterator: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Protocol {
