@@ -162,9 +162,11 @@ pub(crate) fn execute(
             crate::typed_array_base64::execute(builtin, receiver, arguments)
         }
         Builtin::ArrayBufferTransferToImmutable => Some(transfer_to_immutable(receiver, arguments)),
-        Builtin::ArrayBufferTransfer | Builtin::ArrayBufferTransferToFixedLength => {
-            Some(transfer(receiver, arguments))
-        }
+        Builtin::ArrayBufferTransfer | Builtin::ArrayBufferTransferToFixedLength => Some(transfer(
+            receiver,
+            arguments,
+            builtin == Builtin::ArrayBufferTransfer,
+        )),
         Builtin::ArrayBufferSliceToImmutable => {
             Some(crate::vm::slice_to_immutable(receiver, arguments))
         }
@@ -207,7 +209,11 @@ fn transfer_to_immutable(receiver: Option<&Value>, arguments: &[Value]) -> Resul
     Ok(Value::ArrayBuffer(std::rc::Rc::new(result)))
 }
 
-fn transfer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+fn transfer(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    preserve_resizability: bool,
+) -> Result<Value, VmError> {
     let Some(Value::ArrayBuffer(buffer)) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "transfer requires an ArrayBuffer",
@@ -224,7 +230,18 @@ fn transfer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
             "ArrayBuffer is not transferable",
         ));
     }
-    let Some(result) = crate::value::ArrayBufferData::try_new(new_length) else {
+    let result = if preserve_resizability {
+        match buffer.max_byte_length {
+            Some(max) if new_length <= max => {
+                crate::value::ArrayBufferData::try_new_resizable(new_length, max)
+            }
+            Some(_) => None,
+            None => crate::value::ArrayBufferData::try_new(new_length),
+        }
+    } else {
+        crate::value::ArrayBufferData::try_new(new_length)
+    };
+    let Some(result) = result else {
         return Err(crate::value::error::throw_range_error(
             "ArrayBuffer length is too large",
         ));
