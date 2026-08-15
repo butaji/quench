@@ -85,7 +85,9 @@ fn agent_broadcast(arguments: &[Value]) -> Result<Value, VmError> {
     let buffer = arguments.first().cloned().unwrap_or(Value::Undefined);
     let callbacks = AGENT_CALLBACKS.with(|callbacks| callbacks.borrow().clone());
     for callback in callbacks {
+        crate::atomics::begin_agent_callback();
         crate::functions::execute_target(&callback, &Value::Undefined, std::slice::from_ref(&buffer))?;
+        crate::atomics::end_agent_callback();
     }
     Ok(Value::Undefined)
 }
