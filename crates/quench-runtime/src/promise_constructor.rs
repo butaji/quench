@@ -1,7 +1,15 @@
-use crate::{execute::VmError, promise::promise_resolve, value::Value};
+use std::rc::Rc;
+
+use crate::{execute::VmError, ops::Builtin, promise::promise_resolve, value::Value};
 
 pub(super) fn resolve(constructor: &Value, arguments: &[Value]) -> Result<Value, VmError> {
-    let result = promise_resolve(arguments);
+    let result = if matches!(constructor, Value::Builtin(Builtin::Promise)) {
+        promise_resolve(arguments)
+    } else {
+        let target = Rc::new(crate::value::PromiseData::default());
+        let executor = super::bound_settler(Builtin::PromiseResolve, &target);
+        crate::construct::construct_value(constructor, &[executor])?
+    };
     let Value::Promise(promise) = &result else {
         return Ok(result);
     };
