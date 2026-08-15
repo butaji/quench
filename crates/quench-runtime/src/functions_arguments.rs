@@ -275,6 +275,7 @@ fn execute_in_function_realm(
                 _ => crate::ops::RealmId::ROOT,
             })
         });
+    let realm = realm.or_else(|| crate::vm::realm_id_for_global_value(&function.captures.get(0)));
     match realm {
         Some(realm) if realm != crate::ops::RealmId::ROOT => crate::vm::with_realm(realm, || {
             execute(function, receiver, arguments)
