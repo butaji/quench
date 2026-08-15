@@ -98,9 +98,11 @@ fn shared_array_buffer_slice(
 ) -> Result<Value, VmError> {
     let length = buffer.byte_length() as i64;
     let start = slice_index(arguments.first(), length)?.unwrap_or(0);
+    ensure_slice_source(buffer, start)?;
     let end = slice_index(arguments.get(1), length)?
         .unwrap_or(length)
         .max(start);
+    ensure_slice_source(buffer, end)?;
     let bytes = buffer.bytes.borrow()[start as usize..end as usize].to_vec();
     let species = array_buffer_species(receiver)?;
     if !crate::conversion::is_callable(&species) {
@@ -140,19 +142,31 @@ pub(crate) fn slice_to_immutable(
     }
     let length = buffer.byte_length() as i64;
     let start = slice_index(arguments.first(), length)?.unwrap_or(0);
+    ensure_slice_source(buffer, start)?;
     let end = slice_index(arguments.get(1), length)?
         .unwrap_or(length)
         .max(start);
-    if buffer.byte_length() < end as usize {
-        return Err(crate::value::error::throw_range_error(
-            "ArrayBuffer was resized during coercion",
-        ));
-    }
+    ensure_slice_source(buffer, end)?;
     let bytes = buffer.bytes.borrow()[start as usize..end as usize].to_vec();
     let mut result = crate::value::ArrayBufferData::new(bytes.len());
     result.bytes.borrow_mut().copy_from_slice(&bytes);
     result.immutable = true;
     Ok(Value::ArrayBuffer(std::rc::Rc::new(result)))
+}
+
+fn ensure_slice_source(
+    buffer: &crate::value::ArrayBufferData,
+    required_length: i64,
+) -> Result<(), VmError> {
+    if *buffer.detached.borrow() {
+        return Err(type_error("ArrayBuffer was detached during coercion"));
+    }
+    if buffer.byte_length() < required_length as usize {
+        return Err(crate::value::error::throw_range_error(
+            "ArrayBuffer was resized during coercion",
+        ));
+    }
+    Ok(())
 }
 
 fn array_buffer_species(receiver: Option<&Value>) -> Result<Value, VmError> {
