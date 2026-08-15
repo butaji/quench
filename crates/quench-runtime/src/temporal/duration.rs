@@ -436,12 +436,20 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     if same_fields(arguments.first(), arguments.get(1)) {
         return Ok(Value::Number(0.0));
     }
-    if (date_units(&left) || date_units(&right))
-        && matches!(arguments.get(2), None | Some(Value::Undefined))
-    {
-        return Err(crate::value::error::throw_range_error(
-            "relativeTo is required for date units",
-        ));
+    if date_units(&left) || date_units(&right) {
+        let relative_to =
+            options.and_then(|value| crate::execute::get_property_result(value, "relativeTo").ok());
+        if relative_to.is_none() || matches!(relative_to, Some(Value::Undefined)) {
+            return Err(crate::value::error::throw_range_error(
+                "relativeTo is required for date units",
+            ));
+        }
+        let max_nanos = 9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;
+        if duration_value(&left).abs() > max_nanos || duration_value(&right).abs() > max_nanos {
+            return Err(crate::value::error::throw_range_error(
+                "Duration is outside the supported range",
+            ));
+        }
     }
     let difference = duration_value(&left) - duration_value(&right);
     if difference == 0 {
