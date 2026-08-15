@@ -100,6 +100,16 @@ const fn fn_len_tail(b: Builtin) -> Option<f64> {
 }
 
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
+    short_name_core(b).or_else(|| match b {
+        Builtin::MathF16Round => Some("f16round"),
+        Builtin::MathRandom => Some("random"),
+        Builtin::MathSumPrecise => Some("sumPrecise"),
+        Builtin::MathPow => Some("pow"),
+        _ => None,
+    })
+}
+
+const fn short_name_core(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::MathAbs => Some("abs"),
         Builtin::MathFloor => Some("floor"),
@@ -134,10 +144,6 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::MathLog1p => Some("log1p"),
         Builtin::MathSinh => Some("sinh"),
         Builtin::MathTanh => Some("tanh"),
-        Builtin::MathF16Round => Some("f16round"),
-        Builtin::MathRandom => Some("random"),
-        Builtin::MathSumPrecise => Some("sumPrecise"),
-        Builtin::MathPow => Some("pow"),
         _ => None,
     }
 }
