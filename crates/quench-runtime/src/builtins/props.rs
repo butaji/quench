@@ -46,12 +46,6 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "Symbol.iterator" {
         return Some(Value::Builtin(IteratorSelf));
     }
-    if builtin == AsyncIteratorPrototype && key == "Symbol.asyncIterator" {
-        return Some(Value::Builtin(AsyncIteratorSelf));
-    }
-    if builtin == AsyncIteratorPrototype && key == "Symbol.asyncDispose" {
-        return Some(Value::Builtin(AsyncIteratorDispose));
-    }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);
     }
@@ -62,33 +56,6 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
-        (ArrayIteratorPrototype, "next") => Some(Value::Builtin(IteratorNext)),
-        (ArrayIteratorPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Array Iterator".into()))
-        }
-        (builtin, "Symbol.iterator" | "values") if is_typed_array_prototype(builtin) => {
-            Some(Value::Builtin(ArrayIterator))
-        }
-        (AbstractModuleSource, "prototype") => Some(Value::Builtin(AbstractModuleSourcePrototype)),
-        (AbstractModuleSourcePrototype, "constructor") => {
-            Some(Value::Builtin(AbstractModuleSource))
-        }
-        (AbstractModuleSourcePrototype, "Symbol.toStringTag") => Some(Value::Undefined),
-        (AsyncFunctionPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("AsyncFunction".into()))
-        }
-        (AsyncGeneratorFunctionPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("AsyncGeneratorFunction".into()))
-        }
-        (AsyncGeneratorPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("AsyncGenerator".into()))
-        }
-        (AsyncGeneratorPrototype, "Symbol.asyncIterator") => {
-            Some(Value::Builtin(AsyncIteratorSelf))
-        }
-        (AsyncGeneratorPrototype, "Symbol.asyncDispose") => {
-            Some(Value::Builtin(AsyncIteratorDispose))
-        }
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
@@ -129,18 +96,25 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (DisposableStackPrototype, "Symbol.dispose") => {
             Some(Value::Builtin(DisposableStackDispose))
         }
-        (ErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
-        (ErrorPrototype, "name") => Some(Value::String("Error".to_string())),
-        (ErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (ErrorPrototype, "cause") => Some(Value::Undefined),
-        (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
-        (AggregateErrorPrototype, "constructor") => Some(Value::Builtin(AggregateError)),
-        (AggregateErrorPrototype, "name") => Some(Value::String("AggregateError".into())),
-        (AggregateErrorPrototype, "message") => Some(Value::String("".into())),
-        (AggregateErrorPrototype, "cause") => Some(Value::Undefined),
-        (AggregateErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
+        (ErrorPrototype, "toString")
+        | (RangeErrorPrototype, "toString")
+        | (ReferenceErrorPrototype, "toString")
+        | (SyntaxErrorPrototype, "toString")
+        | (EvalErrorPrototype, "toString")
+        | (URIErrorPrototype, "toString")
+        | (AggregateErrorPrototype, "toString")
+        | (TypeErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
+        (prototype, "name") if is_native_error_prototype(prototype) => {
+            Some(Value::String(native_error_name(prototype).to_string()))
+        }
+        (prototype, "message") if is_native_error_prototype(prototype) => {
+            Some(Value::String("".to_string()))
+        }
+        (prototype, "cause") if is_native_error_prototype(prototype) => Some(Value::Undefined),
+        (prototype, "constructor") if is_native_error_prototype(prototype) => {
+            Some(Value::Builtin(native_error_constructor(prototype)))
+        }
         (SuppressedError, "prototype") => Some(Value::Builtin(SuppressedErrorPrototype)),
-        (AggregateError, "prototype") => Some(Value::Builtin(AggregateErrorPrototype)),
         (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
         (SuppressedErrorPrototype, "message") => Some(Value::String("".to_string())),
         (SuppressedErrorPrototype, "constructor") => Some(Value::Builtin(SuppressedError)),
@@ -151,6 +125,46 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             crate::builtin_meta::disposable::property(k).map(Value::Builtin)
         }
         _ => builtin_method(builtin, key).map(Value::Builtin),
+    }
+}
+
+fn is_native_error_prototype(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::TypeErrorPrototype
+    )
+}
+
+fn native_error_name(builtin: Builtin) -> &'static str {
+    match builtin {
+        Builtin::RangeErrorPrototype => "RangeError",
+        Builtin::ReferenceErrorPrototype => "ReferenceError",
+        Builtin::SyntaxErrorPrototype => "SyntaxError",
+        Builtin::EvalErrorPrototype => "EvalError",
+        Builtin::URIErrorPrototype => "URIError",
+        Builtin::AggregateErrorPrototype => "AggregateError",
+        Builtin::TypeErrorPrototype => "TypeError",
+        _ => "Error",
+    }
+}
+
+fn native_error_constructor(builtin: Builtin) -> Builtin {
+    match builtin {
+        Builtin::RangeErrorPrototype => Builtin::RangeError,
+        Builtin::ReferenceErrorPrototype => Builtin::ReferenceError,
+        Builtin::SyntaxErrorPrototype => Builtin::SyntaxError,
+        Builtin::EvalErrorPrototype => Builtin::EvalError,
+        Builtin::URIErrorPrototype => Builtin::URIError,
+        Builtin::AggregateErrorPrototype => Builtin::AggregateError,
+        Builtin::TypeErrorPrototype => Builtin::TypeError,
+        _ => Builtin::Error,
     }
 }
 
@@ -264,17 +278,11 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),
         (Function, "prototype") => Some(FunctionPrototype),
-        (AsyncFunction, "prototype") => Some(AsyncFunctionPrototype),
-        (AsyncFunctionPrototype, "constructor") => Some(AsyncFunction),
+        (AsyncFunction, "prototype") => Some(FunctionPrototype),
         (GeneratorFunction, "prototype") => Some(GeneratorFunctionPrototype),
         (AsyncGeneratorFunction, "prototype") => Some(AsyncGeneratorFunctionPrototype),
         (GeneratorFunctionPrototype, "constructor") => Some(GeneratorFunction),
         (AsyncGeneratorFunctionPrototype, "constructor") => Some(AsyncGeneratorFunction),
-        (AsyncGeneratorFunctionPrototype, "prototype") => Some(AsyncGeneratorPrototype),
-        (AsyncGeneratorPrototype, "constructor") => Some(AsyncGeneratorFunctionPrototype),
-        (AsyncGeneratorPrototype, "next") => Some(AsyncGeneratorNext),
-        (AsyncGeneratorPrototype, "return") => Some(AsyncGeneratorReturn),
-        (AsyncGeneratorPrototype, "throw") => Some(AsyncGeneratorThrow),
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
@@ -325,7 +333,17 @@ fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
                 | Builtin::AggregateError
                 | Builtin::TypeError
         ))
-    .then_some(Builtin::ErrorPrototype)
+    .then_some(match builtin {
+        Builtin::Error => Builtin::ErrorPrototype,
+        Builtin::RangeError => Builtin::RangeErrorPrototype,
+        Builtin::ReferenceError => Builtin::ReferenceErrorPrototype,
+        Builtin::SyntaxError => Builtin::SyntaxErrorPrototype,
+        Builtin::EvalError => Builtin::EvalErrorPrototype,
+        Builtin::URIError => Builtin::URIErrorPrototype,
+        Builtin::AggregateError => Builtin::AggregateErrorPrototype,
+        Builtin::TypeError => Builtin::TypeErrorPrototype,
+        _ => Builtin::ErrorPrototype,
+    })
 }
 fn specialized_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_property(builtin, key).or_else(|| {
@@ -552,7 +570,7 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     }
 }
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
-    if key == "prototype" && !matches!(_builtin, Builtin::AsyncGeneratorFunctionPrototype) {
+    if key == "prototype" {
         return false;
     }
     if crate::builtins::object::is_well_known_symbol_property(_builtin, key) {
@@ -582,8 +600,7 @@ fn builtin_length(builtin: Builtin) -> f64 {
     }
     match builtin {
         Escape | Unescape | EncodeURI | EncodeURIComponent | DecodeURI | DecodeURIComponent
-        | DateSetYear | GeneratorNext | GeneratorReturn | GeneratorThrow | AsyncGeneratorNext
-        | AsyncGeneratorReturn | AsyncGeneratorThrow => 1.0,
+        | DateSetYear | GeneratorNext | GeneratorReturn | GeneratorThrow => 1.0,
         ArrayBuffer => 1.0,
         Object => 1.0,
         Float64Array => 3.0,

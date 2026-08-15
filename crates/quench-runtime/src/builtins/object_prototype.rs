@@ -33,6 +33,14 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::Builtin(Builtin::SuppressedErrorPrototype) => {
             Value::Builtin(Builtin::ErrorPrototype)
         }
+        Value::Builtin(
+            Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::TypeErrorPrototype,
+        ) => Value::Builtin(Builtin::ErrorPrototype),
         Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::SetIteratorPrototype | Builtin::MapIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
         Value::Function(function) => {
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
