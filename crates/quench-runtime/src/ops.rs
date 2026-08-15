@@ -406,6 +406,7 @@ pub enum Builtin {
     TemporalPlainDateTimeNanosecondGetter,
     TemporalPlainDateTimeToString,
     TemporalPlainDateTimeToJSON,
+    TemporalPlainDateTimeToLocaleString,
     TemporalPlainDateTimeCompare,
     TemporalPlainDateTimeEquals,
     TemporalPlainDateTimeValueOf,
