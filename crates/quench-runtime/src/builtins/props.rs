@@ -651,6 +651,7 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Object, "defineProperty") => Some(ObjectDefineProperty),
         (Object, "defineProperties") => Some(ObjectDefineProperties),
         (Object, "getOwnPropertyDescriptor") => Some(ObjectGetOwnPropertyDescriptor),
+        (Object, "getOwnPropertyDescriptors") => Some(ObjectGetOwnPropertyDescriptors),
         (Object, "keys") => Some(ObjectKeys),
         (Object, "values") => Some(ObjectValues),
         (Object, "entries") => Some(ObjectEntries),
