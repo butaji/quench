@@ -38,19 +38,22 @@ fn finish_class(
     let (constructor, default_constructor) = constructor;
     set_class_name(class, constructor, body);
     let prototype = configure_class(heritage, constructor, default_constructor, body, next);
-    let static_fields = reduce_elements(
-        class,
-        prototype,
-        constructor,
-        body,
-        facts,
-        next,
-        locals,
-    )?;
+    let static_fields = reduce_elements(class, prototype, constructor, body, facts, next, locals)?;
     body.push(Op::SetProperty {
         object: constructor,
         key: "prototype".to_string(),
         src: prototype,
+        strict: true,
+    });
+    let marker = take_register(next);
+    body.push(Op::Const {
+        dst: marker,
+        value: Constant::Boolean(true),
+    });
+    body.push(Op::SetProperty {
+        object: constructor,
+        key: "\0class_constructor".to_string(),
+        src: marker,
         strict: true,
     });
     body.extend(static_fields);

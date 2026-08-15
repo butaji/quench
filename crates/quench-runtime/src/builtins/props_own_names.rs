@@ -1,71 +1,146 @@
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
-        Builtin::Temporal => &["Duration", "PlainDate"],
-        Builtin::TemporalDuration => &["length", "name", "prototype", "from", "compare"],
-        Builtin::TemporalDurationPrototype => &[
-            "constructor", "years", "months", "weeks", "days", "hours", "minutes", "seconds",
-            "milliseconds", "microseconds", "nanoseconds", "sign", "blank", "toString",
-            "toJSON", "valueOf",
-        ],
-        Builtin::TemporalPlainDate => &["length", "name", "prototype", "from"],
-        Builtin::TemporalPlainDatePrototype => &[
-            "constructor", "calendarId", "era", "eraYear", "year", "month", "monthCode", "day",
-            "dayOfWeek", "dayOfYear", "weekOfYear", "daysInWeek", "daysInMonth", "daysInYear",
-            "monthsInYear", "inLeapYear", "toString", "toJSON", "toLocaleString", "valueOf",
-        ],
-        Builtin::ShadowRealm => &["length", "name", "prototype"],
-        Builtin::ShadowRealmPrototype => {
-            &["constructor", "evaluate", "importValue", "Symbol.toStringTag"]
-        }
-        Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
-        Builtin::BigIntPrototype => {
-            &["constructor", "toString", "valueOf", "Symbol.toStringTag"]
-        }
-        Builtin::Error => &[
+        Builtin::Function
+        | Builtin::AsyncFunction
+        | Builtin::GeneratorFunction
+        | Builtin::AsyncGeneratorFunction => &["length", "name", "prototype"],
+        Builtin::FunctionPrototype => &[
             "length",
             "name",
-            "prototype",
-            "isError",
-        ],
-        Builtin::ThrowTypeError => &["length", "name"],
-        Builtin::SharedArrayBufferPrototype => &[
+            "arguments",
+            "caller",
             "constructor",
-            "byteLength",
-            "slice",
-            "grow",
-            "growable",
-            "maxByteLength",
+            "apply",
+            "bind",
+            "call",
+            "toString",
+            "Symbol.hasInstance",
+        ],
+        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype => &[
+            "constructor",
+            "prototype",
+            "toString",
+            "valueOf",
             "Symbol.toStringTag",
         ],
-        Builtin::ErrorPrototype => {
-            &["constructor", "name", "message", "cause", "stack", "toString"]
+        Builtin::GeneratorNext | Builtin::GeneratorReturn | Builtin::GeneratorThrow => {
+            &["length", "name"]
+        }
+        Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
+        Builtin::BigIntPrototype => &["constructor", "toString", "valueOf", "Symbol.toStringTag"],
+        Builtin::Error => &["length", "name", "prototype", "isError"],
+        Builtin::ErrorPrototype => &[
+            "constructor",
+            "name",
+            "message",
+            "cause",
+            "stack",
+            "toString",
+        ],
+        Builtin::EvalErrorPrototype
+        | Builtin::RangeErrorPrototype
+        | Builtin::ReferenceErrorPrototype
+        | Builtin::SyntaxErrorPrototype
+        | Builtin::TypeErrorPrototype
+        | Builtin::URIErrorPrototype
+        | Builtin::AggregateErrorPrototype => {
+            &["constructor", "name", "message", "toString"]
         }
         Builtin::SuppressedErrorPrototype => &["constructor", "name", "message", "toString"],
         Builtin::DisposableStack => &["length", "name", "prototype"],
         Builtin::DisposableStackPrototype => &[
-            "constructor", "use", "adopt", "defer", "move", "dispose", "disposed",
-            "Symbol.dispose", "Symbol.toStringTag",
+            "constructor",
+            "use",
+            "adopt",
+            "defer",
+            "move",
+            "dispose",
+            "disposed",
+            "Symbol.dispose",
+            "Symbol.toStringTag",
         ],
         Builtin::AsyncDisposableStack => &["length", "name", "prototype"],
         Builtin::FinalizationRegistry => &["length", "name", "prototype"],
         Builtin::FinalizationRegistryPrototype => &[
-            "constructor", "register", "unregister", "Symbol.toStringTag",
+            "constructor",
+            "register",
+            "unregister",
+            "Symbol.toStringTag",
         ],
         Builtin::AsyncDisposableStackPrototype => &[
-            "constructor", "use", "adopt", "defer", "move", "disposeAsync", "disposed",
-            "Symbol.asyncDispose", "Symbol.toStringTag",
+            "constructor",
+            "use",
+            "adopt",
+            "defer",
+            "move",
+            "disposeAsync",
+            "disposed",
+            "Symbol.asyncDispose",
+            "Symbol.toStringTag",
         ],
         Builtin::Math => &[
-            "abs", "acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh", "cbrt",
-            "ceil", "clz32", "cos", "cosh", "exp", "expm1", "f16round", "floor", "fround",
-            "hypot", "imul", "log", "log1p", "log2", "log10", "max", "min", "pow", "random",
-            "round", "sign", "sin", "sinh", "sqrt", "sumPrecise", "tan", "tanh", "trunc",
-            "E", "LN2", "LN10", "LOG2E", "LOG10E", "PI", "SQRT1_2", "SQRT2", "Symbol.toStringTag",
+            "abs",
+            "acos",
+            "acosh",
+            "asin",
+            "asinh",
+            "atan",
+            "atan2",
+            "atanh",
+            "cbrt",
+            "ceil",
+            "clz32",
+            "cos",
+            "cosh",
+            "exp",
+            "expm1",
+            "f16round",
+            "floor",
+            "fround",
+            "hypot",
+            "imul",
+            "log",
+            "log1p",
+            "log2",
+            "log10",
+            "max",
+            "min",
+            "pow",
+            "random",
+            "round",
+            "sign",
+            "sin",
+            "sinh",
+            "sqrt",
+            "sumPrecise",
+            "tan",
+            "tanh",
+            "trunc",
+            "E",
+            "LN2",
+            "LN10",
+            "LOG2E",
+            "LOG10E",
+            "PI",
+            "SQRT1_2",
+            "SQRT2",
+            "Symbol.toStringTag",
         ],
         Builtin::Reflect => &[
-            "apply", "construct", "defineProperty", "deleteProperty", "get",
-            "getOwnPropertyDescriptor", "getPrototypeOf", "has", "isExtensible", "ownKeys",
-            "preventExtensions", "set", "setPrototypeOf", "Symbol.toStringTag",
+            "apply",
+            "construct",
+            "defineProperty",
+            "deleteProperty",
+            "get",
+            "getOwnPropertyDescriptor",
+            "getPrototypeOf",
+            "has",
+            "isExtensible",
+            "ownKeys",
+            "preventExtensions",
+            "set",
+            "setPrototypeOf",
+            "Symbol.toStringTag",
         ],
         _ => &[],
     }

@@ -50,6 +50,13 @@ pub(crate) fn object_property(
     receiver: &Value,
     key: &str,
 ) -> Value {
+    if let Some(Value::Object(current)) = crate::vm::current_global_for(&Value::Object(
+        Rc::clone(properties),
+    )) {
+        if !Rc::ptr_eq(&current, properties) {
+            return object_property(&current, receiver, key);
+        }
+    }
     if properties
         .iter()
         .any(|(name, _)| name == &crate::builtins::deleted_key(key))
@@ -58,6 +65,18 @@ pub(crate) fn object_property(
     }
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
+    }
+    if key == "constructor"
+        && properties
+            .iter()
+            .any(|(name, _)| name == crate::builtins::ERROR_SLOT)
+    {
+        if let Some(constructor) = error_constructor(properties) {
+            if let Some(realm) = error_realm(properties) {
+                return crate::vm::intrinsic_for_realm(realm, constructor);
+            }
+            return Value::Builtin(constructor);
+        }
     }
     if let Some(realm) = realm::id_for_global(properties) {
         return global_property(properties, key, Some(realm));
@@ -88,6 +107,35 @@ pub(crate) fn object_property(
         return crate::builtins::property(prototype, key);
     }
     crate::builtins::property(prototype, key)
+}
+
+fn error_constructor(properties: &[(String, Value)]) -> Option<Builtin> {
+    let name = properties.iter().rev().find_map(|(key, value)| {
+        (key == "name").then_some(match value {
+            Value::String(name) => name.as_str(),
+            _ => "Error",
+        })
+    })?;
+    Some(match name {
+        "EvalError" => Builtin::EvalError,
+        "RangeError" => Builtin::RangeError,
+        "ReferenceError" => Builtin::ReferenceError,
+        "SyntaxError" => Builtin::SyntaxError,
+        "TypeError" => Builtin::TypeError,
+        "URIError" => Builtin::URIError,
+        "AggregateError" => Builtin::AggregateError,
+        "SuppressedError" => Builtin::SuppressedError,
+        _ => Builtin::Error,
+    })
+}
+
+fn error_realm(properties: &[(String, Value)]) -> Option<crate::ops::RealmId> {
+    properties.iter().rev().find_map(|(key, value)| {
+        (key == "\0realm").then(|| match value {
+            Value::HostCapability(capability) => capability.realm(),
+            _ => crate::ops::RealmId::ROOT,
+        })
+    })
 }
 
 fn boxed_string_property(

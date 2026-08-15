@@ -1,6 +1,13 @@
 use crate::value::ObjectData;
 
+thread_local! {
+    static FUNCTION_GLOBAL: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
 pub(crate) fn current_global_object() -> Value {
+    if let Some(global) = FUNCTION_GLOBAL.with(|slot| slot.borrow().clone()) {
+        return global;
+    }
     if let Some(global) = batched_global_object() {
         return Value::Object(global);
     }
@@ -15,6 +22,13 @@ pub(crate) fn current_global_object() -> Value {
                 .map(|object| Value::Object(object.clone()))
         })
         .unwrap_or(Value::Undefined)
+}
+
+pub(crate) fn with_function_global<T>(global: &Value, callback: impl FnOnce() -> T) -> T {
+    let previous = FUNCTION_GLOBAL.with(|slot| slot.replace(Some(global.clone())));
+    let result = callback();
+    FUNCTION_GLOBAL.with(|slot| slot.replace(previous));
+    result
 }
 
 pub(crate) fn initialize_global_object(value: &Value) {

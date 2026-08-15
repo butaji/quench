@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use oxc::{allocator::Allocator, parser::Parser, span::SourceType};
+use oxc::{allocator::Allocator, ast::visit::Visit, parser::Parser, span::SourceType};
 
 use crate::{execute::VmError, facts::ProgramDb, ops::FunctionKind, value::Value};
 
@@ -9,7 +9,23 @@ pub(crate) fn construct(
     kind: FunctionKind,
     is_async: bool,
 ) -> Result<Value, VmError> {
-    let source = function_source(arguments, kind, is_async);
+    if kind == FunctionKind::Generator
+        && arguments
+            .get(..arguments.len().saturating_sub(1))
+            .is_some_and(|parameters| {
+                parameters
+                    .iter()
+                    .any(|value| to_string(value).is_ok_and(|text| text.contains("yield")))
+            })
+    {
+        return Err(syntax_error("YieldExpression not permitted generally"));
+    }
+    let source = function_source(arguments, kind, is_async)?;
+    if source.contains(".#") {
+        return Err(syntax_error(
+            "Invalid private identifier in dynamic function",
+        ));
+    }
     reduce_dynamic(&source, kind, is_async)
 }
 
@@ -45,6 +61,16 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     let (parameters, count) = crate::functions::function_parameters(function)
         .map_err(|_| syntax_error("Invalid function parameters"))?;
     let strictness = crate::reduce_support::function_strictness(body, false);
+    if matches!(strictness, crate::ops::FunctionStrictness::Strict)
+        && (has_duplicate_parameters(&function.params)
+            || has_strict_reserved_parameter(&function.params))
+    {
+        return Err(syntax_error("duplicate parameter in strict function"));
+    }
+    if matches!(strictness, crate::ops::FunctionStrictness::Strict) && contains_with_statement(body)
+    {
+        return Err(syntax_error("with statement not permitted in strict mode"));
+    }
     let mut facts = ProgramDb {
         strict: matches!(strictness, crate::ops::FunctionStrictness::Strict),
         ..ProgramDb::default()
@@ -67,6 +93,45 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     let value = dynamic_value(ops, count, length, strictness, kind, is_async);
     mark_dynamic(&value);
     Ok(value)
+}
+
+fn contains_with_statement(body: &oxc::ast::ast::FunctionBody<'_>) -> bool {
+    let mut visitor = WithStatementFinder { found: false };
+    visitor.visit_function_body(body);
+    visitor.found
+}
+
+struct WithStatementFinder {
+    found: bool,
+}
+
+fn has_duplicate_parameters(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    let mut names = HashSet::new();
+    parameters.items.iter().any(|parameter| {
+        let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+            &parameter.pattern.kind
+        else {
+            return false;
+        };
+        !names.insert(identifier.name.as_str())
+    })
+}
+
+fn has_strict_reserved_parameter(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    parameters.items.iter().any(|parameter| {
+        let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+            &parameter.pattern.kind
+        else {
+            return false;
+        };
+        matches!(identifier.name.as_str(), "eval" | "arguments")
+    })
+}
+
+impl<'a> oxc::ast::visit::Visit<'a> for WithStatementFinder {
+    fn visit_with_statement(&mut self, _statement: &oxc::ast::ast::WithStatement<'a>) {
+        self.found = true;
+    }
 }
 
 fn dynamic_value(
@@ -94,34 +159,40 @@ fn dynamic_value(
     )
 }
 
-fn function_source(arguments: &[Value], kind: FunctionKind, is_async: bool) -> String {
-    let body = arguments.last().map_or_else(String::new, to_string);
+fn function_source(
+    arguments: &[Value],
+    kind: FunctionKind,
+    is_async: bool,
+) -> Result<String, VmError> {
     let parameters = arguments
         .get(..arguments.len().saturating_sub(1))
         .unwrap_or_default()
         .iter()
         .map(to_string)
-        .collect::<Vec<_>>()
+        .collect::<Result<Vec<_>, _>>()?
         .join(",");
+    let body = arguments
+        .last()
+        .map_or_else(|| Ok(String::new()), to_string)?;
     let prefix = match (kind, is_async) {
         (FunctionKind::Generator, true) => "async function*",
         (FunctionKind::Generator, false) => "function*",
         (_, true) => "async function",
         (_, false) => "function",
     };
-    format!("{prefix} anonymous({parameters}){{{body}}}")
+    Ok(format!("{prefix} anonymous({parameters}\n){{{body}\n}}"))
 }
 
-fn to_string(value: &Value) -> String {
-    crate::intl::tolocale::value::to_string(Some(value))
+fn to_string(value: &Value) -> Result<String, VmError> {
+    crate::conversion::to_string(value)
 }
 
 fn mark_dynamic(value: &Value) {
     if let Value::Function(function) = value {
-        function
-            .properties
-            .borrow_mut()
-            .push(("\0dynamic_function".to_string(), Value::Boolean(true)));
+        function.properties.borrow_mut().extend([
+            ("\0dynamic_function".to_string(), Value::Boolean(true)),
+            ("name".to_string(), Value::String("anonymous".to_string())),
+        ]);
     }
 }
 
