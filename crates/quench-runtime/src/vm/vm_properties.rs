@@ -91,6 +91,13 @@ fn get_property_value_object_tail(value: &Value, key: &str) -> Value {
         }
         Function(function) => function_property(function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
+        _ => get_property_value_collection_tail(value, key),
+    }
+}
+
+fn get_property_value_collection_tail(value: &Value, key: &str) -> Value {
+    use Value::*;
+    match value {
         Map(data) => map_property(data, key),
         Set(data) if key == "size" => Value::Number(data.values.borrow().len() as f64),
         Set(data) if data.weak => crate::collections::set::weak_property(key),
