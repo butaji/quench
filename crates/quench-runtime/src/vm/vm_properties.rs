@@ -336,6 +336,11 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     if same_property_receiver(value, receiver) {
         return property;
     }
+    if let Value::BoundFunction(bound) = &property {
+        if same_property_receiver(&bound.receiver, value) {
+            return bind_method(receiver, bound.target.clone());
+        }
+    }
     match property {
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)
