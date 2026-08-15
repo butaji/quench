@@ -29,6 +29,7 @@ pub struct ModuleGraph {
     units: Vec<ModuleUnit>,
     paths: HashMap<(PathBuf, ModuleKind), ModuleId>,
     edges: HashMap<ModuleId, Vec<ModuleId>>,
+    deferred_edges: std::collections::HashSet<(ModuleId, ModuleId)>,
 }
 
 impl ModuleGraph {
@@ -145,6 +146,13 @@ impl ModuleGraph {
                 format!("unresolved module specifier {specifier:?} from {from:?}")
             })?;
             self.link(from, target)?;
+            if metadata
+                .deferred_imports
+                .iter()
+                .any(|item| item == specifier)
+            {
+                self.deferred_edges.insert((from, target));
+            }
         }
         Ok(())
     }
@@ -183,7 +191,13 @@ impl ModuleGraph {
             return Ok(());
         }
         state.insert(id, 1);
-        for dependency in self.edges.get(&id).into_iter().flatten() {
+        for dependency in self
+            .edges
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .filter(|dependency| !self.deferred_edges.contains(&(id, **dependency)))
+        {
             self.visit(*dependency, state, order)?;
         }
         state.insert(id, 2);
