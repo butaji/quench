@@ -26,6 +26,15 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
         HostCapabilityKind::EvalScript => run_eval_script(arguments),
+        HostCapabilityKind::DeferredModule if arguments.len() == 1 => {
+            let Value::Number(id) = arguments[0] else {
+                return Err(type_error("deferred module id must be numeric"));
+            };
+            crate::vm::execute_deferred_module(id as u32)
+        }
+        HostCapabilityKind::DeferredModule => Err(type_error(
+            "deferred module expects one module id",
+        )),
     }
 }
 

@@ -41,6 +41,7 @@ pub enum HostCapabilityKind {
     CreateRealm,
     EvalScript,
     DetachArrayBuffer,
+    DeferredModule,
 }
 
 /// Non-JavaScript capability descriptor; exposure is owned by the host.

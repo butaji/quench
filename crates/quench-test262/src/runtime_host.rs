@@ -77,6 +77,16 @@ impl LinkedModuleGraph {
     }
 
     pub fn execute(&self, graph: &ModuleGraph, entry: ModuleId) -> Result<(), String> {
+        let graph_ptr = self as *const Self;
+        let module_graph_ptr = graph as *const ModuleGraph;
+        let _callback = quench_runtime::vm::install_deferred_module_callback(Rc::new(move |id| {
+            // The callback guard lives only for the duration of this execution.
+            // Both pointed-to graphs are borrowed by the caller for that duration.
+            let target = ModuleId(id);
+            unsafe { (&*graph_ptr).execute(&*module_graph_ptr, target) }
+                .map(|_| Value::Undefined)
+                .map_err(quench_runtime::execute::VmError::EvalError)
+        }));
         for id in graph.dependency_order(entry)? {
             self.units
                 .get(&id)
@@ -107,7 +117,11 @@ fn bind_imports(
             let target = graph
                 .resolve_kind(id, &binding.source, kind)
                 .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-            let cell = match import_cell(units, target, &binding.imported, provisional) {
+            let deferred = metadata
+                .deferred_imports
+                .iter()
+                .any(|source| source == &binding.source);
+            let cell = match import_cell(units, target, &binding.imported, provisional, deferred) {
                 Ok(cell) => cell,
                 Err(_error) if provisional && binding.imported != "*" => continue,
                 Err(error) => return Err(error),
@@ -174,7 +188,7 @@ fn link_reexport(
     if binding.imported == "*all*" {
         return link_star_exports(units, from, target);
     }
-    let cell = import_cell(units, target, &binding.imported, true)?;
+    let cell = import_cell(units, target, &binding.imported, true, false)?;
     units
         .get(&from)
         .ok_or_else(|| "module unit missing".to_string())?
@@ -204,9 +218,10 @@ fn import_cell(
     target: ModuleId,
     imported: &str,
     provisional: bool,
+    deferred: bool,
 ) -> Result<ModuleBindingCell, String> {
     if imported == "*" {
-        return namespace_cell(units, target);
+        return namespace_cell(units, target, deferred);
     }
     units
         .get(&target)
@@ -223,6 +238,7 @@ fn import_cell(
 fn namespace_cell(
     units: &std::collections::HashMap<ModuleId, LinkedModule>,
     target: ModuleId,
+    deferred: bool,
 ) -> Result<ModuleBindingCell, String> {
     let unit = units
         .get(&target)
@@ -253,6 +269,12 @@ fn namespace_cell(
             format!("\0quench:descriptor:\0{name}"),
             descriptor_value(unit, &name),
         ));
+        if deferred {
+            properties.push((
+                format!("\0quench:deferred:\0{name}"),
+                Value::Number(f64::from(target.0)),
+            ));
+        }
     }
     properties.push((
         "Symbol.toStringTag".to_string(),
@@ -713,6 +735,7 @@ fn host_context() -> &'static VmContext {
                 HostCapabilityKind::CreateRealm,
                 HostCapabilityKind::EvalScript,
                 HostCapabilityKind::DetachArrayBuffer,
+                HostCapabilityKind::DeferredModule,
             ],
         )
         .with_host_capability(
