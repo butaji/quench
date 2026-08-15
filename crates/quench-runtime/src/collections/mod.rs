@@ -166,6 +166,7 @@ fn iterator_map(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
                 callback,
                 index: 0,
                 done: false,
+                executing: false,
             }),
         },
     )))

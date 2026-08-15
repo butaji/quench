@@ -11,6 +11,11 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
         return drop_step(data, iterator);
     }
     if let Some((iterator, callback, index)) = map_target(data) {
+        if map_executing(data) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator map helper is already executing",
+            ));
+        }
         return map_step(data, iterator, callback, index);
     }
     match step_target(data)? {
@@ -38,11 +43,22 @@ fn map_target(data: &IteratorData) -> Option<(Value, Value, u64)> {
         callback,
         index,
         done,
+        ..
     } = &*state
     else {
         return None;
     };
     (!*done).then(|| (iterator.clone(), callback.clone(), *index))
+}
+
+fn map_executing(data: &IteratorData) -> bool {
+    matches!(
+        &*data.state.borrow(),
+        IteratorState::MapHelper {
+            executing: true,
+            ..
+        }
+    )
 }
 
 fn map_step(
@@ -55,11 +71,14 @@ fn map_step(
         mark_map_done(data);
         return Ok(None);
     };
+    set_map_executing(data, true);
     let mapped = crate::functions::execute_target(
         &callback,
         &Value::Undefined,
         &[value, Value::Number(index as f64)],
-    )?;
+    );
+    set_map_executing(data, false);
+    let mapped = mapped?;
     set_map_index(data, index.saturating_add(1));
     Ok(Some(mapped))
 }
@@ -73,6 +92,15 @@ fn set_map_index(data: &IteratorData, index: u64) {
 fn mark_map_done(data: &IteratorData) {
     if let IteratorState::MapHelper { done, .. } = &mut *data.state.borrow_mut() {
         *done = true;
+    }
+}
+
+fn set_map_executing(data: &IteratorData, executing: bool) {
+    if let IteratorState::MapHelper {
+        executing: slot, ..
+    } = &mut *data.state.borrow_mut()
+    {
+        *slot = executing;
     }
 }
 
