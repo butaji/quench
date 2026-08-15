@@ -426,6 +426,17 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
     if let Some(time) = text.split_once('T').map(|(_, value)| value) {
+        for separator in ['.', ','] {
+            if let Some(start) = time.find(separator) {
+                let digits = time[start + 1..]
+                    .chars()
+                    .take_while(|character| character.is_ascii_digit())
+                    .count();
+                if digits > 9 {
+                    return Err(crate::value::error::throw_range_error("Too many decimals"));
+                }
+            }
+        }
         if !time.contains('[')
             && time
                 .chars()
