@@ -108,7 +108,7 @@ fn bind_imports(
                 .ok_or_else(|| format!("unresolved module {}", binding.source))?;
             let cell = match import_cell(units, target, &binding.imported, provisional) {
                 Ok(cell) => cell,
-                Err(_error) if provisional => continue,
+                Err(_error) if provisional && binding.imported != "*" => continue,
                 Err(error) => return Err(error),
             };
             units
