@@ -242,3 +242,9 @@ fn export_star_forwards_live_cells() {
         Value::Boolean(true)
     );
 }
+
+#[test]
+fn module_metadata_marks_top_level_await() {
+    let module = LinkedModule::compile("await 0;").expect("module compiles");
+    assert!(module.has_top_level_await());
+}

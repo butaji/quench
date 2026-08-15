@@ -327,13 +327,6 @@ pub(crate) fn consume_deferred_namespace_marker(value: &Value, key: &str) -> Opt
         }
         deferred_marker_id(value)
     })?;
-    for (name, value) in properties.iter() {
-        if name.starts_with("\0quench:deferred:\0") || name == "\0quench:deferred-module" {
-            if let Value::BindingCell(cell) = value {
-                cell.replace(Value::Undefined);
-            }
-        }
-    }
     Some(id)
 }
 
