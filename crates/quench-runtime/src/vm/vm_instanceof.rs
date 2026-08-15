@@ -212,11 +212,7 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         Value::Generator(generator) => generator_instance_prototype(generator),
         Value::Iterator(_) => Some(crate::collections::iterator::prototype_of(value)),
         Value::Builtin(builtin) => builtin_prototype_parent(*builtin),
-        Value::Function(function) => Some(Value::Builtin(if function.is_async {
-            Builtin::AsyncFunctionPrototype
-        } else {
-            Builtin::FunctionPrototype
-        })),
+        Value::Function(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
         Value::BoundFunction(_) => {
             Some(Value::Builtin(Builtin::FunctionPrototype))
         }
