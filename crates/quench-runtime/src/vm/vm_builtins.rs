@@ -341,11 +341,17 @@ fn error_cause_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
 
 fn error_stack_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
     let value = error_receiver(receiver, "Error.prototype.stack")?;
-    if has_error_slot(value) {
-        Ok(Value::String("Error".to_string()))
-    } else {
-        Ok(Value::Undefined)
+    if !has_error_slot(value) {
+        return Ok(Value::Undefined);
     }
+    let key = Value::String("stack".to_string());
+    let own = crate::builtins::object::descriptor(Some(value), Some(&key))?;
+    if !matches!(own, Value::Undefined)
+        && !matches!(crate::execute::get_property(&own, "value"), Value::Undefined)
+    {
+        return crate::execute::get_property_result(value, "stack");
+    }
+    Ok(Value::String("Error".to_string()))
 }
 
 fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -360,15 +366,15 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
             ));
         }
     }
+    if matches!(value, Value::Proxy(_)) {
+        define_proxy_stack(value, stack.clone())?;
+        return Ok(Value::Undefined);
+    }
     let Value::String(_) = stack else {
         return Err(crate::value::error::throw_type_error(
             "Stack value must be a string",
         ));
     };
-    if matches!(value, Value::Proxy(_)) {
-        define_proxy_stack(value, stack.clone())?;
-        return Ok(Value::Undefined);
-    }
     let key = Value::String("stack".to_string());
     if !matches!(
         crate::builtins::object::descriptor(Some(value), Some(&key))?,
@@ -382,7 +388,13 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
 }
 
 fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
-    let updated = crate::builtins::set_property(value.clone(), "stack", stack);
+    let descriptor = vec![
+        ("value".to_string(), stack),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ];
+    let updated = crate::builtins::define_own_property(value, "stack", &descriptor)?;
     crate::locals::replace_value(value, &updated);
     Ok(())
 }
