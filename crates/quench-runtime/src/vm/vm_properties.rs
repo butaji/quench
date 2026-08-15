@@ -123,6 +123,11 @@ fn map_property(data: &crate::value::MapData, key: &str) -> Value {
 /// `Undefined`. Used to surface `constructor` and prototype methods for
 /// primitive values like `1`, `true`, and `null`-shaped access.
 fn primitive_prototype_property(value: &Value, key: &str) -> Value {
+    if let Value::String(symbol) = value {
+        if symbol.starts_with("Symbol.") && key == "description" {
+            return Value::String(symbol.clone());
+        }
+    }
     let prototype = match value {
         Value::Number(_) => Some(Value::Builtin(Builtin::NumberPrototype)),
         Value::Boolean(_) => Some(Value::Builtin(Builtin::BooleanPrototype)),
@@ -242,7 +247,8 @@ pub(crate) fn get_property_with_receiver(
     }
     if let Value::Array(values) = value {
         let has_own = key == "length"
-            || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+            || crate::arrays::array_index(key)
+                .is_some_and(|index| values.has_index(index as usize))
             || values.descriptor(key).is_some()
             || values.property(key).is_some();
         if !has_own {
@@ -342,9 +348,7 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
 fn is_iterator_next_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::RegExpStringIteratorNext
-            | Builtin::SetIteratorNext
-            | Builtin::MapIteratorNext
+        Builtin::RegExpStringIteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext
     )
 }
 /// Accessor getters/setters carry their `this` at invocation time; binding
