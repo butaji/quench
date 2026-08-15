@@ -48,6 +48,9 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     {
         return Err(syntax_error("Invalid async generator parameters"));
     }
+    if matches!(kind, FunctionKind::Generator) && has_yield_expression(&function.params) {
+        return Err(syntax_error("Invalid generator parameters"));
+    }
     let (parameters, count) = crate::functions::function_parameters(function)
         .map_err(|_| syntax_error("Invalid function parameters"))?;
     let strictness = crate::reduce_support::function_strictness(body, false);
@@ -94,6 +97,22 @@ fn forbidden_parameter_expression(parameters: &oxc::ast::ast::FormalParameters<'
     let mut validator = Validator { forbidden: false };
     validator.visit_formal_parameters(parameters);
     validator.forbidden
+}
+
+fn has_yield_expression(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    struct Validator {
+        found: bool,
+    }
+
+    impl<'a> Visit<'a> for Validator {
+        fn visit_yield_expression(&mut self, _: &oxc::ast::ast::YieldExpression<'a>) {
+            self.found = true;
+        }
+    }
+
+    let mut validator = Validator { found: false };
+    validator.visit_formal_parameters(parameters);
+    validator.found
 }
 
 fn dynamic_value(
