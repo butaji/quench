@@ -46,6 +46,8 @@ pub(crate) struct RawOptions {
     minimum_fraction_digits: f64,
     minimum_integer_digits: f64,
     maximum_fraction_digits: f64,
+    minimum_fraction_given: bool,
+    maximum_fraction_given: bool,
     use_grouping: bool,
     grouping_min2: bool,
     notation: String,
@@ -96,6 +98,8 @@ impl RawOptions {
             minimum_fraction_digits: -1.0,
             minimum_integer_digits: 1.0,
             maximum_fraction_digits: -1.0,
+            minimum_fraction_given: false,
+            maximum_fraction_given: false,
             use_grouping: true,
             grouping_min2: false,
             notation: "standard".to_string(),
@@ -130,12 +134,14 @@ impl RawOptions {
                     "unit" => raw.unit = Some(crate::conversion::to_string(&value)?),
                     "unitDisplay" => raw.unit_display = crate::conversion::to_string(&value)?,
                     "minimumFractionDigits" => {
+                        raw.minimum_fraction_given = true;
                         raw.minimum_fraction_digits = crate::conversion::to_number(&value)?
                     }
                     "minimumIntegerDigits" => {
                         raw.minimum_integer_digits = crate::conversion::to_number(&value)?
                     }
                     "maximumFractionDigits" => {
+                        raw.maximum_fraction_given = true;
                         raw.maximum_fraction_digits = crate::conversion::to_number(&value)?
                     }
                     "useGrouping" => {
@@ -559,6 +565,18 @@ fn validate_basic_options(raw: &RawOptions) -> Result<(), VmError> {
         {
             return Err(crate::value::error::throw_range_error(
                 "invalid numberingSystem",
+            ));
+        }
+    }
+    for (value, given) in [
+        (raw.minimum_fraction_digits, raw.minimum_fraction_given),
+        (raw.maximum_fraction_digits, raw.maximum_fraction_given),
+    ] {
+        if given
+            && (!value.is_finite() || value.fract() != 0.0 || !(0.0..=100.0).contains(&value))
+        {
+            return Err(crate::value::error::throw_range_error(
+                "fraction digits out of range",
             ));
         }
     }
