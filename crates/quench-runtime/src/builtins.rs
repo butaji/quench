@@ -351,7 +351,7 @@ fn boxed_object(value: &Value) -> Value {
 }
 
 pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
-    let (name, constructor, prototype) = match builtin {
+    let (name, constructor, _prototype) = match builtin {
         Builtin::RangeError => ("RangeError", Builtin::RangeError, Builtin::ErrorPrototype),
         Builtin::ReferenceError => (
             "ReferenceError",
@@ -376,9 +376,11 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         _ => ("Error", Builtin::Error, Builtin::ErrorPrototype),
     };
     let message = arguments.first().map_or_else(String::new, value_to_string);
-    let prototype = crate::builtin_meta::instance_prototype(constructor)
-        .map(Value::Builtin)
-        .unwrap_or(Value::Builtin(prototype));
+    let constructor_value = crate::vm::intrinsic_for_realm(
+        crate::vm::current_context_or_default().realm(),
+        constructor,
+    );
+    let prototype = crate::execute::get_property(&constructor_value, "prototype");
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
         ("message".to_string(), Value::String(message)),

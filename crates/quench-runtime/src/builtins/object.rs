@@ -222,6 +222,16 @@ fn data_view_descriptor(view: &crate::value::DataViewData, key: &str) -> Option<
 }
 
 fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> Option<Value> {
+    if let Value::Builtin(builtin) = function.target {
+        if let Ok(descriptor) = descriptor(
+            Some(&Value::Builtin(builtin)),
+            Some(&Value::String(key.to_string())),
+        ) {
+            if !matches!(descriptor, Value::Undefined) {
+                return Some(bind_realm_descriptor(function, descriptor));
+            }
+        }
+    }
     if let Some((_, metadata)) = function
         .properties
         .borrow()
@@ -238,6 +248,24 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
         .rev()
         .find(|(name, _)| name == key)
         .map(|(_, value)| descriptor_object(value))
+}
+
+fn bind_realm_descriptor(function: &crate::value::BoundFunctionValue, descriptor: Value) -> Value {
+    let Value::HostCapability(capability) = &function.receiver else {
+        return descriptor;
+    };
+    let Value::Object(properties) = descriptor else {
+        return descriptor;
+    };
+    let mut properties = properties.properties.clone();
+    for (name, value) in &mut properties {
+        if matches!(name.as_str(), "get" | "set") {
+            if let Value::Builtin(builtin) = value {
+                *value = crate::vm::intrinsic_for_realm(capability.realm(), *builtin);
+            }
+        }
+    }
+    Value::Object(Rc::new(ObjectData::new(properties)))
 }
 fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value> {
     if let Some((_, metadata)) = properties

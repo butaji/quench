@@ -169,6 +169,10 @@ pub(crate) fn current_context_or_default() -> VmContext {
         .unwrap_or_default()
 }
 
+pub(crate) fn intrinsic_for_realm(realm: RealmId, builtin: Builtin) -> Value {
+    realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
+}
+
 pub(crate) fn execute_completion_in_place(
     ops: &[Op],
     registers: &mut Vec<Value>,
