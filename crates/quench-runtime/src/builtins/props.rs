@@ -90,6 +90,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainTimePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainTimeToJSON)),
         (TemporalPlainTimePrototype, "valueOf") => Some(Value::Builtin(TemporalPlainTimeValueOf)),
         (TemporalPlainTimePrototype, "equals") => Some(Value::Builtin(TemporalPlainTimeEquals)),
+        (TemporalPlainTimePrototype, "toLocaleString") => {
+            Some(Value::Builtin(TemporalPlainTimeToLocaleString))
+        }
         (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
         (TemporalPlainDatePrototype, "toString") => Some(Value::Builtin(TemporalPlainDateToString)),
         (TemporalPlainDatePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainDateToJSON)),
