@@ -525,9 +525,6 @@ fn add_module_source(
     attributes: &[(String, String)],
     specifier: &str,
 ) -> Result<ModuleId, String> {
-    let path = path
-        .canonicalize()
-        .map_err(|error| format!("module {}: {error}", path.display()))?;
     let resource_type = attributes
         .iter()
         .find(|(source, _)| source == specifier)
