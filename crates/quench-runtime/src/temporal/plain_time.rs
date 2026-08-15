@@ -178,7 +178,10 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         return Err(crate::value::error::throw_range_error("Invalid time"));
     }
     if let Some(index) = text.find('+').filter(|index| {
-        text[..*index].contains('T') || text[..*index].contains('t') || text[..*index].contains(' ')
+        text[..*index].contains(':')
+            || text[..*index].contains('T')
+            || text[..*index].contains('t')
+            || text[..*index].contains(' ')
     }) {
         let offset = &text[index + 1..];
         let offset = offset.split('[').next().unwrap_or(offset);
