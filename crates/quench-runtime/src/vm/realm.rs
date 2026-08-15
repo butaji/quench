@@ -1,11 +1,11 @@
 use std::{
     cell::{Cell, RefCell},
-    rc::Rc,
+    rc::{Rc, Weak},
 };
 
 use crate::{
     ops::{Builtin, HostCapabilityKind, HostCapabilityRef, Op, RealmId},
-    value::{HostCapabilityValue, Value},
+    value::{HostCapabilityValue, ObjectAliasValue, Value, WeakObject},
 };
 
 use super::{ObjectProperties, VmContext, VmError};
@@ -16,6 +16,7 @@ struct RealmState {
     context: VmContext,
     token: Rc<HostCapabilityValue>,
     intrinsics: RefCell<Vec<(Builtin, Value)>>,
+    global_aliases: RefCell<Vec<Weak<RefCell<WeakObject>>>>,
 }
 
 struct ExecutionGuard {
@@ -42,6 +43,7 @@ pub(super) fn create(parent: &VmContext) -> RealmId {
             kind: HostCapabilityKind::GetGlobal,
         })),
         intrinsics: RefCell::new(Vec::new()),
+        global_aliases: RefCell::new(Vec::new()),
     });
     register(state);
     id
@@ -55,7 +57,25 @@ pub(super) fn register_global(token: &HostCapabilityValue, global: ObjectPropert
         return false;
     }
     state.global.replace(global);
+    let target = Rc::downgrade(&state.global.borrow().clone());
+    state.global_aliases.borrow_mut().retain(|alias| {
+        let Some(alias) = alias.upgrade() else {
+            return false;
+        };
+        *alias.borrow_mut() = target.clone();
+        true
+    });
     true
+}
+
+pub(super) fn register_global_alias(realm: RealmId, alias: &ObjectAliasValue) {
+    if let Some(state) = state(realm) {
+        *alias.0.borrow_mut() = Rc::downgrade(&state.global.borrow().clone());
+        state
+            .global_aliases
+            .borrow_mut()
+            .push(Rc::downgrade(&alias.0));
+    }
 }
 
 pub(super) fn global(id: RealmId) -> Option<Value> {
