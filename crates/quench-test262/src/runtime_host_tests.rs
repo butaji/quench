@@ -218,6 +218,23 @@ fn namespace_import_reads_live_export_cells() {
 }
 
 #[test]
+fn async_module_drains_promise_jobs_before_resuming() {
+    let module = LinkedModule::compile(
+        "export let value = 'synchronous'; Promise.resolve().then(() => value = 'tick'); await 1;",
+    )
+    .expect("module compiles");
+    let cell = module.export_cell("value").expect("export cell");
+    module.execute().expect("module starts");
+    while module.async_next.get().is_some() {
+        module.resume_async().expect("module resumes");
+    }
+    assert_eq!(
+        cell.get(),
+        Value::String("tick".to_string())
+    );
+}
+
+#[test]
 fn export_star_forwards_live_cells() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(
