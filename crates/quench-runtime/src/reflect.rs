@@ -2,7 +2,7 @@ use crate::execute::VmError;
 use crate::value::Value;
 
 pub(crate) fn builtin(
-    _builtin: crate::ops::Builtin,
+    builtin: crate::ops::Builtin,
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
@@ -10,7 +10,62 @@ pub(crate) fn builtin(
         return Ok(Value::Undefined);
     };
     let realm = crate::vm::realm_id_for_intrinsic_receiver(receiver);
-    evaluate(value, false, realm)
+    let result = evaluate(value, false, realm)?;
+    if builtin == crate::ops::Builtin::ShadowRealmEvaluate
+        && crate::conversion::is_callable(&result)
+    {
+        return wrap_shadow_function(&result);
+    }
+    Ok(result)
+}
+
+fn wrap_shadow_function(target: &Value) -> Result<Value, VmError> {
+    let name = match crate::execute::get_property_result(target, "name")? {
+        Value::String(value) if !crate::conversion::is_symbol_string(&value) => value,
+        _ => String::new(),
+    };
+    let length = match crate::execute::get_property_result(target, "length")? {
+        Value::Number(value) if value.is_finite() => value.max(0.0).trunc(),
+        Value::Number(value) if value.is_infinite() && value.is_sign_positive() => value,
+        _ => 0.0,
+    };
+    let properties = vec![
+        ("name".to_string(), Value::String(name.clone())),
+        (
+            crate::builtins::descriptor_key("name"),
+            name_descriptor(&name),
+        ),
+        ("length".to_string(), Value::Number(length)),
+        (
+            crate::builtins::descriptor_key("length"),
+            length_descriptor(length),
+        ),
+    ];
+    Ok(Value::BoundFunction(std::rc::Rc::new(
+        crate::value::BoundFunctionValue {
+            target: target.clone(),
+            receiver: Value::Undefined,
+            arguments: Vec::new(),
+            properties: std::cell::RefCell::new(properties),
+        },
+    )))
+}
+
+fn name_descriptor(value: &str) -> Value {
+    descriptor(Value::String(value.to_string()))
+}
+
+fn length_descriptor(value: f64) -> Value {
+    descriptor(Value::Number(value))
+}
+
+fn descriptor(value: Value) -> Value {
+    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(false)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])))
 }
 
 pub(crate) fn execute_eval(
