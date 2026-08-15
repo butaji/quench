@@ -542,6 +542,7 @@ fn construct_error(
         crate::ops::Builtin::URIError => "URIError",
         crate::ops::Builtin::AggregateError => "AggregateError",
         crate::ops::Builtin::TypeError => "TypeError",
+        crate::ops::Builtin::Error => "Error",
         _ => "Error",
     };
 
@@ -611,15 +612,6 @@ fn construct_error(
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
 }
 
-fn error_data_descriptor(value: Value) -> Value {
-    Value::Object(std::rc::Rc::new(ObjectData::new(vec![
-        ("value".to_string(), value),
-        ("writable".to_string(), Value::Boolean(true)),
-        ("enumerable".to_string(), Value::Boolean(false)),
-        ("configurable".to_string(), Value::Boolean(true)),
-    ])))
-}
-
 fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let mut properties = error_properties(
         "AggregateError",
@@ -681,15 +673,15 @@ fn push_error_property(properties: &mut Vec<(String, Value)>, name: &str, value:
 }
 
 fn error_properties(name: &str, prototype: crate::ops::Builtin) -> Vec<(String, Value)> {
-    let mut properties = Vec::new();
-    push_error_property(&mut properties, "name", Value::String(name.to_string()));
-    push_error_property(&mut properties, "message", Value::String(String::new()));
-    properties.push((
-        crate::builtins::ERROR_SLOT.to_string(),
-        Value::Boolean(true),
-    ));
-    properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
-    properties
+    vec![
+        ("name".to_string(), Value::String(name.to_string())),
+        ("message".to_string(), Value::String(String::new())),
+        (
+            crate::builtins::ERROR_SLOT.to_string(),
+            Value::Boolean(true),
+        ),
+        ("\0prototype".to_string(), Value::Builtin(prototype)),
+    ]
 }
 
 fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {

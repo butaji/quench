@@ -38,6 +38,14 @@ fn named_default_function_has_a_default_export_cell() {
 }
 
 #[test]
+fn json_module_exports_recursive_runtime_values() {
+    let module = LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
+    let cell = module.export_cell("default").expect("default export cell");
+    module.execute().expect("module executes");
+    assert!(matches!(cell.get(), Value::Function(_)));
+}
+
+#[test]
 fn imported_named_default_function_is_callable() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(

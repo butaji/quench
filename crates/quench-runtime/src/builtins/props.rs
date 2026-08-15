@@ -102,10 +102,16 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
+        (AbstractModuleSource, "prototype") => Some(Value::Builtin(AbstractModuleSourcePrototype)),
+        (AbstractModuleSourcePrototype, "constructor") => {
+            Some(Value::Builtin(AbstractModuleSource))
+        }
+        (AbstractModuleSourcePrototype, "Symbol.toStringTag") => Some(Value::Undefined),
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
         (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
+        (Atomics, "Symbol.toStringTag") => Some(Value::String("Atomics".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (ArrayBufferPrototype, "Symbol.toStringTag") => Some(Value::String("ArrayBuffer".into())),
@@ -143,25 +149,18 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (DisposableStackPrototype, "Symbol.dispose") => {
             Some(Value::Builtin(DisposableStackDispose))
         }
-        (ErrorPrototype, "toString")
-        | (RangeErrorPrototype, "toString")
-        | (ReferenceErrorPrototype, "toString")
-        | (SyntaxErrorPrototype, "toString")
-        | (EvalErrorPrototype, "toString")
-        | (URIErrorPrototype, "toString")
-        | (AggregateErrorPrototype, "toString")
-        | (TypeErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
-        (prototype, "name") if is_native_error_prototype(prototype) => {
-            Some(Value::String(native_error_name(prototype).to_string()))
-        }
-        (prototype, "message") if is_native_error_prototype(prototype) => {
-            Some(Value::String("".to_string()))
-        }
-        (prototype, "cause") if is_native_error_prototype(prototype) => Some(Value::Undefined),
-        (prototype, "constructor") if is_native_error_prototype(prototype) => {
-            Some(Value::Builtin(native_error_constructor(prototype)))
-        }
+        (ErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
+        (ErrorPrototype, "name") => Some(Value::String("Error".to_string())),
+        (ErrorPrototype, "message") => Some(Value::String("".to_string())),
+        (ErrorPrototype, "cause") => Some(Value::Undefined),
+        (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
+        (AggregateErrorPrototype, "constructor") => Some(Value::Builtin(AggregateError)),
+        (AggregateErrorPrototype, "name") => Some(Value::String("AggregateError".into())),
+        (AggregateErrorPrototype, "message") => Some(Value::String("".into())),
+        (AggregateErrorPrototype, "cause") => Some(Value::Undefined),
+        (AggregateErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
         (SuppressedError, "prototype") => Some(Value::Builtin(SuppressedErrorPrototype)),
+        (AggregateError, "prototype") => Some(Value::Builtin(AggregateErrorPrototype)),
         (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
         (SuppressedErrorPrototype, "message") => Some(Value::String("".to_string())),
         (SuppressedErrorPrototype, "constructor") => Some(Value::Builtin(SuppressedError)),
@@ -252,6 +251,9 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
 }
 fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
+    if builtin == Atomics {
+        return atomics_method(key);
+    }
     if builtin == ArrayPrototype {
         return array_method(key);
     }
@@ -292,6 +294,27 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         return Some(method);
     }
     builtin_method_core(builtin, key)
+}
+
+fn atomics_method(key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    Some(match key {
+        "add" => AtomicsAdd,
+        "and" => AtomicsAnd,
+        "compareExchange" => AtomicsCompareExchange,
+        "exchange" => AtomicsExchange,
+        "isLockFree" => AtomicsIsLockFree,
+        "load" => AtomicsLoad,
+        "notify" => AtomicsNotify,
+        "or" => AtomicsOr,
+        "pause" => AtomicsPause,
+        "store" => AtomicsStore,
+        "sub" => AtomicsSub,
+        "wait" => AtomicsWait,
+        "waitAsync" => AtomicsWaitAsync,
+        "xor" => AtomicsXor,
+        _ => return None,
+    })
 }
 fn data_view_method_for(builtin: Builtin, key: &str) -> Option<Builtin> {
     (builtin == Builtin::DataViewPrototype)
@@ -504,7 +527,18 @@ fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> O
         "createRealm" => CreateRealm,
         "evalScript" => EvalScript,
         "detachArrayBuffer" => DetachArrayBuffer,
-        "dynamicImport" => DynamicImport,
+        "agent" => Agent,
+        "start" => AgentStart,
+        "broadcast" => AgentBroadcast,
+        "report" => AgentReport,
+        "getReport" => AgentGetReport,
+        "leaving" => AgentLeaving,
+        "receiveBroadcast" => AgentReceiveBroadcast,
+        "sleep" => AgentSleep,
+        "tryYield" => AgentTryYield,
+        "trySleep" => AgentTrySleep,
+        "setTimeout" => AgentSetTimeout,
+        "monotonicNow" => AgentMonotonicNow,
         _ => return None,
     };
     Some(Builtin::HostCapability(kind))
