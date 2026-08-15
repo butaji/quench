@@ -200,6 +200,9 @@ fn stateful_builtin(
         Builtin::AsyncIteratorDisposeFulfilled => Some(Ok(Value::Undefined)),
         Builtin::ProxyRevoke => Some(crate::proxy::revoke(receiver)),
         Builtin::Math => Some(Err(not_callable())),
+        Builtin::AtomicsAdd => Some(Err(crate::value::error::throw_type_error(
+            "Atomics.add requires a valid typed array",
+        ))),
         _ => None,
     }
 }
