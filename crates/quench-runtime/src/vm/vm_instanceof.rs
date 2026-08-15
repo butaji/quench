@@ -89,6 +89,12 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
             name == "\0prototype"
                 && *value == Value::Builtin(Builtin::ShadowRealmPrototype)
         }),
+        (Value::Object(properties), Builtin::TemporalPlainDate) => properties.iter().any(
+            |(name, value)| {
+                name == "\0prototype"
+                    && *value == Value::Builtin(Builtin::TemporalPlainDatePrototype)
+            },
+        ),
         _ => return None,
     })
 }
