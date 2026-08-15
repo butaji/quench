@@ -4,6 +4,18 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root_dir"
 
+rg_bin="$(command -v rg || true)"
+for candidate in /opt/homebrew/bin/rg /usr/local/bin/rg /usr/bin/rg; do
+    if [[ -x "$candidate" ]] && "$candidate" --version >/dev/null 2>&1; then
+        rg_bin="$candidate"
+        break
+    fi
+done
+if [[ -z "$rg_bin" ]]; then
+    printf 'ripgrep is required for Rust linting\n' >&2
+    exit 1
+fi
+
 tools/check-boundaries.sh
 
 fail=0
@@ -13,7 +25,7 @@ while IFS= read -r file; do
         printf '%s: %d lines (maximum 500)\n' "$file" "$lines" >&2
         fail=1
     fi
-done < <(rg --files -g '*.rs' -g '!target/**' | sort)
+done < <("$rg_bin" --files -g '*.rs' -g '!target/**' | sort)
 
 while IFS= read -r file; do
     awk '
@@ -39,7 +51,7 @@ while IFS= read -r file; do
         }
         END { exit fail }
     ' "$file" || fail=1
-done < <(rg --files -g '*.rs' -g '!target/**' | sort)
+done < <("$rg_bin" --files -g '*.rs' -g '!target/**' | sort)
 
 if (( fail != 0 )); then
     exit 1
