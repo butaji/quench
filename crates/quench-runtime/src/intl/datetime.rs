@@ -219,7 +219,7 @@ impl DateTimeOptions {
         }
         match key {
             "timeZone" => {
-                if text.is_empty() || matches!(text.as_str(), "invalid" | "ACT") {
+                if !valid_time_zone_name(&text) {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
                 if text.starts_with(['+', '-', '\u{2212}']) && normalize_offset(&text).is_none() {
@@ -410,6 +410,19 @@ fn canonicalize_time_zone(time_zone: &str) -> String {
     } else {
         time_zone.to_string()
     }
+}
+
+fn valid_time_zone_name(time_zone: &str) -> bool {
+    if time_zone.is_empty() || !time_zone.is_ascii() {
+        return false;
+    }
+    if matches!(time_zone.to_ascii_uppercase().as_str(), "UTC" | "GMT") {
+        return true;
+    }
+    if normalize_offset(time_zone).is_some() {
+        return true;
+    }
+    time_zone.contains('/') && !matches!(time_zone, "ACT" | "invalid")
 }
 
 fn normalize_offset(time_zone: &str) -> Option<String> {
