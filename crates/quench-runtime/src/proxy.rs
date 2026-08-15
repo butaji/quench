@@ -122,7 +122,7 @@ pub(crate) fn proxy_get(
                     Value::String(prop.to_string()),
                     receiver.clone(),
                 ],
-                Some(&proxy.handler),
+                None,
             );
         }
         return proxy_target_property(proxy, prop, receiver.unwrap_or(target));
@@ -176,8 +176,11 @@ pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError>
         if let Some(trap) = get_handler_trap(proxy, "deleteProperty") {
             return call_trap(
                 &trap,
-                &[target.clone(), Value::String(prop.to_string())],
-                None,
+                &[
+                    proxy.target.clone(),
+                    Value::String(prop.to_string()),
+                ],
+                Some(&proxy.handler),
             );
         }
     }
