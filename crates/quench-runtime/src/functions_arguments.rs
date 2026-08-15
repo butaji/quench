@@ -86,6 +86,18 @@ pub(crate) fn execute_construct(
     new_target: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
+    crate::vm::with_realm(function.realm, || {
+        execute_construct_in_realm(function, this_value, new_target, arguments)
+    })
+    .unwrap_or_else(|| execute_construct_in_realm(function, this_value, new_target, arguments))
+}
+
+fn execute_construct_in_realm(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    this_value: &crate::value::Value,
+    new_target: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<(crate::value::Value, crate::value::Value), crate::execute::VmError> {
     let captures = function.captures.len() as u16;
     let (mut registers, environment) = build_registers(function, this_value, arguments);
     let this_slot = captures.saturating_add(function.params).saturating_add(1);
@@ -97,7 +109,7 @@ pub(crate) fn execute_construct(
     let result = crate::vm::execute_in_environment(
         function.ops(),
         &mut registers,
-        &crate::vm::VmContext::default(),
+        &crate::vm::current_context_or_default(),
         std::rc::Rc::clone(&environment),
     )?;
     let final_this = environment.get(this_slot);
@@ -167,11 +179,26 @@ pub(crate) fn execute_bound(
     bound: &crate::value::BoundFunctionValue,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    crate::vm::with_error_realm(bound.realm, || {
+        crate::vm::with_realm(bound.realm, || execute_bound_in_realm(bound, arguments))
+            .unwrap_or_else(|| execute_bound_in_realm(bound, arguments))
+    })
+}
+
+fn execute_bound_in_realm(
+    bound: &crate::value::BoundFunctionValue,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
     match &bound.target {
         crate::value::Value::Builtin(builtin) => {
-            execute_builtin_target(*builtin, Some(&bound.receiver), &combined)
+            execute_builtin_target_in_realm(
+                *builtin,
+                Some(&bound.receiver),
+                &combined,
+                Some(bound.realm),
+            )
         }
         crate::value::Value::Function(function) => execute(function, &bound.receiver, &combined),
         crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
@@ -192,6 +219,17 @@ pub(crate) fn execute_target(
             execute_builtin_target(*builtin, Some(receiver), arguments)
         }
         crate::value::Value::Function(function) => execute(function, receiver, arguments),
+        crate::value::Value::BoundFunction(bound)
+            if crate::vm::is_intrinsic_bound(bound)
+                && matches!(bound.target, crate::value::Value::Builtin(_)) =>
+        {
+            match bound.target {
+                crate::value::Value::Builtin(builtin) => {
+                    execute_builtin_target(builtin, Some(receiver), arguments)
+                }
+                _ => execute_bound(bound, arguments),
+            }
+        }
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(target, receiver, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
@@ -203,8 +241,20 @@ fn execute_builtin_target(
     receiver: Option<&crate::value::Value>,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    execute_builtin_target_in_realm(builtin, receiver, arguments, None)
+}
+
+fn execute_builtin_target_in_realm(
+    builtin: crate::ops::Builtin,
+    receiver: Option<&crate::value::Value>,
+    arguments: &[crate::value::Value],
+    realm: Option<crate::ops::RealmId>,
+) -> Result<crate::value::Value, crate::execute::VmError> {
     if let crate::ops::Builtin::HostCapability(kind) = builtin {
         return crate::vm::execute_host_capability(kind, receiver, arguments);
+    }
+    if builtin == crate::ops::Builtin::FunctionApply {
+        return crate::vm::execute_function_apply_with_realm(receiver, arguments, realm);
     }
     crate::execute::execute_builtin_with_receiver(builtin, arguments, receiver)
 }
@@ -215,8 +265,11 @@ fn execute_function_call(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let receiver = receiver.ok_or(crate::execute::VmError::NotCallable)?;
     if let crate::value::Value::BoundFunction(bound) = receiver {
-        return crate::vm::with_realm(bound.realm, || {
-            execute_function_call_in_realm(receiver, arguments)
+        let realm = crate::vm::realm_id_for_intrinsic_receiver(Some(receiver)).unwrap_or(bound.realm);
+        return crate::vm::with_realm(realm, || {
+            crate::vm::with_error_realm(realm, || {
+                execute_function_call_in_realm(receiver, arguments)
+            })
         })
         .unwrap_or_else(|| execute_function_call_in_realm(receiver, arguments));
     }
@@ -392,6 +445,15 @@ pub(crate) fn function_builtin(
 }
 
 pub(crate) fn execute(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    this_value: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    crate::vm::with_realm(function.realm, || execute_in_realm(function, this_value, arguments))
+        .unwrap_or_else(|| execute_in_realm(function, this_value, arguments))
+}
+
+fn execute_in_realm(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],

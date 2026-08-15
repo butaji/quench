@@ -3,7 +3,7 @@ use crate::ops::{
     Builtin, FunctionKind, FunctionStrictness, HostCapabilityKind, HostCapabilityRef, Op, RealmId,
 };
 use crate::value::Value;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 mod realm;
@@ -14,6 +14,22 @@ mod vm_typed_bigint;
 pub use crate::intl::tolocale::value::is_truthy;
 pub use scope::ExecutionScope;
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+thread_local! {
+    static ERROR_REALM: Cell<Option<RealmId>> = const { Cell::new(None) };
+}
+
+pub(crate) fn with_error_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> T {
+    let previous = ERROR_REALM.with(|slot| slot.replace(Some(realm)));
+    let result = callback();
+    ERROR_REALM.with(|slot| slot.set(previous));
+    result
+}
+
+pub(crate) fn current_error_realm() -> Option<RealmId> {
+    ERROR_REALM.with(Cell::get)
+}
+
 pub(crate) fn with_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> Option<T> {
     realm::with_realm(realm, callback)
 }
@@ -38,6 +54,17 @@ pub(crate) fn with_global_realm<T>(global: &Value, callback: impl FnOnce() -> T)
         return None;
     };
     realm::id_for_global(object).and_then(|id| realm::with_realm(id, callback))
+}
+
+pub(crate) fn realm_id_for_global(global: &Value) -> Option<RealmId> {
+    let Value::Object(object) = global else {
+        return None;
+    };
+    realm::id_for_global(object)
+}
+
+pub(crate) fn is_intrinsic_bound(bound: &crate::value::BoundFunctionValue) -> bool {
+    realm::is_intrinsic(bound)
 }
 
 pub(crate) fn current_global_for(value: &Value) -> Option<Value> {

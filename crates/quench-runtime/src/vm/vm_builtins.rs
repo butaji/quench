@@ -40,6 +40,20 @@ pub(crate) fn execute_function_apply(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    execute_function_apply_with_realm(receiver, arguments, None)
+}
+
+pub(crate) fn execute_function_apply_with_realm(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    realm: Option<crate::ops::RealmId>,
+) -> Result<Value, VmError> {
+    if let Some(realm) = realm {
+        return crate::vm::with_error_realm(realm, || {
+            crate::vm::with_realm(realm, || execute_function_apply_in_realm(receiver, arguments))
+                .unwrap_or_else(|| execute_function_apply_in_realm(receiver, arguments))
+        });
+    }
     if let Some(result) = with_receiver_realm(receiver, arguments) {
         return result;
     }
@@ -52,14 +66,41 @@ fn with_receiver_realm(
 ) -> Option<Result<Value, VmError>> {
     let receiver = receiver?;
     match receiver {
-        Value::BoundFunction(bound) => crate::vm::with_realm(bound.realm, || {
-            execute_function_apply_in_realm(Some(receiver), arguments)
-        }),
-        Value::Function(function) => {
-            crate::vm::with_global_realm(&function.captures.get(0), || {
-                execute_function_apply_in_realm(Some(receiver), arguments)
-            })
+        Value::HostCapability(capability) => {
+            let realm = capability.realm();
+            Some(crate::vm::with_error_realm(realm, || {
+                crate::vm::with_realm(realm, || {
+                    execute_function_apply_in_realm(Some(receiver), arguments)
+                })
+                .unwrap_or_else(|| execute_function_apply_in_realm(Some(receiver), arguments))
+            }))
         }
+        Value::BoundFunction(bound) => {
+            let realm = bound_receiver_realm(&bound.receiver)?;
+            Some(crate::vm::with_error_realm(realm, || {
+                crate::vm::with_realm(realm, || {
+                    execute_function_apply_in_realm(Some(receiver), arguments)
+                })
+                .unwrap_or_else(|| execute_function_apply_in_realm(Some(receiver), arguments))
+            }))
+        }
+        Value::Function(function) => {
+            let realm = crate::vm::realm_id_for_global(&function.captures.get(0))?;
+            Some(crate::vm::with_error_realm(realm, || {
+                crate::vm::with_realm(realm, || {
+                    execute_function_apply_in_realm(Some(receiver), arguments)
+                })
+                .unwrap_or_else(|| execute_function_apply_in_realm(Some(receiver), arguments))
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn bound_receiver_realm(value: &Value) -> Option<crate::ops::RealmId> {
+    match value {
+        Value::HostCapability(capability) => Some(capability.realm()),
+        Value::BoundFunction(bound) => bound_receiver_realm(&bound.receiver),
         _ => None,
     }
 }
@@ -68,13 +109,27 @@ fn execute_function_apply_in_realm(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let target = receiver.filter(|value| crate::conversion::is_callable(value));
+    let target = receiver.filter(|value| {
+        !matches!(value, Value::HostCapability(_)) && crate::conversion::is_callable(value)
+    });
     let target = target.ok_or_else(|| {
-        crate::value::error::throw_type_error("Function.prototype.apply called on non-callable")
+        apply_type_error(receiver, "Function.prototype.apply called on non-callable")
     })?;
     let receiver = arguments.first().unwrap_or(&Value::Undefined);
     let list = create_list_from_array_like(arguments.get(1))?;
     crate::functions::execute_target(target, receiver, &list)
+}
+
+fn apply_type_error(receiver: Option<&Value>, message: &str) -> VmError {
+    let realm = match receiver {
+        Some(Value::HostCapability(capability)) => Some(capability.realm()),
+        Some(Value::BoundFunction(bound)) => Some(bound.realm),
+        _ => None,
+    };
+    realm.map_or_else(
+        || crate::value::error::throw_type_error(message),
+        |realm| VmError::Thrown(crate::builtins::type_error_in_realm(realm, message)),
+    )
 }
 pub(crate) fn create_list_from_array_like(value: Option<&Value>) -> Result<Vec<Value>, VmError> {
     let Some(value) = value.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
@@ -514,10 +569,11 @@ fn weak_ref_deref(receiver: Option<&Value>) -> Result<Value, VmError> {
     Ok(target.clone())
 }
 pub(crate) fn realm_id_for_intrinsic_receiver(receiver: Option<&Value>) -> Option<RealmId> {
-    let Some(Value::HostCapability(token)) = receiver else {
-        return None;
-    };
-    realm::id_for_token(token)
+    match receiver? {
+        Value::HostCapability(token) => realm::id_for_token(token),
+        Value::BoundFunction(bound) => realm_id_for_intrinsic_receiver(Some(&bound.receiver)),
+        _ => None,
+    }
 }
 pub(crate) fn explicit_number(value: Option<&Value>) -> Result<f64, VmError> {
     let Some(value) = value else {
