@@ -45,9 +45,7 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::Builtin(Builtin::SuppressedErrorPrototype) => {
             Value::Builtin(Builtin::ErrorPrototype)
         }
-        Value::Builtin(
-            Builtin::AggregateErrorPrototype
-        ) => Value::Builtin(Builtin::ErrorPrototype),
+        Value::Builtin(Builtin::AggregateErrorPrototype) => Value::Builtin(Builtin::ErrorPrototype),
         Value::Builtin(
             builtin @ (Builtin::ArrayIteratorPrototype
             | Builtin::StringIteratorPrototype
@@ -83,8 +81,7 @@ fn prototype_for_value_tail(value: &Value) -> Value {
         }
         Value::Builtin(Builtin::AsyncFunction) => Value::Builtin(Builtin::Function),
         Value::Builtin(
-            Builtin::Error
-            | Builtin::RangeError
+            Builtin::RangeError
             | Builtin::TypeError
             | Builtin::EvalError
             | Builtin::ReferenceError
