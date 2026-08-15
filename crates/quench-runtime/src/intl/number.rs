@@ -233,17 +233,28 @@ impl NumberOptions {
                 return Err(crate::value::error::throw_range_error("invalid currency"));
             }
         }
-        let minimum_fraction_digits = fraction_digits(
-            raw.style.as_str(),
-            raw.currency.as_deref(),
-            raw.minimum_fraction_digits,
-        );
-        let maximum_fraction_digits = maximum_fraction(
-            &raw.style,
-            &raw.currency,
-            raw.maximum_fraction_digits,
-            minimum_fraction_digits,
-        );
+        let nonstandard_currency = raw.style == "currency" && raw.notation != "standard";
+        let minimum_fraction_digits = if nonstandard_currency
+            && raw.minimum_fraction_digits < 0.0
+        {
+            0
+        } else {
+            fraction_digits(
+                raw.style.as_str(),
+                raw.currency.as_deref(),
+                raw.minimum_fraction_digits,
+            )
+        };
+        let maximum_fraction_digits = if nonstandard_currency && raw.maximum_fraction_digits < 0.0 {
+            if raw.notation == "compact" { 0 } else { 3 }
+        } else {
+            maximum_fraction(
+                &raw.style,
+                &raw.currency,
+                raw.maximum_fraction_digits,
+                minimum_fraction_digits,
+            )
+        };
         let minimum_fraction_digits = minimum_fraction_digits.min(maximum_fraction_digits);
         if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
             return Err(crate::value::error::throw_range_error("invalid unit"));
