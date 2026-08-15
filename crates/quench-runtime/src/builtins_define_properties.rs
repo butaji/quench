@@ -1,5 +1,10 @@
 pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let target = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::value::is_object(&target) {
+        return Err(crate::value::error::throw_type_error(
+            "Property definition target must be an object",
+        ));
+    }
     let Some(properties) = arguments.get(1) else {
         return Err(crate::value::error::throw_type_error(
             "Property descriptors must be an object",
