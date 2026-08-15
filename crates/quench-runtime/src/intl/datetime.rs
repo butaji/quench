@@ -59,6 +59,7 @@ pub(crate) struct DateTimeOptions {
     fractional_second_digits: Option<u32>,
     hour12: Option<bool>,
     explicit_date_options: bool,
+    explicit_time_zone: bool,
 }
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -79,6 +80,7 @@ impl DateTimeOptions {
             fractional_second_digits: None,
             hour12: None,
             explicit_date_options: false,
+            explicit_time_zone: false,
         };
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
@@ -113,6 +115,7 @@ impl DateTimeOptions {
             "dateStyle" | "timeStyle" => self.set_component(key, text),
             "hour12" => self.hour12 = Some(text == "true"),
             "timeZone" => {
+                self.explicit_time_zone = true;
                 if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
@@ -233,6 +236,10 @@ impl DateTimeOptions {
             "__explicitDateOptions".to_string(),
             Value::Boolean(self.explicit_date_options),
         ));
+        props.push((
+            "__explicitTimeZone".to_string(),
+            Value::Boolean(self.explicit_time_zone),
+        ));
         let has_hour = self.contains("hour");
         for (key, value) in &self.components {
             props.push((key.clone(), Value::String(value.clone())));
@@ -347,7 +354,7 @@ pub(crate) fn prototype_method(
     match builtin {
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
             let input = arguments.first().unwrap_or(&Value::Undefined);
-            let number = range_number(input)?;
+            let number = adjusted_temporal_number(input, &slots)?;
             if let Some(value) = day_period_format(&slots, number) {
                 return Ok(Value::String(value));
             }
@@ -395,6 +402,16 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots)),
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn adjusted_temporal_number(input: &Value, slots: &[(String, Value)]) -> Result<f64, VmError> {
+    let number = range_number(input)?;
+    let plain_date_time =
+        matches!(input, Value::Object(object) if object.iter().any(|(key, _)| key == "calendarId"));
+    if plain_date_time && slot_bool(slots, "__explicitTimeZone") != Some(true) {
+        return Ok(number - f64::from(crate::date::local_tz_offset_minutes()) * 60_000.0);
+    }
+    Ok(number)
 }
 
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
