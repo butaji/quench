@@ -258,28 +258,6 @@ fn construct_bound_target(
     }
 }
 
-pub(crate) fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
-    match value {
-        Value::Number(value) => box_to_object(Value::Number(*value), crate::ops::Builtin::Number),
-        Value::Boolean(value) => {
-            box_to_object(Value::Boolean(*value), crate::ops::Builtin::Boolean)
-        }
-        Value::String(value) => {
-            box_to_object(Value::String(value.clone()), crate::ops::Builtin::String)
-        }
-        Value::StringUnits(value) => box_to_object(
-            Value::StringUnits(value.clone()),
-            crate::ops::Builtin::String,
-        ),
-        Value::BigInt(value) => {
-            box_to_object(Value::BigInt(value.clone()), crate::ops::Builtin::BigInt)
-        }
-        Value::BindingCell(_) | Value::Undefined | Value::Null => Err(
-            crate::value::error::throw_type_error("Cannot convert undefined or null to object"),
-        ),
-        _ => Ok(value.clone()),
-    }
-}
 fn construct_builtin(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
