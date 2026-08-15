@@ -267,6 +267,21 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
             _ => None,
         })
         .unwrap_or("short");
+    if slot_value(slots, "minutes") == Some("numeric")
+        && slot_value(slots, "seconds") == Some("numeric")
+    {
+        let clock = format!("{minutes}:{seconds:02}");
+        let time = if hours == 0 {
+            clock
+        } else {
+            format!("{hours} hr, {clock}")
+        };
+        return if days == 0 {
+            Ok(time)
+        } else {
+            Ok(format!("{days} day, {time}"))
+        };
+    }
     if style == "digital" {
         let subsecond =
             milliseconds.abs() * 1_000_000 + microseconds.abs() * 1_000 + nanoseconds.abs();
