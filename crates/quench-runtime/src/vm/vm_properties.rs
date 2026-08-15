@@ -86,10 +86,7 @@ fn iterator_property(value: &Value, key: &str) -> Value {
     if matches!(
         property,
         Value::Builtin(
-            Builtin::RegExpStringIteratorNext
-                | Builtin::StringIteratorNext
-                | Builtin::SetIteratorNext
-                | Builtin::MapIteratorNext
+            Builtin::RegExpStringIteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext
         )
     ) {
         return property;
@@ -339,9 +336,8 @@ pub(crate) fn get_property_with_receiver(
 /// functions; strict functions keep the receiver as-is.
 fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
     match getter {
-        Value::Function(_) | Value::BoundFunction(_) => {
-            crate::functions::execute_target(getter, receiver, &[])
-        }
+        Value::Function(function) => crate::functions::execute(function, receiver, &[]),
+        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &[]),
         Value::Builtin(builtin) => {
             crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
         }
@@ -351,11 +347,6 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     let property = get_property(value, key);
-    if let Value::Object(properties) = value {
-        if properties.iter().rev().any(|(name, _)| name == key) {
-            return property;
-        }
-    }
     if matches!(value, Value::Builtin(_)) {
         return property;
     }
@@ -384,7 +375,6 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     match property {
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)
-                && !is_iterator_next_builtin(builtin)
                 && crate::intl::tolocale::symbol::name(builtin).is_none() =>
         {
             bind_method(receiver, property)
@@ -392,17 +382,6 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
         other => other,
     }
 }
-
-fn is_iterator_next_builtin(builtin: Builtin) -> bool {
-    matches!(
-        builtin,
-        Builtin::RegExpStringIteratorNext
-            | Builtin::StringIteratorNext
-            | Builtin::SetIteratorNext
-            | Builtin::MapIteratorNext
-    )
-}
-
 /// Accessor getters/setters carry their `this` at invocation time; binding
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
@@ -488,12 +467,6 @@ fn bound_function_property(
     bound: &crate::value::BoundFunctionValue,
     key: &str,
 ) -> Value {
-    let shadow_wrapper = bound
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| name == "\0realm")
-        && !realm::is_intrinsic(bound);
     if let Some((_, value)) = bound
         .properties
         .borrow()
@@ -514,8 +487,6 @@ fn bound_function_property(
         }
     } else if key == "name" && !realm::is_intrinsic(bound) {
         Value::String(String::new())
-    } else if shadow_wrapper {
-        function_prototype_property(key)
     } else {
         let result = get_property(&bound.target, key);
         if !matches!(result, Value::Undefined) {
@@ -538,7 +509,6 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
         RefCell::new(Vec::new())
     };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
         receiver: receiver.clone(),
         arguments: Vec::new(),
@@ -628,7 +598,6 @@ fn promise_property(value: &Value, key: &str) -> Value {
         return crate::builtins::property(Builtin::PromisePrototype, key);
     };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
         receiver: value.clone(),
         arguments: Vec::new(),
@@ -636,25 +605,12 @@ fn promise_property(value: &Value, key: &str) -> Value {
     }))
 }
 fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Value {
-    if let Some(value) = buffer.own_property(key) {
-        return value;
-    }
-    if key == "constructor" && buffer.shared {
-        return Value::Builtin(Builtin::SharedArrayBuffer);
-    }
-    if key == "grow" && buffer.shared {
-        return Value::Builtin(Builtin::SharedArrayBufferGrow);
-    }
-    if key == "slice" && buffer.shared {
-        return Value::Builtin(Builtin::SharedArrayBufferSlice);
-    }
     match key {
         "byteLength" => Value::Number(buffer.byte_length() as f64),
         "maxByteLength" => {
             Value::Number(buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64)
         }
         "resizable" => Value::Boolean(buffer.max_byte_length.is_some()),
-        "growable" => Value::Boolean(buffer.shared && buffer.max_byte_length.is_some()),
         "resize" => Value::Builtin(Builtin::ArrayBufferResize),
         "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),

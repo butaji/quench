@@ -46,7 +46,6 @@ pub(crate) fn execute_special(
             }
             descriptor(target, key)
         }
-        Builtin::ObjectGetOwnPropertyDescriptors => get_own_property_descriptors(arguments),
         Builtin::ObjectGetOwnPropertyNames => object_proxy_names(arguments.first(), false),
         Builtin::ObjectGetOwnPropertySymbols => object_proxy_names(arguments.first(), true),
         Builtin::ObjectKeys => object_keys(arguments.first()),
@@ -59,30 +58,6 @@ pub(crate) fn execute_special(
         Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => legacy_accessor_special(builtin, receiver, arguments),
     }
-}
-
-fn get_own_property_descriptors(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = arguments.first().ok_or_else(|| {
-        crate::value::error::throw_type_error("Object.getOwnPropertyDescriptors requires an object")
-    })?;
-    require_object_coercible(Some(target))?;
-    let names = crate::own_keys::names(Some(target))?;
-    let symbols = crate::own_keys::symbols(Some(target))?;
-    let mut properties = Vec::new();
-    for keys in [names, symbols] {
-        let Value::Array(keys) = keys else { continue };
-        for key in keys.snapshot() {
-            let descriptor = descriptor(Some(target), Some(&key))?;
-            if !matches!(descriptor, Value::Undefined) {
-                if let Value::String(key) = key {
-                    properties.push((key, descriptor));
-                }
-            }
-        }
-    }
-    Ok(Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(properties),
-    )))
 }
 fn legacy_accessor_special(
     builtin: Builtin,
@@ -197,10 +172,6 @@ pub(crate) fn descriptor(
             {
                 let value = crate::execute::get_property(&global, &key);
                 Some(descriptor_object_with_flags(value, true, false, true))
-            } else if is_child_realm_global(&global)
-                && !matches!(key.as_str(), "undefined" | "Infinity" | "NaN")
-            {
-                configurable_global_descriptor(&global, &key)
             } else {
                 object_descriptor(properties, &key)
             }
@@ -215,42 +186,10 @@ pub(crate) fn descriptor(
         Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),
         Value::Function(function) => function_descriptor(function, &key),
         Value::BoundFunction(bound) => bound_descriptor(bound, &key),
-        Value::ArrayBuffer(buffer) => buffer_descriptor(buffer, &key),
         Value::DataView(view) => data_view_descriptor(view, &key),
         _ => None,
     };
     Ok(descriptor.unwrap_or(Value::Undefined))
-}
-
-fn is_child_realm_global(value: &Value) -> bool {
-    crate::vm::is_child_global_object(value)
-        || matches!(value, Value::Object(properties) if properties.iter().any(|(key, _)| key == "\0realm"))
-}
-
-fn configurable_global_descriptor(global: &Value, key: &str) -> Option<Value> {
-    let descriptor = object_descriptor(
-        match global {
-            Value::Object(properties) => properties,
-            _ => return None,
-        },
-        key,
-    )?;
-    let Value::Object(properties) = descriptor else {
-        return None;
-    };
-    let mut properties = properties.properties.clone();
-    if let Some((_, value)) = properties
-        .iter_mut()
-        .find(|(name, _)| name == "configurable")
-    {
-        *value = Value::Boolean(true);
-    }
-    Some(Value::Object(Rc::new(ObjectData::new(properties))))
-}
-fn buffer_descriptor(buffer: &crate::value::ArrayBufferData, key: &str) -> Option<Value> {
-    buffer
-        .own_property(&super::descriptor_key(key))
-        .map(|descriptor| public_descriptor(&descriptor))
 }
 fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Option<Value> {
     if let Some((_, metadata)) = function
@@ -301,18 +240,6 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
         .map(|(_, value)| descriptor_object(value))
 }
 fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value> {
-    if let Some(Value::String(value)) = properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "_value").then_some(value))
-    {
-        if key == "length" {
-            return Some(string_length_descriptor(value));
-        }
-        if let Some(descriptor) = string_descriptor(value, key) {
-            return Some(descriptor);
-        }
-    }
     if let Some((_, metadata)) = properties
         .iter()
         .rev()
@@ -350,15 +277,6 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
         (Builtin::DataViewPrototype, "byteLength") => Builtin::DataViewByteLengthGetter,
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
-        (Builtin::SharedArrayBufferPrototype, "byteLength") => {
-            Builtin::SharedArrayBufferByteLengthGetter
-        }
-        (Builtin::SharedArrayBufferPrototype, "growable") => {
-            Builtin::SharedArrayBufferGrowableGetter
-        }
-        (Builtin::SharedArrayBufferPrototype, "maxByteLength") => {
-            Builtin::SharedArrayBufferMaxByteLengthGetter
-        }
         (Builtin::DisposableStackPrototype, "disposed") => Builtin::DisposableStackDisposed,
         (Builtin::AsyncDisposableStackPrototype, "disposed") => {
             Builtin::AsyncDisposableStackDisposed
@@ -394,31 +312,6 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
-    if builtin == Builtin::FunctionPrototype && matches!(key, "caller" | "arguments") {
-        let thrower = crate::vm::realm_intrinsic(Builtin::ThrowTypeError);
-        return Some(Value::Object(Rc::new(ObjectData::new(vec![
-            ("get".to_string(), thrower.clone()),
-            ("set".to_string(), thrower),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]))));
-    }
-    if builtin == Builtin::ThrowTypeError && key == "length" {
-        return Some(descriptor_object_with_flags(
-            Value::Number(0.0),
-            false,
-            false,
-            false,
-        ));
-    }
-    if builtin == Builtin::ThrowTypeError && key == "name" {
-        return Some(descriptor_object_with_flags(
-            Value::String(String::new()),
-            false,
-            false,
-            false,
-        ));
-    }
     if builtin == Builtin::Object && key == "hasOwn" {
         return Some(descriptor_object_with_flags(
             Value::Builtin(Builtin::ObjectHasOwn),
@@ -492,20 +385,8 @@ fn accessor_descriptor_with_setter(getter: Builtin, setter: Option<Builtin>) -> 
 include!("object_property_flags.rs");
 include!("object_array_descriptor.rs");
 fn string_descriptor(value: &str, key: &str) -> Option<Value> {
-    if key == "length" {
-        return Some(string_length_descriptor(value));
-    }
     crate::strings::char_at_utf16(value, key.parse::<usize>().ok()?)
         .map(|character| descriptor_object_with_flags(Value::String(character), false, true, false))
-}
-
-fn string_length_descriptor(value: &str) -> Value {
-    descriptor_object_with_flags(
-        Value::Number(crate::strings::utf16_len(value) as f64),
-        false,
-        false,
-        false,
-    )
 }
 fn descriptor_object(value: &Value) -> Value {
     descriptor_object_with_flags(public_value(value), true, true, true)
