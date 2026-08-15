@@ -10,36 +10,7 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let mut style = "long".to_string();
-    let mut list_type = "conjunction".to_string();
-    if let Some(options) = arguments.get(1) {
-        if matches!(options, Value::Null) {
-            return Err(crate::value::error::throw_type_error(
-                "Cannot convert null or undefined to object",
-            ));
-        }
-        let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
-        if !matches!(matcher, Value::Undefined) {
-            let matcher = crate::conversion::to_string(&matcher)?;
-            if !matches!(matcher.as_str(), "lookup" | "best fit") {
-                return Err(runtime_error("RangeError: invalid localeMatcher"));
-            }
-        }
-        let type_value = crate::execute::get_property_result(options, "type")?;
-        if !matches!(type_value, Value::Undefined) {
-            list_type = crate::conversion::to_string(&type_value)?;
-        }
-        let style_value = crate::execute::get_property_result(options, "style")?;
-        if !matches!(style_value, Value::Undefined) {
-            style = crate::conversion::to_string(&style_value)?;
-        }
-    }
-    if !matches!(style.as_str(), "long" | "short" | "narrow") {
-        return Err(runtime_error("RangeError: invalid style"));
-    }
-    if !matches!(list_type.as_str(), "conjunction" | "disjunction" | "unit") {
-        return Err(runtime_error("RangeError: invalid type"));
-    }
+    let (style, list_type) = list_options(arguments.get(1))?;
     Ok(make_object(vec![
         (
             "format".to_string(),
@@ -62,6 +33,53 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ]),
         ),
     ]))
+}
+
+fn list_options(options: Option<&Value>) -> Result<(String, String), VmError> {
+    let mut style = "long".to_string();
+    let mut list_type = "conjunction".to_string();
+    let Some(options) = options else {
+        return Ok((style, list_type));
+    };
+    if matches!(options, Value::Null) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert null or undefined to object",
+        ));
+    }
+    validate_matcher(options)?;
+    let type_value = crate::execute::get_property_result(options, "type")?;
+    if !matches!(type_value, Value::Undefined) {
+        list_type = crate::conversion::to_string(&type_value)?;
+    }
+    let style_value = crate::execute::get_property_result(options, "style")?;
+    if !matches!(style_value, Value::Undefined) {
+        style = crate::conversion::to_string(&style_value)?;
+    }
+    validate_list_options(&style, &list_type)?;
+    Ok((style, list_type))
+}
+
+fn validate_matcher(options: &Value) -> Result<(), VmError> {
+    let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
+    if matches!(matcher, Value::Undefined) {
+        return Ok(());
+    }
+    let matcher = crate::conversion::to_string(&matcher)?;
+    if matches!(matcher.as_str(), "lookup" | "best fit") {
+        Ok(())
+    } else {
+        Err(runtime_error("RangeError: invalid localeMatcher"))
+    }
+}
+
+fn validate_list_options(style: &str, list_type: &str) -> Result<(), VmError> {
+    if !matches!(style, "long" | "short" | "narrow") {
+        return Err(runtime_error("RangeError: invalid style"));
+    }
+    if !matches!(list_type, "conjunction" | "disjunction" | "unit") {
+        return Err(runtime_error("RangeError: invalid type"));
+    }
+    Ok(())
 }
 
 pub(crate) fn prototype_method(
