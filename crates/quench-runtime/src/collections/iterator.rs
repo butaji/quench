@@ -48,11 +48,7 @@ pub(crate) fn zip(arguments: &[Value]) -> Result<Value, crate::execute::VmError>
     let inputs = arguments.first().cloned().unwrap_or(Value::Undefined);
     let options = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     let mode = zip_mode(&options)?;
-    let values = collect_iterable(inputs)?;
-    let iterators = values
-        .into_iter()
-        .map(|value| from(std::slice::from_ref(&value)))
-        .collect::<Result<Vec<_>, _>>()?;
+    let iterators = collect_zip_iterators(inputs)?;
     Ok(Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Zip {
             iterators,
@@ -60,6 +56,70 @@ pub(crate) fn zip(arguments: &[Value]) -> Result<Value, crate::execute::VmError>
             done: false,
         }),
     })))
+}
+
+fn collect_zip_iterators(inputs: Value) -> Result<Vec<Value>, crate::execute::VmError> {
+    let outer = open(inputs)?;
+    let mut iterators = Vec::new();
+    loop {
+        match step_value(&outer) {
+            Ok(Some(value)) => match zip_flattenable(value) {
+                Ok(iterator) => iterators.push(iterator),
+                Err(error) => return Err(close_zip_inputs(outer, iterators, error)),
+            },
+            Ok(None) => return Ok(iterators),
+            Err(error) => return Err(close_zip_iterators(iterators, error)),
+        }
+    }
+}
+
+fn zip_flattenable(value: Value) -> Result<Value, crate::execute::VmError> {
+    if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.zip rejects string iterables",
+        ));
+    }
+    from(std::slice::from_ref(&value))
+}
+
+fn close_zip_inputs(
+    outer: Value,
+    iterators: Vec<Value>,
+    error: crate::execute::VmError,
+) -> crate::execute::VmError {
+    let completion = match crate::completion::Completion::from_vm_error(error.clone()) {
+        Ok(completion) => completion,
+        Err(_) => return error,
+    };
+    let completion = match close_iterators(iterators, completion) {
+        Ok(completion) => completion,
+        Err(error) => return error,
+    };
+    match close(outer, completion) {
+        Ok(completion) => match completion.into_vm_error() {
+            Err(error) => error,
+            Ok(_) => error,
+        },
+        Err(error) => error,
+    }
+}
+
+fn close_zip_iterators(
+    iterators: Vec<Value>,
+    error: crate::execute::VmError,
+) -> crate::execute::VmError {
+    let completion = match crate::completion::Completion::from_vm_error(error.clone()) {
+        Ok(completion) => completion,
+        Err(_) => return error,
+    };
+    let completion = match close_iterators(iterators, completion) {
+        Ok(completion) => completion,
+        Err(error) => return error,
+    };
+    match completion.into_vm_error() {
+        Err(error) => error,
+        Ok(_) => error,
+    }
 }
 
 fn zip_mode(options: &Value) -> Result<u8, crate::execute::VmError> {
