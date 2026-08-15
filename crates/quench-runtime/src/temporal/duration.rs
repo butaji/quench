@@ -148,9 +148,12 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         return construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>());
     }
     if smallest == "days" {
-        let total = object_number(object, "days")
-            + object_number(object, "hours") / 24.0
-            + object_number(object, "minutes") / 1_440.0;
+        let day_hours = relative_day_hours(relative_to.as_ref());
+        let total_hours = object_number(object, "days") * day_hours
+            + object_number(object, "hours")
+            + object_number(object, "minutes") / 60.0
+            + relative_skipped_hours(relative_to.as_ref());
+        let total = total_hours / day_hours;
         let days = round_duration(total / increment, &rounding_mode) * increment;
         let mut values = [0.0; 10];
         values[3] = days;
