@@ -19,3 +19,21 @@ pub(super) fn resolve(constructor: &Value, arguments: &[Value]) -> Result<Value,
     }
     Ok(result)
 }
+
+pub(super) fn reject(constructor: &Value, arguments: &[Value]) -> Result<Value, VmError> {
+    let target = Rc::new(crate::value::PromiseData::default());
+    let executor = super::bound_settler(Builtin::PromiseResolve, &target);
+    let result = crate::construct::construct_value(constructor, &[executor])?;
+    let Value::Promise(promise) = &result else {
+        return Ok(result);
+    };
+    super::reject_promise(
+        promise,
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+    );
+    let prototype = crate::execute::get_property_result(constructor, "prototype")?;
+    if crate::value::is_object(&prototype) {
+        promise.set_prototype(prototype);
+    }
+    Ok(result)
+}
