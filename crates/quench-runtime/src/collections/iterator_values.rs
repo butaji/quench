@@ -123,7 +123,9 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
     if key == "next" {
         return next_for(value);
     }
-    if key == "return" && matches!(value, Value::Iterator(data) if matches!(&*data.state.borrow(), IteratorState::Protocol { .. })) {
+    if key == "return"
+        && matches!(value, Value::Iterator(data) if matches!(&*data.state.borrow(), IteratorState::Protocol { .. } | IteratorState::Mapped { .. }))
+    {
         return Value::Builtin(crate::ops::Builtin::IteratorReturn);
     }
     if key != "Symbol.toStringTag" {
