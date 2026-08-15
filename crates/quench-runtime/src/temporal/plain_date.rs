@@ -412,6 +412,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if text.contains('−') {
         return Err(crate::value::error::throw_range_error("Invalid ISO time"));
     }
+    if text.starts_with("-000000") {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
     if let Some(calendar) = text
         .split('[')
         .skip(1)
@@ -479,6 +482,19 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                     return Err(crate::value::error::throw_range_error("Too many decimals"));
                 }
             }
+        }
+        if time
+            .as_bytes()
+            .get(2)
+            .is_some_and(|value| *value == b'.' || *value == b',')
+            || time
+                .as_bytes()
+                .get(5)
+                .is_some_and(|value| *value == b'.' || *value == b',')
+        {
+            return Err(crate::value::error::throw_range_error(
+                "Fractional time unit",
+            ));
         }
         if !time.contains('[')
             && time
