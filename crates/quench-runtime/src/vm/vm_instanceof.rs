@@ -117,9 +117,7 @@ pub(crate) fn function_has_instance(
 ) -> Result<Value, VmError> {
     let constructor = receiver.unwrap_or(&Value::Undefined);
     if !instanceof_callable(constructor) {
-        return Err(type_error(
-            "Function.prototype[@@hasInstance] called on non-callable",
-        ));
+        return Ok(Value::Boolean(false));
     }
     let value = arguments.first().unwrap_or(&Value::Undefined);
     Ok(Value::Boolean(ordinary_instanceof(value, constructor)?))
