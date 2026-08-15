@@ -40,7 +40,9 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::TemporalPlainTimeFrom => Some(from(arguments.first())),
+        crate::ops::Builtin::TemporalPlainTimeFrom => {
+            Some(from(arguments.first(), arguments.get(1)))
+        }
         crate::ops::Builtin::TemporalPlainTimeCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalPlainTimeHourGetter
         | crate::ops::Builtin::TemporalPlainTimeMinuteGetter
@@ -117,7 +119,7 @@ fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     )))
 }
 
-fn from(value: Option<&Value>) -> Result<Value, VmError> {
+fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let Some(value) = value else {
         return Err(crate::value::error::throw_type_error("Invalid time"));
     };
@@ -141,7 +143,24 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     if values.iter().all(|value| matches!(value, Value::Undefined)) {
         return Err(crate::value::error::throw_type_error("Missing hour"));
     }
+    let mut values = values;
+    if let Value::Number(second) = values[2] {
+        if second == 60.0 {
+            if overflow_reject(options) {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid leap second",
+                ));
+            }
+            values[2] = Value::Number(59.0);
+        }
+    }
     construct(&values)
+}
+
+fn overflow_reject(options: Option<&Value>) -> bool {
+    options
+        .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
+        .is_some_and(|value| matches!(value, Value::String(value) if value == "reject"))
 }
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
@@ -274,6 +293,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
                 },
             )
     });
+    let second = if second == 60.0 { 59.0 } else { second };
     construct(&[
         Value::Number(hour),
         Value::Number(minute),
@@ -285,8 +305,8 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
-    let left = from(arguments.first())?;
-    let right = from(arguments.get(1))?;
+    let left = from(arguments.first(), None)?;
+    let right = from(arguments.get(1), None)?;
     let left = time_fields(&left)?;
     let right = time_fields(&right)?;
     Ok(Value::Number((left.cmp(&right) as i8) as f64))
@@ -296,7 +316,7 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
     let left = time_fields(receiver)?;
-    let right = time_fields(&from(other)?)?;
+    let right = time_fields(&from(other, None)?)?;
     Ok(Value::Boolean(left == right))
 }
 
@@ -464,7 +484,7 @@ fn difference(
 ) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
-    let delta = (time_fields(&from(other)?)? - time_fields(receiver)?) * direction;
+    let delta = (time_fields(&from(other, None)?)? - time_fields(receiver)?) * direction;
     let hours = delta / 3_600_000_000_000;
     let remainder = delta % 3_600_000_000_000;
     let minutes = remainder / 60_000_000_000;
