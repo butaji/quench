@@ -218,6 +218,22 @@ fn namespace_import_reads_live_export_cells() {
 }
 
 #[test]
+fn deferred_self_namespace_is_linked_before_evaluation() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import defer * as ns from './entry.js'; export default ns;".to_string(),
+    );
+    let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+    let namespace = linked
+        .units
+        .get(&entry)
+        .and_then(|unit| unit.deferred_namespace.borrow().clone())
+        .expect("deferred namespace cell");
+    assert!(matches!(namespace.get(), Value::Object(_)));
+}
+
+#[test]
 fn async_module_drains_promise_jobs_before_resuming() {
     let module = LinkedModule::compile(
         "export let value = 'synchronous'; Promise.resolve().then(() => value = 'tick'); await 1;",
