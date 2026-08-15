@@ -297,10 +297,6 @@ fn slot_base(number: &NumberOptions) -> Vec<(String, Value)> {
             Value::String(number.notation.clone()),
         ),
         (
-            "compactDisplay".to_string(),
-            Value::String(number.compact_display.clone()),
-        ),
-        (
             "signDisplay".to_string(),
             Value::String(number.sign_display.clone()),
         ),
@@ -317,6 +313,12 @@ fn slot_base(number: &NumberOptions) -> Vec<(String, Value)> {
             Value::Number(number.rounding_increment as f64),
         ),
     ]);
+    if number.notation == "compact" {
+        properties.push((
+            "compactDisplay".to_string(),
+            Value::String(number.compact_display.clone()),
+        ));
+    }
     properties
 }
 
