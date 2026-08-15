@@ -48,12 +48,7 @@ fn prototype_for_value(value: &Value) -> Value {
 fn prototype_for_value_tail(value: &Value) -> Value {
     match value {
         Value::Function(function) => {
-            let fallback = if function.is_async {
-                Builtin::AsyncFunctionPrototype
-            } else {
-                Builtin::FunctionPrototype
-            };
-            internal_prototype(&function.properties.borrow(), fallback)
+            internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
         }
         Value::Builtin(_) | Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
@@ -361,7 +356,6 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
-            | Builtin::AsyncFunctionPrototype
             | Builtin::ShadowRealmPrototype
     )
 }
