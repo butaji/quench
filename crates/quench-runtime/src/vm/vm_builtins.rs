@@ -52,14 +52,9 @@ fn with_receiver_realm(
 ) -> Option<Result<Value, VmError>> {
     let receiver = receiver?;
     match receiver {
-        Value::BoundFunction(bound) => {
-            let Value::HostCapability(capability) = &bound.receiver else {
-                return None;
-            };
-            crate::vm::with_realm(capability.realm(), || {
-                execute_function_apply_in_realm(Some(receiver), arguments)
-            })
-        }
+        Value::BoundFunction(bound) => crate::vm::with_realm(bound.realm, || {
+            execute_function_apply_in_realm(Some(receiver), arguments)
+        }),
         Value::Function(function) => {
             crate::vm::with_global_realm(&function.captures.get(0), || {
                 execute_function_apply_in_realm(Some(receiver), arguments)
