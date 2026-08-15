@@ -378,6 +378,10 @@ fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     ))
 }
 
+pub(crate) fn match_all_for_string(receiver: &Value, input: &str) -> Result<Value, VmError> {
+    symbol_match_all(Some(receiver), &[Value::String(input.to_string())])
+}
+
 pub(crate) fn iterator_step(
     regexp: &mut Value,
     input: &str,

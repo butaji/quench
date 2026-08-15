@@ -39,6 +39,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringSearch => Some("String.prototype.search"),
         Builtin::StringLocaleCompare => Some("String.prototype.localeCompare"),
         Builtin::StringMatch => Some("String.prototype.match"),
+        Builtin::StringMatchAll => Some("String.prototype.matchAll"),
         Builtin::StringToLocaleLowerCase => Some("String.prototype.toLocaleLowerCase"),
         Builtin::StringToLocaleUpperCase => Some("String.prototype.toLocaleUpperCase"),
         _ => None,
@@ -72,7 +73,10 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringCodePointAt => Some(1.0),
         Builtin::StringAt => Some(1.0),
         Builtin::StringCharAt | Builtin::StringCharCodeAt => Some(1.0),
-        Builtin::StringSearch | Builtin::StringLocaleCompare | Builtin::StringMatch => Some(1.0),
+        Builtin::StringSearch
+        | Builtin::StringLocaleCompare
+        | Builtin::StringMatch
+        | Builtin::StringMatchAll => Some(1.0),
         Builtin::StringConcat => Some(1.0),
         Builtin::StringSlice | Builtin::StringSubstring => Some(2.0),
         Builtin::StringSplit => Some(2.0),
@@ -118,6 +122,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringSearch => Some("search"),
         Builtin::StringLocaleCompare => Some("localeCompare"),
         Builtin::StringMatch => Some("match"),
+        Builtin::StringMatchAll => Some("matchAll"),
         Builtin::StringToLocaleLowerCase => Some("toLocaleLowerCase"),
         Builtin::StringToLocaleUpperCase => Some("toLocaleUpperCase"),
         _ => None,
