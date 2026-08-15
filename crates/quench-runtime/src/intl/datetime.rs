@@ -79,8 +79,10 @@ impl DateTimeOptions {
             hour12: None,
         };
         if let Some(Value::Object(properties)) = options {
-            for (key, value) in properties.iter() {
-                formatter.apply(key, value)?;
+            let object = Value::Object(properties.clone());
+            for (key, _) in properties.iter() {
+                let value = crate::execute::get_property_result(&object, key)?;
+                formatter.apply(key, &value)?;
             }
         }
         formatter.apply_defaults();
