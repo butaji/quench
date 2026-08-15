@@ -160,7 +160,10 @@ impl RawOptions {
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let locale = locales
+        .first()
+        .map(|locale| strip_unicode_extensions(locale))
+        .unwrap_or_else(default_locale);
     let options = NumberOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
 }
@@ -170,9 +173,18 @@ pub(crate) fn format_with_options(
     locales: &[String],
     options: Option<&Value>,
 ) -> Result<String, VmError> {
-    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let locale = locales
+        .first()
+        .map(|locale| strip_unicode_extensions(locale))
+        .unwrap_or_else(default_locale);
     let options = NumberOptions::from_options(locale, options)?;
     Ok(options.format_number(number))
+}
+
+fn strip_unicode_extensions(locale: &str) -> String {
+    locale
+        .split_once("-u-")
+        .map_or_else(|| locale.to_string(), |(base, _)| base.to_string())
 }
 
 impl NumberOptions {
