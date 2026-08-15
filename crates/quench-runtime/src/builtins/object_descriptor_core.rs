@@ -64,6 +64,22 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
         return Some(public_descriptor(metadata));
     }
     if function.target == Value::Builtin(Builtin::AbstractModuleSource) {
+        if matches!(key, "length" | "name") {
+            return Some(descriptor_object_with_flags(
+                crate::builtins::property(Builtin::AbstractModuleSource, key),
+                false,
+                false,
+                true,
+            ));
+        }
+        if key == "prototype" {
+            return Some(descriptor_object_with_flags(
+                crate::builtins::property(Builtin::AbstractModuleSource, key),
+                false,
+                false,
+                false,
+            ));
+        }
         return builtin_descriptor(Builtin::AbstractModuleSource, key);
     }
     function
