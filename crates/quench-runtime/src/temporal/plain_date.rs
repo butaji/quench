@@ -439,6 +439,16 @@ fn day_of_year(year: f64, month: f64, day: f64) -> f64 {
         .sum::<f64>()
         + day
 }
+
+fn day_of_year_for_calendar(year: f64, month: f64, day: f64, calendar: &str) -> f64 {
+    if calendar != "hebrew" {
+        return day_of_year(year, month, day);
+    }
+    (1..month as i32)
+        .map(|value| days_in_month_for_calendar(year, value as f64, calendar).unwrap_or(0.0))
+        .sum::<f64>()
+        + day
+}
 fn day_of_week(year: f64, month: f64, day: f64) -> f64 {
     let mut y = year as i64;
     let m = month as i64;
@@ -447,7 +457,7 @@ fn day_of_week(year: f64, month: f64, day: f64) -> f64 {
     }
     let value = (y + y / 4 - y / 100
         + y / 400
-        + [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4][m as usize - 1]
+        + [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4][(m as usize - 1) % 12]
         + day as i64)
         % 7;
     let weekday = (value + 7) % 7;
@@ -964,7 +974,7 @@ fn date_object_with_calendar(year: f64, month: f64, day: f64, calendar: &str) ->
         ),
         (
             "dayOfYear".into(),
-            Value::Number(day_of_year(year, month, day)),
+            Value::Number(day_of_year_for_calendar(year, month, day, calendar)),
         ),
         (
             "daysInMonth".into(),
@@ -973,9 +983,22 @@ fn date_object_with_calendar(year: f64, month: f64, day: f64, calendar: &str) ->
         ("daysInWeek".into(), Value::Number(7.0)),
         (
             "daysInYear".into(),
-            Value::Number(if leap(year) { 366.0 } else { 365.0 }),
+            Value::Number(if calendar == "hebrew" {
+                hebrew_year_length(year) as f64
+            } else if leap(year) {
+                366.0
+            } else {
+                365.0
+            }),
         ),
-        ("inLeapYear".into(), Value::Boolean(leap(year))),
+        (
+            "inLeapYear".into(),
+            Value::Boolean(if calendar == "hebrew" {
+                is_hebrew_leap_year(year)
+            } else {
+                leap(year)
+            }),
+        ),
         (
             "monthsInYear".into(),
             Value::Number(if calendar == "hebrew" && is_hebrew_leap_year(year) {
