@@ -41,8 +41,30 @@ pub(crate) fn execute(
     match builtin {
         crate::ops::Builtin::TemporalPlainTimeFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalPlainTimeCompare => Some(compare(arguments)),
+        crate::ops::Builtin::TemporalPlainTimeHourGetter
+        | crate::ops::Builtin::TemporalPlainTimeMinuteGetter
+        | crate::ops::Builtin::TemporalPlainTimeSecondGetter
+        | crate::ops::Builtin::TemporalPlainTimeMillisecondGetter
+        | crate::ops::Builtin::TemporalPlainTimeMicrosecondGetter
+        | crate::ops::Builtin::TemporalPlainTimeNanosecondGetter => {
+            Some(accessor(builtin, _receiver))
+        }
         _ => None,
     }
+}
+
+fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
+    let names = match builtin {
+        crate::ops::Builtin::TemporalPlainTimeHourGetter => "hour",
+        crate::ops::Builtin::TemporalPlainTimeMinuteGetter => "minute",
+        crate::ops::Builtin::TemporalPlainTimeSecondGetter => "second",
+        crate::ops::Builtin::TemporalPlainTimeMillisecondGetter => "millisecond",
+        crate::ops::Builtin::TemporalPlainTimeMicrosecondGetter => "microsecond",
+        _ => "nanosecond",
+    };
+    crate::execute::get_property_result(receiver, names)
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
