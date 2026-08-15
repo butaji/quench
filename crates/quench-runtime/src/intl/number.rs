@@ -11,6 +11,7 @@ use super::{
 
 pub(crate) struct NumberOptions {
     pub locale: String,
+    pub numbering_system: String,
     pub style: String,
     pub currency: Option<String>,
     pub currency_display: String,
@@ -34,6 +35,7 @@ pub(crate) struct NumberOptions {
 
 pub(crate) struct RawOptions {
     style: String,
+    numbering_system: String,
     currency: Option<String>,
     currency_display: String,
     currency_sign: String,
@@ -58,6 +60,7 @@ impl RawOptions {
     fn from_value(options: Option<&Value>) -> Self {
         let mut raw = RawOptions {
             style: "decimal".to_string(),
+            numbering_system: "latn".to_string(),
             currency: None,
             currency_display: "symbol".to_string(),
             currency_sign: "standard".to_string(),
@@ -83,6 +86,9 @@ impl RawOptions {
                     crate::conversion::to_string(value).unwrap_or_else(|_| to_string_value(value));
                 match key.as_str() {
                     "style" => raw.style = value,
+                    "numberingSystem" if super::NUMBERING_SYSTEMS.contains(&value.as_str()) => {
+                        raw.numbering_system = value;
+                    }
                     "currency" => raw.currency = Some(value.to_ascii_uppercase()),
                     "currencyDisplay" => raw.currency_display = value,
                     "currencySign" => raw.currency_sign = value,
@@ -170,6 +176,7 @@ impl NumberOptions {
         }
         Ok(NumberOptions {
             locale,
+            numbering_system: raw.numbering_system,
             style: raw.style,
             currency: raw.currency,
             currency_display: raw.currency_display,
@@ -223,6 +230,10 @@ impl NumberOptions {
     fn slot(&self) -> Value {
         let mut properties = vec![
             ("locale".to_string(), Value::String(self.locale.clone())),
+            (
+                "numberingSystem".to_string(),
+                Value::String(self.numbering_system.clone()),
+            ),
             ("style".to_string(), Value::String(self.style.clone())),
             ("useGrouping".to_string(), Value::Boolean(self.use_grouping)),
             (
@@ -440,6 +451,8 @@ impl NumberOptions {
     fn from_slots(slots: &[(String, Value)]) -> Result<Self, VmError> {
         Ok(NumberOptions {
             locale: slot_string(slots, "locale").unwrap_or_else(default_locale),
+            numbering_system: slot_string(slots, "numberingSystem")
+                .unwrap_or_else(|| "latn".to_string()),
             style: slot_string(slots, "style").unwrap_or_else(|| "decimal".to_string()),
             currency: slot_string(slots, "currency"),
             currency_display: slot_string(slots, "currencyDisplay")
@@ -751,7 +764,7 @@ impl NumberOptions {
             ("locale".to_string(), Value::String(self.locale.clone())),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(self.numbering_system.clone()),
             ),
             ("style".to_string(), Value::String(self.style.clone())),
             ("useGrouping".to_string(), Value::Boolean(self.use_grouping)),
