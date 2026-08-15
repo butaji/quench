@@ -67,7 +67,7 @@ fn execute_iterator_next(
         IteratorNext => iterator::next(receiver),
         SetIteratorNext => iterator::next_set(receiver),
         MapIteratorNext => iterator::next_map(receiver),
-        IteratorSelf => iterator_self(receiver),
+        IteratorSelf | AsyncIteratorSelf => iterator_self(receiver),
         _ => return None,
     })
 }
