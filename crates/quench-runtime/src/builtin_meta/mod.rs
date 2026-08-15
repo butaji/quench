@@ -40,6 +40,17 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::Array => Some("Array"),
         Builtin::Iterator => Some("Iterator"),
         Builtin::ArrayBuffer => Some("ArrayBuffer"),
+        Builtin::Float64Array => Some("Float64Array"),
+        Builtin::Float32Array => Some("Float32Array"),
+        Builtin::Int8Array => Some("Int8Array"),
+        Builtin::Int16Array => Some("Int16Array"),
+        Builtin::Int32Array => Some("Int32Array"),
+        Builtin::Uint8Array => Some("Uint8Array"),
+        Builtin::Uint16Array => Some("Uint16Array"),
+        Builtin::Uint32Array => Some("Uint32Array"),
+        Builtin::Uint8ClampedArray => Some("Uint8ClampedArray"),
+        Builtin::BigInt64Array => Some("BigInt64Array"),
+        Builtin::BigUint64Array => Some("BigUint64Array"),
         Builtin::Boolean => Some("Boolean"),
         Builtin::BigInt => Some("BigInt"),
         Builtin::DataView => Some("DataView"),
@@ -116,7 +127,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::AsyncDisposableStack => Some(Builtin::AsyncDisposableStackPrototype),
         Builtin::FinalizationRegistry => Some(Builtin::FinalizationRegistryPrototype),
         Builtin::Function => Some(Builtin::FunctionPrototype),
-        Builtin::AsyncFunction => Some(Builtin::FunctionPrototype),
+        Builtin::AsyncFunction => Some(Builtin::AsyncFunctionPrototype),
         Builtin::GeneratorFunction => Some(Builtin::GeneratorFunctionPrototype),
         Builtin::AsyncGeneratorFunction => Some(Builtin::AsyncGeneratorFunctionPrototype),
         Builtin::Number => Some(Builtin::ObjectPrototype),
@@ -187,8 +198,11 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::DataViewPrototype
             | Builtin::ArrayPrototype
             | Builtin::FunctionPrototype
+            | Builtin::AsyncFunctionPrototype
             | Builtin::GeneratorFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype
+            | Builtin::GeneratorPrototype
+            | Builtin::AsyncGeneratorPrototype
             | Builtin::DatePrototype
             | Builtin::DisposableStackPrototype
             | Builtin::AsyncDisposableStackPrototype
@@ -246,6 +260,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::Array => Some(1.0),
         Builtin::Iterator => Some(0.0),
         Builtin::ArrayBuffer => Some(1.0),
+        Builtin::ArrayBufferIsView => Some(1.0),
         Builtin::Boolean => Some(1.0),
         Builtin::BigInt => Some(1.0),
         Builtin::DataView => Some(1.0),
@@ -271,8 +286,8 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         | Builtin::ReferenceError
         | Builtin::SyntaxError
         | Builtin::EvalError
-        | Builtin::URIError
-        | Builtin::AggregateError => Some(1.0),
+        | Builtin::URIError => Some(1.0),
+        Builtin::AggregateError => Some(2.0),
         Builtin::SuppressedError => Some(3.0),
         _ => None,
     }
