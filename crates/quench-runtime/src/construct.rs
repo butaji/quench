@@ -527,12 +527,8 @@ fn construct_error(
         _ => "Error",
     };
 
-    let message = arguments
-        .first()
-        .map_or(Ok(String::new()), crate::conversion::to_string)?;
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), Value::String(message)),
         (
             crate::builtins::ERROR_SLOT.to_string(),
             Value::Boolean(true),
@@ -545,6 +541,14 @@ fn construct_error(
             ),
         ),
     ];
+    if let Some(message) = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(crate::conversion::to_string)
+        .transpose()?
+    {
+        properties.push(("message".to_string(), Value::String(message)));
+    }
 
     if let Some(cause_source) = arguments
         .get(1)
