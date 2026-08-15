@@ -223,48 +223,16 @@ pub(crate) fn get_property_with_receiver(
             "Cannot read property `{key}` of null or undefined"
         )));
     }
+    if let Some(id) = consume_deferred_namespace_marker(value, key) {
+        crate::vm::execute_deferred_module(id)?;
+        return get_property_with_receiver(value, key, receiver);
+    }
     if crate::builtins::namespace_uninitialized(value, key) {
         return Err(crate::value::error::throw_reference_error(
             "Cannot access an uninitialized module binding",
         ));
     }
-    if matches!(value, Value::Proxy(_)) {
-        return crate::proxy::proxy_get(value, key, Some(receiver));
-    }
-    if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
-        return Err(crate::value::error::throw_type_error(
-            "'callee' is unavailable on strict arguments",
-        ));
-    }
-    if has_restricted_function_property(value, key) {
-        return Err(crate::value::error::throw_type_error(
-            "'caller' and 'arguments' are unavailable on this function",
-        ));
-    }
-    if let Some(getter) = array_accessor(value, key, "get") {
-        if matches!(getter, Value::Undefined) {
-            return Ok(Value::Undefined);
-        }
-        return invoke_accessor(&getter, receiver);
-    }
-    if let Value::Array(values) = value {
-        let has_own = key == "length"
-            || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
-            || values.descriptor(key).is_some()
-            || values.property(key).is_some();
-        if !has_own {
-            if let Some(getter) = crate::arrays::prototype_override_getter(key) {
-                if matches!(getter, Value::Undefined) {
-                    return Ok(Value::Undefined);
-                }
-                return invoke_accessor(&getter, receiver);
-            }
-        }
-    }
-    if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
-        return result;
-    }
-    if let Some(result) = data_view_instance_accessor(value, key) {
+    if let Some(result) = special_property(value, key, receiver) {
         return result;
     }
     if let Ok(descriptor) =
@@ -297,6 +265,97 @@ pub(crate) fn get_property_with_receiver(
     invoke_accessor(&getter, receiver)
 }
 
+fn special_property(value: &Value, key: &str, receiver: &Value) -> Option<Result<Value, VmError>> {
+    if matches!(value, Value::Proxy(_)) {
+        return Some(crate::proxy::proxy_get(value, key, Some(receiver)));
+    }
+    if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
+        return Some(Err(crate::value::error::throw_type_error(
+            "'callee' is unavailable on strict arguments",
+        )));
+    }
+    if has_restricted_function_property(value, key) {
+        return Some(Err(crate::value::error::throw_type_error(
+            "'caller' and 'arguments' are unavailable on this function",
+        )));
+    }
+    if let Some(getter) = array_accessor(value, key, "get") {
+        return Some(accessor_result(&getter, receiver));
+    }
+    if let Some(getter) = array_prototype_getter(value, key) {
+        return Some(accessor_result(&getter, receiver));
+    }
+    crate::disposable_stack::accessor(value, key, receiver)
+        .or_else(|| data_view_instance_accessor(value, key))
+}
+
+fn accessor_result(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
+    if matches!(getter, Value::Undefined) {
+        Ok(Value::Undefined)
+    } else {
+        invoke_accessor(getter, receiver)
+    }
+}
+
+fn array_prototype_getter(value: &Value, key: &str) -> Option<Value> {
+    let Value::Array(values) = value else { return None };
+    let has_own = key == "length"
+        || crate::arrays::array_index(key)
+            .is_some_and(|index| values.has_index(index as usize))
+        || values.descriptor(key).is_some()
+        || values.property(key).is_some();
+    (!has_own).then(|| crate::arrays::prototype_override_getter(key)).flatten()
+}
+
+pub(crate) fn consume_deferred_namespace_marker(value: &Value, key: &str) -> Option<u32> {
+    if key == "then"
+        || key == "Symbol.toStringTag"
+        || crate::conversion::is_symbol_string(key)
+    {
+        return None;
+    }
+    if let Value::BindingCell(cell) = value {
+        return consume_deferred_namespace_marker(&cell.borrow(), key);
+    }
+    if let Value::ObjectAlias(alias) = value {
+        let object = alias.0.borrow().upgrade().map(Value::Object)?;
+        return consume_deferred_namespace_marker(&object, key);
+    }
+    let Value::Object(properties) = value else { return None };
+    let marker = format!("\0quench:deferred:\0{key}");
+    let id = properties.iter().rev().find_map(|(name, value)| {
+        if name == "\0quench:deferred-module" {
+            return deferred_marker_id(value);
+        }
+        if name != &marker {
+            return None;
+        }
+        deferred_marker_id(value)
+    })?;
+    Some(id)
+}
+
+fn deferred_marker_id(value: &Value) -> Option<u32> {
+    let Value::BindingCell(cell) = value else {
+        return None;
+    };
+    let Value::Number(id) = cell.borrow().clone() else {
+        return None;
+    };
+    Some(id as u32)
+}
+
+pub(crate) fn deferred_namespace_operation(value: &Value) -> Option<u32> {
+    let Value::Object(properties) = value else {
+        return None;
+    };
+    let key = properties.iter().find_map(|(name, _)| {
+        name.strip_prefix("\0quench:deferred:\0")
+            .map(str::to_string)
+    })?;
+    consume_deferred_namespace_marker(value, &key)
+}
+
 /// Invoke a getter using the receiver as `this`. The getter's own
 /// `OrdinaryCallEvaluate` semantics handle ToObject coercion for sloppy
 /// functions; strict functions keep the receiver as-is.
@@ -317,9 +376,6 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
         return property;
     }
     if matches!(value, Value::Object(_)) && crate::vm::is_global_object(value) {
-        return property;
-    }
-    if matches!(value, Value::HostCapability(_)) && key == "AbstractModuleSource" {
         return property;
     }
     if matches!(
@@ -383,30 +439,7 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         .find_map(|(name, value)| (name == field).then(|| value.clone()))
 }
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
-    if let Value::HostCapability(value) = value {
-        if let Some(property) = value.property(key) {
-            return property;
-        }
-    }
-    if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "agent" {
-        let Value::HostCapability(parent) = value else {
-            return Value::Undefined;
-        };
-        return Value::HostCapability(Rc::new(parent.child(HostCapabilityRef {
-            realm: capability.realm,
-            kind: crate::ops::HostCapabilityKind::Agent,
-        })));
-    }
-    if capability.kind == crate::ops::HostCapabilityKind::Agent && key == "timeouts" {
-        return Value::object(vec![
-            ("yield".into(), Value::Number(1.0)),
-            ("small".into(), Value::Number(100.0)),
-            ("long".into(), Value::Number(1_000.0)),
-            ("huge".into(), Value::Number(10_000.0)),
-        ]);
-    }
-    if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "AbstractModuleSource"
-    {
+    if capability.kind == HostCapabilityKind::GetGlobal && key == "AbstractModuleSource" {
         return Value::Builtin(Builtin::Object);
     }
     let builtin = Builtin::HostCapability(capability.kind);
@@ -543,8 +576,8 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
             Value::Number(buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64)
         }
         "resizable" => Value::Boolean(buffer.max_byte_length.is_some()),
+        "immutable" => Value::Boolean(buffer.immutable),
         "resize" => Value::Builtin(Builtin::ArrayBufferResize),
-        "grow" if buffer.shared => Value::Builtin(Builtin::ArrayBufferResize),
         "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
     }

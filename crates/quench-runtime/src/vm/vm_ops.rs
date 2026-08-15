@@ -87,6 +87,12 @@ fn propagate_object_mutation(
 /// Resolve an await operand, suspending only for a pending Promise.
 pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(), VmError> {
     let value = super::read_register(registers, src)?;
+    let value = if crate::value::is_object(&value) {
+        crate::promise::promise_resolve(&[value])
+    } else {
+        value
+    };
+    crate::promise::drain_microtasks();
     match value {
         Value::Promise(promise) => {
             let state = promise.state.borrow().clone();
@@ -97,8 +103,22 @@ pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
                 }
                 crate::value::PromiseState::Rejected(reason) => Err(VmError::Thrown(reason)),
                 crate::value::PromiseState::Pending => {
-                    crate::promise::drain_microtasks();
                     let state = promise.state.borrow().clone();
+                    if !matches!(state, crate::value::PromiseState::Pending) {
+                        return match state {
+                            crate::value::PromiseState::Fulfilled(value) => {
+                                super::write_value(registers, dst, value);
+                                Ok(())
+                            }
+                            crate::value::PromiseState::Rejected(reason) => {
+                                Err(VmError::Thrown(reason))
+                            }
+                            crate::value::PromiseState::Pending => unreachable!(),
+                        };
+                    }
+                    if crate::vm::async_module_step() {
+                        return Err(VmError::Suspended(promise));
+                    }
                     match state {
                         crate::value::PromiseState::Fulfilled(value) => {
                             super::write_value(registers, dst, value);

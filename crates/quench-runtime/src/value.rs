@@ -2,7 +2,7 @@
 
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     rc::Rc,
 };
 
@@ -50,32 +50,12 @@ pub(crate) mod error {
 pub struct HostCapabilityValue {
     pub descriptor: HostCapabilityRef,
     identity: Rc<()>,
-    properties: Rc<RefCell<Vec<(String, Value)>>>,
 }
-
-type HostProperties = Rc<RefCell<Vec<(String, Value)>>>;
-
-thread_local! {
-    static HOST_PROPERTIES: RefCell<HashMap<HostCapabilityRef, HostProperties>>
-        = RefCell::new(HashMap::new());
-}
-
-fn host_properties(descriptor: HostCapabilityRef) -> HostProperties {
-    HOST_PROPERTIES.with(|properties| {
-        properties
-            .borrow_mut()
-            .entry(descriptor)
-            .or_insert_with(|| Rc::new(RefCell::new(Vec::new())))
-            .clone()
-    })
-}
-
 impl HostCapabilityValue {
     pub fn new(descriptor: HostCapabilityRef) -> Self {
         Self {
             descriptor,
             identity: Rc::new(()),
-            properties: host_properties(descriptor),
         }
     }
 
@@ -89,32 +69,6 @@ impl HostCapabilityValue {
 
     pub fn same_identity(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.identity, &other.identity)
-    }
-
-    pub fn property(&self, key: &str) -> Option<Value> {
-        self.properties
-            .borrow()
-            .iter()
-            .rev()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| value.clone())
-    }
-
-    pub fn set_property(&self, key: &str, value: Value) {
-        let mut properties = self.properties.borrow_mut();
-        if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
-            *current = value;
-        } else {
-            properties.push((key.to_string(), value));
-        }
-    }
-
-    pub fn child(&self, descriptor: HostCapabilityRef) -> Self {
-        Self {
-            descriptor,
-            identity: Rc::new(()),
-            properties: Rc::clone(&self.properties),
-        }
     }
 }
 impl PartialEq for HostCapabilityValue {
@@ -538,6 +492,7 @@ impl From<&Constant> for Value {
             Constant::Number(value) => Self::Number(*value),
             Constant::Boolean(value) => Self::Boolean(*value),
             Constant::String(value) => Self::String(value.clone()),
+            Constant::StringUnits(value) => crate::strings::from_units(value.clone()),
             Constant::BigInt(value) => Self::BigInt(value.clone()),
             Constant::Null => Self::Null,
             Constant::Undefined => Self::Undefined,

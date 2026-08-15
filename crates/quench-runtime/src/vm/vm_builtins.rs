@@ -6,7 +6,6 @@ fn early_dispatch(
     crate::intl::tolocale::symbol::dispatch(builtin, arguments, receiver)
         .or_else(|| crate::json::execute(builtin, arguments))
         .or_else(|| crate::typed_array_ops::execute(builtin, receiver, arguments))
-        .or_else(|| crate::atomics::execute(builtin, arguments))
         .or_else(|| crate::arrays::execute_builtin(builtin, receiver, arguments))
         .or_else(|| crate::intl::tolocale::dispatch(builtin, receiver, arguments))
         .or_else(|| crate::collections::execute_builtin(builtin, receiver, arguments))
@@ -75,8 +74,7 @@ fn array_like_length(value: &Value) -> Result<usize, VmError> {
 fn is_simple_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::Atomics
-            | Builtin::Boolean
+        Builtin::Boolean
             | Builtin::BooleanValueOf
             | Builtin::BooleanToString
             | Builtin::Eval
@@ -134,7 +132,6 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::ErrorPrototypeCauseGetter
             | Builtin::ErrorPrototypeStackGetter
             | Builtin::ErrorPrototypeStackSetter
-            | Builtin::AbstractModuleSourceToStringTagGetter
             | Builtin::WeakRefDeref
     )
 }
@@ -147,9 +144,6 @@ fn execute_simple_builtin(
         return result;
     }
     match builtin {
-        Builtin::Atomics => Err(crate::value::error::throw_type_error(
-            "Atomics is not callable",
-        )),
         Builtin::Boolean => Ok(Value::Boolean(arguments.first().is_some_and(is_truthy))),
         Builtin::BooleanValueOf => boolean_value_of(receiver),
         Builtin::BooleanToString => boolean_to_string(receiver),
@@ -232,7 +226,6 @@ fn error_builtin(
         Builtin::ErrorPrototypeNameGetter => Ok(error_name_getter(receiver)?),
         Builtin::ErrorPrototypeMessageGetter => Ok(error_message_getter(receiver)?),
         Builtin::ErrorPrototypeCauseGetter => Ok(error_cause_getter(receiver)?),
-        Builtin::AbstractModuleSourceToStringTagGetter => Ok(Value::Undefined),
         Builtin::ErrorPrototypeStackGetter => error_stack_getter(receiver),
         Builtin::ErrorPrototypeStackSetter => error_stack_setter(receiver, arguments),
         _ => Ok(Value::Undefined),

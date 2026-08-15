@@ -56,16 +56,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
-        (AbstractModuleSource, "prototype") => Some(Value::Builtin(AbstractModuleSourcePrototype)),
-        (AbstractModuleSourcePrototype, "constructor") => {
-            Some(Value::Builtin(AbstractModuleSource))
-        }
-        (AbstractModuleSourcePrototype, "Symbol.toStringTag") => Some(Value::Undefined),
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
         (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
-        (Atomics, "Symbol.toStringTag") => Some(Value::String("Atomics".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
@@ -107,13 +101,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (ErrorPrototype, "message") => Some(Value::String("".to_string())),
         (ErrorPrototype, "cause") => Some(Value::Undefined),
         (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
-        (AggregateErrorPrototype, "constructor") => Some(Value::Builtin(AggregateError)),
-        (AggregateErrorPrototype, "name") => Some(Value::String("AggregateError".into())),
-        (AggregateErrorPrototype, "message") => Some(Value::String("".into())),
-        (AggregateErrorPrototype, "cause") => Some(Value::Undefined),
-        (AggregateErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
         (SuppressedError, "prototype") => Some(Value::Builtin(SuppressedErrorPrototype)),
-        (AggregateError, "prototype") => Some(Value::Builtin(AggregateErrorPrototype)),
         (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
         (SuppressedErrorPrototype, "message") => Some(Value::String("".to_string())),
         (SuppressedErrorPrototype, "constructor") => Some(Value::Builtin(SuppressedError)),
@@ -164,9 +152,6 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
 }
 fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
-    if builtin == Atomics {
-        return atomics_method(key);
-    }
     if builtin == ArrayPrototype {
         return array_method(key);
     }
@@ -204,27 +189,6 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         return Some(method);
     }
     builtin_method_core(builtin, key)
-}
-
-fn atomics_method(key: &str) -> Option<Builtin> {
-    use Builtin::*;
-    Some(match key {
-        "add" => AtomicsAdd,
-        "and" => AtomicsAnd,
-        "compareExchange" => AtomicsCompareExchange,
-        "exchange" => AtomicsExchange,
-        "isLockFree" => AtomicsIsLockFree,
-        "load" => AtomicsLoad,
-        "notify" => AtomicsNotify,
-        "or" => AtomicsOr,
-        "pause" => AtomicsPause,
-        "store" => AtomicsStore,
-        "sub" => AtomicsSub,
-        "wait" => AtomicsWait,
-        "waitAsync" => AtomicsWaitAsync,
-        "xor" => AtomicsXor,
-        _ => return None,
-    })
 }
 fn data_view_method_for(builtin: Builtin, key: &str) -> Option<Builtin> {
     (builtin == Builtin::DataViewPrototype)
@@ -388,18 +352,7 @@ fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> O
         "createRealm" => CreateRealm,
         "evalScript" => EvalScript,
         "detachArrayBuffer" => DetachArrayBuffer,
-        "agent" => Agent,
-        "start" => AgentStart,
-        "broadcast" => AgentBroadcast,
-        "report" => AgentReport,
-        "getReport" => AgentGetReport,
-        "leaving" => AgentLeaving,
-        "receiveBroadcast" => AgentReceiveBroadcast,
-        "sleep" => AgentSleep,
-        "tryYield" => AgentTryYield,
-        "trySleep" => AgentTrySleep,
-        "setTimeout" => AgentSetTimeout,
-        "monotonicNow" => AgentMonotonicNow,
+        "dynamicImport" => DynamicImport,
         _ => return None,
     };
     Some(Builtin::HostCapability(kind))
