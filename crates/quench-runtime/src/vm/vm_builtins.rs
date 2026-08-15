@@ -290,18 +290,31 @@ fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
     let key = Value::String("stack".to_string());
     let own = crate::builtins::object::has_own_property(Some(value), Some(&key));
     let updated = if matches!(own, Value::Boolean(true)) {
-        let descriptor = [
-            ("value".to_string(), stack),
-            ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(true)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ];
+        let descriptor = crate::builtins::object::descriptor(Some(value), Some(&key))?;
+        if descriptor_field_is_false(&descriptor, "writable") {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot assign to read only property 'stack'",
+            ));
+        }
+        let descriptor = [("value".to_string(), stack)];
         crate::builtins::define_own_property(value, "stack", &descriptor)?
     } else {
         crate::builtins::set_property(value.clone(), "stack", stack)
     };
     crate::locals::replace_value(value, &updated);
     Ok(())
+}
+
+fn descriptor_field_is_false(descriptor: &Value, field: &str) -> bool {
+    matches!(
+        descriptor,
+        Value::Object(properties)
+            if properties
+                .iter()
+                .rev()
+                .find(|(name, _)| name == field)
+                .is_some_and(|(_, value)| matches!(value, Value::Boolean(false)))
+    )
 }
 
 fn define_proxy_stack(value: &Value, stack: Value) -> Result<Value, VmError> {
