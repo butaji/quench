@@ -85,6 +85,13 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::SymbolPrototype)
         }
         Value::Object(properties) => internal_prototype(properties, Builtin::ObjectPrototype),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map_or(Value::Null, |properties| {
+                internal_prototype(&properties.properties, Builtin::ObjectPrototype)
+            }),
         Value::Float64Array(_) => Value::Builtin(Builtin::Float64ArrayPrototype),
         Value::Float32Array(_) => Value::Builtin(Builtin::Float32ArrayPrototype),
         Value::Int8Array(_) => Value::Builtin(Builtin::Int8ArrayPrototype),

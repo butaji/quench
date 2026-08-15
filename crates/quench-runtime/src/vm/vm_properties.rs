@@ -494,6 +494,9 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
             ),
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &[]),
         Value::Builtin(builtin) => {
+            if *builtin == Builtin::IntlNumberFormatFormat && is_number_format_receiver(receiver) {
+                return Ok(bind_method(receiver, Value::Builtin(*builtin)));
+            }
             crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
         }
         _ => Err(crate::vm::not_callable()),
@@ -502,6 +505,11 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 
 fn receiver_property(value: &Value, key: &str, _receiver: &Value) -> Value {
     let property = get_property(value, key);
+    if let Value::Object(properties) = value {
+        if properties.iter().any(|(name, _)| name == key) {
+            return property;
+        }
+    }
     if matches!(value, Value::Builtin(_)) {
         return property;
     }

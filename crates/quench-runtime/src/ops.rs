@@ -439,6 +439,7 @@ pub enum Builtin {
     IntlLocaleTextInfoGetter,
     IntlLocaleVariantsGetter,
     IntlNumberFormat,
+    IntlNumberFormatSupportedLocalesOf,
     IntlNumberFormatFormat,
     IntlNumberFormatFormatToParts,
     IntlNumberFormatFormatRange,
