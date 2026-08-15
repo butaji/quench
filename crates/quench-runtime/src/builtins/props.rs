@@ -61,6 +61,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (Temporal, "ZonedDateTime") => Some(Value::Builtin(TemporalZonedDateTime)),
         (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
         (Temporal, "PlainDateTime") => Some(Value::Builtin(TemporalPlainDateTime)),
+        (Temporal, "PlainYearMonth") => Some(Value::Builtin(TemporalPlainYearMonth)),
+        (Temporal, "PlainMonthDay") => Some(Value::Builtin(TemporalPlainMonthDay)),
         (Temporal, "PlainTime") => Some(Value::Builtin(TemporalPlainTime)),
         (Temporal, "Symbol.toStringTag") => Some(Value::String("Temporal".into())),
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
@@ -196,6 +198,12 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDatePrototype, "calendarId") => {
             Some(Value::Builtin(TemporalPlainDateCalendarIdGetter))
         }
+        (TemporalPlainDatePrototype, "year") => Some(Value::Builtin(TemporalPlainDateYearGetter)),
+        (TemporalPlainDatePrototype, "month") => Some(Value::Builtin(TemporalPlainDateMonthGetter)),
+        (TemporalPlainDatePrototype, "monthCode") => {
+            Some(Value::Builtin(TemporalPlainDateMonthCodeGetter))
+        }
+        (TemporalPlainDatePrototype, "day") => Some(Value::Builtin(TemporalPlainDateDayGetter)),
         (TemporalPlainDatePrototype, "dayOfWeek") => {
             Some(Value::Builtin(TemporalPlainDateDayOfWeekGetter))
         }
