@@ -278,12 +278,25 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
             "Stack value must be a string",
         ));
     }
+    if let Some(setter) = own_stack_setter(value)? {
+        let argument = stack.clone();
+        crate::functions::execute_target(&setter, value, std::slice::from_ref(&argument))?;
+        return Ok(Value::Undefined);
+    }
     if matches!(value, Value::Proxy(_)) {
         define_proxy_stack(value, stack.clone())?;
         return Ok(Value::Undefined);
     }
     define_own_stack(value, stack.clone())?;
     Ok(Value::Undefined)
+}
+
+fn own_stack_setter(value: &Value) -> Result<Option<Value>, VmError> {
+    let descriptor = crate::builtins::object::descriptor(
+        Some(value),
+        Some(&Value::String("stack".to_string())),
+    )?;
+    Ok(descriptor_field(&descriptor, "set"))
 }
 
 fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
