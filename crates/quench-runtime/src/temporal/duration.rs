@@ -136,41 +136,39 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     if let Some(Value::String(text)) = value {
         return from_string(text);
     }
-    let Some(Value::Object(object)) = value else {
+    let Some(value) = value.filter(|value| crate::value::is_object(value)) else {
         return Err(crate::value::error::throw_type_error(
             "Duration.from requires a duration-like object",
         ));
     };
     let names = [
-        "years",
-        "months",
-        "weeks",
         "days",
         "hours",
-        "minutes",
-        "seconds",
-        "milliseconds",
         "microseconds",
+        "milliseconds",
+        "minutes",
+        "months",
         "nanoseconds",
+        "seconds",
+        "weeks",
+        "years",
     ];
-    if !names
+    let fields = names
         .iter()
-        .any(|name| object.iter().any(|(key, _)| key == name))
-    {
+        .map(|name| {
+            crate::execute::get_property_result(value, name).and_then(|field| match field {
+                Value::Undefined => Ok(Value::Undefined),
+                field => crate::conversion::to_number(&field).map(Value::Number),
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if fields.iter().all(|field| matches!(field, Value::Undefined)) {
         return Err(crate::value::error::throw_type_error(
             "Duration requires at least one field",
         ));
     }
-    let arguments = names
-        .iter()
-        .map(|name| {
-            object
-                .iter()
-                .find(|(key, _)| key == name)
-                .map_or(Value::Undefined, |(_, value)| value.clone())
-        })
-        .collect::<Vec<_>>();
-    construct(&arguments)
+    let order = [9, 5, 8, 0, 1, 4, 7, 3, 2, 6];
+    construct(&order.map(|index| fields[index].clone()))
 }
 
 fn from_string(text: &str) -> Result<Value, VmError> {
@@ -375,12 +373,28 @@ fn duration_value(value: &Value) -> f64 {
 }
 
 fn validate_range(values: &[f64]) -> Result<(), VmError> {
-    if date_fields_out_of_range(&values[..3]) || time_fields_out_of_range(&values[3..]) {
+    if mixed_signs(values)
+        || date_fields_out_of_range(&values[..3])
+        || time_fields_out_of_range(&values[3..])
+    {
         return Err(crate::value::error::throw_range_error(
             "Duration fields are out of range",
         ));
     }
     Ok(())
+}
+
+fn mixed_signs(values: &[f64]) -> bool {
+    let Some(sign) = values
+        .iter()
+        .find(|value| **value != 0.0)
+        .map(|value| value.signum())
+    else {
+        return false;
+    };
+    values
+        .iter()
+        .any(|value| *value != 0.0 && value.signum() != sign)
 }
 
 fn date_fields_out_of_range(values: &[f64]) -> bool {
