@@ -28,7 +28,7 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlLocaleGetNumberingSystems => {
             Ok(make_array(vec![Value::String("latn".to_string())]))
         }
-        _ => return prototype_method_middle(builtin, receiver, &slot),
+        _ => prototype_method_middle(builtin, receiver, &slot),
     }
 }
 
