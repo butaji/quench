@@ -151,7 +151,7 @@ fn is_decimal_braced(suffix: &str) -> bool {
 }
 
 fn is_atom_terminator(byte: u8) -> bool {
-    matches!(byte, b'^' | b'$' | b'|' | b'(' | b'.' | b'\\')
+    matches!(byte, b'^' | b'$' | b'|' | b'(' | b'\\')
 }
 
 fn validate_quantified_lookbehind(body: &str) -> Result<(), String> {
@@ -208,18 +208,66 @@ fn find_close_paren(body: &str, start: usize) -> Option<usize> {
 include!("regexp_named_groups.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
+    validate_literal_ranges(pattern)?;
+    validate_flags(flags)?;
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
         .map_err(|_| "invalid regular expression".to_string())?
         .map_err(|e| e.to_string())
 }
 
+fn validate_flags(flags: &str) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for flag in flags.chars() {
+        if !matches!(flag, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y') || !seen.insert(flag) {
+            return Err("invalid regular expression flags".to_string());
+        }
+    }
+    if seen.contains(&'u') && seen.contains(&'v') {
+        return Err("invalid regular expression flags".to_string());
+    }
+    Ok(())
+}
+
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
+    validate_literal_ranges(pattern).map_err(|error| format!("SyntaxError: {error}"))?;
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
         .map_err(|_| "SyntaxError: invalid regular expression".to_string())?
         .map(|_| ())
         .map_err(|error| format!("SyntaxError: {error}"))
+}
+
+fn validate_literal_ranges(pattern: &str) -> Result<(), String> {
+    let bytes = pattern.as_bytes();
+    let mut in_class = false;
+    let mut escaped = false;
+    for index in 0..bytes.len().saturating_sub(2) {
+        let byte = bytes[index];
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            continue;
+        }
+        if byte == b'[' {
+            in_class = true;
+            continue;
+        }
+        if byte == b']' {
+            in_class = false;
+            continue;
+        }
+        if in_class && bytes[index + 1] == b'-' && bytes[index + 2] > byte {
+            continue;
+        }
+        if in_class && bytes[index + 1] == b'-' && bytes[index + 2] < byte {
+            return Err("invalid character range".to_string());
+        }
+    }
+    Ok(())
 }
 
 pub fn execute_builtin(
@@ -395,7 +443,7 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
     }
 }
 
-fn has_regexp_internal_slot(value: &Value) -> bool {
+pub(crate) fn has_regexp_internal_slot(value: &Value) -> bool {
     matches!(
         value,
         Value::Object(properties)
