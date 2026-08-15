@@ -5,6 +5,7 @@ include!("ops_bodies.rs");
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Builtin {
     HostCapability(HostCapabilityKind),
+    PromiseCapabilityExecutor,
     Array,
     Iterator,
     IteratorPrototype,
