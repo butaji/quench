@@ -340,8 +340,8 @@ pub(crate) fn has_property(value: &Value, key: &str) -> Result<bool, VmError> {
     }
     if let Value::Proxy(proxy) = value {
         let trapped = crate::proxy::get_handler_trap(proxy, "has").is_some();
-        let result = crate::proxy::proxy_has(value, key)?;
         if trapped {
+            let result = crate::proxy::proxy_has(value, key)?;
             return Ok(crate::execute::is_truthy(&result));
         }
         return has_property(&proxy.target, key);
