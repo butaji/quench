@@ -200,6 +200,8 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
     match key {
         "Symbol.iterator" => Some(Value::Builtin(Builtin::IteratorSelf)),
         "toArray" => Some(Value::Builtin(Builtin::IteratorToArray)),
+        "drop" => Some(Value::Builtin(Builtin::IteratorDrop)),
+        "map" => Some(Value::Builtin(Builtin::IteratorMap)),
         "Symbol.toStringTag" => Some(Value::Builtin(Builtin::IteratorPrototypeToStringTagGetter)),
         "constructor" => Some(Value::Builtin(Builtin::IteratorPrototypeConstructorGetter)),
         _ => None,
