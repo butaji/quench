@@ -15,7 +15,7 @@ pub struct ModuleUnit {
     pub bytes: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModuleKind {
     JavaScript,
     Json,
@@ -27,7 +27,7 @@ pub enum ModuleKind {
 pub struct ModuleGraph {
     entry: Option<ModuleId>,
     units: Vec<ModuleUnit>,
-    paths: HashMap<PathBuf, ModuleId>,
+    paths: HashMap<(PathBuf, ModuleKind), ModuleId>,
     edges: HashMap<ModuleId, Vec<ModuleId>>,
 }
 
@@ -75,9 +75,18 @@ impl ModuleGraph {
     }
 
     pub fn resolve(&self, from: ModuleId, specifier: &str) -> Option<ModuleId> {
+        self.resolve_kind(from, specifier, ModuleKind::JavaScript)
+    }
+
+    pub fn resolve_kind(
+        &self,
+        from: ModuleId,
+        specifier: &str,
+        kind: ModuleKind,
+    ) -> Option<ModuleId> {
         let base = self.units.get(from.0 as usize)?.path.parent()?;
         let path = normalize_module_path(&base.join(specifier));
-        self.paths.get(&path).copied()
+        self.paths.get(&(path, kind)).copied()
     }
 
     /// Record a statically resolved import edge. The graph owns resolution;
@@ -120,7 +129,24 @@ impl ModuleGraph {
         let source = unit.source.clone();
         let metadata = quench_runtime::reduce::inspect_module_source(&source)
             .map_err(|errors| errors.join("; "))?;
-        self.link_specifiers(from, metadata.import_specifiers.iter().map(String::as_str))
+        for specifier in &metadata.import_specifiers {
+            let kind = metadata
+                .import_attributes
+                .iter()
+                .find(|(source, _)| source == specifier)
+                .and_then(|(_, value)| match value.as_str() {
+                    "type=json" => Some(ModuleKind::Json),
+                    "type=text" => Some(ModuleKind::Text),
+                    "type=bytes" => Some(ModuleKind::Bytes),
+                    _ => None,
+                })
+                .unwrap_or(ModuleKind::JavaScript);
+            let target = self.resolve_kind(from, specifier, kind).ok_or_else(|| {
+                format!("unresolved module specifier {specifier:?} from {from:?}")
+            })?;
+            self.link(from, target)?;
+        }
+        Ok(())
     }
 
     /// Link every currently loaded unit from its canonical static metadata.
@@ -173,11 +199,11 @@ impl ModuleGraph {
         entry: bool,
     ) -> ModuleId {
         let path = normalize_module_path(&path);
-        if let Some(id) = self.paths.get(&path).copied() {
+        if let Some(id) = self.paths.get(&(path.clone(), kind)).copied() {
             return id;
         }
         let id = ModuleId(self.units.len() as u32);
-        self.paths.insert(path.clone(), id);
+        self.paths.insert((path.clone(), kind), id);
         self.units.push(ModuleUnit {
             id,
             path,
