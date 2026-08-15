@@ -36,15 +36,15 @@ pub(crate) fn execute_shared_array_buffer_builtin(
 ) -> Result<Value, VmError> {
     let Some(Value::ArrayBuffer(buffer)) = receiver.filter(|value| {
         matches!(value, Value::ArrayBuffer(data) if data.shared)
-            || (builtin == Builtin::SharedArrayBufferByteLengthGetter
-                && matches!(value, Value::ArrayBuffer(_)))
+            || (builtin == Builtin::ArrayBufferByteLengthGetter
+                && matches!(value, Value::ArrayBuffer(data) if !data.shared))
     }) else {
         return Err(type_error(
             "SharedArrayBuffer method called on incompatible receiver",
         ));
     };
     match builtin {
-        Builtin::SharedArrayBufferByteLengthGetter => {
+        Builtin::ArrayBufferByteLengthGetter | Builtin::SharedArrayBufferByteLengthGetter => {
             Ok(Value::Number(buffer.byte_length() as f64))
         }
         Builtin::SharedArrayBufferGrowableGetter => {
