@@ -24,6 +24,12 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringCharCodeAt => Some("String.prototype.charCodeAt"),
         Builtin::StringIndexOf => Some("String.prototype.indexOf"),
         Builtin::StringLastIndexOf => Some("String.prototype.lastIndexOf"),
+        _ => fn_name_tail(builtin),
+    }
+}
+
+const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
         Builtin::StringSlice => Some("String.prototype.slice"),
         Builtin::StringSubstring => Some("String.prototype.substring"),
         Builtin::StringConcat => Some("String.prototype.concat"),
@@ -71,6 +77,12 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringIndexOf
         | Builtin::StringLastIndexOf
         | Builtin::StringCodePointAt => Some(1.0),
+        _ => fn_len_tail(builtin),
+    }
+}
+
+const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
+    match builtin {
         Builtin::StringAt => Some(1.0),
         Builtin::StringCharAt | Builtin::StringCharCodeAt => Some(1.0),
         Builtin::StringSearch
