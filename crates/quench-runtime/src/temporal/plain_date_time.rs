@@ -76,6 +76,13 @@ pub(crate) fn execute(
         }
         crate::ops::Builtin::TemporalPlainDateTimeToString
         | crate::ops::Builtin::TemporalPlainDateTimeToJSON => Some(to_string(_receiver)),
+        crate::ops::Builtin::TemporalPlainDateTimeCompare => Some(compare(arguments)),
+        crate::ops::Builtin::TemporalPlainDateTimeEquals => {
+            Some(equals(_receiver, arguments.first()))
+        }
+        crate::ops::Builtin::TemporalPlainDateTimeValueOf => Some(Err(
+            crate::value::error::throw_type_error("Cannot convert PlainDateTime to a number"),
+        )),
         _ => None,
     }
 }
@@ -97,6 +104,30 @@ fn getter(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Valu
         _ => "nanosecond",
     };
     crate::execute::get_property_result(receiver, name)
+}
+
+fn fields(value: &Value) -> Result<Vec<f64>, VmError> {
+    NAMES
+        .iter()
+        .map(|name| crate::execute::get_property_result(value, name))
+        .map(|value| value.and_then(|value| crate::conversion::to_number(&value)))
+        .collect()
+}
+
+fn compare(arguments: &[Value]) -> Result<Value, VmError> {
+    let left = fields(&from(arguments.first())?)?;
+    let right = fields(&from(arguments.get(1))?)?;
+    Ok(Value::Number(match left.partial_cmp(&right) {
+        Some(std::cmp::Ordering::Less) => -1.0,
+        Some(std::cmp::Ordering::Greater) => 1.0,
+        _ => 0.0,
+    }))
+}
+
+fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    Ok(Value::Boolean(fields(receiver)? == fields(&from(other)?)?))
 }
 
 fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
