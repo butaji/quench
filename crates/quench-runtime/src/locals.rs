@@ -106,6 +106,10 @@ pub(crate) fn global_has_own_name(name: &str) -> bool {
             .any(|(key, _)| key == name))
 }
 
+pub(crate) fn global_has_lexical_name(name: &str) -> bool {
+    global_lexical().is_some_and(|environment| environment.has_own_name(name))
+}
+
 pub(crate) fn has_name(name: &str) -> bool {
     current().has_name(name)
         || global_lexical().is_some_and(|environment| environment.has_name(name))
