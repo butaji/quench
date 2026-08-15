@@ -2,8 +2,7 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_instance, make_object, resolve_locales, runtime_error,
-    slot_string, SLOT,
+    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string, SLOT,
 };
 mod polish;
 pub(crate) struct RelativeOptions {
@@ -103,7 +102,7 @@ impl RelativeOptions {
             ),
             (SLOT.to_string(), self.slot()),
         ];
-        make_instance(crate::ops::Builtin::IntlRelativeTimeFormat, properties)
+        make_object(properties)
     }
 
     fn slot(&self) -> Value {

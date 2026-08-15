@@ -59,7 +59,7 @@ fn lithuanian_lower(value: &str) -> String {
         .replace("i\u{307}a", "ia")
         .replace("j\u{307}a", "ja")
         .replace("\u{12f}\u{307}a", "\u{12f}a")
-        .to_lowercase();
+        .to_lowercase()
 }
 
 fn case_turkish(value: &str, upper: bool) -> String {
