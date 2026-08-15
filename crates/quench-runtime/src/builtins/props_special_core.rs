@@ -27,6 +27,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
         (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
+        (AbstractModuleSource, "prototype") => Some(Value::Builtin(AbstractModuleSourcePrototype)),
+        (AbstractModuleSourcePrototype, "constructor") => {
+            Some(Value::Builtin(AbstractModuleSource))
+        }
         (ShadowRealmPrototype, "constructor") => Some(Value::Builtin(ShadowRealm)),
         (ShadowRealm, "prototype") => Some(Value::Builtin(ShadowRealmPrototype)),
         (ShadowRealmPrototype, "evaluate") => Some(Value::Builtin(ShadowRealmEvaluate)),

@@ -35,6 +35,9 @@ fn construct_builtin_tail(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     match builtin {
+        crate::ops::Builtin::AbstractModuleSource => Err(crate::value::error::throw_type_error(
+            "AbstractModuleSource cannot be constructed",
+        )),
         crate::ops::Builtin::TemporalDuration => crate::temporal::duration::construct(arguments),
         crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
         crate::ops::Builtin::ShadowRealm => {
@@ -373,9 +376,7 @@ fn construct_error(
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
 }
 
-fn construct_aggregate_error(
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
+fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let errors = crate::collections::iterator::collect_iterable(
         arguments.first().cloned().unwrap_or(Value::Undefined),
     )?;

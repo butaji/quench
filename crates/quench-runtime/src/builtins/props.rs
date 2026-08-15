@@ -258,6 +258,7 @@ fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> O
         "createRealm" => CreateRealm,
         "evalScript" => EvalScript,
         "detachArrayBuffer" => DetachArrayBuffer,
+        "AbstractModuleSource" => return Some(Builtin::AbstractModuleSource),
         _ => return None,
     };
     Some(Builtin::HostCapability(kind))
