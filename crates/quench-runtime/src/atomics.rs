@@ -194,16 +194,40 @@ fn validate_view(view: &Value) -> Result<(), VmError> {
     if !valid {
         return Err(type_error("Invalid typed array"));
     }
+    validate_view_buffer(view)?;
     Ok(())
+}
+
+fn validate_view_buffer(view: &Value) -> Result<(), VmError> {
+    let buffer = view_buffer(view).ok_or_else(|| type_error("Invalid typed array"))?;
+    if *buffer.detached.borrow() {
+        return Err(type_error("Detached ArrayBuffer"));
+    }
+    let (offset, bytes) = view_byte_range(view);
+    if buffer.byte_length() < offset.saturating_add(bytes) {
+        return Err(type_error("Typed array is out of bounds"));
+    }
+    Ok(())
+}
+
+fn view_byte_range(view: &Value) -> (usize, usize) {
+    match view {
+        Value::Int8Array(v) => (v.byte_offset, v.byte_length()),
+        Value::Uint8Array(v) => (v.byte_offset, v.byte_length()),
+        Value::Int16Array(v) => (v.byte_offset, v.byte_length()),
+        Value::Uint16Array(v) => (v.byte_offset, v.byte_length()),
+        Value::Int32Array(v) => (v.byte_offset, v.byte_length()),
+        Value::Uint32Array(v) => (v.byte_offset, v.byte_length()),
+        Value::BigInt64Array(v) => (v.byte_offset, v.byte_length()),
+        Value::BigUint64Array(v) => (v.byte_offset, v.byte_length()),
+        _ => (0, 0),
+    }
 }
 
 fn array_index(view: &Value, value: Option<&Value>) -> Result<usize, VmError> {
     let length = view_length(view);
-    if let Some(Value::BigInt(raw)) = value {
-        let index = raw
-            .parse::<u128>()
-            .map_err(|_| crate::value::error::throw_range_error("Invalid index"))?;
-        return check_index(length, usize::try_from(index).unwrap_or(usize::MAX));
+    if matches!(value, Some(Value::BigInt(_))) {
+        return Err(type_error("Cannot convert a BigInt value to a number"));
     }
     let number = crate::conversion::to_number(value.unwrap_or(&Value::Undefined))?;
     let index = crate::construct::to_index(number)?;
