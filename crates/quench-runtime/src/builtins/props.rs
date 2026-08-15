@@ -89,6 +89,26 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (TemporalZonedDateTime, "from") => Some(Value::Builtin(TemporalZonedDateTimeFrom)),
         (TemporalDurationPrototype, "round") => Some(Value::Builtin(TemporalDurationRound)),
+        (TemporalDurationPrototype, "years") => Some(Value::Builtin(TemporalDurationYearsGetter)),
+        (TemporalDurationPrototype, "months") => Some(Value::Builtin(TemporalDurationMonthsGetter)),
+        (TemporalDurationPrototype, "weeks") => Some(Value::Builtin(TemporalDurationWeeksGetter)),
+        (TemporalDurationPrototype, "days") => Some(Value::Builtin(TemporalDurationDaysGetter)),
+        (TemporalDurationPrototype, "hours") => Some(Value::Builtin(TemporalDurationHoursGetter)),
+        (TemporalDurationPrototype, "minutes") => {
+            Some(Value::Builtin(TemporalDurationMinutesGetter))
+        }
+        (TemporalDurationPrototype, "seconds") => {
+            Some(Value::Builtin(TemporalDurationSecondsGetter))
+        }
+        (TemporalDurationPrototype, "milliseconds") => {
+            Some(Value::Builtin(TemporalDurationMillisecondsGetter))
+        }
+        (TemporalDurationPrototype, "microseconds") => {
+            Some(Value::Builtin(TemporalDurationMicrosecondsGetter))
+        }
+        (TemporalDurationPrototype, "nanoseconds") => {
+            Some(Value::Builtin(TemporalDurationNanosecondsGetter))
+        }
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
         (TemporalPlainDate, "compare") => Some(Value::Builtin(TemporalPlainDateCompare)),
