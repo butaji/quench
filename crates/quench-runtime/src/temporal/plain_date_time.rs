@@ -439,11 +439,10 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
             "microsecond" => values[8] = 0.0,
             _ => {}
         }
-        if matches!(smallest_unit.as_str(), "minute" | "minutes") {
-            values[6] = 0.0;
-            values[7] = 0.0;
-            values[8] = 0.0;
-        } else if matches!(smallest_unit.as_str(), "second" | "seconds") {
+        if matches!(
+            smallest_unit.as_str(),
+            "minute" | "minutes" | "second" | "seconds"
+        ) {
             values[6] = 0.0;
             values[7] = 0.0;
             values[8] = 0.0;

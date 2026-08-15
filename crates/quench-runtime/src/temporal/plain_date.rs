@@ -562,7 +562,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         .split('[')
         .next()
         .unwrap_or(text)
-        .split(|character| matches!(character, 'T' | 't' | ' '))
+        .split(['T', 't', ' '])
         .next()
         .unwrap_or(text);
     let parts = date.split('-').collect::<Vec<_>>();
