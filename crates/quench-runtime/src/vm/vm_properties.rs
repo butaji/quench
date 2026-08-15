@@ -257,7 +257,8 @@ pub(crate) fn get_property_with_receiver(
     }
     if let Value::Array(values) = value {
         let has_own = key == "length"
-            || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+            || crate::arrays::array_index(key)
+                .is_some_and(|index| values.has_index(index as usize))
             || values.descriptor(key).is_some()
             || values.property(key).is_some();
         if !has_own {
@@ -313,10 +314,8 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
         Value::Function(function) => crate::functions::execute(function, receiver, &[]),
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &[]),
         Value::Builtin(builtin) => {
-            if *builtin == Builtin::IntlNumberFormatFormat {
-                if is_number_format_receiver(receiver) {
-                    return Ok(bind_method(receiver, Value::Builtin(*builtin)));
-                }
+            if *builtin == Builtin::IntlNumberFormatFormat && is_number_format_receiver(receiver) {
+                return Ok(bind_method(receiver, Value::Builtin(*builtin)));
             }
             crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
         }
@@ -326,6 +325,11 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     let property = get_property(value, key);
+    if let Value::Object(properties) = value {
+        if properties.iter().any(|(name, _)| name == key) {
+            return property;
+        }
+    }
     if matches!(value, Value::Builtin(_)) {
         return property;
     }
@@ -469,15 +473,14 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
     };
-    let properties = if builtin == Builtin::IntlNumberFormatFormat
-        && is_number_format_receiver(receiver)
-    {
-        RefCell::new(number_format_bound_properties(1.0, ""))
-    } else if builtin == Builtin::IntlNumberFormatFormat {
-        RefCell::new(number_format_bound_properties(0.0, "get format"))
-    } else {
-        RefCell::new(Vec::new())
-    };
+    let properties =
+        if builtin == Builtin::IntlNumberFormatFormat && is_number_format_receiver(receiver) {
+            RefCell::new(number_format_bound_properties(1.0, ""))
+        } else if builtin == Builtin::IntlNumberFormatFormat {
+            RefCell::new(number_format_bound_properties(0.0, "get format"))
+        } else {
+            RefCell::new(Vec::new())
+        };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         target: Value::Builtin(builtin),
         receiver: receiver.clone(),
