@@ -21,6 +21,11 @@ pub(crate) fn construct(
         return Err(syntax_error("YieldExpression not permitted generally"));
     }
     let source = function_source(arguments, kind, is_async)?;
+    if source.contains(".#") {
+        return Err(syntax_error(
+            "Invalid private identifier in dynamic function",
+        ));
+    }
     reduce_dynamic(&source, kind, is_async)
 }
 
