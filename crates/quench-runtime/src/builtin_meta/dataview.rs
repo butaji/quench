@@ -17,7 +17,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::SharedArrayBufferGrowableGetter => Some("get growable"),
         Builtin::SharedArrayBufferMaxByteLengthGetter => Some("get maxByteLength"),
         Builtin::SharedArrayBufferGrow => Some("grow"),
-        Builtin::SharedArrayBufferSlice => Some("slice"),
+        Builtin::ArrayBufferSlice | Builtin::SharedArrayBufferSlice => Some("slice"),
         Builtin::ArrayBufferSliceToImmutable => Some("sliceToImmutable"),
         _ => None,
     }
@@ -39,7 +39,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::SharedArrayBufferGrowableGetter
         | Builtin::SharedArrayBufferMaxByteLengthGetter => Some(0.0),
         Builtin::SharedArrayBufferGrow => Some(1.0),
-        Builtin::SharedArrayBufferSlice => Some(2.0),
+        Builtin::ArrayBufferSlice | Builtin::SharedArrayBufferSlice => Some(2.0),
         Builtin::ArrayBufferSliceToImmutable => Some(2.0),
         _ => None,
     }
