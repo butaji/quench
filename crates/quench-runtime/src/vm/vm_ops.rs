@@ -92,6 +92,7 @@ pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
     } else {
         value
     };
+    crate::promise::drain_microtasks();
     match value {
         Value::Promise(promise) => {
             let state = promise.state.borrow().clone();
@@ -102,11 +103,22 @@ pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
                 }
                 crate::value::PromiseState::Rejected(reason) => Err(VmError::Thrown(reason)),
                 crate::value::PromiseState::Pending => {
+                    let state = promise.state.borrow().clone();
+                    if !matches!(state, crate::value::PromiseState::Pending) {
+                        return match state {
+                            crate::value::PromiseState::Fulfilled(value) => {
+                                super::write_value(registers, dst, value);
+                                Ok(())
+                            }
+                            crate::value::PromiseState::Rejected(reason) => {
+                                Err(VmError::Thrown(reason))
+                            }
+                            crate::value::PromiseState::Pending => unreachable!(),
+                        };
+                    }
                     if crate::vm::async_module_step() {
                         return Err(VmError::Suspended(promise));
                     }
-                    crate::promise::drain_microtasks();
-                    let state = promise.state.borrow().clone();
                     match state {
                         crate::value::PromiseState::Fulfilled(value) => {
                             super::write_value(registers, dst, value);
