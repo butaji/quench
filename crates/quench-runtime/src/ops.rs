@@ -366,6 +366,7 @@ pub enum Builtin {
     TemporalInstantEpochNanosecondsGetter,
     TemporalInstantToString,
     TemporalInstantToJSON,
+    TemporalInstantToLocaleString,
     TemporalInstantEquals,
     TemporalInstantAdd,
     TemporalInstantSubtract,
