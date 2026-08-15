@@ -118,6 +118,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::Object
             | Builtin::Date
             | Builtin::TemporalDuration
+            | Builtin::TemporalZonedDateTime
             | Builtin::TemporalPlainTime
             | Builtin::Error
             | Builtin::RangeError
@@ -205,6 +206,9 @@ fn execute_simple_builtin(
         Builtin::Date => Ok(crate::date::call()),
         Builtin::TemporalDuration => Err(crate::value::error::throw_type_error(
             "Temporal.Duration requires new",
+        )),
+        Builtin::TemporalZonedDateTime => Err(crate::value::error::throw_type_error(
+            "Temporal.ZonedDateTime requires new",
         )),
         Builtin::TemporalPlainTime => Err(crate::value::error::throw_type_error(
             "Temporal.PlainTime requires new",
