@@ -16,6 +16,7 @@ struct RealmState {
     context: VmContext,
     token: Rc<HostCapabilityValue>,
     intrinsics: RefCell<Vec<(Builtin, Value)>>,
+    roots: RefCell<Vec<ObjectProperties>>,
 }
 
 struct ExecutionGuard {
@@ -42,6 +43,7 @@ pub(super) fn create(parent: &VmContext) -> RealmId {
             kind: HostCapabilityKind::GetGlobal,
         })),
         intrinsics: RefCell::new(Vec::new()),
+        roots: RefCell::new(Vec::new()),
     });
     register(state);
     id
@@ -54,7 +56,14 @@ pub(super) fn register_global(token: &HostCapabilityValue, global: ObjectPropert
     if !state.token.same_identity(token) {
         return false;
     }
-    state.global.replace(global);
+    let previous = state.global.replace(Rc::clone(&global));
+    let mut roots = state.roots.borrow_mut();
+    if !roots.iter().any(|root| Rc::ptr_eq(root, &previous)) {
+        roots.push(previous);
+    }
+    if !roots.iter().any(|root| Rc::ptr_eq(root, &global)) {
+        roots.push(global);
+    }
     true
 }
 
@@ -132,11 +141,23 @@ pub(super) fn with_realm<T>(id: RealmId, callback: impl FnOnce() -> T) -> Option
 
 pub(super) fn id_for_global(global: &ObjectProperties) -> Option<RealmId> {
     REALMS.with(|realms| {
-        realms
-            .borrow()
-            .iter()
-            .flatten()
-            .find_map(|state| Rc::ptr_eq(&state.global.borrow(), global).then_some(state.id))
+        realms.borrow().iter().flatten().find_map(|state| {
+            let current = state.global.borrow();
+            let roots = state.roots.borrow();
+            (Rc::ptr_eq(&current, global) || roots.iter().any(|root| Rc::ptr_eq(root, global)))
+                .then_some(state.id)
+        })
+    })
+}
+
+pub(super) fn current_global_for(global: &ObjectProperties) -> Option<ObjectProperties> {
+    REALMS.with(|realms| {
+        realms.borrow().iter().flatten().find_map(|state| {
+            let current = state.global.borrow();
+            let roots = state.roots.borrow();
+            (Rc::ptr_eq(&current, global) || roots.iter().any(|root| Rc::ptr_eq(root, global)))
+                .then(|| Rc::clone(&current))
+        })
     })
 }
 
@@ -175,6 +196,7 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "Uint32Array" => Uint32Array,
         "Object" => Object,
         "Function" => Function,
+        "Proxy" => Proxy,
         "Promise" => Promise,
         "RegExp" => RegExp,
         "Symbol" => Symbol,
@@ -233,6 +255,20 @@ pub(super) fn is_intrinsic(bound: &crate::value::BoundFunctionValue) -> bool {
         && state.intrinsics.borrow().iter().any(|(_, value)| {
             matches!(value, Value::BoundFunction(value) if std::ptr::eq(value.as_ref(), bound))
         })
+}
+
+pub(super) fn intrinsic_value(
+    bound: &crate::value::BoundFunctionValue,
+    builtin: Builtin,
+) -> Option<Value> {
+    let Value::HostCapability(token) = &bound.receiver else {
+        return None;
+    };
+    let state = state(token.realm())?;
+    state
+        .token
+        .same_identity(token)
+        .then(|| cached_intrinsic(&state, builtin).unwrap_or_else(|| Value::Builtin(builtin)))
 }
 
 fn cached_intrinsic(state: &RealmState, builtin: Builtin) -> Option<Value> {
