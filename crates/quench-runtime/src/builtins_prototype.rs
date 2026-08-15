@@ -127,6 +127,10 @@ pub(crate) fn function_prototype_to_string(
     receiver: Option<&Value>,
 ) -> Result<Value, crate::execute::VmError> {
     match receiver {
+        Some(Value::BoundFunction(bound)) => Ok(match &bound.target {
+            Value::Builtin(builtin) => Value::String(native_function_source(*builtin)),
+            _ => Value::String("function () { [native code] }".to_string()),
+        }),
         Some(value) if crate::conversion::is_callable(value) => {
             if crate::conversion::property_key_coercion() {
                 if let Value::Function(_) = value {
@@ -136,17 +140,30 @@ pub(crate) fn function_prototype_to_string(
                 }
             }
             let text = match value {
-                Value::Builtin(builtin) => {
-                    format!("function {}() {{ [native code] }}", builtin_name(*builtin))
-                }
+                Value::Builtin(builtin) => native_function_source(*builtin),
                 _ => "function () { [native code] }".to_string(),
             };
-            Ok(Value::String(text))
+            return Ok(Value::String(text));
         }
+        Some(Value::Builtin(builtin)) => Ok(Value::String(native_function_source(*builtin))),
+        Some(Value::Function(_)) => Ok(Value::String("function () { [native code] }".to_string())),
         _ => Err(crate::value::error::throw_type_error(
             "Function.prototype.toString called on non-callable",
         )),
     }
+}
+
+fn native_function_source(builtin: crate::ops::Builtin) -> String {
+    let raw = builtin_name(builtin)
+        .rsplit('.')
+        .next()
+        .unwrap_or(builtin_name(builtin));
+    let name: String = raw
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
+        .collect();
+    let name = if name.is_empty() { "anonymous".to_string() } else { name };
+    format!("function {name}() {{ [native code] }}")
 }
 
 pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {
