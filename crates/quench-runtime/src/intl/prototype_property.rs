@@ -33,6 +33,12 @@ fn prototype_locale_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlLocalePrototype, "script") => Builtin::IntlLocaleScriptGetter,
         (Builtin::IntlLocalePrototype, "textInfo") => Builtin::IntlLocaleTextInfoGetter,
         (Builtin::IntlLocalePrototype, "variants") => Builtin::IntlLocaleVariantsGetter,
+        _ => return prototype_number_property(builtin, key),
+    })
+}
+
+fn prototype_number_property(builtin: Builtin, key: &str) -> Option<Builtin> {
+    Some(match (builtin, key) {
         (Builtin::IntlNumberFormatPrototype, "format") => Builtin::IntlNumberFormatFormat,
         (Builtin::IntlNumberFormatPrototype, "formatToParts") => {
             Builtin::IntlNumberFormatFormatToParts
