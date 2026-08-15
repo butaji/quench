@@ -276,6 +276,7 @@ pub fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
+        Builtin::RegExpCompile => Some(compile_method(receiver, arguments)),
         Builtin::RegExpEscape => Some(escape(arguments)),
         Builtin::RegExpTest => Some(test(receiver, arguments)),
         Builtin::RegExpExec => Some(exec(receiver, arguments)),
@@ -287,6 +288,42 @@ pub fn execute_builtin(
         Builtin::RegExpStringIteratorNext => Some(crate::collections::iterator::next(receiver)),
         _ => None,
     }
+}
+
+fn compile_method(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.prototype.compile requires RegExp",
+        ));
+    };
+    if !has_regexp_internal_slot(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.prototype.compile requires RegExp",
+        ));
+    }
+    let pattern = arguments
+        .first()
+        .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
+    let flags = arguments
+        .get(1)
+        .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
+    compile(&pattern, &flags).map_err(|error| crate::value::error::throw_syntax_error(&error))?;
+    let Value::Object(properties) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.prototype.compile requires RegExp",
+        ));
+    };
+    for (key, value) in properties.iter() {
+        let next = match key.as_str() {
+            "source" => Some(Value::String(pattern.clone())),
+            "flags" => Some(Value::String(flags.clone())),
+            _ => None,
+        };
+        if let (Some(next), Value::BindingCell(cell)) = (next, value) {
+            cell.replace(next);
+        }
+    }
+    Ok(receiver.clone())
 }
 
 fn escape(arguments: &[Value]) -> Result<Value, VmError> {
@@ -514,37 +551,23 @@ fn prepare_search<'a>(s: &'a str, flags: &str, last_index: usize) -> (usize, &'a
 }
 
 fn extract_source(receiver: &Value) -> String {
-    match receiver {
-        Value::Object(props) => props
-            .iter()
-            .find(|(k, _)| k == "source")
-            .and_then(|(_, v)| {
-                if let Value::String(s) = v {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default(),
-        _ => String::new(),
-    }
+    crate::execute::get_property_result(receiver, "source")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(source) => Some(source),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 fn extract_flags(receiver: &Value) -> String {
-    match receiver {
-        Value::Object(props) => props
-            .iter()
-            .find(|(k, _)| k == "flags")
-            .and_then(|(_, v)| {
-                if let Value::String(s) = v {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default(),
-        _ => String::new(),
-    }
+    crate::execute::get_property_result(receiver, "flags")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(flags) => Some(flags),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 fn extract_last_index(receiver: &Value) -> Result<usize, VmError> {

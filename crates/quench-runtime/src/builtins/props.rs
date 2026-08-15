@@ -300,6 +300,7 @@ fn regexp_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
         (RegExp, "prototype") => RegExpPrototype,
         (RegExpPrototype, "constructor") => RegExp,
+        (RegExpPrototype, "compile") => RegExpCompile,
         (RegExp, "escape") => RegExpEscape,
         (RegExpPrototype, "test") => RegExpTest,
         (RegExpPrototype, "exec") => RegExpExec,
