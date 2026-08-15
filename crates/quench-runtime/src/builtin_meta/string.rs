@@ -4,6 +4,7 @@ use crate::ops::Builtin;
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::StringIterator => Some("[Symbol.iterator]"),
         Builtin::StringIteratorNext => Some("StringIterator.prototype.next"),
         Builtin::StringFromCharCode => Some("String.fromCharCode"),
         Builtin::StringFromCodePoint => Some("String.fromCodePoint"),
@@ -45,6 +46,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
+        Builtin::StringIterator => Some(0.0),
         Builtin::StringIteratorNext => Some(0.0),
         Builtin::StringFromCharCode => Some(1.0),
         Builtin::StringFromCodePoint => Some(1.0),
@@ -54,16 +56,9 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringTrim
         | Builtin::StringToLowerCase
         | Builtin::StringToUpperCase
-        | Builtin::StringCharAt
-        | Builtin::StringCharCodeAt
-        | Builtin::StringSlice
-        | Builtin::StringSubstring
-        | Builtin::StringConcat
         | Builtin::StringTrimStart
         | Builtin::StringTrimEnd
         | Builtin::StringToString
-        | Builtin::StringSearch
-        | Builtin::StringMatch
         | Builtin::StringIsWellFormed
         | Builtin::StringToWellFormed
         | Builtin::StringToLocaleLowerCase
@@ -75,6 +70,10 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringLastIndexOf
         | Builtin::StringCodePointAt => Some(1.0),
         Builtin::StringAt => Some(1.0),
+        Builtin::StringCharAt | Builtin::StringCharCodeAt => Some(1.0),
+        Builtin::StringSearch | Builtin::StringMatch => Some(1.0),
+        Builtin::StringConcat => Some(1.0),
+        Builtin::StringSlice | Builtin::StringSubstring => Some(2.0),
         Builtin::StringSplit => Some(2.0),
         Builtin::StringPadStart | Builtin::StringPadEnd => Some(1.0),
         Builtin::StringReplace | Builtin::StringReplaceAll => Some(2.0),
