@@ -200,6 +200,12 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some("supportedLocalesOf"),
         Builtin::IntlSegmenterSupportedLocalesOf => Some("supportedLocalesOf"),
         Builtin::IntlListFormatSupportedLocalesOf => Some("supportedLocalesOf"),
+        _ => intl_short_name_formats(b),
+    }
+}
+
+const fn intl_short_name_formats(b: Builtin) -> Option<&'static str> {
+    match b {
         Builtin::IntlNumberFormatFormat => Some(""),
         Builtin::IntlNumberFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlNumberFormatFormatRange => Some("formatRange"),
