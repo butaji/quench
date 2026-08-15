@@ -41,14 +41,18 @@ fn process_promise(promise: &Rc<PromiseData>) {
     let state = promise.state.borrow().clone();
     let then_actions = std::mem::take(&mut *promise.then_actions.borrow_mut());
     let promise_key = Rc::as_ptr(promise) as usize;
-    process_then_actions(then_actions, &state);
+    process_then_actions(then_actions, &state, promise_key);
     let continuations = std::mem::take(&mut *promise.continuations.borrow_mut());
     for continuation in continuations {
         process_continuation(continuation, &state);
     }
 }
 
-fn process_then_actions(then_actions: Vec<(Option<Value>, Option<Value>)>, state: &PromiseState) {
+fn process_then_actions(
+    then_actions: Vec<(Option<Value>, Option<Value>)>,
+    state: &PromiseState,
+    promise_key: usize,
+) {
     for (on_fulfilled, on_rejected) in then_actions {
         let result_promise = THEN_RESULTS.with(|results| {
             let mut results = results.borrow_mut();

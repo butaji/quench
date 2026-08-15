@@ -1,6 +1,5 @@
 include!("regexp_validation.rs");
 include!("regexp_named_groups.rs");
-include!("regexp_named_groups.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_literal_ranges(pattern)?;

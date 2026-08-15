@@ -231,9 +231,8 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::ArrayIteratorPrototype
             | Builtin::StringIteratorPrototype
             | Builtin::NumberPrototype
-            | Builtin::BooleanPrototype => true,
-        _ => is_runtime_prototype_tail(builtin),
-    )
+            | Builtin::BooleanPrototype
+    ) || is_runtime_prototype_tail(builtin)
 }
 
 fn is_runtime_prototype_tail(builtin: Builtin) -> bool {

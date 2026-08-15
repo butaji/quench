@@ -2,7 +2,7 @@ use crate::{execute::VmError, value::Value};
 
 use super::SLOT;
 
-fn runtime_error(message: &str) -> VmError {
+pub(crate) fn runtime_error(message: &str) -> VmError {
     if let Some(message) = message.strip_prefix("TypeError: ") {
         return crate::value::error::throw_type_error(message);
     }

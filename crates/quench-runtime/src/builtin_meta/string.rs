@@ -24,7 +24,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringCharCodeAt => Some("String.prototype.charCodeAt"),
         Builtin::StringIndexOf => Some("String.prototype.indexOf"),
         Builtin::StringLastIndexOf => Some("String.prototype.lastIndexOf"),
-        _ => fn_name_tail(builtin),
+        _ => fn_name_tail(b),
     }
 }
 
@@ -77,7 +77,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringIndexOf
         | Builtin::StringLastIndexOf
         | Builtin::StringCodePointAt => Some(1.0),
-        _ => fn_len_tail(builtin),
+        _ => fn_len_tail(b),
     }
 }
 
@@ -133,7 +133,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringReplaceAll => Some("replaceAll"),
         Builtin::StringSearch => Some("search"),
         Builtin::StringLocaleCompare => Some("localeCompare"),
-        _ => short_name_tail(builtin),
+        _ => short_name_tail(b),
     }
 }
 
