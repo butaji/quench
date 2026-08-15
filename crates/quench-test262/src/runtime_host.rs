@@ -244,6 +244,31 @@ fn namespace_cell(
         "Symbol.toStringTag".to_string(),
         quench_runtime::value::Value::String("Module".to_string()),
     ));
+    properties.push((
+        "\0quench:descriptor:\0Symbol.toStringTag".to_string(),
+        quench_runtime::value::Value::object(vec![
+            (
+                "value".to_string(),
+                quench_runtime::value::Value::String("Module".to_string()),
+            ),
+            (
+                "writable".to_string(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+            (
+                "enumerable".to_string(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+            (
+                "configurable".to_string(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+        ]),
+    ));
+    properties.push((
+        "\0quench:non_extensible".to_string(),
+        quench_runtime::value::Value::Boolean(true),
+    ));
     let namespace = ModuleBindingCell::new(quench_runtime::value::Value::object(properties));
     unit.namespace.replace(Some(namespace.clone()));
     Ok(namespace)
