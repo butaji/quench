@@ -78,8 +78,14 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::Builtin(Builtin::StringPrototype)) => "String",
         Some(Value::Builtin(Builtin::SymbolPrototype)) => "Symbol",
         Some(Value::Builtin(Builtin::BigIntPrototype)) => "BigInt",
+        Some(Value::Builtin(Builtin::ErrorPrototype)) => "Object",
         Some(Value::Builtin(
-            Builtin::ErrorPrototype
+            Builtin::EvalErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::URIErrorPrototype
             | Builtin::AggregateErrorPrototype
             | Builtin::SuppressedErrorPrototype,
         )) => "Object",
@@ -117,22 +123,47 @@ fn boxed_object_tag(properties: &crate::value::ObjectData) -> Option<&'static st
     })
 }
 
-pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
+pub(crate) fn function_prototype_to_string(
+    receiver: Option<&Value>,
+) -> Result<Value, crate::execute::VmError> {
     match receiver {
-        Some(Value::Builtin(builtin)) => Value::String(format!(
-            "function {}() {{ [native code] }}",
-            builtin_name(*builtin)
-        )),
-        Some(Value::BoundFunction(bound)) => match &bound.target {
-            Value::Builtin(builtin) => Value::String(format!(
-                "function {}() {{ [native code] }}",
-                builtin_name(*builtin)
-            )),
+        Some(Value::BoundFunction(bound)) => Ok(match &bound.target {
+            Value::Builtin(builtin) => Value::String(native_function_source(*builtin)),
             _ => Value::String("function () { [native code] }".to_string()),
-        },
-        Some(Value::Function(_)) => Value::String("function () { [native code] }".to_string()),
-        _ => Value::String(String::new()),
+        }),
+        Some(value) if crate::conversion::is_callable(value) => {
+            if crate::conversion::property_key_coercion() {
+                if let Value::Function(_) = value {
+                    if let Value::String(name) = crate::execute::get_property(value, "name") {
+                        return Ok(Value::String(format!("{name}(){{}}")));
+                    }
+                }
+            }
+            let text = match value {
+                Value::Builtin(builtin) => native_function_source(*builtin),
+                _ => "function () { [native code] }".to_string(),
+            };
+            Ok(Value::String(text))
+        }
+        Some(Value::Builtin(builtin)) => Ok(Value::String(native_function_source(*builtin))),
+        Some(Value::Function(_)) => Ok(Value::String("function () { [native code] }".to_string())),
+        _ => Err(crate::value::error::throw_type_error(
+            "Function.prototype.toString called on non-callable",
+        )),
     }
+}
+
+fn native_function_source(builtin: crate::ops::Builtin) -> String {
+    let raw = builtin_name(builtin)
+        .rsplit('.')
+        .next()
+        .unwrap_or(builtin_name(builtin));
+    let name: String = raw
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
+        .collect();
+    let name = if name.is_empty() { "anonymous".to_string() } else { name };
+    format!("function {name}() {{ [native code] }}")
 }
 
 pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {
