@@ -158,6 +158,14 @@ fn threshold_scale(magnitude: i32, thresholds: &[i32]) -> i32 {
         .unwrap_or(0)
 }
 
+fn threshold_scale(magnitude: i32, thresholds: &[i32]) -> i32 {
+    thresholds
+        .iter()
+        .copied()
+        .find(|threshold| magnitude >= *threshold)
+        .unwrap_or(0)
+}
+
 pub(crate) fn compact_fraction_digits(value: f64) -> u32 {
     if value == 0.0 || !value.is_finite() {
         return 0;
