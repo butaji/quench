@@ -171,6 +171,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "replace" => Some(crate::ops::Builtin::StringReplace),
         "replaceAll" => Some(crate::ops::Builtin::StringReplaceAll),
         "search" => Some(crate::ops::Builtin::StringSearch),
+        "localeCompare" => Some(crate::ops::Builtin::StringLocaleCompare),
         "match" => Some(crate::ops::Builtin::StringMatch),
         _ => None,
     }
@@ -213,6 +214,7 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringReplace => replace(receiver, arguments, false),
         crate::ops::Builtin::StringReplaceAll => replace(receiver, arguments, true),
         crate::ops::Builtin::StringSearch => Ok(search(receiver, arguments)),
+        crate::ops::Builtin::StringLocaleCompare => locale_compare(receiver, arguments),
         crate::ops::Builtin::StringMatch => string_match(receiver, arguments),
         _ => return None,
     };
@@ -418,6 +420,23 @@ pub(crate) fn concat(
         units.extend(crate::conversion::to_string(argument)?.encode_utf16());
     }
     Ok(from_units(units))
+}
+
+pub(crate) fn locale_compare(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let left = string_receiver(receiver)?;
+    let right = arguments
+        .first()
+        .map_or(Ok(String::from("undefined")), crate::conversion::to_string)?;
+    let left = unicode_normalization::UnicodeNormalization::nfc(left.chars()).collect::<String>();
+    let right = unicode_normalization::UnicodeNormalization::nfc(right.chars()).collect::<String>();
+    Ok(Value::Number(crate::intl::collator::compare(
+        &left,
+        &right,
+        &crate::intl::default_locale(),
+    )))
 }
 
 pub(crate) fn pad_start(receiver: Option<&Value>, arguments: &[Value]) -> Value {
