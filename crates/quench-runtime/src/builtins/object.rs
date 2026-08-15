@@ -427,38 +427,8 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
-    if builtin == Builtin::FunctionPrototype && matches!(key, "caller" | "arguments") {
-        let thrower = crate::vm::realm_intrinsic(Builtin::ThrowTypeError);
-        return Some(Value::Object(Rc::new(ObjectData::new(vec![
-            ("get".to_string(), thrower.clone()),
-            ("set".to_string(), thrower),
-            ("enumerable".to_string(), Value::Boolean(false)),
-            ("configurable".to_string(), Value::Boolean(true)),
-        ]))));
-    }
-    if builtin == Builtin::ThrowTypeError && key == "length" {
-        return Some(descriptor_object_with_flags(
-            Value::Number(0.0),
-            false,
-            false,
-            false,
-        ));
-    }
-    if builtin == Builtin::ThrowTypeError && key == "name" {
-        return Some(descriptor_object_with_flags(
-            Value::String(String::new()),
-            false,
-            false,
-            false,
-        ));
-    }
-    if builtin == Builtin::Object && key == "hasOwn" {
-        return Some(descriptor_object_with_flags(
-            Value::Builtin(Builtin::ObjectHasOwn),
-            true,
-            false,
-            true,
-        ));
+    if let Some(descriptor) = builtin_special_descriptor(builtin, key) {
+        return Some(descriptor);
     }
     if key == "BYTES_PER_ELEMENT" {
         if let Some(size) = typed_array_bytes_per_element(builtin) {
@@ -497,21 +467,55 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             Value::Undefined => None,
             value => Some(value),
         })?;
-    let writable = !matches!(
-        key,
-        "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
-    ) && !is_well_known_symbol_property(builtin, key)
-        && builtin_property_writable(builtin, key);
-    let configurable = !matches!(key, "prototype" | "unscopables")
-        && !is_well_known_symbol_property(builtin, key)
-        && builtin_property_configurable(builtin, key)
-        && !crate::conversion::is_symbol(&property);
+    let writable = builtin_property_is_writable(builtin, key);
+    let configurable = builtin_property_is_configurable(builtin, key, &property);
     Some(descriptor_object_with_flags(
         property,
         writable,
         false,
         configurable,
     ))
+}
+
+fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::FunctionPrototype && matches!(key, "caller" | "arguments") {
+        let thrower = crate::vm::realm_intrinsic(Builtin::ThrowTypeError);
+        return Some(Value::Object(Rc::new(ObjectData::new(vec![
+            ("get".to_string(), thrower.clone()),
+            ("set".to_string(), thrower),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]))));
+    }
+    let descriptor = match (builtin, key) {
+        (Builtin::ThrowTypeError, "length") => (Value::Number(0.0), false, false, false),
+        (Builtin::ThrowTypeError, "name") => {
+            (Value::String(String::new()), false, false, false)
+        }
+        (Builtin::Object, "hasOwn") => (Value::Builtin(Builtin::ObjectHasOwn), true, false, true),
+        _ => return None,
+    };
+    Some(descriptor_object_with_flags(
+        descriptor.0,
+        descriptor.1,
+        descriptor.2,
+        descriptor.3,
+    ))
+}
+
+fn builtin_property_is_writable(builtin: Builtin, key: &str) -> bool {
+    !matches!(
+        key,
+        "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
+    ) && !is_well_known_symbol_property(builtin, key)
+        && builtin_property_writable(builtin, key)
+}
+
+fn builtin_property_is_configurable(builtin: Builtin, key: &str, property: &Value) -> bool {
+    !matches!(key, "prototype" | "unscopables")
+        && !is_well_known_symbol_property(builtin, key)
+        && builtin_property_configurable(builtin, key)
+        && !crate::conversion::is_symbol(property)
 }
 
 fn typed_array_bytes_per_element(builtin: Builtin) -> Option<f64> {

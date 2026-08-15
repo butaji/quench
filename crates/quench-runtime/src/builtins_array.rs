@@ -1,39 +1,8 @@
 pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
     match target {
-        Value::Object(properties) if global_constant(&properties, key) => {
-            (Value::Object(properties), false)
-        }
-        Value::Object(properties) if properties.iter().any(|(name, _)| name == "\0realm")
-            && !matches!(key, "undefined" | "Infinity" | "NaN") =>
-        {
-            (delete_object_property(properties, key), true)
-        }
-        Value::Object(properties)
-            if boxed_string_non_configurable(&properties, key) =>
-        {
-            (Value::Object(properties), false)
-        }
-        Value::Object(properties)
-            if descriptor_flag_in(&properties, key, "configurable") == Some(false) =>
-        {
-            (Value::Object(properties), false)
-        }
-        Value::Object(properties) => (delete_object_property(properties, key), true),
+        Value::Object(properties) => delete_object_property_value(properties, key),
         Value::ObjectAlias(alias) => delete_object_alias_property(alias, key),
-        Value::Array(values)
-            if array_descriptor_flag(&values, key, "configurable") == Some(false) =>
-        {
-            (Value::Array(values), false)
-        }
-        Value::Array(mut values) if values.is_arguments() => {
-            Rc::make_mut(&mut values).delete_property(key);
-            (Value::Array(values), true)
-        }
-        Value::Array(mut values) if key != "length" => {
-            Rc::make_mut(&mut values).delete_property(key);
-            (Value::Array(values), true)
-        }
-        Value::Array(values) => (Value::Array(values), false),
+        Value::Array(values) => delete_array_property(values, key),
         Value::Function(function) => delete_function_property(function, key),
         Value::BoundFunction(bound) => {
             let mut properties = bound.properties.borrow_mut();
@@ -55,6 +24,38 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         }
         value => (value, true),
     }
+}
+
+fn delete_object_property_value(
+    properties: Rc<crate::value::ObjectData>,
+    key: &str,
+) -> (Value, bool) {
+    if global_constant(&properties, key) || boxed_string_non_configurable(&properties, key) {
+        return (Value::Object(properties), false);
+    }
+    if properties.iter().any(|(name, _)| name == "\0realm")
+        && !matches!(key, "undefined" | "Infinity" | "NaN")
+    {
+        return (delete_object_property(properties, key), true);
+    }
+    if descriptor_flag_in(&properties, key, "configurable") == Some(false) {
+        return (Value::Object(properties), false);
+    }
+    (delete_object_property(properties, key), true)
+}
+
+fn delete_array_property(
+    mut values: Rc<crate::value::ArrayData>,
+    key: &str,
+) -> (Value, bool) {
+    if array_descriptor_flag(&values, key, "configurable") == Some(false) {
+        return (Value::Array(values), false);
+    }
+    if values.is_arguments() || key != "length" {
+        Rc::make_mut(&mut values).delete_property(key);
+        return (Value::Array(values), true);
+    }
+    (Value::Array(values), false)
 }
 
 fn boxed_string_non_configurable(properties: &Rc<crate::value::ObjectData>, key: &str) -> bool {
