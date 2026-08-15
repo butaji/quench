@@ -134,8 +134,7 @@ fn date_fields(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
 
 fn date_like_fields(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
     match value {
-        Some(Value::Object(_)) => date_fields(value),
-        Some(Value::String(_)) => {
+        Some(Value::Object(_) | Value::String(_)) => {
             let date = from(value, None)?;
             date_fields(Some(&date))
         }
