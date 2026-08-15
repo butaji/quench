@@ -16,6 +16,9 @@ pub(crate) fn execute(
     (builtin == crate::ops::Builtin::TemporalPlainDateFrom)
         .then(|| from(arguments.first(), arguments.get(1)))
         .or_else(|| match builtin {
+            crate::ops::Builtin::TemporalPlainDateCompare => {
+                Some(compare(arguments.first(), arguments.get(1)))
+            }
             crate::ops::Builtin::TemporalPlainDateToString
             | crate::ops::Builtin::TemporalPlainDateToJSON => Some(to_string(receiver)),
             crate::ops::Builtin::TemporalPlainDateCalendarIdGetter
@@ -51,6 +54,14 @@ pub(crate) fn execute(
             )),
             _ => None,
         })
+}
+
+fn compare(left: Option<&Value>, right: Option<&Value>) -> Result<Value, VmError> {
+    let left = date_fields(left)?;
+    let right = date_fields(right)?;
+    let left = date_serial(left.0, left.1, left.2);
+    let right = date_serial(right.0, right.1, right.2);
+    Ok(Value::Number((left.cmp(&right) as i8) as f64))
 }
 
 fn difference(
