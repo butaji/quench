@@ -205,16 +205,16 @@ pub(crate) fn shadow_wrapped_object_error(realm: crate::ops::RealmId) -> VmError
     )
 }
 
-pub(crate) fn shadow_wrapped_argument_error_for_realm(
-    realm: crate::ops::RealmId,
-) -> VmError {
+pub(crate) fn shadow_wrapped_argument_error_for_realm(realm: crate::ops::RealmId) -> VmError {
     crate::vm::with_realm(realm, || {
         shadow_type_error_with_constructor(
             "ShadowRealm wrapped function argument must be primitive or callable",
             crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError),
         )
     })
-    .unwrap_or_else(|| shadow_type_error("ShadowRealm wrapped function argument must be primitive or callable"))
+    .unwrap_or_else(|| {
+        shadow_type_error("ShadowRealm wrapped function argument must be primitive or callable")
+    })
 }
 
 pub(crate) fn shadow_wrapped_exception_error_for_realm(realm: crate::ops::RealmId) -> VmError {
