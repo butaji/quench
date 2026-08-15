@@ -112,7 +112,10 @@ impl DateTimeOptions {
                 }
                 self.time_zone = canonicalize_time_zone(&text);
             }
-            "calendar" => self.calendar = text.to_ascii_lowercase(),
+            "calendar" => {
+                let value = super::locale::calendar_option(&text)?;
+                self.calendar = super::locale::calendar_alias(&value);
+            }
             "numberingSystem" => self.numbering_system = text.to_ascii_lowercase(),
             "fractionalSecondDigits" => {
                 let digits = conversion::to_number(value)?;
