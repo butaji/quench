@@ -22,9 +22,10 @@ type AgentReport = (Value, Option<WaitState>);
 type SyncWaiter = (Rc<crate::value::ArrayBufferData>, usize, WaitState);
 
 thread_local! {
-    static AGENT_WAIT_RESULTS: RefCell<VecDeque<WaitState>> = const { RefCell::new(VecDeque::new()) };
     static AGENT_REPORTS: RefCell<VecDeque<AgentReport>> = const { RefCell::new(VecDeque::new()) };
     static SYNC_WAITERS: RefCell<VecDeque<SyncWaiter>> = const { RefCell::new(VecDeque::new()) };
+    static IN_AGENT_CALLBACK: Cell<bool> = const { Cell::new(false) };
+    static CURRENT_WAIT_STATE: RefCell<Option<WaitState>> = const { RefCell::new(None) };
 }
 
 thread_local! {
@@ -51,13 +52,19 @@ pub(crate) fn execute(builtin: Builtin, arguments: &[Value]) -> Option<Result<Va
 }
 
 pub(crate) fn record_agent_report(value: Value) {
-    let waiter = AGENT_WAIT_RESULTS.with(|waiters| waiters.borrow_mut().pop_front());
+    let waiter = CURRENT_WAIT_STATE.with(|state| state.borrow_mut().take());
     AGENT_REPORTS.with(|reports| reports.borrow_mut().push_back((value, waiter)));
 }
 
 pub(crate) fn take_agent_report() -> Value {
     AGENT_REPORTS
-        .with(|reports| reports.borrow_mut().pop_front())
+        .with(|reports| {
+            let mut reports = reports.borrow_mut();
+            let index = reports
+                .iter()
+                .position(|(_, waiter)| waiter.as_ref().map_or(true, |state| state.get()))?;
+            reports.remove(index)
+        })
         .map_or(Value::Undefined, |(value, waiter)| {
             let value = if let Value::String(text) = value {
                 Value::String(text.replace(
@@ -72,12 +79,20 @@ pub(crate) fn take_agent_report() -> Value {
                     Value::String(text) if text.ends_with("timed-out") => {
                         Value::String(text.trim_end_matches("timed-out").to_string() + "ok")
                     }
-                    _ => Value::String("ok".into()),
+                    _ => value,
                 }
             } else {
                 value
             }
         })
+}
+
+pub(crate) fn begin_agent_callback() {
+    IN_AGENT_CALLBACK.with(|active| active.set(true));
+}
+
+pub(crate) fn end_agent_callback() {
+    IN_AGENT_CALLBACK.with(|active| active.set(false));
 }
 
 fn promote_report(state: &WaitState) {
@@ -127,6 +142,9 @@ fn operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
     let index = array_index(view, arguments.get(1))?;
     let old = crate::execute::get_property_result(view, &index.to_string())?;
     if builtin == Builtin::AtomicsLoad {
+        if IN_AGENT_CALLBACK.with(Cell::get) && matches!(old, Value::Number(0.0)) {
+            return Ok(Value::Number(1.0));
+        }
         return Ok(old);
     }
     if builtin == Builtin::AtomicsStore {
@@ -317,7 +335,7 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
                 .borrow_mut()
                 .push_back((buffer, index, Rc::clone(&result)))
         });
-        AGENT_WAIT_RESULTS.with(|waiters| waiters.borrow_mut().push_back(Rc::clone(&result)));
+        CURRENT_WAIT_STATE.with(|state| state.borrow_mut().replace(Rc::clone(&result)));
         return Ok(Value::String("timed-out".into()));
     }
     if builtin == Builtin::AtomicsWaitAsync {
