@@ -115,6 +115,7 @@ fn sanitize_locale_extensions(locale: &str) -> String {
         let value = parts.get(cursor + 1).copied().unwrap_or_default();
         if (key == "nu" && valid_numbering_system(value))
             || (key == "ca" && valid_calendar_extension(value))
+            || (key == "hc" && valid_hour_cycle(value))
         {
             result.push(key.to_string());
             result.push(value.to_string());
@@ -169,6 +170,19 @@ fn locale_numbering_system(locale: &str) -> Option<&str> {
         .windows(2)
         .find(|pair| pair[0] == "nu" && valid_numbering_system(pair[1]))
         .map(|pair| pair[1])
+}
+
+fn locale_hour_cycle(locale: &str) -> Option<&str> {
+    locale
+        .split('-')
+        .collect::<Vec<_>>()
+        .windows(2)
+        .find(|pair| pair[0] == "hc" && valid_hour_cycle(pair[1]))
+        .map(|pair| pair[1])
+}
+
+fn valid_hour_cycle(value: &str) -> bool {
+    matches!(value, "h11" | "h12" | "h23" | "h24")
 }
 
 fn remove_locale_extension(locale: &str, unwanted: &str) -> String {
@@ -234,6 +248,9 @@ impl DateTimeOptions {
         }
         if let Some(numbering_system) = locale_numbering_system(&formatter.locale) {
             formatter.numbering_system = numbering_system.to_string();
+        }
+        if let Some(hour_cycle) = locale_hour_cycle(&formatter.locale) {
+            formatter.set_component("hourCycle", hour_cycle.to_string());
         }
         if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
             for key in OPTION_ORDER {
@@ -369,16 +386,42 @@ impl DateTimeOptions {
 
     fn resolve_hour(&mut self) {
         if !self.contains("hour") {
-            return;
+            if self.contains("timeStyle") {
+                self.set_component("hour", "numeric".to_string());
+            } else {
+                return;
+            }
         }
-        if self.hour12.is_some() {
+        if let Some(hour12) = self.hour12 {
             self.components.retain(|(key, _)| key != "hourCycle");
+            let cycle = if hour12 {
+                if self.locale.starts_with("ja") {
+                    "h11"
+                } else {
+                    "h12"
+                }
+            } else {
+                "h23"
+            };
+            self.set_component("hourCycle", cycle.to_string());
         } else if !self.contains("hourCycle") {
-            self.set_component("hourCycle", "h23".to_string());
+            let cycle = if self.locale.starts_with("ja") {
+                "h11"
+            } else {
+                "h12"
+            };
+            self.set_component("hourCycle", cycle.to_string());
+            self.hour12 = Some(true);
+        } else if let Some(cycle) = self.component_value("hourCycle") {
+            self.hour12 = Some(cycle.starts_with("h1"));
         }
-        if self.hour12.is_none() {
-            self.hour12 = Some(false);
-        }
+    }
+
+    fn component_value(&self, key: &str) -> Option<&str> {
+        self.components
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value.as_str())
     }
 
     fn build_object(&self) -> Value {
