@@ -12,8 +12,8 @@ fn typed_array_name(builtin: Builtin) -> Option<&'static str> {
 fn generator_name(builtin: Builtin) -> Option<&'static str> {
     Some(match builtin {
         Builtin::GeneratorNext | Builtin::AsyncGeneratorNext => "next",
-        Builtin::GeneratorReturn => "return",
-        Builtin::GeneratorThrow => "throw",
+        Builtin::GeneratorReturn | Builtin::AsyncGeneratorReturn => "return",
+        Builtin::GeneratorThrow | Builtin::AsyncGeneratorThrow => "throw",
         _ => return None,
     })
 }
