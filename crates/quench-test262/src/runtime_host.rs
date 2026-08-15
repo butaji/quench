@@ -29,6 +29,7 @@ pub struct LinkedModule {
     linked_exports: RefCell<HashMap<String, ModuleBindingCell>>,
     star_exports: RefCell<HashSet<String>>,
     ambiguous_exports: RefCell<HashSet<String>>,
+    namespace_cell: RefCell<Option<ModuleBindingCell>>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -195,6 +196,9 @@ fn namespace_cell(
     let unit = units
         .get(&target)
         .ok_or_else(|| "module unit missing".to_string())?;
+    if let Some(cell) = unit.namespace_cell.borrow().clone() {
+        return Ok(cell);
+    }
     let properties = unit
         .export_names()
         .iter()
@@ -206,9 +210,9 @@ fn namespace_cell(
             )
         })
         .collect();
-    Ok(ModuleBindingCell::new(
-        quench_runtime::value::Value::object(properties),
-    ))
+    let cell = ModuleBindingCell::new(quench_runtime::value::Value::object(properties));
+    *unit.namespace_cell.borrow_mut() = Some(cell.clone());
+    Ok(cell)
 }
 
 impl LinkedModule {
@@ -221,6 +225,7 @@ impl LinkedModule {
             linked_exports: RefCell::new(HashMap::new()),
             star_exports: RefCell::new(HashSet::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
+            namespace_cell: RefCell::new(None),
         })
     }
 
@@ -233,6 +238,7 @@ impl LinkedModule {
             linked_exports: RefCell::new(HashMap::new()),
             star_exports: RefCell::new(HashSet::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
+            namespace_cell: RefCell::new(None),
         })
     }
 
