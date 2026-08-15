@@ -377,21 +377,27 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
+    let left = from(arguments.first())?;
+    let right = from(arguments.get(1))?;
+    let options = arguments.get(2);
+    if let Some(options) = options {
+        if !matches!(options, Value::Undefined) && !crate::value::is_object(options) {
+            return Err(crate::value::error::throw_type_error("Invalid options"));
+        }
+    }
     if same_fields(arguments.first(), arguments.get(1)) {
         return Ok(Value::Number(0.0));
     }
-    let left = from(arguments.first())?;
-    let right = from(arguments.get(1))?;
-    if (date_units(&left) || date_units(&right)) && arguments.get(2).is_none() {
+    if (date_units(&left) || date_units(&right))
+        && matches!(arguments.get(2), None | Some(Value::Undefined))
+    {
         return Err(crate::value::error::throw_range_error(
             "relativeTo is required for date units",
         ));
     }
     let difference = duration_value(&left) - duration_value(&right);
     if difference == 0.0 {
-        return Err(crate::value::error::throw_range_error(
-            "relativeTo is required for unequal duration fields",
-        ));
+        return Ok(Value::Number(0.0));
     }
     Ok(Value::Number(difference.signum()))
 }
