@@ -6,7 +6,7 @@ use super::number_format::*;
 
 use super::{
     default_locale, make_array, make_object, resolve_locales, runtime_error, slot_bool,
-    slot_number, slot_string, to_string_value, SLOT,
+    slot_number, slot_string, SLOT,
 };
 
 pub(crate) struct NumberOptions {
@@ -194,45 +194,6 @@ impl NumberOptions {
                 return Err(crate::value::error::throw_type_error(
                     "Cannot convert null to object",
                 ));
-            }
-        }
-        if let Some(Value::Object(properties)) = options {
-            if let Some((_, value)) = properties.iter().find(|(key, _)| key == "numberingSystem") {
-                if !matches!(value, Value::Undefined) {
-                    let numbering = crate::conversion::to_string(value)?;
-                    if numbering.len() < 3
-                        || numbering.len() > 8
-                        || !numbering.chars().all(|character| character.is_ascii_alphanumeric())
-                    {
-                        return Err(crate::value::error::throw_range_error(
-                            "invalid numberingSystem",
-                        ));
-                    }
-                }
-            }
-            if let Some((_, value)) = properties.iter().find(|(key, _)| key == "localeMatcher") {
-                if !matches!(value, Value::String(value) if value == "lookup" || value == "best fit") {
-                    return Err(crate::value::error::throw_range_error(
-                        "invalid localeMatcher",
-                    ));
-                }
-            }
-            if let Some((_, value)) = properties.iter().find(|(key, _)| key == "style") {
-                let style = to_string_value(value);
-                if !matches!(style.as_str(), "decimal" | "percent" | "currency" | "unit") {
-                    return Err(crate::value::error::throw_range_error("invalid style"));
-                }
-            }
-            if let Some((_, value)) = properties
-                .iter()
-                .find(|(key, _)| key == "maximumSignificantDigits")
-            {
-                let digits = crate::conversion::to_number(value)?;
-                if !digits.is_finite() || digits.fract() != 0.0 || !(1.0..=21.0).contains(&digits) {
-                    return Err(crate::value::error::throw_range_error(
-                        "invalid significant digits",
-                    ));
-                }
             }
         }
         let raw = RawOptions::from_value(options)?;
