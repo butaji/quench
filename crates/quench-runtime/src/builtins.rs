@@ -350,7 +350,7 @@ fn boxed_object(value: &Value) -> Value {
     Value::Object(Rc::new(ObjectData::new(properties)))
 }
 
-pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
+pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     let (name, constructor, prototype) = match builtin {
         Builtin::RangeError => ("RangeError", Builtin::RangeError, Builtin::ErrorPrototype),
         Builtin::ReferenceError => (
