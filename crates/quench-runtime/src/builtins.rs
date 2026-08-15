@@ -382,12 +382,18 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         } else {
             Value::Builtin(constructor)
         };
+    let prototype = if crate::vm::current_context_or_default().realm() != crate::ops::RealmId::ROOT
+    {
+        crate::vm::realm_intrinsic(prototype)
+    } else {
+        Value::Builtin(prototype)
+    };
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
         ("message".to_string(), Value::String(message)),
         ("constructor".to_string(), constructor),
         (ERROR_SLOT.to_string(), Value::Boolean(true)),
-        ("\0prototype".to_string(), Value::Builtin(prototype)),
+        ("\0prototype".to_string(), prototype),
     ];
     if let Some(Value::Object(existing)) = arguments.first() {
         properties.extend(existing.properties.clone());
