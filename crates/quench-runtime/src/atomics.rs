@@ -72,6 +72,22 @@ pub(crate) fn take_agent_report() -> Value {
         })
 }
 
+fn promote_report(state: &WaitState) {
+    AGENT_REPORTS.with(|reports| {
+        let mut reports = reports.borrow_mut();
+        let Some(index) = reports.iter().position(|(_, candidate)| {
+            candidate
+                .as_ref()
+                .is_some_and(|candidate| Rc::ptr_eq(candidate, state))
+        }) else {
+            return;
+        };
+        if let Some(report) = reports.remove(index) {
+            reports.push_front(report);
+        }
+    });
+}
+
 fn is_operation(builtin: Builtin) -> bool {
     matches!(
         builtin,
@@ -347,6 +363,7 @@ fn wake_sync_waiters(
                 let matches = Rc::ptr_eq(candidate, buffer) && *position == index;
                 if matches && woken < count {
                     result.set(true);
+                    promote_report(result);
                     woken += 1;
                     false
                 } else {
