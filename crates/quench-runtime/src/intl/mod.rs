@@ -230,17 +230,30 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         return Ok(vec![default_locale()]);
     };
     match locales {
-        Value::String(_) => Ok(vec![canonicalize(&to_string_value(locales))?]),
-        Value::Array(values) => {
-            let mut out = Vec::new();
-            for value in values.iter() {
-                out.push(canonicalize(&to_string_value(value))?);
-            }
-            Ok(dedupe(out))
-        }
+        Value::String(_) => Ok(vec![canonicalize(&crate::conversion::to_string(locales)?)?]),
+        Value::Array(_) | Value::Object(_) => resolve_locale_list(locales),
         Value::Null => Err(runtime_error("TypeError: invalid locales")),
         _ => Ok(vec![default_locale()]),
     }
+}
+
+fn resolve_locale_list(locales: &Value) -> Result<Vec<String>, VmError> {
+    let length = crate::execute::get_property_result(locales, "length")?;
+    let length = locale_list_length(&length)?;
+    let mut out = Vec::new();
+    for index in 0..length {
+        let value = crate::execute::get_property_result(locales, &index.to_string())?;
+        out.push(canonicalize(&crate::conversion::to_string(&value)?)?);
+    }
+    Ok(dedupe(out))
+}
+
+fn locale_list_length(value: &Value) -> Result<usize, VmError> {
+    let number = crate::conversion::to_number(value)?;
+    if number.is_nan() || number <= 0.0 {
+        return Ok(0);
+    }
+    Ok(number.floor().min(9_007_199_254_740_991.0) as usize)
 }
 
 pub(crate) fn default_locale() -> String {
@@ -310,9 +323,19 @@ fn canonicalize_subtags(
 ) -> Result<Vec<String>, VmError> {
     let mut region_done = false;
     let mut variant_done = false;
+    let mut extension = false;
     for part in parts {
         if part.is_empty() {
             return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        if extension {
+            out.push(part.to_ascii_lowercase());
+            continue;
+        }
+        if part.len() == 1 {
+            out.push(part.to_ascii_lowercase());
+            extension = true;
+            continue;
         }
         match classify_subtag(part, script_done, region_done, variant_done) {
             Subtag::Script => {

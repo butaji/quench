@@ -2,7 +2,7 @@
 
 use crate::{execute::VmError, value::Value};
 
-use super::{canonicalize, make_array, make_object, runtime_error, slot_string, to_string_value};
+use super::{canonicalize, make_array, make_object, runtime_error, slot_string};
 
 mod locale_methods;
 pub(crate) use locale_methods::prototype_method;
@@ -11,6 +11,7 @@ pub(crate) struct Locale {
     pub language: String,
     pub script: Option<String>,
     pub region: Option<String>,
+    pub variants: Vec<String>,
     pub calendar: Option<String>,
     pub collation: Option<String>,
     pub case_first: Option<String>,
@@ -30,6 +31,10 @@ impl Locale {
             base.push('-');
             base.push_str(region);
         }
+        for variant in &self.variants {
+            base.push('-');
+            base.push_str(variant);
+        }
         base
     }
 }
@@ -48,7 +53,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn locale_tag(value: &Value) -> Result<String, VmError> {
     match value {
-        Value::String(_) | Value::Object(_) => Ok(to_string_value(value)),
+        Value::String(_) => crate::conversion::to_string(value),
+        Value::Object(_) => crate::conversion::to_string(value),
         _ => Err(runtime_error("TypeError: locale tag must be a string")),
     }
 }
@@ -59,6 +65,7 @@ fn parse_canonical(tag: &str) -> Locale {
         language: parts.first().map(|p| p.to_string()).unwrap_or_default(),
         script: None,
         region: None,
+        variants: Vec::new(),
         calendar: None,
         collation: None,
         case_first: None,
@@ -79,6 +86,13 @@ fn parse_canonical(tag: &str) -> Locale {
         .is_some_and(|p| p.len() == 2 || (p.len() == 3 && p.chars().all(|c| c.is_ascii_digit())))
     {
         locale.region = Some(parts[index].to_string());
+        index += 1;
+    }
+    while let Some(part) = parts.get(index) {
+        if part.len() < 4 || part.len() > 8 || !part.chars().all(|c| c.is_ascii_alphanumeric()) {
+            break;
+        }
+        locale.variants.push((*part).to_string());
         index += 1;
     }
     parse_extensions(&mut locale, &parts[index..]);
