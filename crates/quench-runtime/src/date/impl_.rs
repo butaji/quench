@@ -20,9 +20,14 @@ pub fn execute(
     if let Some(result) = execute_special_setter(builtin, receiver, arguments) {
         return Some(result);
     }
-    if builtin == Builtin::DateSetTime {
-        return Some(super::setter::set_time(receiver, arguments));
-    }
+    execute_date_tail(builtin, receiver, arguments)
+}
+
+fn execute_date_tail(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
     if let Some(result) = super::setter::set_time_components(builtin, receiver, arguments) {
         return Some(result);
     }
