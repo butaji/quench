@@ -30,6 +30,7 @@ fn prototype_for_value(value: &Value) -> Value {
         }
         Value::Builtin(Builtin::FunctionPrototype) => Value::Builtin(Builtin::ObjectPrototype),
         Value::Builtin(Builtin::SuppressedError) => Value::Builtin(Builtin::Error),
+        Value::Builtin(Builtin::AggregateError) => Value::Builtin(Builtin::Error),
         Value::Builtin(Builtin::SuppressedErrorPrototype) => {
             Value::Builtin(Builtin::ErrorPrototype)
         }
