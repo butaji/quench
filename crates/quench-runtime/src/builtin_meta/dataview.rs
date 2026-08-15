@@ -19,6 +19,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
+        Builtin::ArrayBufferIsView => Some(1.0),
         Builtin::DataViewBufferGetter
         | Builtin::DataViewByteLengthGetter
         | Builtin::DataViewByteOffsetGetter
