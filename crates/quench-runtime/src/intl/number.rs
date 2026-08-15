@@ -126,9 +126,44 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
+    validate_options(arguments.get(1))?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
     let options = NumberOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
+}
+
+pub(crate) fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
+    let Some(value @ Value::Object(_)) = options else {
+        return Ok(());
+    };
+    let property = |key: &str| crate::vm::get_property_result(value, key);
+    let style = property("style")?;
+    let style = crate::conversion::to_string(&style)?;
+    if !matches!(
+        style.as_str(),
+        "undefined" | "decimal" | "currency" | "percent" | "unit"
+    ) {
+        return Err(runtime_error("RangeError: style"));
+    }
+    let matcher = property("localeMatcher")?;
+    if crate::conversion::to_string(&matcher)? == "null" {
+        return Err(runtime_error("TypeError: localeMatcher"));
+    }
+    let currency = property("currency")?;
+    let currency = crate::conversion::to_string(&currency)?;
+    if style == "currency" && currency == "undefined" {
+        return Err(runtime_error("TypeError: currency"));
+    }
+    if currency != "undefined"
+        && (currency.len() != 3 || !currency.chars().all(|c| c.is_ascii_alphabetic()))
+    {
+        return Err(runtime_error("RangeError: currency"));
+    }
+    let significant = property("maximumSignificantDigits")?;
+    if crate::conversion::to_string(&significant)? == "-Infinity" {
+        return Err(runtime_error("RangeError: maximumSignificantDigits"));
+    }
+    Ok(())
 }
 
 impl NumberOptions {
