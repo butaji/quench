@@ -526,6 +526,15 @@ fn validate_basic_options(raw: &RawOptions) -> Result<(), VmError> {
             ));
         }
     }
+    if raw.maximum_significant_digits >= 0.0
+        && (!raw.maximum_significant_digits.is_finite()
+            || raw.maximum_significant_digits.fract() != 0.0
+            || !(1.0..=21.0).contains(&raw.maximum_significant_digits))
+    {
+        return Err(crate::value::error::throw_range_error(
+            "invalid significant digits",
+        ));
+    }
     Ok(())
 }
 
