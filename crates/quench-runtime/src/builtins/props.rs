@@ -56,6 +56,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == Iterator && key == "prototype" {
         return Some(IteratorPrototype);
     }
+    if builtin == Iterator && key == "concat" {
+        return Some(IteratorConcat);
+    }
     if builtin == SharedArrayBuffer && key == "prototype" {
         return Some(SharedArrayBufferPrototype);
     }
