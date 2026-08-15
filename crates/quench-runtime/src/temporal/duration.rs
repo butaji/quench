@@ -227,17 +227,23 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
+    let (negative, text) = text
+        .strip_prefix('-')
+        .map_or((false, text), |value| (true, value));
     let Some(rest) = text.strip_prefix('P') else {
         return Err(crate::value::error::throw_range_error("Invalid duration"));
     };
     let mut values = vec![Value::Number(0.0); 10];
     let mut number = String::new();
     for character in rest.chars() {
+        if character == 'T' {
+            continue;
+        }
         if character.is_ascii_digit() || character == '-' || character == '+' {
             number.push(character);
             continue;
         }
-        let value = number
+        let value: f64 = number
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid duration"))?;
         number.clear();
@@ -250,7 +256,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
             'S' => 6,
             _ => return Err(crate::value::error::throw_range_error("Invalid duration")),
         };
-        values[index] = Value::Number(value);
+        values[index] = Value::Number(if negative { -value } else { value });
     }
     construct(&values)
 }
