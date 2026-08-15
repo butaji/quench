@@ -24,16 +24,33 @@ pub(crate) fn return_(
     let Some(Value::Iterator(data)) = receiver else {
         return Err(crate::vm::not_callable());
     };
-    let iterator = {
+    let (iterator, arguments) = {
         let mut state = data.state.borrow_mut();
-        let IteratorState::Protocol { iterator, done, .. } = &mut *state else {
-            return Ok(iterator_result(Value::Undefined, true));
-        };
-        if *done {
-            return Ok(iterator_result(Value::Undefined, true));
+        match &mut *state {
+            IteratorState::Protocol { iterator, done, .. } => {
+                if *done {
+                    return Ok(iterator_result(Value::Undefined, true));
+                }
+                *done = true;
+                (iterator.clone(), arguments.to_vec())
+            }
+            IteratorState::Concat {
+                current: Some(iterator),
+                done,
+                ..
+            } => {
+                if *done {
+                    return Ok(iterator_result(Value::Undefined, true));
+                }
+                *done = true;
+                (iterator.clone(), Vec::new())
+            }
+            IteratorState::Concat { done, .. } => {
+                *done = true;
+                return Ok(iterator_result(Value::Undefined, true));
+            }
+            _ => return Ok(iterator_result(Value::Undefined, true)),
         }
-        *done = true;
-        iterator.clone()
     };
     let method = crate::execute::get_property_result(&iterator, "return")?;
     if matches!(method, Value::Undefined | Value::Null) {
@@ -42,7 +59,7 @@ pub(crate) fn return_(
     if !crate::conversion::is_callable(&method) {
         return Err(crate::vm::not_callable());
     }
-    crate::functions::execute_target(&method, &iterator, arguments)
+    crate::functions::execute_target(&method, &iterator, &arguments)
 }
 
 fn iterator_result(value: Value, done: bool) -> Value {
@@ -120,8 +137,8 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
     let Value::Iterator(data) = record else {
         return Err(not_iterable());
     };
-    let state = data.state.borrow();
-    match &*state {
+    let mut state = data.state.borrow_mut();
+    match &mut *state {
         IteratorState::Native { done: true, .. }
         | IteratorState::Set { done: true, .. }
         | IteratorState::Map { done: true, .. }
@@ -132,6 +149,14 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
         IteratorState::Map { .. } => Ok(None),
         IteratorState::RegExpString { .. } => Ok(None),
         IteratorState::Protocol { iterator, .. } => Ok(Some(iterator.clone())),
+        IteratorState::Concat {
+            current: Some(iterator),
+            done,
+            ..
+        } => {
+            *done = true;
+            Ok(Some(iterator.clone()))
+        }
         IteratorState::Concat { .. } => Ok(None),
     }
 }
