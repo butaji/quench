@@ -8,6 +8,9 @@ use super::{
 };
 
 pub fn function_name(builtin: Builtin) -> Option<&'static str> {
+    if builtin == Builtin::Eval {
+        return Some("eval");
+    }
     if let Some(v) = dataview::fn_name(builtin) {
         return Some(v);
     }
@@ -61,6 +64,9 @@ pub fn function_name(builtin: Builtin) -> Option<&'static str> {
 }
 
 pub fn function_length(builtin: Builtin) -> Option<f64> {
+    if builtin == Builtin::Eval {
+        return Some(1.0);
+    }
     if let Some(v) = dataview::fn_len(builtin) {
         return Some(v);
     }
