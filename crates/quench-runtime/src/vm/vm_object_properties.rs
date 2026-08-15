@@ -111,7 +111,7 @@ pub(crate) fn object_property(
 
 fn error_constructor(properties: &[(String, Value)]) -> Option<Builtin> {
     let name = properties.iter().rev().find_map(|(key, value)| {
-        (key == "name").then(|| match value {
+        (key == "name").then_some(match value {
             Value::String(name) => name.as_str(),
             _ => "Error",
         })
