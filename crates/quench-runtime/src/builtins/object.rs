@@ -220,7 +220,7 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
             let global = Value::Object(properties.clone());
             let deleted = properties
                 .iter()
-                .any(|(name, _)| name == &crate::builtins::deleted_key(key));
+                .any(|(name, _)| name.as_str() == crate::builtins::deleted_key(key).as_str());
             if !deleted
                 && crate::vm::is_global_object(&global)
                 && crate::vm::global_builtin_exists(key)
@@ -239,14 +239,14 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
             .0
             .borrow()
             .upgrade()
-            .and_then(|properties| object_descriptor(&properties, key)),
-        Value::Array(values) => array_descriptor(values, key),
-        Value::String(value) => string_descriptor(value, key),
-        Value::Builtin(builtin) => builtin_descriptor(*builtin, key),
-        Value::Function(function) => function_descriptor(function, key),
-        Value::BoundFunction(bound) => bound_descriptor(bound, key),
-        Value::ArrayBuffer(buffer) => buffer_descriptor(buffer, key),
-        Value::DataView(view) => data_view_descriptor(view, key),
+            .and_then(|properties| object_descriptor(&properties, &key)),
+        Value::Array(values) => array_descriptor(values, &key),
+        Value::String(value) => string_descriptor(value, &key),
+        Value::Builtin(builtin) => builtin_descriptor(*builtin, &key),
+        Value::Function(function) => function_descriptor(function, &key),
+        Value::BoundFunction(bound) => bound_descriptor(bound, &key),
+        Value::ArrayBuffer(buffer) => buffer_descriptor(buffer, &key),
+        Value::DataView(view) => data_view_descriptor(view, &key),
         _ => None,
     };
     descriptor
