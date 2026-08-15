@@ -101,6 +101,12 @@ fn boxed_string_property(
     if crate::conversion::is_symbol_string(value) {
         return None;
     }
+    if crate::builtins::builtin_prototype_property_is_removed(
+        crate::ops::Builtin::StringPrototype,
+        key,
+    ) {
+        return None;
+    }
     match get_property(&Value::String(value.clone()), key) {
         Value::Undefined => None,
         indexed => Some(indexed),
