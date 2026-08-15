@@ -33,25 +33,9 @@ fn attach_prototype(value: &crate::value::Value) {
 
 fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue>) {
     let parent = if function.is_async {
-        crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![(
-            "Symbol.asyncIterator".to_string(),
-            crate::value::Value::Builtin(crate::ops::Builtin::AsyncIteratorSelf),
-        )])))
+        crate::builtins::async_generator_prototype()
     } else {
         crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
-    };
-    let parent = if function.is_async {
-        let crate::value::Value::Object(properties) = parent else {
-            unreachable!()
-        };
-        let mut properties = properties.properties.clone();
-        properties.push((
-            "Symbol.asyncDispose".to_string(),
-            crate::value::Value::Builtin(crate::ops::Builtin::AsyncIteratorDispose),
-        ));
-        crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
-    } else {
-        parent
     };
     let generator = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
         vec![("\0prototype".to_string(), parent)],
@@ -61,7 +45,11 @@ fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue
             ("prototype".to_string(), generator.clone()),
             (
                 "\0prototype".to_string(),
-                crate::value::Value::Builtin(crate::ops::Builtin::FunctionPrototype),
+                crate::value::Value::Builtin(if function.is_async {
+                    crate::ops::Builtin::AsyncGeneratorFunctionPrototype
+                } else {
+                    crate::ops::Builtin::GeneratorFunctionPrototype
+                }),
             ),
         ])));
     let instance = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
