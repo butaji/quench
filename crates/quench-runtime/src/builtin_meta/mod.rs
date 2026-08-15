@@ -172,14 +172,15 @@ fn prototype_tail(builtin: Builtin) -> Option<Builtin> {
         Builtin::SharedArrayBuffer => Some(Builtin::SharedArrayBufferPrototype),
         Builtin::WeakSet => Some(Builtin::WeakSetPrototype),
         Builtin::WeakRef => Some(Builtin::WeakRefPrototype),
-        Builtin::Error | Builtin::RangeError => Some(Builtin::ErrorPrototype),
-        Builtin::ReferenceError | Builtin::SyntaxError | Builtin::EvalError => {
-            Some(Builtin::ErrorPrototype)
-        }
-        Builtin::URIError => Some(Builtin::ErrorPrototype),
+        Builtin::Error => Some(Builtin::ErrorPrototype),
+        Builtin::RangeError => Some(Builtin::RangeErrorPrototype),
+        Builtin::TypeError => Some(Builtin::TypeErrorPrototype),
+        Builtin::ReferenceError => Some(Builtin::ReferenceErrorPrototype),
+        Builtin::SyntaxError => Some(Builtin::SyntaxErrorPrototype),
+        Builtin::EvalError => Some(Builtin::EvalErrorPrototype),
+        Builtin::URIError => Some(Builtin::URIErrorPrototype),
         Builtin::AggregateError => Some(Builtin::AggregateErrorPrototype),
         Builtin::SuppressedError => Some(Builtin::SuppressedErrorPrototype),
-        Builtin::TypeError => Some(Builtin::ErrorPrototype),
         _ => None,
     }
 }
@@ -195,6 +196,12 @@ pub fn is_prototype(builtin: Builtin) -> bool {
                 | Builtin::WeakSetPrototype
                 | Builtin::WeakRefPrototype
                 | Builtin::ErrorPrototype
+                | Builtin::RangeErrorPrototype
+                | Builtin::TypeErrorPrototype
+                | Builtin::EvalErrorPrototype
+                | Builtin::ReferenceErrorPrototype
+                | Builtin::SyntaxErrorPrototype
+                | Builtin::URIErrorPrototype
                 | Builtin::AggregateErrorPrototype
                 | Builtin::SuppressedErrorPrototype
                 | Builtin::PromisePrototype

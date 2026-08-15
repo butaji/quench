@@ -88,6 +88,12 @@ fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
         Some(Value::Builtin(Builtin::BigIntPrototype)) => "BigInt",
         Some(Value::Builtin(
             Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::URIErrorPrototype
             | Builtin::AggregateErrorPrototype
             | Builtin::SuppressedErrorPrototype,
         )) => "Object",
