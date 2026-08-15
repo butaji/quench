@@ -105,6 +105,35 @@ pub(crate) fn exchange(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Number(old as f64))
 }
 
+pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Int32Array(view)) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics.waitAsync requires an Int32Array",
+        ));
+    };
+    if !view.buffer.shared {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics.waitAsync requires a shared buffer",
+        ));
+    }
+    let index = atomic_index(arguments.get(1))?;
+    let expected = atomic_value(arguments.get(2))?;
+    let current = view.get(index).ok_or_else(|| {
+        crate::value::error::throw_range_error("Atomics.waitAsync index is out of range")
+    })?;
+    let result = if current != expected {
+        Value::String("not-equal".into())
+    } else {
+        crate::promise::promise_resolve(&[Value::String("timed-out".into())])
+    };
+    Ok(crate::value::Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            ("async".into(), Value::Boolean(current == expected)),
+            ("value".into(), result),
+        ]),
+    )))
+}
+
 pub(crate) fn execute(
     builtin: Builtin,
     _receiver: Option<&Value>,

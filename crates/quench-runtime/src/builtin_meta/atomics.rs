@@ -14,6 +14,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::AtomicsLoad => "Atomics.load",
         Builtin::AtomicsStore => "Atomics.store",
         Builtin::AtomicsExchange => "Atomics.exchange",
+        Builtin::AtomicsWaitAsync => "Atomics.waitAsync",
         _ => return None,
     })
 }
@@ -31,6 +32,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::AtomicsWait => Some(2.0),
         Builtin::AtomicsLoad | Builtin::AtomicsStore => Some(2.0),
         Builtin::AtomicsExchange => Some(3.0),
+        Builtin::AtomicsWaitAsync => Some(2.0),
         _ => None,
     }
 }
@@ -49,6 +51,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::AtomicsLoad => "load",
         Builtin::AtomicsStore => "store",
         Builtin::AtomicsExchange => "exchange",
+        Builtin::AtomicsWaitAsync => "waitAsync",
         _ => return None,
     })
 }
