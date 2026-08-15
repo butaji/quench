@@ -86,6 +86,16 @@ fn combine(
     for (index, name) in names.iter().enumerate() {
         values[index] = number(left, name) + direction * number(&right, name);
     }
+    let positive = values[4..10].iter().any(|value| *value > 0.0);
+    let negative = values[4..10].iter().any(|value| *value < 0.0);
+    let exceeds_unit = values[4].abs() >= 24.0
+        || values[5].abs() >= 60.0
+        || values[6].abs() >= 60.0
+        || values[7].abs() >= 1_000.0
+        || values[8].abs() >= 1_000.0;
+    if !(positive && negative) && !exceeds_unit {
+        return construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>());
+    }
     let largest_time_unit = (4..10).find(|index| values[*index] != 0.0).unwrap_or(10);
     values[3] += (values[4] / 24.0).trunc();
     values[4] %= 24.0;
