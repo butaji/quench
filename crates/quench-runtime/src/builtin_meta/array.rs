@@ -15,6 +15,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::Uint8ArrayToBase64 => Some("toBase64"),
         Builtin::Uint8ArrayToHex => Some("toHex"),
         Builtin::Uint8ArraySubarray => Some("subarray"),
+        Builtin::Uint8ArraySlice => Some("slice"),
         _ => fn_name_methods(builtin),
     }
 }
@@ -75,6 +76,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::Uint8ArraySetFromHex => Some(1.0),
         Builtin::Uint8ArrayToBase64 | Builtin::Uint8ArrayToHex => Some(0.0),
         Builtin::Uint8ArraySubarray => Some(2.0),
+        Builtin::Uint8ArraySlice => Some(2.0),
         _ => fn_len_methods(builtin),
     }
 }
