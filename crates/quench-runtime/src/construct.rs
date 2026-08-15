@@ -289,9 +289,14 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
 }
 
 fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let source = arguments
-        .first()
-        .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
+    let source = match arguments.first() {
+        Some(value) if crate::regexp::has_regexp_internal_slot(value) => {
+            crate::execute::get_property_result(value, "source")
+                .and_then(|source| crate::conversion::to_string(&source))?
+        }
+        Some(value) => crate::conversion::to_string(value)?,
+        None => String::new(),
+    };
     let flags = arguments
         .get(1)
         .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
