@@ -99,6 +99,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalDurationPrototype, "negated") => Some(Value::Builtin(TemporalDurationNegated)),
         (TemporalDurationPrototype, "abs") => Some(Value::Builtin(TemporalDurationAbs)),
         (TemporalDurationPrototype, "toJSON") => Some(Value::Builtin(TemporalDurationToJSON)),
+        (TemporalDurationPrototype, "add") => Some(Value::Builtin(TemporalDurationAdd)),
         (IntlCollatorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.Collator".into()))
         }
