@@ -327,12 +327,18 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::ThrowTypeError && key == "length" {
         return Some(descriptor_object_with_flags(
-            Value::Number(0.0), false, false, false,
+            Value::Number(0.0),
+            false,
+            false,
+            false,
         ));
     }
     if builtin == Builtin::ThrowTypeError && key == "name" {
         return Some(descriptor_object_with_flags(
-            Value::String(String::new()), false, false, false,
+            Value::String(String::new()),
+            false,
+            false,
+            false,
         ));
     }
     if builtin == Builtin::Object && key == "hasOwn" {

@@ -231,9 +231,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (SharedArrayBufferPrototype, "constructor") => Some(SharedArrayBuffer),
         (SharedArrayBufferPrototype, "byteLength") => Some(SharedArrayBufferByteLengthGetter),
         (SharedArrayBufferPrototype, "growable") => Some(SharedArrayBufferGrowableGetter),
-        (SharedArrayBufferPrototype, "maxByteLength") => {
-            Some(SharedArrayBufferMaxByteLengthGetter)
-        }
+        (SharedArrayBufferPrototype, "maxByteLength") => Some(SharedArrayBufferMaxByteLengthGetter),
         (SharedArrayBufferPrototype, "grow") => Some(SharedArrayBufferGrow),
         (SharedArrayBufferPrototype, "slice") => Some(SharedArrayBufferSlice),
         (DataView, "prototype") => Some(DataViewPrototype),

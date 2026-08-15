@@ -148,6 +148,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "toWellFormed" => Some(crate::ops::Builtin::StringToWellFormed),
         "startsWith" => Some(crate::ops::Builtin::StringStartsWith),
         "endsWith" => Some(crate::ops::Builtin::StringEndsWith),
+        "at" => Some(crate::ops::Builtin::StringAt),
         "repeat" => Some(crate::ops::Builtin::StringRepeat),
         "trim" => Some(crate::ops::Builtin::StringTrim),
         "toLowerCase" => Some(crate::ops::Builtin::StringToLowerCase),
@@ -190,6 +191,7 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringToWellFormed => to_well_formed(receiver),
         crate::ops::Builtin::StringStartsWith => starts_with(receiver, arguments),
         crate::ops::Builtin::StringEndsWith => ends_with(receiver, arguments),
+        crate::ops::Builtin::StringAt => at(receiver, arguments),
         crate::ops::Builtin::StringRepeat => Ok(repeat(receiver, arguments)),
         crate::ops::Builtin::StringTrim => trim(receiver),
         crate::ops::Builtin::StringToLowerCase => Ok(to_lower_case(receiver)),
@@ -215,6 +217,33 @@ pub(crate) fn execute_builtin(
         _ => return None,
     };
     Some(result)
+}
+
+fn at(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let value = string_receiver(receiver)?;
+    let index = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    let index = if index.is_nan() {
+        0
+    } else {
+        index.trunc() as isize
+    };
+    let units: Vec<u16> = value.encode_utf16().collect();
+    let position = if index < 0 {
+        units.len() as isize + index
+    } else {
+        index
+    };
+    if position < 0 {
+        return Ok(Value::Undefined);
+    }
+    Ok(units
+        .get(position as usize)
+        .map(|unit| from_units(vec![*unit]))
+        .unwrap_or(Value::Undefined))
 }
 
 fn string_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {

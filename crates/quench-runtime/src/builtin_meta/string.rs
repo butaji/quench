@@ -14,6 +14,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringToWellFormed => Some("String.prototype.toWellFormed"),
         Builtin::StringStartsWith => Some("String.prototype.startsWith"),
         Builtin::StringEndsWith => Some("String.prototype.endsWith"),
+        Builtin::StringAt => Some("String.prototype.at"),
         Builtin::StringRepeat => Some("String.prototype.repeat"),
         Builtin::StringTrim => Some("String.prototype.trim"),
         Builtin::StringToLowerCase => Some("String.prototype.toLowerCase"),
@@ -73,6 +74,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringIndexOf
         | Builtin::StringLastIndexOf
         | Builtin::StringCodePointAt => Some(1.0),
+        Builtin::StringAt => Some(1.0),
         Builtin::StringSplit => Some(2.0),
         Builtin::StringPadStart | Builtin::StringPadEnd => Some(1.0),
         Builtin::StringReplace | Builtin::StringReplaceAll => Some(2.0),
@@ -92,6 +94,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringToWellFormed => Some("toWellFormed"),
         Builtin::StringStartsWith => Some("startsWith"),
         Builtin::StringEndsWith => Some("endsWith"),
+        Builtin::StringAt => Some("at"),
         Builtin::StringRepeat => Some("repeat"),
         Builtin::StringTrim => Some("trim"),
         Builtin::StringToLowerCase => Some("toLowerCase"),
