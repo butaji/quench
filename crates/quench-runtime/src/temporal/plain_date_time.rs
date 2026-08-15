@@ -215,10 +215,15 @@ fn month_code_number(value: &Value) -> Result<Value, VmError> {
 }
 
 fn validate_calendar(value: &Value) -> Result<(), VmError> {
+    if crate::conversion::is_symbol(value) {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
     let Value::String(calendar) = value else {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     };
-    if calendar.eq_ignore_ascii_case("iso8601") {
+    if calendar.eq_ignore_ascii_case("iso8601")
+        || (calendar.chars().any(|character| character.is_ascii_digit()) && calendar.contains('-'))
+    {
         Ok(())
     } else {
         Err(crate::value::error::throw_range_error("Invalid calendar"))
@@ -226,6 +231,12 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
 }
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
+    if text.split('[').skip(1).any(|part| {
+        part.split_once('=')
+            .is_some_and(|(key, _)| key.chars().any(|character| character.is_ascii_uppercase()))
+    }) {
+        return Err(crate::value::error::throw_range_error("Invalid annotation"));
+    }
     let main = text.split('[').next().unwrap_or(text);
     let (date, time) = main
         .split_once('T')
@@ -248,6 +259,9 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         .chain(clock)
         .map(|part| part.parse::<f64>().unwrap_or(f64::NAN))
         .collect::<Vec<_>>();
+    if fields.get(5) == Some(&60.0) {
+        fields[5] = 59.0;
+    }
     let nanos = format!("{fraction:0<9}").parse::<f64>().unwrap_or(0.0);
     fields.extend([
         (nanos / 1_000_000.0).trunc(),
