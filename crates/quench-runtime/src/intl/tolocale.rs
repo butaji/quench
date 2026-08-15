@@ -441,7 +441,7 @@ fn locale_element_call(
             arguments.push(options.clone());
         }
         let result = crate::functions::execute_target_with_receiver(&method, value, &arguments)?;
-        return Ok(crate::conversion::to_string(&result.0)?);
+        return crate::conversion::to_string(&result.0);
     }
     Ok(to_string_value(value))
 }

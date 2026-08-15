@@ -88,7 +88,7 @@ fn bigint_fraction_format(value: &str, arguments: &[Value]) -> Option<String> {
         return None;
     };
     let digits = options.properties.iter().find_map(|(key, value)| {
-        (key == "minimumFractionDigits").then(|| to_option_number(value) as usize)
+        (key == "minimumFractionDigits").then_some(to_option_number(value) as usize)
     })?;
     let locale = arguments.first().and_then(|value| match value {
         Value::String(value) => Some(value.as_str()),
@@ -111,7 +111,7 @@ fn bigint_significant_format(value: &str, arguments: &[Value]) -> Option<String>
         return None;
     };
     let maximum = options.properties.iter().find_map(|(key, value)| {
-        (key == "maximumSignificantDigits").then(|| to_option_number(value))
+        (key == "maximumSignificantDigits").then_some(to_option_number(value))
     })? as usize;
     if maximum == 0 || value.trim_start_matches('-').len() <= maximum {
         return None;
@@ -176,7 +176,7 @@ fn group_bigint(value: &str, separator: char) -> String {
     if first != 0 {
         groups.push(digits[..first].to_string());
     }
-    for chunk in digits[first..].as_bytes().chunks(3) {
+    for chunk in digits.as_bytes()[first..].chunks(3) {
         let Ok(chunk) = std::str::from_utf8(chunk) else {
             return value.to_string();
         };
