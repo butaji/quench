@@ -15,9 +15,39 @@ const DELETED_PREFIX: &str = "\0quench:deleted:\0";
 pub(crate) const ERROR_SLOT: &str = "\0error_slot";
 
 thread_local! {
+    static GENERATOR_PROTOTYPES:
+        std::cell::RefCell<HashMap<crate::ops::RealmId, Value>> =
+        std::cell::RefCell::new(HashMap::new());
     static ASYNC_GENERATOR_PROTOTYPES:
         std::cell::RefCell<HashMap<crate::ops::RealmId, Value>> =
         std::cell::RefCell::new(HashMap::new());
+}
+
+pub(crate) fn generator_prototype() -> Value {
+    let realm = crate::vm::current_context_or_default().realm();
+    GENERATOR_PROTOTYPES.with(|cell| {
+        if let Some(value) = cell.borrow().get(&realm) {
+            return value.clone();
+        }
+        let value = Value::Object(Rc::new(ObjectData::new(vec![
+            ("next".to_string(), Value::Builtin(Builtin::GeneratorNext)),
+            (
+                "return".to_string(),
+                Value::Builtin(Builtin::GeneratorReturn),
+            ),
+            ("throw".to_string(), Value::Builtin(Builtin::GeneratorThrow)),
+            (
+                "Symbol.toStringTag".to_string(),
+                Value::String("Generator".to_string()),
+            ),
+            (
+                "\0prototype".to_string(),
+                Value::Builtin(Builtin::ObjectPrototype),
+            ),
+        ])));
+        cell.borrow_mut().insert(realm, value.clone());
+        value
+    })
 }
 
 pub(crate) fn async_generator_prototype() -> Value {

@@ -35,7 +35,7 @@ fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue
     let parent = if function.is_async {
         crate::builtins::async_generator_prototype()
     } else {
-        crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
+        crate::builtins::generator_prototype()
     };
     let instance = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
         vec![("\0prototype".to_string(), parent)],
