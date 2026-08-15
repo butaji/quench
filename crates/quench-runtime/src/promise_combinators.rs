@@ -78,10 +78,14 @@ fn capability(
         Value::BindingCell(cell) => cell.borrow().clone(),
         _ => unreachable!(),
     };
-    Ok((
-        crate::execute::get_property_result(&state, "resolve")?,
-        crate::execute::get_property_result(&state, "reject")?,
-    ))
+    let resolve = crate::execute::get_property_result(&state, "resolve")?;
+    let reject = crate::execute::get_property_result(&state, "reject")?;
+    if !crate::conversion::is_callable(&resolve) || !crate::conversion::is_callable(&reject) {
+        return Err(crate::value::error::throw_type_error(
+            "Promise capability callbacks must be callable",
+        ));
+    }
+    Ok((resolve, reject))
 }
 
 fn collect_resolved(source: Value, receiver: Option<&Value>) -> Result<Vec<Value>, Value> {
