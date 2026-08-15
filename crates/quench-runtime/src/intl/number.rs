@@ -2,7 +2,7 @@
 
 use crate::{execute::VmError, value::Value};
 
-use super::digits::map_digits;
+use super::digits::{is_supported, map_digits};
 use super::number_format::*;
 
 use super::{
@@ -12,6 +12,7 @@ use super::{
 
 pub(crate) struct NumberOptions {
     pub locale: String,
+    resolved_locale: String,
     pub numbering_system: String,
     pub style: String,
     pub currency: Option<String>,
@@ -214,10 +215,7 @@ impl RawOptions {
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = locales
-        .first()
-        .map(|locale| strip_unicode_extensions(locale))
-        .unwrap_or_else(default_locale);
+    let locale = locales.first().cloned().unwrap_or_else(default_locale);
     let options = NumberOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
 }
@@ -239,6 +237,18 @@ fn strip_unicode_extensions(locale: &str) -> String {
     locale
         .split_once("-u-")
         .map_or_else(|| locale.to_string(), |(base, _)| base.to_string())
+}
+
+fn unicode_numbering_system(locale: &str) -> Option<String> {
+    let extension = locale.split_once("-u-")?.1;
+    let mut parts = extension.split('-');
+    while let Some(part) = parts.next() {
+        if part == "nu" {
+            let value = parts.next()?.to_string();
+            return is_supported(&value).then_some(value);
+        }
+    }
+    None
 }
 
 impl NumberOptions {
@@ -310,9 +320,24 @@ impl NumberOptions {
         if raw.style == "unit" && raw.unit.is_none() {
             return Err(crate::value::error::throw_type_error("unit is required"));
         }
+        let extension_numbering = raw
+            .numbering_system
+            .as_ref()
+            .and_then(|_| unicode_numbering_system(&locale));
+        let numbering_system = raw
+            .numbering_system
+            .filter(|value| is_supported(value))
+            .or(extension_numbering.clone())
+            .unwrap_or_else(|| "latn".to_string());
+        let resolved_locale = if extension_numbering.as_deref() == Some(&numbering_system) {
+            locale.clone()
+        } else {
+            strip_unicode_extensions(&locale)
+        };
         Ok(NumberOptions {
-            locale,
-            numbering_system: raw.numbering_system.unwrap_or_else(|| "latn".to_string()),
+            locale: strip_unicode_extensions(&locale),
+            resolved_locale,
+            numbering_system,
             style: raw.style,
             currency: raw.currency,
             currency_display: raw.currency_display,
@@ -375,6 +400,10 @@ impl NumberOptions {
     fn slot(&self) -> Value {
         let mut properties = vec![
             ("locale".to_string(), Value::String(self.locale.clone())),
+            (
+                "resolvedLocale".to_string(),
+                Value::String(self.resolved_locale.clone()),
+            ),
             (
                 "numberingSystem".to_string(),
                 Value::String(self.numbering_system.clone()),
@@ -724,6 +753,9 @@ impl NumberOptions {
     fn from_slots(slots: &[(String, Value)]) -> Result<Self, VmError> {
         Ok(NumberOptions {
             locale: slot_string(slots, "locale").unwrap_or_else(default_locale),
+            resolved_locale: slot_string(slots, "resolvedLocale")
+                .or_else(|| slot_string(slots, "locale"))
+                .unwrap_or_else(default_locale),
             numbering_system: slot_string(slots, "numberingSystem")
                 .unwrap_or_else(|| "latn".to_string()),
             style: slot_string(slots, "style").unwrap_or_else(|| "decimal".to_string()),
@@ -1086,7 +1118,10 @@ impl NumberOptions {
 
     fn resolved(&self) -> Value {
         let mut properties = vec![
-            ("locale".to_string(), Value::String(self.locale.clone())),
+            (
+                "locale".to_string(),
+                Value::String(self.resolved_locale.clone()),
+            ),
             (
                 "numberingSystem".to_string(),
                 Value::String(self.numbering_system.clone()),
