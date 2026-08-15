@@ -53,11 +53,11 @@ pub(crate) fn object_property(
     if !matches!(inherited, Value::Undefined) {
         return inherited;
     }
-    let prototype = object_prototype(properties);
-    if key == "constructor" {
-        return crate::builtins::property(prototype, key);
-    }
-    crate::builtins::property(prototype, key)
+    object_builtin_property(properties, key)
+}
+
+fn object_builtin_property(properties: &[(String, Value)], key: &str) -> Value {
+    crate::builtins::property(object_prototype(properties), key)
 }
 
 fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
