@@ -60,8 +60,10 @@ impl LinkedModuleGraph {
             };
             units.insert(unit.id, module);
         }
-        let ids = units.keys().copied().collect::<Vec<_>>();
-        for id in ids {
+        let root = entry
+            .or_else(|| graph.entry())
+            .ok_or_else(|| "module graph missing entry".to_string())?;
+        for id in graph.dependency_order(root)? {
             let metadata = units
                 .get(&id)
                 .and_then(|unit| unit.program.module_metadata.as_ref())
@@ -76,8 +78,8 @@ impl LinkedModuleGraph {
                     .ok_or_else(|| "module unit missing".to_string())?
                     .bind_import(&binding.local, cell)?;
             }
+            link_reexports(graph, &units, id)?;
         }
-        link_reexports(graph, &units)?;
         Ok(Self { units })
     }
 
@@ -99,13 +101,12 @@ impl LinkedModuleGraph {
 fn link_reexports(
     graph: &ModuleGraph,
     units: &HashMap<ModuleId, LinkedModule>,
+    id: ModuleId,
 ) -> Result<(), String> {
-    for unit in graph.units() {
-        let metadata = unit_metadata(units, unit.id)?;
-        for binding in &metadata.reexports {
-            let target = resolve_reexport(graph, unit.id, &binding.source)?;
-            link_reexport(units, unit.id, target, binding)?;
-        }
+    let metadata = unit_metadata(units, id)?;
+    for binding in &metadata.reexports {
+        let target = resolve_reexport(graph, id, &binding.source)?;
+        link_reexport(units, id, target, binding)?;
     }
     Ok(())
 }
