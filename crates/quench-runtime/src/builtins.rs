@@ -224,6 +224,10 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
         return (left.is_nan() && right.is_nan())
             || (left == right && left.is_sign_negative() == right.is_sign_negative());
     }
+    same_value_objects(left, right)
+}
+
+fn same_value_objects(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
@@ -254,12 +258,6 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
         }
         _ => left == right,
     }
-}
-pub(crate) fn same_value_zero(left: &Value, right: &Value) -> bool {
-    if let (Value::Number(left), Value::Number(right)) = (left, right) {
-        return left.is_nan() && right.is_nan() || left == right;
-    }
-    same_value(Some(left), Some(right))
 }
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
     if let Some(result) = crate::typed_array_prototype::set(&target, key, value.clone()) {
