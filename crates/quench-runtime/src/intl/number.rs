@@ -913,6 +913,24 @@ impl NumberOptions {
                 Value::String(self.trailing_zero_display.clone()),
             ),
         ];
+        if let Some(currency) = &self.currency {
+            properties.push(("currency".to_string(), Value::String(currency.clone())));
+            properties.push((
+                "currencyDisplay".to_string(),
+                Value::String(self.currency_display.clone()),
+            ));
+            properties.push((
+                "currencySign".to_string(),
+                Value::String(self.currency_sign.clone()),
+            ));
+        }
+        if let Some(unit) = &self.unit {
+            properties.push(("unit".to_string(), Value::String(unit.clone())));
+            properties.push((
+                "unitDisplay".to_string(),
+                Value::String(self.unit_display.clone()),
+            ));
+        }
         if self.notation == "compact" {
             properties.insert(8, ("compactDisplay".to_string(), Value::String(self.compact_display.clone())));
         }
