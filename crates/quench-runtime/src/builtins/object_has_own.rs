@@ -38,7 +38,9 @@ fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError>
 }
 fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
     Ok(match receiver {
-        Value::Object(properties) => object_data_owns(properties, key),
+        Value::Object(properties) => {
+            object_data_owns(properties, key) || boxed_string_owns(properties, key)
+        }
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
@@ -48,6 +50,7 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
         Value::String(value) => {
             key == "length" || valid_index(key, crate::strings::utf16_len(value))
         }
+        Value::StringUnits(units) => key == "length" || valid_index(key, units.len()),
         Value::Builtin(builtin) => builtin_owns_property(*builtin, key),
         Value::Function(function) => function
             .properties
