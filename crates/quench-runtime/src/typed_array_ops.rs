@@ -175,13 +175,18 @@ fn transfer_to_immutable(receiver: Option<&Value>, arguments: &[Value]) -> Resul
             "transferToImmutable requires an ArrayBuffer",
         ));
     };
+    if buffer.shared {
+        return Err(crate::value::error::throw_type_error(
+            "transferToImmutable requires an ArrayBuffer",
+        ));
+    }
     let new_length = match arguments.first() {
         None | Some(Value::Undefined) => buffer.byte_length(),
         Some(value) => crate::construct::to_index(crate::intl::tolocale::value::to_number_result(
             Some(value),
         )?)?,
     };
-    if buffer.shared || buffer.immutable || *buffer.detached.borrow() {
+    if buffer.immutable || *buffer.detached.borrow() {
         return Err(crate::value::error::throw_type_error(
             "ArrayBuffer is not transferable",
         ));
