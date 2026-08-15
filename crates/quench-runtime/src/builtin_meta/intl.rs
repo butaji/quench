@@ -207,6 +207,12 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlNumberFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlPluralRulesSelect => Some("select"),
         Builtin::IntlPluralRulesResolvedOptions => Some("resolvedOptions"),
+        _ => intl_short_name_tail(b),
+    }
+}
+
+const fn intl_short_name_tail(b: Builtin) -> Option<&'static str> {
+    match b {
         Builtin::IntlDateTimeFormatFormat => Some("format"),
         Builtin::IntlDateTimeFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlDateTimeFormatFormatRange => Some("formatRange"),
