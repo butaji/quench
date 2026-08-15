@@ -465,7 +465,6 @@ fn element_to_locale_string(
         _ => locale_element_call(value, locales, options),
     }
 }
-
 fn locale_element_call(
     value: &Value,
     locales: &[String],
@@ -483,7 +482,6 @@ fn locale_element_call(
     }
     Ok(to_string_value(value))
 }
-
 pub(crate) fn string_to_locale_case(
     receiver: Option<&Value>,
     arguments: &[Value],
