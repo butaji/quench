@@ -53,6 +53,7 @@ pub(crate) struct RawOptions {
     use_grouping: bool,
     resolved_grouping: String,
     grouping_given: bool,
+    grouping_invalid: bool,
     grouping_min2: bool,
     notation: String,
     compact_display: String,
@@ -108,6 +109,7 @@ impl RawOptions {
             use_grouping: true,
             resolved_grouping: "auto".to_string(),
             grouping_given: false,
+            grouping_invalid: false,
             grouping_min2: false,
             notation: "standard".to_string(),
             compact_display: "short".to_string(),
@@ -154,6 +156,15 @@ impl RawOptions {
                     }
                     "useGrouping" => {
                         raw.grouping_given = true;
+                        raw.grouping_invalid = match &value {
+                            Value::Boolean(_) | Value::Null => false,
+                            Value::Number(value) => *value != 0.0,
+                            Value::String(value) => {
+                                !value.is_empty()
+                                    && !matches!(value.as_str(), "auto" | "min2" | "always")
+                            }
+                            _ => true,
+                        };
                         raw.resolved_grouping = match &value {
                             Value::Boolean(true) => "always",
                             Value::Boolean(false) | Value::Null => "false",
@@ -575,6 +586,11 @@ pub(crate) fn prototype_method(
 }
 
 fn validate_basic_options(raw: &RawOptions) -> Result<(), VmError> {
+    if raw.grouping_invalid {
+        return Err(crate::value::error::throw_range_error(
+            "invalid useGrouping",
+        ));
+    }
     if !matches!(raw.locale_matcher.as_str(), "lookup" | "best fit") {
         return Err(crate::value::error::throw_range_error(
             "invalid localeMatcher",
