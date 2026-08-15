@@ -546,7 +546,13 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlLocale => Some(construct(arguments)),
+        crate::ops::Builtin::IntlLocale => Some(
+            receiver.map_or_else(|| construct(arguments), |_| {
+                Err(crate::value::error::throw_type_error(
+                    "Intl.Locale requires 'new'",
+                ))
+            }),
+        ),
         crate::ops::Builtin::IntlLocaleToString
         | crate::ops::Builtin::IntlLocaleMaximize
         | crate::ops::Builtin::IntlLocaleMinimize
