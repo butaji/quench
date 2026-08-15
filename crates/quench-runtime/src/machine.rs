@@ -304,7 +304,6 @@ pub enum Frame {
         resume: CodeRange,
         yield_dst: u16,
         catch_slot: Option<u16>,
-        pending: Option<crate::completion::Completion>,
     },
     Iterator {
         phase: IteratorPhase,
