@@ -102,6 +102,7 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
         IteratorState::Native { .. } | IteratorState::Protocol { .. } => {
             crate::ops::Builtin::ArrayIteratorPrototype
         }
+        IteratorState::Mapped { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
     };
     Value::Builtin(builtin)
 }
@@ -110,6 +111,7 @@ pub(crate) fn property(key: &str) -> Value {
     match key {
         "next" => Value::Builtin(crate::ops::Builtin::IteratorNext),
         "toArray" => Value::Builtin(crate::ops::Builtin::IteratorToArray),
+        "map" => Value::Builtin(crate::ops::Builtin::IteratorMap),
         "Symbol.iterator" => Value::Builtin(crate::ops::Builtin::IteratorSelf),
         _ => Value::Undefined,
     }
@@ -132,6 +134,7 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
         IteratorState::Set { .. } => "Set Iterator",
         IteratorState::Map { .. } => "Map Iterator",
         IteratorState::Protocol { .. } => "Iterator",
+        IteratorState::Mapped { .. } => "Iterator",
     };
     Value::String(tag.to_string())
 }
@@ -147,6 +150,7 @@ fn next_for(value: &Value) -> Value {
         IteratorState::Set { .. } => Builtin::SetIteratorNext,
         IteratorState::Map { .. } => Builtin::MapIteratorNext,
         IteratorState::Native { .. } | IteratorState::Protocol { .. } => Builtin::IteratorNext,
+        IteratorState::Mapped { .. } => Builtin::IteratorNext,
     };
     Value::Builtin(builtin)
 }

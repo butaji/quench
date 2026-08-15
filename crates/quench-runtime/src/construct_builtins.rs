@@ -8,6 +8,12 @@ fn construct_builtin_match(
         crate::ops::Builtin::SharedArrayBuffer => construct_shared_array_buffer(arguments),
         crate::ops::Builtin::DataView => construct_data_view(arguments),
         crate::ops::Builtin::Object => Ok(crate::builtins::object(arguments)),
+        crate::ops::Builtin::Iterator => Ok(crate::value::Value::Object(std::rc::Rc::new(
+            crate::value::ObjectData::new(vec![(
+                "\0prototype".to_string(),
+                crate::value::Value::Builtin(crate::ops::Builtin::IteratorPrototype),
+            )]),
+        ))),
         crate::ops::Builtin::Number => construct_number(arguments),
         crate::ops::Builtin::Boolean => construct_boolean(arguments),
         crate::ops::Builtin::String => construct_string(arguments),
@@ -186,8 +192,8 @@ fn regexp_constructor_flags(arguments: &[Value]) -> Result<String, crate::execut
         .is_none_or(|flags| matches!(flags, Value::Undefined));
     if let Some(pattern) = arguments.first() {
         if inherits_flags && is_regexp_pattern(pattern)? {
-        return crate::execute::get_property_result(pattern, "flags")
-            .and_then(|value| crate::conversion::to_string(&value));
+            return crate::execute::get_property_result(pattern, "flags")
+                .and_then(|value| crate::conversion::to_string(&value));
         }
     }
     arguments

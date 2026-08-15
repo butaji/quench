@@ -228,6 +228,7 @@ fn generator_property(value: &Value, key: &str) -> Value {
         "return" => crate::ops::Builtin::GeneratorReturn,
         "throw" => crate::ops::Builtin::GeneratorThrow,
         "toArray" => crate::ops::Builtin::IteratorToArray,
+        "map" => crate::ops::Builtin::IteratorMap,
         _ => return Value::Undefined,
     };
     bind_method(value, Value::Builtin(builtin))
