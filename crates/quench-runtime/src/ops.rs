@@ -540,6 +540,7 @@ pub enum Builtin {
     IteratorEvery,
     IteratorSome,
     IteratorFind,
+    IteratorFilter,
     SetIteratorNext,
     MapIteratorNext,
     IteratorSelf,
