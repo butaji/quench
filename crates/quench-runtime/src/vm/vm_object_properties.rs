@@ -1,11 +1,15 @@
-fn object_alias_property(alias: &crate::value::ObjectAliasValue, key: &str) -> Value {
+fn object_alias_property(
+    alias: &crate::value::ObjectAliasValue,
+    key: &str,
+    receiver: &Value,
+) -> Value {
     alias
         .0
         .borrow()
         .upgrade()
         .map_or(Value::Undefined, |object| {
             let object = crate::locals::resolved_replacement(Value::Object(object));
-            get_property(&object, key)
+            get_property_with_receiver(&object, key, receiver).unwrap_or(Value::Undefined)
         })
 }
 
