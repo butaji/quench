@@ -173,10 +173,11 @@ pub(crate) fn array_for_each(
         return Ok(Value::Undefined);
     };
     if let Some(callback) = arguments.first() {
+        let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
         for (index, value) in values.iter().enumerate() {
             crate::functions::execute_target(
                 callback,
-                &Value::Undefined,
+                this_arg,
                 &[value.clone(), Value::Number(index as f64), Value::Undefined],
             )?;
         }
