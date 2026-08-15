@@ -302,15 +302,7 @@ fn add_group_value(
     value: Value,
 ) -> Result<(), crate::execute::VmError> {
     let current = result.borrow().clone();
-    let previous = crate::execute::get_property_result(&current, key)?;
-    let values = match previous {
-        Value::Array(array) => {
-            let mut values = array.snapshot();
-            values.push(value);
-            Value::array(values)
-        }
-        _ => Value::array(vec![value]),
-    };
+    let values = grouped_values(&current, key, value)?;
     let descriptor = vec![
         ("value".to_string(), values),
         ("writable".to_string(), Value::Boolean(true)),
@@ -319,6 +311,22 @@ fn add_group_value(
     ];
     *result.borrow_mut() = crate::builtins::define_own_property(&current, key, &descriptor)?;
     Ok(())
+}
+
+fn grouped_values(
+    current: &Value,
+    key: &str,
+    value: Value,
+) -> Result<Value, crate::execute::VmError> {
+    let previous = crate::execute::get_property_result(current, key)?;
+    Ok(match previous {
+        Value::Array(array) => {
+            let mut values = array.snapshot();
+            values.push(value);
+            Value::array(values)
+        }
+        _ => Value::array(vec![value]),
+    })
 }
 
 pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
