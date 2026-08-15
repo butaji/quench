@@ -38,14 +38,13 @@ pub(crate) fn reduce_eval_source_in_context(
         super::reduce_eval::directive_completion(&parsed.program, inherited_strict);
     let mut facts = eval_facts(&analysis, strict);
     install_eval_facts(&mut facts, source, &analysis);
-    let binding_state = crate::reduce_support::eval_bindings(
+    let (locals, next_slot, prefix, behavior, deletable) = crate::reduce_support::eval_bindings(
         &parsed.program,
         bindings,
         reusable_var_names,
         strict,
         global,
     );
-    let (locals, next_slot, mut prefix, behavior, deletable) = binding_state;
     reduce_eval_program(
         &parsed.program.body,
         facts,
