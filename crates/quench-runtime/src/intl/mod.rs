@@ -703,9 +703,32 @@ fn runtime_error(message: &str) -> VmError {
 
 /// Return the internal slot map of an Intl object as an owned vector.
 pub(crate) fn intl_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
-    let Some(Value::Object(properties)) = receiver else {
+    if let Some(Value::Object(properties)) = receiver {
+        return object_slots(properties);
+    }
+    let Some(Value::Proxy(proxy)) = receiver else {
         return Err(runtime_error("TypeError: not an Intl object"));
     };
+    let Value::Object(target) = &proxy.target else {
+        return Err(runtime_error("TypeError: not an Intl object"));
+    };
+    let Some((key, _)) = target
+        .properties
+        .iter()
+        .find(|(name, _)| name.starts_with("Symbol.IntlLegacyConstructedSymbol\0"))
+    else {
+        return Err(runtime_error("TypeError: not an Intl object"));
+    };
+    let fallback = crate::execute::get_property_result(receiver.unwrap(), key)?;
+    let Value::Object(fallback) = fallback else {
+        return Err(runtime_error("TypeError: not an Intl object"));
+    };
+    object_slots(&fallback)
+}
+
+fn object_slots(
+    properties: &crate::value::ObjectData,
+) -> Result<Vec<(String, Value)>, VmError> {
     let Some((_, Value::Object(slots))) = properties.iter().find(|(name, _)| name == SLOT) else {
         return Err(runtime_error("TypeError: not an Intl object"));
     };
