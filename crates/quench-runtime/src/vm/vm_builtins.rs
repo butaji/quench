@@ -376,13 +376,22 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         ));
     };
     let key = Value::String("stack".to_string());
-    if !matches!(
-        crate::builtins::object::descriptor(Some(value), Some(&key))?,
-        Value::Undefined
-    ) {
-        crate::builtins::set_property(value.clone(), "stack", stack.clone());
-    } else {
+    let descriptor = crate::builtins::object::descriptor(Some(value), Some(&key))?;
+    if matches!(descriptor, Value::Undefined) {
         define_own_stack(value, stack.clone())?;
+    } else if !matches!(crate::execute::get_property(&descriptor, "set"), Value::Undefined) {
+        let setter = crate::execute::get_property(&descriptor, "set");
+        crate::functions::execute_target(&setter, value, std::slice::from_ref(stack))?;
+    } else if matches!(
+        crate::execute::get_property(&descriptor, "writable"),
+        Value::Boolean(false)
+    ) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to read-only property 'stack'",
+        ));
+    } else {
+        let updated = crate::builtins::set_property(value.clone(), "stack", stack.clone());
+        crate::locals::replace_value(value, &updated);
     }
     Ok(Value::Undefined)
 }
