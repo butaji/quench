@@ -314,6 +314,15 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::FunctionPrototype && matches!(key, "caller" | "arguments") {
+        let thrower = crate::vm::realm_intrinsic(Builtin::ThrowTypeError);
+        return Some(Value::Object(Rc::new(ObjectData::new(vec![
+            ("get".to_string(), thrower.clone()),
+            ("set".to_string(), thrower),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]))));
+    }
     if builtin == Builtin::ThrowTypeError && key == "length" {
         return Some(descriptor_object_with_flags(
             Value::Number(0.0),
