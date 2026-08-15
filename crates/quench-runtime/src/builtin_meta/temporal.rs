@@ -49,6 +49,48 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateSubtract => Some("Temporal.PlainDate.prototype.subtract"),
         Builtin::TemporalPlainDateUntil => Some("Temporal.PlainDate.prototype.until"),
         Builtin::TemporalPlainDateSince => Some("Temporal.PlainDate.prototype.since"),
+        Builtin::TemporalPlainDateTime => Some("Temporal.PlainDateTime"),
+        Builtin::TemporalPlainDateTimeFrom => Some("Temporal.PlainDateTime.from"),
+        Builtin::TemporalPlainDateTimeCalendarIdGetter => {
+            Some("Temporal.PlainDateTime.prototype.calendarId")
+        }
+        Builtin::TemporalPlainDateTimeYearGetter => Some("Temporal.PlainDateTime.prototype.year"),
+        Builtin::TemporalPlainDateTimeMonthGetter => Some("Temporal.PlainDateTime.prototype.month"),
+        Builtin::TemporalPlainDateTimeMonthCodeGetter => {
+            Some("Temporal.PlainDateTime.prototype.monthCode")
+        }
+        Builtin::TemporalPlainDateTimeDayGetter => Some("Temporal.PlainDateTime.prototype.day"),
+        Builtin::TemporalPlainDateTimeHourGetter => Some("Temporal.PlainDateTime.prototype.hour"),
+        Builtin::TemporalPlainDateTimeMinuteGetter => {
+            Some("Temporal.PlainDateTime.prototype.minute")
+        }
+        Builtin::TemporalPlainDateTimeSecondGetter => {
+            Some("Temporal.PlainDateTime.prototype.second")
+        }
+        Builtin::TemporalPlainDateTimeMillisecondGetter => {
+            Some("Temporal.PlainDateTime.prototype.millisecond")
+        }
+        Builtin::TemporalPlainDateTimeMicrosecondGetter => {
+            Some("Temporal.PlainDateTime.prototype.microsecond")
+        }
+        Builtin::TemporalPlainDateTimeNanosecondGetter => {
+            Some("Temporal.PlainDateTime.prototype.nanosecond")
+        }
+        Builtin::TemporalPlainDateTimeToString => Some("Temporal.PlainDateTime.prototype.toString"),
+        Builtin::TemporalPlainDateTimeToJSON => Some("Temporal.PlainDateTime.prototype.toJSON"),
+        Builtin::TemporalPlainDateTimeToLocaleString => {
+            Some("Temporal.PlainDateTime.prototype.toLocaleString")
+        }
+        Builtin::TemporalPlainDateTimeCompare => Some("Temporal.PlainDateTime.compare"),
+        Builtin::TemporalPlainDateTimeEquals => Some("Temporal.PlainDateTime.prototype.equals"),
+        Builtin::TemporalPlainDateTimeValueOf => Some("Temporal.PlainDateTime.prototype.valueOf"),
+        Builtin::TemporalPlainDateTimeAdd => Some("Temporal.PlainDateTime.prototype.add"),
+        Builtin::TemporalPlainDateTimeSubtract => Some("Temporal.PlainDateTime.prototype.subtract"),
+        Builtin::TemporalPlainDateTimeWith => Some("Temporal.PlainDateTime.prototype.with"),
+        Builtin::TemporalPlainDateTimeRound => Some("Temporal.PlainDateTime.prototype.round"),
+        Builtin::TemporalPlainDateTimeToZonedDateTime => {
+            Some("Temporal.PlainDateTime.prototype.toZonedDateTime")
+        }
         Builtin::TemporalPlainTime => Some("Temporal.PlainTime"),
         Builtin::TemporalPlainTimeFrom => Some("Temporal.PlainTime.from"),
         Builtin::TemporalPlainTimeCompare => Some("Temporal.PlainTime.compare"),
@@ -114,6 +156,30 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateSubtract => Some("subtract"),
         Builtin::TemporalPlainDateUntil => Some("until"),
         Builtin::TemporalPlainDateSince => Some("since"),
+        Builtin::TemporalPlainDateTime => Some("PlainDateTime"),
+        Builtin::TemporalPlainDateTimeFrom => Some("from"),
+        Builtin::TemporalPlainDateTimeCalendarIdGetter => Some("get calendarId"),
+        Builtin::TemporalPlainDateTimeYearGetter => Some("get year"),
+        Builtin::TemporalPlainDateTimeMonthGetter => Some("get month"),
+        Builtin::TemporalPlainDateTimeMonthCodeGetter => Some("get monthCode"),
+        Builtin::TemporalPlainDateTimeDayGetter => Some("get day"),
+        Builtin::TemporalPlainDateTimeHourGetter => Some("get hour"),
+        Builtin::TemporalPlainDateTimeMinuteGetter => Some("get minute"),
+        Builtin::TemporalPlainDateTimeSecondGetter => Some("get second"),
+        Builtin::TemporalPlainDateTimeMillisecondGetter => Some("get millisecond"),
+        Builtin::TemporalPlainDateTimeMicrosecondGetter => Some("get microsecond"),
+        Builtin::TemporalPlainDateTimeNanosecondGetter => Some("get nanosecond"),
+        Builtin::TemporalPlainDateTimeToString => Some("toString"),
+        Builtin::TemporalPlainDateTimeToJSON => Some("toJSON"),
+        Builtin::TemporalPlainDateTimeToLocaleString => Some("toLocaleString"),
+        Builtin::TemporalPlainDateTimeCompare => Some("compare"),
+        Builtin::TemporalPlainDateTimeEquals => Some("equals"),
+        Builtin::TemporalPlainDateTimeValueOf => Some("valueOf"),
+        Builtin::TemporalPlainDateTimeAdd => Some("add"),
+        Builtin::TemporalPlainDateTimeSubtract => Some("subtract"),
+        Builtin::TemporalPlainDateTimeWith => Some("with"),
+        Builtin::TemporalPlainDateTimeRound => Some("round"),
+        Builtin::TemporalPlainDateTimeToZonedDateTime => Some("toZonedDateTime"),
         Builtin::TemporalPlainTime => Some("PlainTime"),
         Builtin::TemporalPlainTimeFrom => Some("from"),
         Builtin::TemporalPlainTimeCompare => Some("compare"),
@@ -149,6 +215,15 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalPlainTimeToString | Builtin::TemporalPlainTimeToJSON => Some(0.0),
         Builtin::TemporalPlainTimeRound => Some(1.0),
         Builtin::TemporalPlainDateToString | Builtin::TemporalPlainDateToJSON => Some(0.0),
+        Builtin::TemporalPlainDateTimeFrom => Some(1.0),
+        Builtin::TemporalPlainDateTimeCompare => Some(2.0),
+        Builtin::TemporalPlainDateTimeToString
+        | Builtin::TemporalPlainDateTimeToJSON
+        | Builtin::TemporalPlainDateTimeToLocaleString
+        | Builtin::TemporalPlainDateTimeValueOf => Some(0.0),
+        Builtin::TemporalPlainDateTimeWith
+        | Builtin::TemporalPlainDateTimeRound
+        | Builtin::TemporalPlainDateTimeToZonedDateTime => Some(1.0),
         _ => None,
     }
 }
