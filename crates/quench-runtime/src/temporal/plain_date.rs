@@ -536,16 +536,21 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         if month < 0.0 || day < 0.0 {
             return Err(crate::value::error::throw_range_error("Invalid date"));
         }
-        if let Ok(Value::String(code)) = field(object, "monthCode") {
-            let expected = format!("M{month:02.0}");
-            if code != expected {
-                return Err(crate::value::error::throw_range_error("monthCode mismatch"));
-            }
-        }
         let calendar = match field(object, "calendar")? {
             Value::String(calendar) => canonical_calendar(&Value::String(calendar))?,
             _ => "iso8601".into(),
         };
+        let month = if calendar == "hebrew" {
+            hebrew_month_number(year, month, field(object, "monthCode").ok().as_ref())?
+        } else {
+            month
+        };
+        if let Ok(Value::String(code)) = field(object, "monthCode") {
+            let expected = month_code(year, month, &calendar);
+            if code != expected {
+                return Err(crate::value::error::throw_range_error("monthCode mismatch"));
+            }
+        }
         return make_date_with_calendar(year, month, day, options, &calendar);
     }
     let Value::String(text) = value else {
@@ -846,20 +851,78 @@ fn days_in_month_for_calendar(year: f64, month: f64, calendar: &str) -> Result<f
     if !(1.0..=max_month).contains(&month) || !year.is_finite() {
         return Err(crate::value::error::throw_range_error("Invalid date"));
     }
-    let lengths = if leap {
-        [
-            30.0, 30.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 29.0,
-        ]
-    } else {
-        [
-            30.0, 30.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 0.0,
-        ]
-    };
-    Ok(lengths[month as usize - 1])
+    let lengths = [
+        30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 29.0,
+    ];
+    let mut length = lengths[month as usize - 1];
+    let year_length = hebrew_year_length(year);
+    if month == 2.0 {
+        length = if year_length % 10 == 5 { 30.0 } else { 29.0 };
+    } else if month == 3.0 {
+        length = if year_length % 10 == 3 { 29.0 } else { 30.0 };
+    }
+    Ok(length)
 }
 
 fn is_hebrew_leap_year(year: f64) -> bool {
     matches!((year as i64).rem_euclid(19), 0 | 3 | 6 | 8 | 11 | 14 | 17)
+}
+
+fn hebrew_month_number(year: f64, month: f64, month_code: Option<&Value>) -> Result<f64, VmError> {
+    let Some(Value::String(code)) = month_code else {
+        return Ok(month);
+    };
+    if code == "M05L" {
+        return Ok(6.0);
+    }
+    let number = month;
+    if is_hebrew_leap_year(year) && number >= 6.0 {
+        Ok(number + 1.0)
+    } else {
+        Ok(number)
+    }
+}
+
+fn month_code(year: f64, month: f64, calendar: &str) -> String {
+    if calendar == "hebrew" && is_hebrew_leap_year(year) {
+        if month == 6.0 {
+            return "M05L".into();
+        }
+        if month > 6.0 {
+            return format!("M{:02}", month as u32 - 1);
+        }
+    }
+    format!("M{:02}", month as u32)
+}
+
+fn hebrew_delay(year: i64) -> i64 {
+    let months = (235 * year - 234).div_euclid(19);
+    let parts = 12_084 + 13_753 * months;
+    let mut day = 29 * months + parts.div_euclid(25_920);
+    if (3 * (day + 1)).rem_euclid(7) < 3 {
+        day += 1;
+    }
+    day
+}
+
+fn hebrew_postponement(year: i64) -> i64 {
+    let present = hebrew_delay(year);
+    let next = hebrew_delay(year + 1);
+    let previous = hebrew_delay(year - 1);
+    if next - present == 356 {
+        2
+    } else if present - previous == 382 {
+        1
+    } else {
+        0
+    }
+}
+
+fn hebrew_year_length(year: f64) -> i64 {
+    let year = year as i64;
+    hebrew_delay(year + 1) + hebrew_postponement(year + 1)
+        - hebrew_delay(year)
+        - hebrew_postponement(year)
 }
 
 fn field(object: &crate::value::ObjectData, name: &str) -> Result<Value, VmError> {
@@ -884,7 +947,10 @@ fn date_object_with_calendar(year: f64, month: f64, day: f64, calendar: &str) ->
     Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
         ("year".into(), Value::Number(year)),
         ("month".into(), Value::Number(month)),
-        ("monthCode".into(), Value::String(format!("M{month:02.0}"))),
+        (
+            "monthCode".into(),
+            Value::String(month_code(year, month, calendar)),
+        ),
         ("day".into(), Value::Number(day)),
         ("_temporal_kind".into(), Value::String("PlainDate".into())),
         ("_year".into(), Value::Number(year)),
