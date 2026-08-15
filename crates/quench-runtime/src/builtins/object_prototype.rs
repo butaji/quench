@@ -42,13 +42,18 @@ fn prototype_for_value(value: &Value) -> Value {
             Value::Builtin(Builtin::ErrorPrototype)
         }
         Value::Builtin(
-            builtin @ (Builtin::ArrayIteratorPrototype
-            | Builtin::RegExpStringIteratorPrototype
-            | Builtin::SetIteratorPrototype
-            | Builtin::MapIteratorPrototype
-            | Builtin::IteratorPrototype),
-        ) => iterator_prototype(*builtin),
-        Value::Function(function) => function_prototype(function),
+            Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::TypeErrorPrototype,
+        ) => Value::Builtin(Builtin::ErrorPrototype),
+        Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::SetIteratorPrototype | Builtin::MapIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
+        Value::Function(function) => {
+            internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
+        }
         Value::Builtin(_) | Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
         Value::Generator(generator) => generator_prototype(generator),
@@ -332,10 +337,8 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
-            | Builtin::AsyncFunctionPrototype
-            | Builtin::AsyncGeneratorFunctionPrototype
-            | Builtin::AsyncGeneratorPrototype
-            | Builtin::AsyncIteratorPrototype
+            | Builtin::ErrorPrototype
+            | Builtin::SuppressedErrorPrototype
     )
 }
 

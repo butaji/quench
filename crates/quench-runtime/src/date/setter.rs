@@ -130,15 +130,15 @@ fn components(
     start: usize,
     mut values: [f64; 4],
 ) -> Result<[f64; 4], VmError> {
-    for index in start..values.len() {
+    for (index, value_slot) in values.iter_mut().enumerate().skip(start) {
         let value = arguments
             .get(index - start)
             .map(crate::conversion::to_number)
             .transpose()?;
         if index == start {
-            values[index] = value.unwrap_or(f64::NAN);
+            *value_slot = value.unwrap_or(f64::NAN);
         } else if let Some(value) = value {
-            values[index] = value;
+            *value_slot = value;
         }
     }
     Ok(values)
