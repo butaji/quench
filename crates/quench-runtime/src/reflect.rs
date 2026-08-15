@@ -56,11 +56,11 @@ pub(crate) fn wrap_shadow_function(
     target: &Value,
     realm: Option<crate::ops::RealmId>,
 ) -> Result<Value, VmError> {
-    let name = match shadow_property(target, "name")? {
+    let name = match shadow_property(target, "name", realm)? {
         Value::String(value) if !crate::conversion::is_symbol_string(&value) => value,
         _ => String::new(),
     };
-    let length = match shadow_property(target, "length")? {
+    let length = match shadow_property(target, "length", realm)? {
         Value::Number(value) if value.is_finite() => value.max(0.0).trunc(),
         Value::Number(value) if value.is_infinite() && value.is_sign_positive() => value,
         _ => 0.0,
@@ -90,13 +90,23 @@ pub(crate) fn wrap_shadow_function(
     )))
 }
 
-fn shadow_property(target: &Value, key: &str) -> Result<Value, VmError> {
-    let result = if matches!(target, Value::Proxy(_)) {
-        crate::proxy::proxy_get_own_property_descriptor(target, key)
-            .and_then(|_| crate::execute::get_property_result(target, key))
-    } else {
-        crate::execute::get_property_result(target, key)
+fn shadow_property(
+    target: &Value,
+    key: &str,
+    realm: Option<crate::ops::RealmId>,
+) -> Result<Value, VmError> {
+    let read = || {
+        if matches!(target, Value::Proxy(_)) {
+            crate::proxy::proxy_get_own_property_descriptor(target, key)
+                .and_then(|_| crate::execute::get_property_result(target, key))
+        } else {
+            crate::execute::get_property_result(target, key)
+        }
     };
+    let result = realm
+        .filter(|realm| *realm != crate::ops::RealmId::ROOT)
+        .and_then(|realm| crate::vm::with_realm(realm, read))
+        .unwrap_or_else(read);
     result.map_err(|_| shadow_type_error("ShadowRealm wrapped function metadata failed"))
 }
 
