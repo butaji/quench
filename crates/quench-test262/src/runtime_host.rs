@@ -210,10 +210,24 @@ impl LinkedModuleGraph {
     }
 
     fn ready_for_execution(&self, graph: &ModuleGraph, id: ModuleId) -> bool {
+        let mut seen = HashSet::new();
+        self.dependencies_settled(graph, id, &mut seen)
+    }
+
+    fn dependencies_settled(
+        &self,
+        graph: &ModuleGraph,
+        id: ModuleId,
+        seen: &mut HashSet<ModuleId>,
+    ) -> bool {
+        if !seen.insert(id) {
+            return true;
+        }
         graph.dependencies(id).into_iter().all(|dependency| {
             self.units
                 .get(&dependency)
                 .map_or(true, |unit| unit.async_next.get().is_none())
+                && self.dependencies_settled(graph, dependency, seen)
         })
     }
 
