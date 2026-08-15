@@ -20,9 +20,15 @@ pub(crate) fn builtin(
         ));
     }
     let realm = crate::vm::realm_id_for_intrinsic_receiver(receiver);
+    let direct_syntax_error = matches!(
+        value,
+        Value::String(source)
+            if crate::reduce::reduce_eval_source(source, false, true, false, &[], &[]).is_err()
+    );
     let result = evaluate(value, false, realm).map_err(|error| {
         if builtin == crate::ops::Builtin::ShadowRealmEvaluate
-            && matches!(&error, VmError::Thrown(value) if !is_syntax_error(value))
+            && !direct_syntax_error
+            && matches!(error, VmError::Thrown(_))
         {
             crate::value::error::throw_type_error("ShadowRealm evaluation threw a value")
         } else {
@@ -40,16 +46,6 @@ pub(crate) fn builtin(
         ));
     }
     Ok(result)
-}
-
-fn is_syntax_error(value: &Value) -> bool {
-    matches!(
-        value,
-        Value::Object(properties)
-            if properties.iter().any(|(key, value)| {
-                key == "constructor" && *value == Value::Builtin(crate::ops::Builtin::SyntaxError)
-            })
-    )
 }
 
 fn wrap_shadow_function(target: &Value) -> Result<Value, VmError> {
