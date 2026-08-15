@@ -161,6 +161,12 @@ fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
         "escape" => Some(crate::ops::Builtin::Escape),
         "isFinite" => Some(crate::ops::Builtin::IsFinite),
         "isNaN" => Some(crate::ops::Builtin::IsNaN),
+        _ => builtin_core_tail(name),
+    }
+}
+
+fn builtin_core_tail(name: &str) -> Option<crate::ops::Builtin> {
+    match name {
         "Number" => Some(crate::ops::Builtin::Number),
         "Object" => Some(crate::ops::Builtin::Object),
         "parseFloat" => Some(crate::ops::Builtin::ParseFloat),
