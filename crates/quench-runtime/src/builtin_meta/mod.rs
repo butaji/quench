@@ -303,6 +303,12 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::RegExp => Some(2.0),
         Builtin::String => Some(1.0),
         Builtin::Symbol => Some(0.0),
+        _ => constructor_length_tail(builtin),
+    }
+}
+
+fn constructor_length_tail(builtin: Builtin) -> Option<f64> {
+    match builtin {
         Builtin::TypeError
         | Builtin::Error
         | Builtin::RangeError
