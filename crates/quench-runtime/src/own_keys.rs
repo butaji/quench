@@ -88,7 +88,10 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
 
 fn object_enumerable_keys(properties: &[(String, Value)]) -> Vec<String> {
     let Some((_, Value::String(value))) = properties.iter().find(|(key, _)| key == "_value") else {
-        return enumerable_ordered(properties);
+        return enumerable_ordered(properties)
+            .into_iter()
+            .filter(|key| key != "timeValue")
+            .collect();
     };
     if crate::conversion::is_symbol_string(value) {
         return enumerable_ordered(properties);
@@ -97,7 +100,7 @@ fn object_enumerable_keys(properties: &[(String, Value)]) -> Vec<String> {
     keys.extend(
         enumerable_ordered(properties)
             .into_iter()
-            .filter(|key| !matches!(key.as_str(), "_value" | "constructor")),
+            .filter(|key| !matches!(key.as_str(), "_value" | "constructor" | "timeValue")),
     );
     keys
 }
