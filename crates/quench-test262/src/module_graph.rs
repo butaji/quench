@@ -96,6 +96,14 @@ impl ModuleGraph {
         self.edges.get(&id).into_iter().flatten().copied().collect()
     }
 
+    pub fn is_deferred_edge(&self, from: ModuleId, to: ModuleId) -> bool {
+        self.deferred_edges.contains(&(from, to))
+    }
+
+    pub fn has_async_dependency(&self, id: ModuleId) -> Result<bool, String> {
+        self.gather_async_dependencies(id, &mut Vec::new(), &mut Vec::new())
+    }
+
     pub fn units(&self) -> &[ModuleUnit] {
         &self.units
     }
