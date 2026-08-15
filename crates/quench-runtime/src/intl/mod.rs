@@ -400,6 +400,8 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let tag = tag.trim();
     if tag.eq_ignore_ascii_case("nan")
+        || tag.eq_ignore_ascii_case("en-gb-oed")
+        || tag.eq_ignore_ascii_case("x-private")
         || tag.is_empty()
         || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
     {
