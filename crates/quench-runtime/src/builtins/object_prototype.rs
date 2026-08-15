@@ -78,6 +78,20 @@ fn prototype_for_value_tail(value: &Value) -> Value {
         {
             crate::vm::realm_intrinsic_for(bound.realm, Builtin::Function)
         }
+        Value::BoundFunction(bound)
+            if crate::vm::is_intrinsic_bound(bound)
+                && matches!(
+                    bound.target,
+                    Value::Builtin(Builtin::GeneratorFunction)
+                        | Value::Builtin(Builtin::AsyncGeneratorFunction)
+                ) =>
+        {
+            let prototype = match bound.target {
+                Value::Builtin(Builtin::GeneratorFunction) => Builtin::GeneratorFunctionPrototype,
+                _ => Builtin::AsyncGeneratorFunctionPrototype,
+            };
+            crate::vm::realm_intrinsic_for(bound.realm, prototype)
+        }
         Value::Builtin(_) | Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
         Value::Generator(generator) => generator_prototype(generator),
