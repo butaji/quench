@@ -125,6 +125,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
         (TemporalPlainDate, "compare") => Some(Value::Builtin(TemporalPlainDateCompare)),
+        (TemporalPlainDatePrototype, "era") => Some(Value::Builtin(TemporalPlainDateEraGetter)),
+        (TemporalPlainDatePrototype, "eraYear") => {
+            Some(Value::Builtin(TemporalPlainDateEraYearGetter))
+        }
         (TemporalPlainDateTime, "prototype") => {
             Some(Value::Builtin(TemporalPlainDateTimePrototype))
         }
