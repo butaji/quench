@@ -369,7 +369,7 @@ fn set_error_stack_home() -> Option<Value> {
     Some(value)
 }
 
-fn has_error_slot(value: &Value) -> bool {
+pub(crate) fn has_error_slot(value: &Value) -> bool {
     match value {
         Value::Object(value) => value
             .iter()
