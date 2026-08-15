@@ -75,6 +75,7 @@ impl LinkedModuleGraph {
         link_reexports(graph, &units)?;
         link_reexports(graph, &units)?;
         link_reexports(graph, &units)?;
+        validate_reexports(graph, &units)?;
         bind_imports(graph, &units, false)?;
         Ok(Self { units })
     }
@@ -145,6 +146,77 @@ impl LinkedModuleGraph {
     pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
         self.units.get(&unit)?.export_cell(name)
     }
+}
+
+fn validate_reexports(
+    graph: &ModuleGraph,
+    units: &HashMap<ModuleId, LinkedModule>,
+) -> Result<(), String> {
+    for (&id, unit) in units {
+        let Some(metadata) = unit.program.module_metadata.as_ref() else {
+            continue;
+        };
+        for binding in metadata
+            .reexports
+            .iter()
+            .filter(|b| b.imported != "*all*" && b.imported != "*")
+        {
+            let target = graph
+                .resolve(id, &binding.source)
+                .ok_or_else(|| format!("unresolved module {}", binding.source))?;
+            if !resolve_export(units, graph, target, &binding.imported, &mut Vec::new()) {
+                return Err(format!("SyntaxError: export {} missing", binding.imported));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn resolve_export(
+    units: &HashMap<ModuleId, LinkedModule>,
+    graph: &ModuleGraph,
+    id: ModuleId,
+    name: &str,
+    seen: &mut Vec<(ModuleId, String)>,
+) -> bool {
+    let key = (id, name.to_string());
+    if seen.contains(&key) {
+        return false;
+    }
+    seen.push(key);
+    let Some(metadata) = units
+        .get(&id)
+        .and_then(|u| u.program.module_metadata.as_ref())
+    else {
+        return false;
+    };
+    if metadata
+        .exports
+        .iter()
+        .any(|export| export.exported == name)
+    {
+        return true;
+    }
+    if let Some(binding) = metadata
+        .reexports
+        .iter()
+        .find(|binding| binding.exported == name && binding.imported != "*all*")
+    {
+        let Some(target) = graph.resolve(id, &binding.source) else {
+            return false;
+        };
+        return resolve_export(units, graph, target, &binding.imported, seen);
+    }
+    if name == "default" {
+        return false;
+    }
+    let mut matches = metadata.reexports.iter().filter(|binding| {
+        binding.imported == "*all*"
+            && graph
+                .resolve(id, &binding.source)
+                .is_some_and(|target| resolve_export(units, graph, target, name, &mut seen.clone()))
+    });
+    matches.next().is_some() && matches.next().is_none()
 }
 
 fn dynamic_import_error(error: &str) -> Value {
@@ -236,7 +308,7 @@ fn link_reexports(
         let metadata = unit_metadata(units, unit.id)?;
         for binding in &metadata.reexports {
             let target = resolve_reexport(graph, unit.id, &binding.source)?;
-            link_reexport(units, unit.id, target, binding)?;
+            link_reexport(graph, units, unit.id, target, binding)?;
         }
     }
     Ok(())
@@ -259,6 +331,7 @@ fn resolve_reexport(graph: &ModuleGraph, from: ModuleId, source: &str) -> Result
 }
 
 fn link_reexport(
+    graph: &ModuleGraph,
     units: &HashMap<ModuleId, LinkedModule>,
     from: ModuleId,
     target: ModuleId,
@@ -267,19 +340,61 @@ fn link_reexport(
     if binding.imported == "*all*" {
         return link_star_exports(units, from, target);
     }
-    let cell = match import_cell(units, target, &binding.imported, true, false) {
-        Ok(cell) => cell,
-        Err(error) if declares_export(units, target, &binding.imported) => {
-            let _ = error;
+    if binding.imported == "*" {
+        let cell = namespace_cell(units, target, false)?;
+        units
+            .get(&from)
+            .ok_or_else(|| "module unit missing".to_string())?
+            .link_export(&binding.exported, cell);
+        return Ok(());
+    }
+    let cell = match resolved_export_cell(units, graph, target, &binding.imported, &mut Vec::new())
+    {
+        Some(cell) => cell,
+        None if declares_export(units, target, &binding.imported) => {
             ModuleBindingCell::unresolved()
         }
-        Err(error) => return Err(error),
+        None => return Err(format!("SyntaxError: export {} missing", binding.imported)),
     };
     units
         .get(&from)
         .ok_or_else(|| "module unit missing".to_string())?
         .link_export(&binding.exported, cell);
     Ok(())
+}
+
+fn resolved_export_cell(
+    units: &HashMap<ModuleId, LinkedModule>,
+    graph: &ModuleGraph,
+    id: ModuleId,
+    name: &str,
+    seen: &mut Vec<(ModuleId, String)>,
+) -> Option<ModuleBindingCell> {
+    let key = (id, name.to_string());
+    if seen.contains(&key) {
+        return None;
+    }
+    seen.push(key);
+    if let Some(cell) = units.get(&id)?.export_cell(name) {
+        return Some(cell);
+    }
+    let metadata = units.get(&id)?.program.module_metadata.as_ref()?;
+    if let Some(binding) = metadata
+        .reexports
+        .iter()
+        .find(|binding| binding.exported == name && binding.imported != "*all*")
+    {
+        let target = graph.resolve(id, &binding.source)?;
+        return resolved_export_cell(units, graph, target, &binding.imported, seen);
+    }
+    metadata
+        .reexports
+        .iter()
+        .filter(|binding| binding.imported == "*all*")
+        .find_map(|binding| {
+            let target = graph.resolve(id, &binding.source)?;
+            resolved_export_cell(units, graph, target, name, &mut seen.clone())
+        })
 }
 
 fn declares_export(units: &HashMap<ModuleId, LinkedModule>, target: ModuleId, name: &str) -> bool {
