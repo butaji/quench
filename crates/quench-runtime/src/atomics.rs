@@ -7,34 +7,18 @@ pub(crate) fn is_lock_free(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(view) = arguments.first() else {
+    let Some(Value::Int32Array(view)) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
-            "Atomics.notify requires an integer typed array",
+            "Atomics.notify requires an Int32Array",
         ));
     };
-    let shared = match view {
-        Value::Int32Array(view) => view.buffer.shared,
-        Value::BigInt64Array(view) => view.buffer.shared,
-        Value::BigUint64Array(view) => view.buffer.shared,
-        _ => {
-            return Err(crate::value::error::throw_type_error(
-                "Atomics.notify requires an integer typed array",
-            ))
-        }
-    };
-    if !shared {
+    if !view.buffer.shared {
         return Err(crate::value::error::throw_type_error(
             "Atomics.notify requires a shared buffer",
         ));
     }
     let index = atomic_index(arguments.get(1))?;
-    let valid = match view {
-        Value::Int32Array(view) => view.get(index).is_some(),
-        Value::BigInt64Array(view) => view.get(index).is_some(),
-        Value::BigUint64Array(view) => view.get(index).is_some(),
-        _ => false,
-    };
-    if !valid {
+    if view.get(index).is_none() {
         return Err(crate::value::error::throw_range_error(
             "Atomics.notify index is out of range",
         ));
