@@ -362,8 +362,10 @@ pub(crate) fn bare_call_receiver(
     function: &crate::value::FunctionValue,
     this_value: &Value,
 ) -> Value {
-    if matches!(function.kind, FunctionKind::Ordinary)
-        && matches!(function.strictness, FunctionStrictness::Sloppy)
+    if matches!(
+        function.kind,
+        FunctionKind::Ordinary | FunctionKind::Generator
+    ) && matches!(function.strictness, FunctionStrictness::Sloppy)
     {
         if matches!(this_value, Value::Undefined | Value::Null) {
             return current_global_object();
