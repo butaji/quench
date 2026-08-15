@@ -437,6 +437,11 @@ fn era_values(calendar: &Value, year: f64, month: f64, day: f64) -> (Value, Valu
         }
         "roc" if year > 0.0 => (Value::String("roc".into()), Value::Number(year)),
         "roc" => (Value::String("broc".into()), Value::Number(1.0 - year)),
+        "buddhist" => (Value::String("be".into()), Value::Number(year)),
+        "coptic" => (Value::String("am".into()), Value::Number(year)),
+        "ethioaa" => (Value::String("aa".into()), Value::Number(year)),
+        "indian" => (Value::String("shaka".into()), Value::Number(year)),
+        "persian" => (Value::String("ap".into()), Value::Number(year)),
         _ => (Value::Undefined, Value::Undefined),
     }
 }
@@ -637,8 +642,13 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         if month < 0.0 || day < 0.0 {
             return Err(crate::value::error::throw_range_error("Invalid date"));
         }
+        let month_code_value = if field(object, "month").is_err() {
+            field(object, "monthCode").ok()
+        } else {
+            None
+        };
         let month = if calendar == "hebrew" {
-            hebrew_month_number(year, month, field(object, "monthCode").ok().as_ref())?
+            hebrew_month_number(year, month, month_code_value.as_ref())?
         } else {
             month
         };
@@ -941,7 +951,25 @@ fn days_in_month(year: f64, month: f64) -> Result<f64, VmError> {
 
 fn days_in_month_for_calendar(year: f64, month: f64, calendar: &str) -> Result<f64, VmError> {
     if calendar != "hebrew" {
-        return days_in_month(year, month);
+        if matches!(calendar, "iso8601" | "gregory") {
+            return days_in_month(year, month);
+        }
+        if !(1.0..=13.0).contains(&month) || !year.is_finite() {
+            return Err(crate::value::error::throw_range_error("Invalid date"));
+        }
+        return Ok(if month == 2.0 {
+            if leap(year) {
+                29.0
+            } else {
+                28.0
+            }
+        } else if month == 13.0 {
+            29.0
+        } else if [4.0, 6.0, 9.0, 11.0].contains(&month) {
+            30.0
+        } else {
+            31.0
+        });
     }
     let leap = is_hebrew_leap_year(year);
     let max_month = if leap { 13.0 } else { 12.0 };
@@ -990,6 +1018,9 @@ fn hebrew_month_number(year: f64, month: f64, month_code: Option<&Value>) -> Res
 }
 
 fn month_code(year: f64, month: f64, calendar: &str) -> String {
+    if matches!(calendar, "chinese" | "dangi") && month == 13.0 {
+        return "M12".into();
+    }
     if calendar == "hebrew" && is_hebrew_leap_year(year) {
         if month == 6.0 {
             return "M05L".into();
