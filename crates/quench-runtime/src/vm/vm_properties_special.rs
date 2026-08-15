@@ -366,7 +366,7 @@ fn data_view_instance_accessor(value: &Value, key: &str) -> Option<Result<Value,
     match key {
         "buffer" => Some(Ok(Value::ArrayBuffer(view.buffer.clone()))),
         "byteLength" | "byteOffset" => {
-            if view.is_detached() || view.is_out_of_bounds() {
+            if data_view_invalid(view) {
                 return Some(Err(crate::value::error::throw_type_error(
                     "Detached DataView",
                 )));
@@ -380,6 +380,10 @@ fn data_view_instance_accessor(value: &Value, key: &str) -> Option<Result<Value,
         }
         _ => None,
     }
+}
+
+fn data_view_invalid(view: &crate::value::DataViewData) -> bool {
+    view.is_detached() || view.is_out_of_bounds()
 }
 
 fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
