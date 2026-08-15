@@ -57,6 +57,7 @@ fn make_protocol(iterator: Value) -> Value {
             iterator,
             next: Value::Undefined,
             done: false,
+            executing: false,
         }),
     }))
 }

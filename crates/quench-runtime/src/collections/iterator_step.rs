@@ -11,10 +11,34 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
         StepTarget::Value(value) => Ok(value),
         StepTarget::Protocol(iterator, cached) => {
             let next = resolve_next(data, &iterator, cached)?;
-            let result = iterator_protocol::call_next(data, &next, &iterator)?;
+            let result = protocol_next(data, &next, &iterator)?;
             protocol_result(data, result)
         }
     }
+}
+
+fn protocol_next(
+    data: &IteratorData,
+    next: &Value,
+    iterator: &Value,
+) -> Result<Value, crate::execute::VmError> {
+    {
+        let mut state = data.state.borrow_mut();
+        let IteratorState::Protocol { executing, .. } = &mut *state else {
+            return iterator_protocol::call_next(data, next, iterator);
+        };
+        if *executing {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator next called while iterator is executing",
+            ));
+        }
+        *executing = true;
+    }
+    let result = iterator_protocol::call_next(data, next, iterator);
+    if let IteratorState::Protocol { executing, .. } = &mut *data.state.borrow_mut() {
+        *executing = false;
+    }
+    result
 }
 
 enum StepTarget {
