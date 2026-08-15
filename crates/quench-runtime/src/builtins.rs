@@ -523,6 +523,10 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             Value::DataView(view)
         }
         Value::ArrayBuffer(buffer) => {
+            let value = match value {
+                Value::Object(object) => crate::builtins::object_alias::alias(&object),
+                value => value,
+            };
             buffer.set_own_property(key, value);
             Value::ArrayBuffer(buffer)
         }
