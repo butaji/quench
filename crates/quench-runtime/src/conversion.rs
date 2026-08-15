@@ -204,7 +204,11 @@ pub(crate) fn is_callable(value: &Value) -> bool {
             if crate::vm::is_intrinsic_bound(bound)
                 && matches!(
                     bound.target,
-                    Value::Builtin(crate::ops::Builtin::AsyncFunctionPrototype)
+                    Value::Builtin(
+                        crate::ops::Builtin::AsyncFunctionPrototype
+                            | crate::ops::Builtin::GeneratorFunctionPrototype
+                            | crate::ops::Builtin::AsyncGeneratorFunctionPrototype,
+                    )
                 ) =>
         {
             false
