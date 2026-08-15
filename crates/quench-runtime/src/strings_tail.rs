@@ -1,8 +1,12 @@
 pub(crate) fn search(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::String(value)) = receiver else { return Value::Number(-1.0) };
+    let Some(Value::String(value)) = receiver else {
+        return Value::Number(-1.0);
+    };
     if let Some(Value::Object(pattern)) = arguments.first() {
         let pattern = Value::Object(pattern.clone());
-        if let Ok(Value::Array(result)) = crate::regexp::exec(Some(&pattern), &[Value::String(value.clone())]) {
+        if let Ok(Value::Array(result)) =
+            crate::regexp::exec(Some(&pattern), &[Value::String(value.clone())])
+        {
             return crate::execute::get_property_result(&Value::Array(result), "index")
                 .unwrap_or_else(|_| Value::Number(-1.0));
         }
@@ -12,7 +16,10 @@ pub(crate) fn search(receiver: Option<&Value>, arguments: &[Value]) -> Value {
     Value::Number(value.find(&pattern).map_or(-1.0, |index| index as f64))
 }
 
-fn string_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+fn string_match(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
     let input = string_receiver(receiver)?;
     let pattern = arguments.first().cloned().unwrap_or(Value::Undefined);
     let matcher = if crate::value::is_object(&pattern) {
@@ -37,12 +44,8 @@ fn string_match(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
             "String match method is not callable",
         ));
     }
-    crate::functions::execute_target_with_receiver(
-        &target,
-        &this_arg,
-        &[Value::String(input)],
-    )
-    .map(|(result, _)| result)
+    crate::functions::execute_target_with_receiver(&target, &this_arg, &[Value::String(input)])
+        .map(|(result, _)| result)
 }
 
 fn string_match_all(
@@ -93,4 +96,65 @@ fn to_string(value: &Value) -> String {
         Value::Undefined => "undefined".to_string(),
         _ => "[object Object]".to_string(),
     }
+}
+
+pub(crate) fn replace(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    all: bool,
+) -> Result<Value, crate::execute::VmError> {
+    let Some(Value::String(value)) = receiver else {
+        return Ok(Value::String(String::new()));
+    };
+    let pattern = arguments.first().map_or_else(String::new, to_string);
+    let Some(replacement) = arguments.get(1) else {
+        let result = if all {
+            value.replace(&pattern, "")
+        } else {
+            value.replacen(&pattern, "", 1)
+        };
+        return Ok(Value::String(result));
+    };
+    let result = if crate::conversion::is_callable(replacement) {
+        apply_callable_replacement(value, pattern, replacement, all)?
+    } else {
+        let template = to_string(replacement);
+        if all {
+            value.replace(&pattern, &template)
+        } else {
+            value.replacen(&pattern, &template, 1)
+        }
+    };
+    Ok(Value::String(result))
+}
+
+fn apply_callable_replacement(
+    value: &str,
+    pattern: String,
+    replacement: &Value,
+    all: bool,
+) -> Result<String, crate::execute::VmError> {
+    let mut result = String::new();
+    let mut rest = value;
+    while let Some(index) = rest.find(&pattern) {
+        let matched = rest[..index + pattern.len()].to_string();
+        let suffix_start = index + pattern.len();
+        let offset = value.len() - rest.len() + index;
+        let callback_args = [
+            Value::String(matched.clone()),
+            Value::Number(offset as f64),
+            Value::String(value.to_string()),
+        ];
+        let replaced =
+            crate::functions::execute_target(replacement, &Value::Undefined, &callback_args)?;
+        result.push_str(&matched[..index]);
+        result.push_str(&to_string(&replaced));
+        rest = &rest[suffix_start..];
+        if !all {
+            result.push_str(rest);
+            return Ok(result);
+        }
+    }
+    result.push_str(rest);
+    Ok(result)
 }
