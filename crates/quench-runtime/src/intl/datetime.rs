@@ -326,7 +326,7 @@ pub(crate) fn prototype_method(
             slots.push((name.to_string(), Value::String(style.into())));
         }
     }
-    if temporal_input
+    if (temporal_input || slot_string(&slots, "timeStyle").is_some())
         && (slot_string(&slots, "hour").is_none() || slot_string(&slots, "timeStyle").is_some())
         && (no_options
             || !["year", "month", "day", "weekday", "era"]

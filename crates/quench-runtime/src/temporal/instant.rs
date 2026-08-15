@@ -25,6 +25,9 @@ pub(crate) fn execute(
     match builtin {
         crate::ops::Builtin::TemporalInstantFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalInstantEpochNanosecondsGetter => Some(get_epoch(receiver)),
+        crate::ops::Builtin::TemporalInstantEpochMillisecondsGetter => {
+            Some(get_epoch_milliseconds(receiver))
+        }
         crate::ops::Builtin::TemporalInstantToString => Some(to_string(receiver, arguments)),
         crate::ops::Builtin::TemporalInstantToJSON => Some(to_string(receiver, &[])),
         crate::ops::Builtin::TemporalInstantToLocaleString => {
@@ -98,6 +101,16 @@ fn get_epoch(receiver: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not an Instant"))?;
     crate::execute::get_property_result(receiver, "epochNanoseconds")
+}
+
+fn get_epoch_milliseconds(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::BigInt(epoch) = get_epoch(receiver)? else {
+        return Err(crate::value::error::throw_type_error("Invalid instant"));
+    };
+    let epoch = epoch
+        .parse::<i128>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
+    Ok(Value::Number((epoch / 1_000_000) as f64))
 }
 
 fn to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
