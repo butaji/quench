@@ -75,6 +75,12 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::Uint8ArraySetFromHex => Some(1.0),
         Builtin::Uint8ArrayToBase64 | Builtin::Uint8ArrayToHex => Some(0.0),
         Builtin::Uint8ArraySubarray => Some(2.0),
+        _ => fn_len_methods(builtin),
+    }
+}
+
+const fn fn_len_methods(builtin: Builtin) -> Option<f64> {
+    match builtin {
         Builtin::ArrayMap
         | Builtin::ArrayFilter
         | Builtin::ArraySome
