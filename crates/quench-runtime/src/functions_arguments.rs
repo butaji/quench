@@ -190,7 +190,14 @@ pub(crate) fn execute_bound(
                         .unwrap_or_else(|| execute(function, &bound.receiver, &call_arguments))
                 }
                 _ => execute(function, &bound.receiver, &call_arguments),
-            }?;
+            };
+            let result = match result {
+                Ok(result) => result,
+                Err(_) if realm.is_some() => {
+                    return Err(crate::reflect::shadow_wrapped_exception_error())
+                }
+                Err(error) => return Err(error),
+            };
             if realm.is_some() && crate::conversion::is_callable(&result) {
                 crate::reflect::wrap_shadow_function(&result, realm)
             } else if let Some(realm) = realm.filter(|_| crate::value::is_object(&result)) {
@@ -219,6 +226,8 @@ fn wrap_shadow_arguments(
         .map(|argument| {
             if crate::conversion::is_callable(argument) {
                 crate::reflect::wrap_shadow_function(argument, Some(realm))
+            } else if crate::value::is_object(argument) {
+                Err(crate::reflect::shadow_wrapped_argument_error())
             } else {
                 Ok(argument.clone())
             }
