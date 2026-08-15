@@ -41,17 +41,19 @@ pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::V
 }
 
 pub(crate) fn typed_length(value: &Value) -> Result<usize, crate::execute::VmError> {
-    macro_rules! length {
+macro_rules! length {
         ($data:expr) => {
-            let required = if $data.byte_length == usize::MAX {
+            (|| {
+            let required = if $data.length == usize::MAX {
                 $data.byte_offset
             } else {
-                $data.byte_offset.saturating_add($data.byte_length)
+                $data.byte_offset.saturating_add($data.byte_length())
             };
             if *$data.buffer.detached.borrow() || $data.buffer.byte_length() < required {
                 Err(crate::collections::iterator::not_iterable())
             } else {
                 Ok($data.logical_len())
+            })()
             }
         };
     }
