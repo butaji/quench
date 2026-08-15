@@ -124,6 +124,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_type_error("Invalid time"));
     };
     if let Value::String(text) = value {
+        if crate::conversion::is_symbol(value) {
+            return Err(crate::value::error::throw_type_error("Invalid time"));
+        }
         return parse_string(text);
     }
     if !crate::value::is_object(value) {
@@ -164,8 +167,16 @@ fn overflow_reject(options: Option<&Value>) -> bool {
 }
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
+    if text.starts_with("-000000") {
+        return Err(crate::value::error::throw_range_error("Invalid time"));
+    }
     if text.contains('−') {
         return Err(crate::value::error::throw_range_error("Invalid time"));
+    }
+    if let Some(index) = text.find('-') {
+        if index > 0 && !text[..index].contains(':') && !text.contains('T') && !text.contains('t') {
+            return Err(crate::value::error::throw_range_error("Invalid time"));
+        }
     }
     if !text.contains('T')
         && !text.contains('t')
