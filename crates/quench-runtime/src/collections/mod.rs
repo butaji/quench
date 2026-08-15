@@ -30,6 +30,28 @@ fn execute_core(
         return Some(result);
     }
     match builtin {
+        IteratorConcat => Some(iterator_concat(arguments)),
+        IteratorFrom => Some(iterator_from(arguments)),
+        Iterator => Some(constructor_requires_new("Iterator")),
+        IteratorReturn => Some(iterator::return_(receiver, arguments)),
+        IteratorPrototypeConstructorGetter => Some(Ok(Value::Builtin(Builtin::Iterator))),
+        IteratorPrototypeConstructorSetter => {
+            Some(iterator_accessor_setter(receiver, arguments, "constructor"))
+        }
+        IteratorPrototypeToStringTagGetter => Some(Ok(Value::String("Iterator".into()))),
+        IteratorPrototypeToStringTagSetter => Some(iterator_accessor_setter(
+            receiver,
+            arguments,
+            "Symbol.toStringTag",
+        )),
+        IteratorToArray => Some(iterator_to_array(receiver)),
+        IteratorDrop => Some(iterator_drop(receiver, arguments)),
+        IteratorMap => Some(iterator_map(receiver, arguments)),
+        IteratorEvery => Some(iterator_every(receiver, arguments)),
+        IteratorSome => Some(iterator_some(receiver, arguments)),
+        IteratorFind => Some(iterator_find(receiver, arguments)),
+        IteratorFilter => Some(iterator_filter(receiver, arguments)),
+        IteratorTake => Some(iterator_take(receiver, arguments)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
@@ -56,6 +78,388 @@ fn execute_core(
         SetSpeciesGetter | MapSpeciesGetter | SpeciesGetter => Some(set::set_species(receiver)),
         _ => None,
     }
+}
+
+fn iterator_accessor_setter(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    key: &str,
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator accessor called on non-object",
+        ));
+    };
+    if !crate::value::is_object(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator accessor called on non-object",
+        ));
+    }
+    if matches!(receiver, Value::Builtin(Builtin::IteratorPrototype)) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot set Iterator prototype accessor",
+        ));
+    }
+    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    crate::builtins::set_property(receiver.clone(), key, value);
+    Ok(Value::Undefined)
+}
+
+fn iterator_to_array(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator receiver required",
+        ));
+    };
+    let iterator = iterator::open(receiver.clone())?;
+    Ok(Value::array(iterator::collect(&iterator)?))
+}
+
+fn iterator_drop(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    validate_iterator_receiver(receiver, "drop")?;
+    if arguments.is_empty() || matches!(arguments.first(), Some(Value::Undefined)) {
+        let _ = close_direct_receiver(receiver);
+        return Err(crate::value::error::throw_range_error(
+            "Invalid iterator drop count",
+        ));
+    }
+    let count = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let number = match crate::conversion::to_number(&count) {
+        Ok(number) => number,
+        Err(error) => {
+            let _ = close_direct_receiver(receiver);
+            return Err(error);
+        }
+    };
+    let integer = number.trunc();
+    if number.is_nan() || integer < 0.0 {
+        let error = crate::value::error::throw_range_error("Invalid iterator drop count");
+        let _ = close_direct_receiver(receiver);
+        return Err(error);
+    }
+    let remaining = if integer.is_infinite() {
+        u64::MAX
+    } else {
+        integer as u64
+    };
+    let receiver = iterator_source(receiver, "drop")?;
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::Drop {
+                iterator: receiver,
+                remaining,
+                done: false,
+            }),
+        },
+    )))
+}
+
+fn validate_iterator_receiver(receiver: Option<&Value>, method: &str) -> Result<(), VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(&format!(
+            "Iterator.{method} called on incompatible receiver"
+        )));
+    };
+    if !crate::value::is_object(receiver) {
+        return Err(crate::value::error::throw_type_error(&format!(
+            "Iterator.{method} called on incompatible receiver"
+        )));
+    }
+    Ok(())
+}
+
+fn iterator_map(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    validate_iterator_receiver(receiver, "map")?;
+    let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        let error = crate::value::error::throw_type_error("Iterator.map callback is not callable");
+        let _ = close_direct_receiver(receiver);
+        return Err(error);
+    }
+    let receiver = iterator_source(receiver, "map")?;
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::MapHelper {
+                iterator: receiver,
+                callback,
+                index: 0,
+                done: false,
+                executing: false,
+            }),
+        },
+    )))
+}
+
+fn iterator_every(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    validate_iterator_receiver(receiver, "every")?;
+    let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        let error =
+            crate::value::error::throw_type_error("Iterator.every callback is not callable");
+        let _ = close_direct_receiver(receiver);
+        return Err(error);
+    }
+    let source = iterator_source(receiver, "every")?;
+    let mut index = 0_u64;
+    loop {
+        let Some(value) = crate::collections::iterator::step_source(&source)? else {
+            return Ok(Value::Boolean(true));
+        };
+        let result = match crate::functions::execute_target(
+            &callback,
+            &Value::Undefined,
+            &[value, Value::Number(index as f64)],
+        ) {
+            Ok(result) => result,
+            Err(error) => return Err(close_with_error(&source, error)),
+        };
+        index = index.saturating_add(1);
+        if !crate::execute::is_truthy(&result) {
+            close_direct_receiver(Some(&source))?;
+            return Ok(Value::Boolean(false));
+        }
+    }
+}
+
+fn iterator_some(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    validate_iterator_receiver(receiver, "some")?;
+    let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        let error = crate::value::error::throw_type_error("Iterator.some callback is not callable");
+        let _ = close_direct_receiver(receiver);
+        return Err(error);
+    }
+    let source = iterator_source(receiver, "some")?;
+    let mut index = 0_u64;
+    loop {
+        let Some(value) = crate::collections::iterator::step_source(&source)? else {
+            return Ok(Value::Boolean(false));
+        };
+        let result = match crate::functions::execute_target(
+            &callback,
+            &Value::Undefined,
+            &[value, Value::Number(index as f64)],
+        ) {
+            Ok(result) => result,
+            Err(error) => return Err(close_with_error(&source, error)),
+        };
+        index = index.saturating_add(1);
+        if crate::execute::is_truthy(&result) {
+            close_direct_receiver(Some(&source))?;
+            return Ok(Value::Boolean(true));
+        }
+    }
+}
+
+fn iterator_find(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    validate_iterator_receiver(receiver, "find")?;
+    let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        let error = crate::value::error::throw_type_error("Iterator.find callback is not callable");
+        let _ = close_direct_receiver(receiver);
+        return Err(error);
+    }
+    let source = iterator_source(receiver, "find")?;
+    let mut index = 0_u64;
+    loop {
+        let Some(value) = crate::collections::iterator::step_source(&source)? else {
+            return Ok(Value::Undefined);
+        };
+        let result = match crate::functions::execute_target(
+            &callback,
+            &Value::Undefined,
+            &[value.clone(), Value::Number(index as f64)],
+        ) {
+            Ok(result) => result,
+            Err(error) => return Err(close_with_error(&source, error)),
+        };
+        index = index.saturating_add(1);
+        if crate::execute::is_truthy(&result) {
+            close_direct_receiver(Some(&source))?;
+            return Ok(value);
+        }
+    }
+}
+
+fn iterator_filter(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    validate_iterator_receiver(receiver, "filter")?;
+    let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        let error =
+            crate::value::error::throw_type_error("Iterator.filter callback is not callable");
+        let _ = close_direct_receiver(receiver);
+        return Err(error);
+    }
+    let source = iterator_source(receiver, "filter")?;
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::FilterHelper {
+                iterator: source,
+                callback,
+                index: 0,
+                done: false,
+                executing: false,
+            }),
+        },
+    )))
+}
+
+fn iterator_take(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    validate_iterator_receiver(receiver, "take")?;
+    if arguments.is_empty() || matches!(arguments.first(), Some(Value::Undefined)) {
+        let _ = close_direct_receiver(receiver);
+        return Err(crate::value::error::throw_range_error(
+            "Invalid iterator take count",
+        ));
+    }
+    let count = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let number = match crate::conversion::to_number(&count) {
+        Ok(number) => number,
+        Err(error) => {
+            let _ = close_direct_receiver(receiver);
+            return Err(error);
+        }
+    };
+    let integer = number.trunc();
+    if number.is_nan() || integer < 0.0 {
+        let _ = close_direct_receiver(receiver);
+        return Err(crate::value::error::throw_range_error(
+            "Invalid iterator take count",
+        ));
+    }
+    let source = iterator_source(receiver, "take")?;
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::Take {
+                iterator: source,
+                remaining: if integer.is_infinite() {
+                    u64::MAX
+                } else {
+                    integer as u64
+                },
+                done: false,
+            }),
+        },
+    )))
+}
+
+fn close_direct_receiver(receiver: Option<&Value>) -> Result<(), VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(());
+    };
+    let wrapper = Value::Iterator(std::rc::Rc::new(crate::value::IteratorData {
+        state: std::cell::RefCell::new(crate::value::IteratorState::Protocol {
+            iterator: receiver.clone(),
+            next: Value::Undefined,
+            done: false,
+            executing: false,
+        }),
+    }));
+    let completion =
+        crate::collections::iterator::close(wrapper, crate::completion::Completion::Normal)?;
+    match completion {
+        crate::completion::Completion::Throw(value) => Err(VmError::Thrown(value)),
+        _ => Ok(()),
+    }
+}
+
+fn close_with_error(source: &Value, error: VmError) -> VmError {
+    match close_direct_receiver(Some(source)) {
+        Ok(()) => error,
+        Err(close_error) => close_error,
+    }
+}
+
+fn iterator_source(receiver: Option<&Value>, method: &str) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(&format!(
+            "Iterator.{method} called on incompatible receiver"
+        )));
+    };
+    if matches!(receiver, Value::Iterator(_) | Value::Generator(_)) {
+        return Ok(receiver.clone());
+    }
+    if !crate::value::is_object(receiver) {
+        return Err(crate::value::error::throw_type_error(&format!(
+            "Iterator.{method} called on incompatible receiver"
+        )));
+    }
+    let next = crate::execute::get_property_result(receiver, "next")?;
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::Protocol {
+                iterator: receiver.clone(),
+                next,
+                done: false,
+                executing: false,
+            }),
+        },
+    )))
+}
+
+fn iterator_from(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(value) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.from requires an argument",
+        ));
+    };
+    if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        return iterator::open(value.clone());
+    }
+    if !crate::value::is_object(value) {
+        return Err(crate::value::error::throw_type_error(
+            "value is not iterable",
+        ));
+    }
+    let method = crate::execute::get_property_result(value, "Symbol.iterator")?;
+    if crate::conversion::is_callable(&method) {
+        return iterator::open(value.clone());
+    }
+    if !matches!(method, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "value is not iterable",
+        ));
+    }
+    let next = crate::execute::get_property_result(value, "next")?;
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::Protocol {
+                iterator: value.clone(),
+                next,
+                done: false,
+                executing: false,
+            }),
+        },
+    )))
+}
+
+fn iterator_concat(arguments: &[Value]) -> Result<Value, VmError> {
+    let mut items = Vec::with_capacity(arguments.len());
+    for value in arguments {
+        if !crate::value::is_object(value) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.concat item is not an object",
+            ));
+        }
+        let method = crate::execute::get_property_result(value, "Symbol.iterator")?;
+        if !crate::conversion::is_callable(&method) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.concat item is not iterable",
+            ));
+        }
+        items.push((value.clone(), method));
+    }
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::Concat {
+                items,
+                index: 0,
+                current: None,
+                done: false,
+                executing: false,
+            }),
+        },
+    )))
 }
 
 fn execute_iterator_next(

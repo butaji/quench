@@ -106,6 +106,17 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         return Some(name);
     }
     match b {
+        Builtin::IteratorConcat => Some("Iterator.concat"),
+        Builtin::IteratorFrom => Some("Iterator.from"),
+        Builtin::IteratorToArray => Some("Iterator.prototype.toArray"),
+        Builtin::IteratorDrop => Some("Iterator.prototype.drop"),
+        Builtin::IteratorMap => Some("Iterator.prototype.map"),
+        Builtin::IteratorEvery => Some("Iterator.prototype.every"),
+        Builtin::IteratorSome => Some("Iterator.prototype.some"),
+        Builtin::IteratorFind => Some("Iterator.prototype.find"),
+        Builtin::IteratorFilter => Some("Iterator.prototype.filter"),
+        Builtin::IteratorTake => Some("Iterator.prototype.take"),
+        Builtin::IteratorReturn => Some("Iterator.prototype[Symbol.dispose]"),
         Builtin::IteratorSelf => Some("Iterator.prototype[Symbol.iterator]"),
         Builtin::IteratorNext => Some("ArrayIteratorPrototype.prototype.next"),
         Builtin::SetIteratorNext => Some("SetIteratorPrototype.prototype.next"),
@@ -161,6 +172,17 @@ const fn set_fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
+        Builtin::IteratorConcat => Some(0.0),
+        Builtin::IteratorFrom => Some(1.0),
+        Builtin::IteratorToArray => Some(0.0),
+        Builtin::IteratorDrop => Some(1.0),
+        Builtin::IteratorMap => Some(1.0),
+        Builtin::IteratorEvery => Some(1.0),
+        Builtin::IteratorSome => Some(1.0),
+        Builtin::IteratorFind => Some(1.0),
+        Builtin::IteratorFilter => Some(1.0),
+        Builtin::IteratorTake => Some(1.0),
+        Builtin::IteratorReturn => Some(0.0),
         Builtin::IteratorSelf => Some(0.0),
         Builtin::IteratorNext => Some(0.0),
         Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some(0.0),
@@ -203,6 +225,17 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         return Some(name);
     }
     match b {
+        Builtin::IteratorConcat => Some("concat"),
+        Builtin::IteratorFrom => Some("from"),
+        Builtin::IteratorToArray => Some("toArray"),
+        Builtin::IteratorDrop => Some("drop"),
+        Builtin::IteratorMap => Some("map"),
+        Builtin::IteratorEvery => Some("every"),
+        Builtin::IteratorSome => Some("some"),
+        Builtin::IteratorFind => Some("find"),
+        Builtin::IteratorFilter => Some("filter"),
+        Builtin::IteratorTake => Some("take"),
+        Builtin::IteratorReturn => Some("[Symbol.dispose]"),
         Builtin::IteratorSelf => Some("[Symbol.iterator]"),
         Builtin::IteratorNext => Some("next"),
         Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some("next"),

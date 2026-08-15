@@ -387,6 +387,7 @@ pub enum Op {
         key: String,
         callee: Option<u16>,
         args: Vec<u16>,
+        spreads: Vec<bool>,
     },
     CallSuperMethod {
         dst: u16,
