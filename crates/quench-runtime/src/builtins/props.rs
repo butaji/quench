@@ -374,6 +374,13 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         } else {
             NumberIsSafeInteger
         }),
+        _ => builtin_method3_tail(builtin, key),
+    }
+}
+
+fn builtin_method3_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    match (builtin, key) {
         (Boolean, "prototype") => Some(BooleanPrototype),
         (BooleanPrototype, "valueOf") => Some(BooleanValueOf),
         (BooleanPrototype, "toString") => Some(BooleanToString),
