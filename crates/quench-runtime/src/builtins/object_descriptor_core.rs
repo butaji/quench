@@ -376,6 +376,9 @@ fn builtin_property_is_writable(builtin: Builtin, key: &str) -> bool {
 }
 
 fn builtin_property_is_configurable(builtin: Builtin, key: &str, property: &Value) -> bool {
+    if builtin == Builtin::GeneratorFunctionPrototype && key == "Symbol.toStringTag" {
+        return true;
+    }
     !matches!(key, "prototype" | "unscopables")
         && !is_well_known_symbol_property(builtin, key)
         && builtin_property_configurable(builtin, key)
