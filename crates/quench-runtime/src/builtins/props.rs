@@ -398,6 +398,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
+        (FunctionPrototype, "Symbol.hasInstance") => Some(FunctionPrototypeHasInstance),
         (FunctionCall, "bind") => Some(FunctionBind),
         (Object, "prototype") => Some(ObjectPrototype),
         (Object, "fromEntries") => Some(ObjectFromEntries),
@@ -613,6 +614,7 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Object, "defineProperty") => Some(ObjectDefineProperty),
         (Object, "defineProperties") => Some(ObjectDefineProperties),
         (Object, "getOwnPropertyDescriptor") => Some(ObjectGetOwnPropertyDescriptor),
+        (Object, "getOwnPropertyDescriptors") => Some(ObjectGetOwnPropertyDescriptors),
         (Object, "keys") => Some(ObjectKeys),
         (Object, "values") => Some(ObjectValues),
         (Object, "entries") => Some(ObjectEntries),
@@ -633,7 +635,6 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Map, "prototype") => Some(MapPrototype),
         (Set, "prototype") => Some(SetPrototype),
         (FunctionPrototype, "toString") => Some(FunctionPrototypeToString),
-        (FunctionPrototype, "valueOf") => Some(FunctionPrototypeValueOf),
         (RegExpPrototype, "toString") => Some(RegExpPrototypeToString),
         _ => builtin_method3(builtin, key),
     }
@@ -718,11 +719,14 @@ pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
     if key == "prototype" {
         return false;
     }
-    if crate::builtins::object::is_well_known_symbol_property(_builtin, key) {
+    if key == "prototype" && builtin != Builtin::GeneratorFunctionPrototype {
+        return false;
+    }
+    if crate::builtins::object::is_well_known_symbol_property(builtin, key) {
         return false;
     }
     if matches!(
-        (_builtin, key),
+        (builtin, key),
         (
             Builtin::Math,
             "E" | "LN2" | "LN10" | "LOG2E" | "LOG10E" | "PI" | "SQRT1_2" | "SQRT2"

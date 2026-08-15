@@ -28,10 +28,14 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     primitive_prototype_property(value, key)
 }
 fn get_property_value(value: &Value, key: &str) -> Value {
-    use Value::*;
     if let Some(found) = crate::typed_array_prototype::own_property(value, key) {
         return found;
     }
+    property_for_value(value, key)
+}
+
+fn property_for_value(value: &Value, key: &str) -> Value {
+    use Value::*;
     match value {
         Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => {
             bind_callable_property(
@@ -61,9 +65,13 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         StringUnits(units) => string_units_property(units, key),
         Number(value) => number_property(*value, key),
         Boolean(value) => boolean_property(*value, key),
-        Function(_) if matches!(key, "apply" | "call" | "bind") => {
-            bind_function_property(value, key)
+        Function(function)
+            if function.realm == crate::ops::RealmId::ROOT
+                && matches!(key, "apply" | "call" | "bind") =>
+        {
+            function_prototype_method(function.realm, key)
         }
+        Function(_) if matches!(key, "apply" | "call" | "bind") => bind_function_property(value, key),
         Function(function) => function_property(function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
         Map(data) => map_property(data, key),
@@ -178,7 +186,9 @@ fn generator_property(value: &Value, key: &str) -> Value {
 
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     if key == "constructor" {
-        return Value::Builtin(function_constructor(function));
+        let builtin = function_constructor(function);
+        return crate::vm::intrinsic_for_global(&function.captures.get(0), builtin)
+            .unwrap_or(Value::Builtin(builtin));
     }
     let properties = function.properties.borrow();
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
@@ -227,9 +237,9 @@ pub(crate) fn get_property_with_receiver(
         return get_property_with_receiver(&cell.borrow(), key, receiver);
     }
     if matches!(value, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(&format!(
+        return Some(Err(crate::value::error::throw_type_error(&format!(
             "Cannot read property `{key}` of null or undefined"
-        )));
+        ))));
     }
     if let Some(result) = special_property(value, key, receiver) {
         return result;
@@ -311,10 +321,58 @@ pub(crate) fn get_property_with_receiver(
     let Some(getter) = getter else {
         return inherited_property(value, key, receiver);
     };
-    if matches!(getter, Value::Undefined) {
-        return Ok(Value::Undefined);
+    let has_own = key == "length"
+        || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+        || values.descriptor(key).is_some()
+        || values.property(key).is_some();
+    if has_own {
+        return None;
     }
-    invoke_accessor(&getter, receiver)
+    crate::arrays::prototype_override_getter(key).map(|getter| match getter {
+        Value::Undefined => Ok(Value::Undefined),
+        getter => invoke_accessor(&getter, receiver),
+    })
+}
+
+fn property_from_descriptor(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Result<Value, VmError> {
+    let descriptor =
+        crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))?;
+    descriptor_result(&descriptor, receiver, value, key)
+        .unwrap_or_else(|| accessor_property(value, key, receiver))
+}
+
+fn accessor_property(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
+    let getter = crate::property_define::accessor(value, key, "get");
+    match getter {
+        None => Ok(receiver_property(value, key, receiver)),
+        Some(Value::Undefined) => Ok(Value::Undefined),
+        Some(getter) => invoke_accessor(&getter, receiver),
+    }
+}
+
+fn descriptor_result(
+    descriptor: &Value,
+    receiver: &Value,
+    value: &Value,
+    key: &str,
+) -> Option<Result<Value, VmError>> {
+    let Value::Object(descriptor) = descriptor else {
+        return (!matches!(descriptor, Value::Undefined))
+            .then_some(Ok(receiver_property(value, key, receiver)));
+    };
+    let getter = descriptor
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "get").then_some(value));
+    Some(match getter {
+        Some(Value::Undefined) => Ok(Value::Undefined),
+        Some(getter) => invoke_accessor(getter, receiver),
+        None => Ok(receiver_property(value, key, receiver)),
+    })
 }
 
 fn is_error_subclass_receiver(value: &Value) -> bool {

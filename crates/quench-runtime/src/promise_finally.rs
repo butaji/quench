@@ -9,11 +9,7 @@ pub fn promise_finally(receiver: Option<&Value>, arguments: &[Value]) -> Result<
     }
     let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&callback) {
-        return crate::functions::execute_target(
-            &then,
-            receiver,
-            &[callback.clone(), callback],
-        );
+        return crate::functions::execute_target(&then, receiver, &[callback.clone(), callback]);
     }
     let fulfilled = finally_handler(Builtin::PromiseFinallyOnFulfilled, callback.clone());
     let rejected = finally_handler(Builtin::PromiseFinallyOnRejected, callback);
@@ -22,6 +18,7 @@ pub fn promise_finally(receiver: Option<&Value>, arguments: &[Value]) -> Result<
 
 fn finally_handler(builtin: Builtin, callback: Value) -> Value {
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
         receiver: callback,
         arguments: Vec::new(),
@@ -56,6 +53,7 @@ fn settle_original(fulfilled: bool, original: Value) -> Result<Value, VmError> {
 
 fn finally_settle_handler(fulfilled: bool, original: Value) -> Value {
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(if fulfilled {
             Builtin::PromiseFinallyFulfilled
         } else {

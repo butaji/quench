@@ -125,13 +125,96 @@ pub(crate) fn execute_function_apply(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let target = receiver.filter(|value| crate::conversion::is_callable(value));
+    execute_function_apply_with_realm(receiver, arguments, None)
+}
+
+pub(crate) fn execute_function_apply_with_realm(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    realm: Option<crate::ops::RealmId>,
+) -> Result<Value, VmError> {
+    if let Some(realm) = realm {
+        return crate::vm::with_error_realm(realm, || {
+            crate::vm::with_realm(realm, || execute_function_apply_in_realm(receiver, arguments))
+                .unwrap_or_else(|| execute_function_apply_in_realm(receiver, arguments))
+        });
+    }
+    if let Some(result) = with_receiver_realm(receiver, arguments) {
+        return result;
+    }
+    execute_function_apply_in_realm(receiver, arguments)
+}
+
+fn with_receiver_realm(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    let receiver = receiver?;
+    match receiver {
+        Value::HostCapability(capability) => {
+            let realm = capability.realm();
+            Some(crate::vm::with_error_realm(realm, || {
+                crate::vm::with_realm(realm, || {
+                    execute_function_apply_in_realm(Some(receiver), arguments)
+                })
+                .unwrap_or_else(|| execute_function_apply_in_realm(Some(receiver), arguments))
+            }))
+        }
+        Value::BoundFunction(bound) => {
+            let realm = bound_receiver_realm(&bound.receiver)?;
+            Some(crate::vm::with_error_realm(realm, || {
+                crate::vm::with_realm(realm, || {
+                    execute_function_apply_in_realm(Some(receiver), arguments)
+                })
+                .unwrap_or_else(|| execute_function_apply_in_realm(Some(receiver), arguments))
+            }))
+        }
+        Value::Function(function) => {
+            let realm = crate::vm::realm_id_for_global(&function.captures.get(0))?;
+            Some(crate::vm::with_error_realm(realm, || {
+                crate::vm::with_realm(realm, || {
+                    execute_function_apply_in_realm(Some(receiver), arguments)
+                })
+                .unwrap_or_else(|| execute_function_apply_in_realm(Some(receiver), arguments))
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn bound_receiver_realm(value: &Value) -> Option<crate::ops::RealmId> {
+    match value {
+        Value::HostCapability(capability) => Some(capability.realm()),
+        Value::BoundFunction(bound) => bound_receiver_realm(&bound.receiver),
+        _ => None,
+    }
+}
+
+fn execute_function_apply_in_realm(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let target = receiver.filter(|value| {
+        !matches!(value, Value::HostCapability(_)) && crate::conversion::is_callable(value)
+    });
     let target = target.ok_or_else(|| {
-        crate::value::error::throw_type_error("Function.prototype.apply called on non-callable")
+        apply_type_error(receiver, "Function.prototype.apply called on non-callable")
     })?;
     let receiver = arguments.first().unwrap_or(&Value::Undefined);
     let list = create_list_from_array_like(arguments.get(1))?;
     crate::functions::execute_target(target, receiver, &list)
+}
+
+fn apply_type_error(receiver: Option<&Value>, message: &str) -> VmError {
+    let realm = match receiver {
+        Some(Value::HostCapability(capability)) => Some(capability.realm()),
+        Some(Value::BoundFunction(bound)) => Some(bound.realm),
+        _ => None,
+    };
+    realm.map_or_else(
+        || crate::value::error::throw_type_error(message),
+        |realm| VmError::Thrown(crate::builtins::type_error_in_realm(realm, message)),
+    )
 }
 pub(crate) fn create_list_from_array_like(value: Option<&Value>) -> Result<Vec<Value>, VmError> {
     let Some(value) = value.filter(|value| !matches!(value, Value::Null | Value::Undefined)) else {
@@ -192,6 +275,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::ObjectPrototypeValueOf
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
+            | Builtin::FunctionPrototypeHasInstance
             | Builtin::RegExpPrototypeToString
             | Builtin::Function
             | Builtin::AsyncFunction
@@ -211,6 +295,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
+            | Builtin::ThrowTypeError
             | Builtin::SuppressedError
             | Builtin::ErrorIsError
             | Builtin::ErrorPrototypeToString
@@ -269,6 +354,9 @@ fn execute_simple_builtin(
         Builtin::FunctionPrototypeToString | Builtin::FunctionPrototypeValueOf => {
             function_prototype_builtin(builtin, receiver)
         }
+        Builtin::FunctionPrototypeHasInstance => {
+            crate::vm::vm_arithmetic::function_has_instance(receiver, arguments)
+        }
         Builtin::RegExpPrototypeToString => regexp_prototype_to_string(receiver),
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
             crate::number_fmt::number_format(receiver, arguments.first(), builtin)
@@ -284,6 +372,7 @@ fn execute_simple_builtin(
         | Builtin::URIError
         | Builtin::AggregateError
         | Builtin::TypeError
+        | Builtin::ThrowTypeError
         | Builtin::SuppressedError
         | Builtin::ErrorIsError
         | Builtin::ErrorPrototypeToString
@@ -304,6 +393,9 @@ fn error_builtin(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     match builtin {
+        Builtin::ThrowTypeError => Err(crate::value::error::throw_type_error(
+            "Restricted arguments property",
+        )),
         Builtin::Error
         | Builtin::RangeError
         | Builtin::ReferenceError
@@ -540,6 +632,7 @@ fn error_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     let value = error_receiver(receiver, "Error.prototype.toString")?;
     let name = match error_to_string_property(value, "name")? {
         Value::Undefined => "Error".to_string(),
+        Value::String(name) if name.is_empty() && name_missing => "Error".to_string(),
         value => crate::conversion::to_string(&value)?,
     };
     let message = match error_to_string_property(value, "message")? {

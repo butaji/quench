@@ -129,10 +129,28 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
     if !crate::value::is_object(&prototype) {
         return Err(type_error("Function has non-object prototype"));
     }
-    Ok(prototype_chain_contains(value, &prototype)
+    Ok(prototype_chain_contains(value, &prototype)?
         || own_constructor(value)
             .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
         || is_error_subclass(value, constructor))
+}
+
+pub(crate) fn function_has_instance(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let constructor = receiver.unwrap_or(&Value::Undefined);
+    if !instanceof_callable(constructor) {
+        return Ok(Value::Boolean(false));
+    }
+    let value = arguments.first().unwrap_or(&Value::Undefined);
+    if !crate::value::is_object(value) {
+        return Ok(Value::Boolean(false));
+    }
+    if let Some(result) = builtin_instanceof(value, constructor) {
+        return Ok(Value::Boolean(result));
+    }
+    Ok(Value::Boolean(ordinary_instanceof(value, constructor)?))
 }
 
 fn is_error_subclass(value: &Value, constructor: &Value) -> bool {
@@ -179,31 +197,14 @@ fn instanceof_callable(value: &Value) -> bool {
     }
 }
 
-fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
-    let mut current = internal_prototype(value);
+fn prototype_chain_contains(value: &Value, expected: &Value) -> Result<bool, VmError> {
+    let mut current = crate::builtins::object::get_prototype_of(Some(value))?;
     for _ in 0..1_024 {
-        let Some(prototype) = current else {
-            return false;
-        };
-        if crate::builtins::same_value(Some(&prototype), Some(expected)) {
-            return true;
+        if matches!(current, Value::Null) {
+            return Ok(false);
         }
-        current = internal_prototype(&prototype);
-    }
-    false
-}
-
-fn internal_prototype(value: &Value) -> Option<Value> {
-    if let Some(prototype) = crate::typed_array_prototype::get(value) {
-        return Some(prototype);
-    }
-    if let Some(prototype) = custom_object_prototype(value) {
-        return Some(prototype);
-    }
-    match value {
-        Value::Object(_) => Some(Value::Builtin(Builtin::ObjectPrototype)),
-        Value::Array(values) if values.is_arguments() => {
-            Some(Value::Builtin(Builtin::ObjectPrototype))
+        if crate::builtins::same_value(Some(&current), Some(expected)) {
+            return Ok(true);
         }
         Value::Array(values) => values
             .property("\0prototype")
@@ -322,6 +323,7 @@ fn custom_object_prototype(value: &Value) -> Option<Value> {
             .map(|(_, prototype)| prototype.clone()),
         _ => None,
     }
+    Ok(false)
 }
 
 fn own_constructor(value: &Value) -> Option<Value> {

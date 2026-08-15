@@ -1,3 +1,8 @@
+thread_local! {
+    static GENERATOR_PROTOTYPES: std::cell::RefCell<std::collections::HashMap<usize, crate::value::Value>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 pub(super) fn reduce_function_ops(
     statements: &[oxc::ast::ast::Statement<'_>],
     formal: &oxc::ast::ast::FormalParameters<'_>,
@@ -434,6 +439,7 @@ fn make_function_value(
     metadata: FunctionMetadata,
 ) -> crate::value::Value {
     crate::value::Value::Function(std::rc::Rc::new(crate::value::FunctionValue {
+        realm: crate::vm::current_realm_id(),
         code,
         params,
         captures,
@@ -475,10 +481,13 @@ fn attach_prototype(value: &crate::value::Value) {
         vec![("constructor".to_string(), value.clone())],
     )));
     if let crate::value::Value::Function(function) = value {
-        function
-            .properties
-            .borrow_mut()
-            .push(("prototype".to_string(), prototype));
+        function.properties.borrow_mut().extend([
+            ("prototype".to_string(), prototype.clone()),
+            (
+                crate::builtins::descriptor_key("prototype"),
+                prototype_descriptor(prototype),
+            ),
+        ]);
     }
 }
 
