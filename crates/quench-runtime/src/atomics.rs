@@ -139,12 +139,12 @@ pub(crate) fn execute(
     _receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(Value::Int32Array(view)) = arguments.first() else {
+    let Some(view) = atomic_view(arguments.first()) else {
         return Err(crate::value::error::throw_type_error(
             "Atomics operation requires an Int32Array",
         ));
     };
-    if !view.buffer.shared {
+    if !view.shared() {
         return Err(crate::value::error::throw_type_error(
             "Atomics operation requires a shared buffer",
         ));
@@ -171,6 +171,60 @@ pub(crate) fn execute(
     };
     view.set(index, updated);
     Ok(Value::Number(old as f64))
+}
+
+enum AtomicView<'a> {
+    Int8(&'a crate::value::Int8ArrayData),
+    Int16(&'a crate::value::Int16ArrayData),
+    Int32(&'a crate::value::Int32ArrayData),
+    Uint8(&'a crate::value::Uint8ArrayData),
+    Uint16(&'a crate::value::Uint16ArrayData),
+    Uint32(&'a crate::value::Uint32ArrayData),
+}
+
+impl AtomicView<'_> {
+    fn shared(&self) -> bool {
+        match self {
+            Self::Int8(v) => v.buffer.shared,
+            Self::Int16(v) => v.buffer.shared,
+            Self::Int32(v) => v.buffer.shared,
+            Self::Uint8(v) => v.buffer.shared,
+            Self::Uint16(v) => v.buffer.shared,
+            Self::Uint32(v) => v.buffer.shared,
+        }
+    }
+    fn get(&self, index: usize) -> Option<i32> {
+        match self {
+            Self::Int8(v) => v.get(index).map(i32::from),
+            Self::Int16(v) => v.get(index).map(i32::from),
+            Self::Int32(v) => v.get(index),
+            Self::Uint8(v) => v.get(index).map(i32::from),
+            Self::Uint16(v) => v.get(index).map(i32::from),
+            Self::Uint32(v) => v.get(index).map(|x| x as i32),
+        }
+    }
+    fn set(&self, index: usize, value: i32) -> bool {
+        match self {
+            Self::Int8(v) => v.set(index, value as i8),
+            Self::Int16(v) => v.set(index, value as i16),
+            Self::Int32(v) => v.set(index, value),
+            Self::Uint8(v) => v.set(index, value as u8),
+            Self::Uint16(v) => v.set(index, value as u16),
+            Self::Uint32(v) => v.set(index, value as u32),
+        }
+    }
+}
+
+fn atomic_view(value: Option<&Value>) -> Option<AtomicView<'_>> {
+    match value? {
+        Value::Int8Array(v) => Some(AtomicView::Int8(v)),
+        Value::Int16Array(v) => Some(AtomicView::Int16(v)),
+        Value::Int32Array(v) => Some(AtomicView::Int32(v)),
+        Value::Uint8Array(v) => Some(AtomicView::Uint8(v)),
+        Value::Uint16Array(v) => Some(AtomicView::Uint16(v)),
+        Value::Uint32Array(v) => Some(AtomicView::Uint32(v)),
+        _ => None,
+    }
 }
 
 fn atomic_index(value: Option<&Value>) -> Result<usize, VmError> {
