@@ -140,9 +140,32 @@ pub(crate) fn object_property_is_enumerable(
         return Value::Boolean(false);
     };
     let owned = owns_property(&receiver, &key).unwrap_or(false);
+    if owned
+        && key == "stack"
+        && native_error_prototype_receiver(&receiver)
+        && crate::builtins::descriptor_flag(&receiver, &key, "enumerable") == Some(false)
+    {
+        return Value::Boolean(true);
+    }
     let enumerable =
         crate::builtins::descriptor_flag(&receiver, &key, "enumerable").unwrap_or(true);
     Value::Boolean(owned && enumerable)
+}
+
+fn native_error_prototype_receiver(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Builtin(
+            Builtin::RangeErrorPrototype
+                | Builtin::ReferenceErrorPrototype
+                | Builtin::SyntaxErrorPrototype
+                | Builtin::EvalErrorPrototype
+                | Builtin::URIErrorPrototype
+                | Builtin::AggregateErrorPrototype
+                | Builtin::TypeErrorPrototype
+                | Builtin::SuppressedErrorPrototype
+        )
+    )
 }
 pub(crate) fn object_special(
     builtin: Builtin,
