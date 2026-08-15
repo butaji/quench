@@ -4,13 +4,21 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
 pub fn validate_literal(body: &str) -> Result<(), String> {
+    let bytes = body.as_bytes();
     let mut index = 0;
-    while let Some(found) = body[index..].find("(?") {
-        let next = index + found + 2;
-        if next >= body.len() {
+    while index + 1 < bytes.len() {
+        if bytes[index] == b'\\' {
+            index += 2;
+            continue;
+        }
+        if bytes[index] != b'(' || bytes[index + 1] != b'?' {
+            index += 1;
+            continue;
+        }
+        let next = index + 2;
+        if next >= bytes.len() {
             return Ok(());
         }
-        let bytes = body.as_bytes();
         let head = bytes[next];
         if matches!(head, b'=' | b'!' | b':' | b'>') {
             index = next;
