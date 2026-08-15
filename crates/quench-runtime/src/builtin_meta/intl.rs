@@ -137,6 +137,12 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         Builtin::IntlSegmenterSupportedLocalesOf => Some(1.0),
         Builtin::IntlListFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlNumberFormatFormat => Some(1.0),
+        _ => intl_fn_len_tail(b),
+    }
+}
+
+const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
+    match b {
         Builtin::IntlNumberFormatResolvedOptions
         | Builtin::IntlPluralRulesSelect
         | Builtin::IntlPluralRulesResolvedOptions
@@ -151,12 +157,6 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlSegmenterResolvedOptions
         | Builtin::IntlDisplayNamesOf
         | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
-        _ => intl_fn_len_tail(b),
-    }
-}
-
-const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
-    match b {
         Builtin::IntlNumberFormatFormatToParts => Some(1.0),
         Builtin::IntlNumberFormatFormatRange
         | Builtin::IntlNumberFormatFormatRangeToParts
