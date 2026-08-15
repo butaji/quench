@@ -292,9 +292,9 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
     }
     if !matches!(value, Value::Proxy(_)) {
         if let Some(setter) = own_stack_setter(value)? {
-        let argument = stack.clone();
-        crate::functions::execute_target(&setter, value, std::slice::from_ref(&argument))?;
-        return Ok(Value::Undefined);
+            let argument = stack.clone();
+            crate::functions::execute_target(&setter, value, std::slice::from_ref(&argument))?;
+            return Ok(Value::Undefined);
         }
     }
     if matches!(value, Value::Proxy(_)) {
@@ -305,11 +305,21 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
     Ok(Value::Undefined)
 }
 
+fn proxy_has_own_stack(value: &Value) -> Result<bool, VmError> {
+    Ok(!matches!(
+        crate::proxy::proxy_get_own_property_descriptor(value, "stack")?,
+        Value::Undefined
+    ))
+}
 fn own_stack_setter(value: &Value) -> Result<Option<Value>, VmError> {
-    let descriptor = crate::builtins::object::descriptor(
-        Some(value),
-        Some(&Value::String("stack".to_string())),
-    )?;
+    let descriptor = if matches!(value, Value::Proxy(_)) {
+        crate::proxy::proxy_get_own_property_descriptor(value, "stack")?
+    } else {
+        crate::builtins::object::descriptor(
+            Some(value),
+            Some(&Value::String("stack".to_string())),
+        )?
+    };
     Ok(descriptor_field(&descriptor, "set"))
 }
 
