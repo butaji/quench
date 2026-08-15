@@ -582,6 +582,13 @@ fn view_buffer(view: &Value) -> Option<&std::rc::Rc<crate::value::ArrayBufferDat
     }
 }
 
+pub(crate) fn broadcast_buffer(value: &Value) -> Value {
+    view_buffer(value)
+        .cloned()
+        .map(Value::ArrayBuffer)
+        .unwrap_or_else(|| value.clone())
+}
+
 fn type_error(message: &str) -> VmError {
     crate::value::error::throw_type_error(message)
 }
