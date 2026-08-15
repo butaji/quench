@@ -43,10 +43,18 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::AgentReceiveBroadcast => agent_receive_broadcast(arguments),
         HostCapabilityKind::AgentSleep
         | HostCapabilityKind::AgentTryYield
-        | HostCapabilityKind::AgentTrySleep
-        | HostCapabilityKind::AgentSetTimeout => Ok(Value::Undefined),
+        | HostCapabilityKind::AgentTrySleep => agent_sleep(arguments),
+        HostCapabilityKind::AgentSetTimeout => Ok(Value::Undefined),
         HostCapabilityKind::AgentMonotonicNow => Ok(agent_monotonic_now()),
     }
+}
+
+fn agent_sleep(arguments: &[Value]) -> Result<Value, VmError> {
+    let delay = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    if delay.is_finite() && delay > 0.0 {
+        std::thread::sleep(std::time::Duration::from_secs_f64(delay / 1_000.0));
+    }
+    Ok(Value::Undefined)
 }
 
 fn agent_monotonic_now() -> Value {
