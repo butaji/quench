@@ -371,7 +371,22 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let Value::String(text) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
-    let date = text.split('T').next().unwrap_or(text);
+    let invalid_annotation = text.split('[').skip(1).any(|part| {
+        part.split_once('=')
+            .is_some_and(|(key, _)| key.chars().any(|character| character.is_ascii_uppercase()))
+    });
+    if invalid_annotation {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid calendar annotation",
+        ));
+    }
+    let date = text
+        .split('[')
+        .next()
+        .unwrap_or(text)
+        .split('T')
+        .next()
+        .unwrap_or(text);
     let parts = date.split('-').collect::<Vec<_>>();
     if parts.len() == 1 && (date.len() == 8 || date.len() == 11) {
         let (year_end, month_start, day_start) = if date.len() == 11 {
