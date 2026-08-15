@@ -436,15 +436,14 @@ pub(super) fn native_step(
         })
         .transpose()?
         .flatten()
-        .or_else(|| receiver.map(|data| array_receiver_step(data, *index)))
-        .or_else(|| values.get(*index).cloned());
+        .or_else(|| {
+            receiver
+                .and_then(|data| data.get_index(*index))
+                .or_else(|| values.get(*index).cloned())
+        });
     *index = index.saturating_add(1);
     *done = value.is_none();
     Ok(value)
-}
-
-fn array_receiver_step(data: &Rc<crate::value::ArrayData>, index: usize) -> Option<Value> {
-    (index < data.logical_len()).then(|| data.get_index(index).unwrap_or(Value::Undefined))
 }
 pub(super) fn mark_done(data: &IteratorData) {
     match &mut *data.state.borrow_mut() {
