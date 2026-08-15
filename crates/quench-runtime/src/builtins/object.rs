@@ -83,10 +83,14 @@ fn create(arguments: &[Value]) -> Result<Value, VmError> {
             "Object prototype must be an object or null",
         ));
     }
-    Ok(Value::Object(Rc::new(ObjectData::new(vec![(
+    let object = Value::Object(Rc::new(ObjectData::new(vec![(
         "\0prototype".to_string(),
         prototype,
-    )]))))
+    )])));
+    if arguments.len() > 1 && !matches!(arguments[1], Value::Undefined) {
+        return crate::builtins::define_properties(&[object, arguments[1].clone()]);
+    }
+    Ok(object)
 }
 pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(target) = arguments.first() else {
