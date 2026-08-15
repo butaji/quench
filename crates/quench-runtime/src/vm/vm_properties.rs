@@ -153,23 +153,25 @@ fn primitive_prototype_property(value: &Value, key: &str) -> Value {
         return Value::Undefined;
     };
     if key == "constructor" {
-        let builtin = match value {
-            Value::Number(_) => Some(Builtin::Number),
-            Value::Boolean(_) => Some(Builtin::Boolean),
-            Value::String(value) if !crate::conversion::is_symbol_string(value) => {
-                Some(Builtin::String)
-            }
-            Value::String(value) if crate::conversion::is_symbol_string(value) => {
-                Some(Builtin::Symbol)
-            }
-            Value::BigInt(_) => Some(Builtin::BigInt),
-            _ => None,
-        };
+        let builtin = primitive_constructor(value);
         if let Some(builtin) = builtin {
             return Value::Builtin(builtin);
         }
     }
     get_property(&prototype, key)
+}
+
+fn primitive_constructor(value: &Value) -> Option<Builtin> {
+    match value {
+        Value::Number(_) => Some(Builtin::Number),
+        Value::Boolean(_) => Some(Builtin::Boolean),
+        Value::String(value) if !crate::conversion::is_symbol_string(value) => {
+            Some(Builtin::String)
+        }
+        Value::String(value) if crate::conversion::is_symbol_string(value) => Some(Builtin::Symbol),
+        Value::BigInt(_) => Some(Builtin::BigInt),
+        _ => None,
+    }
 }
 
 fn generator_property(value: &Value, key: &str) -> Value {
