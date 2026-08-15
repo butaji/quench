@@ -303,7 +303,8 @@ fn builtin_property_is_writable(builtin: Builtin, key: &str) -> bool {
     !matches!(
         key,
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
-    ) && !is_well_known_symbol_property(builtin, key)
+    ) && !(builtin == Builtin::GeneratorFunctionPrototype && key == "constructor")
+        && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key)
 }
 
