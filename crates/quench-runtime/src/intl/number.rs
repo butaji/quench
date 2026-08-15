@@ -23,6 +23,7 @@ pub(crate) struct NumberOptions {
     pub minimum_fraction_digits: u32,
     pub maximum_fraction_digits: u32,
     pub use_grouping: bool,
+    pub resolved_grouping: String,
     pub grouping_min2: bool,
     pub notation: String,
     pub compact_display: String,
@@ -49,6 +50,8 @@ pub(crate) struct RawOptions {
     minimum_fraction_given: bool,
     maximum_fraction_given: bool,
     use_grouping: bool,
+    resolved_grouping: String,
+    grouping_given: bool,
     grouping_min2: bool,
     notation: String,
     compact_display: String,
@@ -101,6 +104,8 @@ impl RawOptions {
             minimum_fraction_given: false,
             maximum_fraction_given: false,
             use_grouping: true,
+            resolved_grouping: "auto".to_string(),
+            grouping_given: false,
             grouping_min2: false,
             notation: "standard".to_string(),
             compact_display: "short".to_string(),
@@ -145,9 +150,19 @@ impl RawOptions {
                         raw.maximum_fraction_digits = crate::conversion::to_number(&value)?
                     }
                     "useGrouping" => {
-                        let value = crate::conversion::to_string(&value)?;
-                        raw.use_grouping = grouping_enabled(&value);
-                        raw.grouping_min2 = value == "min2";
+                        raw.grouping_given = true;
+                        raw.resolved_grouping = match &value {
+                            Value::Boolean(true) => "always",
+                            Value::Boolean(false) | Value::Null => "false",
+                            Value::String(value) => match value.as_str() {
+                                "auto" | "min2" | "always" => value,
+                                _ => "auto",
+                            },
+                            _ => "auto",
+                        }
+                        .to_string();
+                        raw.use_grouping = raw.resolved_grouping != "false";
+                        raw.grouping_min2 = raw.resolved_grouping == "min2";
                     }
                     "notation" => raw.notation = crate::conversion::to_string(&value)?,
                     "compactDisplay" => raw.compact_display = crate::conversion::to_string(&value)?,
@@ -215,6 +230,10 @@ impl NumberOptions {
             }
         }
         let mut raw = RawOptions::from_value(options)?;
+        if raw.notation == "compact" && !raw.grouping_given {
+            raw.resolved_grouping = "min2".to_string();
+            raw.grouping_min2 = true;
+        }
         validate_basic_options(&raw)?;
         validate_rounding_options(&raw)?;
         if !matches!(raw.unit_display.as_str(), "short" | "narrow" | "long") {
@@ -283,6 +302,7 @@ impl NumberOptions {
             minimum_fraction_digits,
             maximum_fraction_digits,
             use_grouping: raw.use_grouping,
+            resolved_grouping: raw.resolved_grouping,
             grouping_min2: raw.grouping_min2,
             notation: raw.notation,
             compact_display: raw.compact_display,
@@ -338,6 +358,10 @@ impl NumberOptions {
             ),
             ("style".to_string(), Value::String(self.style.clone())),
             ("useGrouping".to_string(), Value::Boolean(self.use_grouping)),
+            (
+                "resolvedGrouping".to_string(),
+                Value::String(self.resolved_grouping.clone()),
+            ),
             (
                 "groupingMin2".to_string(),
                 Value::Boolean(self.grouping_min2),
@@ -429,10 +453,6 @@ fn valid_unit(unit: Option<&str>) -> bool {
             super::UNITS.contains(&numerator) && super::UNITS.contains(&denominator)
         },
     )
-}
-
-fn grouping_enabled(value: &str) -> bool {
-    matches!(value, "true" | "always" | "auto" | "min2")
 }
 
 fn fraction_digits(style: &str, currency: Option<&str>, requested: f64) -> u32 {
@@ -665,6 +685,8 @@ impl NumberOptions {
             maximum_fraction_digits: slot_number(slots, "maximumFractionDigits").unwrap_or(3.0)
                 as u32,
             use_grouping: slot_bool(slots, "useGrouping").unwrap_or(true),
+            resolved_grouping: slot_string(slots, "resolvedGrouping")
+                .unwrap_or_else(|| "auto".to_string()),
             grouping_min2: slot_bool(slots, "groupingMin2").unwrap_or(false),
             notation: slot_string(slots, "notation").unwrap_or_else(|| "standard".to_string()),
             compact_display: slot_string(slots, "compactDisplay")
@@ -990,7 +1012,14 @@ impl NumberOptions {
                 Value::String(self.numbering_system.clone()),
             ),
             ("style".to_string(), Value::String(self.style.clone())),
-            ("useGrouping".to_string(), Value::Boolean(self.use_grouping)),
+            (
+                "useGrouping".to_string(),
+                if self.resolved_grouping == "false" {
+                    Value::Boolean(false)
+                } else {
+                    Value::String(self.resolved_grouping.clone())
+                },
+            ),
             (
                 "minimumIntegerDigits".to_string(),
                 Value::Number(self.minimum_integer_digits as f64),
