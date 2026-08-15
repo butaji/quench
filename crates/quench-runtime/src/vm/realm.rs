@@ -248,6 +248,7 @@ fn global_builtin_error(key: &str) -> Option<Builtin> {
         "isFinite" => IsFinite,
         "JSON" => Json,
         "Math" => Math,
+        "Atomics" => Atomics,
         "Reflect" => Reflect,
         "Map" => Map,
         "Set" => Set,
