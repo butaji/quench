@@ -90,6 +90,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDatePrototype, "monthsInYear") => {
             Some(Value::Builtin(TemporalPlainDateMonthsInYearGetter))
         }
+        (TemporalPlainDatePrototype, "equals") => Some(Value::Builtin(TemporalPlainDateEquals)),
         (TemporalDurationPrototype, "constructor") => Some(Value::Builtin(TemporalDuration)),
         (IntlCollatorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.Collator".into()))
