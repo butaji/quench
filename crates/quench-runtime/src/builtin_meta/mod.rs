@@ -87,6 +87,7 @@ fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::IntlSegmenter => "Intl.Segmenter",
         Builtin::TemporalDuration => "Temporal.Duration",
         Builtin::TemporalPlainDate => "Temporal.PlainDate",
+        Builtin::ShadowRealm => "ShadowRealm",
         _ => return None,
     })
 }
@@ -128,6 +129,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::String => Some(Builtin::ObjectPrototype),
         Builtin::TemporalDuration => Some(Builtin::TemporalDurationPrototype),
         Builtin::TemporalPlainDate => Some(Builtin::TemporalPlainDatePrototype),
+        Builtin::ShadowRealm => Some(Builtin::ShadowRealmPrototype),
         Builtin::Symbol => Some(Builtin::ObjectPrototype),
         Builtin::IntlCollator => Some(Builtin::IntlCollatorPrototype),
         Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatPrototype),
@@ -211,6 +213,7 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::BigIntPrototype
             | Builtin::TemporalDurationPrototype
             | Builtin::TemporalPlainDatePrototype
+            | Builtin::ShadowRealmPrototype
     )
 }
 
@@ -262,6 +265,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::Date => Some(7.0),
         Builtin::TemporalDuration => Some(0.0),
         Builtin::TemporalPlainDate => Some(3.0),
+        Builtin::ShadowRealm => Some(0.0),
         Builtin::DisposableStack => Some(0.0),
         Builtin::AsyncDisposableStack => Some(0.0),
         Builtin::FinalizationRegistry => Some(1.0),
