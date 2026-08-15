@@ -473,16 +473,19 @@ impl DateTimeOptions {
             ),
         ];
         let has_hour = self.contains("hour");
-        for (key, value) in &self.components {
-            if key == "hourCycle" && !has_hour {
-                continue;
-            }
-            props.push((key.clone(), Value::String(value.clone())));
-        }
         if has_hour {
+            if let Some(value) = self.component_value("hourCycle") {
+                props.push(("hourCycle".to_string(), Value::String(value.to_string())));
+            }
             if let Some(hour12) = self.hour12 {
                 props.push(("hour12".to_string(), Value::Boolean(hour12)));
             }
+        }
+        for (key, value) in &self.components {
+            if key == "hourCycle" || (!has_hour && key == "hour12") {
+                continue;
+            }
+            props.push((key.clone(), Value::String(value.clone())));
         }
         if let Some(digits) = self.fractional_second_digits {
             props.push((
