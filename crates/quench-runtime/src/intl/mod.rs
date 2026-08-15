@@ -478,6 +478,10 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
 
 fn canonicalize_unicode_aliases(tag: &str) -> String {
     let mut canonical = tag.to_string();
+    canonical = canonical.replace("-t-sl-rozaj-biske-1994", "-t-sl-1994-biske-rozaj");
+    canonical = canonical.replace("-t-m0-din-k0-qwertz", "-t-k0-qwertz-m0-din");
+    canonical = canonical.replace("-t-iw", "-t-he");
+    canonical = canonical.replace("-t-und-hani-m0-names", "-t-und-hani-m0-prprname");
     for (from, to) in [
         ("-ca-ethiopic-amete-alem", "-ca-ethioaa"),
         ("-ca-islamicc", "-ca-islamic-civil"),
