@@ -89,6 +89,11 @@ fn construct_with_new_target(
 ) -> Result<Value, crate::execute::VmError> {
     let result = match target {
         Value::Builtin(builtin) => {
+            if is_intl_constructor(*builtin)
+                && !crate::builtins::same_value(Some(target), Some(new_target))
+            {
+                crate::execute::get_property_result(new_target, "prototype")?;
+            }
             let value = construct_builtin(*builtin, arguments)?;
             let value = with_new_target_prototype(value, target, new_target)?;
             if let Value::DataView(view) = &value {
