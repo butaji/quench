@@ -288,8 +288,7 @@ fn is_function_declaration(statement: &Statement<'_>) -> bool {
             Statement::ExportDefaultDeclaration(export)
                 if matches!(
                     &export.declaration,
-                    oxc::ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(function)
-                        if function.id.is_some()
+                    oxc::ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(_)
                 )
         )
 }
