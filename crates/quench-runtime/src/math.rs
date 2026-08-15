@@ -3,7 +3,7 @@ use num_bigint::{BigInt, Sign};
 use crate::{ops::Builtin, value::Value};
 
 pub(crate) fn property(key: &str) -> Option<Builtin> {
-    property_core(key).or_else(|| match key {
+    property_core(key).or(match key {
         "clz32" => Some(Builtin::MathClz32),
         "cosh" => Some(Builtin::MathCosh),
         "expm1" => Some(Builtin::MathExpm1),
@@ -71,7 +71,7 @@ pub(crate) fn is_builtin(builtin: Builtin) -> bool {
 }
 
 fn property_name(builtin: Builtin) -> Option<&'static str> {
-    property_name_core(builtin).or_else(|| match builtin {
+    property_name_core(builtin).or(match builtin {
         Builtin::MathClz32 => Some("clz32"),
         Builtin::MathCosh => Some("cosh"),
         Builtin::MathExpm1 => Some("expm1"),
