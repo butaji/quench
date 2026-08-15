@@ -209,10 +209,26 @@ include!("regexp_named_groups.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_literal_ranges(pattern)?;
+    validate_flags(flags)?;
     let reg_flags: Flags = flags.into();
     catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
         .map_err(|_| "invalid regular expression".to_string())?
         .map_err(|e| e.to_string())
+}
+
+fn validate_flags(flags: &str) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for flag in flags.chars() {
+        if !matches!(flag, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y')
+            || !seen.insert(flag)
+        {
+            return Err("invalid regular expression flags".to_string());
+        }
+    }
+    if seen.contains(&'u') && seen.contains(&'v') {
+        return Err("invalid regular expression flags".to_string());
+    }
+    Ok(())
 }
 
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
