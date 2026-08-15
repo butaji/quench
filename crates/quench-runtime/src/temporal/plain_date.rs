@@ -74,6 +74,28 @@ fn validate_era(object: &crate::value::ObjectData, calendar: &str) -> Result<(),
     Ok(())
 }
 
+fn validate_required_fields(object: &crate::value::ObjectData) -> Result<(), VmError> {
+    for name in ["year", "day"] {
+        if matches!(field(object, name)?, Value::Undefined) {
+            return Err(crate::value::error::throw_type_error(
+                "Missing PlainDate field",
+            ));
+        }
+    }
+    if matches!(
+        field(object, "month").unwrap_or(Value::Undefined),
+        Value::Undefined
+    ) && matches!(
+        field(object, "monthCode").unwrap_or(Value::Undefined),
+        Value::Undefined
+    ) {
+        return Err(crate::value::error::throw_type_error(
+            "Missing PlainDate field",
+        ));
+    }
+    Ok(())
+}
+
 fn canonical_calendar(value: &Value) -> Result<String, VmError> {
     validate_constructor_calendar(value)?;
     let Value::String(calendar) = value else {
@@ -462,6 +484,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                 validate_era(object, &calendar)?;
             }
         }
+        validate_required_fields(object)?;
         let year = field_number(object, "year")?;
         let day = field_number(object, "day")?;
         let month = field_number(object, "month").or_else(|_| {
