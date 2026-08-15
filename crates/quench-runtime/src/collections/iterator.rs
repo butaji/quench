@@ -14,7 +14,7 @@ pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpda
 pub(crate) use iterator_step::step_value;
 pub(crate) use iterator_values::{
     from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_array,
-    make_regexp_string, make_string, make_typed, make_typed_keys, next, next_map, next_set, property_for,
+    make_regexp_string, make_string, make_typed, next, next_map, next_set, property_for,
     prototype_of,
 };
 
@@ -285,7 +285,6 @@ pub fn delegate_next(
                 values,
                 receiver,
                 typed_receiver,
-                typed_keys,
                 index,
                 done,
             } => {
@@ -293,7 +292,6 @@ pub fn delegate_next(
                     values,
                     receiver.as_ref(),
                     typed_receiver.as_ref(),
-                    *typed_keys,
                     index,
                     done,
                 );
@@ -360,11 +358,10 @@ fn native_delegation_step(
     values: &[Value],
     receiver: Option<&Rc<crate::value::ArrayData>>,
     typed_receiver: Option<&Value>,
-    typed_keys: bool,
     index: &mut usize,
     done: &mut bool,
 ) -> Result<DelegationResult, crate::execute::VmError> {
-    let value = native_step(values, receiver, typed_receiver, typed_keys, index, done)?
+    let value = native_step(values, receiver, typed_receiver, index, done)?
         .unwrap_or(Value::Undefined);
     if *done {
         Ok(DelegationResult::Done(value))
@@ -426,7 +423,6 @@ pub(super) fn native_step(
     values: &[Value],
     receiver: Option<&Rc<crate::value::ArrayData>>,
     typed_receiver: Option<&Value>,
-    typed_keys: bool,
     index: &mut usize,
     done: &mut bool,
 ) -> Result<Option<Value>, crate::execute::VmError> {
@@ -434,12 +430,9 @@ pub(super) fn native_step(
         return Ok(None);
     }
     let value = if let Some(value) = typed_receiver {
-        let values = iterator_typed::typed_values(value.clone())?;
-        if typed_keys {
-            (values.get(*index).is_some()).then_some(Value::Number(*index as f64))
-        } else {
-            values.get(*index).cloned()
-        }
+        iterator_typed::typed_values(value.clone())?
+            .get(*index)
+            .cloned()
     } else if let Some(data) = receiver {
         array_receiver_step(data, *index)?
     } else {
