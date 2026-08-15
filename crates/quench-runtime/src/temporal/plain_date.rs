@@ -94,18 +94,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
         return checked_date_object(year, month, day);
     }
-    if parts.len() != 3 {
-        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
-    }
-    let year = parts[0]
-        .parse()
-        .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-    let month = parts[1]
-        .parse()
-        .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-    let day = parts[2]
-        .parse()
-        .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+    let (year, month, day) = parse_date_parts(&parts)?;
     checked_date_object(year, month, day)
 }
 
@@ -144,6 +133,23 @@ fn date_part(text: &str) -> &str {
     text.split(['T', 't', ' ', '[']).next().unwrap_or(text)
 }
 
+fn parse_date_parts(parts: &[&str]) -> Result<(i32, i32, i32), VmError> {
+    let (year, month, day) = match parts {
+        [year, month, day] => ((*year).to_owned(), (*month).to_owned(), (*day).to_owned()),
+        ["", year, month, day] => (format!("-{year}"), (*month).to_owned(), (*day).to_owned()),
+        _ => return Err(crate::value::error::throw_range_error("Invalid ISO date")),
+    };
+    Ok((
+        year.parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?,
+        month
+            .parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?,
+        day.parse()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?,
+    ))
+}
+
 fn checked_date_object(year: i32, month: i32, day: i32) -> Result<Value, VmError> {
     let year = f64::from(year);
     let month = f64::from(month);
@@ -151,6 +157,11 @@ fn checked_date_object(year: i32, month: i32, day: i32) -> Result<Value, VmError
     if !(-271_821.0..=275_760.0).contains(&year)
         || !(1.0..=12.0).contains(&month)
         || !(1.0..=days_in_month(year, month)).contains(&day)
+    {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
+    if (year == -271_821.0 && (month < 4.0 || month == 4.0 && day < 19.0))
+        || (year == 275_760.0 && (month > 9.0 || month == 9.0 && day > 13.0))
     {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
