@@ -64,8 +64,14 @@ fn check_var(name: &str, is_lexical: bool, is_eval: bool) -> Result<(), VmError>
         Ok(())
     } else if is_eval && crate::locals::global_has_lexical_name(name) {
         lexical_collision(name)
-    } else if own_descriptor(name).is_some() {
-        Ok(())
+    } else if let Some(descriptor) = own_descriptor(name) {
+        if can_reuse_global_var(&descriptor) {
+            Ok(())
+        } else {
+            Err(crate::value::error::throw_type_error(&format!(
+                "Cannot redeclare global var '{name}'"
+            )))
+        }
     } else if !is_global_extensible() {
         Err(crate::value::error::throw_type_error(&format!(
             "Cannot declare global var '{name}' on non-extensible object"
@@ -117,6 +123,10 @@ fn has_restricted_global(name: &str) -> bool {
     !descriptor.configurable
 }
 
+fn can_reuse_global_var(descriptor: &Descriptor) -> bool {
+    descriptor.configurable || descriptor.data && descriptor.writable && descriptor.enumerable
+}
+
 fn create_var(
     registers: &mut Vec<Value>,
     name: &str,
@@ -132,6 +142,12 @@ fn create_var(
     let current = own_descriptor(name);
     let cell = binding_cell(name, slot, current.as_ref().map(|value| &value.value));
     // Per spec, global var bindings are non-configurable.
+    if current
+        .as_ref()
+        .is_some_and(|descriptor| !descriptor.configurable && can_reuse_global_var(descriptor))
+    {
+        return Ok(());
+    }
     let descriptor = match current {
         Some(current) if !current.configurable => value_descriptor(cell),
         Some(current) => descriptor_with_flags(cell, &current),
