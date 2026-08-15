@@ -60,6 +60,7 @@ pub(crate) struct DateTimeOptions {
     hour12: Option<bool>,
     explicit_date_options: bool,
     explicit_time_zone: bool,
+    explicit_component_count: usize,
 }
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -81,6 +82,7 @@ impl DateTimeOptions {
             hour12: None,
             explicit_date_options: false,
             explicit_time_zone: false,
+            explicit_component_count: 0,
         };
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
@@ -98,6 +100,9 @@ impl DateTimeOptions {
             return Ok(());
         }
         let text = to_string_value(value);
+        if EXPLICIT_COMPONENTS.contains(&key) {
+            self.explicit_component_count += 1;
+        }
         if EXPLICIT_COMPONENTS.contains(&key) && key != "timeZoneName"
             || matches!(key, "dateStyle" | "timeStyle" | "fractionalSecondDigits")
         {
@@ -240,6 +245,10 @@ impl DateTimeOptions {
             "__explicitTimeZone".to_string(),
             Value::Boolean(self.explicit_time_zone),
         ));
+        props.push((
+            "__explicitComponentCount".to_string(),
+            Value::Number(self.explicit_component_count as f64),
+        ));
         let has_hour = self.contains("hour");
         for (key, value) in &self.components {
             props.push((key.clone(), Value::String(value.clone())));
@@ -358,8 +367,10 @@ pub(crate) fn prototype_method(
             if let Some(value) = day_period_format(&slots, number) {
                 return Ok(Value::String(value));
             }
-            if let Some(value) = proleptic_year_format(&slots, number) {
-                return Ok(Value::String(value));
+            if slot_string(&slots, "month").is_none() {
+                if let Some(value) = proleptic_year_format(&slots, number) {
+                    return Ok(Value::String(value));
+                }
             }
             if let Some(parts) = component_parts(&slots, number) {
                 return Ok(Value::String(format_parts(&parts, &slots)));
@@ -408,7 +419,7 @@ fn adjusted_temporal_number(input: &Value, slots: &[(String, Value)]) -> Result<
     let number = range_number(input)?;
     let plain_date_time =
         matches!(input, Value::Object(object) if object.iter().any(|(key, _)| key == "calendarId"));
-    if plain_date_time && slot_bool(slots, "__explicitTimeZone") != Some(true) {
+    if plain_date_time && slot_number(slots, "__explicitComponentCount") == Some(1.0) {
         return Ok(number - f64::from(crate::date::local_tz_offset_minutes()) * 60_000.0);
     }
     Ok(number)
@@ -544,6 +555,12 @@ fn format_parts(parts: &[Value], slots: &[(String, Value)]) -> String {
     {
         return format_english_date_time(parts);
     }
+    if slot_string(slots, "locale").is_some_and(|locale| locale.starts_with("en"))
+        && slot_string(slots, "era").is_some()
+        && has_date(parts)
+    {
+        return format_english_date(parts);
+    }
     let mut result = String::new();
     for part in parts {
         let kind = crate::execute::get_property_result(part, "type").ok();
@@ -566,6 +583,29 @@ fn has_date_and_time(parts: &[Value]) -> bool {
                     .is_ok_and(|value| value == Value::String((*kind).into()))
             })
         })
+}
+
+fn has_date(parts: &[Value]) -> bool {
+    ["year", "month", "day"].iter().all(|kind| {
+        parts.iter().any(|part| {
+            crate::execute::get_property_result(part, "type")
+                .is_ok_and(|value| value == Value::String((*kind).into()))
+        })
+    })
+}
+
+fn format_english_date(parts: &[Value]) -> String {
+    let value = |kind: &str| {
+        parts
+            .iter()
+            .find(|part| {
+                crate::execute::get_property_result(part, "type")
+                    .is_ok_and(|value| value == Value::String(kind.into()))
+            })
+            .and_then(part_value)
+            .unwrap_or_default()
+    };
+    format!("{}/{}/{}", value("month"), value("day"), value("year"))
 }
 
 fn format_english_date_time(parts: &[Value]) -> String {
