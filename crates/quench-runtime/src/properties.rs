@@ -215,7 +215,7 @@ pub(crate) fn execute_set_property(
     Ok(())
 }
 
-fn inherits_error_prototype(target: &crate::value::Value) -> bool {
+pub(crate) fn inherits_error_prototype(target: &crate::value::Value) -> bool {
     if matches!(
         target,
         crate::value::Value::Builtin(crate::ops::Builtin::ErrorPrototype)
