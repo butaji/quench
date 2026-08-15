@@ -542,28 +542,11 @@ fn construct_error(
         crate::ops::Builtin::URIError => "URIError",
         crate::ops::Builtin::AggregateError => "AggregateError",
         crate::ops::Builtin::TypeError => "TypeError",
-        crate::ops::Builtin::Error | _ => "Error",
+        _ => "Error",
     };
 
-    let message = arguments
-        .first()
-        .map_or(Ok(String::new()), crate::conversion::to_string)?;
-    let message_value = Value::String(message.clone());
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), message_value.clone()),
-        (
-            crate::builtins::descriptor_key("name"),
-            error_property_descriptor(Value::String(name.to_string())),
-        ),
-        (
-            crate::builtins::descriptor_key("message"),
-            error_property_descriptor(message_value),
-        ),
-        (
-            "constructor".to_string(),
-            crate::vm::current_realm_intrinsic(*builtin).unwrap_or(Value::Builtin(*builtin)),
-        ),
         (
             crate::builtins::ERROR_SLOT.to_string(),
             Value::Boolean(true),
@@ -576,96 +559,49 @@ fn construct_error(
             ),
         ),
     ];
+    if let Some(message) = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
+        properties.push((
+            "message".to_string(),
+            Value::String(crate::conversion::to_string(message)?),
+        ));
+    }
 
     if let Some(cause_source) = arguments
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined))
     {
         let options = to_object(cause_source)?;
-        if !crate::with_scope::has_property(&options, "cause")? {
-            return Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))));
-        }
-        let cause = crate::execute::get_property_result(&options, "cause")?;
-        properties.push(("cause".to_string(), cause.clone()));
-        properties.push((
-            crate::builtins::descriptor_key("cause"),
-            error_property_descriptor(cause),
-        ));
-    }
-
-    Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
-}
-
-fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let message = arguments
-        .get(1)
-        .filter(|value| !matches!(value, Value::Undefined))
-        .map(crate::conversion::to_string)
-        .transpose()?;
-    let iterable = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let iterator = crate::collections::iterator::open(iterable)?;
-    let mut values = Vec::new();
-    loop {
-        let Some(value) = crate::collections::iterator::step_value(&iterator)? else {
-            break;
-        };
-        values.push(value);
-    }
-    let errors = Value::array(values);
-    let mut properties = vec![
-        ("errors".to_string(), errors.clone()),
-        (
-            crate::builtins::descriptor_key("errors"),
-            error_property_descriptor(errors),
-        ),
-        (
-            "name".to_string(),
-            Value::String("AggregateError".to_string()),
-        ),
-        (
-            crate::builtins::descriptor_key("name"),
-            error_property_descriptor(Value::String("AggregateError".to_string())),
-        ),
-        (
-            "\0prototype".to_string(),
-            crate::builtins::aggregate_error_prototype(),
-        ),
-    ];
-    if let Some(message) = message {
-        let message_value = Value::String(message);
-        properties.push(("message".to_string(), message_value.clone()));
-        properties.push((
-            crate::builtins::descriptor_key("message"),
-            error_property_descriptor(message_value),
-        ));
-    }
-    if let Some(options) = arguments
-        .get(2)
-        .filter(|value| !matches!(value, Value::Undefined))
-    {
-        let options = to_object(options)?;
         if crate::with_scope::has_property(&options, "cause")? {
             let cause = crate::execute::get_property_result(&options, "cause")?;
-            properties.push(("cause".to_string(), cause.clone()));
+            properties.push(("cause".to_string(), cause));
+        }
+    }
+
+    for key in ["name", "message", "cause"] {
+        if let Some((_, value)) = properties.iter().rev().find(|(current, _)| current == key) {
             properties.push((
-                crate::builtins::descriptor_key("cause"),
-                error_property_descriptor(cause),
+                crate::builtins::descriptor_key(key),
+                non_enumerable_descriptor(value),
             ));
         }
     }
+
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
 }
 
-fn error_property_descriptor(value: Value) -> Value {
+fn non_enumerable_descriptor(value: &Value) -> Value {
     Value::Object(std::rc::Rc::new(ObjectData::new(vec![
-        ("value".to_string(), value),
+        ("value".to_string(), value.clone()),
         ("writable".to_string(), Value::Boolean(true)),
         ("enumerable".to_string(), Value::Boolean(false)),
         ("configurable".to_string(), Value::Boolean(true)),
     ])))
 }
 
-pub(crate) fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
+fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
     match value {
         Value::Object(_)
         | Value::Array(_)

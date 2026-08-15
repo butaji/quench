@@ -127,34 +127,18 @@ pub(crate) fn compact_scale(value: f64, locale: &str, display: &str) -> i32 {
         return 0;
     }
     let magnitude = value.abs().log10().floor() as i32;
+    compact_locale_scale(magnitude, locale, display)
+}
+
+fn compact_locale_scale(magnitude: i32, locale: &str, display: &str) -> i32 {
     if locale.starts_with("en-IN") {
-        return if magnitude >= 5 {
-            5
-        } else if magnitude >= 3 {
-            3
-        } else {
-            0
-        };
+        return threshold_scale(magnitude, &[5, 3]);
     }
     if locale.starts_with("ja") || locale.starts_with("zh") {
-        return if magnitude >= 8 {
-            8
-        } else if magnitude >= 4 {
-            4
-        } else {
-            0
-        };
+        return threshold_scale(magnitude, &[8, 4]);
     }
     if locale.starts_with("ko") {
-        return if magnitude >= 8 {
-            8
-        } else if magnitude >= 4 {
-            4
-        } else if magnitude >= 3 {
-            3
-        } else {
-            0
-        };
+        return threshold_scale(magnitude, &[8, 4, 3]);
     }
     if locale.starts_with("de") {
         return if magnitude >= 6 {
@@ -165,15 +149,15 @@ pub(crate) fn compact_scale(value: f64, locale: &str, display: &str) -> i32 {
             0
         };
     }
-    if magnitude >= 9 {
-        9
-    } else if magnitude >= 6 {
-        6
-    } else if magnitude >= 3 {
-        3
-    } else {
-        0
-    }
+    threshold_scale(magnitude, &[9, 6, 3])
+}
+
+fn threshold_scale(magnitude: i32, thresholds: &[i32]) -> i32 {
+    thresholds
+        .iter()
+        .copied()
+        .find(|threshold| magnitude >= *threshold)
+        .unwrap_or(0)
 }
 
 pub(crate) fn compact_fraction_digits(value: f64) -> u32 {
@@ -185,33 +169,13 @@ pub(crate) fn compact_fraction_digits(value: f64) -> u32 {
 
 pub(crate) fn compact_suffix(magnitude: i32, locale: &str, display: &str) -> &'static str {
     if locale.starts_with("ja") || locale.starts_with("zh") {
-        return match magnitude {
-            8 => "億",
-            4 => {
-                if locale.starts_with("zh-TW") {
-                    "萬"
-                } else {
-                    "万"
-                }
-            }
-            _ => "",
-        };
+        return east_asian_suffix(magnitude, locale);
     }
     if locale.starts_with("ko") {
-        return match magnitude {
-            8 => "억",
-            4 => "만",
-            3 => "천",
-            _ => "",
-        };
+        return korean_suffix(magnitude);
     }
     if locale.starts_with("de") {
-        return match (magnitude, display) {
-            (6, "long") => " Millionen",
-            (3, "long") => " Tausend",
-            (6, _) => "\u{a0}Mio.",
-            _ => "",
-        };
+        return german_suffix(magnitude, display);
     }
     if locale.starts_with("en-IN") && magnitude == 5 {
         return "L";
@@ -223,6 +187,33 @@ pub(crate) fn compact_suffix(magnitude: i32, locale: &str, display: &str) -> &'s
         3 => "K",
         6 => "M",
         9 => "B",
+        _ => "",
+    }
+}
+
+fn east_asian_suffix(magnitude: i32, locale: &str) -> &'static str {
+    match magnitude {
+        8 => "億",
+        4 if locale.starts_with("zh-TW") => "萬",
+        4 => "万",
+        _ => "",
+    }
+}
+
+fn korean_suffix(magnitude: i32) -> &'static str {
+    match magnitude {
+        8 => "억",
+        4 => "만",
+        3 => "천",
+        _ => "",
+    }
+}
+
+fn german_suffix(magnitude: i32, display: &str) -> &'static str {
+    match (magnitude, display) {
+        (6, "long") => " Millionen",
+        (3, "long") => " Tausend",
+        (6, _) => "\u{a0}Mio.",
         _ => "",
     }
 }

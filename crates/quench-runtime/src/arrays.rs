@@ -63,7 +63,9 @@ fn map_argument_error(
     if builtin != crate::ops::Builtin::ArrayMap {
         return None;
     }
-    if receiver.is_none_or(|value| matches!(value, Value::Null | Value::Undefined)) {
+    if receiver.map_or(true, |value| {
+        matches!(value, Value::Null | Value::Undefined)
+    }) {
         return Some(Err(crate::value::error::throw_type_error(
             "Array.prototype.map called on null or undefined",
         )));
@@ -520,6 +522,10 @@ fn same_value_zero(left: &Value, right: &Value) -> bool {
     crate::builtins::same_value_zero(left, right)
 }
 
+include!("arrays_concat.rs");
+include!("arrays_slice.rs");
+include!("arrays_index_of.rs");
+
 #[cfg(test)]
 mod tests {
     use super::index_of;
@@ -535,7 +541,3 @@ mod tests {
         assert_eq!(result, Ok(Value::Number(-1.0)));
     }
 }
-
-include!("arrays_concat.rs");
-include!("arrays_slice.rs");
-include!("arrays_index_of.rs");
