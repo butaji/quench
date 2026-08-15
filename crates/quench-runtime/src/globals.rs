@@ -77,6 +77,7 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         "Number",
         "String",
         "Symbol",
+        "Intl",
     ];
     names
         .into_iter()
@@ -171,6 +172,8 @@ fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
         "decodeURI" => Some(crate::ops::Builtin::DecodeURI),
         "decodeURIComponent" => Some(crate::ops::Builtin::DecodeURIComponent),
         "Math" => Some(crate::ops::Builtin::Math),
+        "Intl" => Some(crate::ops::Builtin::Intl),
+        "Atomics" => Some(crate::ops::Builtin::Atomics),
         "Function" => Some(crate::ops::Builtin::Function),
         "TypeError" => Some(crate::ops::Builtin::TypeError),
         "Error" => Some(crate::ops::Builtin::Error),
