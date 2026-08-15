@@ -99,6 +99,7 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Re
             let context = current()?;
             require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
+            trigger_deferred(&prototype, key)?;
             let value = get_with_receiver(&prototype, key, &context.receiver)?;
             crate::execute::write_value(registers, *dst, value);
             Ok(())
@@ -109,6 +110,7 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Re
             let prototype = require_super_base(&context.home)?;
             let key_value = crate::execute::read_register(registers, *key)?;
             let key_string = crate::properties::dynamic_property_key(&key_value)?;
+            trigger_deferred(&prototype, &key_string)?;
             let value = get_with_receiver(&prototype, &key_string, &context.receiver)?;
             crate::execute::write_value(registers, *dst, value);
             Ok(())
@@ -124,6 +126,7 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
             require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
+            trigger_deferred(&prototype, key)?;
             put_with_receiver(&prototype, key, value, &context.receiver)?;
             Ok(())
         }
@@ -134,11 +137,19 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
             let key_value = crate::execute::read_register(registers, *key)?;
             let key_string = crate::properties::dynamic_property_key(&key_value)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
+            trigger_deferred(&prototype, &key_string)?;
             put_with_receiver(&prototype, &key_string, value, &context.receiver)?;
             Ok(())
         }
         _ => Err(VmError::MissingReturn),
     }
+}
+
+fn trigger_deferred(target: &Value, key: &str) -> Result<(), VmError> {
+    if let Some(id) = crate::vm::consume_deferred_namespace_marker(target, key) {
+        crate::vm::execute_deferred_module(id)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn execute_call(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result<(), VmError> {
