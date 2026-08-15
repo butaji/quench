@@ -19,25 +19,24 @@ pub(crate) fn to_property_key(value: &Value) -> Result<String, VmError> {
 }
 
 pub(crate) fn property_key_value(key: &str) -> Value {
-    let symbol = match key {
-        "Symbol.iterator" => crate::ops::Builtin::SymbolIterator,
-        "Symbol.asyncIterator" => crate::ops::Builtin::SymbolAsyncIterator,
-        "Symbol.dispose" => crate::ops::Builtin::SymbolDispose,
-        "Symbol.asyncDispose" => crate::ops::Builtin::SymbolAsyncDispose,
-        "Symbol.unscopables" => crate::ops::Builtin::SymbolUnscopables,
-        "Symbol.toStringTag" => crate::ops::Builtin::SymbolToStringTag,
-        "Symbol.toPrimitive" => crate::ops::Builtin::SymbolToPrimitive,
-        "Symbol.hasInstance" => crate::ops::Builtin::SymbolHasInstance,
-        "Symbol.isConcatSpreadable" => crate::ops::Builtin::SymbolIsConcatSpreadable,
-        "Symbol.species" => crate::ops::Builtin::SymbolSpecies,
-        "Symbol.match" => crate::ops::Builtin::SymbolMatch,
-        "Symbol.replace" => crate::ops::Builtin::SymbolReplace,
-        "Symbol.search" => crate::ops::Builtin::SymbolSearch,
-        "Symbol.split" => crate::ops::Builtin::SymbolSplit,
-        "Symbol.matchAll" => crate::ops::Builtin::SymbolMatchAll,
+    match key {
+        "Symbol.iterator"
+        | "Symbol.asyncIterator"
+        | "Symbol.dispose"
+        | "Symbol.asyncDispose"
+        | "Symbol.unscopables"
+        | "Symbol.toStringTag"
+        | "Symbol.toPrimitive"
+        | "Symbol.hasInstance"
+        | "Symbol.isConcatSpreadable"
+        | "Symbol.species"
+        | "Symbol.match"
+        | "Symbol.replace"
+        | "Symbol.search"
+        | "Symbol.split"
+        | "Symbol.matchAll" => Value::String(format!("{key}\0")),
         _ => return Value::String(key.to_string()),
-    };
-    Value::Builtin(symbol)
+    }
 }
 
 pub(crate) fn number_to_string(value: f64) -> String {
