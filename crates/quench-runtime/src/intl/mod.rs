@@ -316,9 +316,7 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
-                if matches!(value, Value::Number(_)) {
-                    return Err(runtime_error("RangeError: invalid language tag"));
-                }
+                require_locale_value(value)?;
                 out.push(canonicalize(&locale_string(value)?)?);
             }
             Ok(dedupe(out))
@@ -342,12 +340,19 @@ fn resolve_array_like_locales(locales: &Value) -> Result<Vec<String>, VmError> {
             continue;
         }
         let value = crate::execute::get_property_result(locales, &key)?;
-        if matches!(value, Value::Number(_)) {
-            return Err(runtime_error("RangeError: invalid language tag"));
-        }
+        require_locale_value(&value)?;
         result.push(canonicalize(&locale_string(&value)?)?);
     }
     Ok(dedupe(result))
+}
+
+fn require_locale_value(value: &Value) -> Result<(), VmError> {
+    if matches!(value, Value::String(_) | Value::Object(_) | Value::Proxy(_)) {
+        return Ok(());
+    }
+    Err(crate::value::error::throw_type_error(
+        "Locale list element must be a string or object",
+    ))
 }
 
 fn locale_slot(properties: &crate::value::ObjectData) -> Option<String> {
@@ -433,6 +438,8 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
+    let parts: Vec<&str> = parts.collect();
+    validate_tag_parts(language, &parts)?;
     let mut out = Vec::new();
     let mut script_done = false;
     if language.eq_ignore_ascii_case("sh") {
@@ -442,7 +449,28 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     } else {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
-    Ok(canonicalize_subtags(parts.collect(), out, script_done)?.join("-"))
+    Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
+}
+
+fn validate_tag_parts(language: &str, parts: &[&str]) -> Result<(), VmError> {
+    if language.len() == 4
+        && parts
+            .first()
+            .is_some_and(|part| part.len() == 3 && part.chars().all(|c| c.is_ascii_alphabetic()))
+    {
+        return Err(runtime_error("RangeError: invalid language tag"));
+    }
+    let mut singletons = std::collections::HashSet::new();
+    let mut variants = std::collections::HashSet::new();
+    for part in parts {
+        if part.len() == 1 && !singletons.insert(part.to_ascii_lowercase()) {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        if part.len() >= 4 && !variants.insert(part.to_ascii_lowercase()) {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+    }
+    Ok(())
 }
 
 fn canonicalize_subtags(
