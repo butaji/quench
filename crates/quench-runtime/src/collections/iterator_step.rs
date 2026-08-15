@@ -127,8 +127,48 @@ fn step_target_state(
             index,
             done,
         } => StepTarget::Value(mapped_step(iterator, mapper, index, done)?),
+        IteratorState::Zip {
+            iterators,
+            mode,
+            done,
+        } => StepTarget::Value(zip_step(iterators, *mode, done)?),
         state => return step_target_tail(state),
     })
+}
+
+fn zip_step(
+    iterators: &[Value],
+    mode: u8,
+    done: &mut bool,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    if *done {
+        return Ok(None);
+    }
+    let mut values = Vec::with_capacity(iterators.len());
+    let mut ended = 0;
+    for iterator in iterators {
+        match super::step_value(iterator)? {
+            Some(value) => values.push(value),
+            None => {
+                ended += 1;
+                values.push(Value::Undefined);
+            }
+        }
+    }
+    if ended == iterators.len() {
+        *done = true;
+        return Ok(None);
+    }
+    if ended > 0 && mode != 1 {
+        *done = true;
+        if mode == 2 {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.zip iterators have different lengths",
+            ));
+        }
+        return Ok(None);
+    }
+    Ok(Some(Value::array(values)))
 }
 
 fn mapped_step(

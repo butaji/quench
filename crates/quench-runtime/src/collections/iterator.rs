@@ -44,6 +44,52 @@ pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
     })))
 }
 
+pub(crate) fn zip(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let inputs = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let options = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    let mode = zip_mode(&options)?;
+    let values = array_values(&inputs)?;
+    let iterators = values
+        .into_iter()
+        .map(|value| from(std::slice::from_ref(&value)))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Value::Iterator(Rc::new(IteratorData {
+        state: RefCell::new(IteratorState::Zip {
+            iterators,
+            mode,
+            done: false,
+        }),
+    })))
+}
+
+fn zip_mode(options: &Value) -> Result<u8, crate::execute::VmError> {
+    if matches!(options, Value::Undefined) {
+        return Ok(0);
+    }
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.zip options",
+        ));
+    }
+    let mode = crate::execute::get_property_result(options, "mode")?;
+    match mode {
+        Value::Undefined => Ok(0),
+        Value::String(value) if value == "shortest" => Ok(0),
+        Value::String(value) if value == "longest" => Ok(1),
+        Value::String(value) if value == "strict" => Ok(2),
+        _ => Err(crate::value::error::throw_type_error("Iterator.zip mode")),
+    }
+}
+
+fn array_values(value: &Value) -> Result<Vec<Value>, crate::execute::VmError> {
+    let Value::Array(array) = value else {
+        return Err(crate::value::error::throw_type_error("Iterator.zip inputs"));
+    };
+    Ok((0..array.logical_len())
+        .map(|index| array.get_index(index).unwrap_or(Value::Undefined))
+        .collect())
+}
+
 pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
     if matches!(value, Value::Iterator(_) | Value::Generator(_)) {
@@ -179,6 +225,7 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
         IteratorState::Mapped { iterator, .. } => Ok(Some(iterator.clone())),
         IteratorState::Concat { current, done, .. } if !*done => Ok(current.clone()),
         IteratorState::Concat { .. } => Ok(None),
+        IteratorState::Zip { .. } => Ok(None),
     }
 }
 fn get_return_method(iterator: &Value) -> Result<Option<Value>, crate::execute::VmError> {
@@ -390,6 +437,7 @@ pub fn delegate_next(
             IteratorState::Protocol { .. } => None,
             IteratorState::Mapped { .. } => None,
             IteratorState::Concat { .. } => None,
+            IteratorState::Zip { .. } => None,
         }
     };
     let Some(iterator) = protocol else {
@@ -474,6 +522,7 @@ fn delegation_target(
         | IteratorState::RegExpString { .. } => None,
         IteratorState::Mapped { .. } => None,
         IteratorState::Concat { .. } => None,
+        IteratorState::Zip { .. } => None,
     };
     Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
 }
@@ -557,6 +606,7 @@ pub(super) fn mark_done(data: &IteratorData) {
         | IteratorState::RegExpString { done, .. } => *done = true,
         IteratorState::Mapped { done, .. } => *done = true,
         IteratorState::Concat { done, .. } => *done = true,
+        IteratorState::Zip { done, .. } => *done = true,
     }
 }
 fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {
