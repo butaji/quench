@@ -9,7 +9,7 @@ pub(crate) fn construct(
     kind: FunctionKind,
     is_async: bool,
 ) -> Result<Value, VmError> {
-    let source = function_source(arguments, kind, is_async);
+    let source = function_source(arguments, kind, is_async)?;
     reduce_dynamic(&source, kind, is_async)
 }
 
@@ -169,26 +169,28 @@ fn dynamic_value(
     )
 }
 
-fn function_source(arguments: &[Value], kind: FunctionKind, is_async: bool) -> String {
+fn function_source(
+    arguments: &[Value],
+    kind: FunctionKind,
+    is_async: bool,
+) -> Result<String, VmError> {
     let parameters = arguments
         .get(..arguments.len().saturating_sub(1))
         .unwrap_or_default()
         .iter()
         .map(to_string)
-        .collect::<Vec<_>>()
+        .collect::<Result<Vec<_>, _>>()?
         .join(",");
-    let body = arguments.last().map_or_else(String::new, to_string);
+    let body = arguments
+        .last()
+        .map_or_else(|| Ok(String::new()), to_string)?;
     let prefix = match (kind, is_async) {
         (FunctionKind::Generator, true) => "async function*",
         (FunctionKind::Generator, false) => "function*",
         (_, true) => "async function",
         (_, false) => "function",
     };
-    format!("{prefix} anonymous({parameters}){{{body}}}")
-}
-
-fn to_string(value: &Value) -> String {
-    crate::intl::tolocale::value::to_string(Some(value))
+    Ok(format!("{prefix} anonymous({parameters}){{{body}}}"))
 }
 
 fn mark_dynamic(value: &Value) {
