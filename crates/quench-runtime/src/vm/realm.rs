@@ -25,6 +25,7 @@ struct ExecutionGuard {
 
 thread_local! {
     static REALMS: RefCell<Vec<Option<Rc<RealmState>>>> = const { RefCell::new(Vec::new()) };
+    static ROOT_INTRINSICS: RefCell<Vec<(Builtin, Value)>> = const { RefCell::new(Vec::new()) };
     static NEXT_REALM: Cell<u64> = const { Cell::new(1) };
 }
 
@@ -161,7 +162,11 @@ pub(super) fn id_for_global(global: &ObjectProperties) -> Option<RealmId> {
 }
 
 pub(super) fn intrinsic(id: RealmId, builtin: Builtin) -> Option<Value> {
-    let state = state(id)?;
+    let state = state(id);
+    if state.is_none() && id == RealmId::ROOT && builtin == Builtin::AbstractModuleSource {
+        return Some(root_intrinsic(builtin));
+    }
+    let state = state?;
     if let Some(value) = cached_intrinsic(&state, builtin) {
         return Some(value);
     }
@@ -174,6 +179,30 @@ pub(super) fn intrinsic(id: RealmId, builtin: Builtin) -> Option<Value> {
     }));
     state.intrinsics.borrow_mut().push((builtin, value.clone()));
     Some(value)
+}
+
+fn root_intrinsic(builtin: Builtin) -> Value {
+    ROOT_INTRINSICS.with(|intrinsics| {
+        if let Some((_, value)) = intrinsics
+            .borrow()
+            .iter()
+            .find(|(candidate, _)| *candidate == builtin)
+        {
+            return value.clone();
+        }
+        let value = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+            realm: RealmId::ROOT,
+            target: Value::Builtin(builtin),
+            receiver: Value::HostCapability(Rc::new(HostCapabilityValue::new(HostCapabilityRef {
+                realm: RealmId::ROOT,
+                kind: HostCapabilityKind::GetGlobal,
+            }))),
+            arguments: Vec::new(),
+            properties: RefCell::new(Vec::new()),
+        }));
+        intrinsics.borrow_mut().push((builtin, value.clone()));
+        value
+    })
 }
 
 pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
@@ -246,6 +275,13 @@ pub(super) fn is_intrinsic(bound: &crate::value::BoundFunctionValue) -> bool {
     let Value::HostCapability(token) = &bound.receiver else {
         return false;
     };
+    if token.realm() == RealmId::ROOT {
+        return ROOT_INTRINSICS.with(|intrinsics| {
+            intrinsics.borrow().iter().any(|(_, value)| {
+                matches!(value, Value::BoundFunction(value) if std::ptr::eq(value.as_ref(), bound))
+            })
+        });
+    }
     let Some(state) = state(token.realm()) else {
         return false;
     };
