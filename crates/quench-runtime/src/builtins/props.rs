@@ -23,6 +23,10 @@ pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     }
     Value::Undefined
 }
+
+pub(crate) fn number_constant(key: &str) -> Option<Value> {
+    props_number::constant(key)
+}
 include!("props_special_core.rs");
 fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin != Builtin::IteratorPrototype {
