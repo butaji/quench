@@ -53,6 +53,9 @@ pub fn function_name(builtin: Builtin) -> Option<&'static str> {
     if builtin == Builtin::ShadowRealmEvaluate {
         return Some("ShadowRealm.prototype.evaluate");
     }
+    if builtin == Builtin::ShadowRealmImportValue {
+        return Some("ShadowRealm.prototype.importValue");
+    }
     if let Some(v) = reflect::fn_name(builtin) {
         return Some(v);
     }
@@ -112,6 +115,9 @@ pub fn function_length(builtin: Builtin) -> Option<f64> {
     if builtin == Builtin::ShadowRealmEvaluate {
         return Some(1.0);
     }
+    if builtin == Builtin::ShadowRealmImportValue {
+        return Some(2.0);
+    }
     if let Some(v) = reflect::fn_len(builtin) {
         return Some(v);
     }
@@ -169,6 +175,9 @@ pub fn short_name(builtin: Builtin) -> Option<&'static str> {
     }
     if builtin == Builtin::ShadowRealmEvaluate {
         return Some("evaluate");
+    }
+    if builtin == Builtin::ShadowRealmImportValue {
+        return Some("importValue");
     }
     if let Some(v) = reflect::short_name(builtin) {
         return Some(v);

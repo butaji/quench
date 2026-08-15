@@ -9,6 +9,9 @@ pub(crate) fn builtin(
     let Some(value) = arguments.first() else {
         return Ok(Value::Undefined);
     };
+    if builtin == crate::ops::Builtin::ShadowRealmImportValue {
+        return import_value(arguments, receiver);
+    }
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && !is_shadow_realm_receiver(receiver) {
         return Err(shadow_type_error_for_realm(
             receiver,
@@ -50,6 +53,32 @@ pub(crate) fn builtin(
         ));
     }
     Ok(result)
+}
+
+fn import_value(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    if !is_shadow_realm_receiver(receiver) {
+        return Err(shadow_type_error_for_realm(
+            receiver,
+            "ShadowRealm.prototype.importValue called on incompatible receiver",
+        ));
+    }
+    let specifier = arguments.first().ok_or_else(|| {
+        crate::value::error::throw_type_error(
+            "ShadowRealm.prototype.importValue requires a specifier",
+        )
+    })?;
+    crate::conversion::to_string(specifier)?;
+    if let Some(export_name) = arguments.get(1) {
+        if !matches!(export_name, Value::String(_)) {
+            return Err(shadow_type_error_for_realm(
+                receiver,
+                "ShadowRealm.prototype.importValue export name must be a string",
+            ));
+        }
+    }
+    Ok(crate::promise::promise_reject(&[Value::Builtin(
+        crate::ops::Builtin::TypeError,
+    )]))
 }
 
 pub(crate) fn wrap_shadow_function(
