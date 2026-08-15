@@ -572,8 +572,11 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         .split_once('T')
         .or_else(|| main.split_once('t'))
         .unwrap_or((main, "00:00"));
+    validate_time_offset(time)?;
     let time = time.split(['+', '-']).next().unwrap_or(time);
-    let date_fields = if date.starts_with(['+', '-']) && date.matches('-').count() >= 2 {
+    let date_fields = if date.starts_with(['+', '-']) && !date.contains('-') && date.len() == 11 {
+        vec![&date[..7], &date[7..9], &date[9..]]
+    } else if date.starts_with(['+', '-']) && date.matches('-').count() >= 2 {
         vec![&date[..7], &date[8..10], &date[11..]]
     } else if date.contains('-') {
         date.split('-').collect::<Vec<_>>()
@@ -619,11 +622,36 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     construct(&fields.into_iter().map(Value::Number).collect::<Vec<_>>())
 }
 
+fn validate_time_offset(time: &str) -> Result<(), VmError> {
+    let Some(index) = time
+        .get(1..)
+        .and_then(|tail| tail.find(['+', '-']).map(|index| index + 1))
+    else {
+        return Ok(());
+    };
+    let offset = &time[index + 1..];
+    let valid = offset
+        .chars()
+        .all(|character| character.is_ascii_digit() || character == ':')
+        && matches!(offset.len(), 2 | 4 | 5);
+    if valid {
+        Ok(())
+    } else {
+        Err(crate::value::error::throw_range_error("Invalid offset"))
+    }
+}
+
 fn validate_annotations(text: &str) -> Result<(), VmError> {
     let mut calendars = 0;
     let mut critical_calendar = false;
     let mut time_zones = 0;
     for annotation in text.split('[').skip(1) {
+        if let Some(close) = annotation.find(']') {
+            let trailing = &annotation[close + 1..];
+            if !trailing.is_empty() && !trailing.starts_with('[') {
+                return Err(crate::value::error::throw_range_error("Invalid annotation"));
+            }
+        }
         let annotation = annotation
             .strip_suffix(']')
             .unwrap_or(annotation)
