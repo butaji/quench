@@ -439,7 +439,7 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     let property = get_property(value, key);
-    if should_preserve_receiver_property(value, key, &property)
+    if should_preserve_receiver_property(value, key, &property, receiver)
         || same_property_receiver(value, receiver)
     {
         return property;
@@ -447,14 +447,33 @@ fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     bind_receiver_property(property, receiver)
 }
 
-fn should_preserve_receiver_property(value: &Value, key: &str, property: &Value) -> bool {
+fn should_preserve_receiver_property(
+    value: &Value,
+    key: &str,
+    property: &Value,
+    receiver: &Value,
+) -> bool {
     if object_has_property(value, key) {
         return true;
     }
     matches!(value, Value::Builtin(_))
         || matches!(value, Value::Object(_)) && crate::vm::is_global_object(value)
         || is_intl_number_format_property(property)
+        || is_boxed_primitive(receiver) && matches!(property, Value::Builtin(_))
         || matches!(key, "constructor" | "prototype")
+}
+
+fn is_boxed_primitive(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Object(properties)
+            if properties.iter().any(|(name, value)|
+                name == "_value"
+                    && matches!(
+                        value,
+                        Value::Number(_) | Value::Boolean(_) | Value::String(_) | Value::BigInt(_)
+                    ))
+    )
 }
 
 fn object_has_property(value: &Value, key: &str) -> bool {
