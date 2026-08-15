@@ -579,6 +579,11 @@ fn intrinsic_error_prototype(
     ) {
         return None;
     }
+    if let Value::HostCapability(capability) = &bound.receiver {
+        if capability.realm() == crate::ops::RealmId::ROOT {
+            return Some(Value::Builtin(prototype));
+        }
+    }
     let mut properties = vec![
         ("constructor".to_string(), value.clone()),
         ("name".to_string(), crate::builtins::property(prototype, "name")),
