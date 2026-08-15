@@ -97,6 +97,9 @@ fn integrity_descriptor(
             }
         }
     } else {
+        if let Some(value) = descriptor_field_value(existing.as_ref(), "value") {
+            fields.push(("value".to_string(), value));
+        }
         fields.push((
             "writable".to_string(),
             crate::value::Value::Boolean(!frozen && flag("writable")),
