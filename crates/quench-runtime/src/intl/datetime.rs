@@ -108,9 +108,6 @@ impl DateTimeOptions {
                 if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
-                if NON_IANA_TIME_ZONES.contains(&text.as_str()) {
-                    return Err(runtime_error("RangeError: invalid time zone"));
-                }
                 self.time_zone = canonicalize_time_zone(&text);
             }
             "calendar" => self.calendar = text.to_ascii_lowercase(),

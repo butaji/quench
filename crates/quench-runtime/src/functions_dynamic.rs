@@ -38,7 +38,6 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     else {
         return Err(syntax_error("Invalid function source"));
     };
-    validate_dynamic_parameters(&function.params, kind, is_async)?;
     let body = function
         .body
         .as_ref()
@@ -124,22 +123,6 @@ fn mark_dynamic(value: &Value) {
             .borrow_mut()
             .push(("\0dynamic_function".to_string(), Value::Boolean(true)));
     }
-}
-
-fn set_dynamic_name(value: &Value) {
-    let Value::Function(function) = value else {
-        return;
-    };
-    let name = Value::String("anonymous".into());
-    let descriptor = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-        ("value".to_string(), name.clone()),
-        ("writable".to_string(), Value::Boolean(false)),
-        ("enumerable".to_string(), Value::Boolean(false)),
-        ("configurable".to_string(), Value::Boolean(true)),
-    ])));
-    let mut properties = function.properties.borrow_mut();
-    properties.push(("name".to_string(), name));
-    properties.push((crate::builtins::descriptor_key("name"), descriptor));
 }
 
 fn invalid(message: &str) -> VmError {

@@ -60,16 +60,15 @@ pub fn execute(
         return Some(date_to_json(receiver));
     }
     let result = match builtin {
-        Builtin::DateNow => Ok(Value::Number(chrono_utils::current_time_ms())),
-        Builtin::DateParse => Ok(date_parse(arguments)),
+        Builtin::DateNow => Value::Number(chrono_utils::current_time_ms()),
+        Builtin::DateParse => date_parse(arguments),
         _ => {
             let val = dispatch_get(builtin, receiver)
-                .map(Ok)
                 .or_else(|| dispatch_set(builtin, receiver, arguments));
             val?
         }
     };
-    Some(result)
+    Some(Ok(result))
 }
 
 fn is_date_getter(builtin: Builtin) -> bool {
@@ -130,11 +129,7 @@ fn dispatch_get(builtin: Builtin, receiver: Option<&Value>) -> Option<Value> {
     }
 }
 
-fn dispatch_set(
-    builtin: Builtin,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Option<Result<Value, VmError>> {
+fn dispatch_set(builtin: Builtin, receiver: Option<&Value>, args: &[Value]) -> Option<Value> {
     match builtin {
         Builtin::DateSetYear => Some(date_set_year(receiver, args)),
         _ => None,
@@ -390,15 +385,14 @@ fn date_get_year(receiver: Option<&Value>) -> Value {
     Value::Number(if year.is_nan() { f64::NAN } else { year })
 }
 
-fn date_set_year(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let current = super::setter::time_value(receiver)?;
-    let year = crate::conversion::to_number(arguments.first().unwrap_or(&Value::Undefined))?;
-    let year = year.trunc();
+fn date_set_year(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let year = helpers::to_int32(arguments.first().unwrap_or(&Value::Undefined));
     let year = if (0.0..=99.0).contains(&year) {
         year + 1900.0
     } else {
         year
     };
+    let current = extract_time(receiver);
     let (_, m, d, h, min, s, ms) =
         chrono_utils::local_components(current).unwrap_or((2000, 1, 1, 0, 0, 0, 0));
     let result = chrono_utils::make_local_ms(
@@ -411,5 +405,5 @@ fn date_set_year(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
         ms as f64,
     );
     store_time(receiver.unwrap_or(&Value::Undefined), result);
-    Ok(Value::Number(chrono_utils::time_clip(result)))
+    Value::Number(chrono_utils::time_clip(result))
 }

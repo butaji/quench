@@ -93,107 +93,11 @@ fn syntax_error() -> String {
     "SyntaxError: invalid regular expression modifiers".to_string()
 }
 pub fn validate_pattern(body: &str) -> Result<(), String> {
-    validate_trailing_escape(body)?;
     validate_initial_quantifier(body)?;
-    validate_quantifier_sequence(body)?;
     validate_braced_quantifier(body)?;
-    validate_quantifier_bounds(body)?;
-    validate_character_ranges(body)?;
     validate_quantified_lookbehind(body)?;
     validate_named_groups(body)?;
     Ok(())
-}
-
-fn validate_quantifier_sequence(body: &str) -> Result<(), String> {
-    let bytes = body.as_bytes();
-    for index in 1..bytes.len() {
-        let previous = bytes[index - 1];
-        let current = bytes[index];
-        if matches!(current, b'*' | b'+' | b'?') && matches!(previous, b'*' | b'+' | b'?')
-            || current == b'{' && previous == b'}'
-        {
-            return Err(syntax_error());
-        }
-    }
-    Ok(())
-}
-
-pub fn validate_flags(flags: &str) -> Result<(), String> {
-    let mut seen = String::new();
-    for flag in flags.chars() {
-        if !matches!(flag, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y') || seen.contains(flag) {
-            return Err(syntax_error());
-        }
-        seen.push(flag);
-    }
-    if seen.contains('u') && seen.contains('v') {
-        return Err(syntax_error());
-    }
-    Ok(())
-}
-
-fn validate_trailing_escape(body: &str) -> Result<(), String> {
-    let bytes = body.as_bytes();
-    let mut escapes = 0;
-    for byte in bytes.iter().rev() {
-        if *byte != b'\\' {
-            break;
-        }
-        escapes += 1;
-    }
-    if escapes % 2 == 1 {
-        return Err(syntax_error());
-    }
-    Ok(())
-}
-
-fn validate_quantifier_bounds(body: &str) -> Result<(), String> {
-    let bytes = body.as_bytes();
-    for (index, byte) in bytes.iter().enumerate() {
-        if *byte != b'{' {
-            continue;
-        }
-        let Some(close) = bytes[index..].iter().position(|value| *value == b'}') else {
-            continue;
-        };
-        let text = &body[index + 1..index + close];
-        let Some((minimum, maximum)) = text.split_once(',') else {
-            continue;
-        };
-        let Ok(minimum) = minimum.parse::<u32>() else {
-            continue;
-        };
-        if !maximum.is_empty()
-            && maximum
-                .parse::<u32>()
-                .is_ok_and(|maximum| maximum < minimum)
-        {
-            return Err(syntax_error());
-        }
-    }
-    Ok(())
-}
-
-fn validate_character_ranges(body: &str) -> Result<(), String> {
-    let bytes = body.as_bytes();
-    let mut in_class = false;
-    for index in 0..bytes.len() {
-        match bytes[index] {
-            b'[' if !escaped(bytes, index) => in_class = true,
-            b']' if in_class && !escaped(bytes, index) => in_class = false,
-            b'-' if in_class && index > 0 && index + 1 < bytes.len() => {
-                if bytes[index - 1] > bytes[index + 1] {
-                    return Err(syntax_error());
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
-fn escaped(bytes: &[u8], index: usize) -> bool {
-    index > 0 && bytes[index - 1] == b'\\' && !escaped(bytes, index - 1)
 }
 fn validate_initial_quantifier(body: &str) -> Result<(), String> {
     if let Some(first) = body.chars().next() {

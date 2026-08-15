@@ -133,22 +133,6 @@ fn builtin_owns_property(builtin: Builtin, key: &str) -> bool {
         || super::callable_property(builtin, key).is_some()
         || super::special_property(builtin, key).is_some()
 }
-fn is_typed_array_constructor_own(builtin: Builtin) -> bool {
-    matches!(
-        builtin,
-        Builtin::Float64Array
-            | Builtin::Float32Array
-            | Builtin::Int8Array
-            | Builtin::Int16Array
-            | Builtin::Int32Array
-            | Builtin::Uint8Array
-            | Builtin::Uint16Array
-            | Builtin::Uint32Array
-            | Builtin::Uint8ClampedArray
-            | Builtin::BigInt64Array
-            | Builtin::BigUint64Array
-    )
-}
 fn valid_index(key: &str, len: usize) -> bool {
     key.parse::<usize>().is_ok_and(|index| index < len)
 }
