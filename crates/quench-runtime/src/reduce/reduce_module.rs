@@ -466,9 +466,14 @@ fn reduce_class(
     let Some(identifier) = class.id.as_ref() else {
         return Err(vec!["Anonymous class declaration".to_string()]);
     };
-    let slot = *next_slot;
-    *next_slot = next_slot.saturating_add(1);
-    locals.insert(identifier.name.to_string(), slot);
+    let slot = if let Some(slot) = locals.get(identifier.name.as_str()).copied() {
+        slot
+    } else {
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        locals.insert(identifier.name.to_string(), slot);
+        slot
+    };
     let register = crate::classes::reduce_expression(class, ops, facts, next_register, locals)
         .ok_or_else(|| vec!["Unsupported class body".to_string()])?;
     ops.push(Op::StoreLocal {
