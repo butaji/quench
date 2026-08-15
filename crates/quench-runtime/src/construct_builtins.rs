@@ -361,12 +361,33 @@ fn construct_error(
     if *builtin == crate::ops::Builtin::SuppressedError {
         return crate::builtins::suppressed_error(arguments);
     }
+    if *builtin == crate::ops::Builtin::AggregateError {
+        return construct_aggregate_error(arguments);
+    }
 
     let message = arguments
         .first()
         .map_or(Ok(String::new()), crate::conversion::to_string)?;
     let mut properties = error_properties(builtin, message);
     append_error_cause(&mut properties, arguments)?;
+    Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
+}
+
+fn construct_aggregate_error(
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let errors = crate::collections::iterator::collect_iterable(
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+    )?;
+    let message = arguments
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(crate::conversion::to_string)
+        .transpose()?
+        .unwrap_or_default();
+    let mut properties = error_properties(&crate::ops::Builtin::AggregateError, message);
+    append_error_cause(&mut properties, &arguments[1..])?;
+    properties.push(("errors".to_string(), Value::array(errors)));
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
 }
 
