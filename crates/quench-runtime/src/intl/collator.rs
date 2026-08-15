@@ -45,9 +45,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             }
         }
         if let Some(value) = option(options, "collation")? {
-            collation = crate::conversion::to_string(&value)?;
+            let requested = crate::conversion::to_string(&value)?;
             if !matches!(
-                collation.as_str(),
+                requested.as_str(),
                 "default"
                     | "search"
                     | "standard"
@@ -71,11 +71,14 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ) {
                 return Err(runtime_error("RangeError: invalid collation"));
             }
-            if matches!(collation.as_str(), "eor" | "default") {
-                locale = strip_unicode_key(&locale, "co");
-            }
-            if matches!(collation.as_str(), "search" | "standard") {
-                collation = "default".to_string();
+            if requested != "pinyin" {
+                collation = requested;
+                if matches!(collation.as_str(), "eor" | "default") {
+                    locale = strip_unicode_key(&locale, "co");
+                }
+                if matches!(collation.as_str(), "search" | "standard") {
+                    collation = "default".to_string();
+                }
             }
         }
         if case_first != "false" {
@@ -198,7 +201,7 @@ fn normalize_locale_extensions(locale: &str) -> (String, LocaleExtensions) {
                 retained.extend(["kf", value.unwrap_or("false")]);
             }
             "co" if base.starts_with("de")
-                && matches!(value, Some("phonebk" | "dict" | "ducet" | "pinyin")) =>
+                && matches!(value, Some("phonebk" | "dict" | "ducet")) =>
             {
                 collation = value.map(str::to_string);
                 retained.extend(["co", value.unwrap_or("")]);
