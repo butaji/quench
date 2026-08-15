@@ -648,6 +648,9 @@ pub(crate) fn prototype_method(
             if let Some(value) = day_period_parts(&slots, number) {
                 return Ok(make_array(value));
             }
+            if let Some(value) = time_parts(&slots, number) {
+                return Ok(make_array(value));
+            }
             let value = format_number(&slots, number);
             Ok(make_array(vec![literal_part(&value)]))
         }
@@ -681,6 +684,28 @@ pub(crate) fn prototype_method(
         )),
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    if slot_string(slots, "minute").is_none() || slot_string(slots, "second").is_none() {
+        return None;
+    }
+    if slot_string(slots, "hour").is_some() {
+        return None;
+    }
+    let date = date_time(slots, number)?;
+    let mut parts = vec![
+        component_part("minute", &format!("{:02}", date.minute())),
+        literal_part(":"),
+        component_part("second", &format!("{:02}", date.second())),
+    ];
+    if let Some(digits) = slot_number(slots, "fractionalSecondDigits") {
+        let fraction = format!("{:03}", date.and_utc().timestamp_subsec_millis());
+        let count = digits as usize;
+        parts.push(literal_part("."));
+        parts.push(component_part("fractionalSecond", &fraction[..count]));
+    }
+    Some(parts)
 }
 
 fn format_number(slots: &[(String, Value)], number: f64) -> String {
