@@ -168,7 +168,7 @@ pub(crate) fn execute_bound(
     combined.extend_from_slice(arguments);
     match &bound.target {
         crate::value::Value::Builtin(builtin) => {
-            execute_builtin_target(*builtin, Some(&bound.receiver), &combined)
+            execute_bound_builtin(*builtin, bound, &combined)
         }
         crate::value::Value::Function(function) => execute(function, &bound.receiver, &combined),
         crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
@@ -177,6 +177,25 @@ pub(crate) fn execute_bound(
         }
         _ => Err(crate::execute::VmError::NotCallable),
     }
+}
+
+fn execute_bound_builtin(
+    builtin: crate::ops::Builtin,
+    bound: &crate::value::BoundFunctionValue,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let execute = || execute_builtin_target(builtin, Some(&bound.receiver), arguments);
+    if matches!(
+        builtin,
+        crate::ops::Builtin::ErrorPrototypeStackGetter
+            | crate::ops::Builtin::ErrorPrototypeStackSetter
+    ) {
+        if let crate::value::Value::HostCapability(token) = &bound.receiver {
+            return crate::vm::with_realm(token.realm(), execute)
+                .unwrap_or_else(|| Err(crate::vm::not_callable()));
+        }
+    }
+    execute()
 }
 
 pub(crate) fn execute_target(
@@ -189,6 +208,25 @@ pub(crate) fn execute_target(
             execute_builtin_target(*builtin, Some(receiver), arguments)
         }
         crate::value::Value::Function(function) => execute(function, receiver, arguments),
+        crate::value::Value::BoundFunction(bound)
+            if matches!(
+                bound.target,
+                crate::value::Value::Builtin(
+                    crate::ops::Builtin::ErrorPrototypeStackGetter
+                        | crate::ops::Builtin::ErrorPrototypeStackSetter
+                )
+            ) => match bound.target {
+                crate::value::Value::Builtin(builtin) => {
+                    let execute = || execute_builtin_target(builtin, Some(receiver), arguments);
+                    if let crate::value::Value::HostCapability(token) = &bound.receiver {
+                        crate::vm::with_realm(token.realm(), execute)
+                            .unwrap_or_else(|| Err(crate::vm::not_callable()))
+                    } else {
+                        execute()
+                    }
+                }
+                _ => unreachable!(),
+            },
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(target, receiver, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
@@ -234,8 +272,8 @@ fn bind_function_target(
         .unwrap_or(crate::value::Value::Undefined);
     let extra = arguments.get(1..).unwrap_or(&[]).to_vec();
     let mut properties = Vec::new();
-    let name = bound_function_name(&target)?;
-    let length = bound_function_length(&target, extra.len() as f64);
+    let name = bound_function_name(target)?;
+    let length = bound_function_length(target, extra.len() as f64);
     insert_bound_property(
         &mut properties,
         "name",
@@ -300,8 +338,7 @@ fn to_integer_or_infinity(value: f64) -> f64 {
     if value.is_infinite() {
         return f64::INFINITY;
     }
-    let value = if value == -0.0 { 0.0 } else { value.trunc() };
-    value
+    if value == -0.0 { 0.0 } else { value.trunc() }
 }
 
 fn length_descriptor(length: f64) -> crate::value::Value {

@@ -95,7 +95,7 @@ fn decode_run(
     Ok(())
 }
 
-fn percent_run(units: &[u16], index: &mut usize) -> Result<(Vec<u8>, Vec<String>), VmError> {
+fn percent_run(units: &[u16], index: &mut usize) -> Result<(Vec<u8>, Vec<[u16; 3]>), VmError> {
     let mut bytes = Vec::new();
     let mut escapes = Vec::new();
     while units.get(*index) == Some(&u16::from(b'%')) {
@@ -106,24 +106,45 @@ fn percent_run(units: &[u16], index: &mut usize) -> Result<(Vec<u8>, Vec<String>
         {
             return Err(uri_error());
         }
-        let text = String::from_utf16_lossy(escape);
-        let byte = u8::from_str_radix(&text, 16).map_err(|_| uri_error())?;
+        let high = hex_value(escape[0]).ok_or_else(uri_error)?;
+        let low = hex_value(escape[1]).ok_or_else(uri_error)?;
+        let byte = (high << 4) | low;
         bytes.push(byte);
-        escapes.push(String::from_utf16_lossy(&units[*index..*index + 3]));
+        escapes.push([units[*index], units[*index + 1], units[*index + 2]]);
         *index += 3;
     }
     Ok((bytes, escapes))
 }
 
-fn append_decoded(escapes: &[String], preserve_reserved: bool, text: &str, decoded: &mut Vec<u16>) {
+fn append_decoded(
+    escapes: &[[u16; 3]],
+    preserve_reserved: bool,
+    text: &str,
+    decoded: &mut Vec<u16>,
+) {
     let mut index = 0;
     for character in text.chars() {
+        let width = character.len_utf8();
         if preserve_reserved && URI_RESERVED.contains(character) {
-            decoded.extend(escapes[index].encode_utf16());
+            for escape in &escapes[index..index + width] {
+                decoded.extend(escape);
+            }
         } else {
             decoded.extend(character.to_string().encode_utf16());
         }
-        index += character.len_utf8();
+        index += width;
+    }
+}
+
+fn hex_value(unit: u16) -> Option<u8> {
+    if (u16::from(b'0')..=u16::from(b'9')).contains(&unit) {
+        Some((unit - u16::from(b'0')) as u8)
+    } else if (u16::from(b'A')..=u16::from(b'F')).contains(&unit) {
+        Some((unit - u16::from(b'A') + 10) as u8)
+    } else if (u16::from(b'a')..=u16::from(b'f')).contains(&unit) {
+        Some((unit - u16::from(b'a') + 10) as u8)
+    } else {
+        None
     }
 }
 
