@@ -216,6 +216,7 @@ fn stateful_builtin(
         }
         Builtin::AtomicsExchange => Some(crate::atomics::exchange(arguments)),
         Builtin::AtomicsWaitAsync => Some(crate::atomics::wait_async(arguments)),
+        Builtin::AtomicsPause => Some(Ok(Value::Undefined)),
         _ => None,
     }
 }
