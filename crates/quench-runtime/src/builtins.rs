@@ -76,7 +76,11 @@ pub(crate) fn generator_prototype() -> Value {
         if let Some(value) = cell.borrow().get(&realm) {
             return value.clone();
         }
-        let value = Value::Object(Rc::new(ObjectData::new(vec![
+        let mut value = Value::Object(Rc::new(ObjectData::new(vec![
+            (
+                "constructor".to_string(),
+                Value::Builtin(Builtin::GeneratorFunctionPrototype),
+            ),
             ("next".to_string(), Value::Builtin(Builtin::GeneratorNext)),
             (
                 "return".to_string(),
@@ -92,6 +96,19 @@ pub(crate) fn generator_prototype() -> Value {
                 Value::Builtin(Builtin::ObjectPrototype),
             ),
         ])));
+        store_descriptor_metadata(
+            &mut value,
+            "constructor",
+            &[
+                (
+                    "value".to_string(),
+                    Value::Builtin(Builtin::GeneratorFunctionPrototype),
+                ),
+                ("writable".to_string(), Value::Boolean(false)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ],
+        );
         cell.borrow_mut().insert(realm, value.clone());
         value
     })
