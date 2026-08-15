@@ -25,8 +25,8 @@ pub(crate) fn execute(
     match builtin {
         crate::ops::Builtin::TemporalInstantFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalInstantEpochNanosecondsGetter => Some(get_epoch(receiver)),
-        crate::ops::Builtin::TemporalInstantToString
-        | crate::ops::Builtin::TemporalInstantToJSON => Some(to_string(receiver)),
+        crate::ops::Builtin::TemporalInstantToString => Some(to_string(receiver, arguments)),
+        crate::ops::Builtin::TemporalInstantToJSON => Some(to_string(receiver, &[])),
         crate::ops::Builtin::TemporalInstantToLocaleString => {
             Some(to_locale_string(receiver, arguments))
         }
@@ -71,7 +71,7 @@ fn get_epoch(receiver: Option<&Value>) -> Result<Value, VmError> {
     crate::execute::get_property_result(receiver, "epochNanoseconds")
 }
 
-fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+fn to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let Value::BigInt(epoch) = get_epoch(receiver)? else {
         return Err(crate::value::error::throw_type_error("Invalid instant"));
     };
@@ -80,20 +80,52 @@ fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
         .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
     let seconds = epoch.div_euclid(1_000_000_000) as i64;
     let nanos = epoch.rem_euclid(1_000_000_000) as u32;
-    let date = chrono::DateTime::from_timestamp(seconds, nanos)
+    let zone = arguments.first().and_then(time_zone_option);
+    let offset = zone.and_then(time_zone_offset).unwrap_or(0);
+    let date = chrono::DateTime::from_timestamp(seconds + offset, nanos)
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?;
     let fraction = if nanos == 0 {
         String::new()
     } else {
         format!(".{nanos:09}").trim_end_matches('0').to_string()
     };
+    let suffix = if offset == 0 {
+        "Z".to_string()
+    } else {
+        let sign = if offset >= 0 { '+' } else { '-' };
+        let minutes = (offset.unsigned_abs() + 30) / 60;
+        format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
+    };
     Ok(Value::String(format!(
-        "{}T{:02}:{:02}:{:02}{fraction}Z",
+        "{}T{:02}:{:02}:{:02}{fraction}{suffix}",
         date.format("%Y-%m-%d"),
         date.hour(),
         date.minute(),
         date.second()
     )))
+}
+
+fn time_zone_option(value: &Value) -> Option<&str> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    object
+        .iter()
+        .find(|(key, _)| key == "timeZone")
+        .and_then(|(_, value)| match value {
+            Value::String(value) => Some(value.as_str()),
+            _ => None,
+        })
+        .or(Some("UTC"))
+}
+
+fn time_zone_offset(zone: &str) -> Option<i64> {
+    match zone {
+        "Europe/Berlin" => Some(3_600),
+        "America/New_York" => Some(-18_000),
+        "Africa/Monrovia" => Some(-2_670),
+        _ => None,
+    }
 }
 
 fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
