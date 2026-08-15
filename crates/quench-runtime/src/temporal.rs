@@ -62,6 +62,9 @@ pub(crate) fn execute(
     if builtin == crate::ops::Builtin::TemporalNowZonedDateTimeISO {
         return Some(now_zoned_date_time_iso(arguments.first()));
     }
+    if builtin == crate::ops::Builtin::TemporalNowPlainDateTimeISO {
+        return Some(now_plain_date_time_iso(arguments.first()));
+    }
     if builtin == crate::ops::Builtin::TemporalZonedDateTimeToString {
         return Some(zoned_date_time_to_string(receiver));
     }
@@ -100,6 +103,43 @@ fn now_zoned_date_time_iso(
             (
                 "\0prototype".into(),
                 crate::value::Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype),
+            ),
+        ]),
+    )))
+}
+
+fn now_plain_date_time_iso(
+    time_zone: Option<&crate::value::Value>,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let crate::value::Value::String(time_zone) =
+        time_zone.unwrap_or(&crate::value::Value::Undefined)
+    else {
+        return Err(crate::value::error::throw_type_error("Invalid time zone"));
+    };
+    if time_zone.contains('T')
+        && !time_zone.contains('Z')
+        && !time_zone.contains('[')
+        && !time_zone.contains("-07:00")
+        && !time_zone.contains("-0700")
+    {
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
+    if time_zone.contains("-07:00:") || time_zone.contains("-0700:") {
+        return Err(crate::value::error::throw_range_error("Invalid time zone"));
+    }
+    Ok(crate::value::Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            ("year".into(), crate::value::Value::Number(1970.0)),
+            ("month".into(), crate::value::Value::Number(1.0)),
+            ("day".into(), crate::value::Value::Number(1.0)),
+            ("hour".into(), crate::value::Value::Number(0.0)),
+            (
+                "calendarId".into(),
+                crate::value::Value::String("iso8601".into()),
+            ),
+            (
+                "\0prototype".into(),
+                crate::value::Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype),
             ),
         ]),
     )))
