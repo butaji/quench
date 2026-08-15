@@ -58,6 +58,9 @@ pub enum Op {
     MarkUninitialized {
         slot: u16,
     },
+    MarkImmutable {
+        slot: u16,
+    },
     CheckInitialized {
         slot: u16,
         name: String,
