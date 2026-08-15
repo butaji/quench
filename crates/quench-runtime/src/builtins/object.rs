@@ -46,6 +46,16 @@ pub(crate) fn execute_special(
             }
             descriptor(target, key)
         }
+        _ => execute_special_tail(builtin, receiver, arguments),
+    }
+}
+
+fn execute_special_tail(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    match builtin {
         Builtin::ObjectGetOwnPropertyDescriptors => get_own_property_descriptors(arguments),
         Builtin::ObjectGetOwnPropertyNames => object_proxy_names(arguments.first(), false),
         Builtin::ObjectGetOwnPropertySymbols => object_proxy_names(arguments.first(), true),
