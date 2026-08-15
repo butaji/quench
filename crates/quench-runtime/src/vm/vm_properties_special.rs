@@ -60,12 +60,7 @@ fn bound_function_property(
     bound: &crate::value::BoundFunctionValue,
     key: &str,
 ) -> Value {
-    let shadow_wrapper = bound
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| name == "\0realm")
-        && !realm::is_intrinsic(bound);
+    let shadow_wrapper = is_shadow_wrapper(bound);
     if let Some((_, value)) = bound
         .properties
         .borrow()
@@ -89,6 +84,15 @@ fn bound_function_property(
     } else {
         bound_function_fallback(bound, shadow_wrapper, key)
     }
+}
+
+fn is_shadow_wrapper(bound: &crate::value::BoundFunctionValue) -> bool {
+    bound
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == "\0realm")
+        && !realm::is_intrinsic(bound)
 }
 
 fn bound_function_fallback(
