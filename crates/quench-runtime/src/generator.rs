@@ -4,7 +4,7 @@ use crate::{
     ops::Op,
     value::{GeneratorData, GeneratorState, Value},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::{
     cell::{Ref, RefCell, RefMut},
     rc::Rc,
@@ -59,6 +59,7 @@ pub(crate) fn create(
         done: RefCell::new(false),
         state: RefCell::new(state),
         pending_yield: RefCell::new(false),
+        async_queue: RefCell::new(VecDeque::new()),
     })))
 }
 
@@ -142,6 +143,17 @@ fn require_normal_parameter_completion(
 }
 pub(crate) fn next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_handle(receiver, "next")?;
+    if generator.function.is_async && is_executing(&generator) {
+        let promise = crate::promise::new_promise();
+        let Value::Promise(result) = promise.clone() else {
+            return Err(VmError::MissingReturn);
+        };
+        generator
+            .async_queue
+            .borrow_mut()
+            .push_back((first_argument(arguments), result));
+        return Ok(promise);
+    }
     let completion = resume(&generator, Resume::Next(first_argument(arguments)));
     if generator.function.is_async {
         return Ok(crate::promise::from_async_generator_completion(
@@ -152,76 +164,67 @@ pub(crate) fn next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
 }
 
 pub(crate) fn async_next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    if matches!(receiver, Some(Value::Generator(generator)) if generator.function.is_async) {
-        return next(receiver, arguments);
-    }
-    let promise = crate::promise::new_promise();
-    let Value::Promise(data) = &promise else {
-        return Err(crate::value::error::throw_type_error("Invalid promise"));
+    let generator = match generator_handle(receiver, "next") {
+        Ok(generator) => generator,
+        Err(error) => return Ok(rejected_promise(error)),
     };
-    crate::promise::reject_promise(
-        data,
-        crate::builtins::error(
-            crate::ops::Builtin::TypeError,
-            &[Value::String(
-                "AsyncGenerator.next called on incompatible receiver".into(),
-            )],
-        ),
-    );
-    Ok(promise)
+    if is_executing(&generator) {
+        let promise = crate::promise::new_promise();
+        let Value::Promise(result) = promise.clone() else {
+            return Err(VmError::MissingReturn);
+        };
+        generator
+            .async_queue
+            .borrow_mut()
+            .push_back((first_argument(arguments), result));
+        return Ok(promise);
+    }
+    Ok(crate::promise::from_async_generator_completion(
+        resume(&generator, Resume::Next(first_argument(arguments))),
+        generator,
+    ))
 }
 
 pub(crate) fn async_return(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    async_resume(
-        receiver,
-        arguments,
-        Resume::Return(first_argument(arguments)),
-        "return",
-    )
+    async_completion(receiver, Resume::Return(first_argument(arguments)))
 }
 
 pub(crate) fn async_throw(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    async_resume(
-        receiver,
-        arguments,
-        Resume::Throw(first_argument(arguments)),
-        "throw",
-    )
+    async_completion(receiver, Resume::Throw(first_argument(arguments)))
 }
 
-fn async_resume(
-    receiver: Option<&Value>,
-    _arguments: &[Value],
-    resume_input: Resume,
-    method: &str,
-) -> Result<Value, VmError> {
-    let Some(generator) = receiver.and_then(|value| match value {
-        Value::Generator(generator) if generator.function.is_async => Some(generator),
-        _ => None,
-    }) else {
-        let promise = crate::promise::new_promise();
-        let Value::Promise(data) = &promise else {
-            return Err(crate::value::error::throw_type_error("Invalid promise"));
-        };
-        crate::promise::reject_promise(
-            data,
-            crate::builtins::error(
-                crate::ops::Builtin::TypeError,
-                &[Value::String(format!(
-                    "AsyncGenerator.{method} called on incompatible receiver"
-                ))],
-            ),
-        );
-        return Ok(promise);
+fn async_completion(receiver: Option<&Value>, resume_input: Resume) -> Result<Value, VmError> {
+    let generator = match generator_handle(receiver, "async generator") {
+        Ok(generator) => generator,
+        Err(error) => return Ok(rejected_promise(error)),
     };
-    let completion = resume(&Rc::clone(generator), resume_input);
     Ok(crate::promise::from_async_generator_completion(
-        completion,
-        Rc::clone(generator),
+        resume(&generator, resume_input),
+        generator,
     ))
+}
+
+fn rejected_promise(error: VmError) -> Value {
+    let reason = match error {
+        VmError::Thrown(value) => value,
+        _ => Value::Undefined,
+    };
+    crate::promise::promise_reject(&[reason])
+}
+
+fn is_executing(generator: &GeneratorData) -> bool {
+    generator
+        .state
+        .borrow()
+        .as_ref()
+        .is_some_and(|state| state.suspension.is_none())
+}
+
+pub(crate) fn resume_async_next(generator: &GeneratorData, value: Value) -> Result<Value, VmError> {
+    resume(generator, Resume::Next(value))
 }
 pub(crate) fn return_(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_receiver(receiver, "return")?;

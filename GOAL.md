@@ -1,9 +1,8 @@
-# Goal: stages 16, 19, and 20
+# Goal: stage 46 residuals
 
-Bring test262 stages 16, 19, and 20 to 100% passing through the canonical
-runner: import, literals, and module-code. Preserve UTF-16 lone surrogates,
-module/linking behavior, parse and completion semantics, and exact error
-ordering. Fix the canonical parser/evaluator/runtime path rather than adding
-test-specific behavior; do not alter `tests/test262` or the harness. Re-run
-these stages and all earlier completed regressions after each fix. Finish with
-zero failures, clean format/clippy checks, and committed verified changes.
+Bring test262 stage 46 (`built-ins/Error`) to 100% through the canonical
+runner. Start from the current branch baseline, reproduce the remaining
+subclass Error stack receiver failures, and implement the smallest shared
+completion/prototype fix. Preserve realms, constructors, descriptors,
+accessors, proxies, and observable errors. Do not edit test262 or the harness.
+Run stage 46 plus regressions, strict format/clippy, and commit verified work.

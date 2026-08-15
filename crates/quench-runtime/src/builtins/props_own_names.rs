@@ -1,5 +1,19 @@
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::AbstractModuleSource => &["length", "name", "prototype"],
+        Builtin::AbstractModuleSourcePrototype => &["constructor", "Symbol.toStringTag"],
+        Builtin::ArrayIteratorPrototype => &["next", "Symbol.toStringTag"],
+        Builtin::AsyncFunctionPrototype => &["constructor", "Symbol.toStringTag"],
+        Builtin::AsyncGeneratorFunctionPrototype => {
+            &["constructor", "prototype", "Symbol.toStringTag"]
+        }
+        Builtin::AsyncGeneratorPrototype => {
+            &[
+                "constructor", "next", "return", "throw", "Symbol.toStringTag",
+                "Symbol.asyncIterator", "Symbol.asyncDispose",
+            ]
+        }
+        Builtin::AsyncIteratorPrototype => &["Symbol.asyncIterator", "Symbol.asyncDispose"],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => &["constructor", "toString", "valueOf", "Symbol.toStringTag"],
         Builtin::Error => &["length", "name", "prototype", "isError"],
@@ -7,37 +21,10 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "constructor",
             "name",
             "message",
-            "cause",
             "stack",
             "toString",
         ],
-        Builtin::DatePrototype => &[
-            "constructor",
-            "toString",
-            "toDateString",
-            "toTimeString",
-            "toUTCString",
-            "toGMTString",
-            "toISOString",
-            "toJSON",
-            "Symbol.toPrimitive",
-            "valueOf",
-        ],
-        Builtin::ErrorPrototype => {
-            &["constructor", "name", "message", "cause", "stack", "toString"]
-        }
-        Builtin::RangeErrorPrototype
-        | Builtin::ReferenceErrorPrototype
-        | Builtin::SyntaxErrorPrototype
-        | Builtin::EvalErrorPrototype
-        | Builtin::URIErrorPrototype
-        | Builtin::AggregateErrorPrototype
-        | Builtin::TypeErrorPrototype => {
-            &["constructor", "name", "message", "stack", "toString"]
-        }
-        Builtin::SuppressedErrorPrototype => {
-            &["constructor", "name", "message", "stack", "toString"]
-        }
+        Builtin::SuppressedErrorPrototype => &["constructor", "name", "message", "toString"],
         Builtin::DisposableStack => &["length", "name", "prototype"],
         Builtin::DisposableStackPrototype => &[
             "constructor",
@@ -67,29 +54,6 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "disposeAsync",
             "disposed",
             "Symbol.asyncDispose",
-            "Symbol.toStringTag",
-        ],
-        Builtin::AsyncFunctionPrototype => &["constructor", "Symbol.toStringTag"],
-        Builtin::AsyncGeneratorFunctionPrototype => {
-            &["constructor", "prototype", "Symbol.toStringTag"]
-        }
-        Builtin::AsyncGeneratorPrototype => &[
-            "constructor",
-            "next",
-            "return",
-            "throw",
-            "Symbol.toStringTag",
-        ],
-        Builtin::GeneratorPrototype => {
-            &["constructor", "next", "return", "throw", "Symbol.toStringTag"]
-        }
-        Builtin::AsyncIteratorPrototype => &["Symbol.asyncDispose", "Symbol.asyncIterator"],
-        Builtin::Atomics => &[
-            "add",
-            "store",
-            "load",
-            "and",
-            "compareExchange",
             "Symbol.toStringTag",
         ],
         Builtin::Math => &[
