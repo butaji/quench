@@ -176,6 +176,15 @@ pub fn execute_builtin_tail(
     if let Some(result) = early_dispatch(builtin, receiver, arguments) {
         return result;
     }
+    execute_builtin_mid(builtin, arguments, receiver)
+}
+
+fn execute_builtin_mid(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    use crate::ops::Builtin;
     if crate::math::is_builtin(builtin) {
         return crate::math::execute(builtin, arguments);
     }
