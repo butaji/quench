@@ -235,11 +235,17 @@ pub(crate) fn proxy_construct(
         if let Some(trap) = get_handler_trap(proxy, "construct") {
             let args_array = Value::array(arguments.to_vec());
             let new_target = new_target.unwrap_or(target);
-            return call_trap(
+            let result = call_trap(
                 &trap,
                 &[proxy.target.clone(), args_array, new_target.clone()],
                 Some(&proxy.handler),
-            );
+            )?;
+            if !crate::value::is_object(&result) {
+                return Err(crate::value::error::throw_type_error(
+                    "Proxy construct trap must return an object",
+                ));
+            }
+            return Ok(result);
         }
         return proxy_construct(&proxy.target, arguments, new_target);
     }
