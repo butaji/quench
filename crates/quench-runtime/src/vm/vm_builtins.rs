@@ -217,9 +217,7 @@ fn error_builtin(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     match builtin {
-        Builtin::ThrowTypeError => Err(crate::value::error::throw_type_error(
-            "Restricted arguments property",
-        )),
+        Builtin::ThrowTypeError => restricted_arguments_error(receiver),
         Builtin::Error
         | Builtin::RangeError
         | Builtin::ReferenceError
@@ -240,6 +238,26 @@ fn error_builtin(
         Builtin::ErrorPrototypeStackSetter => error_stack_setter(receiver, arguments),
         _ => Ok(Value::Undefined),
     }
+}
+
+fn restricted_arguments_error(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(realm) = crate::vm::realm_id_for_intrinsic_receiver(receiver) else {
+        return Err(crate::value::error::throw_type_error(
+            "Restricted arguments property",
+        ));
+    };
+    let error = crate::builtins::error(
+        Builtin::TypeError,
+        &[Value::String("Restricted arguments property".to_string())],
+    );
+    let error = if realm != crate::ops::RealmId::ROOT {
+        let constructor = crate::vm::with_realm(realm, || crate::vm::realm_intrinsic(Builtin::TypeError))
+            .unwrap_or(Value::Builtin(Builtin::TypeError));
+        crate::builtins::set_property(error, "constructor", constructor)
+    } else {
+        error
+    };
+    Err(VmError::Thrown(error))
 }
 
 fn error_name_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
