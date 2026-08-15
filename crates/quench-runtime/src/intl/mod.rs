@@ -657,6 +657,10 @@ pub(crate) fn intl_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)
     }
 }
 
+pub(crate) fn intl_object(value: &Value) -> bool {
+    matches!(value, Value::Object(properties) if properties.iter().any(|(name, _)| name == SLOT))
+}
+
 pub(crate) fn slot_string(slots: &[(String, Value)], key: &str) -> Option<String> {
     slots
         .iter()
