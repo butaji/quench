@@ -310,6 +310,20 @@ fn array_special(value: &Value, key: &str, receiver: &Value) -> Option<Result<Va
 fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
     match getter {
         Value::Function(function) => crate::functions::execute(function, receiver, &[]),
+        Value::BoundFunction(bound)
+            if matches!(
+                bound.target,
+                Value::Builtin(
+                    Builtin::ErrorPrototypeStackGetter | Builtin::ErrorPrototypeStackSetter
+                )
+            ) => crate::vm::execute_builtin_with_receiver(
+                match bound.target {
+                    Value::Builtin(builtin) => builtin,
+                    _ => unreachable!(),
+                },
+                &[],
+                Some(receiver),
+            ),
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, &[]),
         Value::Builtin(builtin) => {
             crate::vm::execute_builtin_with_receiver(*builtin, &[], Some(receiver))
@@ -484,14 +498,35 @@ fn intrinsic_error_prototype(
         properties.push((
             crate::builtins::descriptor_key("stack"),
             Value::Object(Rc::new(crate::value::ObjectData::new(vec![
-                ("get".to_string(), Value::Builtin(Builtin::ErrorPrototypeStackGetter)),
-                ("set".to_string(), Value::Builtin(Builtin::ErrorPrototypeStackSetter)),
+                (
+                    "get".to_string(),
+                    error_accessor_function(
+                        Builtin::ErrorPrototypeStackGetter,
+                        bound.receiver.clone(),
+                    ),
+                ),
+                (
+                    "set".to_string(),
+                    error_accessor_function(
+                        Builtin::ErrorPrototypeStackSetter,
+                        bound.receiver.clone(),
+                    ),
+                ),
                 ("enumerable".to_string(), Value::Boolean(false)),
                 ("configurable".to_string(), Value::Boolean(true)),
             ]))),
         ));
     }
     Some(Value::Object(Rc::new(crate::value::ObjectData::new(properties))))
+}
+
+fn error_accessor_function(builtin: Builtin, receiver: Value) -> Value {
+    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        target: Value::Builtin(builtin),
+        receiver,
+        arguments: Vec::new(),
+        properties: std::cell::RefCell::new(Vec::new()),
+    }))
 }
 fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
