@@ -50,6 +50,9 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationAbs => Some(absolute(receiver)),
         crate::ops::Builtin::TemporalDurationToJSON => Some(to_json(receiver)),
         crate::ops::Builtin::TemporalDurationAdd => Some(combine(receiver, arguments.first(), 1.0)),
+        crate::ops::Builtin::TemporalDurationSubtract => {
+            Some(combine(receiver, arguments.first(), -1.0))
+        }
         crate::ops::Builtin::TemporalDurationValueOf => Some(Err(
             crate::value::error::throw_type_error("Cannot convert Duration to a number"),
         )),
@@ -96,7 +99,14 @@ fn combine(
     if !(positive && negative) && !exceeds_unit {
         return construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>());
     }
-    let largest_time_unit = (4..10).find(|index| values[*index] != 0.0).unwrap_or(10);
+    let mut largest_time_unit = (4..10).find(|index| values[*index] != 0.0).unwrap_or(10);
+    while values[3] != 0.0
+        && (5..10).contains(&largest_time_unit)
+        && values[largest_time_unit].abs()
+            >= [60.0, 60.0, 1_000.0, 1_000.0, 1_000.0][largest_time_unit - 5]
+    {
+        largest_time_unit -= 1;
+    }
     values[3] += (values[4] / 24.0).trunc();
     values[4] %= 24.0;
     let time = values[4] * 3_600_000_000_000.0
