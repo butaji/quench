@@ -19,36 +19,6 @@ pub(crate) fn units_of(value: &Value) -> Option<Vec<u16>> {
     }
 }
 
-/// The lossy UTF-8 view of a string value (lone surrogates become U+FFFD).
-pub(crate) fn lossy(value: &Value) -> Option<String> {
-    match value {
-        Value::String(value) => Some(value.clone()),
-        Value::StringUnits(units) => Some(String::from_utf16_lossy(units)),
-        _ => None,
-    }
-}
-
-pub(crate) fn source_text(value: &Value) -> Option<String> {
-    let units = units_of(value)?;
-    let mut source = String::new();
-    for unit in units {
-        if (0xD800..=0xDFFF).contains(&unit) {
-            source.push_str(&format!("\\u{unit:04X}"));
-        } else if let Some(character) = char::from_u32(u32::from(unit)) {
-            source.push(character);
-        }
-    }
-    Some(source)
-}
-
-/// Whether two string values hold identical UTF-16 code units.
-pub(crate) fn units_equal(left: &Value, right: &Value) -> bool {
-    match (units_of(left), units_of(right)) {
-        (Some(left), Some(right)) => left == right,
-        _ => false,
-    }
-}
-
 /// Whether `units` form a well-formed UTF-16 sequence (no lone surrogates).
 pub(crate) fn units_well_formed(units: &[u16]) -> bool {
     let mut index = 0;
