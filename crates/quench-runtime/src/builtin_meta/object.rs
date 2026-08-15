@@ -4,6 +4,7 @@ use crate::ops::Builtin;
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::ObjectPrototypeToString => Some("Object.prototype.toString"),
         Builtin::ObjectPrototypeValueOf => Some("Object.prototype.valueOf"),
         Builtin::ObjectHasOwnProperty => Some("Object.prototype.hasOwnProperty"),
         Builtin::ObjectHasOwn => Some("Object.hasOwn"),
@@ -40,6 +41,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
+        Builtin::ObjectPrototypeToString => Some(0.0),
         Builtin::ObjectPrototypeValueOf | Builtin::BoxedValueOf | Builtin::BooleanValueOf => {
             Some(0.0)
         }
@@ -77,6 +79,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::ObjectPrototypeToString => Some("toString"),
         Builtin::ObjectPrototypeValueOf | Builtin::BoxedValueOf | Builtin::BooleanValueOf => {
             Some("valueOf")
         }
