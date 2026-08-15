@@ -237,10 +237,11 @@ pub(crate) fn proxy_construct(
             let new_target = new_target.unwrap_or(target);
             return call_trap(
                 &trap,
-                &[target.clone(), args_array, new_target.clone()],
-                None,
+                &[proxy.target.clone(), args_array, new_target.clone()],
+                Some(&proxy.handler),
             );
         }
+        return proxy_construct(&proxy.target, arguments, new_target);
     }
     let new_target = new_target.unwrap_or(target);
     crate::construct::construct_value_with_new_target(target, new_target, arguments)
