@@ -265,6 +265,10 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             (is_typed_array_prototype(builtin) && key == "keys").then_some(Builtin::ArrayKeys)
         })
         .or_else(|| {
+            (is_typed_array_prototype(builtin) && key == "toLocaleString")
+                .then_some(Builtin::ArrayToLocaleString)
+        })
+        .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "fill").then_some(Builtin::TypedArrayFill)
         })
         .or_else(|| uint8_array_base64_method(builtin, key))
