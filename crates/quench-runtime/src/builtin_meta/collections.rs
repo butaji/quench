@@ -111,6 +111,14 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorToArray => Some("Iterator.prototype.toArray"),
         Builtin::IteratorReturn => Some("Iterator.prototype[Symbol.dispose]"),
         Builtin::IteratorSelf => Some("Iterator.prototype[Symbol.iterator]"),
+        Builtin::IteratorPrototypeConstructorGetter => Some("get Iterator.prototype.constructor"),
+        Builtin::IteratorPrototypeConstructorSetter => Some("set Iterator.prototype.constructor"),
+        Builtin::IteratorPrototypeToStringTagGetter => {
+            Some("get Iterator.prototype[Symbol.toStringTag]")
+        }
+        Builtin::IteratorPrototypeToStringTagSetter => {
+            Some("set Iterator.prototype[Symbol.toStringTag]")
+        }
         Builtin::SetIteratorNext => Some("SetIteratorPrototype.prototype.next"),
         Builtin::MapIteratorNext => Some("MapIteratorPrototype.prototype.next"),
         Builtin::MapSet => Some("Map.prototype.set"),
@@ -169,6 +177,10 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::IteratorToArray => Some(0.0),
         Builtin::IteratorReturn => Some(0.0),
         Builtin::IteratorSelf => Some(0.0),
+        Builtin::IteratorPrototypeConstructorGetter
+        | Builtin::IteratorPrototypeToStringTagGetter => Some(0.0),
+        Builtin::IteratorPrototypeConstructorSetter
+        | Builtin::IteratorPrototypeToStringTagSetter => Some(1.0),
         Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some(0.0),
         Builtin::MapSet => Some(2.0),
         Builtin::MapSizeGetter | Builtin::SetSizeGetter => Some(0.0),
@@ -214,6 +226,10 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorToArray => Some("toArray"),
         Builtin::IteratorReturn => Some("[Symbol.dispose]"),
         Builtin::IteratorSelf => Some("[Symbol.iterator]"),
+        Builtin::IteratorPrototypeConstructorGetter => Some("get constructor"),
+        Builtin::IteratorPrototypeConstructorSetter => Some("set constructor"),
+        Builtin::IteratorPrototypeToStringTagGetter => Some("get [Symbol.toStringTag]"),
+        Builtin::IteratorPrototypeToStringTagSetter => Some("set [Symbol.toStringTag]"),
         Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some("next"),
         Builtin::MapSet => Some("set"),
         Builtin::MapGet => Some("get"),
