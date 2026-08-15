@@ -14,7 +14,8 @@ pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpda
 pub(crate) use iterator_step::step_value;
 pub(crate) use iterator_values::{
     from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_array,
-    make_regexp_string, make_string, next, next_map, next_set, property_for, prototype_of,
+    make_regexp_string, make_string, make_typed, next, next_map, next_set, property_for,
+    prototype_of,
 };
 
 pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -283,10 +284,17 @@ pub fn delegate_next(
             IteratorState::Native {
                 values,
                 receiver,
+                typed_receiver,
                 index,
                 done,
             } => {
-                return Ok(native_delegation_step(values, receiver.as_ref(), index, done));
+                return native_delegation_step(
+                    values,
+                    receiver.as_ref(),
+                    typed_receiver.as_ref(),
+                    index,
+                    done,
+                );
             }
             IteratorState::Set { .. }
             | IteratorState::Map { .. }
@@ -349,17 +357,19 @@ fn close_after_missing_throw(
 fn native_delegation_step(
     values: &[Value],
     receiver: Option<&Rc<crate::value::ArrayData>>,
+    typed_receiver: Option<&Value>,
     index: &mut usize,
     done: &mut bool,
-) -> DelegationResult {
-    let value = native_step(values, receiver, index, done).unwrap_or(Value::Undefined);
+) -> Result<DelegationResult, crate::execute::VmError> {
+    let value = native_step(values, receiver, typed_receiver, index, done)?
+        .unwrap_or(Value::Undefined);
     if *done {
-        DelegationResult::Done(value)
+        Ok(DelegationResult::Done(value))
     } else {
-        DelegationResult::Ongoing {
+        Ok(DelegationResult::Ongoing {
             value,
             passthrough: false,
-        }
+        })
     }
 }
 fn delegation_target(
@@ -412,18 +422,28 @@ fn missing_throw_method() -> crate::execute::VmError {
 pub(super) fn native_step(
     values: &[Value],
     receiver: Option<&Rc<crate::value::ArrayData>>,
+    typed_receiver: Option<&Value>,
     index: &mut usize,
     done: &mut bool,
-) -> Option<Value> {
+) -> Result<Option<Value>, crate::execute::VmError> {
     if *done {
-        return None;
+        return Ok(None);
     }
-    let value = receiver
-        .and_then(|data| data.get_index(*index))
-        .or_else(|| values.get(*index).cloned());
+    let value = typed_receiver
+        .map(|value| {
+            crate::collections::iterator_typed::typed_values(value.clone())
+                .map(|values| values.get(*index).cloned())
+        })
+        .transpose()?
+        .flatten()
+        .or_else(|| {
+            receiver
+                .and_then(|data| data.get_index(*index))
+                .or_else(|| values.get(*index).cloned())
+        });
     *index = index.saturating_add(1);
     *done = value.is_none();
-    value
+    Ok(value)
 }
 pub(super) fn mark_done(data: &IteratorData) {
     match &mut *data.state.borrow_mut() {

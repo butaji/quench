@@ -8,6 +8,7 @@ pub enum IteratorState {
     Native {
         values: Vec<Value>,
         receiver: Option<Rc<crate::value::ArrayData>>,
+        typed_receiver: Option<Value>,
         index: usize,
         done: bool,
     },
