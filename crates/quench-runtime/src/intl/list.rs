@@ -10,30 +10,7 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let mut style = "long".to_string();
-    let mut list_type = "conjunction".to_string();
-    if let Some(options) = arguments.get(1) {
-        if matches!(options, Value::Null) {
-            return Err(crate::value::error::throw_type_error(
-                "Cannot convert null or undefined to object",
-            ));
-        }
-        let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
-        if !matches!(matcher, Value::Undefined) {
-            let matcher = crate::conversion::to_string(&matcher)?;
-            if !matches!(matcher.as_str(), "lookup" | "best fit") {
-                return Err(runtime_error("RangeError: invalid localeMatcher"));
-            }
-        }
-        let type_value = crate::execute::get_property_result(options, "type")?;
-        if !matches!(type_value, Value::Undefined) {
-            list_type = crate::conversion::to_string(&type_value)?;
-        }
-        let style_value = crate::execute::get_property_result(options, "style")?;
-        if !matches!(style_value, Value::Undefined) {
-            style = crate::conversion::to_string(&style_value)?;
-        }
-    }
+    let (style, list_type) = parse_options(arguments.get(1))?;
     if !matches!(style.as_str(), "long" | "short" | "narrow") {
         return Err(runtime_error("RangeError: invalid style"));
     }
@@ -62,6 +39,34 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ]),
         ),
     ]))
+}
+
+fn parse_options(options: Option<&Value>) -> Result<(String, String), VmError> {
+    let mut style = "long".to_string();
+    let mut list_type = "conjunction".to_string();
+    if let Some(options) = options {
+        if matches!(options, Value::Null) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot convert null or undefined to object",
+            ));
+        }
+        let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
+        if !matches!(matcher, Value::Undefined) {
+            let matcher = crate::conversion::to_string(&matcher)?;
+            if !matches!(matcher.as_str(), "lookup" | "best fit") {
+                return Err(runtime_error("RangeError: invalid localeMatcher"));
+            }
+        }
+        let type_value = crate::execute::get_property_result(options, "type")?;
+        if !matches!(type_value, Value::Undefined) {
+            list_type = crate::conversion::to_string(&type_value)?;
+        }
+        let style_value = crate::execute::get_property_result(options, "style")?;
+        if !matches!(style_value, Value::Undefined) {
+            style = crate::conversion::to_string(&style_value)?;
+        }
+    }
+    Ok((style, list_type))
 }
 
 pub(crate) fn prototype_method(
