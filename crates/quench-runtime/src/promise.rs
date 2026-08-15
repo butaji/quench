@@ -76,7 +76,7 @@ fn process_then_actions(
             PromiseState::Pending => continue,
         };
         let Some(handler) = action.filter(crate::conversion::is_callable) else {
-            propagate_default(&result_promise, &state, value);
+            propagate_default(&result_promise, state, value);
             continue;
         };
         match crate::functions::execute_target(&handler, &Value::Undefined, &[value]) {

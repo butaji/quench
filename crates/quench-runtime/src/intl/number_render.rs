@@ -288,8 +288,6 @@ pub(crate) fn localized_unit_text(text: &str, locale: &str) -> String {
         text.to_string()
     }
 }
-use super::*;
-
 pub(crate) fn is_decimal_literal(value: &str) -> bool {
     let value = value.strip_prefix(['+', '-']).unwrap_or(value);
     let (integer, fraction) = value.split_once('.').unwrap_or((value, ""));
