@@ -352,7 +352,10 @@ fn boxed_primitive(value: Value, constructor: crate::ops::Builtin) -> Value {
         ("constructor".to_string(), Value::Builtin(constructor)),
     ];
     if let Some(prototype) = crate::builtin_meta::instance_prototype(constructor) {
-        properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
+        properties.push((
+            "\0prototype".to_string(),
+            crate::vm::realm_intrinsic(prototype),
+        ));
     }
     Value::Object(std::rc::Rc::new(ObjectData::new(properties)))
 }
