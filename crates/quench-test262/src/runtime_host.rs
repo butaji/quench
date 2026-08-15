@@ -92,9 +92,22 @@ impl LinkedModuleGraph {
             // The callback guard lives only for the duration of this execution.
             // Both pointed-to graphs are borrowed by the caller for that duration.
             let target = ModuleId(id);
+            let unit = unsafe { (&*graph_ptr).units.get(&target) };
+            if unit.is_some_and(LinkedModule::is_evaluating) {
+                return Err(quench_runtime::execute::VmError::Thrown(
+                    quench_runtime::builtins::error(
+                        quench_runtime::ops::Builtin::TypeError,
+                        &[Value::String(
+                            "Cannot evaluate a module while it is evaluating".to_string(),
+                        )],
+                    ),
+                ));
+            }
             unsafe { (&*graph_ptr).execute(&*module_graph_ptr, target) }
                 .map(|_| {
-                    if let Some(unit) = unsafe { (&*graph_ptr).units.get(&target) } {
+                    if let Some(unit) = unsafe { (&*graph_ptr).units.get(&target) }
+                        .filter(|unit| unit.is_executed())
+                    {
                         unit.complete_deferred_namespace();
                     }
                     Value::Undefined
@@ -886,6 +899,14 @@ impl LinkedModule {
         let result = self.execute_inner();
         self.evaluating.set(false);
         result
+    }
+
+    fn is_evaluating(&self) -> bool {
+        self.evaluating.get()
+    }
+
+    fn is_executed(&self) -> bool {
+        self.executed.get()
     }
 
     fn execute_inner(&self) -> Result<quench_runtime::value::Value, String> {
