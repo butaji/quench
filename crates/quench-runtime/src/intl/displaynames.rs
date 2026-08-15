@@ -3,7 +3,8 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_object, resolve_locales, runtime_error, slot_string, to_string_value, SLOT,
+    default_locale, make_object, resolve_locales, runtime_error, slot_string, to_string_value,
+    CURRENCIES, SLOT,
 };
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -225,6 +226,8 @@ fn display_name(
     match display_type {
         "language" => language_name(code, fallback),
         "region" => Value::String(code.to_string()),
+        "currency" if CURRENCIES.contains(&code) => Value::String(code.to_string()),
+        "currency" if fallback == "none" => Value::Undefined,
         "currency" => Value::String(code.to_string()),
         "script" => Value::String(code.to_string()),
         "calendar" => Value::String(code.to_string()),
