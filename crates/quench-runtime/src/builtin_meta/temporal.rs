@@ -70,6 +70,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainTimeAdd => Some("Temporal.PlainTime.prototype.add"),
         Builtin::TemporalPlainTimeSubtract => Some("Temporal.PlainTime.prototype.subtract"),
         Builtin::TemporalPlainTimeWith => Some("Temporal.PlainTime.prototype.with"),
+        Builtin::TemporalPlainTimeRound => Some("Temporal.PlainTime.prototype.round"),
         _ => None,
     }
 }
@@ -122,6 +123,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainTimeAdd => Some("add"),
         Builtin::TemporalPlainTimeSubtract => Some("subtract"),
         Builtin::TemporalPlainTimeWith => Some("with"),
+        Builtin::TemporalPlainTimeRound => Some("round"),
         _ => None,
     }
 }
@@ -135,6 +137,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalPlainTimeFrom => Some(1.0),
         Builtin::TemporalPlainTimeCompare => Some(2.0),
         Builtin::TemporalPlainTimeToString | Builtin::TemporalPlainTimeToJSON => Some(0.0),
+        Builtin::TemporalPlainTimeRound => Some(1.0),
         Builtin::TemporalPlainDateToString | Builtin::TemporalPlainDateToJSON => Some(0.0),
         _ => None,
     }
