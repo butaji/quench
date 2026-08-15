@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use oxc::{allocator::Allocator, ast::visit::Visit, parser::Parser, span::SourceType};
 
@@ -58,6 +58,11 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     {
         return Err(syntax_error("Invalid strict function body"));
     }
+    if matches!(strictness, crate::ops::FunctionStrictness::Strict)
+        && invalid_strict_parameters(&function.params)
+    {
+        return Err(syntax_error("Invalid function parameters"));
+    }
     let mut facts = ProgramDb {
         strict: matches!(strictness, crate::ops::FunctionStrictness::Strict),
         ..ProgramDb::default()
@@ -97,6 +102,18 @@ fn contains_with_statement(body: &oxc::ast::ast::FunctionBody<'_>) -> bool {
     let mut validator = Validator { found: false };
     validator.visit_function_body(body);
     validator.found
+}
+
+fn invalid_strict_parameters(params: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    let mut names = HashSet::new();
+    let patterns = params
+        .items
+        .iter()
+        .map(|item| &item.pattern)
+        .chain(params.rest.iter().map(|rest| &rest.argument));
+    patterns
+        .flat_map(crate::binding_patterns::names)
+        .any(|name| name == "eval" || name == "arguments" || !names.insert(name))
 }
 
 fn forbidden_parameter_expression(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
