@@ -89,6 +89,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (TemporalZonedDateTime, "from") => Some(Value::Builtin(TemporalZonedDateTimeFrom)),
         (TemporalDurationPrototype, "round") => Some(Value::Builtin(TemporalDurationRound)),
+        (TemporalDurationPrototype, "total") => Some(Value::Builtin(TemporalDurationTotal)),
         (TemporalDurationPrototype, "years") => Some(Value::Builtin(TemporalDurationYearsGetter)),
         (TemporalDurationPrototype, "months") => Some(Value::Builtin(TemporalDurationMonthsGetter)),
         (TemporalDurationPrototype, "weeks") => Some(Value::Builtin(TemporalDurationWeeksGetter)),

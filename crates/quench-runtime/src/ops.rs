@@ -385,6 +385,7 @@ pub enum Builtin {
     TemporalDurationAdd,
     TemporalDurationSubtract,
     TemporalDurationRound,
+    TemporalDurationTotal,
     TemporalDurationValueOf,
     TemporalDurationYearsGetter,
     TemporalDurationMonthsGetter,
