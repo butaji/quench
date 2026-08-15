@@ -5,8 +5,8 @@ use chrono::{DateTime, Datelike, Timelike, Utc};
 use crate::{conversion, execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
-    slot_string, to_string_value, SLOT,
+    default_locale, is_supported_calendar, locale::calendar_alias, make_array, make_object,
+    resolve_locales, runtime_error, slot_number, slot_string, to_string_value, SLOT,
 };
 
 /// Allowed values for each string-valued date/time component option.
@@ -48,6 +48,11 @@ const EXPLICIT_COMPONENTS: &[&str] = &[
     "minute",
     "second",
     "timeZoneName",
+];
+
+const NON_IANA_TIME_ZONES: &[&str] = &[
+    "ACT", "AET", "AGT", "ART", "AST", "BET", "BST", "CAT", "CNT", "CST", "CTT", "EAT", "ECT",
+    "IET", "IST", "JST", "MIT", "NET", "NST", "PLT", "PNT", "PRT", "PST", "SST", "VST",
 ];
 
 pub(crate) struct DateTimeOptions {
@@ -108,9 +113,18 @@ impl DateTimeOptions {
                 if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
+                if NON_IANA_TIME_ZONES.contains(&text.as_str()) {
+                    return Err(runtime_error("RangeError: invalid time zone"));
+                }
                 self.time_zone = canonicalize_time_zone(&text);
             }
-            "calendar" => self.calendar = text.to_ascii_lowercase(),
+            "calendar" => {
+                let calendar = calendar_alias(&text.to_ascii_lowercase());
+                if !is_supported_calendar(&calendar) {
+                    return Err(runtime_error("RangeError: invalid calendar"));
+                }
+                self.calendar = calendar;
+            }
             "numberingSystem" => self.numbering_system = text.to_ascii_lowercase(),
             "fractionalSecondDigits" => {
                 let digits = conversion::to_number(value)?;

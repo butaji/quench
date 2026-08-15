@@ -15,26 +15,26 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let mut ignore_punctuation = locale.starts_with("th");
     let mut numeric = false;
     let mut case_first = "false".to_string();
-    if let Some(Value::Object(properties)) = arguments.get(1) {
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
-            usage = to_string_value(value);
+    if let Some(options) = arguments.get(1) {
+        if let Some(value) = option(options, "usage")? {
+            usage = to_string_value(&value);
             if !matches!(usage.as_str(), "sort" | "search") {
                 return Err(runtime_error("RangeError: invalid usage"));
             }
         }
-        if let Some((_, Value::Boolean(value))) =
-            properties.iter().find(|(name, _)| name == "numeric")
-        {
-            numeric = *value;
+        let _ = option(options, "localeMatcher")?;
+        let _ = option(options, "collation")?;
+        if let Some(Value::Boolean(value)) = option(options, "numeric")? {
+            numeric = value;
         }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
-            case_first = to_string_value(value);
+        if let Some(value) = option(options, "caseFirst")? {
+            case_first = to_string_value(&value);
             if !matches!(case_first.as_str(), "upper" | "lower" | "false") {
                 return Err(runtime_error("RangeError: invalid caseFirst"));
             }
         }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
-            sensitivity = to_string_value(value);
+        if let Some(value) = option(options, "sensitivity")? {
+            sensitivity = to_string_value(&value);
             if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
                 return Err(runtime_error("RangeError: invalid sensitivity"));
             }
@@ -45,11 +45,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         if numeric {
             locale = remove_conflicting_extension(&locale, "kn", "true");
         }
-        if let Some((_, Value::Boolean(value))) = properties
-            .iter()
-            .find(|(name, _)| name == "ignorePunctuation")
-        {
-            ignore_punctuation = *value;
+        if let Some(Value::Boolean(value)) = option(options, "ignorePunctuation")? {
+            ignore_punctuation = value;
         }
     }
     Ok(make_object(vec![
@@ -76,6 +73,11 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ]),
         ),
     ]))
+}
+
+fn option(options: &Value, key: &str) -> Result<Option<Value>, VmError> {
+    let value = crate::execute::get_property_result(options, key)?;
+    Ok((!matches!(value, Value::Undefined)).then_some(value))
 }
 
 fn remove_conflicting_extension(locale: &str, key: &str, value: &str) -> String {

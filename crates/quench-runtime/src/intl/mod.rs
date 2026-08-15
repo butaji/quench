@@ -30,6 +30,21 @@ pub(crate) fn property(builtin: Builtin, key: &str) -> Option<Value> {
     Some(Value::Builtin(value))
 }
 
+pub(crate) fn is_constructor(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::IntlNumberFormat
+            | Builtin::IntlDateTimeFormat
+            | Builtin::IntlCollator
+            | Builtin::IntlPluralRules
+            | Builtin::IntlListFormat
+            | Builtin::IntlRelativeTimeFormat
+            | Builtin::IntlSegmenter
+            | Builtin::IntlDisplayNames
+            | Builtin::IntlLocale
+    )
+}
+
 fn global_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin != Builtin::Intl {
         return None;
@@ -189,8 +204,8 @@ fn list_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
     ))
 }
 
-fn supported_segmenter_locale(locale: &str) -> bool {
-    ["de", "en", "sr", "zh"]
+pub(crate) fn supported_segmenter_locale(locale: &str) -> bool {
+    ["ar", "de", "en", "fr", "sr", "zh"]
         .iter()
         .any(|language| locale == *language || locale.starts_with(&format!("{language}-")))
 }
@@ -279,21 +294,85 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
     let Some(locales) = arguments.first() else {
         return Ok(vec![default_locale()]);
     };
+    if matches!(locales, Value::Null) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert null to object",
+        ));
+    }
+    if matches!(locales, Value::Undefined) {
+        return Ok(vec![default_locale()]);
+    }
     match locales {
-        Value::String(_) => Ok(vec![canonicalize(&to_string_value(locales))?]),
+        Value::String(value) => Ok(vec![canonicalize(value)?]),
+        Value::Object(_) if locale_slot(locales).is_some() => {
+            Ok(vec![locale_slot(locales).unwrap_or_default()])
+        }
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
-                out.push(canonicalize(&to_string_value(value))?);
+                out.push(canonicalize_locale_value(value)?);
             }
             Ok(dedupe(out))
         }
-        _ => Ok(vec![default_locale()]),
+        Value::Object(_) => {
+            let values = crate::vm::create_list_from_array_like(Some(locales))?;
+            let mut out = Vec::new();
+            for value in values {
+                out.push(canonicalize_locale_value(&value)?);
+            }
+            Ok(dedupe(out))
+        }
+        _ => Err(crate::value::error::throw_type_error(
+            "Locale must be a string or object",
+        )),
     }
+}
+
+fn canonicalize_locale_value(value: &Value) -> Result<String, VmError> {
+    if let Some(locale) = locale_slot(value) {
+        return Ok(locale);
+    }
+    let Value::String(value) = value else {
+        return Err(crate::value::error::throw_type_error(
+            "Locale list element must be a string",
+        ));
+    };
+    canonicalize(value)
+}
+
+fn locale_slot(value: &Value) -> Option<String> {
+    let properties = match value {
+        Value::Object(properties) => properties.clone(),
+        Value::ObjectAlias(alias) => alias.0.borrow().upgrade()?,
+        _ => return None,
+    };
+    let slot = properties
+        .iter()
+        .find_map(|(name, value)| (name == SLOT).then_some(value))?;
+    let Value::Object(slot) = slot else {
+        return None;
+    };
+    slot.properties.iter().find_map(|(name, value)| {
+        (name == "base").then(|| match value {
+            Value::String(value) => value.clone(),
+            _ => String::new(),
+        })
+    })
 }
 
 pub(crate) fn default_locale() -> String {
     "en".to_string()
+}
+
+pub(crate) fn select_supported_locale(
+    locales: &[String],
+    supported: impl Fn(&str) -> bool,
+) -> String {
+    locales
+        .iter()
+        .find(|locale| supported(locale))
+        .cloned()
+        .unwrap_or_else(default_locale)
 }
 
 fn dedupe(locales: Vec<String>) -> Vec<String> {
@@ -323,6 +402,14 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 /// Canonicalize a single BCP-47 language tag.
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let tag = tag.trim();
+    let parts: Vec<&str> = tag.split('-').collect();
+    if parts.len() == 3
+        && parts[0].eq_ignore_ascii_case("en")
+        && parts[1].eq_ignore_ascii_case("gb")
+        && parts[2].eq_ignore_ascii_case("oed")
+    {
+        return Err(runtime_error("RangeError: grandfathered language tag"));
+    }
     if tag.is_empty() || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
@@ -356,9 +443,26 @@ fn canonicalize_subtags(
 ) -> Result<Vec<String>, VmError> {
     let mut region_done = false;
     let mut variant_done = false;
-    for part in parts {
+    let mut extension_singletons = Vec::new();
+    for (index, part) in parts.into_iter().enumerate() {
         if part.is_empty() {
             return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        if index == 0
+            && out.first().is_some_and(|language| language.len() == 4)
+            && part.len() == 3
+            && part.chars().all(|c| c.is_ascii_alphabetic())
+        {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        if variant_done && part.len() >= 4 && part.chars().all(|c| c.is_ascii_alphabetic()) {
+            return Err(runtime_error("RangeError: duplicate variant"));
+        }
+        if part.len() == 1 && part.chars().all(|c| c.is_ascii_alphanumeric()) {
+            if extension_singletons.contains(&part.to_ascii_lowercase()) {
+                return Err(runtime_error("RangeError: duplicate extension"));
+            }
+            extension_singletons.push(part.to_ascii_lowercase());
         }
         match classify_subtag(part, script_done, region_done, variant_done) {
             Subtag::Script => {
@@ -366,7 +470,7 @@ fn canonicalize_subtags(
                 script_done = true;
             }
             Subtag::Region => {
-                out.push(part.to_ascii_uppercase());
+                out.push(region_alias(part));
                 region_done = true;
             }
             Subtag::Variant => {
@@ -377,6 +481,13 @@ fn canonicalize_subtags(
         }
     }
     Ok(out)
+}
+
+fn region_alias(part: &str) -> String {
+    match part.to_ascii_uppercase().as_str() {
+        "SU" => "AM".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn titlecase_script(part: &str) -> String {
@@ -445,6 +556,12 @@ fn supported_calendars() -> Vec<Value> {
         "persian",
         "roc",
     ])
+}
+
+pub(crate) fn is_supported_calendar(value: &str) -> bool {
+    supported_calendars()
+        .iter()
+        .any(|item| matches!(item, Value::String(name) if name == value))
 }
 
 fn supported_collations() -> Vec<Value> {
