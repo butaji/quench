@@ -72,17 +72,26 @@ pub fn reset_intrinsic_prototype_state() {
 }
 
 pub(crate) fn property(builtin: Builtin, key: &str) -> Value {
-    let value = props::lookup(builtin, key);
-    if !matches!(value, Value::Undefined) {
-        return value;
+    let mut current = builtin;
+    let mut seen = Vec::new();
+    loop {
+        if seen.contains(&current) {
+            return Value::Undefined;
+        }
+        seen.push(current);
+        let value = props::lookup(current, key);
+        if !matches!(value, Value::Undefined) {
+            return value;
+        }
+        let json = crate::json::method_property(current, key);
+        if !matches!(json, Value::Undefined) {
+            return json;
+        }
+        let Some(prototype) = crate::builtin_meta::prototype(current) else {
+            return Value::Undefined;
+        };
+        current = prototype;
     }
-    let json = crate::json::method_property(builtin, key);
-    if !matches!(json, Value::Undefined) {
-        return json;
-    }
-    crate::builtin_meta::prototype(builtin)
-        .filter(|prototype| *prototype != builtin)
-        .map_or(Value::Undefined, |prototype| property(prototype, key))
 }
 
 pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
