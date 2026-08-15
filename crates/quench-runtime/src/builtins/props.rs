@@ -149,6 +149,16 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
+        (Intl, "Symbol.toStringTag") => Some(Value::String("Intl".into())),
+        (IntlListFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.ListFormat".into()))
+        }
+        (IntlLocalePrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.Locale".into()))
+        }
+        (IntlNumberFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.NumberFormat".into()))
+        }
         (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Atomics, "Symbol.toStringTag") => Some(Value::String("Atomics".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),

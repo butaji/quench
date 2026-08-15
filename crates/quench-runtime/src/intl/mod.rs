@@ -9,6 +9,7 @@ use crate::{execute::VmError, ops::Builtin, value::Value};
 
 pub(crate) mod collator;
 pub(crate) mod datetime;
+mod digits;
 pub(crate) mod displaynames;
 pub(crate) mod duration;
 pub(crate) mod list;
@@ -70,6 +71,7 @@ fn global_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     if key == "supportedLocalesOf" {
         return match builtin {
+            Builtin::IntlNumberFormat => Some(Builtin::IntlNumberFormatSupportedLocalesOf),
             Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatSupportedLocalesOf),
             Builtin::IntlCollator => Some(Builtin::IntlCollatorSupportedLocalesOf),
             Builtin::IntlSegmenter => Some(Builtin::IntlSegmenterSupportedLocalesOf),
@@ -98,6 +100,9 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 
 fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
+        (Builtin::IntlListFormatPrototype, "constructor") => Builtin::IntlListFormat,
+        (Builtin::IntlLocalePrototype, "constructor") => Builtin::IntlLocale,
+        (Builtin::IntlNumberFormatPrototype, "constructor") => Builtin::IntlNumberFormat,
         (Builtin::IntlLocalePrototype, "toString") => Builtin::IntlLocaleToString,
         (Builtin::IntlLocalePrototype, "maximize") => Builtin::IntlLocaleMaximize,
         (Builtin::IntlLocalePrototype, "minimize") => Builtin::IntlLocaleMinimize,
@@ -171,6 +176,11 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
         }
+        (Builtin::IntlListFormatPrototype, "format") => Builtin::IntlListFormatFormat,
+        (Builtin::IntlListFormatPrototype, "formatToParts") => Builtin::IntlListFormatFormatToParts,
+        (Builtin::IntlListFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlListFormatResolvedOptions
+        }
         _ => return None,
     })
 }
@@ -193,6 +203,10 @@ pub(crate) fn execute(
         Builtin::IntlSupportedValuesOf => Some(supported_values_of(arguments)),
         _ => dispatch_all(builtin, arguments, receiver),
     }
+}
+
+pub(crate) fn construct_list_format(arguments: &[Value]) -> Result<Value, VmError> {
+    list::construct(arguments)
 }
 
 fn supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
@@ -309,6 +323,19 @@ fn dispatch_all(
 
 /// Implement `Intl.getCanonicalLocales`.
 fn get_canonical_locales(arguments: &[Value]) -> Result<Value, VmError> {
+    if arguments.first().is_some_and(|value| {
+        matches!(
+            value,
+            Value::Null
+                | Value::Undefined
+                | Value::Boolean(_)
+                | Value::Number(_)
+                | Value::BigInt(_)
+                | Value::HostCapability(_)
+        )
+    }) {
+        return Ok(make_array(Vec::new()));
+    }
     let locales = resolve_locales(arguments)?;
     Ok(make_array(locales.into_iter().map(Value::String).collect()))
 }
@@ -450,6 +477,9 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
         return Err(runtime_error("RangeError: grandfathered language tag"));
     }
     if tag.is_empty() || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err(runtime_error("RangeError: invalid language tag"));
+    }
+    if tag.eq_ignore_ascii_case("en-GB-oed") {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
     let mut parts = tag.split('-');
@@ -846,7 +876,10 @@ fn runtime_error(message: &str) -> VmError {
 
 /// Return the internal slot map of an Intl object as an owned vector.
 pub(crate) fn intl_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
-    let Some(Value::Object(properties)) = receiver else {
+    if let Some(Value::Object(properties)) = receiver {
+        return object_slots(properties);
+    }
+    let Some(Value::Proxy(proxy)) = receiver else {
         return Err(runtime_error("TypeError: not an Intl object"));
     };
     let Some((_, slots)) = properties.iter().find(|(name, _)| name == SLOT) else {

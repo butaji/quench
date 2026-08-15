@@ -143,6 +143,9 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 pub(crate) fn callable_property(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::ObjectPrototype {
+        return None;
+    }
     props::callable(builtin, key)
 }
 
