@@ -128,9 +128,12 @@ fn reduce_import(
             ImportDeclarationSpecifier::ImportDefaultSpecifier(value) => &value.local,
             ImportDeclarationSpecifier::ImportNamespaceSpecifier(value) => &value.local,
         };
-        let slot = *next_slot;
-        *next_slot = next_slot.saturating_add(1);
-        locals.insert(local.name.to_string(), slot);
+        let slot = locals.get(local.name.as_str()).copied().unwrap_or_else(|| {
+            let slot = *next_slot;
+            *next_slot = next_slot.saturating_add(1);
+            locals.insert(local.name.to_string(), slot);
+            slot
+        });
         ops.push(Op::DeclareEvalBinding {
             name: local.name.to_string(),
             slot,
