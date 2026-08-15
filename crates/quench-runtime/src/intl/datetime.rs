@@ -284,6 +284,7 @@ impl DateTimeOptions {
         }
         if key == "hour12" {
             self.hour12 = Some(crate::execute::is_truthy(value));
+            self.locale = remove_locale_extension(&self.locale, "hc");
             return Ok(());
         }
         if key == "fractionalSecondDigits" {
@@ -298,6 +299,9 @@ impl DateTimeOptions {
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
             if let Some(valid) = valid_component(&text, allowed) {
                 self.set_component(name, valid);
+                if *name == "hourCycle" && locale_hour_cycle(&self.locale) != Some(text.as_str()) {
+                    self.locale = remove_locale_extension(&self.locale, "hc");
+                }
             } else {
                 return Err(runtime_error("RangeError: invalid date/time option"));
             }
