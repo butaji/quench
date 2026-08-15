@@ -697,6 +697,9 @@ pub(crate) fn prototype_method(
             if let Some(value) = calendar_year_parts(&slots, number) {
                 return Ok(make_array(value));
             }
+            if let Some(value) = calendar_pattern_parts(&slots, number) {
+                return Ok(make_array(value));
+            }
             let value = format_number(&slots, number);
             Ok(make_array(vec![literal_part(&value)]))
         }
@@ -725,6 +728,9 @@ pub(crate) fn prototype_method(
             if let Some(parts) = range_time_parts(&slots, start, end) {
                 return Ok(make_array(parts));
             }
+            if let Some(parts) = calendar_pattern_parts(&slots, start) {
+                return Ok(make_array(add_range_source(parts, "shared")));
+            }
             let start = format_number(&slots, start);
             let end = format_number(&slots, end);
             if start == end || (nearly_equal_range(arguments)? && !has_fraction(&slots)) {
@@ -744,6 +750,15 @@ pub(crate) fn prototype_method(
         )),
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn calendar_pattern_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    let calendar = slot_string(slots, "calendar")?;
+    if calendar == "gregory" {
+        return None;
+    }
+    let year = date_time(slots, number)?.year().to_string();
+    Some(vec![component_part("year", &year)])
 }
 
 fn date_range_text(slots: &[(String, Value)], start: f64, end: f64) -> Option<String> {
@@ -1017,15 +1032,18 @@ fn calendar_year_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Val
     }
     let text = calendar_year_format(slots, number)?;
     let year = date.year().to_string();
-    let name = text.strip_prefix(&year)?.strip_suffix('年')?;
     if slot_string(slots, "locale")?.starts_with("zh") {
+        let name = text.strip_prefix(&year)?.strip_suffix('年')?;
         return Some(vec![
             component_part("relatedYear", &year),
             component_part("yearName", name),
             literal_part("年"),
         ]);
     }
-    Some(vec![component_part("relatedYear", &year)])
+    Some(vec![
+        component_part("relatedYear", &year),
+        component_part("yearName", &sexagenary_name(date.year())),
+    ])
 }
 
 fn calendar_month_day(calendar: &str, date: &NaiveDateTime) -> Option<(u32, u32)> {
