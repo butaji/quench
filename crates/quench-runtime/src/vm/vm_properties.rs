@@ -303,7 +303,7 @@ pub(crate) fn get_property_with_receiver(
 }
 
 pub(crate) fn consume_deferred_namespace_marker(value: &Value, key: &str) -> Option<u32> {
-    if key == "then" {
+    if key == "then" || key == "Symbol.toStringTag" {
         return None;
     }
     let Value::Object(properties) = value else {
@@ -311,21 +311,32 @@ pub(crate) fn consume_deferred_namespace_marker(value: &Value, key: &str) -> Opt
     };
     let marker = format!("\0quench:deferred:\0{key}");
     let id = properties.iter().rev().find_map(|(name, value)| {
+        if name == "\0quench:deferred-module" {
+            return deferred_marker_id(value);
+        }
         if name != &marker {
             return None;
         }
-        let Value::BindingCell(cell) = value else { return None };
-        let Value::Number(id) = cell.borrow().clone() else { return None };
-        Some(id as u32)
+        deferred_marker_id(value)
     })?;
     for (name, value) in properties.iter() {
-        if name.starts_with("\0quench:deferred:\0") {
+        if name.starts_with("\0quench:deferred:\0") || name == "\0quench:deferred-module" {
             if let Value::BindingCell(cell) = value {
                 cell.replace(Value::Undefined);
             }
         }
     }
     Some(id)
+}
+
+fn deferred_marker_id(value: &Value) -> Option<u32> {
+    let Value::BindingCell(cell) = value else {
+        return None;
+    };
+    let Value::Number(id) = cell.borrow().clone() else {
+        return None;
+    };
+    Some(id as u32)
 }
 
 pub(crate) fn deferred_namespace_operation(value: &Value) -> Option<u32> {
