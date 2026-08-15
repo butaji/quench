@@ -54,6 +54,10 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     let (parameters, count) = crate::functions::function_parameters(function)
         .map_err(|_| syntax_error("Invalid function parameters"))?;
     let strictness = crate::reduce_support::function_strictness(body, false);
+    if matches!(strictness, crate::ops::FunctionStrictness::Strict) && contains_with_statement(body)
+    {
+        return Err(syntax_error("Invalid strict function body"));
+    }
     let mut facts = ProgramDb {
         strict: matches!(strictness, crate::ops::FunctionStrictness::Strict),
         ..ProgramDb::default()
@@ -77,6 +81,22 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     crate::builtins::set_function_name(&value, "anonymous")?;
     mark_dynamic(&value);
     Ok(value)
+}
+
+fn contains_with_statement(body: &oxc::ast::ast::FunctionBody<'_>) -> bool {
+    struct Validator {
+        found: bool,
+    }
+
+    impl<'a> Visit<'a> for Validator {
+        fn visit_with_statement(&mut self, _: &oxc::ast::ast::WithStatement<'a>) {
+            self.found = true;
+        }
+    }
+
+    let mut validator = Validator { found: false };
+    validator.visit_function_body(body);
+    validator.found
 }
 
 fn forbidden_parameter_expression(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
