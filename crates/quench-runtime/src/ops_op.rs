@@ -183,6 +183,11 @@ pub enum Op {
         object: u16,
         name: crate::facts::PrivateNameId,
     },
+    HasPrivate {
+        dst: u16,
+        object: u16,
+        name: crate::facts::PrivateNameId,
+    },
     GetSuperProperty {
         dst: u16,
         key: String,
