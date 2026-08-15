@@ -249,27 +249,9 @@ fn namespace_cell(
             .collect::<Vec<_>>(),
     );
     for name in export_names {
-        let value = unit
-            .export_cell(&name)
-            .map(|cell| quench_runtime::value::Value::BindingCell(cell.shared()))
-            .unwrap_or(quench_runtime::value::Value::Undefined);
         properties.push((
             format!("\0quench:descriptor:\0{name}"),
-            quench_runtime::value::Value::object(vec![
-                ("value".to_string(), value),
-                (
-                    "writable".to_string(),
-                    quench_runtime::value::Value::Boolean(true),
-                ),
-                (
-                    "enumerable".to_string(),
-                    quench_runtime::value::Value::Boolean(true),
-                ),
-                (
-                    "configurable".to_string(),
-                    quench_runtime::value::Value::Boolean(false),
-                ),
-            ]),
+            descriptor_value(unit, &name),
         ));
     }
     properties.push((
@@ -304,6 +286,26 @@ fn namespace_cell(
     let namespace = ModuleBindingCell::new(quench_runtime::value::Value::object(properties));
     unit.namespace.replace(Some(namespace.clone()));
     Ok(namespace)
+}
+
+fn descriptor_value(unit: &LinkedModule, name: &str) -> Value {
+    let value = unit
+        .export_cell(name)
+        .map(|cell| Value::BindingCell(cell.shared()))
+        .unwrap_or(Value::Undefined);
+    let mut descriptor = vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(false)),
+    ];
+    if unit
+        .export_slot(name)
+        .is_some_and(|slot| unit.scope.is_uninitialized_slot(slot))
+    {
+        descriptor.push(("\0quench:uninitialized".to_string(), Value::Boolean(true)));
+    }
+    Value::object(descriptor)
 }
 
 impl LinkedModule {
@@ -392,6 +394,19 @@ impl LinkedModule {
             .get(local)
             .copied()
             .map(|slot| self.scope.module_cell_slot(slot))
+    }
+
+    fn export_slot(&self, name: &str) -> Option<u16> {
+        let local = self
+            .program
+            .module_metadata
+            .as_ref()?
+            .exports
+            .iter()
+            .find(|binding| binding.exported == name)?
+            .local
+            .as_str();
+        self.program.local_slots.get(local).copied()
     }
 
     fn provisional_export_cell(&self, name: &str) -> Option<ModuleBindingCell> {
@@ -489,7 +504,35 @@ impl LinkedModule {
                 .ok_or_else(|| format!("fixed export {name} missing"))?;
             cell.set(value.clone());
         }
+        self.clear_namespace_tdz();
         Ok(result)
+    }
+
+    fn clear_namespace_tdz(&self) {
+        let Some(namespace) = self.namespace.borrow().as_ref().cloned() else {
+            return;
+        };
+        let Value::Object(properties) = namespace.get() else {
+            return;
+        };
+        let entries = properties
+            .iter()
+            .map(|(key, value)| {
+                if key.starts_with("\0quench:descriptor:\0") {
+                    let Value::Object(descriptor) = value else {
+                        return (key.clone(), value.clone());
+                    };
+                    let filtered = descriptor
+                        .iter()
+                        .filter(|(name, _)| name != "\0quench:uninitialized")
+                        .cloned()
+                        .collect();
+                    return (key.clone(), Value::object(filtered));
+                }
+                (key.clone(), value.clone())
+            })
+            .collect::<Vec<_>>();
+        namespace.set(Value::object(entries));
     }
 }
 
