@@ -379,7 +379,7 @@ pub(crate) fn proxy_define_property(
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "defineProperty") {
-            return call_trap(
+            let result = call_trap(
                 &trap,
                 &[
                     proxy.target.clone(),
@@ -387,7 +387,11 @@ pub(crate) fn proxy_define_property(
                     descriptor.clone(),
                 ],
                 Some(&proxy.handler),
-            );
+            )?;
+            if crate::execute::is_truthy(&result) {
+                validate_define_property_invariant(proxy, prop, descriptor)?;
+            }
+            return Ok(result);
         }
     }
     let target = match target {
@@ -401,6 +405,27 @@ pub(crate) fn proxy_define_property(
     ])?;
     crate::locals::replace_value(target, &updated);
     Ok(Value::Boolean(true))
+}
+
+fn validate_define_property_invariant(
+    proxy: &crate::value::ProxyValue,
+    prop: &str,
+    descriptor: &Value,
+) -> Result<(), VmError> {
+    let current = crate::builtins::object::descriptor(
+        Some(&proxy.target),
+        Some(&Value::String(prop.to_string())),
+    )?;
+    let current_configurable = crate::execute::get_property_result(&current, "configurable")?;
+    let requested_configurable = crate::execute::get_property_result(descriptor, "configurable")?;
+    if matches!(current_configurable, Value::Boolean(true))
+        && matches!(requested_configurable, Value::Boolean(false))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy defineProperty trap violates target invariants",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
