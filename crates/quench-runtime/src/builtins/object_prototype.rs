@@ -288,17 +288,25 @@ pub(crate) fn group_by(arguments: &[Value]) -> Result<Value, crate::execute::VmE
     )));
     let mut index = 0usize;
     crate::collections::iterator::for_each_iterable(iterable, |value| {
-        let key_value = crate::functions::execute_target(
-            &callback,
-            &Value::Undefined,
-            &[value.clone(), Value::Number(index as f64)],
-        )?;
-        index += 1;
-        let key = crate::conversion::to_property_key(&key_value)?;
-        add_group_value(&result, &key, value)?;
-        Ok(())
+        add_group_entry(&result, &callback, &mut index, value)
     })?;
     Ok(result.into_inner())
+}
+
+fn add_group_entry(
+    result: &std::cell::RefCell<Value>,
+    callback: &Value,
+    index: &mut usize,
+    value: Value,
+) -> Result<(), crate::execute::VmError> {
+    let key_value = crate::functions::execute_target(
+        callback,
+        &Value::Undefined,
+        &[value.clone(), Value::Number(*index as f64)],
+    )?;
+    *index += 1;
+    let key = crate::conversion::to_property_key(&key_value)?;
+    add_group_value(result, &key, value)
 }
 
 fn add_group_value(
