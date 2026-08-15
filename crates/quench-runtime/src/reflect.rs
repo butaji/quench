@@ -294,14 +294,14 @@ fn evaluate(
     realm: Option<crate::ops::RealmId>,
     error_realm: Option<crate::ops::RealmId>,
 ) -> Result<Value, VmError> {
-    let Value::String(source) = value else {
+    let Some(source) = crate::strings::source_text(value) else {
         return Ok(value.clone());
     };
     let bindings = vec![
         ("globalThis".to_string(), 0),
         ("\0script_this".to_string(), 0),
     ];
-    let program = crate::reduce::reduce_eval_source(source, strict, true, false, &bindings, &[])
+    let program = crate::reduce::reduce_eval_source(&source, strict, true, false, &bindings, &[])
         .map_err(|errors| syntax_error(errors, error_realm))?;
     match realm {
         Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, program.ops()),
@@ -317,7 +317,7 @@ fn evaluate_direct(
     reusable_var_names: &[String],
     forbidden_var_names: &[String],
 ) -> Result<Value, VmError> {
-    let Value::String(source) = value else {
+    let Some(source) = crate::strings::source_text(value) else {
         return Ok(value.clone());
     };
     let grammar = crate::semantic::EvalGrammarContext {
@@ -325,7 +325,7 @@ fn evaluate_direct(
         super_property: crate::super_scope::is_active(),
     };
     let program = crate::reduce::reduce_statements::reduce_eval_source_in_context(
-        source,
+        &source,
         strict,
         global,
         bindings,
