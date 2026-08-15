@@ -9,6 +9,26 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateFrom => Some("Temporal.PlainDate.from"),
         Builtin::TemporalPlainDateToString => Some("Temporal.PlainDate.prototype.toString"),
         Builtin::TemporalPlainDateToJSON => Some("Temporal.PlainDate.prototype.toJSON"),
+        Builtin::TemporalPlainDateCalendarIdGetter => {
+            Some("Temporal.PlainDate.prototype.calendarId")
+        }
+        Builtin::TemporalPlainDateDayOfWeekGetter => Some("Temporal.PlainDate.prototype.dayOfWeek"),
+        Builtin::TemporalPlainDateDayOfYearGetter => Some("Temporal.PlainDate.prototype.dayOfYear"),
+        Builtin::TemporalPlainDateDaysInMonthGetter => {
+            Some("Temporal.PlainDate.prototype.daysInMonth")
+        }
+        Builtin::TemporalPlainDateDaysInWeekGetter => {
+            Some("Temporal.PlainDate.prototype.daysInWeek")
+        }
+        Builtin::TemporalPlainDateDaysInYearGetter => {
+            Some("Temporal.PlainDate.prototype.daysInYear")
+        }
+        Builtin::TemporalPlainDateInLeapYearGetter => {
+            Some("Temporal.PlainDate.prototype.inLeapYear")
+        }
+        Builtin::TemporalPlainDateMonthsInYearGetter => {
+            Some("Temporal.PlainDate.prototype.monthsInYear")
+        }
         _ => None,
     }
 }
@@ -22,6 +42,14 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateFrom => Some("from"),
         Builtin::TemporalPlainDateToString => Some("toString"),
         Builtin::TemporalPlainDateToJSON => Some("toJSON"),
+        Builtin::TemporalPlainDateCalendarIdGetter => Some("get calendarId"),
+        Builtin::TemporalPlainDateDayOfWeekGetter => Some("get dayOfWeek"),
+        Builtin::TemporalPlainDateDayOfYearGetter => Some("get dayOfYear"),
+        Builtin::TemporalPlainDateDaysInMonthGetter => Some("get daysInMonth"),
+        Builtin::TemporalPlainDateDaysInWeekGetter => Some("get daysInWeek"),
+        Builtin::TemporalPlainDateDaysInYearGetter => Some("get daysInYear"),
+        Builtin::TemporalPlainDateInLeapYearGetter => Some("get inLeapYear"),
+        Builtin::TemporalPlainDateMonthsInYearGetter => Some("get monthsInYear"),
         _ => None,
     }
 }

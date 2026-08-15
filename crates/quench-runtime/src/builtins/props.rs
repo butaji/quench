@@ -66,6 +66,30 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
         (TemporalPlainDatePrototype, "toString") => Some(Value::Builtin(TemporalPlainDateToString)),
         (TemporalPlainDatePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainDateToJSON)),
+        (TemporalPlainDatePrototype, "calendarId") => {
+            Some(Value::Builtin(TemporalPlainDateCalendarIdGetter))
+        }
+        (TemporalPlainDatePrototype, "dayOfWeek") => {
+            Some(Value::Builtin(TemporalPlainDateDayOfWeekGetter))
+        }
+        (TemporalPlainDatePrototype, "dayOfYear") => {
+            Some(Value::Builtin(TemporalPlainDateDayOfYearGetter))
+        }
+        (TemporalPlainDatePrototype, "daysInMonth") => {
+            Some(Value::Builtin(TemporalPlainDateDaysInMonthGetter))
+        }
+        (TemporalPlainDatePrototype, "daysInWeek") => {
+            Some(Value::Builtin(TemporalPlainDateDaysInWeekGetter))
+        }
+        (TemporalPlainDatePrototype, "daysInYear") => {
+            Some(Value::Builtin(TemporalPlainDateDaysInYearGetter))
+        }
+        (TemporalPlainDatePrototype, "inLeapYear") => {
+            Some(Value::Builtin(TemporalPlainDateInLeapYearGetter))
+        }
+        (TemporalPlainDatePrototype, "monthsInYear") => {
+            Some(Value::Builtin(TemporalPlainDateMonthsInYearGetter))
+        }
         (TemporalDurationPrototype, "constructor") => Some(Value::Builtin(TemporalDuration)),
         (IntlCollatorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.Collator".into()))
