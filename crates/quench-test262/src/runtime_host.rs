@@ -257,6 +257,7 @@ fn namespace_cell(
         quench_runtime::value::Value::Null,
     )];
     let mut export_names = unit.export_names();
+    export_names.retain(|name| !unit.ambiguous_exports.borrow().contains(name));
     export_names.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
     properties.extend(
         export_names
@@ -503,7 +504,24 @@ impl LinkedModule {
         } else {
             self.linked_exports.borrow_mut().remove(name);
             self.ambiguous_exports.borrow_mut().insert(name.to_string());
+            self.remove_namespace_export(name);
         }
+    }
+
+    fn remove_namespace_export(&self, name: &str) {
+        let Some(namespace) = self.namespace.borrow().as_ref().cloned() else {
+            return;
+        };
+        let Value::Object(properties) = namespace.get() else {
+            return;
+        };
+        let descriptor = format!("\0quench:descriptor:\0{name}");
+        let entries = properties
+            .iter()
+            .filter(|(key, _)| key != name && key != &descriptor)
+            .cloned()
+            .collect::<Vec<_>>();
+        namespace.set(Value::object(entries));
     }
 
     fn refresh_namespace_export(&self, name: &str) {
