@@ -54,6 +54,15 @@ fn data_view_descriptor(view: &crate::value::DataViewData, key: &str) -> Option<
 }
 
 fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> Option<Value> {
+    let deleted = crate::builtins::deleted_key(key);
+    if function
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == &deleted)
+    {
+        return None;
+    }
     if let Some((_, metadata)) = function
         .properties
         .borrow()
