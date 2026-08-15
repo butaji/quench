@@ -82,8 +82,12 @@ fn create_realm_value() -> Value {
     let Some(constructor) = realm::intrinsic(realm, Builtin::TypeError) else {
         return Value::Undefined;
     };
+    let Some(object_prototype) = realm::intrinsic(realm, Builtin::ObjectPrototype) else {
+        return Value::Undefined;
+    };
     let properties = Rc::new(crate::value::ObjectData::new(vec![
         ("TypeError".to_string(), constructor),
+        ("\0prototype".to_string(), object_prototype),
         ("\0realm".to_string(), Value::HostCapability(Rc::clone(&token))),
     ]));
     if realm::id_for_token(&token).is_none() || !realm::register_global(&token, properties) {
