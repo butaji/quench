@@ -83,6 +83,20 @@ impl StatementReducer {
                         }
                     }
                 }
+                if let oxc::ast::ast::Statement::ExportDefaultDeclaration(export) = statement {
+                    if let oxc::ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(
+                        function,
+                    ) = &export.declaration
+                    {
+                        if let Some(identifier) = &function.id {
+                            crate::reduce_support::reserve_names(
+                                &[identifier.name.to_string()],
+                                &mut self.locals,
+                                &mut self.next_slot,
+                            );
+                        }
+                    }
+                }
             }
         }
         let barrier_len = facts.eval_var_barrier.len();
@@ -265,8 +279,17 @@ fn is_function_declaration(statement: &Statement<'_>) -> bool {
             statement,
             Statement::ExportNamedDeclaration(export)
                 if matches!(
-                    export.declaration,
+                    &export.declaration,
                     Some(oxc::ast::ast::Declaration::FunctionDeclaration(_))
+                )
+        )
+        || matches!(
+            statement,
+            Statement::ExportDefaultDeclaration(export)
+                if matches!(
+                    &export.declaration,
+                    oxc::ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(function)
+                        if function.id.is_some()
                 )
         )
 }
