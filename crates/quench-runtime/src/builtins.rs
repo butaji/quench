@@ -389,7 +389,13 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         ("message".to_string(), Value::String(message)),
         ("constructor".to_string(), Value::Builtin(constructor)),
         (ERROR_SLOT.to_string(), Value::Boolean(true)),
-        ("\0prototype".to_string(), Value::Builtin(prototype)),
+        (
+            "\0prototype".to_string(),
+            crate::vm::intrinsic_for_realm(
+                crate::vm::current_context_or_default().realm(),
+                prototype,
+            ),
+        ),
     ];
     if let Some(Value::Object(existing)) = arguments.first() {
         properties.extend(existing.properties.clone());
