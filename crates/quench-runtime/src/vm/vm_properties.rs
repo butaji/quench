@@ -104,6 +104,12 @@ fn get_property_value_collection_tail(value: &Value, key: &str) -> Value {
         Set(_) => crate::collections::set::property(key),
         Iterator(_) => iterator_property(value, key),
         Generator(_) => generator_property(value, key),
+        _ => get_property_value_async_tail(value, key),
+    }
+}
+
+fn get_property_value_async_tail(value: &Value, key: &str) -> Value {
+    match value {
         Promise(promise) => promise_value_property(promise, value, key),
         HostCapability(capability) => host_capability_property(value, capability.descriptor, key),
         _ => Value::Undefined,
