@@ -461,6 +461,16 @@ pub(crate) fn format_unit(text: &str, unit: Option<&str>, display: &str) -> Stri
         (Some("kilometer-per-hour"), "long") => "kilometers per hour",
         (Some("kilometer-per-hour"), "narrow") => "km/h",
         (Some("kilometer-per-hour"), _) => "km/h",
+        (Some("year"), _) => "yr",
+        (Some("month"), _) => "mth",
+        (Some("week"), _) => "wk",
+        (Some("day"), _) => "day",
+        (Some("hour"), _) => "hr",
+        (Some("minute"), _) => "min",
+        (Some("second"), _) => "sec",
+        (Some("millisecond"), _) => "ms",
+        (Some("microsecond"), _) => "μs",
+        (Some("nanosecond"), _) => "ns",
         _ => "",
     };
     if suffix.is_empty() {
