@@ -7,39 +7,7 @@ use super::{default_locale, make_object, resolve_locales, runtime_error, slot_st
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let mut notation = "standard".to_string();
-    let mut compact_display: Option<String> = None;
-    let plural_type = match arguments.get(1) {
-        Some(Value::Object(properties)) => {
-            for (key, value) in properties.iter() {
-                let text = super::to_string_value(value);
-                match key.as_str() {
-                    "notation" => {
-                        if !matches!(
-                            text.as_str(),
-                            "standard" | "compact" | "scientific" | "engineering"
-                        ) {
-                            return Err(runtime_error("RangeError: invalid notation"));
-                        }
-                        notation = text;
-                    }
-                    "compactDisplay" => {
-                        if !matches!(text.as_str(), "short" | "long") {
-                            return Err(runtime_error("RangeError: invalid compactDisplay"));
-                        }
-                        compact_display = Some(text);
-                    }
-                    _ => {}
-                }
-            }
-            properties
-                .iter()
-                .find(|(key, _)| key == "type")
-                .map(|(_, value)| super::to_string_value(value))
-                .unwrap_or_else(|| "cardinal".to_string())
-        }
-        _ => "cardinal".to_string(),
-    };
+    let (notation, compact_display, plural_type) = plural_options(arguments.get(1))?;
     if !matches!(plural_type.as_str(), "cardinal" | "ordinal") {
         return Err(runtime_error("RangeError: invalid type"));
     }
@@ -65,6 +33,39 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ]),
         ),
     ]))
+}
+
+fn plural_options(option: Option<&Value>) -> Result<(String, Option<String>, String), VmError> {
+    let Some(Value::Object(properties)) = option else {
+        return Ok(("standard".to_string(), None, "cardinal".to_string()));
+    };
+    let mut notation = "standard".to_string();
+    let mut compact_display = None;
+    for (key, value) in properties.iter() {
+        let text = super::to_string_value(value);
+        match key.as_str() {
+            "notation"
+                if matches!(
+                    text.as_str(),
+                    "standard" | "compact" | "scientific" | "engineering"
+                ) =>
+            {
+                notation = text
+            }
+            "notation" => return Err(runtime_error("RangeError: invalid notation")),
+            "compactDisplay" if matches!(text.as_str(), "short" | "long") => {
+                compact_display = Some(text)
+            }
+            "compactDisplay" => return Err(runtime_error("RangeError: invalid compactDisplay")),
+            _ => {}
+        }
+    }
+    let plural_type = properties
+        .iter()
+        .find(|(key, _)| key == "type")
+        .map(|(_, value)| super::to_string_value(value))
+        .unwrap_or_else(|| "cardinal".to_string());
+    Ok((notation, compact_display, plural_type))
 }
 
 pub(crate) fn prototype_method(
