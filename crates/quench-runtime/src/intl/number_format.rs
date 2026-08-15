@@ -128,33 +128,13 @@ pub(crate) fn compact_scale(value: f64, locale: &str, display: &str) -> i32 {
     }
     let magnitude = value.abs().log10().floor() as i32;
     if locale.starts_with("en-IN") {
-        return if magnitude >= 5 {
-            5
-        } else if magnitude >= 3 {
-            3
-        } else {
-            0
-        };
+        return threshold_scale(magnitude, &[5, 3]);
     }
     if locale.starts_with("ja") || locale.starts_with("zh") {
-        return if magnitude >= 8 {
-            8
-        } else if magnitude >= 4 {
-            4
-        } else {
-            0
-        };
+        return threshold_scale(magnitude, &[8, 4]);
     }
     if locale.starts_with("ko") {
-        return if magnitude >= 8 {
-            8
-        } else if magnitude >= 4 {
-            4
-        } else if magnitude >= 3 {
-            3
-        } else {
-            0
-        };
+        return threshold_scale(magnitude, &[8, 4, 3]);
     }
     if locale.starts_with("de") {
         return if magnitude >= 6 {
@@ -174,6 +154,14 @@ pub(crate) fn compact_scale(value: f64, locale: &str, display: &str) -> i32 {
     } else {
         0
     }
+}
+
+fn threshold_scale(magnitude: i32, thresholds: &[i32]) -> i32 {
+    thresholds
+        .iter()
+        .copied()
+        .find(|threshold| magnitude >= *threshold)
+        .unwrap_or(0)
 }
 
 pub(crate) fn compact_fraction_digits(value: f64) -> u32 {
