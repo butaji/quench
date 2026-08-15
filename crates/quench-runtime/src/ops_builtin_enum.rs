@@ -281,7 +281,7 @@ pub enum Builtin {
     SetIteratorNext, MapIteratorNext,
     IteratorSelf, GeneratorNext,
     GeneratorReturn, GeneratorThrow,
-    Error, ErrorPrototype,
+    Error, ErrorPrototype, AggregateErrorPrototype,
     ErrorIsError, ErrorPrototypeToString,
     ErrorPrototypeNameGetter, ErrorPrototypeMessageGetter,
     ErrorPrototypeCauseGetter, ErrorPrototypeStackGetter,

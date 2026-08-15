@@ -182,10 +182,11 @@ fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
                 | Builtin::SyntaxError
                 | Builtin::EvalError
                 | Builtin::URIError
-                | Builtin::AggregateError
                 | Builtin::TypeError
         ))
     .then_some(Builtin::ErrorPrototype)
+    .or_else(|| (builtin == Builtin::AggregateError && key == "prototype")
+        .then_some(Builtin::AggregateErrorPrototype))
 }
 fn specialized_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_property(builtin, key).or_else(|| {

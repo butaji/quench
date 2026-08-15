@@ -33,6 +33,9 @@ fn prototype_for_value(value: &Value) -> Value {
         Value::Builtin(Builtin::SuppressedErrorPrototype) => {
             Value::Builtin(Builtin::ErrorPrototype)
         }
+        Value::Builtin(Builtin::AggregateErrorPrototype) => {
+            Value::Builtin(Builtin::ErrorPrototype)
+        }
         Value::Builtin(
             builtin @ (Builtin::ArrayIteratorPrototype
             | Builtin::StringIteratorPrototype
