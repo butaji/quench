@@ -31,6 +31,14 @@ fn execute_date_tail(
     if let Some(result) = super::setter::set_time_components(builtin, receiver, arguments) {
         return Some(result);
     }
+    execute_remaining(builtin, receiver, arguments)
+}
+
+fn execute_remaining(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
     if is_date_getter(builtin) {
         return Some(
             super::setter::time_value(receiver)
