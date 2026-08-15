@@ -31,7 +31,12 @@ impl ArrayData {
             strict_arguments: false,
             mapped: Vec::new(),
             deleted: Vec::new(),
-            argument_live: None,
+        argument_live: Some(Rc::new(RefCell::new(ArgumentLive {
+            values: values.clone(),
+            length,
+            mapped: Vec::new(),
+            deleted: Vec::new(),
+        }))),
         }
     }
 
