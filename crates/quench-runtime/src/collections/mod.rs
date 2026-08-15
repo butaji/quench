@@ -46,6 +46,7 @@ fn execute_core(
         )),
         IteratorToArray => Some(iterator_to_array(receiver)),
         IteratorDrop => Some(iterator_drop(receiver, arguments)),
+        IteratorMap => Some(iterator_map(receiver, arguments)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
@@ -110,11 +111,7 @@ fn iterator_to_array(receiver: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn iterator_drop(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(receiver @ (Value::Iterator(_) | Value::Generator(_))) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Iterator.drop called on incompatible receiver",
-        ));
-    };
+    let receiver = iterator_source(receiver, "drop")?;
     let count = arguments.first().cloned().unwrap_or(Value::Undefined);
     let number = crate::conversion::to_number(&count)?;
     let integer = number.trunc();
@@ -131,9 +128,56 @@ fn iterator_drop(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
     Ok(Value::Iterator(std::rc::Rc::new(
         crate::value::IteratorData {
             state: std::cell::RefCell::new(crate::value::IteratorState::Drop {
-                iterator: receiver.clone(),
+                iterator: receiver,
                 remaining,
                 done: false,
+            }),
+        },
+    )))
+}
+
+fn iterator_map(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let receiver = iterator_source(receiver, "map")?;
+    let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.map callback is not callable",
+        ));
+    }
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::MapHelper {
+                iterator: receiver,
+                callback,
+                index: 0,
+                done: false,
+            }),
+        },
+    )))
+}
+
+fn iterator_source(receiver: Option<&Value>, method: &str) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(&format!(
+            "Iterator.{method} called on incompatible receiver"
+        )));
+    };
+    if matches!(receiver, Value::Iterator(_) | Value::Generator(_)) {
+        return Ok(receiver.clone());
+    }
+    if !crate::value::is_object(receiver) {
+        return Err(crate::value::error::throw_type_error(&format!(
+            "Iterator.{method} called on incompatible receiver"
+        )));
+    }
+    let next = crate::execute::get_property_result(receiver, "next")?;
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::Protocol {
+                iterator: receiver.clone(),
+                next,
+                done: false,
+                executing: false,
             }),
         },
     )))

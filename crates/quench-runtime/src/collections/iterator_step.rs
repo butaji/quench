@@ -10,6 +10,9 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
     if let Some(iterator) = drop_target(data) {
         return drop_step(data, iterator);
     }
+    if let Some((iterator, callback, index)) = map_target(data) {
+        return map_step(data, iterator, callback, index);
+    }
     match step_target(data)? {
         StepTarget::Value(value) => Ok(value),
         StepTarget::Protocol(iterator, cached) => {
@@ -26,6 +29,51 @@ fn drop_target(data: &IteratorData) -> Option<Value> {
         return None;
     };
     Some(iterator.clone())
+}
+
+fn map_target(data: &IteratorData) -> Option<(Value, Value, u64)> {
+    let state = data.state.borrow();
+    let IteratorState::MapHelper {
+        iterator,
+        callback,
+        index,
+        done,
+    } = &*state
+    else {
+        return None;
+    };
+    (!*done).then(|| (iterator.clone(), callback.clone(), *index))
+}
+
+fn map_step(
+    data: &IteratorData,
+    iterator: Value,
+    callback: Value,
+    index: u64,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    let Some(value) = step_source(&iterator)? else {
+        mark_map_done(data);
+        return Ok(None);
+    };
+    let mapped = crate::functions::execute_target(
+        &callback,
+        &Value::Undefined,
+        &[value, Value::Number(index as f64)],
+    )?;
+    set_map_index(data, index.saturating_add(1));
+    Ok(Some(mapped))
+}
+
+fn set_map_index(data: &IteratorData, index: u64) {
+    if let IteratorState::MapHelper { index: slot, .. } = &mut *data.state.borrow_mut() {
+        *slot = index;
+    }
+}
+
+fn mark_map_done(data: &IteratorData) {
+    if let IteratorState::MapHelper { done, .. } = &mut *data.state.borrow_mut() {
+        *done = true;
+    }
 }
 
 fn drop_step(
@@ -157,6 +205,7 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
         }
         IteratorState::Concat { .. } => StepTarget::Value(None),
         IteratorState::Drop { .. } => StepTarget::Value(None),
+        IteratorState::MapHelper { .. } => StepTarget::Value(None),
     })
 }
 
