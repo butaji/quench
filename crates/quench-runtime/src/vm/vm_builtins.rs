@@ -116,6 +116,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::NumberToExponential
             | Builtin::Object
             | Builtin::Date
+            | Builtin::ErrorPrototype
             | Builtin::Error
             | Builtin::RangeError
             | Builtin::ReferenceError
@@ -183,6 +184,9 @@ fn execute_simple_builtin(
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
             crate::number_fmt::number_format(receiver, arguments.first(), builtin)
         }
+        Builtin::ErrorPrototype => Err(crate::value::error::throw_type_error(
+            "Error.prototype is not callable",
+        )),
         Builtin::Error
         | Builtin::RangeError
         | Builtin::ReferenceError
