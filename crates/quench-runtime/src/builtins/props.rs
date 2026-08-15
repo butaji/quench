@@ -377,6 +377,13 @@ fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> O
         "createRealm" => CreateRealm,
         "evalScript" => EvalScript,
         "detachArrayBuffer" => DetachArrayBuffer,
+        "agent" => Agent,
+        "start" => AgentStart,
+        "broadcast" => AgentBroadcast,
+        "report" => AgentReport,
+        "getReport" => AgentGetReport,
+        "leaving" => AgentLeaving,
+        "receiveBroadcast" => AgentReceiveBroadcast,
         _ => return None,
     };
     Some(Builtin::HostCapability(kind))
