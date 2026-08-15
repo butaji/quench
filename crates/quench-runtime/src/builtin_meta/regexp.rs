@@ -4,6 +4,7 @@ use crate::ops::Builtin;
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::RegExpCompile => Some("RegExp.prototype.compile"),
         Builtin::RegExpPrototypeToString => Some("RegExp.prototype.toString"),
         Builtin::RegExpEscape => Some("escape"),
         Builtin::RegExpTest => Some("RegExp.prototype.test"),
@@ -20,6 +21,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
+        Builtin::RegExpCompile => Some(2.0),
         Builtin::RegExpPrototypeToString => Some(0.0),
         Builtin::RegExpEscape | Builtin::RegExpTest | Builtin::RegExpExec => Some(1.0),
         Builtin::RegExpSymbolSearch | Builtin::RegExpSymbolMatchAll => Some(1.0),
@@ -32,6 +34,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::RegExpCompile => Some("compile"),
         Builtin::RegExpPrototypeToString => Some("toString"),
         Builtin::RegExpEscape => Some("escape"),
         Builtin::RegExpTest => Some("test"),
