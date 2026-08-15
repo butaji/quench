@@ -47,6 +47,22 @@ pub(crate) fn is_legacy_global(key: &str) -> bool {
 pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
     crate::globals::builtin(key).map(Value::Builtin)
 }
+
+pub(crate) fn realm_token(realm: RealmId) -> Option<Value> {
+    realm::token(realm).map(Value::HostCapability)
+}
+
+pub(crate) fn realm_id_for_global_value(value: &Value) -> Option<RealmId> {
+    let Value::Object(object) = value else {
+        return None;
+    };
+    realm::id_for_global(object)
+}
+
+pub(crate) fn realm_intrinsic(builtin: Builtin) -> Value {
+    let realm = current_context_or_default().realm();
+    realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
+}
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
@@ -462,6 +478,16 @@ pub fn execute_builtin_with_receiver(
     if is_data_view_builtin(builtin) {
         return execute_data_view_builtin(builtin, receiver, arguments);
     }
+    if matches!(
+        builtin,
+        Builtin::SharedArrayBufferByteLengthGetter
+            | Builtin::SharedArrayBufferGrow
+            | Builtin::SharedArrayBufferSlice
+            | Builtin::SharedArrayBufferGrowableGetter
+            | Builtin::SharedArrayBufferMaxByteLengthGetter
+    ) {
+        return execute_shared_array_buffer_builtin(builtin, receiver, arguments);
+    }
     if let Builtin::HostCapability(kind) = builtin {
         return vm_ops::execute_host_capability(kind, receiver, arguments);
     }
@@ -503,6 +529,7 @@ fn is_object_special(builtin: Builtin) -> bool {
         Builtin::ObjectHasOwnProperty
             | Builtin::ObjectHasOwn
             | Builtin::ObjectGetOwnPropertyDescriptor
+            | Builtin::ObjectGetOwnPropertyDescriptors
             | Builtin::ObjectGetOwnPropertyNames
             | Builtin::ObjectGetOwnPropertySymbols
             | Builtin::ObjectKeys
