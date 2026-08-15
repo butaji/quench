@@ -403,14 +403,16 @@ fn error_properties(
         .unwrap_or(crate::ops::Builtin::ErrorPrototype);
     let prototype = crate::vm::realm_intrinsic(prototype_builtin);
     let mut properties = vec![
-        ("name".to_string(), Value::String(name.to_string())),
-        ("constructor".to_string(), constructor),
         (
             crate::builtins::ERROR_SLOT.to_string(),
             Value::Boolean(true),
         ),
         ("\0prototype".to_string(), prototype),
     ];
+    if *builtin != crate::ops::Builtin::AggregateError {
+        properties.insert(0, ("constructor".to_string(), constructor));
+        properties.insert(0, ("name".to_string(), Value::String(name.to_string())));
+    }
     if let Some(message) = message {
         push_error_property(&mut properties, "message", Value::String(message));
     }
