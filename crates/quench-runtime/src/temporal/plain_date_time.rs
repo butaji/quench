@@ -360,10 +360,21 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         .and_then(|value| crate::execute::get_property_result(value, "calendarName").ok())
         .filter(|value| matches!(value, Value::String(value) if value == "always"))
         .map_or(String::new(), |_| "[u-ca=iso8601]".into());
+    let year = year_text(values[0] as i32);
     Ok(Value::String(format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{suffix}{calendar_suffix}",
-        values[0], values[1], values[2], values[3], values[4], values[5]
+        "{year}-{:02}-{:02}T{:02}:{:02}:{:02}{suffix}{calendar_suffix}",
+        values[1], values[2], values[3], values[4], values[5]
     )))
+}
+
+fn year_text(year: i32) -> String {
+    if year < 0 {
+        format!("-{year_abs:06}", year_abs = year.unsigned_abs())
+    } else if year > 9999 {
+        format!("+{year:06}")
+    } else {
+        format!("{year:04}")
+    }
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
