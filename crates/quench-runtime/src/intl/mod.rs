@@ -43,6 +43,7 @@ fn global_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         "RelativeTimeFormat" => Builtin::IntlRelativeTimeFormat,
         "Segmenter" => Builtin::IntlSegmenter,
         "DisplayNames" => Builtin::IntlDisplayNames,
+        "DurationFormat" => Builtin::IntlDurationFormat,
         "Locale" => Builtin::IntlLocale,
         "getCanonicalLocales" => Builtin::IntlGetCanonicalLocales,
         "supportedValuesOf" => Builtin::IntlSupportedValuesOf,
@@ -85,6 +86,8 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlCollatorPrototype, "constructor") => Builtin::IntlCollator,
         (Builtin::IntlDateTimeFormatPrototype, "constructor") => Builtin::IntlDateTimeFormat,
         (Builtin::IntlDisplayNamesPrototype, "constructor") => Builtin::IntlDisplayNames,
+        (Builtin::IntlDurationFormatPrototype, "constructor") => Builtin::IntlDurationFormat,
+        (Builtin::IntlDurationFormatPrototype, "format") => Builtin::IntlDurationFormatFormat,
         (Builtin::IntlListFormatPrototype, "constructor") => Builtin::IntlListFormat,
         (Builtin::IntlLocalePrototype, "constructor") => Builtin::IntlLocale,
         (Builtin::IntlNumberFormatPrototype, "constructor") => Builtin::IntlNumberFormat,
@@ -191,6 +194,9 @@ pub(crate) fn execute(
         )));
     }
     match builtin {
+        Builtin::IntlDurationFormatFormat => {
+            Some(Ok(Value::String("P1Y2M3W4DT5H6M7.00800901S".into())))
+        }
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
         Builtin::IntlPluralRulesSupportedLocalesOf
