@@ -50,6 +50,57 @@ fn early_dispatch(
                 .then(|| crate::date::execute(builtin, receiver, arguments))?
         })
 }
+
+pub(crate) fn execute_array_buffer_byte_length(
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(type_error(
+            "ArrayBuffer.prototype.byteLength called on incompatible receiver",
+        ));
+    };
+    Ok(Value::Number(buffer.byte_length() as f64))
+}
+
+pub(crate) fn execute_array_buffer_detached(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(type_error(
+            "ArrayBuffer.prototype.detached called on incompatible receiver",
+        ));
+    };
+    Ok(Value::Boolean(*buffer.detached.borrow()))
+}
+
+pub(crate) fn execute_array_buffer_max_byte_length(
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(type_error(
+            "ArrayBuffer.prototype.maxByteLength called on incompatible receiver",
+        ));
+    };
+    Ok(Value::Number(
+        buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64,
+    ))
+}
+
+pub(crate) fn execute_array_buffer_resizable(
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(type_error("ArrayBuffer.prototype.resizable called on incompatible receiver"));
+    };
+    Ok(Value::Boolean(buffer.max_byte_length.is_some()))
+}
+
+pub(crate) fn execute_array_buffer_immutable(
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(type_error("ArrayBuffer.prototype.immutable called on incompatible receiver"));
+    };
+    Ok(Value::Boolean(buffer.immutable))
+}
 fn is_function_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,

@@ -339,7 +339,7 @@ fn non_enumerable_descriptor(value: &Value) -> Value {
     ])))
 }
 
-fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
+pub(crate) fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
     match value {
         Value::Object(_)
         | Value::Array(_)
