@@ -183,6 +183,9 @@ fn is_surrogate(code: u32) -> bool {
 }
 
 pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
+    if key == "Symbol.iterator" {
+        return Some(crate::ops::Builtin::StringIterator);
+    }
     match key {
         "localeCompare" => Some(crate::ops::Builtin::StringLocaleCompare),
         "includes" => Some(crate::ops::Builtin::StringIncludes),
@@ -190,6 +193,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "toWellFormed" => Some(crate::ops::Builtin::StringToWellFormed),
         "startsWith" => Some(crate::ops::Builtin::StringStartsWith),
         "endsWith" => Some(crate::ops::Builtin::StringEndsWith),
+        "at" => Some(crate::ops::Builtin::StringAt),
         "repeat" => Some(crate::ops::Builtin::StringRepeat),
         "trim" => Some(crate::ops::Builtin::StringTrim),
         "toLowerCase" => Some(crate::ops::Builtin::StringToLowerCase),
@@ -224,6 +228,7 @@ pub(crate) fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, crate::execute::VmError>> {
     let result = match builtin {
+        crate::ops::Builtin::StringIterator => string_iterator(receiver),
         crate::ops::Builtin::StringFromCharCode => from_char_code(arguments),
         crate::ops::Builtin::StringFromCodePoint => from_code_point(arguments),
         crate::ops::Builtin::StringRaw => raw(arguments),
@@ -232,7 +237,8 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringToWellFormed => to_well_formed(receiver),
         crate::ops::Builtin::StringStartsWith => starts_with(receiver, arguments),
         crate::ops::Builtin::StringEndsWith => ends_with(receiver, arguments),
-        crate::ops::Builtin::StringRepeat => repeat(receiver, arguments),
+        crate::ops::Builtin::StringAt => at(receiver, arguments),
+        crate::ops::Builtin::StringRepeat => Ok(repeat(receiver, arguments)),
         crate::ops::Builtin::StringTrim => trim(receiver),
         crate::ops::Builtin::StringToLowerCase => Ok(to_lower_case(receiver)),
         crate::ops::Builtin::StringToUpperCase => Ok(to_upper_case(receiver)),
@@ -258,6 +264,45 @@ pub(crate) fn execute_builtin(
         _ => return None,
     };
     Some(result)
+}
+
+fn at(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let units = receiver
+        .and_then(units_of)
+        .unwrap_or(string_receiver(receiver)?.encode_utf16().collect());
+    let index = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    let index = if index.is_nan() {
+        0
+    } else {
+        index.trunc() as isize
+    };
+    let position = if index < 0 {
+        units.len() as isize + index
+    } else {
+        index
+    };
+    if position < 0 {
+        return Ok(Value::Undefined);
+    }
+    Ok(units
+        .get(position as usize)
+        .map(|unit| from_units(vec![*unit]))
+        .unwrap_or(Value::Undefined))
+}
+
+fn string_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let value = receiver.ok_or_else(|| {
+        crate::value::error::throw_type_error("Cannot convert undefined to object")
+    })?;
+    let units = match crate::strings::units_of(value) {
+        Some(units) => units,
+        None => string_receiver(Some(value))?.encode_utf16().collect(),
+    };
+    Ok(crate::collections::iterator::make_string(units))
 }
 
 fn from_char_code(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
