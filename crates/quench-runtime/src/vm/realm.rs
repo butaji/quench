@@ -136,17 +136,12 @@ pub(super) fn with_realm<T>(id: RealmId, callback: impl FnOnce() -> T) -> Option
 
 pub(super) fn id_for_global(global: &ObjectProperties) -> Option<RealmId> {
     REALMS.with(|realms| {
-        realms
-            .borrow()
-            .iter()
-            .flatten()
-            .find_map(|state| {
-                let current = state.global.borrow();
-                let roots = state.roots.borrow();
-                (Rc::ptr_eq(&current, global)
-                    || roots.iter().any(|root| Rc::ptr_eq(root, global)))
+        realms.borrow().iter().flatten().find_map(|state| {
+            let current = state.global.borrow();
+            let roots = state.roots.borrow();
+            (Rc::ptr_eq(&current, global) || roots.iter().any(|root| Rc::ptr_eq(root, global)))
                 .then_some(state.id)
-            })
+        })
     })
 }
 
@@ -194,6 +189,7 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "Uint32Array" => Uint32Array,
         "Object" => Object,
         "Function" => Function,
+        "Proxy" => Proxy,
         "Promise" => Promise,
         "RegExp" => RegExp,
         "Symbol" => Symbol,
@@ -261,11 +257,10 @@ pub(super) fn intrinsic_value(
         return None;
     };
     let state = state(token.realm())?;
-    state.token.same_identity(token).then(|| {
-        cached_intrinsic(&state, builtin).unwrap_or_else(|| {
-            Value::Builtin(builtin)
-        })
-    })
+    state
+        .token
+        .same_identity(token)
+        .then(|| cached_intrinsic(&state, builtin).unwrap_or_else(|| Value::Builtin(builtin)))
 }
 
 fn cached_intrinsic(state: &RealmState, builtin: Builtin) -> Option<Value> {
