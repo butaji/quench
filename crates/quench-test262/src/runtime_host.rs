@@ -32,6 +32,7 @@ pub struct LinkedModule {
     export_candidates: RefCell<HashMap<String, Vec<ModuleBindingCell>>>,
     ambiguous_exports: RefCell<HashSet<String>>,
     namespace: RefCell<Option<ModuleBindingCell>>,
+    deferred_namespace: RefCell<Option<ModuleBindingCell>>,
     executed: Cell<bool>,
 }
 
@@ -93,6 +94,25 @@ impl LinkedModuleGraph {
                 })
                 .map_err(quench_runtime::execute::VmError::EvalError)
         }));
+        let graph_ptr = self as *const Self;
+        let module_graph_ptr = graph as *const ModuleGraph;
+        let _dynamic = quench_runtime::vm::install_dynamic_import_callback(Rc::new(
+            move |specifier, deferred| {
+                let graph = unsafe { &*module_graph_ptr };
+                let target = graph.resolve(entry, &specifier).ok_or_else(|| {
+                    quench_runtime::execute::VmError::EvalError(
+                        "Cannot resolve dynamic import".to_string(),
+                    )
+                })?;
+                if !deferred {
+                    unsafe { (&*graph_ptr).execute(graph, target) }
+                        .map_err(quench_runtime::execute::VmError::EvalError)?;
+                }
+                namespace_cell(unsafe { &(*graph_ptr).units }, target, deferred)
+                    .map(|cell| cell.get())
+                    .map_err(quench_runtime::execute::VmError::EvalError)
+            },
+        ));
         for id in graph.dependency_order(entry)? {
             self.units
                 .get(&id)
@@ -123,10 +143,7 @@ fn bind_imports(
             let target = graph
                 .resolve_kind(id, &binding.source, kind)
                 .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-            let deferred = metadata
-                .deferred_imports
-                .iter()
-                .any(|source| source == &binding.source);
+            let deferred = binding.deferred;
             let cell = match import_cell(units, target, &binding.imported, provisional, deferred) {
                 Ok(cell) => cell,
                 Err(_error) if provisional && binding.imported != "*" => continue,
@@ -273,7 +290,12 @@ fn namespace_cell(
     let unit = units
         .get(&target)
         .ok_or_else(|| "module unit missing".to_string())?;
-    if let Some(namespace) = unit.namespace.borrow().as_ref() {
+    let cache = if deferred {
+        &unit.deferred_namespace
+    } else {
+        &unit.namespace
+    };
+    if let Some(namespace) = cache.borrow().as_ref() {
         return Ok(namespace.clone());
     }
     let mut properties = vec![(
@@ -344,7 +366,7 @@ fn namespace_cell(
         quench_runtime::value::Value::Boolean(true),
     ));
     let namespace = ModuleBindingCell::new(quench_runtime::value::Value::object(properties));
-    unit.namespace.replace(Some(namespace.clone()));
+    cache.replace(Some(namespace.clone()));
     Ok(namespace)
 }
 
@@ -376,6 +398,7 @@ impl LinkedModule {
             export_candidates: RefCell::new(HashMap::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace: RefCell::new(None),
+            deferred_namespace: RefCell::new(None),
             executed: Cell::new(false),
         })
     }
@@ -390,6 +413,7 @@ impl LinkedModule {
             export_candidates: RefCell::new(HashMap::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace: RefCell::new(None),
+            deferred_namespace: RefCell::new(None),
             executed: Cell::new(false),
         })
     }
@@ -606,7 +630,7 @@ impl LinkedModule {
     }
 
     fn complete_deferred_namespace(&self) {
-        let Some(namespace) = self.namespace.borrow().as_ref().cloned() else {
+        let Some(namespace) = self.deferred_namespace.borrow().as_ref().cloned() else {
             return;
         };
         let Value::Object(properties) = namespace.get() else {
@@ -640,9 +664,16 @@ impl LinkedModule {
     }
 
     fn clear_namespace_tdz(&self) {
-        let Some(namespace) = self.namespace.borrow().as_ref().cloned() else {
-            return;
-        };
+        let namespaces = [
+            self.namespace.borrow().as_ref().cloned(),
+            self.deferred_namespace.borrow().as_ref().cloned(),
+        ];
+        for namespace in namespaces.into_iter().flatten() {
+            self.clear_namespace_tdz_value(namespace);
+        }
+    }
+
+    fn clear_namespace_tdz_value(&self, namespace: ModuleBindingCell) {
         let Value::Object(properties) = namespace.get() else {
             return;
         };
@@ -846,6 +877,7 @@ fn host_context() -> &'static VmContext {
                 HostCapabilityKind::EvalScript,
                 HostCapabilityKind::DetachArrayBuffer,
                 HostCapabilityKind::DeferredModule,
+                HostCapabilityKind::DynamicImport,
             ],
         )
         .with_host_capability(

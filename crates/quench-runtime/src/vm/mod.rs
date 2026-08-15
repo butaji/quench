@@ -52,11 +52,18 @@ thread_local! {
     static CURRENT_CONTEXT: RefCell<Option<VmContext>> = const { RefCell::new(None) };
     static GLOBAL_OBJECT: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
     static DEFERRED_MODULE_CALLBACK: RefCell<Option<DeferredCallback>> = const { RefCell::new(None) };
+    static DYNAMIC_IMPORT_CALLBACK: RefCell<Option<DynamicImportCallback>> = const { RefCell::new(None) };
     static DEFERRED_MODULE_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
 pub struct DeferredModuleCallbackGuard {
     previous: Option<DeferredCallback>,
+}
+
+pub type DynamicImportCallback = Rc<dyn Fn(String, bool) -> Result<Value, VmError>>;
+
+pub struct DynamicImportCallbackGuard {
+    previous: Option<DynamicImportCallback>,
 }
 
 pub fn install_deferred_module_callback(callback: DeferredCallback) -> DeferredModuleCallbackGuard {
@@ -68,6 +75,26 @@ impl Drop for DeferredModuleCallbackGuard {
     fn drop(&mut self) {
         DEFERRED_MODULE_CALLBACK.with(|slot| slot.replace(self.previous.take()));
     }
+}
+
+pub fn install_dynamic_import_callback(
+    callback: DynamicImportCallback,
+) -> DynamicImportCallbackGuard {
+    let previous = DYNAMIC_IMPORT_CALLBACK.with(|slot| slot.replace(Some(callback)));
+    DynamicImportCallbackGuard { previous }
+}
+
+impl Drop for DynamicImportCallbackGuard {
+    fn drop(&mut self) {
+        DYNAMIC_IMPORT_CALLBACK.with(|slot| slot.replace(self.previous.take()));
+    }
+}
+
+pub(crate) fn execute_dynamic_import(specifier: String, deferred: bool) -> Result<Value, VmError> {
+    let callback = DYNAMIC_IMPORT_CALLBACK.with(|slot| slot.borrow().clone());
+    callback.map_or(Err(VmError::NotCallable), |callback| {
+        callback(specifier, deferred)
+    })
 }
 
 pub(crate) fn execute_deferred_module(id: u32) -> Result<Value, VmError> {

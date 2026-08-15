@@ -8,7 +8,7 @@ use crate::{
     special, transparent,
 };
 use oxc::{
-    ast::ast::{Expression, Statement, VariableDeclarationKind},
+    ast::ast::{Expression, ImportPhase, Statement, VariableDeclarationKind},
     syntax::operator::UnaryOperator,
 };
 use std::collections::HashMap;
@@ -246,12 +246,28 @@ fn reduce_import_expression(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    // Dynamic imports have no module graph in this runtime, so eagerly
-    // evaluate the specifier/options for side effects and return a Promise.
     let specifier = reduce_expression(&import.source, ops, facts, next_register, locals)?;
     for argument in &import.arguments {
         reduce_expression(argument, ops, facts, next_register, locals)?;
     }
+    let phase = take_register(next_register);
+    ops.push(Op::Const {
+        dst: phase,
+        value: crate::ops::Constant::Boolean(matches!(import.phase, Some(ImportPhase::Defer))),
+    });
+    let capability = take_register(next_register);
+    ops.push(Op::MakeBuiltin {
+        dst: capability,
+        builtin: crate::ops::Builtin::HostCapability(crate::ops::HostCapabilityKind::DynamicImport),
+    });
+    let imported = take_register(next_register);
+    ops.push(Op::CallMethod {
+        dst: imported,
+        object: capability,
+        key: "dynamicImport".to_string(),
+        callee: None,
+        args: vec![specifier, phase],
+    });
     let promise = take_register(next_register);
     ops.push(Op::MakeBuiltin {
         dst: promise,
@@ -263,7 +279,7 @@ fn reduce_import_expression(
         object: promise,
         key: "resolve".to_string(),
         callee: None,
-        args: vec![specifier],
+        args: vec![imported],
     });
     Some(dst)
 }
