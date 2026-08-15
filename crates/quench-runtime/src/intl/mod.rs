@@ -362,8 +362,9 @@ fn canonical_locale_element(value: &Value) -> Result<String, VmError> {
 }
 
 fn resolve_locale_object(locales: &Value) -> Result<Vec<String>, VmError> {
+    let mut current = crate::locals::resolved_replacement(locales.clone());
     let length =
-        crate::conversion::to_number(&crate::execute::get_property_result(locales, "length")?)?;
+        crate::conversion::to_number(&crate::execute::get_property_result(&current, "length")?)?;
     let length = if !length.is_finite() || length <= 0.0 {
         0
     } else {
@@ -371,10 +372,11 @@ fn resolve_locale_object(locales: &Value) -> Result<Vec<String>, VmError> {
     };
     let mut out = Vec::new();
     for index in 0..length {
-        if !crate::with_scope::has_property(locales, &index.to_string())? {
+        current = crate::locals::resolved_replacement(current);
+        if !crate::with_scope::has_property(&current, &index.to_string())? {
             continue;
         }
-        let value = crate::execute::get_property_result(locales, &index.to_string())?;
+        let value = crate::execute::get_property_result(&current, &index.to_string())?;
         if !matches!(value, Value::Undefined) {
             out.push(canonicalize(&crate::conversion::to_string(&value)?)?);
         }
