@@ -28,8 +28,28 @@ pub(crate) fn execute(
             | crate::ops::Builtin::TemporalPlainDateMonthsInYearGetter => {
                 Some(accessor(builtin, receiver))
             }
+            crate::ops::Builtin::TemporalPlainDateEquals => {
+                Some(equals(receiver, arguments.first()))
+            }
             _ => None,
         })
+}
+
+fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
+    let Some((Value::Object(left), Value::Object(right))) = receiver.zip(other) else {
+        return Ok(Value::Boolean(false));
+    };
+    Ok(Value::Boolean(["year", "month", "day"].iter().all(
+        |name| {
+            left.iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value)
+                == right
+                    .iter()
+                    .find(|(key, _)| key == name)
+                    .map(|(_, value)| value)
+        },
+    )))
 }
 
 fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Value, VmError> {
