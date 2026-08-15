@@ -483,6 +483,7 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
         RefCell::new(Vec::new())
     };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
         receiver: receiver.clone(),
         arguments: Vec::new(),
@@ -522,6 +523,7 @@ fn promise_property(value: &Value, key: &str) -> Value {
         return crate::builtins::property(Builtin::PromisePrototype, key);
     };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(builtin),
         receiver: value.clone(),
         arguments: Vec::new(),
