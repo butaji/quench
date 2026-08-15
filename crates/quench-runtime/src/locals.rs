@@ -38,6 +38,23 @@ pub(crate) struct EnvironmentGuard {
     previous_global: Option<Rc<Environment>>,
 }
 
+pub(crate) struct GlobalLexicalGuard {
+    previous: Option<Rc<Environment>>,
+}
+
+impl GlobalLexicalGuard {
+    pub(crate) fn install(environment: Rc<Environment>) -> Self {
+        let previous = GLOBAL_LEXICAL_ENVIRONMENT.with(|global| global.replace(Some(environment)));
+        Self { previous }
+    }
+}
+
+impl Drop for GlobalLexicalGuard {
+    fn drop(&mut self) {
+        GLOBAL_LEXICAL_ENVIRONMENT.with(|global| global.replace(self.previous.take()));
+    }
+}
+
 pub(crate) struct IterationBinding {
     environment: Rc<Environment>,
     slot: u16,
