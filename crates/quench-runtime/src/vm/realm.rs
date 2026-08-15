@@ -176,6 +176,7 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "BigInt" => BigInt,
         "String" => String,
         "Date" => Date,
+        "Intl" => Intl,
         "DisposableStack" => DisposableStack,
         "AsyncDisposableStack" => AsyncDisposableStack,
         "FinalizationRegistry" => FinalizationRegistry,
