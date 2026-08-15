@@ -106,7 +106,7 @@ pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError
                 "Iterator.from requires an iterable or iterator",
             ));
         }
-        return Ok(make_protocol(value));
+        return Ok(make_protocol_with_next(value, next));
     }
     open(value)
 }
@@ -155,10 +155,13 @@ pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::exec
     next(receiver)
 }
 fn make_protocol(iterator: Value) -> Value {
+    make_protocol_with_next(iterator, Value::Undefined)
+}
+fn make_protocol_with_next(iterator: Value, next: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Protocol {
             iterator,
-            next: Value::Undefined,
+            next,
             done: false,
         }),
     }))
