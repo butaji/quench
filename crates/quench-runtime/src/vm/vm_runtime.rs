@@ -210,6 +210,7 @@ fn stateful_builtin(
         }
         Builtin::AtomicsIsLockFree => Some(crate::atomics::is_lock_free(arguments)),
         Builtin::AtomicsNotify => Some(crate::atomics::notify(arguments)),
+        Builtin::AtomicsWait => Some(crate::atomics::wait(arguments)),
         _ => None,
     }
 }
