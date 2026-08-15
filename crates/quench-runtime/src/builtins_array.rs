@@ -3,6 +3,11 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         Value::Object(properties) if global_constant(&properties, key) => {
             (Value::Object(properties), false)
         }
+        Value::Object(properties) if properties.iter().any(|(name, _)| name == "\0realm")
+            && !matches!(key, "undefined" | "Infinity" | "NaN") =>
+        {
+            (delete_object_property(properties, key), true)
+        }
         Value::Object(properties)
             if descriptor_flag_in(&properties, key, "configurable") == Some(false) =>
         {
@@ -101,6 +106,10 @@ fn define_property_value(target: Value, key: &str, value: Value) -> Value {
             crate::builtins::builtins_cells::set_object_property(properties, key, value)
         }
         Value::Array(values) => set_array_property(values, key, value),
+        Value::ArrayBuffer(buffer) => {
+            buffer.set_own_property(key, value);
+            Value::ArrayBuffer(buffer)
+        }
         Value::Function(function) => {
             let function = std::rc::Rc::clone(&function);
             {

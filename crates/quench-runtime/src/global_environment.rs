@@ -30,7 +30,7 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
 }
 
 fn check_function(name: &str) -> Result<(), VmError> {
-    if crate::locals::global_has_own_name(name) {
+    if crate::locals::global_has_lexical_name(name) {
         return lexical_collision(name);
     }
     if let Some(descriptor) = own_descriptor(name) {
@@ -87,7 +87,7 @@ fn is_global_extensible() -> bool {
 }
 
 fn check_lexical_declaration(name: &str) -> Result<(), VmError> {
-    if !crate::locals::global_has_own_name(name) {
+    if !crate::locals::global_has_lexical_name(name) {
         if has_restricted_global(name) {
             return Err(VmError::Thrown(crate::builtins::error(
                 crate::ops::Builtin::SyntaxError,
@@ -127,12 +127,6 @@ fn create_var(
     }
     let current = own_descriptor(name);
     let cell = binding_cell(name, slot, current.as_ref().map(|value| &value.value));
-    if current
-        .as_ref()
-        .is_some_and(|descriptor| !descriptor.configurable)
-    {
-        return Ok(());
-    }
     // Per spec, global var bindings are non-configurable.
     let descriptor = match current {
         Some(current) if !current.configurable => value_descriptor(cell),
