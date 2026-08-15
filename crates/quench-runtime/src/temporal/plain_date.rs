@@ -29,7 +29,13 @@ fn validate_constructor_calendar(value: &Value) -> Result<(), VmError> {
     };
     if matches!(
         calendar.to_ascii_lowercase().as_str(),
-        "iso8601" | "islamicc" | "islamic-civil" | "ethiopic-amete-alem" | "ethioaa"
+        "iso8601"
+            | "gregory"
+            | "hebrew"
+            | "islamicc"
+            | "islamic-civil"
+            | "ethiopic-amete-alem"
+            | "ethioaa"
     ) {
         Ok(())
     } else {
@@ -406,8 +412,10 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             if calendar.starts_with("-000000") {
                 return Err(crate::value::error::throw_range_error("Invalid calendar"));
             }
-            let iso_calendar = calendar.eq_ignore_ascii_case("iso8601")
-                || (calendar.contains('-') && !calendar.contains("[u-ca="))
+            let iso_calendar = matches!(
+                calendar.to_ascii_lowercase().as_str(),
+                "iso8601" | "gregory" | "hebrew" | "islamic-civil" | "islamicc" | "ethioaa"
+            ) || (calendar.contains('-') && !calendar.contains("[u-ca="))
                 || calendar.contains("[u-ca=iso8601]");
             if !iso_calendar {
                 return Err(crate::value::error::throw_range_error("Invalid calendar"));
