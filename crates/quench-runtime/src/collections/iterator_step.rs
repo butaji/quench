@@ -28,7 +28,7 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
 }
 
 fn step_target_state(
-    data: &IteratorData,
+    _data: &IteratorData,
     state: &mut IteratorState,
 ) -> Result<StepTarget, crate::execute::VmError> {
     Ok(match state {
