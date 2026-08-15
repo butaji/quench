@@ -306,6 +306,10 @@ fn bound_settler(target: Builtin, promise: &Rc<PromiseData>) -> Value {
     }))
 }
 
+pub(crate) fn bound_settler_for_capability(target: Builtin, promise: &Rc<PromiseData>) -> Value {
+    bound_settler(target, promise)
+}
+
 fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     match receiver {
         Some(Value::Builtin(Builtin::Promise)) => Ok(promise_resolve(arguments)),
@@ -444,6 +448,7 @@ pub fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     let result = match builtin {
+        Builtin::PromiseCapabilityExecutor => capability_executor(receiver, arguments),
         Builtin::Promise => Ok(new_promise()),
         Builtin::PromiseResolve => resolve_receiver(receiver, arguments),
         Builtin::PromiseReject => reject_receiver(receiver, arguments),
@@ -475,6 +480,42 @@ pub fn execute_builtin(
         _ => return None,
     };
     Some(result)
+}
+
+fn capability_executor(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::BindingCell(cell)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid Promise capability",
+        ));
+    };
+    let mut updated = {
+        let value = cell.borrow();
+        let Value::Object(object) = &*value else {
+            return Err(crate::value::error::throw_type_error(
+                "Invalid Promise capability",
+            ));
+        };
+        (**object).clone()
+    };
+    let prior_resolve =
+        crate::execute::get_property_result(&Value::Object(Rc::new(updated.clone())), "resolve")?;
+    let prior_reject =
+        crate::execute::get_property_result(&Value::Object(Rc::new(updated.clone())), "reject")?;
+    if !matches!(prior_resolve, Value::Undefined) || !matches!(prior_reject, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Promise capability executor called more than once",
+        ));
+    }
+    updated.properties.push((
+        "resolve".to_string(),
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+    ));
+    updated.properties.push((
+        "reject".to_string(),
+        arguments.get(1).cloned().unwrap_or(Value::Undefined),
+    ));
+    *cell.borrow_mut() = Value::Object(Rc::new(updated));
+    Ok(Value::Undefined)
 }
 
 const _: () = {
