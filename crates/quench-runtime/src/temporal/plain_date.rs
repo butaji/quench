@@ -319,7 +319,7 @@ fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     let year = field_number(object, "year")? as i64;
     let month = field_number(object, "month")? as i64;
     let day = field_number(object, "day")? as i64;
-    let year = if year >= 0 && year <= 9999 {
+    let year = if (0..=9999).contains(&year) {
         format!("{year:04}")
     } else {
         format!("{year:+07}")
