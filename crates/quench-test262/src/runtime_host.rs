@@ -205,7 +205,7 @@ fn namespace_cell(
     if let Some(namespace) = unit.namespace.borrow().as_ref() {
         return Ok(namespace.clone());
     }
-    let properties = unit
+    let mut properties = unit
         .export_names()
         .iter()
         .filter_map(|name| unit.export_cell(name).map(|cell| (name.clone(), cell)))
@@ -215,7 +215,11 @@ fn namespace_cell(
                 quench_runtime::value::Value::BindingCell(cell.shared()),
             )
         })
-        .collect();
+        .collect::<Vec<_>>();
+    properties.push((
+        "Symbol.toStringTag".to_string(),
+        quench_runtime::value::Value::String("Module".to_string()),
+    ));
     let namespace = ModuleBindingCell::new(quench_runtime::value::Value::object(properties));
     unit.namespace.replace(Some(namespace.clone()));
     Ok(namespace)
