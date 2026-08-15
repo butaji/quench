@@ -38,7 +38,7 @@ pub(crate) fn builtin(
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate
         && crate::conversion::is_callable(&result)
     {
-        return wrap_shadow_function(&result);
+        return wrap_shadow_function(&result, realm);
     }
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && crate::value::is_object(&result) {
         return Err(crate::value::error::throw_type_error(
@@ -48,7 +48,10 @@ pub(crate) fn builtin(
     Ok(result)
 }
 
-fn wrap_shadow_function(target: &Value) -> Result<Value, VmError> {
+fn wrap_shadow_function(
+    target: &Value,
+    realm: Option<crate::ops::RealmId>,
+) -> Result<Value, VmError> {
     let name = match shadow_property(target, "name")? {
         Value::String(value) if !crate::conversion::is_symbol_string(&value) => value,
         _ => String::new(),
@@ -58,7 +61,7 @@ fn wrap_shadow_function(target: &Value) -> Result<Value, VmError> {
         Value::Number(value) if value.is_infinite() && value.is_sign_positive() => value,
         _ => 0.0,
     };
-    let properties = vec![
+    let mut properties = vec![
         ("name".to_string(), Value::String(name.clone())),
         (
             crate::builtins::descriptor_key("name"),
@@ -70,6 +73,9 @@ fn wrap_shadow_function(target: &Value) -> Result<Value, VmError> {
             length_descriptor(length),
         ),
     ];
+    if let Some(realm) = realm.and_then(crate::vm::realm_token) {
+        properties.push(("\0realm".to_string(), realm));
+    }
     Ok(Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
             target: target.clone(),
