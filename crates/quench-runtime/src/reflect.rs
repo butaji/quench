@@ -10,12 +10,12 @@ pub(crate) fn builtin(
         return Ok(Value::Undefined);
     };
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && !is_shadow_realm_receiver(receiver) {
-        return Err(crate::value::error::throw_type_error(
+        return Err(shadow_type_error(
             "ShadowRealm.prototype.evaluate called on incompatible receiver",
         ));
     }
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate && !matches!(value, Value::String(_)) {
-        return Err(crate::value::error::throw_type_error(
+        return Err(shadow_type_error(
             "ShadowRealm.prototype.evaluate requires a string",
         ));
     }
@@ -224,8 +224,13 @@ fn execute_direct_eval(ops: &[crate::ops::Op], strict: bool) -> Result<Value, Vm
 }
 
 fn syntax_error(errors: Vec<String>) -> VmError {
-    VmError::Thrown(crate::builtins::error(
+    let error = crate::builtins::error(
         crate::ops::Builtin::SyntaxError,
         &[Value::String(errors.join("; "))],
+    );
+    VmError::Thrown(crate::builtins::set_property(
+        error,
+        "constructor",
+        Value::Builtin(crate::ops::Builtin::SyntaxError),
     ))
 }
