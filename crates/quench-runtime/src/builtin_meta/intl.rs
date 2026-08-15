@@ -80,32 +80,6 @@ const fn intl_name_group_a_tail(b: Builtin) -> Option<&'static str> {
     }
 }
 
-const fn intl_name_group_b(b: Builtin) -> Option<&'static str> {
-    match b {
-        Builtin::IntlCollatorCompare => Some("Intl.Collator.prototype.compare"),
-        Builtin::IntlCollatorResolvedOptions => Some("Intl.Collator.prototype.resolvedOptions"),
-        Builtin::IntlListFormatFormat => Some("Intl.ListFormat.prototype.format"),
-        Builtin::IntlListFormatFormatToParts => Some("Intl.ListFormat.prototype.formatToParts"),
-        Builtin::IntlListFormatResolvedOptions => Some("Intl.ListFormat.prototype.resolvedOptions"),
-        Builtin::IntlRelativeTimeFormatFormat => Some("Intl.RelativeTimeFormat.prototype.format"),
-        Builtin::IntlRelativeTimeFormatFormatToParts => {
-            Some("Intl.RelativeTimeFormat.prototype.formatToParts")
-        }
-        Builtin::IntlRelativeTimeFormatResolvedOptions => {
-            Some("Intl.RelativeTimeFormat.prototype.resolvedOptions")
-        }
-        Builtin::IntlSegmenterSegment => Some("Intl.Segmenter.prototype.segment"),
-        Builtin::IntlSegmenterSegmentsIterator => Some("%Segments.prototype%[Symbol.iterator]"),
-        Builtin::IntlSegmenterSegmentsContaining => Some("%Segments.prototype%.containing"),
-        Builtin::IntlSegmenterResolvedOptions => Some("Intl.Segmenter.prototype.resolvedOptions"),
-        Builtin::IntlDisplayNamesOf => Some("Intl.DisplayNames.prototype.of"),
-        Builtin::IntlDisplayNamesResolvedOptions => {
-            Some("Intl.DisplayNames.prototype.resolvedOptions")
-        }
-        _ => intl_name_group_b(b),
-    }
-}
-
 const fn intl_fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::IntlGetCanonicalLocales => Some(1.0),

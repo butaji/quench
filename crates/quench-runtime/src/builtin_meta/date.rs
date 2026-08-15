@@ -154,9 +154,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 }
 
 const fn fn_len_get_or_set(b: Builtin) -> Option<f64> {
-    match b {
-        _ => fn_len_getters(b),
-    }
+    fn_len_getters(b)
 }
 
 #[rustfmt::skip]
