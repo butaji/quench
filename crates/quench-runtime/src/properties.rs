@@ -174,7 +174,7 @@ pub(crate) fn execute_set_property(
     if crate::vm::is_global_object(&target) && crate::with_scope::set_if_bound(&key, &value)? {
         return Ok(());
     }
-    if key == "stack" && inherits_error_prototype(&target) {
+    if key == "stack" && (inherits_error_prototype(&target) || crate::vm::has_error_slot(&target)) {
         crate::vm::execute_builtin_with_receiver(
             crate::ops::Builtin::ErrorPrototypeStackSetter,
             &[value],
