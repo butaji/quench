@@ -318,6 +318,16 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         Value::Null => Err(crate::value::error::throw_type_error(
             "Cannot convert null to object",
         )),
+        Value::String(value) if crate::conversion::is_symbol_string(value) => {
+            let boxed = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+                ("_value".to_string(), locales.clone()),
+                (
+                    "\0prototype".to_string(),
+                    Value::Builtin(crate::ops::Builtin::SymbolPrototype),
+                ),
+            ])));
+            resolve_locale_object(&boxed)
+        }
         Value::String(_) => Ok(vec![canonicalize(&to_string_value(locales))?]),
         Value::Array(values) => {
             let mut out = Vec::new();
@@ -326,32 +336,31 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
             }
             Ok(dedupe(out))
         }
-        Value::Object(properties) => {
-            let length = properties
-                .iter()
-                .find_map(|(key, value)| {
-                    (key == "length").then(|| match value {
-                        Value::Number(number) => (*number).max(0.0).trunc() as usize,
-                        _ => 0,
-                    })
-                })
-                .unwrap_or(0);
-            let mut out = Vec::new();
-            for index in 0..length {
-                if let Some((_, value)) =
-                    properties.iter().find(|(key, _)| key == &index.to_string())
-                {
-                    out.push(canonicalize(&crate::conversion::to_string(value)?)?);
-                }
-            }
-            if out.is_empty() {
-                Ok(vec![default_locale()])
-            } else {
-                Ok(dedupe(out))
-            }
-        }
+        Value::Object(_) | Value::Proxy(_) => resolve_locale_object(locales),
         _ => Ok(vec![default_locale()]),
     }
+}
+
+fn resolve_locale_object(locales: &Value) -> Result<Vec<String>, VmError> {
+    let length =
+        crate::conversion::to_number(&crate::execute::get_property_result(locales, "length")?)?;
+    let length = if !length.is_finite() || length <= 0.0 {
+        0
+    } else {
+        length.min(usize::MAX as f64).trunc() as usize
+    };
+    let mut out = Vec::new();
+    for index in 0..length {
+        let value = crate::execute::get_property_result(locales, &index.to_string())?;
+        if !matches!(value, Value::Undefined) {
+            out.push(canonicalize(&crate::conversion::to_string(&value)?)?);
+        }
+    }
+    Ok(if out.is_empty() {
+        vec![default_locale()]
+    } else {
+        dedupe(out)
+    })
 }
 
 pub(crate) fn default_locale() -> String {
