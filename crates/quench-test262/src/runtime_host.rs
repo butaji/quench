@@ -191,8 +191,8 @@ impl LinkedModuleGraph {
                 completed.insert(*id);
                 progressed = true;
             }
-            self.resume_async_modules_once()?;
-            if !progressed && !self.has_pending_async() {
+            self.resume_async_modules_once(&order)?;
+            if !progressed && !self.has_pending_async(&order) {
                 for id in &order {
                     if completed.insert(*id) {
                         self.units
@@ -203,8 +203,8 @@ impl LinkedModuleGraph {
                 }
             }
         }
-        while self.has_pending_async() {
-            self.resume_async_modules_once()?;
+        while self.has_pending_async(&order) {
+            self.resume_async_modules_once(&order)?;
         }
         Ok(())
     }
@@ -217,19 +217,23 @@ impl LinkedModuleGraph {
         })
     }
 
-    fn resume_async_modules_once(&self) -> Result<(), String> {
-        for unit in self.units.values() {
-            if unit.async_next.get().is_some() {
-                unit.resume_async()?;
+    fn resume_async_modules_once(&self, order: &[ModuleId]) -> Result<(), String> {
+        for id in order {
+            if let Some(unit) = self.units.get(id) {
+                if unit.async_next.get().is_some() {
+                    unit.resume_async()?;
+                }
             }
         }
         Ok(())
     }
 
-    fn has_pending_async(&self) -> bool {
-        self.units
-            .values()
-            .any(|unit| unit.async_next.get().is_some())
+    fn has_pending_async(&self, order: &[ModuleId]) -> bool {
+        order.iter().any(|id| {
+            self.units
+                .get(id)
+                .is_some_and(|unit| unit.async_next.get().is_some())
+        })
     }
 
     pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
