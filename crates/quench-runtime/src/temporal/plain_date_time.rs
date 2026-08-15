@@ -78,16 +78,64 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     if !crate::value::is_object(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
-    let fields = NAMES
-        .iter()
-        .map(|name| crate::execute::get_property_result(value, name))
-        .collect::<Result<Vec<_>, _>>()?;
-    if fields.iter().any(|field| matches!(field, Value::Undefined)) {
+    let year = crate::execute::get_property_result(value, "year")?;
+    let day = crate::execute::get_property_result(value, "day")?;
+    let month = crate::execute::get_property_result(value, "month")?;
+    let month_code = crate::execute::get_property_result(value, "monthCode")?;
+    if matches!(year, Value::Undefined)
+        || matches!(day, Value::Undefined)
+        || (matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined))
+    {
         return Err(crate::value::error::throw_type_error(
             "Missing date-time field",
         ));
     }
+    let month = if matches!(month, Value::Undefined) {
+        month_code_number(&month_code)?
+    } else {
+        month
+    };
+    if !matches!(month_code, Value::Undefined)
+        && crate::conversion::to_number(&month)?
+            != crate::conversion::to_number(&month_code_number(&month_code)?)?
+    {
+        return Err(crate::value::error::throw_range_error("Month mismatch"));
+    }
+    let calendar = crate::execute::get_property_result(value, "calendar")?;
+    if !matches!(calendar, Value::Undefined) {
+        validate_calendar(&calendar)?;
+    }
+    let mut fields = vec![year, month, day];
+    for name in &NAMES[3..] {
+        let field = crate::execute::get_property_result(value, name)?;
+        fields.push(if matches!(field, Value::Undefined) {
+            Value::Number(0.0)
+        } else {
+            field
+        });
+    }
     construct(&fields)
+}
+
+fn month_code_number(value: &Value) -> Result<Value, VmError> {
+    let Value::String(code) = value else {
+        return Err(crate::value::error::throw_range_error("Invalid monthCode"));
+    };
+    code.strip_prefix('M')
+        .and_then(|value| value.parse::<f64>().ok())
+        .map(Value::Number)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))
+}
+
+fn validate_calendar(value: &Value) -> Result<(), VmError> {
+    let Value::String(calendar) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    };
+    if calendar.eq_ignore_ascii_case("iso8601") {
+        Ok(())
+    } else {
+        Err(crate::value::error::throw_range_error("Invalid calendar"))
+    }
 }
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
