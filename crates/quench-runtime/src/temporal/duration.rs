@@ -83,6 +83,7 @@ fn combine(
     for (index, name) in names.iter().enumerate() {
         values[index] = number(left, name) + direction * number(&right, name);
     }
+    let largest_time_unit = (4..10).find(|index| values[*index] != 0.0).unwrap_or(10);
     values[3] += (values[4] / 24.0).trunc();
     values[4] %= 24.0;
     let time = values[4] * 3_600_000_000_000.0
@@ -91,9 +92,17 @@ fn combine(
         + values[7] * 1_000_000.0
         + values[8] * 1_000.0
         + values[9];
-    values[4] = (time / 3_600_000_000_000.0).trunc();
+    values[4] = if largest_time_unit <= 4 {
+        (time / 3_600_000_000_000.0).trunc()
+    } else {
+        0.0
+    };
     let remainder = time - values[4] * 3_600_000_000_000.0;
-    values[5] = (remainder / 60_000_000_000.0).trunc();
+    values[5] = if largest_time_unit <= 5 {
+        (remainder / 60_000_000_000.0).trunc()
+    } else {
+        0.0
+    };
     let remainder = remainder - values[5] * 60_000_000_000.0;
     values[6] = (remainder / 1_000_000_000.0).trunc();
     let remainder = remainder - values[6] * 1_000_000_000.0;
