@@ -60,6 +60,7 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::RegExp => Some("RegExp"),
         Builtin::String => Some("String"),
         Builtin::Symbol => Some("Symbol"),
+        Builtin::ShadowRealm => Some("ShadowRealm"),
         Builtin::TypeError
         | Builtin::Error
         | Builtin::RangeError
