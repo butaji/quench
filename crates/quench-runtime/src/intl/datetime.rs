@@ -274,6 +274,7 @@ impl DateTimeOptions {
         }
         formatter.apply_defaults();
         formatter.validate_styles()?;
+        formatter.resolve_styles();
         formatter.resolve_hour();
         Ok(formatter)
     }
@@ -433,6 +434,40 @@ impl DateTimeOptions {
             self.hour12 = Some(true);
         } else if let Some(cycle) = self.component_value("hourCycle") {
             self.hour12 = Some(cycle.starts_with("h1"));
+        }
+    }
+
+    fn resolve_styles(&mut self) {
+        if let Some(style) = self.component_value("dateStyle").map(str::to_owned) {
+            let month = match style.as_str() {
+                "short" => "numeric",
+                "medium" => "short",
+                _ => "long",
+            };
+            let year = if style == "short" {
+                "2-digit"
+            } else {
+                "numeric"
+            };
+            self.set_component("year", year.to_string());
+            self.set_component("month", month.to_string());
+            self.set_component("day", "numeric".to_string());
+            if style == "full" {
+                self.set_component("weekday", "long".to_string());
+            }
+        }
+        if let Some(style) = self.component_value("timeStyle").map(str::to_owned) {
+            self.set_component("hour", "numeric".to_string());
+            self.set_component("minute", "2-digit".to_string());
+            if style != "short" {
+                self.set_component("second", "2-digit".to_string());
+            }
+            if matches!(style.as_str(), "long" | "full") {
+                self.set_component("timeZoneName", "short".to_string());
+            }
+            if style == "full" {
+                self.set_component("timeZoneName", "long".to_string());
+            }
         }
     }
 
@@ -827,6 +862,9 @@ fn has_fraction(slots: &[(String, Value)]) -> bool {
 }
 
 fn time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    if slot_string(slots, "hour").is_some() && slot_string(slots, "minute").is_some() {
+        return full_time_parts(slots, number);
+    }
     if slot_string(slots, "minute").is_none() || slot_string(slots, "second").is_none() {
         return None;
     }
@@ -848,6 +886,45 @@ fn time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
     Some(parts)
 }
 
+fn full_time_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    let date = date_time(slots, number)?;
+    let hour12 = super::slot_bool(slots, "hour12").unwrap_or(false);
+    let hour = if hour12 {
+        match date.hour() % 12 {
+            0 => 12,
+            value => value,
+        }
+    } else {
+        date.hour()
+    };
+    let mut parts = vec![
+        component_part("hour", &format_hour(slots, hour)),
+        literal_part(":"),
+        component_part("minute", &format!("{:02}", date.minute())),
+    ];
+    if slot_string(slots, "second").is_some() {
+        parts.extend([
+            literal_part(":"),
+            component_part("second", &format!("{:02}", date.second())),
+        ]);
+    }
+    if hour12 {
+        parts.extend([
+            literal_part(" "),
+            component_part("dayPeriod", if date.hour() < 12 { "AM" } else { "PM" }),
+        ]);
+    }
+    Some(parts)
+}
+
+fn format_hour(slots: &[(String, Value)], hour: u32) -> String {
+    if slot_string(slots, "hour") == Some("2-digit".to_string()) {
+        format!("{hour:02}")
+    } else {
+        hour.to_string()
+    }
+}
+
 fn format_number(slots: &[(String, Value)], number: f64) -> String {
     let value = raw_format_number(slots, number);
     localize_number(slots, &value)
@@ -860,6 +937,12 @@ fn raw_format_number(slots: &[(String, Value)], number: f64) -> String {
     if let Some(value) = proleptic_year_format(slots, number) {
         return value;
     }
+    if let Some(value) = date_time_style_format(slots, number) {
+        return value;
+    }
+    if let Some(value) = time_style_format(slots, number) {
+        return value;
+    }
     if let Some(value) = fractional_format(slots, number) {
         return value;
     }
@@ -867,6 +950,44 @@ fn raw_format_number(slots: &[(String, Value)], number: f64) -> String {
         return value;
     }
     range_text(number)
+}
+
+fn date_time_style_format(slots: &[(String, Value)], number: f64) -> Option<String> {
+    let style = slot_string(slots, "dateStyle")?;
+    slot_string(slots, "timeStyle")?;
+    let date = date_time(slots, number)?;
+    let date_text = format_us_date(slots, &date, Some(style));
+    let time_text = time_style_format(slots, number)?;
+    Some(format!("{date_text}, {time_text}"))
+}
+
+fn time_style_format(slots: &[(String, Value)], number: f64) -> Option<String> {
+    slot_string(slots, "timeStyle")?;
+    let parts = full_time_parts(slots, number)?;
+    let mut text = parts.iter().filter_map(part_value).collect::<String>();
+    if let Some(zone) = slot_string(slots, "timeZoneName") {
+        text.push(' ');
+        text.push_str(if zone == "long" {
+            "Coordinated Universal Time"
+        } else {
+            "UTC"
+        });
+    }
+    Some(text)
+}
+
+fn part_value(value: &Value) -> Option<&str> {
+    let Value::Object(properties) = value else {
+        return None;
+    };
+    properties.iter().rev().find_map(|(key, value)| {
+        (key == "value")
+            .then_some(value)
+            .and_then(|value| match value {
+                Value::String(value) => Some(value.as_str()),
+                _ => None,
+            })
+    })
 }
 
 fn localize_number(slots: &[(String, Value)], value: &str) -> String {
