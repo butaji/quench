@@ -24,6 +24,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                         notation = text;
                     }
                     "compactDisplay" => {
+                        if matches!(value, Value::Undefined) {
+                            continue;
+                        }
                         if !matches!(text.as_str(), "short" | "long") {
                             return Err(runtime_error("RangeError: invalid compactDisplay"));
                         }
@@ -120,16 +123,7 @@ fn select(number: f64, plural_type: &str, locale: &str) -> String {
     if locale.starts_with("ar") {
         return arabic_cardinal(number);
     }
-    if number == 1.0 {
-        "one"
-    } else if number == 2.0 {
-        "two"
-    } else if number == 0.0 {
-        "zero"
-    } else {
-        "other"
-    }
-    .to_string()
+    if number == 1.0 { "one" } else { "other" }.to_string()
 }
 
 fn russian_cardinal(number: f64) -> String {

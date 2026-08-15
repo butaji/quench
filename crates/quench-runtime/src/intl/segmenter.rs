@@ -7,11 +7,14 @@ use crate::{
     value::{IteratorData, IteratorState, Value},
 };
 
-use super::{default_locale, make_object, resolve_locales, runtime_error, slot_string, SLOT};
+use super::{
+    default_locale, make_object, resolve_locales, runtime_error, select_supported_locale,
+    slot_string, supported_segmenter_locale, SLOT,
+};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let locale = select_supported_locale(&locales, supported_segmenter_locale);
     let mut granularity = "grapheme".to_string();
     if matches!(arguments.get(1), Some(Value::Null)) {
         return Err(crate::value::error::throw_type_error(
@@ -201,7 +204,10 @@ fn word_segments(text: &str) -> Vec<Value> {
 
 fn decimal_point(text: &str, index: usize, character: char) -> bool {
     character == '.'
-        && text[..index].chars().next_back().is_some_and(|value| value.is_ascii_digit())
+        && text[..index]
+            .chars()
+            .next_back()
+            .is_some_and(|value| value.is_ascii_digit())
         && text[index + character.len_utf8()..]
             .chars()
             .next()

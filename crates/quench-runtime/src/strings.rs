@@ -186,16 +186,16 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringToWellFormed => to_well_formed(receiver),
         crate::ops::Builtin::StringStartsWith => starts_with(receiver, arguments),
         crate::ops::Builtin::StringEndsWith => ends_with(receiver, arguments),
-        crate::ops::Builtin::StringRepeat => Ok(repeat(receiver, arguments)),
+        crate::ops::Builtin::StringRepeat => repeat(receiver, arguments),
         crate::ops::Builtin::StringTrim => trim(receiver),
         crate::ops::Builtin::StringToLowerCase => Ok(to_lower_case(receiver)),
         crate::ops::Builtin::StringToUpperCase => Ok(to_upper_case(receiver)),
-        crate::ops::Builtin::StringCharAt => Ok(char_at(receiver, arguments)),
-        crate::ops::Builtin::StringCharCodeAt => Ok(char_code_at(receiver, arguments)),
+        crate::ops::Builtin::StringCharAt => char_at(receiver, arguments),
+        crate::ops::Builtin::StringCharCodeAt => char_code_at(receiver, arguments),
         crate::ops::Builtin::StringIndexOf => index_of(receiver, arguments),
         crate::ops::Builtin::StringLastIndexOf => last_index_of(receiver, arguments),
-        crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
-        crate::ops::Builtin::StringSubstring => Ok(substring(receiver, arguments)),
+        crate::ops::Builtin::StringSlice => slice(receiver, arguments),
+        crate::ops::Builtin::StringSubstring => substring(receiver, arguments),
         crate::ops::Builtin::StringConcat => concat(receiver, arguments),
         crate::ops::Builtin::StringSplit => split(receiver, arguments),
         crate::ops::Builtin::StringPadStart => Ok(pad_start(receiver, arguments)),
@@ -226,7 +226,9 @@ fn is_well_formed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmE
     if let Some(Value::StringUnits(units)) = receiver {
         return Ok(Value::Boolean(units_well_formed(units)));
     }
-    let value = string_receiver(receiver)?;
+    let Some(Value::String(value)) = receiver else {
+        return Ok(Value::String(String::new()));
+    };
     let units: Vec<u16> = value.encode_utf16().collect();
     Ok(Value::Boolean(units_well_formed(&units)))
 }
@@ -260,12 +262,22 @@ fn string_receiver(receiver: Option<&Value>) -> Result<String, crate::execute::V
     crate::conversion::to_string(value)
 }
 
-pub(crate) fn repeat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::String(value)) = receiver else {
-        return Value::String(String::new());
-    };
-    let count = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    Value::String(value.repeat(count))
+pub(crate) fn repeat(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = string_receiver(receiver)?;
+    let count = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    if count.is_infinite() || count < 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid count value",
+        ));
+    }
+    Ok(Value::String(value.repeat(count.trunc() as usize)))
 }
 
 pub(crate) fn to_lower_case(receiver: Option<&Value>) -> Value {
@@ -282,27 +294,39 @@ pub(crate) fn to_upper_case(receiver: Option<&Value>) -> Value {
     Value::String(value.to_uppercase())
 }
 
-pub(crate) fn char_at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+pub(crate) fn char_at(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    string_receiver(receiver)?;
     let Some(units) = receiver.and_then(units_of) else {
-        return Value::String(String::new());
+        return Ok(Value::String(String::new()));
     };
     let index = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    char_at_units(&units, index).unwrap_or_else(|| Value::String(String::new()))
+    Ok(char_at_units(&units, index).unwrap_or_else(|| Value::String(String::new())))
 }
 
-pub(crate) fn char_code_at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+pub(crate) fn char_code_at(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    string_receiver(receiver)?;
     let Some(units) = receiver.and_then(units_of) else {
-        return Value::Number(f64::NAN);
+        return Ok(Value::Number(f64::NAN));
     };
     let index = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    units
+    Ok(units
         .get(index)
-        .map_or(Value::Number(f64::NAN), |unit| Value::Number(*unit as f64))
+        .map_or(Value::Number(f64::NAN), |unit| Value::Number(*unit as f64)))
 }
 
-pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+pub(crate) fn slice(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    string_receiver(receiver)?;
     let Some(units) = receiver.and_then(units_of) else {
-        return Value::String(String::new());
+        return Ok(Value::String(String::new()));
     };
     let length = units.len() as isize;
     let start = string_index(arguments.first(), length);
@@ -310,12 +334,16 @@ pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         .get(1)
         .map_or(length, |value| string_index(Some(value), length));
     let range = start.min(end) as usize..end.max(start) as usize;
-    from_units(units[range].to_vec())
+    Ok(from_units(units[range].to_vec()))
 }
 
-pub(crate) fn substring(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+pub(crate) fn substring(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    string_receiver(receiver)?;
     let Some(units) = receiver.and_then(units_of) else {
-        return Value::String(String::new());
+        return Ok(Value::String(String::new()));
     };
     let length = units.len() as isize;
     let start = substring_index(arguments.first(), length);
@@ -323,7 +351,7 @@ pub(crate) fn substring(receiver: Option<&Value>, arguments: &[Value]) -> Value 
         .get(1)
         .map_or(length, |value| substring_index(Some(value), length));
     let range = start.min(end) as usize..end.max(start) as usize;
-    from_units(units[range].to_vec())
+    Ok(from_units(units[range].to_vec()))
 }
 
 fn string_index(value: Option<&Value>, length: isize) -> isize {
@@ -413,10 +441,12 @@ pub(crate) fn replace(
     arguments: &[Value],
     all: bool,
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::String(value)) = receiver else {
-        return Ok(Value::String(String::new()));
-    };
-    let pattern = arguments.first().map_or_else(String::new, to_string);
+    let value = string_receiver(receiver)?;
+    let pattern = arguments
+        .first()
+        .map(crate::conversion::to_string)
+        .transpose()?
+        .unwrap_or_default();
     let Some(replacement) = arguments.get(1) else {
         let result = if all {
             value.replace(&pattern, "")
@@ -426,9 +456,9 @@ pub(crate) fn replace(
         return Ok(Value::String(result));
     };
     let result = if crate::conversion::is_callable(replacement) {
-        apply_callable_replacement(value, pattern, replacement, all)?
+        apply_callable_replacement(&value, pattern, replacement, all)?
     } else {
-        let template = to_string(replacement);
+        let template = crate::conversion::to_string(replacement)?;
         if all {
             value.replace(&pattern, &template)
         } else {

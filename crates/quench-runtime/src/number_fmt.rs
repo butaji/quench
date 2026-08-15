@@ -16,7 +16,11 @@ pub(crate) fn number_format(
     let number = if number == 0.0 { 0.0 } else { number };
     if !number.is_finite() {
         if let Some(value) = digits.filter(|value| !matches!(value, Value::Undefined)) {
-            let _ = crate::conversion::to_number(value)?;
+            if builtin == Builtin::NumberToFixed {
+                let _ = to_digits(value)?;
+            } else {
+                let _ = crate::conversion::to_number(value)?;
+            }
         }
         return Ok(Value::String(crate::conversion::number_to_string(number)));
     }

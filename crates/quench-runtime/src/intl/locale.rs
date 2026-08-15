@@ -2,7 +2,7 @@
 
 use crate::{execute::VmError, value::Value};
 
-use super::{canonicalize, make_array, make_object, runtime_error, slot_string, to_string_value};
+use super::{canonicalize, make_array, make_object, runtime_error, slot_string};
 
 pub(crate) struct Locale {
     pub language: String,
@@ -45,7 +45,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn locale_tag(value: &Value) -> Result<String, VmError> {
     match value {
-        Value::String(_) | Value::Object(_) => Ok(to_string_value(value)),
+        Value::String(_) | Value::Object(_) => crate::conversion::to_string(value),
         _ => Err(runtime_error("TypeError: locale tag must be a string")),
     }
 }
@@ -116,7 +116,7 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
     }
 }
 
-fn calendar_alias(value: &str) -> String {
+pub(crate) fn calendar_alias(value: &str) -> String {
     match value {
         "islamicc" => "islamic-civil".to_string(),
         other => canonicalize(other).unwrap_or_else(|_| other.to_string()),
@@ -129,15 +129,28 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "Cannot convert null or undefined to object",
         ));
     }
-    let Some(Value::Object(properties)) = options else {
+    let Some(Value::Object(_)) = options else {
         return Ok(locale);
     };
-    for (key, value) in properties.iter() {
+    for key in [
+        "language",
+        "script",
+        "region",
+        "variants",
+        "calendar",
+        "collation",
+        "hourCycle",
+        "caseFirst",
+        "numeric",
+        "numberingSystem",
+        "firstDayOfWeek",
+    ] {
+        let value = crate::execute::get_property_result(options.unwrap(), key)?;
         if matches!(value, Value::Undefined) {
             continue;
         }
-        let text = crate::conversion::to_string(value)?;
-        match key.as_str() {
+        let text = crate::conversion::to_string(&value)?;
+        match key {
             "calendar" => {
                 let value = option_value(&text, "calendar")?;
                 locale.calendar = Some(calendar_alias(&value));
@@ -148,11 +161,20 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "numberingSystem" => {
                 locale.numbering_system = Some(option_value(&text, "numberingSystem")?)
             }
-            "numeric" => locale.numeric = normalize_numeric(value, &text)?,
+            "numeric" => locale.numeric = normalize_numeric(&value, &text)?,
             "firstDayOfWeek" => {
                 let _ = option_value(&text, "firstDayOfWeek")?;
             }
-            "language" | "region" | "script" | "variants" => {
+            "language" => {
+                locale.language = canonicalize(&option_value(&text, key)?)?
+                    .split('-')
+                    .next()
+                    .unwrap_or(&text)
+                    .to_string()
+            }
+            "region" => locale.region = Some(option_value(&text, key)?.to_ascii_uppercase()),
+            "script" => locale.script = Some(text),
+            "variants" => {
                 let _ = option_value(&text, key)?;
             }
             _ => {}
@@ -422,9 +444,13 @@ fn maximize(tag: &str) -> String {
         .map_or((tag, String::new()), |(a, b)| (a, format!("-u{b}")));
     let parts: Vec<&str> = base.split('-').collect();
     let script = parts.iter().skip(1).find(|part| part.len() == 4).copied();
-    let region = parts.iter().skip(1).find(|part| {
-        part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
-    }).copied();
+    let region = parts
+        .iter()
+        .skip(1)
+        .find(|part| {
+            part.len() == 2 || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
+        })
+        .copied();
     let language = if parts.first().copied() == Some("und") {
         undefined_language(script, region)
     } else {

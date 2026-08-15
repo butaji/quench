@@ -377,16 +377,30 @@ pub(crate) fn array_to_locale_string(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(Value::Array(values)) = receiver else {
+    let Some(receiver) = receiver.filter(|value| !matches!(value, Value::Null | Value::Undefined))
+    else {
         return Err(crate::value::error::throw_type_error(
-            "Array.prototype.toLocaleString called on non-array",
+            "Array.prototype.toLocaleString called on null or undefined",
         ));
     };
     let locales = resolve_locales(arguments)?;
     let options = arguments.get(1);
+    let length = crate::execute::get_property_result(receiver, "length")?;
+    let length = crate::conversion::to_number(&length)?;
+    let length = if length.is_finite() && length > 0.0 {
+        length.floor().min(usize::MAX as f64) as usize
+    } else {
+        0
+    };
     let mut parts = Vec::new();
-    for value in values.iter() {
-        parts.push(element_to_locale_string(value, &locales, options)?);
+    for index in 0..length {
+        let value = crate::execute::get_property_result(receiver, &index.to_string())?;
+        parts.push(element_to_locale_string(
+            &value,
+            &locales,
+            arguments.first(),
+            options,
+        )?);
     }
     Ok(Value::String(parts.join(",")))
 }
@@ -412,23 +426,24 @@ pub(crate) fn dispatch(
 fn element_to_locale_string(
     value: &Value,
     locales: &[String],
+    original_locales: Option<&Value>,
     options: Option<&Value>,
 ) -> Result<String, VmError> {
     match value {
         Value::Number(number) => Ok(format_number(*number, locales, options)),
         Value::Null | Value::Undefined => Ok(String::new()),
-        _ => locale_element_call(value, locales, options),
+        _ => locale_element_call(value, original_locales, options),
     }
 }
 
 fn locale_element_call(
     value: &Value,
-    locales: &[String],
+    original_locales: Option<&Value>,
     options: Option<&Value>,
 ) -> Result<String, VmError> {
     let method = crate::execute::get_property_result(value, "toLocaleString")?;
     if !matches!(method, Value::Undefined | Value::Null) {
-        let locale_value = Value::array(locales.iter().cloned().map(Value::String).collect());
+        let locale_value = original_locales.cloned().unwrap_or(Value::Undefined);
         let mut arguments = vec![locale_value];
         if let Some(options) = options {
             arguments.push(options.clone());
