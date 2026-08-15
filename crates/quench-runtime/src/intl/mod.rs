@@ -338,18 +338,28 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
-                if !matches!(value, Value::String(_)) {
-                    return Err(crate::value::error::throw_type_error(
-                        "locale list elements must be strings",
-                    ));
-                }
-                out.push(canonicalize(&to_string_value(value))?);
+                out.push(canonical_locale_element(value)?);
             }
             Ok(dedupe(out))
         }
         Value::Object(_) | Value::Proxy(_) => resolve_locale_object(locales),
         _ => Ok(vec![default_locale()]),
     }
+}
+
+fn canonical_locale_element(value: &Value) -> Result<String, VmError> {
+    if let Some(full) = intl_slots(Some(value))
+        .ok()
+        .and_then(|slots| slot_string(&slots, "full"))
+    {
+        return Ok(full);
+    }
+    if matches!(value, Value::String(_)) {
+        return canonicalize(&to_string_value(value));
+    }
+    Err(crate::value::error::throw_type_error(
+        "locale list elements must be strings",
+    ))
 }
 
 fn resolve_locale_object(locales: &Value) -> Result<Vec<String>, VmError> {
