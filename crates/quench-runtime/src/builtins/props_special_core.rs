@@ -134,7 +134,6 @@ fn special_match_error_tail(builtin: Builtin, key: &str) -> Option<Value> {
         (ErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
         (ErrorPrototype, "name") => Some(Value::String("Error".to_string())),
         (ErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (ErrorPrototype, "cause") => Some(Value::Undefined),
         (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
         (AggregateError, "prototype") => Some(Value::Builtin(AggregateErrorPrototype)),
         (AggregateErrorPrototype, "name") => Some(Value::String("AggregateError".to_string())),
