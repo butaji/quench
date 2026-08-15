@@ -133,47 +133,71 @@ fn reduce_element_list(
     locals: &HashMap<String, u16>,
 ) -> Option<Vec<Op>> {
     let mut static_fields = Vec::new();
+    let mut context = ClassElementContext {
+        prototype,
+        constructor,
+        ops,
+        facts,
+        next,
+        locals,
+        static_fields: &mut static_fields,
+    };
     for element in &class.body.body {
-        reduce_class_element(
-            element,
-            prototype,
-            constructor,
-            ops,
-            facts,
-            next,
-            locals,
-            &mut static_fields,
-        )?;
+        reduce_class_element(element, &mut context)?;
     }
     Some(static_fields)
 }
 
-fn reduce_class_element(
-    element: &ClassElement<'_>,
+struct ClassElementContext<'a> {
     prototype: u16,
     constructor: u16,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next: &mut u16,
-    locals: &HashMap<String, u16>,
-    static_fields: &mut Vec<Op>,
+    ops: &'a mut Vec<Op>,
+    facts: &'a mut ProgramDb,
+    next: &'a mut u16,
+    locals: &'a HashMap<String, u16>,
+    static_fields: &'a mut Vec<Op>,
+}
+
+fn reduce_class_element(
+    element: &ClassElement<'_>,
+    context: &mut ClassElementContext<'_>,
 ) -> Option<()> {
     match element {
         ClassElement::StaticBlock(block) => {
-            static_fields.push(reduce_static_block(block, constructor, facts, locals)?);
+            context.static_fields.push(reduce_static_block(
+                block,
+                context.constructor,
+                context.facts,
+                context.locals,
+            )?);
         }
         ClassElement::MethodDefinition(method) => {
-            reduce_class_method(method, prototype, constructor, ops, facts, next, locals)?;
+            reduce_class_method(method, context)?;
         }
         ClassElement::PropertyDefinition(field)
             if !matches!(field.key, PropertyKey::PrivateIdentifier(_)) =>
         {
-            reduce_public_field(field, constructor, ops, static_fields, facts, next, locals)?;
+            reduce_public_field(
+                field,
+                context.constructor,
+                context.ops,
+                context.static_fields,
+                context.facts,
+                context.next,
+                context.locals,
+            )?;
         }
         ClassElement::PropertyDefinition(field)
             if matches!(field.key, PropertyKey::PrivateIdentifier(_)) =>
         {
-            reduce_private_field(field, constructor, ops, static_fields, facts, locals)?;
+            reduce_private_field(
+                field,
+                context.constructor,
+                context.ops,
+                context.static_fields,
+                context.facts,
+                context.locals,
+            )?;
         }
         _ => {}
     }
@@ -209,28 +233,43 @@ fn reduce_static_block(
 
 fn reduce_class_method(
     method: &MethodDefinition<'_>,
-    prototype: u16,
-    constructor: u16,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next: &mut u16,
-    locals: &HashMap<String, u16>,
+    context: &mut ClassElementContext<'_>,
 ) -> Option<()> {
     if method.kind == MethodDefinitionKind::Constructor {
         return Some(());
     }
     if let PropertyKey::PrivateIdentifier(name) = &method.key {
-        return reduce_private_method(method, name, constructor, ops, facts, next, locals);
+        return reduce_private_method(
+            method,
+            name,
+            context.constructor,
+            context.ops,
+            context.facts,
+            context.next,
+            context.locals,
+        );
     }
-    let key = reduce_method_key(method, ops, facts, next, locals)?;
-    let value = reduce_method(method, ops, facts, next, locals)?;
-    set_method_name(ops, method, value, key)?;
+    let key = reduce_method_key(
+        method,
+        context.ops,
+        context.facts,
+        context.next,
+        context.locals,
+    )?;
+    let value = reduce_method(
+        method,
+        context.ops,
+        context.facts,
+        context.next,
+        context.locals,
+    )?;
+    set_method_name(context.ops, method, value, key)?;
     let target = if method.r#static {
-        constructor
+        context.constructor
     } else {
-        prototype
+        context.prototype
     };
-    define_method(ops, target, key, value, method.kind);
+    define_method(context.ops, target, key, value, method.kind);
     Some(())
 }
 
