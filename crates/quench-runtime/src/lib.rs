@@ -87,6 +87,7 @@ mod strings;
 mod super_scope;
 mod switch;
 mod templates;
+mod temporal;
 mod transparent;
 mod typed_array_base64;
 mod typed_array_ops;

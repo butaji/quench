@@ -554,9 +554,24 @@ fn receiver_property(value: &Value, key: &str, _receiver: &Value) -> Value {
             Builtin::IntlNumberFormatFormatToParts
                 | Builtin::IntlNumberFormatFormatRange
                 | Builtin::IntlNumberFormatFormatRangeToParts
-                | Builtin::IntlDurationFormatFormat
-                | Builtin::IntlDurationFormatFormatToParts
-                | Builtin::IntlDurationFormatResolvedOptions
+                | Builtin::IntlCollator
+                | Builtin::IntlDateTimeFormat
+                | Builtin::IntlDisplayNames
+                | Builtin::IntlListFormat
+                | Builtin::IntlLocale
+                | Builtin::IntlNumberFormat
+                | Builtin::IntlPluralRules
+                | Builtin::IntlRelativeTimeFormat
+                | Builtin::IntlSegmenter
+                | Builtin::IntlPluralRulesSelect
+                | Builtin::IntlPluralRulesSelectRange
+                | Builtin::IntlPluralRulesResolvedOptions
+                | Builtin::IntlRelativeTimeFormatFormat
+                | Builtin::IntlRelativeTimeFormatFormatToParts
+                | Builtin::IntlRelativeTimeFormatResolvedOptions
+                | Builtin::IntlSegmenterSegmentsIterator
+                | Builtin::IntlSegmenterSegmentsContaining
+                | Builtin::IntlSegmenterResolvedOptions
         )
     ) {
         return property;

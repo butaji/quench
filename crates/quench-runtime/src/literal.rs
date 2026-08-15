@@ -20,11 +20,7 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
             fact: FactConstant::Boolean(boolean.value),
             op: Constant::Boolean(boolean.value),
         }),
-        Expression::StringLiteral(string) => Some(Literal {
-            span: string.span,
-            fact: FactConstant::String(string.value.to_string()),
-            op: string_constant(string),
-        }),
+        Expression::StringLiteral(string) => string_literal(string.span, string.value.as_str()),
         Expression::NullLiteral(null) => Some(Literal {
             span: null.span,
             fact: FactConstant::Null,
@@ -45,16 +41,48 @@ pub(crate) fn reduce_literal(expression: &Expression<'_>) -> Option<Literal> {
     }
 }
 
-fn string_constant(string: &oxc::ast::ast::StringLiteral<'_>) -> Constant {
-    let raw = string.raw.as_ref().map_or("", |raw| raw.as_str());
-    let body = raw
-        .strip_prefix(['\'', '"'])
-        .and_then(|value| value.strip_suffix(['\'', '"']))
-        .unwrap_or(raw);
-    match crate::strings::decode_surrogate_escapes(body) {
-        crate::value::Value::StringUnits(units) => Constant::StringUnits((*units).clone()),
-        _ => Constant::String(string.value.to_string()),
+fn string_literal(span: Span, value: &str) -> Option<Literal> {
+    let op = unicode_escape_constant(value).unwrap_or_else(|| Constant::String(value.to_string()));
+    Some(Literal {
+        span,
+        fact: FactConstant::String(value.to_string()),
+        op,
+    })
+}
+
+fn unicode_escape_constant(value: &str) -> Option<Constant> {
+    if !value.contains("\\u") {
+        return None;
     }
+    let mut units = Vec::new();
+    let mut chars = value.chars().peekable();
+    let mut changed = false;
+    while let Some(character) = chars.next() {
+        if character == '\\' && chars.peek() == Some(&'u') {
+            chars.next();
+            let digits: String = chars.by_ref().take(4).collect();
+            if let Ok(code) = u16::from_str_radix(&digits, 16) {
+                if (0xd800..=0xdfff).contains(&code) && units.last() == Some(&('\\' as u16)) {
+                    units.pop();
+                }
+                units.push(code);
+                changed = true;
+                continue;
+            }
+            units.extend("\\u".encode_utf16());
+            units.extend(digits.encode_utf16());
+        } else {
+            units.extend(character.to_string().encode_utf16());
+        }
+    }
+    if !changed {
+        return None;
+    }
+    Some(
+        String::from_utf16(&units)
+            .map(Constant::String)
+            .unwrap_or(Constant::StringUnits(units)),
+    )
 }
 
 fn reduce_template_literal(template: &oxc::ast::ast::TemplateLiteral<'_>) -> Option<Literal> {

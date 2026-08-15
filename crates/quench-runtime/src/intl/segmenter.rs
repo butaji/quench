@@ -8,13 +8,15 @@ use crate::{
 };
 
 use super::{
-    default_locale, make_object, resolve_locales, runtime_error, select_supported_locale,
-    slot_string, supported_segmenter_locale, SLOT,
+    default_locale, make_instance, make_object, resolve_locales, runtime_error, slot_string, SLOT,
 };
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = select_supported_locale(&locales, supported_segmenter_locale);
+    let locale = locales
+        .into_iter()
+        .find(|locale| super::supported_segmenter_locale(locale))
+        .unwrap_or_else(default_locale);
     let mut granularity = "grapheme".to_string();
     if matches!(arguments.get(1), Some(Value::Null)) {
         return Err(crate::value::error::throw_type_error(
@@ -38,23 +40,26 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             }
         }
     }
-    Ok(make_object(vec![
-        (
-            "segment".to_string(),
-            Value::Builtin(crate::ops::Builtin::IntlSegmenterSegment),
-        ),
-        (
-            "resolvedOptions".to_string(),
-            Value::Builtin(crate::ops::Builtin::IntlSegmenterResolvedOptions),
-        ),
-        (
-            SLOT.to_string(),
-            make_object(vec![
-                ("locale".to_string(), Value::String(locale)),
-                ("granularity".to_string(), Value::String(granularity)),
-            ]),
-        ),
-    ]))
+    Ok(make_instance(
+        crate::ops::Builtin::IntlSegmenter,
+        vec![
+            (
+                "segment".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlSegmenterSegment),
+            ),
+            (
+                "resolvedOptions".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlSegmenterResolvedOptions),
+            ),
+            (
+                SLOT.to_string(),
+                make_object(vec![
+                    ("locale".to_string(), Value::String(locale)),
+                    ("granularity".to_string(), Value::String(granularity)),
+                ]),
+            ),
+        ],
+    ))
 }
 
 pub(crate) fn prototype_method(
@@ -68,8 +73,11 @@ pub(crate) fn prototype_method(
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
             let granularity =
                 slot_string(&slots, "granularity").unwrap_or_else(|| "grapheme".to_string());
-            let text =
-                crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
+            let input = arguments.first().unwrap_or(&Value::Undefined);
+            if let Value::StringUnits(units) = input {
+                return Ok(units_segment(Value::StringUnits(units.clone())));
+            }
+            let text = crate::conversion::to_string(input)?;
             Ok(segment(&text, &granularity, &locale))
         }
         crate::ops::Builtin::IntlSegmenterSegmentsIterator => segments_iterator(receiver),
@@ -114,6 +122,57 @@ fn segment(text: &str, granularity: &str, locale: &str) -> Value {
     ])
 }
 
+fn units_segment(input: Value) -> Value {
+    let Value::StringUnits(units) = &input else {
+        return single_segment(input);
+    };
+    let mut entries = Vec::new();
+    let mut start = 0;
+    while start < units.len() {
+        let end = if start + 1 < units.len()
+            && (0xd800..=0xdbff).contains(&units[start])
+            && (0xdc00..=0xdfff).contains(&units[start + 1])
+        {
+            start + 2
+        } else {
+            start + 1
+        };
+        entries.push(unit_segment_entry(
+            Value::StringUnits(std::rc::Rc::new(units[start..end].to_vec())),
+            start,
+            input.clone(),
+        ));
+        start = end;
+    }
+    segments_object(entries)
+}
+
+fn single_segment(input: Value) -> Value {
+    segments_object(vec![unit_segment_entry(input.clone(), 0, input)])
+}
+
+fn segments_object(entries: Vec<Value>) -> Value {
+    make_object(vec![
+        ("__segments".to_string(), Value::array(entries)),
+        (
+            "Symbol.iterator".to_string(),
+            Value::Builtin(crate::ops::Builtin::IntlSegmenterSegmentsIterator),
+        ),
+        (
+            "containing".to_string(),
+            Value::Builtin(crate::ops::Builtin::IntlSegmenterSegmentsContaining),
+        ),
+    ])
+}
+
+fn unit_segment_entry(segment: Value, index: usize, input: Value) -> Value {
+    make_object(vec![
+        ("segment".to_string(), segment),
+        ("index".to_string(), Value::Number(index as f64)),
+        ("input".to_string(), input),
+    ])
+}
+
 fn grapheme_segments(text: &str) -> Vec<Value> {
     let mut result = Vec::new();
     let mut start = None;
@@ -124,6 +183,11 @@ fn grapheme_segments(text: &str) -> Vec<Value> {
             start = Some(byte_index);
             start_utf16 = utf16_index;
         } else if !is_combining_mark(character) {
+            let previous = text[..byte_index].chars().next_back();
+            if previous == Some('\u{200d}') || hangul_no_break(previous, character) {
+                utf16_index += character.len_utf16();
+                continue;
+            }
             if let Some(cluster_start) = start {
                 result.push(segment_entry(
                     &text[cluster_start..byte_index],
@@ -143,8 +207,20 @@ fn grapheme_segments(text: &str) -> Vec<Value> {
     result
 }
 
+fn hangul_no_break(previous: Option<char>, current: char) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    let previous = previous as u32;
+    let current = current as u32;
+    (0x1100..=0x115f).contains(&previous)
+        && ((0x1100..=0x115f).contains(&current) || (0x1160..=0x11a7).contains(&current))
+        || (0x1160..=0x11a7).contains(&previous) && (0x1160..=0x11a7).contains(&current)
+        || (0x1100..=0x11ff).contains(&previous) && (0x11a8..=0x11ff).contains(&current)
+}
+
 fn is_combining_mark(character: char) -> bool {
-    matches!(character as u32, 0x0300..=0x036f | 0x1ab0..=0x1aff | 0x1dc0..=0x1dff | 0x20d0..=0x20ff)
+    matches!(character as u32, 0x0300..=0x036f | 0x1ab0..=0x1aff | 0x1dc0..=0x1dff | 0x20d0..=0x20ff | 0x0e31 | 0x0e34..=0x0e3a | 0x0e47..=0x0e4e | 0x1f3fb..=0x1f3ff | 0x200d)
 }
 
 fn sentence_segments(text: &str) -> Vec<Value> {
@@ -183,12 +259,18 @@ fn word_segments(text: &str) -> Vec<Value> {
     let mut utf16_index = 0;
     let mut kind: Option<u8> = None;
     for (index, character) in text.char_indices() {
-        let next_kind = if decimal_point(text, index, character) {
+        let previous = text[..index].chars().next_back();
+        let next_kind = if is_combining_mark(character) || previous == Some('\u{200d}') {
+            kind.unwrap_or(2)
+        } else if decimal_point(text, index, character) {
             1
         } else {
             character_kind(character)
         };
-        if kind.is_some_and(|previous| previous != next_kind || next_kind == 2) {
+        if kind.is_some_and(|previous_kind| {
+            previous_kind != next_kind
+                || (next_kind == 2 && !is_combining_mark(character) && previous != Some('\u{200d}'))
+        }) {
             push_word_segment(&mut result, &text[start..index], start_utf16, text, kind);
             start = index;
             start_utf16 = utf16_index;
@@ -291,6 +373,7 @@ fn segment_input_length(value: Option<&Value>) -> usize {
         .and_then(|value| crate::execute::get_property_result(value, "input").ok())
         .and_then(|value| match value {
             Value::String(text) => Some(text.encode_utf16().count()),
+            Value::StringUnits(units) => Some(units.len()),
             _ => None,
         })
         .unwrap_or(0)
