@@ -146,6 +146,7 @@ pub(super) fn intrinsic(id: RealmId, builtin: Builtin) -> Option<Value> {
         return Some(value);
     }
     let value = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
+        realm: id,
         target: Value::Builtin(builtin),
         receiver: Value::HostCapability(Rc::clone(&state.token)),
         arguments: Vec::new(),
