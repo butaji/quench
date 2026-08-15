@@ -104,10 +104,10 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         options.and_then(|value| crate::execute::get_property_result(value, "relativeTo").ok());
     let skipped = relative_skipped_hours(relative.as_ref());
     let days = object_number(object, "days");
-    let hours = object_number(object, "years") * 365.0 * 24.0
-        + object_number(object, "months") * 30.0 * 24.0
-        + object_number(object, "weeks") * 7.0 * 24.0
-        + object_number(object, "days") * relative_day_hours(relative.as_ref())
+    let calendar_days = object_number(object, "years") * 366.0
+        + object_number(object, "months") * 30.0
+        + object_number(object, "weeks") * 7.0;
+    let hours = object_number(object, "days") * relative_day_hours(relative.as_ref())
         + object_number(object, "hours")
         + object_number(object, "minutes") / 60.0
         + object_number(object, "seconds") / 3_600.0;
@@ -131,7 +131,7 @@ fn total(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
         "days" if before_fall_transition(relative.as_ref()) && hours.abs() > 30.0 => {
             (hours + hours.signum()) / 25.0
         }
-        "days" => (hours + skipped) / relative_day_hours(relative.as_ref()),
+        "days" => calendar_days + (hours + skipped) / relative_day_hours(relative.as_ref()),
         "hours" => {
             hours
                 - if skipped > 0.0 && days.abs() >= 2.0 {
