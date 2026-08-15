@@ -109,6 +109,7 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
 pub(crate) fn property(key: &str) -> Value {
     match key {
         "next" => Value::Builtin(crate::ops::Builtin::IteratorNext),
+        "toArray" => Value::Builtin(crate::ops::Builtin::IteratorToArray),
         "Symbol.iterator" => Value::Builtin(crate::ops::Builtin::IteratorSelf),
         _ => Value::Undefined,
     }

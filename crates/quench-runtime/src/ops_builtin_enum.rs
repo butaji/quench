@@ -2,7 +2,7 @@
 #[rustfmt::skip]
 pub enum Builtin {
     HostCapability(HostCapabilityKind), Array,
-    Iterator, IteratorPrototype, IteratorConcat, IteratorFrom,
+    Iterator, IteratorPrototype, IteratorConcat, IteratorFrom, IteratorToArray,
     TypedArray, ArrayBuffer,
     ArrayBufferPrototype, SharedArrayBuffer,
     SharedArrayBufferPrototype, ArrayBufferIsView,
