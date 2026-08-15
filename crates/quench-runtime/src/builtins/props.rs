@@ -56,6 +56,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
     match (builtin, key) {
+        (Intl, "Symbol.toStringTag") => Some(Value::String("Intl".into())),
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }

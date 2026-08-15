@@ -179,6 +179,8 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
 
 const fn intl_short_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::IntlGetCanonicalLocales => Some("getCanonicalLocales"),
+        Builtin::IntlSupportedValuesOf => Some("supportedValuesOf"),
         Builtin::IntlLocaleToString => Some("toString"),
         Builtin::IntlLocaleMaximize => Some("maximize"),
         Builtin::IntlLocaleMinimize => Some("minimize"),
