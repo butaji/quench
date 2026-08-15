@@ -54,6 +54,13 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         Uint8ClampedArray(view) => uint8_clamped_array_property(view, key),
         BigInt64Array(_) | BigUint64Array(_) => vm_typed_bigint::property(value, key),
         DataView(view) => data_view_property(view, key),
+        _ => get_property_value_tail(value, key),
+    }
+}
+
+fn get_property_value_tail(value: &Value, key: &str) -> Value {
+    use Value::*;
+    match value {
         Object(properties) => object_property(properties, value, key),
         ObjectAlias(alias) => object_alias_property(alias, key),
         String(value) if crate::conversion::is_symbol_string(value) => Value::Undefined,
