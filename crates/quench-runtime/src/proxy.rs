@@ -91,8 +91,8 @@ pub(crate) fn call_trap(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     match trap {
-        Value::Function(func) => crate::functions::execute(
-            func,
+        Value::Function(_) => crate::functions::execute_target(
+            trap,
             receiver.unwrap_or(&crate::value::Value::Undefined),
             arguments,
         ),
