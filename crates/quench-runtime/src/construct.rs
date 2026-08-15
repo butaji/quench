@@ -715,16 +715,6 @@ include!("construct_instance_fields.rs");
 pub(crate) fn derived_constructor(
     function: &crate::value::FunctionValue,
 ) -> Result<Value, crate::execute::VmError> {
-    let derived = function
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| name == "\0derived_constructor");
-    if !derived {
-        return Err(crate::value::error::throw_reference_error(
-            "super is unavailable",
-        ));
-    }
     function
         .properties
         .borrow()
