@@ -16,10 +16,7 @@ fn values_int8_array(values: &[Value]) -> Result<Value, crate::execute::VmError>
     let buffer = Rc::new(crate::value::ArrayBufferData::new(values.len()));
     let view = crate::value::Int8ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(
-            index,
-            to_int8(crate::conversion::to_number(value)?),
-        );
+        view.set(index, to_int8(crate::conversion::to_number(value)?));
     }
     Ok(Value::Int8Array(Rc::new(view)))
 }
@@ -47,10 +44,14 @@ fn view_int8_array(
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
+        None | Some(Value::Undefined) => view_length(buffer, available),
         Some(value) => to_index(crate::conversion::to_number(value)?)?,
-        None => view_length(buffer, available),
     };
-    if arguments.get(2).is_some() && length > available {
+    if arguments
+        .get(2)
+        .is_some_and(|value| !matches!(value, Value::Undefined))
+        && length > available
+    {
         return Err(range_error("Invalid Int8Array length"));
     }
     Ok(Value::Int8Array(Rc::new(crate::value::Int8ArrayData::new(
@@ -81,10 +82,7 @@ fn values_int16_array(values: &[Value]) -> Result<Value, crate::execute::VmError
     ));
     let view = crate::value::Int16ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(
-            index,
-            to_int16(crate::conversion::to_number(value)?),
-        );
+        view.set(index, to_int16(crate::conversion::to_number(value)?));
     }
     Ok(Value::Int16Array(Rc::new(view)))
 }
@@ -115,10 +113,14 @@ fn view_int16_array(
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
+        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
         Some(value) => to_index(crate::conversion::to_number(value)?)?,
-        None => view_length(buffer, available / element_size),
     };
-    if arguments.get(2).is_some() && length > available / element_size {
+    if arguments
+        .get(2)
+        .is_some_and(|value| !matches!(value, Value::Undefined))
+        && length > available / element_size
+    {
         return Err(range_error("Invalid Int16Array length"));
     }
     Ok(Value::Int16Array(Rc::new(
@@ -133,10 +135,7 @@ fn values_int32_array(values: &[Value]) -> Result<Value, crate::execute::VmError
     ));
     let view = crate::value::Int32ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(
-            index,
-            to_int32(crate::conversion::to_number(value)?),
-        );
+        view.set(index, to_int32(crate::conversion::to_number(value)?));
     }
     Ok(Value::Int32Array(Rc::new(view)))
 }
@@ -167,10 +166,14 @@ fn view_int32_array(
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
+        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
         Some(value) => to_index(crate::conversion::to_number(value)?)?,
-        None => view_length(buffer, available / element_size),
     };
-    if arguments.get(2).is_some() && length > available / element_size {
+    if arguments
+        .get(2)
+        .is_some_and(|value| !matches!(value, Value::Undefined))
+        && length > available / element_size
+    {
         return Err(range_error("Invalid Int32Array length"));
     }
     Ok(Value::Int32Array(Rc::new(
@@ -241,10 +244,7 @@ fn values_float32_array(values: &[Value]) -> Result<Value, crate::execute::VmErr
     ));
     let view = crate::value::Float32ArrayData::new(buffer, 0, values.len());
     for (index, value) in values.iter().enumerate() {
-        view.set(
-            index,
-            crate::conversion::to_number(value)? as f32,
-        );
+        view.set(index, crate::conversion::to_number(value)? as f32);
     }
     Ok(Value::Float32Array(Rc::new(view)))
 }
@@ -275,10 +275,14 @@ fn view_float32_array(
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
+        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
         Some(value) => to_index(crate::conversion::to_number(value)?)?,
-        None => view_length(buffer, available / element_size),
     };
-    if arguments.get(2).is_some() && length > available / element_size {
+    if arguments
+        .get(2)
+        .is_some_and(|value| !matches!(value, Value::Undefined))
+        && length > available / element_size
+    {
         return Err(range_error("Invalid Float32Array length"));
     }
     Ok(Value::Float32Array(Rc::new(
@@ -330,10 +334,14 @@ fn view_float64_array(
     }
     let available = buffer.byte_length() - offset;
     let length = match arguments.get(2) {
+        None | Some(Value::Undefined) => view_length(buffer, available / element_size),
         Some(value) => to_index(crate::conversion::to_number(value)?)?,
-        None => view_length(buffer, available / element_size),
     };
-    if arguments.get(2).is_some() && length > available / element_size {
+    if arguments
+        .get(2)
+        .is_some_and(|value| !matches!(value, Value::Undefined))
+        && length > available / element_size
+    {
         return Err(range_error("Invalid Float64Array length"));
     }
     Ok(Value::Float64Array(Rc::new(
@@ -349,8 +357,7 @@ pub(crate) fn to_index(value: f64) -> Result<usize, crate::execute::VmError> {
     if !value.is_finite() || truncated < 0.0 {
         return Err(range_error("Invalid typed-array length"));
     }
-    usize::try_from(truncated as u128)
-        .map_err(|_| range_error("Typed-array length is too large"))
+    usize::try_from(truncated as u128).map_err(|_| range_error("Typed-array length is too large"))
 }
 
 fn type_error(message: &str) -> crate::execute::VmError {
