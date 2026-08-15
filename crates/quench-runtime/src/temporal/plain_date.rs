@@ -371,6 +371,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let Value::String(text) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
+    if text.contains('−') {
+        return Err(crate::value::error::throw_range_error("Invalid ISO time"));
+    }
     if let Some(calendar) = text
         .split('[')
         .skip(1)
