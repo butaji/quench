@@ -66,6 +66,10 @@ pub fn time_property(ms: f64) -> Value {
     Value::BindingCell(Rc::new(RefCell::new(Value::Number(ms))))
 }
 
+pub fn local_tz_offset_minutes() -> i32 {
+    chrono_utils::local_tz_offset_minutes()
+}
+
 /// Store time value in a Date Object.
 pub fn store_time(receiver: &Value, ms: f64) -> Value {
     crate::builtins::set_property(
