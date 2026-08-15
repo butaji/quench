@@ -133,6 +133,9 @@ fn absolute_fields(object: &crate::value::ObjectData) -> Vec<Value> {
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
+    if let Some(Value::String(text)) = value {
+        return from_string(text);
+    }
     let Some(Value::Object(object)) = value else {
         return Err(crate::value::error::throw_type_error(
             "Duration.from requires a duration-like object",
@@ -160,6 +163,132 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         })
         .collect::<Vec<_>>();
     construct(&arguments)
+}
+
+fn from_string(text: &str) -> Result<Value, VmError> {
+    let (negative, body) = match text.strip_prefix('-') {
+        Some(body) => (true, body),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    };
+    let body = body
+        .strip_prefix('P')
+        .or_else(|| body.strip_prefix('p'))
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration string"))?;
+    let mut values = [0.0; 10];
+    let (date, time) = body.split_once(['T', 't']).unwrap_or((body, ""));
+    let date_seen = parse_duration_section(date, false, &mut values)?;
+    let time_seen = parse_duration_section(time, true, &mut values)?;
+    if !date_seen && !time_seen {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid duration string",
+        ));
+    }
+    if negative {
+        values.iter_mut().for_each(|value| *value = -*value);
+    }
+    construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
+}
+
+fn parse_duration_section(
+    section: &str,
+    time: bool,
+    values: &mut [f64; 10],
+) -> Result<bool, VmError> {
+    let mut rest = section;
+    let mut seen = false;
+    while !rest.is_empty() {
+        let end = rest
+            .char_indices()
+            .find_map(|(index, character)| character.is_ascii_alphabetic().then_some(index))
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration string"))?;
+        let (number, tail) = rest.split_at(end);
+        let unit = tail
+            .chars()
+            .next()
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration string"))?;
+        validate_duration_number(number, tail, time, unit)?;
+        let magnitude = number
+            .replace(',', ".")
+            .parse::<f64>()
+            .map_err(|_| crate::value::error::throw_range_error("Invalid duration string"))?;
+        if !magnitude.is_finite() {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid duration string",
+            ));
+        }
+        add_duration_component(values, time, unit, magnitude)?;
+        seen = true;
+        rest = &tail[unit.len_utf8()..];
+    }
+    Ok(seen)
+}
+
+fn validate_duration_number(
+    number: &str,
+    tail: &str,
+    time: bool,
+    unit: char,
+) -> Result<(), VmError> {
+    let separators = number.matches(['.', ',']).count();
+    let fractional = separators > 0;
+    let digits = number.split(['.', ',']).collect::<Vec<_>>();
+    if number.is_empty()
+        || !number
+            .chars()
+            .all(|character| character.is_ascii_digit() || matches!(character, '.' | ','))
+        || separators > 1
+        || digits.first().is_some_and(|part| part.is_empty())
+        || digits.get(1).is_some_and(|part| part.is_empty())
+        || fractional && (!time || !tail[unit.len_utf8()..].is_empty())
+        || unit.eq_ignore_ascii_case(&'S') && digits.get(1).is_some_and(|part| part.len() > 9)
+    {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid duration string",
+        ));
+    }
+    Ok(())
+}
+
+fn add_duration_component(
+    values: &mut [f64; 10],
+    time: bool,
+    unit: char,
+    magnitude: f64,
+) -> Result<(), VmError> {
+    let index = match (time, unit.to_ascii_uppercase()) {
+        (false, 'Y') => 0,
+        (false, 'M') => 1,
+        (false, 'W') => 2,
+        (false, 'D') => 3,
+        (true, 'H') => 4,
+        (true, 'M') => 5,
+        (true, 'S') => 6,
+        _ => {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid duration string",
+            ))
+        }
+    };
+    let whole = magnitude.trunc();
+    values[index] += whole;
+    if time && magnitude.fract() != 0.0 {
+        add_fractional_time(values, index, magnitude.fract());
+    }
+    Ok(())
+}
+
+fn add_fractional_time(values: &mut [f64; 10], index: usize, fraction: f64) {
+    let multiplier = [3_600.0, 60.0, 1.0][index - 4] * 1_000_000_000.0;
+    let mut nanos = (fraction * multiplier).round() as i64;
+    if index == 4 {
+        values[5] += (nanos / 60_000_000_000) as f64;
+        nanos %= 60_000_000_000;
+    }
+    values[6] += (nanos / 1_000_000_000) as f64;
+    nanos %= 1_000_000_000;
+    values[7] += (nanos / 1_000_000) as f64;
+    values[8] += (nanos / 1_000 % 1_000) as f64;
+    values[9] += (nanos % 1_000) as f64;
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
