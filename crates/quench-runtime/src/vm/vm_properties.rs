@@ -194,19 +194,18 @@ fn primitive_prototype_property(value: &Value, key: &str) -> Value {
 }
 
 fn primitive_prototype(value: &Value) -> Option<Value> {
-    let builtin = match value {
-        Value::Number(_) => Builtin::NumberPrototype,
-        Value::Boolean(_) => Builtin::BooleanPrototype,
+    Some(match value {
+        Value::Number(_) => Value::Builtin(Builtin::NumberPrototype),
+        Value::Boolean(_) => Value::Builtin(Builtin::BooleanPrototype),
         Value::String(value) if !crate::conversion::is_symbol_string(value) => {
-            Builtin::StringPrototype
+            Value::Builtin(Builtin::StringPrototype)
         }
         Value::String(value) if crate::conversion::is_symbol_string(value) => {
-            Builtin::SymbolPrototype
+            Value::Builtin(Builtin::SymbolPrototype)
         }
-        Value::BigInt(_) => Builtin::BigIntPrototype,
+        Value::BigInt(_) => Value::Builtin(Builtin::BigIntPrototype),
         _ => return None,
-    };
-    Some(crate::vm::realm_intrinsic(builtin))
+    })
 }
 
 fn primitive_constructor(value: &Value) -> Option<Builtin> {
