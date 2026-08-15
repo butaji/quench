@@ -7,6 +7,9 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
     let Value::Iterator(data) = value else {
         return Err(not_iterable());
     };
+    if let Some(iterator) = drop_target(data) {
+        return drop_step(data, iterator);
+    }
     match step_target(data)? {
         StepTarget::Value(value) => Ok(value),
         StepTarget::Protocol(iterator, cached) => {
@@ -14,6 +17,73 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
             let result = protocol_next(data, &next, &iterator)?;
             protocol_result(data, result)
         }
+    }
+}
+
+fn drop_target(data: &IteratorData) -> Option<Value> {
+    let state = data.state.borrow();
+    let IteratorState::Drop { iterator, .. } = &*state else {
+        return None;
+    };
+    Some(iterator.clone())
+}
+
+fn drop_step(
+    data: &IteratorData,
+    iterator: Value,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    let mut remaining = {
+        let state = data.state.borrow();
+        let IteratorState::Drop {
+            remaining, done, ..
+        } = &*state
+        else {
+            return Ok(None);
+        };
+        if *done {
+            return Ok(None);
+        }
+        *remaining
+    };
+    while remaining > 0 {
+        if step_source(&iterator)?.is_none() {
+            mark_drop_done(data);
+            return Ok(None);
+        }
+        remaining -= 1;
+        set_drop_remaining(data, remaining);
+    }
+    let value = step_source(&iterator)?;
+    if value.is_none() {
+        mark_drop_done(data);
+    }
+    Ok(value)
+}
+
+fn step_source(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
+    if matches!(value, Value::Iterator(_)) {
+        return step_value(value);
+    }
+    let result = crate::generator::next(Some(value), &[])?;
+    let done = crate::execute::get_property_result(&result, "done")?;
+    if crate::execute::is_truthy(&done) {
+        return Ok(None);
+    }
+    Ok(Some(crate::execute::get_property_result(&result, "value")?))
+}
+
+fn set_drop_remaining(data: &IteratorData, remaining: u64) {
+    if let IteratorState::Drop {
+        remaining: slot, ..
+    } = &mut *data.state.borrow_mut()
+    {
+        *slot = remaining;
+    }
+}
+
+fn mark_drop_done(data: &IteratorData) {
+    if let IteratorState::Drop { done, .. } = &mut *data.state.borrow_mut() {
+        *done = true;
     }
 }
 
@@ -86,6 +156,7 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
             StepTarget::Protocol(iterator.clone(), next.clone())
         }
         IteratorState::Concat { .. } => StepTarget::Value(None),
+        IteratorState::Drop { .. } => StepTarget::Value(None),
     })
 }
 
