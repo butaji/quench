@@ -29,6 +29,15 @@ fn uninitialized_export_cell_is_marked_before_module_execution() {
 }
 
 #[test]
+fn named_default_function_has_a_default_export_cell() {
+    let module = LinkedModule::compile("export default function f() { return 1; }")
+        .expect("module compiles");
+    let cell = module.export_cell("default").expect("default export cell");
+    module.execute().expect("module executes");
+    assert!(matches!(cell.get(), Value::Function(_)));
+}
+
+#[test]
 fn json_module_exports_recursive_runtime_values() {
     let module = LinkedModule::compile_json("[true, {\"answer\": 42}]").expect("JSON module compiles");
     let cell = module.export_cell("default").expect("default export cell");
