@@ -84,6 +84,7 @@ fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
         Some(Value::BigUint64Array(_)) => "BigUint64Array",
         Some(Value::Function(_) | Value::BoundFunction(_)) => "Function",
         Some(Value::Builtin(Builtin::ObjectPrototype)) => "Object",
+        Some(Value::Builtin(Builtin::RegExpPrototype)) => "Object",
         Some(Value::Builtin(Builtin::BooleanPrototype)) => "Boolean",
         Some(Value::Builtin(Builtin::NumberPrototype)) => "Number",
         Some(Value::Builtin(Builtin::StringPrototype)) => "String",
