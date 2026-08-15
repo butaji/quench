@@ -21,6 +21,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(runtime_error("RangeError: invalid localeMatcher"));
     }
     let style = option_string(options, "style", "long")?;
+    if !matches!(style.as_str(), "long" | "short" | "narrow") {
+        return Err(runtime_error("RangeError: invalid style"));
+    }
     let display_type = option_string(options, "type", "\0missing")?;
     if display_type == "\0missing" {
         return Err(runtime_error("TypeError: options.type is required"));
@@ -30,9 +33,6 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         "language" | "region" | "currency" | "script" | "calendar" | "dateTimeField"
     ) {
         return Err(runtime_error("RangeError: invalid type"));
-    }
-    if !matches!(style.as_str(), "long" | "short" | "narrow") {
-        return Err(runtime_error("RangeError: invalid style"));
     }
     let fallback = option_string(options, "fallback", "code")?;
     if !matches!(fallback.as_str(), "code" | "none") {
