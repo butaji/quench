@@ -453,7 +453,12 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             // Time-zone annotations are validated by the date grammar below.
         } else {
             let hour = time.get(..2).and_then(|value| value.parse::<u32>().ok());
-            if time.len() > 2 && !matches!(time.as_bytes()[2] as char, ':' | '+' | '-' | 'Z' | '[')
+            let compact = time.len() >= 6
+                && time.as_bytes()[..6].iter().all(u8::is_ascii_digit)
+                && (time.len() == 6 || !time.as_bytes()[6].is_ascii_alphabetic());
+            if time.len() > 2
+                && !matches!(time.as_bytes()[2] as char, ':' | '+' | '-' | 'Z' | '[')
+                && !compact
             {
                 return Err(crate::value::error::throw_range_error("Invalid ISO time"));
             }
