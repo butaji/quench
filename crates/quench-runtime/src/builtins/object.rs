@@ -295,10 +295,21 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
     }) || matches!(
         key,
-        "input" | "lastMatch" | "lastParen" | "leftContext" | "rightContext"
+        "$_" | "input" | "lastMatch" | "lastParen" | "leftContext" | "rightContext"
     );
     if builtin == Builtin::RegExp && legacy {
-        return Some(accessor_descriptor(Builtin::RegExpLegacyGetter));
+        let setter = matches!(
+            key,
+            "$_" | "input" | "lastMatch" | "lastParen" | "leftContext" | "rightContext"
+        );
+        return Some(if setter {
+            accessor_descriptor_with_setter(
+                Builtin::RegExpLegacyGetter,
+                Some(Builtin::RegExpLegacyGetter),
+            )
+        } else {
+            accessor_descriptor(Builtin::RegExpLegacyGetter)
+        });
     }
     let getter = match (builtin, key) {
         (Builtin::RegExpPrototype, "source") => Builtin::RegExpSourceGetter,
