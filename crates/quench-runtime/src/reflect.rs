@@ -27,7 +27,8 @@ pub(crate) fn builtin(
         Value::String(source)
             if crate::reduce::reduce_eval_source(source, false, true, false, &[], &[]).is_err()
     );
-    let result = evaluate(value, false, realm).map_err(|error| {
+    let error_realm = shadow_creation_realm(receiver);
+    let result = evaluate(value, false, realm, error_realm).map_err(|error| {
         if builtin == crate::ops::Builtin::ShadowRealmEvaluate
             && !direct_syntax_error
             && matches!(error, VmError::Thrown(_))
@@ -185,7 +186,7 @@ pub(crate) fn execute_eval(
             input.forbidden_var_names,
         )?
     } else {
-        evaluate(&source, input.strict, None)?
+        evaluate(&source, input.strict, None, None)?
     };
     crate::execute::write_value(registers, input.dst, value);
     Ok(())
@@ -206,6 +207,7 @@ fn evaluate(
     value: &Value,
     strict: bool,
     realm: Option<crate::ops::RealmId>,
+    error_realm: Option<crate::ops::RealmId>,
 ) -> Result<Value, VmError> {
     let Value::String(source) = value else {
         return Ok(value.clone());
@@ -215,7 +217,7 @@ fn evaluate(
         ("\0script_this".to_string(), 0),
     ];
     let program = crate::reduce::reduce_eval_source(source, strict, true, false, &bindings, &[])
-        .map_err(syntax_error)?;
+        .map_err(|errors| syntax_error(errors, error_realm))?;
     match realm {
         Some(realm) => crate::vm::execute_indirect_eval_in_realm(realm, program.ops()),
         None => crate::vm::execute_indirect_eval(program.ops()),
@@ -246,7 +248,7 @@ fn evaluate_direct(
         forbidden_var_names,
         grammar,
     )
-    .map_err(syntax_error)?;
+    .map_err(|errors| syntax_error(errors, None))?;
     execute_direct_eval(program.ops(), program.facts.strict)
 }
 
@@ -257,14 +259,21 @@ fn execute_direct_eval(ops: &[crate::ops::Op], strict: bool) -> Result<Value, Vm
     crate::execute::execute_in_place(ops, &mut Vec::new())
 }
 
-fn syntax_error(errors: Vec<String>) -> VmError {
+fn syntax_error(errors: Vec<String>, realm: Option<crate::ops::RealmId>) -> VmError {
     let error = crate::builtins::error(
         crate::ops::Builtin::SyntaxError,
         &[Value::String(errors.join("; "))],
     );
+    let constructor = realm
+        .and_then(|realm| {
+            crate::vm::with_realm(realm, || {
+                crate::vm::realm_intrinsic(crate::ops::Builtin::SyntaxError)
+            })
+        })
+        .unwrap_or(Value::Builtin(crate::ops::Builtin::SyntaxError));
     VmError::Thrown(crate::builtins::set_property(
         error,
         "constructor",
-        Value::Builtin(crate::ops::Builtin::SyntaxError),
+        constructor,
     ))
 }
