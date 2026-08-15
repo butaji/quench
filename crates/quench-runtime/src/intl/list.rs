@@ -115,8 +115,30 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 fn iterable_items(value: Option<&Value>) -> Result<Vec<String>, VmError> {
     let value = value.unwrap_or(&Value::Undefined);
     let iterator = crate::collections::iterator::open(value.clone())?;
-    crate::collections::iterator::collect(&iterator)
-        .map(|values| values.iter().map(to_string_value).collect())
+    let mut items = Vec::new();
+    while let Some(value) = crate::collections::iterator::step_value(&iterator)? {
+        match string_item(value) {
+            Ok(value) => items.push(value),
+            Err(error) => {
+                let crate::execute::VmError::Thrown(reason) = &error else {
+                    return Err(error);
+                };
+                let completion = crate::completion::Completion::Throw(reason.clone());
+                let _ = crate::collections::iterator::close(iterator.clone(), completion);
+                return Err(error);
+            }
+        }
+    }
+    Ok(items)
+}
+
+fn string_item(value: Value) -> Result<String, VmError> {
+    if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        return Ok(to_string_value(&value));
+    }
+    Err(crate::value::error::throw_type_error(
+        "ListFormat iterable values must be strings",
+    ))
 }
 
 fn format_parts(items: &[String], locale: &str, style: &str, list_type: &str) -> Vec<Value> {
