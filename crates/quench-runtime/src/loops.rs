@@ -222,11 +222,28 @@ fn unpack_for_in<'a>(
 }
 
 fn for_in_keys(value: crate::value::Value) -> Vec<String> {
+    let value = crate::locals::resolved_replacement(value);
     match value {
-        value @ (crate::value::Value::Object(_) | crate::value::Value::ObjectAlias(_)) => {
+        value @ (crate::value::Value::Object(_)
+        | crate::value::Value::ObjectAlias(_)
+        | crate::value::Value::Function(_)
+        | crate::value::Value::BoundFunction(_)) => {
             crate::own_keys::enumerable_key_strings(Some(&value))
         }
-        crate::value::Value::Array(values) => (0..values.len()).map(|i| i.to_string()).collect(),
+        value @ crate::value::Value::Array(_) => {
+            crate::own_keys::enumerable_key_strings(Some(&value))
+        }
+        crate::value::Value::Builtin(builtin) => crate::builtins::own_property_names(builtin)
+            .iter()
+            .filter(|key| {
+                crate::builtins::descriptor_flag(
+                    &crate::value::Value::Builtin(builtin),
+                    key,
+                    "enumerable",
+                ) == Some(true)
+            })
+            .map(|key| (*key).to_string())
+            .collect(),
         _ => Vec::new(),
     }
 }
