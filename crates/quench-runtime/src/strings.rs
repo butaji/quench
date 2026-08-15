@@ -196,8 +196,8 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringTrim => trim(receiver),
         crate::ops::Builtin::StringToLowerCase => Ok(to_lower_case(receiver)),
         crate::ops::Builtin::StringToUpperCase => Ok(to_upper_case(receiver)),
-        crate::ops::Builtin::StringCharAt => Ok(char_at(receiver, arguments)),
-        crate::ops::Builtin::StringCharCodeAt => Ok(char_code_at(receiver, arguments)),
+        crate::ops::Builtin::StringCharAt => char_at(receiver, arguments),
+        crate::ops::Builtin::StringCharCodeAt => char_code_at(receiver, arguments),
         crate::ops::Builtin::StringIndexOf => index_of(receiver, arguments),
         crate::ops::Builtin::StringLastIndexOf => last_index_of(receiver, arguments),
         crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
@@ -327,22 +327,32 @@ pub(crate) fn to_upper_case(receiver: Option<&Value>) -> Value {
     Value::String(value.to_uppercase())
 }
 
-pub(crate) fn char_at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(units) = receiver.and_then(units_of) else {
-        return Value::String(String::new());
-    };
-    let index = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    char_at_units(&units, index).unwrap_or_else(|| Value::String(String::new()))
+pub(crate) fn char_at(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let text = string_receiver(receiver)?;
+    let units = text.encode_utf16().collect::<Vec<_>>();
+    let index = arguments
+        .first()
+        .map_or(Ok(0.0), crate::conversion::to_number)?
+        .max(0.0) as usize;
+    Ok(char_at_units(&units, index).unwrap_or_else(|| Value::String(String::new())))
 }
 
-pub(crate) fn char_code_at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(units) = receiver.and_then(units_of) else {
-        return Value::Number(f64::NAN);
-    };
-    let index = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    units
+pub(crate) fn char_code_at(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let text = string_receiver(receiver)?;
+    let units = text.encode_utf16().collect::<Vec<_>>();
+    let index = arguments
+        .first()
+        .map_or(Ok(0.0), crate::conversion::to_number)?
+        .max(0.0) as usize;
+    Ok(units
         .get(index)
-        .map_or(Value::Number(f64::NAN), |unit| Value::Number(*unit as f64))
+        .map_or(Value::Number(f64::NAN), |unit| Value::Number(*unit as f64)))
 }
 
 pub(crate) fn slice(receiver: Option<&Value>, arguments: &[Value]) -> Value {
