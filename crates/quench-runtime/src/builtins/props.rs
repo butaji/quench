@@ -58,6 +58,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     match (builtin, key) {
         (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
         (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
+        (Temporal, "PlainTime") => Some(Value::Builtin(TemporalPlainTime)),
         (Temporal, "Symbol.toStringTag") => Some(Value::String("Temporal".into())),
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
         (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
@@ -65,6 +66,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
         (TemporalPlainDate, "compare") => Some(Value::Builtin(TemporalPlainDateCompare)),
+        (TemporalPlainTime, "prototype") => Some(Value::Builtin(TemporalPlainTimePrototype)),
+        (TemporalPlainTimePrototype, "constructor") => Some(Value::Builtin(TemporalPlainTime)),
         (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
         (TemporalPlainDatePrototype, "toString") => Some(Value::Builtin(TemporalPlainDateToString)),
         (TemporalPlainDatePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainDateToJSON)),
