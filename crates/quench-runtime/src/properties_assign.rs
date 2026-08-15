@@ -19,12 +19,12 @@ pub(crate) fn assign_set_property(
                 "Cannot set property without a setter",
             ));
         }
-        let (_, target) = crate::functions::execute_target_with_receiver(
+        crate::functions::execute_target(
             &setter,
             target,
             std::slice::from_ref(&value),
         )?;
-        return Ok(target);
+        return Ok(target.clone());
     }
     if rejects_new_property(target, key) || inherited_write_blocked(target, key) {
         return Err(crate::value::error::throw_type_error(
