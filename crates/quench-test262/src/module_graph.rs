@@ -18,6 +18,7 @@ pub struct ModuleUnit {
 pub enum ModuleKind {
     JavaScript,
     Json,
+    Text,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -43,6 +44,10 @@ impl ModuleGraph {
 
     pub fn add_json_dependency(&mut self, path: PathBuf, source: String) -> ModuleId {
         self.add_unit(path, source, ModuleKind::Json, false)
+    }
+
+    pub fn add_text_dependency(&mut self, path: PathBuf, source: String) -> ModuleId {
+        self.add_unit(path, source, ModuleKind::Text, false)
     }
 
     pub fn entry(&self) -> Option<ModuleId> {

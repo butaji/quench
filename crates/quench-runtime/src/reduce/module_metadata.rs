@@ -10,6 +10,7 @@ use oxc::ast::ast::{
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct ModuleMetadata {
     pub import_specifiers: Vec<String>,
+    pub import_types: Vec<(String, String)>,
     pub imports: Vec<ImportBinding>,
     pub exports: Vec<ExportBinding>,
     pub reexports: Vec<ReexportBinding>,
@@ -52,6 +53,20 @@ impl ModuleMetadata {
             Statement::ImportDeclaration(import) => {
                 let source = import.source.value.to_string();
                 push_unique(&mut self.import_specifiers, &source);
+                if let Some(with_clause) = &import.with_clause {
+                    for entry in &with_clause.with_entries {
+                        let key = match &entry.key {
+                            oxc::ast::ast::ImportAttributeKey::Identifier(key) => {
+                                key.name.to_string()
+                            }
+                            oxc::ast::ast::ImportAttributeKey::StringLiteral(key) => {
+                                key.value.to_string()
+                            }
+                        };
+                        self.import_types
+                            .push((source.clone(), format!("{key}={}", entry.value.value)));
+                    }
+                }
                 if let Some(specifiers) = &import.specifiers {
                     for specifier in specifiers {
                         let (imported, local) = match specifier {

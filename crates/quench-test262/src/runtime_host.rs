@@ -53,6 +53,8 @@ impl LinkedModuleGraph {
                 LinkedModule::compile_with_prefix(prefix, &unit.source)?
             } else if unit.kind == ModuleKind::Json {
                 LinkedModule::compile_json(&unit.source)?
+            } else if unit.kind == ModuleKind::Text {
+                LinkedModule::compile_text(&unit.source)?
             } else {
                 LinkedModule::compile(&unit.source)?
             };
@@ -235,6 +237,15 @@ impl LinkedModule {
         Ok(module)
     }
 
+    pub fn compile_text(source: &str) -> Result<Self, String> {
+        let mut module = Self::compile("export default null;")?;
+        module.fixed_exports.push((
+            "default".to_string(),
+            quench_runtime::value::Value::String(source.to_string()),
+        ));
+        Ok(module)
+    }
+
     pub fn bind_import(&self, local: &str, cell: ModuleBindingCell) -> Result<(), String> {
         let slot = self
             .program
@@ -410,7 +421,7 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
         .ok_or_else(|| "module unit is unknown".to_string())?;
     if graph
         .unit(from)
-        .is_some_and(|unit| unit.kind == ModuleKind::Json)
+        .is_some_and(|unit| matches!(unit.kind, ModuleKind::Json | ModuleKind::Text))
     {
         return Ok(());
     }
@@ -420,7 +431,7 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
             continue;
         }
         let path = base.join(&specifier);
-        let dependency = add_module_source(graph, path)?;
+        let dependency = add_module_source(graph, path, &metadata.import_types, &specifier)?;
         load_module_dependencies(graph, dependency)?;
     }
     Ok(())
@@ -429,9 +440,17 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
 fn add_module_source(
     graph: &mut ModuleGraph,
     path: std::path::PathBuf,
+    import_types: &[(String, String)],
+    specifier: &str,
 ) -> Result<ModuleId, String> {
     let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("module {}: {error}", path.display()))?;
+    if import_types
+        .iter()
+        .any(|(source, attribute)| source == specifier && attribute == "type=text")
+    {
+        return Ok(graph.add_text_dependency(path, source));
+    }
     if path
         .extension()
         .is_some_and(|extension| extension == "json")
