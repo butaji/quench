@@ -197,13 +197,13 @@ fn finish_set_property(
         if matches!(setter, crate::value::Value::Undefined) {
             return write_failure(strict);
         }
-        crate::functions::execute_target(&setter, &target, std::slice::from_ref(&value))?;
-        if let Some(updated) = crate::locals::replacement(&target) {
+        crate::functions::execute_target(&setter, target, std::slice::from_ref(&value))?;
+        if let Some(updated) = crate::locals::replacement(target) {
             crate::execute::write_value(registers, object, updated);
         }
         return Ok(());
     }
-    if inherited_write_blocked(&target, &key) {
+    if inherited_write_blocked(target, key) {
         return write_failure(strict);
     }
     if matches!(
@@ -217,10 +217,10 @@ fn finish_set_property(
         return write_failure(strict);
     }
     if let crate::value::Value::Builtin(builtin) = &target {
-        if !crate::builtins::object::builtin_property_writable(*builtin, &key) {
+        if !crate::builtins::object::builtin_property_writable(*builtin, key) {
             return write_failure(strict);
         }
-        return set_builtin_property(registers, object, &target, &key, value);
+        return set_builtin_property(registers, object, target, key, value);
     }
     finish_property_write(registers, object, target, key, value);
     Ok(())
