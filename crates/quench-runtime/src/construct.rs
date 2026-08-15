@@ -90,7 +90,16 @@ fn construct_with_new_target(
     let result = match target {
         Value::Proxy(_) => crate::proxy::proxy_construct(target, arguments, Some(new_target)),
         Value::Builtin(builtin) => {
-            let value = construct_builtin(*builtin, arguments)?;
+            if *builtin == crate::ops::Builtin::Iterator
+                && crate::builtins::same_value(Some(target), Some(new_target))
+            {
+                return Err(type_error("Iterator is not constructable directly"));
+            }
+            let value = if *builtin == crate::ops::Builtin::Iterator {
+                crate::builtins::object(arguments)
+            } else {
+                construct_builtin(*builtin, arguments)?
+            };
             let value = with_new_target_prototype(value, target, new_target)?;
             if let Value::DataView(view) = &value {
                 if *view.buffer.detached.borrow() {
