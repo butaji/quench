@@ -151,13 +151,14 @@ fn validate_iterator_receiver(receiver: Option<&Value>, method: &str) -> Result<
 }
 
 fn iterator_map(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let receiver = iterator_source(receiver, "map")?;
+    validate_iterator_receiver(receiver, "map")?;
     let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
     if !crate::conversion::is_callable(&callback) {
-        return Err(crate::value::error::throw_type_error(
-            "Iterator.map callback is not callable",
-        ));
+        let error = crate::value::error::throw_type_error("Iterator.map callback is not callable");
+        close_direct_receiver(receiver);
+        return Err(error);
     }
+    let receiver = iterator_source(receiver, "map")?;
     Ok(Value::Iterator(std::rc::Rc::new(
         crate::value::IteratorData {
             state: std::cell::RefCell::new(crate::value::IteratorState::MapHelper {
@@ -168,6 +169,18 @@ fn iterator_map(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
             }),
         },
     )))
+}
+
+fn close_direct_receiver(receiver: Option<&Value>) {
+    let Some(receiver) = receiver else {
+        return;
+    };
+    let Ok(method) = crate::execute::get_property_result(receiver, "return") else {
+        return;
+    };
+    if crate::conversion::is_callable(&method) {
+        let _ = crate::functions::execute_target(&method, receiver, &[]);
+    }
 }
 
 fn iterator_source(receiver: Option<&Value>, method: &str) -> Result<Value, VmError> {
