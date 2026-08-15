@@ -48,6 +48,18 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainTime => Some("Temporal.PlainTime"),
         Builtin::TemporalPlainTimeFrom => Some("Temporal.PlainTime.from"),
         Builtin::TemporalPlainTimeCompare => Some("Temporal.PlainTime.compare"),
+        Builtin::TemporalPlainTimeHourGetter => Some("Temporal.PlainTime.prototype.hour"),
+        Builtin::TemporalPlainTimeMinuteGetter => Some("Temporal.PlainTime.prototype.minute"),
+        Builtin::TemporalPlainTimeSecondGetter => Some("Temporal.PlainTime.prototype.second"),
+        Builtin::TemporalPlainTimeMillisecondGetter => {
+            Some("Temporal.PlainTime.prototype.millisecond")
+        }
+        Builtin::TemporalPlainTimeMicrosecondGetter => {
+            Some("Temporal.PlainTime.prototype.microsecond")
+        }
+        Builtin::TemporalPlainTimeNanosecondGetter => {
+            Some("Temporal.PlainTime.prototype.nanosecond")
+        }
         _ => None,
     }
 }
@@ -86,6 +98,12 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainTime => Some("PlainTime"),
         Builtin::TemporalPlainTimeFrom => Some("from"),
         Builtin::TemporalPlainTimeCompare => Some("compare"),
+        Builtin::TemporalPlainTimeHourGetter => Some("get hour"),
+        Builtin::TemporalPlainTimeMinuteGetter => Some("get minute"),
+        Builtin::TemporalPlainTimeSecondGetter => Some("get second"),
+        Builtin::TemporalPlainTimeMillisecondGetter => Some("get millisecond"),
+        Builtin::TemporalPlainTimeMicrosecondGetter => Some("get microsecond"),
+        Builtin::TemporalPlainTimeNanosecondGetter => Some("get nanosecond"),
         _ => None,
     }
 }

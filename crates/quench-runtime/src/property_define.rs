@@ -191,6 +191,18 @@ fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::TemporalPlainDatePrototype, "monthsInYear") => {
             Builtin::TemporalPlainDateMonthsInYearGetter
         }
+        (Builtin::TemporalPlainTimePrototype, "hour") => Builtin::TemporalPlainTimeHourGetter,
+        (Builtin::TemporalPlainTimePrototype, "minute") => Builtin::TemporalPlainTimeMinuteGetter,
+        (Builtin::TemporalPlainTimePrototype, "second") => Builtin::TemporalPlainTimeSecondGetter,
+        (Builtin::TemporalPlainTimePrototype, "millisecond") => {
+            Builtin::TemporalPlainTimeMillisecondGetter
+        }
+        (Builtin::TemporalPlainTimePrototype, "microsecond") => {
+            Builtin::TemporalPlainTimeMicrosecondGetter
+        }
+        (Builtin::TemporalPlainTimePrototype, "nanosecond") => {
+            Builtin::TemporalPlainTimeNanosecondGetter
+        }
         _ => return None,
     };
     Some(Value::Object(std::rc::Rc::new(

@@ -20,7 +20,9 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "valueOf",
         ],
         Builtin::TemporalPlainTime => &["length", "name", "prototype", "from", "compare"],
-        Builtin::TemporalPlainTimePrototype => &["constructor"],
+        Builtin::TemporalPlainTimePrototype => &[
+            "constructor", "hour", "minute", "second", "millisecond", "microsecond", "nanosecond",
+        ],
         Builtin::BigIntPrototype => {
             &["constructor", "toString", "valueOf", "Symbol.toStringTag"]
         }
