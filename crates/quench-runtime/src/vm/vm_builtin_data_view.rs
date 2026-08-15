@@ -3,6 +3,9 @@ fn execute_data_view_builtin(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(result) = typed_array_accessor(builtin, receiver) {
+        return result;
+    }
     let view = data_view_receiver(receiver)?;
     if let Some(result) = data_view_accessor(builtin, view) {
         return result;
@@ -20,6 +23,40 @@ fn execute_data_view_builtin(
         return execute_data_view_get(builtin, view, offset, little_endian);
     }
     execute_data_view_set(builtin, view, offset, little_endian, arguments)
+}
+
+fn typed_array_accessor(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+) -> Option<Result<Value, VmError>> {
+    macro_rules! access {
+        ($view:expr) => {
+            Some(Ok(match builtin {
+                Builtin::DataViewByteLengthGetter => Value::Number(
+                    if $view.buffer.byte_length() < $view.byte_offset + $view.byte_length() {
+                        0.0
+                    } else {
+                        $view.byte_length() as f64
+                    },
+                ),
+                _ => return None,
+            }))
+        };
+    }
+    match receiver {
+        Some(Value::Float64Array(view)) => access!(view),
+        Some(Value::Float32Array(view)) => access!(view),
+        Some(Value::Int8Array(view)) => access!(view),
+        Some(Value::Int16Array(view)) => access!(view),
+        Some(Value::Int32Array(view)) => access!(view),
+        Some(Value::Uint8Array(view)) => access!(view),
+        Some(Value::Uint8ClampedArray(view)) => access!(view),
+        Some(Value::Uint16Array(view)) => access!(view),
+        Some(Value::Uint32Array(view)) => access!(view),
+        Some(Value::BigInt64Array(view)) => access!(view),
+        Some(Value::BigUint64Array(view)) => access!(view),
+        _ => None,
+    }
 }
 fn data_view_accessor(
     builtin: Builtin,
