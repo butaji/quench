@@ -82,6 +82,7 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
             Some(Value::String("String Iterator".into()))
         }
         (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
+        (Atomics, "Symbol.toStringTag") => Some(Value::String("Atomics".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
