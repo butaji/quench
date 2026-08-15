@@ -1,6 +1,10 @@
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
+    if let Value::Builtin(Builtin::AbstractModuleSource) = property {
+        return crate::vm::realm::intrinsic(capability.realm, Builtin::AbstractModuleSource)
+            .unwrap_or(Value::Builtin(Builtin::AbstractModuleSource));
+    }
     if matches!(property, Value::Builtin(Builtin::HostCapability(_))) {
         return bind_method(value, property);
     }
@@ -73,6 +77,9 @@ fn bound_function_property(
     {
         return value.clone();
     }
+    if realm::is_intrinsic(bound) {
+        return intrinsic_bound_property(bound, key);
+    }
     if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
     } else if key == "length" && !realm::is_intrinsic(bound) {
@@ -87,6 +94,13 @@ fn bound_function_property(
     } else {
         bound_function_fallback(bound, shadow_wrapper, key)
     }
+}
+
+fn intrinsic_bound_property(bound: &crate::value::BoundFunctionValue, key: &str) -> Value {
+    let Value::Builtin(builtin) = bound.target else {
+        return Value::Undefined;
+    };
+    builtin_property(builtin, key)
 }
 
 fn is_shadow_wrapper(bound: &crate::value::BoundFunctionValue) -> bool {

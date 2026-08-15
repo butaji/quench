@@ -63,6 +63,12 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
     {
         return Some(public_descriptor(metadata));
     }
+    if crate::vm::realm_is_intrinsic(function) {
+        let Value::Builtin(builtin) = function.target else {
+            return None;
+        };
+        return builtin_descriptor(builtin, key);
+    }
     function
         .properties
         .borrow()
@@ -282,6 +288,14 @@ fn builtin_descriptor_for_property(builtin: Builtin, key: &str) -> Option<Value>
 }
 
 fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if builtin == Builtin::AbstractModuleSourcePrototype && key == "constructor" {
+        return Some(descriptor_object_with_flags(
+            crate::vm::realm_intrinsic(Builtin::AbstractModuleSource),
+            true,
+            false,
+            true,
+        ));
+    }
     if builtin == Builtin::AbstractModuleSourcePrototype && key == "Symbol.toStringTag" {
         return Some(Value::Object(Rc::new(ObjectData::new(vec![
             (
