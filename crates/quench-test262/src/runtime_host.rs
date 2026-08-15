@@ -213,6 +213,9 @@ fn resolve_export_cell(
     if !seen.insert((module, name.to_string())) {
         return None;
     }
+    if let Some(cell) = units.get(&module).and_then(|unit| unit.export_cell(name)) {
+        return Some(cell);
+    }
     let metadata = unit_metadata(units, module).ok()?;
     let mut result = None;
     for binding in &metadata.reexports {
