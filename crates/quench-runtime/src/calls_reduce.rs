@@ -118,6 +118,7 @@ fn reduce_direct_eval(
         .collect::<Vec<_>>();
     bindings.sort_by(|left, right| left.0.cmp(&right.0));
     let reusable_var_names = reusable_eval_var_names(locals, facts);
+    let forbidden_var_names = forbidden_eval_var_names(locals, facts);
     ops.push(Op::Eval {
         dst,
         source,
@@ -126,9 +127,23 @@ fn reduce_direct_eval(
         direct: true,
         bindings,
         reusable_var_names,
-        forbidden_var_names: facts.eval_var_barrier.clone(),
+        forbidden_var_names,
     });
     Some(dst)
+}
+
+fn forbidden_eval_var_names(locals: &HashMap<String, u16>, facts: &ProgramDb) -> Vec<String> {
+    let mut names = facts.eval_var_barrier.clone();
+    if facts.eval_arrow_scope
+        && locals
+            .get("arguments")
+            .is_some_and(|slot| *slot >= facts.eval_var_scope_start)
+    {
+        names.push("arguments".to_string());
+    }
+    names.sort_unstable();
+    names.dedup();
+    names
 }
 
 fn reusable_eval_var_names(locals: &HashMap<String, u16>, facts: &ProgramDb) -> Vec<String> {
@@ -139,7 +154,11 @@ fn reusable_eval_var_names(locals: &HashMap<String, u16>, facts: &ProgramDb) -> 
         })
         .map(|(name, _)| name.clone())
         .collect::<Vec<_>>();
-    if facts.eval_arrow_scope && locals.contains_key("arguments") {
+    if facts.eval_arrow_scope
+        && locals
+            .get("arguments")
+            .is_some_and(|slot| *slot < facts.eval_var_scope_start)
+    {
         names.push("arguments".to_string());
     }
     names.sort_unstable();
