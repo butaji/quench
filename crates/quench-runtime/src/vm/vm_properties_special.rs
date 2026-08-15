@@ -241,8 +241,6 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
         }),
         "growable" => Value::Boolean(buffer.shared && buffer.max_byte_length.is_some()),
         "resize" => Value::Builtin(Builtin::ArrayBufferResize),
-        "transfer" => Value::Builtin(Builtin::ArrayBufferTransfer),
-        "transferToFixedLength" => Value::Builtin(Builtin::ArrayBufferTransferToFixedLength),
         "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
         "sliceToImmutable" => Value::Builtin(Builtin::ArrayBufferSliceToImmutable),
         "constructor" | "Symbol.toStringTag" => {
