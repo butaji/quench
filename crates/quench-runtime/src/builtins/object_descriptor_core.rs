@@ -65,6 +65,13 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
     }
     if crate::vm::is_intrinsic_bound(function) {
         if let Value::Builtin(builtin) = function.target {
+            if builtin == Builtin::ErrorPrototype && key == "stack" {
+                return Some(realm_accessor_descriptor(
+                    function.realm,
+                    Builtin::ErrorPrototypeStackGetter,
+                    Some(Builtin::ErrorPrototypeStackSetter),
+                ));
+            }
             if let Some(descriptor) = builtin_descriptor(builtin, key) {
                 return Some(descriptor);
             }
@@ -432,6 +439,22 @@ fn accessor_descriptor_with_setter(getter: Builtin, setter: Option<Builtin>) -> 
     Value::Object(Rc::new(ObjectData::new(vec![
         ("get".to_string(), Value::Builtin(getter)),
         ("set".to_string(), set),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])))
+}
+fn realm_accessor_descriptor(
+    realm: crate::ops::RealmId,
+    getter: Builtin,
+    setter: Option<Builtin>,
+) -> Value {
+    let getter = crate::vm::realm_intrinsic_for(realm, getter);
+    let setter = setter.map_or(Value::Undefined, |builtin| {
+        crate::vm::realm_intrinsic_for(realm, builtin)
+    });
+    Value::Object(Rc::new(ObjectData::new(vec![
+        ("get".to_string(), getter),
+        ("set".to_string(), setter),
         ("enumerable".to_string(), Value::Boolean(false)),
         ("configurable".to_string(), Value::Boolean(true)),
     ])))
