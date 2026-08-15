@@ -386,6 +386,8 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::BigIntPrototype
             | Builtin::AsyncFunctionPrototype
             | Builtin::AbstractModuleSourcePrototype
+            | Builtin::GeneratorFunctionPrototype
+            | Builtin::AsyncGeneratorFunctionPrototype
             | Builtin::ShadowRealmPrototype
     )
 }
