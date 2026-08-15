@@ -76,6 +76,15 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     ]))
 }
 
+fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    if receiver.is_some() {
+        return Err(crate::value::error::throw_type_error(
+            "Intl.ListFormat requires new",
+        ));
+    }
+    construct(arguments)
+}
+
 pub(crate) fn prototype_method(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
@@ -221,7 +230,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlListFormat => Some(construct(arguments)),
+        crate::ops::Builtin::IntlListFormat => Some(construct_call(arguments, receiver)),
         crate::ops::Builtin::IntlListFormatFormat
         | crate::ops::Builtin::IntlListFormatFormatToParts
         | crate::ops::Builtin::IntlListFormatResolvedOptions => {
