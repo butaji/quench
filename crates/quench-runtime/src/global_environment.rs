@@ -58,8 +58,6 @@ fn check_var(name: &str, is_lexical: bool) -> Result<(), VmError> {
     if is_lexical {
         check_lexical_declaration(name)?;
         Ok(())
-    } else if crate::locals::global_has_own_name(name) {
-        lexical_collision(name)
     } else if own_descriptor(name).is_some() {
         Ok(())
     } else if !is_global_extensible() {
