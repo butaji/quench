@@ -47,7 +47,13 @@ pub(crate) fn execute(
     _receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
-    (builtin == crate::ops::Builtin::TemporalPlainDateFrom).then(|| from(arguments.first()))
+    match builtin {
+        crate::ops::Builtin::TemporalPlainDate => Some(Err(crate::value::error::throw_type_error(
+            "Temporal.PlainDate requires new",
+        ))),
+        crate::ops::Builtin::TemporalPlainDateFrom => Some(from(arguments.first())),
+        _ => None,
+    }
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
