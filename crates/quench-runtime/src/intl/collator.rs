@@ -48,18 +48,34 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             collation = crate::conversion::to_string(&value)?;
             if !matches!(
                 collation.as_str(),
-                "default" | "search" | "standard" | "phonebk" | "pinyin" | "eor"
+                "default"
+                    | "search"
+                    | "standard"
+                    | "phonebk"
+                    | "pinyin"
+                    | "eor"
+                    | "big5han"
+                    | "compat"
+                    | "dict"
+                    | "direct"
+                    | "ducet"
+                    | "emoji"
+                    | "gb2312"
+                    | "phonetic"
+                    | "reformed"
+                    | "searchjl"
+                    | "stroke"
+                    | "trad"
+                    | "unihan"
+                    | "zhuyin"
             ) {
                 return Err(runtime_error("RangeError: invalid collation"));
             }
-            if collation == "pinyin" {
-                collation = normalize_locale_extensions(&raw_locale)
-                    .1
-                    .collation
-                    .unwrap_or_else(|| "default".to_string());
-            }
             if matches!(collation.as_str(), "eor" | "default") {
                 locale = strip_unicode_key(&locale, "co");
+            }
+            if matches!(collation.as_str(), "search" | "standard") {
+                collation = "default".to_string();
             }
         }
         if case_first != "false" {

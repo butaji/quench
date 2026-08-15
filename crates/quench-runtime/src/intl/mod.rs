@@ -632,7 +632,10 @@ fn supported_calendars() -> Vec<Value> {
 }
 
 fn supported_collations() -> Vec<Value> {
-    strings(&["default"])
+    strings(&[
+        "big5han", "compat", "dict", "direct", "ducet", "emoji", "eor", "gb2312", "phonebk",
+        "phonetic", "pinyin", "reformed", "searchjl", "stroke", "trad", "unihan", "zhuyin",
+    ])
 }
 
 const CURRENCIES: &[&str] = &[
