@@ -225,8 +225,16 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
                 && crate::vm::is_global_object(&global)
                 && crate::vm::global_builtin_exists(key)
             {
-                let value = crate::execute::get_property(&global, key);
-                Some(descriptor_object_with_flags(value, true, false, true))
+                let immutable = crate::globals::immutable_value(key);
+                let value = immutable
+                    .clone()
+                    .unwrap_or_else(|| crate::execute::get_property(&global, key));
+                Some(descriptor_object_with_flags(
+                    value,
+                    immutable.is_none(),
+                    false,
+                    immutable.is_none(),
+                ))
             } else if is_child_realm_global(&global)
                 && !matches!(key, "undefined" | "Infinity" | "NaN")
             {
