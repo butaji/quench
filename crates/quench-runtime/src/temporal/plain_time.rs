@@ -145,6 +145,40 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
+    if text.contains('−') {
+        return Err(crate::value::error::throw_range_error("Invalid time"));
+    }
+    if !text.contains('T')
+        && !text.contains('t')
+        && !text.contains(' ')
+        && text.matches('-').count() >= 2
+    {
+        return Err(crate::value::error::throw_range_error("Invalid time"));
+    }
+    if text.contains('Z') && !text.contains('T') && !text.contains('t') && !text.contains(' ') {
+        return Err(crate::value::error::throw_range_error("Invalid time"));
+    }
+    let annotations = text.split('[').skip(1).collect::<Vec<_>>();
+    if annotations
+        .iter()
+        .filter(|part| part.contains("u-ca="))
+        .count()
+        > 1
+        || annotations
+            .iter()
+            .filter(|part| !part.contains('='))
+            .count()
+            > 1
+        || annotations.iter().any(|part| {
+            part.starts_with('!') && part.contains('=') && !part.starts_with("!u-ca=iso8601")
+        })
+        || annotations.iter().any(|part| {
+            part.split_once('=')
+                .is_some_and(|(key, _)| key.chars().any(|character| character.is_ascii_uppercase()))
+        })
+    {
+        return Err(crate::value::error::throw_range_error("Invalid annotation"));
+    }
     let mut time = text.split('[').next().unwrap_or(text);
     if let Some((_, suffix)) = time.rsplit_once(|character| character == 'T' || character == 't') {
         time = suffix;
