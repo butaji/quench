@@ -172,7 +172,6 @@ pub fn execute_builtin_tail(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    use crate::ops::Builtin;
     if let Some(result) = early_dispatch(builtin, receiver, arguments) {
         return result;
     }

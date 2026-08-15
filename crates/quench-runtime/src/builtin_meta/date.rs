@@ -4,7 +4,6 @@ use crate::ops::Builtin;
 
 /// Returns the builtin for a DatePrototype property key.
 pub fn date_prop(key: &str) -> Option<Builtin> {
-    use Builtin::*;
     match key {
         "constructor" => Some(Date),
         "toString" => Some(DateToString),
