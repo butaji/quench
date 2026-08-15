@@ -52,9 +52,19 @@ pub(crate) fn intrinsic_for_realm(realm: RealmId, builtin: Builtin) -> Value {
 }
 
 pub(crate) fn realm_intrinsic(builtin: Builtin) -> Value {
-    let realm = current_context_or_default().realm();
+    let realm = current_realm_id();
     realm::intrinsic(realm, builtin).unwrap_or(Value::Builtin(builtin))
 }
+
+pub(crate) fn current_realm_id() -> RealmId {
+    match current_global_object() {
+        Value::Object(global) => {
+            realm::id_for_global(&global).unwrap_or_else(|| current_context_or_default().realm())
+        }
+        _ => current_context_or_default().realm(),
+    }
+}
+
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
@@ -534,6 +544,7 @@ fn is_object_special(builtin: Builtin) -> bool {
         Builtin::ObjectHasOwnProperty
             | Builtin::ObjectHasOwn
             | Builtin::ObjectGetOwnPropertyDescriptor
+            | Builtin::ObjectGetOwnPropertyDescriptors
             | Builtin::ObjectGetOwnPropertyNames
             | Builtin::ObjectGetOwnPropertySymbols
             | Builtin::ObjectKeys

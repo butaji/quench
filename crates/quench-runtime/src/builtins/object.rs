@@ -46,6 +46,7 @@ pub(crate) fn execute_special(
             }
             descriptor(target, key)
         }
+        Builtin::ObjectGetOwnPropertyDescriptors => own_descriptors(arguments.first()),
         Builtin::ObjectGetOwnPropertyNames => object_proxy_names(arguments.first(), false),
         Builtin::ObjectGetOwnPropertySymbols => object_proxy_names(arguments.first(), true),
         Builtin::ObjectKeys => object_keys(arguments.first()),
@@ -58,6 +59,32 @@ pub(crate) fn execute_special(
         Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => legacy_accessor_special(builtin, receiver, arguments),
     }
+}
+
+fn own_descriptors(target: Option<&Value>) -> Result<Value, VmError> {
+    let target = target.ok_or_else(|| {
+        crate::value::error::throw_type_error("Cannot convert undefined or null to object")
+    })?;
+    if !crate::value::is_object(target) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert value to object",
+        ));
+    }
+    let keys = crate::own_keys::all(target)?;
+    let Value::Array(keys) = keys else {
+        return Ok(Value::Object(Rc::new(ObjectData::new(Vec::new()))));
+    };
+    let mut properties = Vec::new();
+    for index in 0..keys.logical_len() {
+        let Some(key) = keys.get(index) else { continue };
+        let descriptor = descriptor(Some(target), Some(&key))?;
+        if matches!(descriptor, Value::Undefined) {
+            continue;
+        }
+        let name = crate::conversion::to_property_key(&key)?;
+        properties.push((name, descriptor));
+    }
+    Ok(Value::Object(Rc::new(ObjectData::new(properties))))
 }
 fn legacy_accessor_special(
     builtin: Builtin,
@@ -407,7 +434,7 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
                 | Builtin::URIErrorPrototype
                 | Builtin::AggregateErrorPrototype
                 | Builtin::SuppressedErrorPrototype
-         )))
+        )))
         && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);
     let configurable = ((key == "prototype" && builtin_property_configurable(builtin, key))
