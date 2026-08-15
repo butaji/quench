@@ -1,6 +1,6 @@
 //! `Intl.DateTimeFormat`.
 
-use chrono::{DateTime, Datelike, Timelike, Utc};
+use chrono::{DateTime, Datelike, Local, TimeZone, Timelike, Utc};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{conversion, execute::VmError, value::Value};
@@ -493,12 +493,20 @@ fn format_number(slots: &[(String, Value)], number: f64) -> String {
 
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
     let style = slot_string(slots, "dayPeriod")?;
-    let hour = DateTime::<Utc>::from_timestamp((number / 1_000.0).trunc() as i64, 0)?.hour();
-    Some(match style.as_str() {
-        "narrow" => day_period_name(hour, false),
-        "short" => day_period_name(hour, true),
-        _ => day_period_name(hour, true),
-    })
+    let hour = Local
+        .timestamp_opt((number / 1_000.0).trunc() as i64, 0)
+        .single()?
+        .hour();
+    let name = match style.as_str() {
+        "narrow" => day_period_name(hour, true),
+        _ => day_period_name(hour, false),
+    };
+    if slot_string(slots, "hour").is_some() {
+        let display_hour = if hour % 12 == 0 { 12 } else { hour % 12 };
+        Some(format!("{display_hour} {name}"))
+    } else {
+        Some(name)
+    }
 }
 
 fn day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
@@ -509,19 +517,19 @@ fn day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>
     ])])
 }
 
-fn day_period_name(hour: u32, with_prefix: bool) -> String {
+fn day_period_name(hour: u32, narrow: bool) -> String {
     let name = match hour {
-        0..=5 => "night",
+        0..=5 => "at night",
         6..=11 => "in the morning",
         12 => "noon",
         13..=17 => "in the afternoon",
         18..=20 => "in the evening",
         _ => "at night",
     };
-    if with_prefix {
-        name.to_string()
+    if narrow && hour == 12 {
+        "n".to_string()
     } else {
-        name.replace("in the ", "").replace("at ", "")
+        name.to_string()
     }
 }
 
