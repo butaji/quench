@@ -167,15 +167,31 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "Cannot convert null or undefined to object",
         ));
     }
-    let Some(Value::Object(properties)) = options else {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok(locale);
     };
-    for (key, value) in properties.iter() {
+    if !matches!(options, Value::Object(_) | Value::Proxy(_)) {
+        return Ok(locale);
+    }
+    for key in [
+        "calendar",
+        "collation",
+        "caseFirst",
+        "hourCycle",
+        "numberingSystem",
+        "numeric",
+        "firstDayOfWeek",
+        "language",
+        "region",
+        "script",
+        "variants",
+    ] {
+        let value = crate::execute::get_property_result(options, key)?;
         if matches!(value, Value::Undefined) {
             continue;
         }
-        let text = crate::conversion::to_string(value)?;
-        match key.as_str() {
+        let text = crate::conversion::to_string(&value)?;
+        match key {
             "calendar" => {
                 let value = option_value(&text, "calendar")?;
                 locale.calendar = Some(calendar_alias(&value));
@@ -186,7 +202,7 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "numberingSystem" => {
                 locale.numbering_system = Some(option_value(&text, "numberingSystem")?)
             }
-            "numeric" => locale.numeric = normalize_numeric(value, &text)?,
+            "numeric" => locale.numeric = normalize_numeric(&value, &text)?,
             "firstDayOfWeek" => {
                 let _ = option_value(&text, "firstDayOfWeek")?;
             }
