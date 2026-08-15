@@ -56,6 +56,7 @@ pub(crate) fn execute(
             crate::value::error::throw_type_error("Cannot convert PlainTime to a number"),
         )),
         crate::ops::Builtin::TemporalPlainTimeEquals => Some(equals(_receiver, arguments.first())),
+        crate::ops::Builtin::TemporalPlainTimeAdd => Some(add(_receiver, arguments.first())),
         _ => None,
     }
 }
@@ -251,6 +252,56 @@ fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmEr
     let left = time_fields(receiver)?;
     let right = time_fields(&from(other)?)?;
     Ok(Value::Boolean(left == right))
+}
+
+fn add(receiver: Option<&Value>, duration: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainTime"))?;
+    if duration.is_some_and(crate::conversion::is_symbol) {
+        return Err(crate::value::error::throw_type_error("Invalid duration"));
+    }
+    let duration = crate::temporal::duration::from(duration)?;
+    let names = ["years", "months", "weeks"];
+    for name in names {
+        if duration_number(&duration, name)? != 0 {
+            return Err(crate::value::error::throw_range_error("Invalid duration"));
+        }
+    }
+    let delta = [
+        ("days", 86_400_000_000_000_i64),
+        ("hours", 3_600_000_000_000),
+        ("minutes", 60_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
+    ]
+    .iter()
+    .map(|(name, scale)| duration_number(&duration, name).map(|value| value * scale))
+    .collect::<Result<Vec<_>, _>>()?
+    .into_iter()
+    .sum::<i64>();
+    let total = (time_fields(receiver)? + delta).rem_euclid(86_400_000_000_000);
+    let hour = total / 3_600_000_000_000;
+    let remainder = total % 3_600_000_000_000;
+    let minute = remainder / 60_000_000_000;
+    let remainder = remainder % 60_000_000_000;
+    let second = remainder / 1_000_000_000;
+    let remainder = remainder % 1_000_000_000;
+    construct(&[
+        Value::Number(hour as f64),
+        Value::Number(minute as f64),
+        Value::Number(second as f64),
+        Value::Number((remainder / 1_000_000) as f64),
+        Value::Number((remainder / 1_000 % 1_000) as f64),
+        Value::Number((remainder % 1_000) as f64),
+    ])
+}
+
+fn duration_number(value: &Value, name: &str) -> Result<i64, VmError> {
+    crate::execute::get_property_result(value, name)
+        .and_then(|value| crate::conversion::to_number(&value))
+        .map(|value| value as i64)
 }
 
 fn time_fields(value: &Value) -> Result<i64, VmError> {

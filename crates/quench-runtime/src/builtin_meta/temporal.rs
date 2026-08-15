@@ -67,6 +67,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainTimeToLocaleString => {
             Some("Temporal.PlainTime.prototype.toLocaleString")
         }
+        Builtin::TemporalPlainTimeAdd => Some("Temporal.PlainTime.prototype.add"),
         _ => None,
     }
 }
@@ -116,6 +117,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainTimeValueOf => Some("valueOf"),
         Builtin::TemporalPlainTimeEquals => Some("equals"),
         Builtin::TemporalPlainTimeToLocaleString => Some("toLocaleString"),
+        Builtin::TemporalPlainTimeAdd => Some("add"),
         _ => None,
     }
 }

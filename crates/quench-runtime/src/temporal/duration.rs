@@ -301,7 +301,7 @@ fn negated(value: Option<&Value>) -> Result<Value, VmError> {
     construct(&values)
 }
 
-fn from(value: Option<&Value>) -> Result<Value, VmError> {
+pub(crate) fn from(value: Option<&Value>) -> Result<Value, VmError> {
     if let Some(Value::String(text)) = value {
         return parse_string(text);
     }
