@@ -132,9 +132,6 @@ pub(crate) fn object_property_is_enumerable(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Value {
-    if matches!(receiver, Some(Value::Builtin(_))) {
-        return Value::Boolean(false);
-    }
     let (Some(receiver), Some(key)) = (receiver, arguments.first()) else {
         return Value::Boolean(false);
     };
