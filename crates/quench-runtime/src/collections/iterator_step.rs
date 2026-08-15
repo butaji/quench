@@ -1,6 +1,8 @@
 //! Iterator stepping — one observable `next` fetch per protocol iterator (GetIterator semantics).
 
-use super::{close, iterator_map, iterator_protocol, mark_done, native_step, not_iterable};
+use super::{
+    close, close_iterators, iterator_map, iterator_protocol, mark_done, native_step, not_iterable,
+};
 use crate::value::{IteratorData, IteratorState, Value};
 
 pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
@@ -146,12 +148,17 @@ fn zip_step(
     }
     let mut values = Vec::with_capacity(iterators.len());
     let mut ended = 0;
+    let mut open = vec![true; iterators.len()];
     for (index, iterator) in iterators.iter().enumerate() {
         match super::step_value(iterator) {
             Ok(Some(value)) => values.push(value),
             Ok(None) => {
                 ended += 1;
+                open[index] = false;
                 values.push(Value::Undefined);
+                if mode == 0 {
+                    break;
+                }
             }
             Err(error) => return Err(close_remaining(&iterators[index + 1..], error)),
         }
@@ -167,9 +174,29 @@ fn zip_step(
                 "Iterator.zip iterators have different lengths",
             ));
         }
+        if let Some(error) = close_shortest(iterators, &open)? {
+            *done = true;
+            return Err(error);
+        }
         return Ok(None);
     }
     Ok(Some(Value::array(values)))
+}
+
+fn close_shortest(
+    iterators: &[Value],
+    open: &[bool],
+) -> Result<Option<crate::execute::VmError>, crate::execute::VmError> {
+    let open_iterators = iterators
+        .iter()
+        .zip(open)
+        .filter_map(|(iterator, is_open)| is_open.then_some(iterator.clone()))
+        .collect();
+    let completion = close_iterators(
+        open_iterators,
+        crate::completion::Completion::Return(Value::Undefined),
+    )?;
+    Ok(completion.into_vm_error().err())
 }
 
 fn close_remaining(iterators: &[Value], error: crate::execute::VmError) -> crate::execute::VmError {
