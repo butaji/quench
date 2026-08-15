@@ -131,6 +131,13 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Date, "prototype") => Some(DatePrototype),
         (Date, "now") => Some(DateNow),
         (Date, "parse") => Some(DateParse),
+        _ => builtin_method_core_tail(builtin, key),
+    }
+}
+
+fn builtin_method_core_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    match (builtin, key) {
         (Date, "UTC") => Some(DateUTC),
         _ => builtin_method2(builtin, key),
     }
