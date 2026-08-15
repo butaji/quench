@@ -84,7 +84,12 @@ fn difference(
     let mut months = 0.0;
     let mut weeks = 0.0;
     if matches!(unit.as_deref(), Some("years") | Some("months")) {
-        let total = (right.0 - left.0) * 12.0 + right.1 - left.1;
+        let mut total = (right.0 - left.0) * 12.0 + right.1 - left.1;
+        if total > 0.0 && right.2 < left.2 {
+            total -= 1.0;
+        } else if total < 0.0 && right.2 > left.2 {
+            total += 1.0;
+        }
         let sign = total.signum();
         let total = total.abs();
         if unit.as_deref() == Some("years") {
