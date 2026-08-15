@@ -393,7 +393,7 @@ fn wake_waiters(buffer: &Rc<crate::value::ArrayBufferData>, index: usize, count:
     let mut woken = wake_sync_waiters(buffer, index, count);
     WAITERS.with(|waiters| {
         waiters.borrow_mut().retain(|waiter| {
-            let matches = Rc::ptr_eq(&waiter.buffer, buffer) && waiter.index == index;
+            let matches = same_buffer(&waiter.buffer, buffer) && waiter.index == index;
             if matches && woken < count {
                 crate::promise::resolve_promise(&waiter.promise, Value::String("ok".into()));
                 woken += 1;
@@ -419,7 +419,7 @@ fn wake_sync_waiters(
         waiters
             .borrow_mut()
             .retain(|(candidate, position, result)| {
-                let matches = Rc::ptr_eq(candidate, buffer) && *position == index;
+                let matches = same_buffer(candidate, buffer) && *position == index;
                 if matches && woken < count {
                     result.woken.set(true);
                     woken += 1;
@@ -580,6 +580,13 @@ fn view_buffer(view: &Value) -> Option<&std::rc::Rc<crate::value::ArrayBufferDat
         Value::BigUint64Array(v) => Some(&v.buffer),
         _ => None,
     }
+}
+
+fn same_buffer(
+    left: &Rc<crate::value::ArrayBufferData>,
+    right: &Rc<crate::value::ArrayBufferData>,
+) -> bool {
+    Rc::ptr_eq(left, right) || Rc::ptr_eq(&left.bytes, &right.bytes)
 }
 
 pub(crate) fn broadcast_buffer(value: &Value) -> Value {
