@@ -61,6 +61,10 @@ fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
     }
 }
 
+pub(crate) fn create_shadow_realm_value() -> Value {
+    create_realm_value()
+}
+
 fn create_realm_value() -> Value {
     let parent = CURRENT_CONTEXT
         .with(|context| context.borrow().clone())
@@ -75,10 +79,10 @@ fn create_realm_value() -> Value {
     let Some(constructor) = realm::intrinsic(realm, Builtin::TypeError) else {
         return Value::Undefined;
     };
-    let properties = Rc::new(crate::value::ObjectData::new(vec![(
-        "TypeError".to_string(),
-        constructor,
-    )]));
+    let properties = Rc::new(crate::value::ObjectData::new(vec![
+        ("TypeError".to_string(), constructor),
+        ("\0realm".to_string(), Value::HostCapability(Rc::clone(&token))),
+    ]));
     if realm::id_for_token(&token).is_none() || !realm::register_global(&token, properties) {
         return Value::Undefined;
     }
