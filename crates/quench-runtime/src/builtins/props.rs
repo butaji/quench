@@ -93,6 +93,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDatePrototype, "equals") => Some(Value::Builtin(TemporalPlainDateEquals)),
         (TemporalPlainDatePrototype, "add") => Some(Value::Builtin(TemporalPlainDateAdd)),
         (TemporalPlainDatePrototype, "subtract") => Some(Value::Builtin(TemporalPlainDateSubtract)),
+        (TemporalPlainDatePrototype, "until") => Some(Value::Builtin(TemporalPlainDateUntil)),
+        (TemporalPlainDatePrototype, "since") => Some(Value::Builtin(TemporalPlainDateSince)),
         (TemporalDurationPrototype, "constructor") => Some(Value::Builtin(TemporalDuration)),
         (TemporalDurationPrototype, "negated") => Some(Value::Builtin(TemporalDurationNegated)),
         (IntlCollatorPrototype, "Symbol.toStringTag") => {
