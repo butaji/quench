@@ -229,6 +229,9 @@ impl ModuleGraph {
             ModuleKind::Json | ModuleKind::Text | ModuleKind::JavaScript => {
                 let source = std::fs::read_to_string(&path)
                     .map_err(|error| format!("module {}: {error}", path.display()))?;
+                if kind == ModuleKind::JavaScript {
+                    Self::validate_static_source(&path, &source, &mut Vec::new())?;
+                }
                 Ok(match kind {
                     ModuleKind::Json => self.add_json_dependency(path, source),
                     ModuleKind::Text => self.add_text_dependency(path, source),
@@ -242,6 +245,31 @@ impl ModuleGraph {
                 Ok(self.add_bytes_dependency(path, bytes))
             }
         }
+    }
+
+    fn validate_static_source(
+        path: &Path,
+        source: &str,
+        seen: &mut Vec<PathBuf>,
+    ) -> Result<(), String> {
+        let path = normalize_module_path(path);
+        if seen.contains(&path) {
+            return Ok(());
+        }
+        seen.push(path.clone());
+        let metadata = quench_runtime::reduce::inspect_module_source(source)
+            .map_err(|errors| errors.join("; "))?;
+        let base = path.parent().unwrap_or_else(|| Path::new(""));
+        for imported in metadata.import_specifiers {
+            if imported == "<module source>" {
+                continue;
+            }
+            let imported_path = normalize_module_path(&base.join(&imported));
+            let imported_source = std::fs::read_to_string(&imported_path)
+                .map_err(|_| format!("unresolved module {}", imported_path.display()))?;
+            Self::validate_static_source(&imported_path, &imported_source, seen)?;
+        }
+        Ok(())
     }
 
     /// Link every currently loaded unit from its canonical static metadata.
