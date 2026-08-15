@@ -251,11 +251,17 @@ fn error_cause_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
 
 fn error_stack_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
     let value = error_receiver(receiver, "Error.prototype.stack")?;
-    if has_error_slot(value) {
-        Ok(Value::String("Error".to_string()))
-    } else {
-        Ok(Value::Undefined)
+    if !has_error_slot(value) {
+        return Ok(Value::Undefined);
     }
+    let key = Value::String("stack".to_string());
+    let own = crate::builtins::object::descriptor(Some(value), Some(&key))?;
+    if !matches!(own, Value::Undefined)
+        && !matches!(crate::execute::get_property(&own, "value"), Value::Undefined)
+    {
+        return crate::execute::get_property_result(value, "stack");
+    }
+    Ok(Value::String("Error".to_string()))
 }
 
 fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
