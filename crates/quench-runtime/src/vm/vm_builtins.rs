@@ -302,19 +302,20 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
 
 fn proxy_has_own_stack(value: &Value) -> Result<bool, VmError> {
     Ok(!matches!(
-        crate::builtins::object::descriptor(
-            Some(value),
-            Some(&Value::String("stack".to_string())),
-        )?,
+        crate::proxy::proxy_get_own_property_descriptor(value, "stack")?,
         Value::Undefined
     ))
 }
 
 fn own_stack_setter(value: &Value) -> Result<Option<Value>, VmError> {
-    let descriptor = crate::builtins::object::descriptor(
-        Some(value),
-        Some(&Value::String("stack".to_string())),
-    )?;
+    let descriptor = if matches!(value, Value::Proxy(_)) {
+        crate::proxy::proxy_get_own_property_descriptor(value, "stack")?
+    } else {
+        crate::builtins::object::descriptor(
+            Some(value),
+            Some(&Value::String("stack".to_string())),
+        )?
+    };
     Ok(descriptor_field(&descriptor, "set"))
 }
 
