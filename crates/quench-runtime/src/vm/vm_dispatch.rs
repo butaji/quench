@@ -327,7 +327,7 @@ fn render_thrown(value: &Value) -> String {
             (Some(name), Some(message)) => format!("{name}: {message}"),
             (Some(name), None) => name,
             (None, Some(message)) if message.is_empty() => constructor_name(value),
-            (None, Some(message)) => message,
+            (None, Some(message)) => format!("{}: {message}", constructor_name(value)),
             (None, None) => "[object Object]".to_string(),
         }
     } else {
