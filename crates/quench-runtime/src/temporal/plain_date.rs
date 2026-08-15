@@ -4,6 +4,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
     let month = number(arguments.get(1))?;
     let day = number(arguments.get(2))?;
+    validate_date(year, month, day)?;
     Ok(date_object(year, month, day))
 }
 
@@ -12,10 +13,11 @@ pub(crate) fn execute(
     _receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
-    (builtin == crate::ops::Builtin::TemporalPlainDateFrom).then(|| from(arguments.first()))
+    (builtin == crate::ops::Builtin::TemporalPlainDateFrom)
+        .then(|| from(arguments.first(), arguments.get(1)))
 }
 
-fn from(value: Option<&Value>) -> Result<Value, VmError> {
+fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let Some(value) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
@@ -31,7 +33,13 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
                 .and_then(|value| value.parse().ok())
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))
         })?;
-        return Ok(date_object(year, month, day));
+        if let Ok(Value::String(code)) = field(object, "monthCode") {
+            let expected = format!("M{month:02.0}");
+            if code != expected {
+                return Err(crate::value::error::throw_range_error("monthCode mismatch"));
+            }
+        }
+        return make_date(year, month, day, options);
     }
     let Value::String(text) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
@@ -53,7 +61,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         let day = date[day_start..]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        return Ok(date_object(year, month, day));
+        return make_date(year, month, day, options);
     }
     if parts.len() == 4 && parts[0].is_empty() {
         let year = format!("-{}", parts[1])
@@ -65,7 +73,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         let day = parts[3]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        return Ok(date_object(year, month, day));
+        return make_date(year, month, day, options);
     }
     if parts.len() != 3 {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
@@ -79,7 +87,58 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     let day = parts[2]
         .parse()
         .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
+    make_date(year, month, day, options)
+}
+
+fn make_date(year: f64, month: f64, day: f64, options: Option<&Value>) -> Result<Value, VmError> {
+    let max = days_in_month(year, month)?;
+    if day <= 0.0
+        || day > max
+        || (year == -271821.0 && (month < 4.0 || (month == 4.0 && day < 19.0)))
+        || (year == 275760.0 && (month > 9.0 || (month == 9.0 && day > 13.0)))
+    {
+        let reject = matches!(options, Some(Value::Object(object)) if object.iter().any(|(key, value)| key == "overflow" && matches!(value, Value::String(value) if value == "reject")));
+        if reject {
+            return Err(crate::value::error::throw_range_error("Invalid date"));
+        }
+        return Ok(date_object(year, month, day.clamp(1.0, max)));
+    }
     Ok(date_object(year, month, day))
+}
+
+fn validate_date(year: f64, month: f64, day: f64) -> Result<(), VmError> {
+    let max = days_in_month(year, month)?;
+    if day <= 0.0
+        || day > max
+        || (year == -271821.0 && (month < 4.0 || (month == 4.0 && day < 19.0)))
+        || (year == 275760.0 && (month > 9.0 || (month == 9.0 && day > 13.0)))
+    {
+        return Err(crate::value::error::throw_range_error("Invalid date"));
+    }
+    Ok(())
+}
+
+fn days_in_month(year: f64, month: f64) -> Result<f64, VmError> {
+    if !(1.0..=12.0).contains(&month)
+        || !year.is_finite()
+        || !(-271821.0..=275760.0).contains(&year)
+    {
+        return Err(crate::value::error::throw_range_error("Invalid date"));
+    }
+    if month == 2.0 {
+        return Ok(
+            if year % 4.0 == 0.0 && (year % 100.0 != 0.0 || year % 400.0 == 0.0) {
+                29.0
+            } else {
+                28.0
+            },
+        );
+    }
+    Ok(if [4.0, 6.0, 9.0, 11.0].contains(&month) {
+        30.0
+    } else {
+        31.0
+    })
 }
 
 fn field(object: &crate::value::ObjectData, name: &str) -> Result<Value, VmError> {
