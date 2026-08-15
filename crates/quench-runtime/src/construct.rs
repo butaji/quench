@@ -13,7 +13,12 @@ pub(crate) fn reduce(
 ) -> Option<u16> {
     let callee =
         crate::reduce::reduce_expression(&expression.callee, ops, facts, next_register, locals)?;
-    let (args, spreads) = if is_aggregate_error_callee(&expression.callee) {
+    let (args, spreads) = if is_aggregate_error_callee(&expression.callee, locals)
+        && !matches!(
+            expression.arguments.first(),
+            Some(oxc::ast::ast::Argument::SpreadElement(_))
+        )
+    {
         reduce_aggregate_error_arguments(&expression.arguments, ops, facts, next_register, locals)?
     } else {
         crate::reduce::reduce_expressions::calls_reduce::reduce_arguments(
@@ -35,10 +40,14 @@ pub(crate) fn reduce(
     Some(dst)
 }
 
-fn is_aggregate_error_callee(expression: &oxc::ast::ast::Expression<'_>) -> bool {
+fn is_aggregate_error_callee(
+    expression: &oxc::ast::ast::Expression<'_>,
+    locals: &HashMap<String, u16>,
+) -> bool {
     matches!(
         expression,
-        oxc::ast::ast::Expression::Identifier(identifier) if identifier.name == "AggregateError"
+        oxc::ast::ast::Expression::Identifier(identifier)
+            if identifier.name == "AggregateError" && !locals.contains_key("AggregateError")
     )
 }
 
