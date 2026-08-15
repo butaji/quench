@@ -22,6 +22,9 @@ static BOOTSTRAP_SOURCE: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| polyfills::node_compat().bootstrap_source());
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if !env::args().skip(1).any(|arg| arg == "--quickjs") {
+        return run_quench_cli();
+    }
     let mut args = cli_args().into_iter();
     let mode = args.next();
     if mode.as_deref() == Some("--help") || mode.as_deref() == Some("-h") {
@@ -55,6 +58,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         None => run_source(""),
     }
+}
+fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = env::args()
+        .skip(1)
+        .filter(|arg| arg != "--quickjs")
+        .collect();
+    match args.first().map(String::as_str) {
+        Some("--help") | Some("-h") => {
+            println!("quench-node [--quickjs] [-e CODE|SCRIPT]");
+            Ok(())
+        }
+        Some("-e") | Some("--eval") => {
+            run_quench_source(args.get(1).map_or("", String::as_str), None)
+        }
+        Some(path) => {
+            let source = fs::read_to_string(path)?;
+            run_quench_source(&source, Some(path))
+        }
+        None => run_quench_source("", None),
+    }
+}
+fn run_quench_source(source: &str, path: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let program = match path.is_some_and(|path| path.ends_with(".mjs")) {
+        true => quench_runtime::reduce::reduce_module_source(source),
+        false => quench_runtime::reduce::reduce_source(source),
+    }
+    .map_err(|errors| errors.join("\n"))?;
+    quench_runtime::execute::run_vm(program.ops())
+        .map(|_| ())
+        .map_err(|error| error.render().into())
 }
 fn cli_args() -> Vec<String> {
     let mut args: Vec<String> = env::args().skip(1).collect();
