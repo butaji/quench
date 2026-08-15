@@ -246,6 +246,18 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
         .map(|(_, value)| descriptor_object(value))
 }
 fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value> {
+    if let Some(Value::String(value)) = properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "_value").then_some(value))
+    {
+        if key == "length" {
+            return Some(string_length_descriptor(value));
+        }
+        if let Some(descriptor) = string_descriptor(value, key) {
+            return Some(descriptor);
+        }
+    }
     if let Some((_, metadata)) = properties
         .iter()
         .rev()
@@ -414,8 +426,20 @@ fn accessor_descriptor_with_setter(getter: Builtin, setter: Option<Builtin>) -> 
 include!("object_property_flags.rs");
 include!("object_array_descriptor.rs");
 fn string_descriptor(value: &str, key: &str) -> Option<Value> {
+    if key == "length" {
+        return Some(string_length_descriptor(value));
+    }
     crate::strings::char_at_utf16(value, key.parse::<usize>().ok()?)
         .map(|character| descriptor_object_with_flags(Value::String(character), false, true, false))
+}
+
+fn string_length_descriptor(value: &str) -> Value {
+    descriptor_object_with_flags(
+        Value::Number(crate::strings::utf16_len(value) as f64),
+        false,
+        false,
+        false,
+    )
 }
 fn descriptor_object(value: &Value) -> Value {
     descriptor_object_with_flags(public_value(value), true, true, true)
