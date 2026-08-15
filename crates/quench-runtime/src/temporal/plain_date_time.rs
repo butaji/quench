@@ -636,6 +636,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         .or_else(|| main.split_once(' '))
         .unwrap_or((main, "00:00"));
     validate_time_offset(time)?;
+    validate_fraction_digits(time)?;
     let time = time.split(['+', '-']).next().unwrap_or(time);
     let date_fields = if date.starts_with(['+', '-']) && !date.contains('-') && date.len() == 11 {
         vec![&date[..7], &date[7..9], &date[9..]]
@@ -683,6 +684,21 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         nanos % 1_000.0,
     ]);
     construct(&fields.into_iter().map(Value::Number).collect::<Vec<_>>())
+}
+
+fn validate_fraction_digits(time: &str) -> Result<(), VmError> {
+    for separator in ['.', ','] {
+        if let Some(index) = time.find(separator) {
+            let digits = time[index + 1..]
+                .chars()
+                .take_while(|character| character.is_ascii_digit())
+                .count();
+            if digits > 9 {
+                return Err(crate::value::error::throw_range_error("Invalid fraction"));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_time_offset(time: &str) -> Result<(), VmError> {
