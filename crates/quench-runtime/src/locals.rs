@@ -101,6 +101,9 @@ pub(crate) fn global_lexical() -> Option<Rc<Environment>> {
 
 pub(crate) fn global_has_own_name(name: &str) -> bool {
     global_lexical().is_some_and(|environment| environment.has_own_name(name))
+        || matches!(crate::vm::current_global_object(), Value::Object(object) if object
+            .iter()
+            .any(|(key, _)| key == name))
 }
 
 pub(crate) fn has_name(name: &str) -> bool {
@@ -311,12 +314,13 @@ pub(crate) fn is_immutable_name(name: &str) -> bool {
 }
 
 pub(crate) fn resolve_name(name: &str) -> Option<Value> {
-    current().resolve_name(name).or_else(|| {
-        global_has_own_name(name)
-            .then(global_lexical)
-            .flatten()?
-            .resolve_name(name)
-    })
+    if let Some(value) = current().resolve_name(name) {
+        return Some(value);
+    }
+    if global_has_own_name(name) {
+        return global_lexical().and_then(|environment| environment.resolve_name(name));
+    }
+    None
 }
 
 pub(crate) fn resolve_eval_name(name: &str) -> Option<Value> {
