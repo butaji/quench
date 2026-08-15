@@ -34,6 +34,7 @@ pub struct LinkedModule {
     namespace: RefCell<Option<ModuleBindingCell>>,
     deferred_namespace: RefCell<Option<ModuleBindingCell>>,
     executed: Cell<bool>,
+    evaluating: Cell<bool>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -111,8 +112,14 @@ impl LinkedModuleGraph {
                         )
                     })?;
                 if !deferred {
-                    unsafe { (&*graph_ptr).execute(graph, target) }
-                        .map_err(quench_runtime::execute::VmError::EvalError)?;
+                    if let Err(error) = unsafe { (&*graph_ptr).execute(graph, target) } {
+                        let reason = dynamic_import_error(&error);
+                        return Ok(Value::Promise(Rc::new(
+                            quench_runtime::value::PromiseData::new(
+                                quench_runtime::value::PromiseState::Rejected(reason),
+                            ),
+                        )));
+                    }
                 }
                 namespace_cell(unsafe { &(*graph_ptr).units }, target, deferred)
                     .map(|cell| cell.get())
@@ -131,6 +138,16 @@ impl LinkedModuleGraph {
     pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
         self.units.get(&unit)?.export_cell(name)
     }
+}
+
+fn dynamic_import_error(error: &str) -> Value {
+    let message = error
+        .strip_prefix("residual VM error: TypeError: ")
+        .unwrap_or(error);
+    quench_runtime::builtins::error(
+        quench_runtime::ops::Builtin::TypeError,
+        &[Value::String(message.to_string())],
+    )
 }
 
 fn dynamic_module_kind(options: &Value) -> ModuleKind {
@@ -432,6 +449,7 @@ impl LinkedModule {
             namespace: RefCell::new(None),
             deferred_namespace: RefCell::new(None),
             executed: Cell::new(false),
+            evaluating: Cell::new(false),
         })
     }
 
@@ -447,6 +465,7 @@ impl LinkedModule {
             namespace: RefCell::new(None),
             deferred_namespace: RefCell::new(None),
             executed: Cell::new(false),
+            evaluating: Cell::new(false),
         })
     }
 
@@ -679,6 +698,15 @@ impl LinkedModule {
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
+        if self.evaluating.replace(true) {
+            return Ok(Value::Undefined);
+        }
+        let result = self.execute_inner();
+        self.evaluating.set(false);
+        result
+    }
+
+    fn execute_inner(&self) -> Result<quench_runtime::value::Value, String> {
         let mut registers = Vec::new();
         let result = self
             .scope

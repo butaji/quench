@@ -168,8 +168,7 @@ impl ModuleGraph {
         }
         for specifier in &metadata.dynamic_imports {
             let kind = dynamic_kind(specifier);
-            let target = self.ensure_dependency(from, specifier, kind)?;
-            self.link(from, target)?;
+            let _ = self.ensure_dependency(from, specifier, kind)?;
         }
         Ok(())
     }
