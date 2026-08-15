@@ -442,7 +442,8 @@ pub fn execute_builtin_with_receiver(
     }
     if matches!(
         builtin,
-        Builtin::SharedArrayBufferByteLengthGetter | Builtin::SharedArrayBufferGrow
+        Builtin::SharedArrayBufferByteLengthGetter
+            | Builtin::SharedArrayBufferGrow
             | Builtin::SharedArrayBufferSlice
             | Builtin::SharedArrayBufferGrowableGetter
             | Builtin::SharedArrayBufferMaxByteLengthGetter
