@@ -189,6 +189,8 @@ fn stateful_builtin(
         Builtin::GeneratorNext => Some(crate::generator::next(receiver, arguments)),
         Builtin::GeneratorReturn => Some(crate::generator::return_(receiver, arguments)),
         Builtin::GeneratorThrow => Some(crate::generator::throw(receiver, arguments)),
+        Builtin::AsyncIteratorDispose => Some(crate::generator::async_dispose(receiver)),
+        Builtin::AsyncIteratorDisposeFulfilled => Some(Ok(Value::Undefined)),
         Builtin::ProxyRevoke => Some(crate::proxy::revoke(receiver)),
         Builtin::Math => Some(Err(not_callable())),
         _ => None,

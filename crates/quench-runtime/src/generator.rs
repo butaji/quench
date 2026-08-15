@@ -158,6 +158,24 @@ pub(crate) fn throw(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     let generator = generator_receiver(receiver, "throw")?;
     resume(generator, Resume::Throw(first_argument(arguments)))
 }
+
+pub(crate) fn async_dispose(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or_else(|| {
+        crate::value::error::throw_type_error("AsyncIterator.prototype[@@asyncDispose]")
+    })?;
+    let method = crate::execute::get_property_result(receiver, "return")?;
+    if !crate::conversion::is_callable(&method) {
+        return Ok(crate::promise::promise_resolve(&[Value::Undefined]));
+    }
+    let result = crate::functions::execute_target(&method, receiver, &[Value::Undefined])?;
+    let promise = crate::promise::promise_resolve(&[result]);
+    crate::promise::promise_then(
+        Some(&promise),
+        &[Value::Builtin(
+            crate::ops::Builtin::AsyncIteratorDisposeFulfilled,
+        )],
+    )
+}
 enum Resume {
     Next(Value),
     Return(Value),
