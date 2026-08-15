@@ -316,7 +316,7 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
         if !crate::vm::current_context_or_default().can_block() {
             return Err(type_error("Atomics.wait cannot suspend this agent"));
         }
-        if timeout.is_nan() || (timeout.is_finite() && timeout <= 0.0) {
+        if timeout.is_finite() && timeout <= 0.0 {
             return Ok(Value::String("timed-out".into()));
         }
         if timeout < 1_000.0 {
