@@ -13,25 +13,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         Some(Value::Object(properties)) => properties,
         _ => return Err(runtime_error("TypeError: options.type is required")),
     };
-    let display_type = option_string(properties, "type", "TypeError: options.type is required")?;
-    if !matches!(
-        display_type.as_str(),
-        "language" | "region" | "currency" | "script" | "calendar" | "dateTimeField"
-    ) {
-        return Err(runtime_error("RangeError: invalid type"));
-    }
-    let style = option_string(properties, "style", "")?;
-    if !matches!(style.as_str(), "long" | "short" | "narrow") {
-        return Err(runtime_error("RangeError: invalid style"));
-    }
-    let fallback = option_string(properties, "fallback", "")?;
-    if !matches!(fallback.as_str(), "code" | "none") {
-        return Err(runtime_error("RangeError: invalid fallback"));
-    }
-    let language_display = option_string(properties, "languageDisplay", "")?;
-    if !matches!(language_display.as_str(), "dialect" | "standard") {
-        return Err(runtime_error("RangeError: invalid languageDisplay"));
-    }
+    let options = parse_options(properties)?;
     Ok(make_object(vec![
         (
             "of".to_string(),
@@ -45,16 +27,67 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             SLOT.to_string(),
             make_object(vec![
                 ("locale".to_string(), Value::String(locale)),
-                ("type".to_string(), Value::String(display_type)),
-                ("style".to_string(), Value::String(style)),
-                ("fallback".to_string(), Value::String(fallback)),
+                ("type".to_string(), Value::String(options.display_type)),
+                ("style".to_string(), Value::String(options.style)),
+                ("fallback".to_string(), Value::String(options.fallback)),
                 (
                     "languageDisplay".to_string(),
-                    Value::String(language_display),
+                    Value::String(options.language_display),
                 ),
             ]),
         ),
     ]))
+}
+
+struct DisplayNamesOptions {
+    display_type: String,
+    style: String,
+    fallback: String,
+    language_display: String,
+}
+
+fn parse_options(properties: &[(String, Value)]) -> Result<DisplayNamesOptions, VmError> {
+    let display_type = option_string(properties, "type", "TypeError: options.type is required")?;
+    validate_type(&display_type)?;
+    let style = option_string(properties, "style", "")?;
+    validate_value(&style, &["long", "short", "narrow"], "style")?;
+    let fallback = option_string(properties, "fallback", "")?;
+    validate_value(&fallback, &["code", "none"], "fallback")?;
+    let language_display = option_string(properties, "languageDisplay", "")?;
+    validate_value(
+        &language_display,
+        &["dialect", "standard"],
+        "languageDisplay",
+    )?;
+    Ok(DisplayNamesOptions {
+        display_type,
+        style,
+        fallback,
+        language_display,
+    })
+}
+
+fn validate_type(value: &str) -> Result<(), VmError> {
+    validate_value(
+        value,
+        &[
+            "language",
+            "region",
+            "currency",
+            "script",
+            "calendar",
+            "dateTimeField",
+        ],
+        "type",
+    )
+}
+
+fn validate_value(value: &str, allowed: &[&str], name: &str) -> Result<(), VmError> {
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        Err(runtime_error(&format!("RangeError: invalid {name}")))
+    }
 }
 
 pub(crate) fn prototype_method(
@@ -98,16 +131,11 @@ pub(crate) fn prototype_method(
 fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
     let valid = match display_type {
         "language" => language_code_valid(code),
-        "region" => {
-            (code.len() == 2 && code.chars().all(|c| c.is_ascii_alphabetic()))
-                || (code.len() == 3 && code.chars().all(|c| c.is_ascii_digit()))
-        }
-        "script" => code.len() == 4 && code.chars().all(|c| c.is_ascii_alphabetic()),
-        "currency" => code.len() == 3 && code.chars().all(|c| c.is_ascii_alphabetic()),
-        "calendar" => code.split('-').all(|part| {
-            (3..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
-        }),
-        "dateTimeField" => !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric()),
+        "region" => region_code_valid(code),
+        "script" => fixed_alpha_code_valid(code, 4),
+        "currency" => fixed_alpha_code_valid(code, 3),
+        "calendar" => calendar_code_valid(code),
+        "dateTimeField" => alpha_numeric_code_valid(code),
         _ => false,
     };
     if valid {
@@ -115,6 +143,25 @@ fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
     } else {
         Err(runtime_error("RangeError: invalid code"))
     }
+}
+
+fn region_code_valid(code: &str) -> bool {
+    (code.len() == 2 && code.chars().all(|c| c.is_ascii_alphabetic()))
+        || (code.len() == 3 && code.chars().all(|c| c.is_ascii_digit()))
+}
+
+fn fixed_alpha_code_valid(code: &str, length: usize) -> bool {
+    code.len() == length && code.chars().all(|c| c.is_ascii_alphabetic())
+}
+
+fn calendar_code_valid(code: &str) -> bool {
+    code.split('-').all(|part| {
+        (3..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
+    })
+}
+
+fn alpha_numeric_code_valid(code: &str) -> bool {
+    !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 fn language_code_valid(code: &str) -> bool {
