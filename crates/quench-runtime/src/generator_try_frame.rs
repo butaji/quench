@@ -54,7 +54,9 @@ fn resume_try_frame(
     };
     if completion.is_suspension() {
         let next = next.ok_or(VmError::MissingReturn)?;
-        advance_frame_after_yield(generator, frame.body_resume, next)?;
+        if !push_nested_try_frame(generator, frame.body_resume, next)? {
+            advance_frame_after_yield(generator, frame.body_resume, next)?;
+        }
         return Ok(Some(completion));
     }
     let completion = if let Some(pending) = frame.pending {
@@ -73,6 +75,65 @@ fn resume_try_frame(
     }
     generator.machine.borrow_mut().pop_frame();
     resume_after_try(generator, state, frame.resume, completion).map(Some)
+}
+
+fn push_nested_try_frame(
+    generator: &GeneratorData,
+    range: crate::machine::CodeRange,
+    next: usize,
+) -> Result<bool, VmError> {
+    let store = generator
+        .machine
+        .borrow()
+        .store
+        .clone()
+        .ok_or(VmError::MissingReturn)?;
+    let ops = store.get(range).ok_or(VmError::MissingReturn)?;
+    let Some(crate::ops::Op::Try {
+        body,
+        handler,
+        finalizer,
+        catch_slot,
+    }) = next.checked_sub(1).and_then(|index| ops.get(index))
+    else {
+        return Ok(false);
+    };
+    let Some(body_ops) = body.ops() else {
+        return Ok(false);
+    };
+    let Some((yield_index, crate::ops::Op::Yield { src })) = body_ops
+        .iter()
+        .enumerate()
+        .find(|(_, op)| matches!(op, crate::ops::Op::Yield { .. }))
+    else {
+        return Ok(false);
+    };
+    let body_resume = crate::machine::CodeRange {
+        code: body.range.code,
+        start: body.range.start.saturating_add(yield_index as u32 + 1),
+        end: body.range.end,
+    };
+    let resume = crate::machine::CodeRange {
+        code: range.code,
+        start: range.start.saturating_add(next as u32),
+        end: range.end,
+    };
+    generator
+        .machine
+        .borrow_mut()
+        .try_push_frame(crate::machine::Frame::Try {
+            phase: crate::machine::TryPhase::Body,
+            body: body.range,
+            handler: handler.as_ref().map(|code| code.range),
+            finalizer: finalizer.as_ref().map(|code| code.range),
+            body_resume,
+            resume,
+            yield_dst: *src,
+            catch_slot: *catch_slot,
+            pending: None,
+        })
+        .map_err(|_| VmError::EvalError("continuation frame stack overflow".to_string()))?;
+    Ok(true)
 }
 
 fn execute_frame_range(
