@@ -119,6 +119,10 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::Date
             | Builtin::TemporalDuration
             | Builtin::TemporalZonedDateTime
+            | Builtin::TemporalPlainDate
+            | Builtin::TemporalPlainDateTime
+            | Builtin::TemporalPlainYearMonth
+            | Builtin::TemporalPlainMonthDay
             | Builtin::TemporalPlainTime
             | Builtin::Error
             | Builtin::RangeError
@@ -210,6 +214,12 @@ fn execute_simple_builtin(
         Builtin::TemporalZonedDateTime => Err(crate::value::error::throw_type_error(
             "Temporal.ZonedDateTime requires new",
         )),
+        Builtin::TemporalPlainDate | Builtin::TemporalPlainDateTime => {
+            Err(crate::value::error::throw_type_error("Temporal requires new"))
+        }
+        Builtin::TemporalPlainYearMonth | Builtin::TemporalPlainMonthDay => {
+            Err(crate::value::error::throw_type_error("Temporal requires new"))
+        }
         Builtin::TemporalPlainTime => Err(crate::value::error::throw_type_error(
             "Temporal.PlainTime requires new",
         )),
