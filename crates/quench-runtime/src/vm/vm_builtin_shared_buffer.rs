@@ -42,6 +42,8 @@ pub(crate) fn execute_shared_array_buffer_builtin(
                 && matches!(value, Value::ArrayBuffer(data) if !data.shared))
             || (builtin == Builtin::ArrayBufferImmutableGetter
                 && matches!(value, Value::ArrayBuffer(data) if !data.shared))
+            || (builtin == Builtin::ArrayBufferMaxByteLengthGetter
+                && matches!(value, Value::ArrayBuffer(data) if !data.shared))
     }) else {
         return Err(type_error(
             "SharedArrayBuffer method called on incompatible receiver",
@@ -53,6 +55,9 @@ pub(crate) fn execute_shared_array_buffer_builtin(
         }
         Builtin::ArrayBufferDetachedGetter => Ok(Value::Boolean(*buffer.detached.borrow())),
         Builtin::ArrayBufferImmutableGetter => Ok(Value::Boolean(buffer.immutable)),
+        Builtin::ArrayBufferMaxByteLengthGetter => Ok(Value::Number(
+            buffer.max_byte_length.unwrap_or(buffer.byte_length()) as f64,
+        )),
         Builtin::SharedArrayBufferGrowableGetter => {
             Ok(Value::Boolean(buffer.max_byte_length.is_some()))
         }
