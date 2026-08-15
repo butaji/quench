@@ -1,5 +1,11 @@
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
+pub(crate) fn is_lock_free(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = arguments.first().unwrap_or(&Value::Undefined);
+    let size = crate::conversion::to_number(value)?;
+    Ok(Value::Boolean(matches!(size, 1.0 | 2.0 | 4.0)))
+}
+
 pub(crate) fn execute(
     builtin: Builtin,
     _receiver: Option<&Value>,
