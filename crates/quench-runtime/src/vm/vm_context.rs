@@ -19,11 +19,8 @@ pub(crate) fn global_builtin_exists_for_object(
     realm::global_builtin_exists(key) && !is_legacy_global(key)
 }
 
-pub(crate) fn is_legacy_global(key: &str) -> bool {
-    matches!(
-        key,
-        "encodeURIComponent"
-    )
+pub(crate) fn is_legacy_global(_key: &str) -> bool {
+    false
 }
 
 pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
