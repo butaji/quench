@@ -487,14 +487,16 @@ pub(crate) fn string_to_locale_case(
     arguments: &[Value],
     upper: bool,
 ) -> Result<Value, VmError> {
-    let Some(Value::String(value)) = receiver else {
+    let value = receiver.ok_or_else(crate::vm::not_callable)?;
+    if matches!(value, Value::Null | Value::Undefined) {
         return Err(runtime_error("TypeError: String.prototype.toLocale*Case"));
-    };
+    }
+    let value = crate::conversion::to_string(value)?;
     let locale = resolve_locales(arguments)?
         .first()
         .cloned()
         .unwrap_or_default();
-    let result = case::locale_case(value, &locale, upper);
+    let result = case::locale_case(&value, &locale, upper);
     Ok(Value::String(result))
 }
 mod case;
