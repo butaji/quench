@@ -55,7 +55,7 @@ fn get_property_value(value: &Value, key: &str) -> Value {
         BigInt64Array(_) | BigUint64Array(_) => vm_typed_bigint::property(value, key),
         DataView(view) => data_view_property(view, key),
         Object(properties) => object_property(properties, value, key),
-        ObjectAlias(alias) => object_alias_property(alias, value, key),
+        ObjectAlias(alias) => object_alias_property(alias, key, value),
         String(value) if crate::conversion::is_symbol_string(value) => Value::Undefined,
         String(value) => string_property(value, key),
         StringUnits(units) => string_units_property(units, key),
