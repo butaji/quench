@@ -139,7 +139,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::AsyncDisposableStack => Some(Builtin::AsyncDisposableStackPrototype),
         Builtin::FinalizationRegistry => Some(Builtin::FinalizationRegistryPrototype),
         Builtin::Function => Some(Builtin::FunctionPrototype),
-        Builtin::AsyncFunction => Some(Builtin::AsyncFunctionPrototype),
+        Builtin::AsyncFunction => Some(Builtin::FunctionPrototype),
         Builtin::GeneratorFunction => Some(Builtin::GeneratorFunctionPrototype),
         Builtin::AsyncGeneratorFunction => Some(Builtin::AsyncGeneratorFunctionPrototype),
         Builtin::Number => Some(Builtin::ObjectPrototype),
@@ -220,7 +220,6 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::DataViewPrototype
             | Builtin::ArrayPrototype
             | Builtin::FunctionPrototype
-            | Builtin::AsyncFunctionPrototype
             | Builtin::GeneratorFunctionPrototype
             | Builtin::AsyncGeneratorFunctionPrototype
             | Builtin::DatePrototype
