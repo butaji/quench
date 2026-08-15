@@ -8,6 +8,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::AtomicsSub => "Atomics.sub",
         Builtin::AtomicsXor => "Atomics.xor",
         Builtin::AtomicsCompareExchange => "Atomics.compareExchange",
+        Builtin::AtomicsIsLockFree => "Atomics.isLockFree",
         _ => return None,
     })
 }
@@ -20,6 +21,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::AtomicsSub
         | Builtin::AtomicsXor => Some(3.0),
         Builtin::AtomicsCompareExchange => Some(4.0),
+        Builtin::AtomicsIsLockFree => Some(1.0),
         _ => None,
     }
 }
@@ -32,6 +34,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::AtomicsSub => "sub",
         Builtin::AtomicsXor => "xor",
         Builtin::AtomicsCompareExchange => "compareExchange",
+        Builtin::AtomicsIsLockFree => "isLockFree",
         _ => return None,
     })
 }
