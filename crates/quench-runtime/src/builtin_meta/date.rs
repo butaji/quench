@@ -156,6 +156,13 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 const fn fn_len_get_or_set(b: Builtin) -> Option<f64> {
     use Builtin::*;
     match b {
+        _ => fn_len_getters(b),
+    }
+}
+
+const fn fn_len_getters(b: Builtin) -> Option<f64> {
+    use Builtin::*;
+    match b {
         DateGetTime
         | DateToString
         | DateToDateString
