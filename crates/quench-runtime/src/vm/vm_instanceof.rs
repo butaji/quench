@@ -36,7 +36,10 @@ fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
-    ) && own_constructor(value).as_ref().and_then(intrinsic_builtin) == Some(constructor)
+    ) && own_constructor(value)
+        .as_ref()
+        .and_then(intrinsic_builtin)
+        == Some(constructor)
 }
 
 fn intrinsic_builtin(value: &Value) -> Option<Builtin> {
@@ -74,15 +77,9 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         | (Value::BigUint64Array(_), Builtin::BigUint64Array)
         | (Value::Promise(_), Builtin::Promise) => true,
         (Value::Object(properties), Builtin::Date)
-            if properties.iter().any(|(name, _)| name == "timeValue") =>
-        {
-            true
-        }
+            if properties.iter().any(|(name, _)| name == "timeValue") => true,
         (Value::Object(properties), Builtin::RegExp)
-            if properties.iter().any(|(name, _)| name == "source") =>
-        {
-            true
-        }
+            if properties.iter().any(|(name, _)| name == "source") => true,
         (Value::Map(data), Builtin::Map) if !data.weak => true,
         (Value::Map(data), Builtin::WeakMap) if data.weak => true,
         (Value::ArrayBuffer(data), Builtin::SharedArrayBuffer) if data.shared => true,
@@ -91,11 +88,10 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         (Value::Object(properties), Builtin::WeakRef) => {
             properties.iter().any(|(name, _)| name == "\0weakref")
         }
-        (Value::Object(properties), Builtin::ShadowRealm) => {
-            properties.iter().any(|(name, value)| {
-                name == "\0prototype" && *value == Value::Builtin(Builtin::ShadowRealmPrototype)
-            })
-        }
+        (Value::Object(properties), Builtin::ShadowRealm) => properties.iter().any(|(name, value)| {
+            name == "\0prototype"
+                && *value == Value::Builtin(Builtin::ShadowRealmPrototype)
+        }),
         (Value::Object(properties), Builtin::TemporalPlainDate) => {
             has_property(properties, "year")
                 && has_property(properties, "month")
@@ -221,7 +217,9 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         } else {
             Builtin::FunctionPrototype
         })),
-        Value::BoundFunction(_) => Some(Value::Builtin(Builtin::FunctionPrototype)),
+        Value::BoundFunction(_) => {
+            Some(Value::Builtin(Builtin::FunctionPrototype))
+        }
         _ => None,
     }
 }
@@ -261,9 +259,6 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
     if builtin == Builtin::IteratorPrototype {
         return Some(Value::Builtin(Builtin::ObjectPrototype));
     }
-    if builtin == Builtin::AbstractModuleSource {
-        return Some(Value::Builtin(Builtin::FunctionPrototype));
-    }
     matches!(
         builtin,
         Builtin::FunctionPrototype
@@ -274,7 +269,6 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
             | Builtin::SharedArrayBufferPrototype
             | Builtin::WeakRefPrototype
             | Builtin::DisposableStackPrototype
-            | Builtin::AbstractModuleSourcePrototype
     )
     .then_some(Value::Builtin(Builtin::ObjectPrototype))
 }
