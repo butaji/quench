@@ -157,6 +157,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
 
 fn prototype_tail(builtin: Builtin) -> Option<Builtin> {
     match builtin {
+        Builtin::ArrayBuffer => Some(Builtin::ArrayBufferPrototype),
         Builtin::IntlCollator => Some(Builtin::IntlCollatorPrototype),
         Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatPrototype),
         Builtin::IntlDisplayNames => Some(Builtin::IntlDisplayNamesPrototype),
