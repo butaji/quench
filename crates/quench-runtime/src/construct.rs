@@ -524,7 +524,7 @@ fn construct_error(
         crate::ops::Builtin::URIError => "URIError",
         crate::ops::Builtin::AggregateError => "AggregateError",
         crate::ops::Builtin::TypeError => "TypeError",
-        crate::ops::Builtin::Error | _ => "Error",
+        _ => "Error",
     };
 
     let message = arguments

@@ -77,11 +77,11 @@ fn own_descriptors(target: Option<&Value>) -> Result<Value, VmError> {
     let mut properties = Vec::new();
     for index in 0..keys.logical_len() {
         let Some(key) = keys.get(index) else { continue };
-        let descriptor = descriptor(Some(target), Some(&key))?;
+        let descriptor = descriptor(Some(target), Some(key))?;
         if matches!(descriptor, Value::Undefined) {
             continue;
         }
-        let name = crate::conversion::to_property_key(&key)?;
+        let name = crate::conversion::to_property_key(key)?;
         properties.push((name, descriptor));
     }
     Ok(Value::Object(Rc::new(ObjectData::new(properties))))
