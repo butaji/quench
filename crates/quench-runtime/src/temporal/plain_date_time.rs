@@ -157,9 +157,11 @@ fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     if arguments.get(1).is_none() && !matches!(calendar, Some("iso8601") | Some("gregory") | None) {
         return Err(crate::value::error::throw_range_error("Calendar mismatch"));
     }
-    if let (Some(Value::Object(object)), Some(options)) = (receiver, arguments.get(1)) {
+    if let (Some(Value::Object(object)), Some(Value::Object(options))) =
+        (receiver, arguments.get(1))
+    {
         if let Value::String(option_calendar) =
-            crate::execute::get_property_result(options, "calendar")?
+            crate::execute::get_property_result(&Value::Object(options.clone()), "calendar")?
         {
             let actual = object
                 .iter()
