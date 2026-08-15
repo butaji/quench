@@ -322,7 +322,7 @@ fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Object(Rc::new(ObjectData::new(vec![
             (
                 "get".to_string(),
-                Value::Builtin(Builtin::FunctionPrototype),
+                Value::Builtin(Builtin::AbstractModuleSourceToStringTagGetter),
             ),
             ("enumerable".to_string(), Value::Boolean(false)),
             ("configurable".to_string(), Value::Boolean(true)),
