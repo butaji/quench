@@ -44,7 +44,7 @@ pub(crate) fn includes(
         return Ok(Value::Boolean(false));
     }
     let start = search_from_index(arguments.get(1), length)?;
-    for index in start..length.min(i32::MAX as isize) {
+    for index in start..length {
         // A getter may have replaced the receiver (copy-on-write) mid-search.
         let current = crate::locals::resolved_replacement(this.clone());
         let element = crate::execute::get_property_result(&current, &index.to_string())?;
@@ -68,7 +68,7 @@ pub(crate) fn index_of(
     let this = crate::locals::resolved_replacement(this);
     let search = arguments.first().unwrap_or(&Value::Undefined);
     let start = search_from_index(arguments.get(1), length)?;
-    for index in start..length.min(i32::MAX as isize) {
+    for index in start..length {
         let key = index.to_string();
         // A getter may have replaced the receiver (copy-on-write) mid-search.
         let current = crate::locals::resolved_replacement(this.clone());
