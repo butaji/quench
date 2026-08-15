@@ -471,8 +471,31 @@ fn date_object(year: f64, month: f64, day: f64) -> Value {
         ("inLeapYear".into(), Value::Boolean(leap(year))),
         ("monthsInYear".into(), Value::Number(12.0)),
         (
+            "weekOfYear".into(),
+            Value::Number(iso_week(year, month, day).0),
+        ),
+        (
+            "yearOfWeek".into(),
+            Value::Number(iso_week(year, month, day).1),
+        ),
+        (
             "\0prototype".into(),
             Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype),
         ),
     ])))
+}
+
+fn iso_week(year: f64, month: f64, day: f64) -> (f64, f64) {
+    let date = date_serial(year, month, day);
+    let jan4 = date_serial(year, 1.0, 4.0);
+    let first = jan4 - (day_of_week(year, 1.0, 4.0) as i64 - 1);
+    if date < first {
+        return iso_week(year - 1.0, 12.0, 31.0);
+    }
+    let next = date_serial(year + 1.0, 1.0, 4.0);
+    let next_first = next - (day_of_week(year + 1.0, 1.0, 4.0) as i64 - 1);
+    if date >= next_first {
+        return (1.0, year + 1.0);
+    }
+    (((date - first) / 7 + 1) as f64, year)
 }
