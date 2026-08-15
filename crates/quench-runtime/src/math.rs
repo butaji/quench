@@ -3,6 +3,22 @@ use num_bigint::{BigInt, Sign};
 use crate::{ops::Builtin, value::Value};
 
 pub(crate) fn property(key: &str) -> Option<Builtin> {
+    property_core(key).or_else(|| match key {
+        "clz32" => Some(Builtin::MathClz32),
+        "cosh" => Some(Builtin::MathCosh),
+        "expm1" => Some(Builtin::MathExpm1),
+        "fround" => Some(Builtin::MathFround),
+        "log1p" => Some(Builtin::MathLog1p),
+        "sinh" => Some(Builtin::MathSinh),
+        "tanh" => Some(Builtin::MathTanh),
+        "f16round" => Some(Builtin::MathF16Round),
+        "random" => Some(Builtin::MathRandom),
+        "sumPrecise" => Some(Builtin::MathSumPrecise),
+        _ => None,
+    })
+}
+
+fn property_core(key: &str) -> Option<Builtin> {
     match key {
         "pow" => Some(Builtin::MathPow),
         "abs" => Some(Builtin::MathAbs),
@@ -31,16 +47,6 @@ pub(crate) fn property(key: &str) -> Option<Builtin> {
         "acosh" => Some(Builtin::MathAcosh),
         "asinh" => Some(Builtin::MathAsinh),
         "atanh" => Some(Builtin::MathAtanh),
-        "clz32" => Some(Builtin::MathClz32),
-        "cosh" => Some(Builtin::MathCosh),
-        "expm1" => Some(Builtin::MathExpm1),
-        "fround" => Some(Builtin::MathFround),
-        "log1p" => Some(Builtin::MathLog1p),
-        "sinh" => Some(Builtin::MathSinh),
-        "tanh" => Some(Builtin::MathTanh),
-        "f16round" => Some(Builtin::MathF16Round),
-        "random" => Some(Builtin::MathRandom),
-        "sumPrecise" => Some(Builtin::MathSumPrecise),
         _ => None,
     }
 }
