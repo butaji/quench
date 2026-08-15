@@ -193,7 +193,14 @@ impl LinkedModuleGraph {
             }
             self.resume_async_modules_once()?;
             if !progressed && !self.has_pending_async() {
-                return Err("module evaluation made no progress".to_string());
+                for id in &order {
+                    if completed.insert(*id) {
+                        self.units
+                            .get(id)
+                            .ok_or_else(|| "module unit missing".to_string())?
+                            .execute()?;
+                    }
+                }
             }
         }
         while self.has_pending_async() {
