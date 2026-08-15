@@ -194,14 +194,18 @@ pub(crate) fn execute_bound(
             let result = match result {
                 Ok(result) => result,
                 Err(_) if realm.is_some() => {
-                    return Err(crate::reflect::shadow_wrapped_exception_error())
+                    return Err(crate::reflect::shadow_wrapped_exception_error_for_realm(
+                        wrapper_caller_realm(bound).unwrap_or(crate::ops::RealmId::ROOT),
+                    ))
                 }
                 Err(error) => return Err(error),
             };
             if realm.is_some() && crate::conversion::is_callable(&result) {
                 crate::reflect::wrap_shadow_function(&result, realm)
             } else if let Some(realm) = realm.filter(|_| crate::value::is_object(&result)) {
-                Err(crate::reflect::shadow_wrapped_object_error(realm))
+                Err(crate::reflect::shadow_wrapped_object_error(
+                    wrapper_caller_realm(bound).unwrap_or(realm),
+                ))
             } else {
                 Ok(result)
             }
@@ -212,6 +216,17 @@ pub(crate) fn execute_bound(
         }
         _ => Err(crate::execute::VmError::NotCallable),
     }
+}
+
+fn wrapper_caller_realm(
+    bound: &crate::value::BoundFunctionValue,
+) -> Option<crate::ops::RealmId> {
+    bound.properties.borrow().iter().rev().find_map(|(key, value)| {
+        (key == "\0caller_realm").then(|| match value {
+            crate::value::Value::HostCapability(token) => token.realm(),
+            _ => crate::ops::RealmId::ROOT,
+        })
+    })
 }
 
 fn wrap_shadow_arguments(
@@ -324,6 +339,12 @@ fn execute_function_call(
                     | crate::ops::Builtin::ShadowRealmImportValue,
             )
         ) {
+            if !crate::reflect::is_shadow_realm_receiver(Some(&this)) {
+                return Err(crate::reflect::shadow_type_error_for_realm(
+                    Some(&bound.receiver),
+                    "ShadowRealm method called on incompatible receiver",
+                ));
+            }
             return execute_target(&bound.target, &this, arguments.get(1..).unwrap_or_default());
         }
     }
