@@ -1,3 +1,5 @@
+include!("functions_reduction_tail.rs");
+
 pub(super) fn reduce_function_ops(
     statements: &[oxc::ast::ast::Statement<'_>],
     formal: &oxc::ast::ast::FormalParameters<'_>,
@@ -476,28 +478,3 @@ fn attach_prototype(value: &crate::value::Value) {
             .push(("prototype".to_string(), prototype));
     }
 }
-
-fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue>) {
-    let generator = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
-        vec![("\0prototype".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype))],
-    )));
-    let function_prototype = crate::value::Value::Object(std::rc::Rc::new(
-        crate::value::ObjectData::new(vec![
-            ("prototype".to_string(), generator.clone()),
-            ("\0prototype".to_string(), crate::value::Value::Builtin(crate::ops::Builtin::FunctionPrototype)),
-        ]),
-    ));
-    let instance = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
-        vec![("\0prototype".to_string(), generator)],
-    )));
-    function.properties.borrow_mut().extend([
-        ("\0prototype".to_string(), function_prototype),
-        ("prototype".to_string(), instance.clone()),
-        (
-            crate::builtins::descriptor_key("prototype"),
-            prototype_descriptor(instance),
-        ),
-    ]);
-}
-
-include!("functions_reduction_tail.rs");
