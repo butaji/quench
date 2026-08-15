@@ -7,6 +7,11 @@ pub(super) fn to_locale_string(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    if !is_date_receiver(receiver) {
+        return Err(crate::value::error::throw_type_error(
+            "Date.prototype.toLocaleString called on incompatible receiver",
+        ));
+    }
     if is_invalid_date(receiver) {
         return Ok(Value::String("Invalid Date".into()));
     }
@@ -22,6 +27,10 @@ pub(super) fn to_locale_string(
         &[receiver.cloned().unwrap_or(Value::Undefined)],
         Some(&formatter),
     )
+}
+
+fn is_date_receiver(receiver: Option<&Value>) -> bool {
+    matches!(receiver, Some(Value::Object(properties)) if properties.iter().any(|(name, _)| name == "timeValue"))
 }
 
 fn is_invalid_date(receiver: Option<&Value>) -> bool {
