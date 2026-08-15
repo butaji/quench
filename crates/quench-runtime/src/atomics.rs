@@ -56,6 +56,35 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::String("timed-out".into()))
 }
 
+pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Int32Array(view)) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires an Int32Array",
+        ));
+    };
+    if !view.buffer.shared {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics operation requires a shared buffer",
+        ));
+    }
+    let index = atomic_index(arguments.get(1))?;
+    if builtin == Builtin::AtomicsLoad {
+        return view
+            .get(index)
+            .map(|value| Value::Number(value as f64))
+            .ok_or_else(|| {
+                crate::value::error::throw_range_error("Atomics index is out of range")
+            });
+    }
+    let value = atomic_value(arguments.get(2))?;
+    if !view.set(index, value) {
+        return Err(crate::value::error::throw_range_error(
+            "Atomics index is out of range",
+        ));
+    }
+    Ok(Value::Number(value as f64))
+}
+
 pub(crate) fn execute(
     builtin: Builtin,
     _receiver: Option<&Value>,
