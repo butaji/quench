@@ -77,6 +77,7 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         "Number",
         "String",
         "Symbol",
+        "Temporal",
     ];
     names
         .into_iter()
@@ -165,6 +166,7 @@ fn builtin_core(name: &str) -> Option<crate::ops::Builtin> {
         "parseInt" => Some(crate::ops::Builtin::ParseInt),
         "String" => Some(crate::ops::Builtin::String),
         "Symbol" => Some(crate::ops::Builtin::Symbol),
+        "Temporal" => Some(crate::ops::Builtin::Temporal),
         "unescape" => Some(crate::ops::Builtin::Unescape),
         "encodeURI" => Some(crate::ops::Builtin::EncodeURI),
         "encodeURIComponent" => Some(crate::ops::Builtin::EncodeURIComponent),
