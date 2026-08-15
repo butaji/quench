@@ -40,6 +40,39 @@ pub(crate) fn execute_function_apply(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    if let Some(result) = with_receiver_realm(receiver, arguments) {
+        return result;
+    }
+    execute_function_apply_in_realm(receiver, arguments)
+}
+
+fn with_receiver_realm(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    let receiver = receiver?;
+    match receiver {
+        Value::BoundFunction(bound) => {
+            let Value::HostCapability(capability) = &bound.receiver else {
+                return None;
+            };
+            crate::vm::with_realm(capability.realm(), || {
+                execute_function_apply_in_realm(Some(receiver), arguments)
+            })
+        }
+        Value::Function(function) => {
+            crate::vm::with_global_realm(&function.captures.get(0), || {
+                execute_function_apply_in_realm(Some(receiver), arguments)
+            })
+        }
+        _ => None,
+    }
+}
+
+fn execute_function_apply_in_realm(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
     let target = receiver.filter(|value| crate::conversion::is_callable(value));
     let target = target.ok_or_else(|| {
         crate::value::error::throw_type_error("Function.prototype.apply called on non-callable")
