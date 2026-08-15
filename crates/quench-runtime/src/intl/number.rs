@@ -441,7 +441,7 @@ impl NumberOptions {
         let magnitude = compact_magnitude(self, scaled);
         let value = notation_value(scaled, scientific, magnitude);
         let compact_unscaled_de = compact_unscaled_german(self, scaled, magnitude);
-        let fraction_digits = fraction_digits(self, value, compact_unscaled_de);
+        let fraction_digits = output_fraction_digits(self, value, compact_unscaled_de);
         let (mut text, significant_selected) = rounded_text(self, value, fraction_digits);
         text = decorate_numeric_text(
             self,
@@ -735,7 +735,7 @@ fn compact_unscaled_german(options: &NumberOptions, scaled: f64, magnitude: i32)
         && scaled.abs() >= 1_000.0
 }
 
-fn fraction_digits(options: &NumberOptions, value: f64, compact_unscaled_de: bool) -> u32 {
+fn output_fraction_digits(options: &NumberOptions, value: f64, compact_unscaled_de: bool) -> u32 {
     if options.notation == "compact" && !compact_unscaled_de {
         compact_fraction_digits(value)
     } else {
