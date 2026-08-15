@@ -480,8 +480,15 @@ fn range_number(value: &Value) -> Result<f64, VmError> {
 }
 
 fn temporal_epoch_millis(object: &crate::value::ObjectData) -> Option<f64> {
-    if let Some((_, Value::Number(value))) = object.iter().find(|(key, _)| key == "timeValue") {
-        return Some(*value);
+    if let Some((_, value)) = object.iter().find(|(key, _)| key == "timeValue") {
+        return match value {
+            Value::Number(value) => Some(*value),
+            Value::BindingCell(cell) => match &*cell.borrow() {
+                Value::Number(value) => Some(*value),
+                _ => None,
+            },
+            _ => None,
+        };
     }
     let epoch = object
         .iter()
