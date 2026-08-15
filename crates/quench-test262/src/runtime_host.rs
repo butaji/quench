@@ -196,7 +196,9 @@ fn namespace_cell(
     let unit = units
         .get(&target)
         .ok_or_else(|| "module unit missing".to_string())?;
-    if let Some(cell) = unit.namespace_cell.borrow().clone() {
+    let cached = unit.namespace_cell.borrow().clone();
+    if let Some(cell) = cached {
+        unit.refresh_namespace();
         return Ok(cell);
     }
     let properties = unit
@@ -325,6 +327,25 @@ impl LinkedModule {
         self.linked_exports
             .borrow_mut()
             .insert(name.to_string(), cell);
+        self.refresh_namespace();
+    }
+
+    fn refresh_namespace(&self) {
+        let Some(cell) = self.namespace_cell.borrow().clone() else {
+            return;
+        };
+        let properties = self
+            .export_names()
+            .iter()
+            .filter_map(|name| self.export_cell(name).map(|value| (name.clone(), value)))
+            .map(|(name, value)| {
+                (
+                    name,
+                    quench_runtime::value::Value::BindingCell(value.shared()),
+                )
+            })
+            .collect();
+        cell.set(quench_runtime::value::Value::object(properties));
     }
 
     fn link_star_export(&self, name: &str, cell: ModuleBindingCell) {
