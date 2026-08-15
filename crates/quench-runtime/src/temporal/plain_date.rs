@@ -61,6 +61,11 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
     let calendar_count = text.matches("[u-ca=").count();
+    if text.contains("[!") && !text.contains("[!u-ca=") {
+        return Err(crate::value::error::throw_range_error(
+            "Unknown critical annotation",
+        ));
+    }
     if text.contains("[!u-ca=") && calendar_count > 0 {
         return Err(crate::value::error::throw_range_error("Multiple calendars"));
     }
