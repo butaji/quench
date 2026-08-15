@@ -136,7 +136,7 @@ fn is_boxed_string_target(value: &Value) -> bool {
 }
 
 fn set_name_value(key: &str, value: Value, strict: bool) -> Result<(), VmError> {
-    if crate::locals::is_immutable_name(key) {
+    if is_readonly_name(key) {
         return Err(crate::value::error::throw_type_error(
             "Cannot assign to immutable binding",
         ));
@@ -248,7 +248,7 @@ fn global_builtin_deleted(global: &Value, key: &str) -> bool {
 
 fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, src)?;
-    if crate::locals::is_immutable_name(key) {
+    if is_readonly_name(key) {
         return Err(crate::value::error::throw_type_error(
             "Cannot assign to immutable binding",
         ));
@@ -268,6 +268,10 @@ fn set_name(registers: &mut Vec<Value>, key: &str, src: u16, strict: bool) -> Re
     let updated = crate::builtins::set_property(global.clone(), key, value);
     crate::vm::synchronize_global_object(registers, &global, &updated);
     Ok(())
+}
+
+fn is_readonly_name(key: &str) -> bool {
+    crate::locals::is_immutable_name(key) || crate::globals::immutable_value(key).is_some()
 }
 
 fn check_strict_name(key: &str) -> Result<(), VmError> {
