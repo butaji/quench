@@ -24,6 +24,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(builtin: Builtin) -> Option<f64> {
     match builtin {
+        Builtin::TemporalPlainDate => Some(3.0),
         Builtin::TemporalDurationFrom => Some(1.0),
         Builtin::TemporalDurationCompare => Some(2.0),
         Builtin::TemporalPlainDateFrom => Some(1.0),
