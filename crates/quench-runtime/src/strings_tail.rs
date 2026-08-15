@@ -106,6 +106,18 @@ pub(crate) fn replace(
     let Some(Value::String(value)) = receiver else {
         return Ok(Value::String(String::new()));
     };
+    if let Some(pattern) = arguments.first() {
+        let matcher = crate::execute::get_property_result(pattern, "Symbol.replace")?;
+        if crate::conversion::is_callable(&matcher) {
+            let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+            return crate::functions::execute_target_with_receiver(
+                &matcher,
+                pattern,
+                &[Value::String(value.clone()), replacement],
+            )
+            .map(|(result, _)| result);
+        }
+    }
     let pattern = arguments.first().map_or_else(String::new, to_string);
     let Some(replacement) = arguments.get(1) else {
         let result = if all {
