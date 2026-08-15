@@ -54,6 +54,20 @@ thread_local! {
     static DEFERRED_MODULE_CALLBACK: RefCell<Option<DeferredCallback>> = const { RefCell::new(None) };
     static DYNAMIC_IMPORT_CALLBACK: RefCell<Option<DynamicImportCallback>> = const { RefCell::new(None) };
     static DEFERRED_MODULE_DEPTH: Cell<u32> = const { Cell::new(0) };
+    static ASYNC_MODULE_STEP: Cell<bool> = const { Cell::new(false) };
+}
+
+pub struct AsyncModuleStepGuard {
+    previous: bool,
+}
+
+pub fn install_async_module_step() -> AsyncModuleStepGuard {
+    let previous = ASYNC_MODULE_STEP.with(|slot| slot.replace(true));
+    AsyncModuleStepGuard { previous }
+}
+
+pub(crate) fn async_module_step() -> bool {
+    ASYNC_MODULE_STEP.with(Cell::get)
 }
 
 pub struct DeferredModuleCallbackGuard {
@@ -87,6 +101,12 @@ pub fn install_dynamic_import_callback(
 impl Drop for DynamicImportCallbackGuard {
     fn drop(&mut self) {
         DYNAMIC_IMPORT_CALLBACK.with(|slot| slot.replace(self.previous.take()));
+    }
+}
+
+impl Drop for AsyncModuleStepGuard {
+    fn drop(&mut self) {
+        ASYNC_MODULE_STEP.with(|slot| slot.set(self.previous));
     }
 }
 
