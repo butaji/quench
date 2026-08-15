@@ -69,57 +69,53 @@ fn parse_options(value: Option<&Value>, default_ignore: bool) -> Result<Collator
     let Some(Value::Object(properties)) = value else {
         return Ok(options);
     };
-    apply_properties(&mut options, properties)?;
+    let properties = Value::Object(properties.clone());
+    apply_properties(&mut options, &properties)?;
     Ok(options)
 }
 
-fn apply_properties(
-    options: &mut CollatorOptions,
-    properties: &[(String, Value)],
-) -> Result<(), VmError> {
-    apply_string_properties(options, properties)?;
-    apply_boolean_properties(options, properties);
+fn apply_properties(options: &mut CollatorOptions, properties: &Value) -> Result<(), VmError> {
+    options.usage = option_string(properties, "usage", &options.usage)?;
+    validate_option(&options.usage, &["sort", "search"], "usage")?;
+    let _ = option_value(properties, "localeMatcher")?;
+    let _ = option_value(properties, "collation")?;
+    options.numeric = option_boolean(properties, "numeric", options.numeric)?;
+    options.case_first = option_string(properties, "caseFirst", &options.case_first)?;
+    validate_option(
+        &options.case_first,
+        &["upper", "lower", "false"],
+        "caseFirst",
+    )?;
+    options.sensitivity = option_string(properties, "sensitivity", &options.sensitivity)?;
+    validate_option(
+        &options.sensitivity,
+        &["base", "accent", "case", "variant"],
+        "sensitivity",
+    )?;
+    options.ignore_punctuation =
+        option_boolean(properties, "ignorePunctuation", options.ignore_punctuation)?;
     Ok(())
 }
 
-fn apply_string_properties(
-    options: &mut CollatorOptions,
-    properties: &[(String, Value)],
-) -> Result<(), VmError> {
-    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
-        options.usage = to_string_value(value);
-        validate_option(&options.usage, &["sort", "search"], "usage")?;
-    }
-    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
-        options.case_first = to_string_value(value);
-        validate_option(
-            &options.case_first,
-            &["upper", "lower", "false"],
-            "caseFirst",
-        )?;
-    }
-    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
-        options.sensitivity = to_string_value(value);
-        validate_option(
-            &options.sensitivity,
-            &["base", "accent", "case", "variant"],
-            "sensitivity",
-        )?;
-    }
-    Ok(())
+fn option_value(properties: &Value, name: &str) -> Result<Value, VmError> {
+    crate::execute::get_property_result(properties, name)
 }
 
-fn apply_boolean_properties(options: &mut CollatorOptions, properties: &[(String, Value)]) {
-    if let Some((_, Value::Boolean(value))) = properties.iter().find(|(name, _)| name == "numeric")
-    {
-        options.numeric = *value;
+fn option_string(properties: &Value, name: &str, default: &str) -> Result<String, VmError> {
+    let value = option_value(properties, name)?;
+    if matches!(value, Value::Undefined) {
+        return Ok(default.to_string());
     }
-    if let Some((_, Value::Boolean(value))) = properties
-        .iter()
-        .find(|(name, _)| name == "ignorePunctuation")
-    {
-        options.ignore_punctuation = *value;
-    }
+    crate::conversion::to_string(&value)
+}
+
+fn option_boolean(properties: &Value, name: &str, default: bool) -> Result<bool, VmError> {
+    let value = option_value(properties, name)?;
+    Ok(if matches!(value, Value::Undefined) {
+        default
+    } else {
+        crate::execute::is_truthy(&value)
+    })
 }
 
 fn validate_option(value: &str, allowed: &[&str], name: &str) -> Result<(), VmError> {
