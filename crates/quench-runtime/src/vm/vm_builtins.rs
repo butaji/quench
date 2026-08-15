@@ -611,7 +611,12 @@ fn shared_array_buffer_slice(
         receiver.ok_or_else(|| type_error("Missing SharedArrayBuffer receiver"))?,
         "constructor",
     )?;
-    let species = if matches!(constructor, Value::Undefined | Value::Null) {
+    if matches!(constructor, Value::Null) || !matches!(constructor, Value::Undefined)
+        && !crate::value::is_object(&constructor)
+    {
+        return Err(type_error("SharedArrayBuffer constructor must be an object"));
+    }
+    let species = if matches!(constructor, Value::Undefined) {
         Value::Builtin(Builtin::SharedArrayBuffer)
     } else {
         crate::execute::get_property_result(&constructor, "Symbol.species")?
@@ -621,6 +626,9 @@ fn shared_array_buffer_slice(
     } else {
         species
     };
+    if !crate::conversion::is_callable(&species) {
+        return Err(type_error("SharedArrayBuffer species must be a constructor"));
+    }
     let result = crate::construct::construct_value(&species, &[Value::Number(bytes.len() as f64)])?;
     let Value::ArrayBuffer(result) = result else {
         return Err(type_error("SharedArrayBuffer species must return a buffer"));
