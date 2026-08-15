@@ -1,3 +1,6 @@
+use std::sync::OnceLock;
+use std::time::Instant;
+
 thread_local! {
     static AGENT_CALLBACKS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static AGENT_REPORTS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
@@ -42,7 +45,14 @@ pub(crate) fn execute_host_capability(
         | HostCapabilityKind::AgentTryYield
         | HostCapabilityKind::AgentTrySleep
         | HostCapabilityKind::AgentSetTimeout => Ok(Value::Undefined),
+        HostCapabilityKind::AgentMonotonicNow => Ok(agent_monotonic_now()),
     }
+}
+
+fn agent_monotonic_now() -> Value {
+    static START: OnceLock<Instant> = OnceLock::new();
+    let elapsed = START.get_or_init(Instant::now).elapsed();
+    Value::Number(elapsed.as_secs_f64() * 1_000.0)
 }
 
 fn agent_start(arguments: &[Value]) -> Result<Value, VmError> {
