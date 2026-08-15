@@ -452,9 +452,19 @@ fn canonicalize_subtags(
 ) -> Result<Vec<String>, VmError> {
     let mut region_done = false;
     let mut variant_done = false;
+    let mut extension_mode = false;
     for part in parts {
         if part.is_empty() {
             return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        if extension_mode {
+            out.push(part.to_ascii_lowercase());
+            continue;
+        }
+        if part.len() == 1 && part.chars().all(|c| c.is_ascii_alphanumeric()) {
+            out.push(part.to_ascii_lowercase());
+            extension_mode = true;
+            continue;
         }
         match classify_subtag(part, script_done, region_done, variant_done) {
             Subtag::Script => {
