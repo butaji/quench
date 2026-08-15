@@ -24,3 +24,19 @@ fn set_last_index_value(receiver: &Value, value: Value) -> Result<(), VmError> {
 }
 
 include!("regexp_tail.rs");
+fn extract_flags(receiver: &Value) -> String {
+    match receiver {
+        Value::Object(props) => props
+            .iter()
+            .find(|(k, _)| k == "flags")
+            .and_then(|(_, v)| {
+                if let Value::String(s) = v {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
