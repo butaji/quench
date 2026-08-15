@@ -49,8 +49,60 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
         crate::ops::Builtin::TemporalDurationAbs => Some(absolute(receiver)),
         crate::ops::Builtin::TemporalDurationToJSON => Some(to_json(receiver)),
+        crate::ops::Builtin::TemporalDurationAdd => Some(combine(receiver, arguments.first(), 1.0)),
         _ => None,
     }
+}
+
+fn combine(
+    receiver: Option<&Value>,
+    other: Option<&Value>,
+    direction: f64,
+) -> Result<Value, VmError> {
+    let (Some(Value::Object(left)), Some(right)) = (receiver, other) else {
+        return Err(crate::value::error::throw_type_error("Invalid duration"));
+    };
+    let right = from(Some(right))?;
+    let Value::Object(right) = right else {
+        return Err(crate::value::error::throw_type_error("Invalid duration"));
+    };
+    let number = |object: &crate::value::ObjectData, name: &str| object_number(object, name);
+    let mut values = [0.0; 10];
+    let names = [
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ];
+    for (index, name) in names.iter().enumerate() {
+        values[index] = number(left, name) + direction * number(&right, name);
+    }
+    values[3] += (values[4] / 24.0).trunc();
+    values[4] %= 24.0;
+    let time = values[4] * 3_600_000_000_000.0
+        + values[5] * 60_000_000_000.0
+        + values[6] * 1_000_000_000.0
+        + values[7] * 1_000_000.0
+        + values[8] * 1_000.0
+        + values[9];
+    values[4] = (time / 3_600_000_000_000.0).trunc();
+    let remainder = time - values[4] * 3_600_000_000_000.0;
+    values[5] = (remainder / 60_000_000_000.0).trunc();
+    let remainder = remainder - values[5] * 60_000_000_000.0;
+    values[6] = (remainder / 1_000_000_000.0).trunc();
+    let remainder = remainder - values[6] * 1_000_000_000.0;
+    values[7] = (remainder / 1_000_000.0).trunc();
+    let remainder = remainder - values[7] * 1_000_000.0;
+    values[8] = (remainder / 1_000.0).trunc();
+    values[9] = remainder - values[8] * 1_000.0;
+    let arguments = values.into_iter().map(Value::Number).collect::<Vec<_>>();
+    construct(&arguments)
 }
 
 fn to_json(value: Option<&Value>) -> Result<Value, VmError> {
@@ -235,11 +287,13 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     };
     let mut values = vec![Value::Number(0.0); 10];
     let mut number = String::new();
+    let mut in_time = false;
     for character in rest.chars() {
         if character == 'T' {
+            in_time = true;
             continue;
         }
-        if character.is_ascii_digit() || character == '-' || character == '+' {
+        if character.is_ascii_digit() || matches!(character, '-' | '+' | '.') {
             number.push(character);
             continue;
         }
@@ -249,6 +303,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         number.clear();
         let index = match character {
             'Y' => 0,
+            'M' if in_time => 5,
             'M' => 1,
             'W' => 2,
             'D' => 3,

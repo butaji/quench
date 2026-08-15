@@ -366,6 +366,7 @@ pub enum Builtin {
     TemporalDurationNegated,
     TemporalDurationAbs,
     TemporalDurationToJSON,
+    TemporalDurationAdd,
     TemporalPlainDate,
     TemporalPlainDatePrototype,
     TemporalPlainDateFrom,
