@@ -67,6 +67,15 @@ fn bound_function_property(
     key: &str,
 ) -> Value {
     let shadow_wrapper = is_shadow_wrapper(bound);
+    let deleted = crate::builtins::deleted_key(key);
+    if bound
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == &deleted)
+    {
+        return Value::Undefined;
+    }
     if let Some((_, value)) = bound
         .properties
         .borrow()
