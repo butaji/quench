@@ -77,6 +77,7 @@ fn constructor_name_tail(builtin: Builtin) -> Option<&'static str> {
         Builtin::Uint32Array => Some("Uint32Array"),
         Builtin::BigInt64Array => Some("BigInt64Array"),
         Builtin::BigUint64Array => Some("BigUint64Array"),
+        Builtin::AbstractModuleSource => Some("AbstractModuleSource"),
         Builtin::ShadowRealm => Some("ShadowRealm"),
         Builtin::TypeError
         | Builtin::Error
@@ -147,6 +148,7 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::String => Some(Builtin::ObjectPrototype),
         Builtin::TemporalDuration => Some(Builtin::TemporalDurationPrototype),
         Builtin::TemporalPlainDate => Some(Builtin::TemporalPlainDatePrototype),
+        Builtin::AbstractModuleSource => Some(Builtin::AbstractModuleSourcePrototype),
         Builtin::ShadowRealm => Some(Builtin::ShadowRealmPrototype),
         Builtin::Symbol => Some(Builtin::ObjectPrototype),
         _ => prototype_tail(builtin),
@@ -243,6 +245,7 @@ fn is_runtime_prototype_tail(builtin: Builtin) -> bool {
             | Builtin::BigIntPrototype
             | Builtin::TemporalDurationPrototype
             | Builtin::TemporalPlainDatePrototype
+            | Builtin::AbstractModuleSourcePrototype
             | Builtin::ShadowRealmPrototype
     )
 }
@@ -295,7 +298,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::Date => Some(7.0),
         Builtin::TemporalDuration => Some(0.0),
         Builtin::TemporalPlainDate => Some(3.0),
-        Builtin::ShadowRealm => Some(0.0),
+        Builtin::AbstractModuleSource | Builtin::ShadowRealm => Some(0.0),
         Builtin::DisposableStack => Some(0.0),
         Builtin::AsyncDisposableStack => Some(0.0),
         Builtin::FinalizationRegistry => Some(1.0),
