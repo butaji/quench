@@ -74,8 +74,8 @@ fn difference(
     options: Option<&Value>,
     direction: f64,
 ) -> Result<Value, VmError> {
-    let left = date_fields(receiver)?;
-    let right = date_fields(other)?;
+    let left = date_like_fields(receiver)?;
+    let right = date_like_fields(other)?;
     let mut days = (date_serial(right.0, right.1, right.2) - date_serial(left.0, left.1, left.2))
         as f64
         * direction;
@@ -130,6 +130,17 @@ fn date_fields(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
         field_number(object, "month")?,
         field_number(object, "day")?,
     ))
+}
+
+fn date_like_fields(value: Option<&Value>) -> Result<(f64, f64, f64), VmError> {
+    match value {
+        Some(Value::Object(_)) => date_fields(value),
+        Some(Value::String(_)) => {
+            let date = from(value, None)?;
+            date_fields(Some(&date))
+        }
+        _ => Err(crate::value::error::throw_type_error("Invalid PlainDate")),
+    }
 }
 
 fn field_object_string(value: &Value, name: &str) -> Option<String> {
