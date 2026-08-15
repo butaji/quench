@@ -418,6 +418,9 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     if let Some(alias) = grandfathered_alias(tag) {
         return Ok(alias.to_string());
     }
+    if let Some(alias) = canonical_tag_alias(tag) {
+        return Ok(alias.to_string());
+    }
     if tag.eq_ignore_ascii_case("nan")
         || tag.eq_ignore_ascii_case("en-gb-oed")
         || tag.eq_ignore_ascii_case("x-private")
@@ -449,8 +452,23 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let mut script_done = false;
     if language.eq_ignore_ascii_case("sh") {
         out.push("sr".to_string());
-        out.push("Latn".to_string());
-        script_done = true;
+        let has_script = parts
+            .clone()
+            .next()
+            .is_some_and(|part| part.len() == 4 && part.chars().all(|c| c.is_ascii_alphabetic()));
+        if !has_script {
+            out.push("Latn".to_string());
+            script_done = true;
+        }
+    } else if language.eq_ignore_ascii_case("cnr") {
+        out.push("sr".to_string());
+        let has_region = parts.clone().next().is_some_and(|part| {
+            (part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic()))
+                || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
+        });
+        if !has_region {
+            out.push("ME".to_string());
+        }
     } else {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
@@ -464,6 +482,14 @@ fn grandfathered_alias(tag: &str) -> Option<&'static str> {
         "zh-guoyu" => Some("zh"),
         "zh-hakka" => Some("hak"),
         "zh-xiang" => Some("hsn"),
+        _ => None,
+    }
+}
+
+fn canonical_tag_alias(tag: &str) -> Option<&'static str> {
+    match tag.to_ascii_lowercase().as_str() {
+        "ja-latn-hepburn-heploc" => Some("ja-Latn-alalc97"),
+        "sr-latn-cyrl" => Some("sr-Cyrl"),
         _ => None,
     }
 }
