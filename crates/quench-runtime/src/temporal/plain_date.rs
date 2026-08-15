@@ -374,6 +374,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                 .and_then(|value| value.parse().ok())
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))
         })?;
+        if month < 0.0 || day < 0.0 {
+            return Err(crate::value::error::throw_range_error("Invalid date"));
+        }
         if let Ok(Value::String(code)) = field(object, "monthCode") {
             let expected = format!("M{month:02.0}");
             if code != expected {
