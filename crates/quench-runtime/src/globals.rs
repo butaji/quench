@@ -47,6 +47,7 @@ pub(crate) fn immutable_value(name: &str) -> Option<crate::value::Value> {
 
 pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> Vec<(String, u16)> {
     let names = [
+        "undefined",
         "Object",
         "Function",
         "Array",
@@ -81,7 +82,11 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
     names
         .into_iter()
         .filter_map(|name| {
-            let register = emit_builtin(ops, next_register, builtin(name)?);
+            let register = if name == "undefined" {
+                emit_undefined(ops, next_register)
+            } else {
+                emit_builtin(ops, next_register, builtin(name)?)
+            };
             Some((name.to_string(), register))
         })
         .collect()
@@ -104,6 +109,15 @@ fn emit_builtin(ops: &mut Vec<Op>, next_register: &mut u16, builtin: crate::ops:
     ops.push(Op::MakeBuiltin {
         dst: register,
         builtin,
+    });
+    register
+}
+
+fn emit_undefined(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 {
+    let register = take_register(next_register);
+    ops.push(Op::Const {
+        dst: register,
+        value: Constant::Undefined,
     });
     register
 }
