@@ -99,6 +99,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ArrayBufferPrototype, "constructor") => Some(ArrayBuffer),
         (ArrayBufferPrototype, "byteLength") => Some(ArrayBufferByteLengthGetter),
         (ArrayBufferPrototype, "detached") => Some(ArrayBufferDetachedGetter),
+        (ArrayBufferPrototype, "immutable") => Some(ArrayBufferImmutableGetter),
         (ArrayBufferPrototype, "resize") => Some(ArrayBufferResize),
         (ArrayBufferPrototype, "transferToImmutable") => Some(ArrayBufferTransferToImmutable),
         (SharedArrayBufferPrototype, "constructor") => Some(SharedArrayBuffer),
@@ -189,8 +190,10 @@ fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
                 | Builtin::TypeError
         ))
     .then_some(Builtin::ErrorPrototype)
-    .or_else(|| (builtin == Builtin::AggregateError && key == "prototype")
-        .then_some(Builtin::AggregateErrorPrototype))
+    .or_else(|| {
+        (builtin == Builtin::AggregateError && key == "prototype")
+            .then_some(Builtin::AggregateErrorPrototype)
+    })
 }
 fn specialized_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_property(builtin, key).or_else(|| {
@@ -221,16 +224,14 @@ fn reflect_method(key: &str) -> Option<Builtin> {
 fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_constructor_property(builtin, key)
         .or_else(|| {
-            (is_typed_array_prototype(builtin) && key == "values")
-                .then_some(Builtin::ArrayIterator)
+            (is_typed_array_prototype(builtin) && key == "values").then_some(Builtin::ArrayIterator)
         })
         .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "Symbol.iterator")
                 .then_some(Builtin::ArrayIterator)
         })
         .or_else(|| {
-            (is_typed_array_prototype(builtin) && key == "keys")
-                .then_some(Builtin::ArrayKeys)
+            (is_typed_array_prototype(builtin) && key == "keys").then_some(Builtin::ArrayKeys)
         })
         .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "fill").then_some(Builtin::TypedArrayFill)
