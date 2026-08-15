@@ -293,9 +293,17 @@ fn bound_function_keys(bound: &crate::value::BoundFunctionValue, symbols: bool) 
 }
 
 fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
+    let namespace = properties.iter().any(|(key, value)| {
+        key == "\0quench:non_extensible" && matches!(value, Value::Boolean(true))
+    }) && properties
+        .iter()
+        .any(|(key, value)| key == "\0prototype" && matches!(value, Value::Null));
     let mut indices = Vec::new();
     let mut strings = Vec::new();
     for (key, _) in properties {
+        if namespace && !symbols && key == "Symbol.toStringTag" {
+            continue;
+        }
         if crate::builtins::is_descriptor_key(key) || key.starts_with('\0') {
             continue;
         }
@@ -308,11 +316,15 @@ fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
         }
     }
     indices.sort_by_key(|(index, _)| *index);
-    indices
+    let mut result = indices
         .into_iter()
         .map(|(_, key)| key)
         .chain(strings)
-        .collect()
+        .collect::<Vec<_>>();
+    if namespace && symbols {
+        result.push("Symbol.toStringTag\0".to_string());
+    }
+    result
 }
 
 fn array_index(key: &str) -> Option<u32> {
