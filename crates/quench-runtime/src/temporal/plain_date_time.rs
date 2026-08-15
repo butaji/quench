@@ -541,6 +541,7 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
 }
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
+    validate_annotations(text)?;
     if text.split('[').skip(1).any(|part| {
         part.split_once('=')
             .is_some_and(|(key, _)| key.chars().any(|character| character.is_ascii_uppercase()))
@@ -597,4 +598,33 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         nanos % 1_000.0,
     ]);
     construct(&fields.into_iter().map(Value::Number).collect::<Vec<_>>())
+}
+
+fn validate_annotations(text: &str) -> Result<(), VmError> {
+    let mut calendars = 0;
+    let mut critical_calendar = false;
+    let mut time_zones = 0;
+    for annotation in text.split('[').skip(1) {
+        let annotation = annotation
+            .strip_suffix(']')
+            .unwrap_or(annotation)
+            .split('[')
+            .next()
+            .unwrap_or(annotation);
+        if annotation.starts_with('!') && !annotation.starts_with("!u-ca=") {
+            return Err(crate::value::error::throw_range_error("Invalid annotation"));
+        }
+        if annotation.starts_with("u-ca=") || annotation.starts_with("!u-ca=") {
+            calendars += 1;
+            critical_calendar |= annotation.starts_with("!u-ca=");
+        } else if !annotation.contains('=') {
+            time_zones += 1;
+        }
+    }
+    if (calendars > 1 && critical_calendar) || time_zones > 1 {
+        return Err(crate::value::error::throw_range_error(
+            "Duplicate annotation",
+        ));
+    }
+    Ok(())
 }
