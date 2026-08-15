@@ -117,10 +117,11 @@ fn to_object_value(this_value: &Value) -> Value {
 }
 
 fn boxed_primitive(value: &Value, constructor: crate::ops::Builtin) -> Value {
-    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-        ("_value".to_string(), value.clone()),
-        ("constructor".to_string(), Value::Builtin(constructor)),
-    ])))
+    let mut properties = vec![("_value".to_string(), value.clone())];
+    if constructor != Builtin::Number {
+        properties.push(("constructor".to_string(), Value::Builtin(constructor)));
+    }
+    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
 }
 
 pub fn execute_builtin_with_receiver(
