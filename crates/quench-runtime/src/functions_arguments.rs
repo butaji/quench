@@ -193,6 +193,8 @@ pub(crate) fn execute_bound(
             }?;
             if realm.is_some() && crate::conversion::is_callable(&result) {
                 crate::reflect::wrap_shadow_function(&result, realm)
+            } else if let Some(realm) = realm.filter(|_| crate::value::is_object(&result)) {
+                Err(crate::reflect::shadow_wrapped_object_error(realm))
             } else {
                 Ok(result)
             }
