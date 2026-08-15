@@ -47,9 +47,6 @@ fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == ArrayIteratorPrototype && key == "constructor" {
         return Some(Value::Builtin(Array));
     }
-    if builtin == ArrayIteratorPrototype && key == "next" {
-        return Some(Value::Builtin(IteratorNext));
-    }
     if builtin == ArrayIteratorPrototype && key == "Symbol.toStringTag" {
         return Some(Value::String("Array Iterator".into()));
     }
