@@ -143,7 +143,7 @@ pub(crate) fn function_prototype_to_string(
                 Value::Builtin(builtin) => native_function_source(*builtin),
                 _ => "function () { [native code] }".to_string(),
             };
-            return Ok(Value::String(text));
+            Ok(Value::String(text))
         }
         Some(Value::Builtin(builtin)) => Ok(Value::String(native_function_source(*builtin))),
         Some(Value::Function(_)) => Ok(Value::String("function () { [native code] }".to_string())),

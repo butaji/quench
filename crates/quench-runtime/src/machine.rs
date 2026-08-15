@@ -71,9 +71,9 @@ impl Default for FrameStack {
 }
 
 impl FrameStack {
-    pub fn try_push(&mut self, frame: Frame) -> Result<(), Frame> {
+    pub fn try_push(&mut self, frame: Frame) -> Result<(), Box<Frame>> {
         if self.limit.is_some_and(|limit| self.count >= limit) {
-            return Err(frame);
+            return Err(Box::new(frame));
         }
         self.push(frame);
         Ok(())
@@ -404,7 +404,7 @@ impl Machine {
         self.completion = completion;
     }
 
-    pub fn try_push_frame(&mut self, frame: Frame) -> Result<(), Frame> {
+    pub fn try_push_frame(&mut self, frame: Frame) -> Result<(), Box<Frame>> {
         self.frames.try_push(frame)
     }
 
