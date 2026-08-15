@@ -1101,7 +1101,7 @@ impl NumberOptions {
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
             ),
-        ];
+        ]);
         if self.style == "currency" {
             if let Some(currency) = &self.currency {
                 properties.push(("currency".to_string(), Value::String(currency.clone())));
