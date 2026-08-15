@@ -369,6 +369,28 @@ pub(crate) fn reduce_arrow(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    let (body_ops, captures, strictness) = reduce_arrow_body(function, facts, locals)?;
+    Some(emit_function_op(
+        ops,
+        next_register,
+        body_ops,
+        crate::function_parameters::expected_argument_count(&function.params),
+        captures,
+        FunctionMetadata {
+            kind: FunctionKind::Arrow,
+            length: crate::function_parameters::expected_argument_count(&function.params),
+            strictness,
+            is_async: function.r#async,
+            mapped_arguments: false,
+        },
+    ))
+}
+
+fn reduce_arrow_body(
+    function: &oxc::ast::ast::ArrowFunctionExpression<'_>,
+    facts: &mut ProgramDb,
+    locals: &HashMap<String, u16>,
+) -> Option<(Vec<Op>, u16, bool)> {
     let strictness = crate::reduce_support::function_strictness(&function.body, facts.strict);
     let (parameters, parameter_count) =
         crate::function_parameters::bindings(&function.params).ok()?;
@@ -385,20 +407,7 @@ pub(crate) fn reduce_arrow(
     );
     (facts.strict, facts.in_function, facts.tail_calls) = inherited;
     let (body_ops, captures) = reduced?;
-    Some(emit_function_op(
-        ops,
-        next_register,
-        body_ops,
-        parameter_count,
-        captures,
-        FunctionMetadata {
-            kind: FunctionKind::Arrow,
-            length: crate::function_parameters::expected_argument_count(&function.params),
-            strictness,
-            is_async: function.r#async,
-            mapped_arguments: false,
-        },
-    ))
+    Some((body_ops, captures, strictness))
 }
 
 pub(super) fn make(
