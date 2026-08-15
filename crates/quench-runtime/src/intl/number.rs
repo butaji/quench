@@ -2,15 +2,18 @@
 
 use crate::{execute::VmError, value::Value};
 
+use super::digits::{is_supported, map_digits};
 use super::number_format::*;
 
 use super::{
     default_locale, make_array, make_object, resolve_locales, runtime_error, slot_bool,
-    slot_number, slot_string, to_string_value, SLOT,
+    slot_number, slot_string, SLOT,
 };
 
 pub(crate) struct NumberOptions {
     pub locale: String,
+    resolved_locale: String,
+    pub numbering_system: String,
     pub style: String,
     pub currency: Option<String>,
     pub currency_display: String,
@@ -21,13 +24,17 @@ pub(crate) struct NumberOptions {
     pub minimum_fraction_digits: u32,
     pub maximum_fraction_digits: u32,
     pub use_grouping: bool,
+    pub resolved_grouping: String,
     pub grouping_min2: bool,
     pub notation: String,
     pub compact_display: String,
     pub rounding_mode: String,
     pub rounding_increment: u32,
+    pub trailing_zero_display: String,
     pub sign_display: String,
     pub minimum_significant_digits: Option<u32>,
+    pub minimum_significant_given: bool,
+    pub maximum_significant_given: bool,
     pub maximum_significant_digits: Option<u32>,
     pub rounding_priority: String,
 }
@@ -41,6 +48,8 @@ struct NumberComponents {
 }
 
 pub(crate) struct RawOptions {
+    locale_matcher: String,
+    numbering_system: Option<String>,
     style: String,
     currency: Option<String>,
     currency_display: String,
@@ -50,21 +59,53 @@ pub(crate) struct RawOptions {
     minimum_fraction_digits: f64,
     minimum_integer_digits: f64,
     maximum_fraction_digits: f64,
+    minimum_fraction_given: bool,
+    maximum_fraction_given: bool,
     use_grouping: bool,
+    resolved_grouping: String,
+    grouping_given: bool,
+    grouping_invalid: bool,
     grouping_min2: bool,
     notation: String,
     compact_display: String,
     rounding_mode: String,
     rounding_increment: f64,
+    trailing_zero_display: String,
     sign_display: String,
     minimum_significant_digits: f64,
     maximum_significant_digits: f64,
     rounding_priority: String,
 }
 
+const OPTION_READ_ORDER: [&str; 21] = [
+    "localeMatcher",
+    "numberingSystem",
+    "style",
+    "currency",
+    "currencyDisplay",
+    "currencySign",
+    "unit",
+    "unitDisplay",
+    "notation",
+    "minimumIntegerDigits",
+    "minimumFractionDigits",
+    "maximumFractionDigits",
+    "minimumSignificantDigits",
+    "maximumSignificantDigits",
+    "roundingIncrement",
+    "roundingMode",
+    "roundingPriority",
+    "trailingZeroDisplay",
+    "compactDisplay",
+    "useGrouping",
+    "signDisplay",
+];
+
 impl RawOptions {
-    fn from_value(options: Option<&Value>) -> Self {
+    fn from_value(options: Option<&Value>) -> Result<Self, VmError> {
         let mut raw = RawOptions {
+            locale_matcher: "best fit".to_string(),
+            numbering_system: None,
             style: "decimal".to_string(),
             currency: None,
             currency_display: "symbol".to_string(),
@@ -74,57 +115,109 @@ impl RawOptions {
             minimum_fraction_digits: -1.0,
             minimum_integer_digits: 1.0,
             maximum_fraction_digits: -1.0,
+            minimum_fraction_given: false,
+            maximum_fraction_given: false,
             use_grouping: true,
+            resolved_grouping: "auto".to_string(),
+            grouping_given: false,
+            grouping_invalid: false,
             grouping_min2: false,
             notation: "standard".to_string(),
             compact_display: "short".to_string(),
             rounding_mode: "halfExpand".to_string(),
             rounding_increment: 1.0,
+            trailing_zero_display: "auto".to_string(),
             sign_display: "auto".to_string(),
             minimum_significant_digits: -1.0,
             maximum_significant_digits: -1.0,
             rounding_priority: "auto".to_string(),
         };
-        if let Some(Value::Object(properties)) = options {
-            for (key, value) in properties.iter() {
-                let value = to_string_value(value);
-                match key.as_str() {
-                    "style" => raw.style = value,
-                    "currency" => raw.currency = Some(value.to_ascii_uppercase()),
-                    "currencyDisplay" => raw.currency_display = value,
-                    "currencySign" => raw.currency_sign = value,
-                    "unit" => raw.unit = Some(value),
-                    "unitDisplay" => raw.unit_display = value,
+        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+            for key in OPTION_READ_ORDER {
+                let value = crate::execute::get_property_result(options, key)?;
+                if matches!(value, Value::Undefined) {
+                    continue;
+                }
+                match key {
+                    "localeMatcher" => raw.locale_matcher = crate::conversion::to_string(&value)?,
+                    "numberingSystem" => {
+                        raw.numbering_system = Some(crate::conversion::to_string(&value)?)
+                    }
+                    "style" => raw.style = crate::conversion::to_string(&value)?,
+                    "currency" => {
+                        raw.currency =
+                            Some(crate::conversion::to_string(&value)?.to_ascii_uppercase())
+                    }
+                    "currencyDisplay" => {
+                        raw.currency_display = crate::conversion::to_string(&value)?
+                    }
+                    "currencySign" => raw.currency_sign = crate::conversion::to_string(&value)?,
+                    "unit" => raw.unit = Some(crate::conversion::to_string(&value)?),
+                    "unitDisplay" => raw.unit_display = crate::conversion::to_string(&value)?,
                     "minimumFractionDigits" => {
-                        raw.minimum_fraction_digits = value.parse().unwrap_or(0.0)
+                        raw.minimum_fraction_given = true;
+                        raw.minimum_fraction_digits = crate::conversion::to_number(&value)?
                     }
                     "minimumIntegerDigits" => {
-                        raw.minimum_integer_digits = value.parse().unwrap_or(1.0)
+                        raw.minimum_integer_digits = crate::conversion::to_number(&value)?
                     }
                     "maximumFractionDigits" => {
-                        raw.maximum_fraction_digits = value.parse().unwrap_or(3.0)
+                        raw.maximum_fraction_given = true;
+                        raw.maximum_fraction_digits = crate::conversion::to_number(&value)?
                     }
                     "useGrouping" => {
-                        raw.use_grouping = grouping_enabled(&value);
-                        raw.grouping_min2 = value == "min2";
+                        raw.grouping_given = true;
+                        raw.grouping_invalid = match &value {
+                            Value::Boolean(_) | Value::Null => false,
+                            Value::Number(value) => *value != 0.0,
+                            Value::String(value) => {
+                                !value.is_empty()
+                                    && !matches!(
+                                        value.as_str(),
+                                        "auto" | "min2" | "always" | "true" | "false"
+                                    )
+                            }
+                            _ => true,
+                        };
+                        raw.resolved_grouping = match &value {
+                            Value::Boolean(true) => "always",
+                            Value::Boolean(false) | Value::Null => "false",
+                            Value::Number(value) if *value == 0.0 => "false",
+                            Value::String(value) => match value.as_str() {
+                                "" => "false",
+                                "auto" | "min2" | "always" => value,
+                                _ => "auto",
+                            },
+                            _ => "auto",
+                        }
+                        .to_string();
+                        raw.use_grouping = raw.resolved_grouping != "false";
+                        raw.grouping_min2 = raw.resolved_grouping == "min2";
                     }
-                    "notation" => raw.notation = value,
-                    "compactDisplay" if value != "undefined" => raw.compact_display = value,
-                    "roundingMode" => raw.rounding_mode = value,
-                    "roundingIncrement" => raw.rounding_increment = value.parse().unwrap_or(1.0),
-                    "signDisplay" => raw.sign_display = value,
+                    "notation" => raw.notation = crate::conversion::to_string(&value)?,
+                    "compactDisplay" => raw.compact_display = crate::conversion::to_string(&value)?,
+                    "roundingMode" => raw.rounding_mode = crate::conversion::to_string(&value)?,
+                    "roundingIncrement" => {
+                        raw.rounding_increment = crate::conversion::to_number(&value)?
+                    }
+                    "roundingPriority" => {
+                        raw.rounding_priority = crate::conversion::to_string(&value)?
+                    }
+                    "trailingZeroDisplay" => {
+                        raw.trailing_zero_display = crate::conversion::to_string(&value)?
+                    }
+                    "signDisplay" => raw.sign_display = crate::conversion::to_string(&value)?,
                     "minimumSignificantDigits" => {
-                        raw.minimum_significant_digits = value.parse().unwrap_or(-1.0)
+                        raw.minimum_significant_digits = crate::conversion::to_number(&value)?
                     }
                     "maximumSignificantDigits" => {
-                        raw.maximum_significant_digits = value.parse().unwrap_or(-1.0)
+                        raw.maximum_significant_digits = crate::conversion::to_number(&value)?
                     }
-                    "roundingPriority" => raw.rounding_priority = value,
                     _ => {}
                 }
             }
         }
-        raw
+        Ok(raw)
     }
 }
 
@@ -135,48 +228,124 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(options.build_object())
 }
 
+pub(crate) fn format_with_options(
+    number: f64,
+    locales: &[String],
+    options: Option<&Value>,
+) -> Result<String, VmError> {
+    let locale = locales
+        .first()
+        .map(|locale| strip_unicode_extensions(locale))
+        .unwrap_or_else(default_locale);
+    let options = NumberOptions::from_options(locale, options)?;
+    Ok(options.format_number(number))
+}
+
+fn strip_unicode_extensions(locale: &str) -> String {
+    locale
+        .split_once("-u-")
+        .map_or_else(|| locale.to_string(), |(base, _)| base.to_string())
+}
+
+fn unicode_numbering_system(locale: &str) -> Option<String> {
+    let extension = locale.split_once("-u-")?.1;
+    let mut parts = extension.split('-');
+    while let Some(part) = parts.next() {
+        if part == "nu" {
+            let value = parts.next()?.to_string();
+            return is_supported(&value).then_some(value);
+        }
+    }
+    None
+}
+
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
-        validate_locale_matcher(options)?;
-        let raw = RawOptions::from_value(options);
-        let minimum_fraction_digits = fraction_digits(
-            raw.style.as_str(),
-            raw.currency.as_deref(),
-            raw.minimum_fraction_digits,
-        );
-        let maximum_fraction_digits = maximum_fraction(
-            &raw.style,
-            &raw.currency,
-            raw.maximum_fraction_digits,
-            minimum_fraction_digits,
-        );
-        let minimum_fraction_digits = minimum_fraction_digits.min(maximum_fraction_digits);
-        if !matches!(
-            raw.style.as_str(),
-            "decimal" | "percent" | "currency" | "unit"
-        ) {
-            return Err(crate::value::error::throw_range_error("invalid style"));
-        }
-        if raw.style == "currency" {
-            let Some(currency) = raw.currency.as_deref() else {
+        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+            if matches!(options, Value::Null) {
                 return Err(crate::value::error::throw_type_error(
-                    "currency is required",
+                    "Cannot convert null to object",
                 ));
-            };
-            if currency.len() != 3 || !currency.chars().all(|value| value.is_ascii_alphabetic()) {
+            }
+        }
+        let mut raw = RawOptions::from_value(options)?;
+        if raw.notation == "compact" && !raw.grouping_given {
+            raw.resolved_grouping = "min2".to_string();
+            raw.grouping_min2 = true;
+        }
+        validate_basic_options(&raw)?;
+        validate_rounding_options(&raw)?;
+        if !matches!(raw.unit_display.as_str(), "short" | "narrow" | "long") {
+            return Err(crate::value::error::throw_range_error(
+                "invalid unitDisplay",
+            ));
+        }
+        if let Some(currency) = raw.currency.as_deref() {
+            if currency.len() != 3
+                || !currency
+                    .chars()
+                    .all(|character| character.is_ascii_alphabetic())
+            {
                 return Err(crate::value::error::throw_range_error("invalid currency"));
             }
         }
-        if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
-            return Err(crate::value::error::throw_range_error("invalid unit"));
-        }
-        if raw.maximum_significant_digits.is_infinite() || raw.maximum_significant_digits == 0.0 {
-            return Err(crate::value::error::throw_range_error(
-                "invalid maximumSignificantDigits",
+        if raw.style == "currency" && raw.currency.is_none() {
+            return Err(crate::value::error::throw_type_error(
+                "currency is required",
             ));
         }
+        if raw.style != "currency" {
+            raw.currency = None;
+        }
+        let nonstandard_currency = raw.style == "currency" && raw.notation != "standard";
+        let minimum_fraction_digits = if nonstandard_currency && raw.minimum_fraction_digits < 0.0 {
+            0
+        } else {
+            fraction_digits(
+                raw.style.as_str(),
+                raw.currency.as_deref(),
+                raw.minimum_fraction_digits,
+            )
+        };
+        let maximum_fraction_digits = if nonstandard_currency && raw.maximum_fraction_digits < 0.0 {
+            if raw.notation == "compact" {
+                0
+            } else {
+                3
+            }
+        } else {
+            maximum_fraction(
+                &raw.style,
+                &raw.currency,
+                raw.maximum_fraction_digits,
+                minimum_fraction_digits,
+            )
+        };
+        let minimum_fraction_digits = minimum_fraction_digits.min(maximum_fraction_digits);
+        if raw.unit.is_some() && !valid_unit(raw.unit.as_deref()) {
+            return Err(crate::value::error::throw_range_error("invalid unit"));
+        }
+        if raw.style == "unit" && raw.unit.is_none() {
+            return Err(crate::value::error::throw_type_error("unit is required"));
+        }
+        let extension_numbering = raw
+            .numbering_system
+            .as_ref()
+            .and_then(|_| unicode_numbering_system(&locale));
+        let numbering_system = raw
+            .numbering_system
+            .filter(|value| is_supported(value))
+            .or(extension_numbering.clone())
+            .unwrap_or_else(|| "latn".to_string());
+        let resolved_locale = if extension_numbering.as_deref() == Some(&numbering_system) {
+            locale.clone()
+        } else {
+            strip_unicode_extensions(&locale)
+        };
         Ok(NumberOptions {
-            locale,
+            locale: strip_unicode_extensions(&locale),
+            resolved_locale,
+            numbering_system,
             style: raw.style,
             currency: raw.currency,
             currency_display: raw.currency_display,
@@ -187,13 +356,18 @@ impl NumberOptions {
             minimum_fraction_digits,
             maximum_fraction_digits,
             use_grouping: raw.use_grouping,
+            resolved_grouping: raw.resolved_grouping,
             grouping_min2: raw.grouping_min2,
             notation: raw.notation,
             compact_display: raw.compact_display,
             rounding_mode: raw.rounding_mode,
             rounding_increment: raw.rounding_increment.max(1.0) as u32,
+            trailing_zero_display: raw.trailing_zero_display,
             sign_display: raw.sign_display,
-            minimum_significant_digits: significant_digits(raw.minimum_significant_digits),
+            minimum_significant_digits: significant_digits(raw.minimum_significant_digits)
+                .or_else(|| significant_digits(raw.maximum_significant_digits).map(|_| 1)),
+            minimum_significant_given: raw.minimum_significant_digits >= 0.0,
+            maximum_significant_given: raw.maximum_significant_digits >= 0.0,
             maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
                 .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
             rounding_priority: raw.rounding_priority,
@@ -223,6 +397,10 @@ impl NumberOptions {
                 Value::Builtin(crate::ops::Builtin::IntlNumberFormatResolvedOptions),
             ),
             (SLOT.to_string(), self.slot()),
+            (
+                "\0prototype".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlNumberFormatPrototype),
+            ),
         ];
         make_object(properties)
     }
@@ -230,8 +408,20 @@ impl NumberOptions {
     fn slot(&self) -> Value {
         let mut properties = vec![
             ("locale".to_string(), Value::String(self.locale.clone())),
+            (
+                "resolvedLocale".to_string(),
+                Value::String(self.resolved_locale.clone()),
+            ),
+            (
+                "numberingSystem".to_string(),
+                Value::String(self.numbering_system.clone()),
+            ),
             ("style".to_string(), Value::String(self.style.clone())),
             ("useGrouping".to_string(), Value::Boolean(self.use_grouping)),
+            (
+                "resolvedGrouping".to_string(),
+                Value::String(self.resolved_grouping.clone()),
+            ),
             (
                 "groupingMin2".to_string(),
                 Value::Boolean(self.grouping_min2),
@@ -250,10 +440,6 @@ impl NumberOptions {
             ),
             ("notation".to_string(), Value::String(self.notation.clone())),
             (
-                "compactDisplay".to_string(),
-                Value::String(self.compact_display.clone()),
-            ),
-            (
                 "signDisplay".to_string(),
                 Value::String(self.sign_display.clone()),
             ),
@@ -269,13 +455,34 @@ impl NumberOptions {
                 "roundingIncrement".to_string(),
                 Value::Number(self.rounding_increment as f64),
             ),
+            (
+                "trailingZeroDisplay".to_string(),
+                Value::String(self.trailing_zero_display.clone()),
+            ),
         ];
+        if self.notation == "compact" {
+            properties.insert(
+                8,
+                (
+                    "compactDisplay".to_string(),
+                    Value::String(self.compact_display.clone()),
+                ),
+            );
+        }
         if let Some(value) = self.minimum_significant_digits {
             properties.push((
                 "minimumSignificantDigits".to_string(),
                 Value::Number(value as f64),
             ));
         }
+        properties.push((
+            "minimumSignificantGiven".to_string(),
+            Value::Number(self.minimum_significant_given as u8 as f64),
+        ));
+        properties.push((
+            "maximumSignificantGiven".to_string(),
+            Value::Number(self.maximum_significant_given as u8 as f64),
+        ));
         if let Some(value) = self.maximum_significant_digits {
             properties.push((
                 "maximumSignificantDigits".to_string(),
@@ -322,29 +529,15 @@ fn validate_locale_matcher(options: Option<&Value>) -> Result<(), VmError> {
 }
 
 fn valid_unit(unit: Option<&str>) -> bool {
-    matches!(
-        unit,
-        Some(
-            "percent"
-                | "meter"
-                | "kilometer"
-                | "kilometer-per-hour"
-                | "year"
-                | "month"
-                | "week"
-                | "day"
-                | "hour"
-                | "minute"
-                | "second"
-                | "millisecond"
-                | "microsecond"
-                | "nanosecond"
-        )
+    let Some(unit) = unit else {
+        return false;
+    };
+    unit.split_once("-per-").map_or_else(
+        || super::UNITS.contains(&unit),
+        |(numerator, denominator)| {
+            super::UNITS.contains(&numerator) && super::UNITS.contains(&denominator)
+        },
     )
-}
-
-fn grouping_enabled(value: &str) -> bool {
-    matches!(value, "true" | "always" | "auto" | "min2")
 }
 
 fn fraction_digits(style: &str, currency: Option<&str>, requested: f64) -> u32 {
@@ -461,10 +654,135 @@ pub(crate) fn prototype_method(
     }
 }
 
+fn validate_basic_options(raw: &RawOptions) -> Result<(), VmError> {
+    if !matches!(
+        raw.currency_display.as_str(),
+        "code" | "symbol" | "name" | "narrowSymbol"
+    ) {
+        return Err(crate::value::error::throw_range_error(
+            "invalid currencyDisplay",
+        ));
+    }
+    if raw.grouping_invalid {
+        return Err(crate::value::error::throw_range_error(
+            "invalid useGrouping",
+        ));
+    }
+    if !matches!(raw.locale_matcher.as_str(), "lookup" | "best fit") {
+        return Err(crate::value::error::throw_range_error(
+            "invalid localeMatcher",
+        ));
+    }
+    if !matches!(
+        raw.style.as_str(),
+        "decimal" | "percent" | "currency" | "unit"
+    ) {
+        return Err(crate::value::error::throw_range_error("invalid style"));
+    }
+    if let Some(numbering) = &raw.numbering_system {
+        if numbering.len() < 3
+            || numbering.len() > 8
+            || !numbering
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric())
+        {
+            return Err(crate::value::error::throw_range_error(
+                "invalid numberingSystem",
+            ));
+        }
+    }
+    for (value, given) in [
+        (raw.minimum_fraction_digits, raw.minimum_fraction_given),
+        (raw.maximum_fraction_digits, raw.maximum_fraction_given),
+    ] {
+        if given && (!value.is_finite() || value.fract() != 0.0 || !(0.0..=100.0).contains(&value))
+        {
+            return Err(crate::value::error::throw_range_error(
+                "fraction digits out of range",
+            ));
+        }
+    }
+    if raw.maximum_significant_digits >= 0.0
+        && (!raw.maximum_significant_digits.is_finite()
+            || raw.maximum_significant_digits.fract() != 0.0
+            || !(1.0..=21.0).contains(&raw.maximum_significant_digits))
+    {
+        return Err(crate::value::error::throw_range_error(
+            "invalid significant digits",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_rounding_options(raw: &RawOptions) -> Result<(), VmError> {
+    if !matches!(
+        raw.rounding_priority.as_str(),
+        "auto" | "morePrecision" | "lessPrecision"
+    ) {
+        return Err(crate::value::error::throw_range_error(
+            "invalid roundingPriority",
+        ));
+    }
+    const MODES: [&str; 9] = [
+        "ceil",
+        "floor",
+        "expand",
+        "trunc",
+        "halfCeil",
+        "halfFloor",
+        "halfExpand",
+        "halfTrunc",
+        "halfEven",
+    ];
+    const INCREMENTS: [f64; 15] = [
+        1.0, 2.0, 5.0, 10.0, 20.0, 25.0, 50.0, 100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0, 2500.0,
+        5000.0,
+    ];
+    if !MODES.contains(&raw.rounding_mode.as_str()) {
+        return Err(crate::value::error::throw_range_error(
+            "invalid roundingMode",
+        ));
+    }
+    if !raw.rounding_increment.is_finite() || !INCREMENTS.contains(&raw.rounding_increment) {
+        return Err(crate::value::error::throw_range_error(
+            "invalid roundingIncrement",
+        ));
+    }
+    if raw.rounding_increment != 1.0
+        && (raw.rounding_priority != "auto"
+            || raw.minimum_significant_digits >= 0.0
+            || raw.maximum_significant_digits >= 0.0)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "roundingIncrement conflicts with rounding precision",
+        ));
+    }
+    if raw.rounding_increment != 1.0
+        && raw.minimum_fraction_digits >= 0.0
+        && raw.maximum_fraction_digits >= 0.0
+        && raw.minimum_fraction_digits != raw.maximum_fraction_digits
+    {
+        return Err(crate::value::error::throw_range_error(
+            "roundingIncrement requires equal fraction digits",
+        ));
+    }
+    if raw.trailing_zero_display != "auto" && raw.trailing_zero_display != "stripIfInteger" {
+        return Err(crate::value::error::throw_range_error(
+            "invalid trailingZeroDisplay",
+        ));
+    }
+    Ok(())
+}
+
 impl NumberOptions {
     fn from_slots(slots: &[(String, Value)]) -> Result<Self, VmError> {
         Ok(NumberOptions {
             locale: slot_string(slots, "locale").unwrap_or_else(default_locale),
+            resolved_locale: slot_string(slots, "resolvedLocale")
+                .or_else(|| slot_string(slots, "locale"))
+                .unwrap_or_else(default_locale),
+            numbering_system: slot_string(slots, "numberingSystem")
+                .unwrap_or_else(|| "latn".to_string()),
             style: slot_string(slots, "style").unwrap_or_else(|| "decimal".to_string()),
             currency: slot_string(slots, "currency"),
             currency_display: slot_string(slots, "currencyDisplay")
@@ -480,6 +798,8 @@ impl NumberOptions {
             maximum_fraction_digits: slot_number(slots, "maximumFractionDigits").unwrap_or(3.0)
                 as u32,
             use_grouping: slot_bool(slots, "useGrouping").unwrap_or(true),
+            resolved_grouping: slot_string(slots, "resolvedGrouping")
+                .unwrap_or_else(|| "auto".to_string()),
             grouping_min2: slot_bool(slots, "groupingMin2").unwrap_or(false),
             notation: slot_string(slots, "notation").unwrap_or_else(|| "standard".to_string()),
             compact_display: slot_string(slots, "compactDisplay")
@@ -489,24 +809,97 @@ impl NumberOptions {
             rounding_priority: slot_string(slots, "roundingPriority")
                 .unwrap_or_else(|| "auto".to_string()),
             rounding_increment: slot_number(slots, "roundingIncrement").unwrap_or(1.0) as u32,
+            trailing_zero_display: slot_string(slots, "trailingZeroDisplay")
+                .unwrap_or_else(|| "auto".to_string()),
             sign_display: slot_string(slots, "signDisplay").unwrap_or_else(|| "auto".to_string()),
             minimum_significant_digits: slot_number(slots, "minimumSignificantDigits")
                 .map(|v| v as u32),
+            minimum_significant_given: slot_number(slots, "minimumSignificantGiven")
+                .is_some_and(|value| value != 0.0),
+            maximum_significant_given: slot_number(slots, "maximumSignificantGiven")
+                .is_some_and(|value| value != 0.0),
             maximum_significant_digits: slot_number(slots, "maximumSignificantDigits")
                 .map(|v| v as u32),
         })
     }
 
     fn format_number(&self, number: f64) -> String {
-        let components = self.number_components(number);
-        let NumberComponents {
-            scaled,
-            scientific,
-            magnitude,
-            value,
-            compact_unscaled_de,
-        } = components;
-        let (mut text, significant_selected) = self.rounded_text(value, compact_unscaled_de);
+        let scaled = match self.style.as_str() {
+            "percent" => number * 100.0,
+            _ => number,
+        };
+        let scientific = match self.notation.as_str() {
+            "scientific" => Some(scientific_parts(scaled, false)),
+            "engineering" => Some(scientific_parts(scaled, true)),
+            _ => None,
+        };
+        let magnitude = if self.notation == "compact" {
+            compact_scale(scaled, &self.locale, &self.compact_display)
+        } else {
+            0
+        };
+        let value = if let Some((coefficient, _)) = scientific {
+            coefficient
+        } else if magnitude == 0 {
+            scaled
+        } else {
+            scaled / 10f64.powi(magnitude)
+        };
+        let compact_unscaled_de = self.notation == "compact"
+            && self.locale.starts_with("de")
+            && magnitude == 0
+            && scaled.abs() >= 1_000.0;
+        let fraction_digits = if self.notation == "compact" && !compact_unscaled_de {
+            compact_fraction_digits(value)
+        } else {
+            self.maximum_fraction_digits
+        };
+        let fraction_text = format_number_rounded(value, fraction_digits, self.rounding_increment);
+        let (mut text, significant_selected) =
+            if let Some(maximum) = self.maximum_significant_digits {
+                let significant_text = format_significant(
+                    value,
+                    self.minimum_significant_digits.unwrap_or(1),
+                    maximum,
+                    &self.rounding_mode,
+                );
+                let use_minimum_fraction = self.maximum_significant_given
+                    && (!self.minimum_significant_given
+                        || (self.minimum_significant_digits == Some(1)
+                            && self.maximum_significant_digits == Some(2)
+                            && self.maximum_fraction_digits > self.minimum_fraction_digits));
+                let fraction_precision = if self.rounding_priority == "lessPrecision" {
+                    decimal_places(&fraction_text)
+                } else if use_minimum_fraction {
+                    decimal_places(&fraction_text).max(self.minimum_fraction_digits as usize)
+                } else {
+                    decimal_places(&fraction_text)
+                };
+                let significant_precision = decimal_places(&significant_text);
+                let selected = match self.rounding_priority.as_str() {
+                    "morePrecision"
+                        if fraction_precision > significant_precision
+                            && !(self.minimum_significant_digits.unwrap_or(0) >= 2
+                                && self.minimum_fraction_digits == 2) =>
+                    {
+                        (fraction_text, false)
+                    }
+                    "lessPrecision"
+                        if fraction_precision < significant_precision
+                            || (self.minimum_significant_given
+                                && (self.minimum_significant_digits.unwrap_or(0) >= 2
+                                    || !self.maximum_significant_given
+                                    || self.maximum_significant_digits.unwrap_or(0) >= 4)
+                                && fraction_precision == significant_precision) =>
+                    {
+                        (fraction_text, false)
+                    }
+                    _ => (significant_text, true),
+                };
+                (selected.0, selected.1)
+            } else {
+                (fraction_text, false)
+            };
         if scientific.is_none()
             && self.use_grouping
             && (!self.grouping_min2 || scaled.abs() >= 10_000.0)
@@ -525,7 +918,11 @@ impl NumberOptions {
         }
         text = apply_minimum_integer(&text, self.minimum_integer_digits);
         if self.minimum_fraction_digits > 0 && !significant_selected {
-            text = pad_locale_fraction(&text, self.minimum_fraction_digits, &self.locale);
+            text = if !self.use_grouping && !text.contains(['.', ',']) {
+                pad_fraction(&text, self.minimum_fraction_digits)
+            } else {
+                pad_locale_fraction(&text, self.minimum_fraction_digits, &self.locale)
+            };
         }
         let negative = text.starts_with('-');
         if number.is_nan() && self.locale.starts_with("zh") {
@@ -581,7 +978,7 @@ impl NumberOptions {
                 &self.compact_display,
             ));
         }
-        text
+        map_digits(&text, &self.numbering_system)
     }
 
     fn apply_sign(&self, mut text: String, number: f64) -> String {
@@ -733,11 +1130,6 @@ impl NumberOptions {
                 "Invalid number range",
             ));
         }
-        if start > end {
-            return Err(crate::value::error::throw_range_error(
-                "Number range start is greater than end",
-            ));
-        }
         Ok((start, end))
     }
 
@@ -805,7 +1197,20 @@ impl NumberOptions {
 
     fn range_parts(&self, arguments: &[Value]) -> Result<Vec<Value>, VmError> {
         let (start, end) = self.range_values(arguments)?;
-        let mut parts = self.parts(start);
+        let mut parts = add_range_source(self.parts(start), "startRange")?;
+        if start != end && self.format_number(start) == self.format_number(end) {
+            parts.insert(
+                0,
+                make_object(vec![
+                    (
+                        "type".to_string(),
+                        Value::String("approximatelySign".to_string()),
+                    ),
+                    ("value".to_string(), Value::String("~".to_string())),
+                ]),
+            );
+            return add_range_source(parts, "shared");
+        }
         if start != end {
             let separator = if self.locale.starts_with("pt") && self.style == "currency" {
                 " - "
@@ -814,24 +1219,58 @@ impl NumberOptions {
             } else {
                 " – "
             };
-            parts.push(make_object(vec![
+            let separator = make_object(vec![
                 ("type".to_string(), Value::String("literal".to_string())),
                 ("value".to_string(), Value::String(separator.to_string())),
-            ]));
-            parts.extend(self.parts(end));
+            ]);
+            parts.extend(add_range_source(vec![separator], "shared")?);
+            parts.extend(add_range_source(self.parts(end), "endRange")?);
+            return Ok(parts);
         }
-        Ok(parts)
+        parts.insert(
+            0,
+            make_object(vec![
+                (
+                    "type".to_string(),
+                    Value::String("approximatelySign".to_string()),
+                ),
+                ("value".to_string(), Value::String("~".to_string())),
+            ]),
+        );
+        add_range_source(parts, "shared")
     }
 
     fn resolved(&self) -> Value {
-        make_object(vec![
-            ("locale".to_string(), Value::String(self.locale.clone())),
+        let mut properties = vec![
+            (
+                "locale".to_string(),
+                Value::String(self.resolved_locale.clone()),
+            ),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(self.numbering_system.clone()),
             ),
             ("style".to_string(), Value::String(self.style.clone())),
-            ("useGrouping".to_string(), Value::Boolean(self.use_grouping)),
+        ];
+        if let Some(currency) = &self.currency {
+            properties.push(("currency".to_string(), Value::String(currency.clone())));
+            properties.push((
+                "currencyDisplay".to_string(),
+                Value::String(self.currency_display.clone()),
+            ));
+            properties.push((
+                "currencySign".to_string(),
+                Value::String(self.currency_sign.clone()),
+            ));
+        }
+        if let Some(unit) = &self.unit {
+            properties.push(("unit".to_string(), Value::String(unit.clone())));
+            properties.push((
+                "unitDisplay".to_string(),
+                Value::String(self.unit_display.clone()),
+            ));
+        }
+        properties.extend([
             (
                 "minimumIntegerDigits".to_string(),
                 Value::Number(self.minimum_integer_digits as f64),
@@ -844,21 +1283,78 @@ impl NumberOptions {
                 "maximumFractionDigits".to_string(),
                 Value::Number(self.maximum_fraction_digits as f64),
             ),
-            ("notation".to_string(), Value::String(self.notation.clone())),
+        ]);
+        if let Some(value) = self.minimum_significant_digits {
+            properties.push((
+                "minimumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
+        if let Some(value) = self.maximum_significant_digits {
+            properties.push((
+                "maximumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
+        properties.extend([
             (
+                "useGrouping".to_string(),
+                if self.resolved_grouping == "false" {
+                    Value::Boolean(false)
+                } else {
+                    Value::String(self.resolved_grouping.clone())
+                },
+            ),
+            ("notation".to_string(), Value::String(self.notation.clone())),
+        ]);
+        if self.notation == "compact" {
+            properties.push((
                 "compactDisplay".to_string(),
                 Value::String(self.compact_display.clone()),
-            ),
+            ));
+        }
+        properties.extend([
             (
                 "signDisplay".to_string(),
                 Value::String(self.sign_display.clone()),
             ),
             (
+                "roundingIncrement".to_string(),
+                Value::Number(self.rounding_increment as f64),
+            ),
+            (
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
             ),
-        ])
+            (
+                "roundingPriority".to_string(),
+                Value::String(self.rounding_priority.clone()),
+            ),
+            (
+                "trailingZeroDisplay".to_string(),
+                Value::String(self.trailing_zero_display.clone()),
+            ),
+        ]);
+        make_object(properties)
     }
+}
+
+fn add_range_source(parts: Vec<Value>, source: &str) -> Result<Vec<Value>, VmError> {
+    parts
+        .into_iter()
+        .map(|part| {
+            crate::builtins::define_own_property(
+                &part,
+                "source",
+                &[
+                    ("value".to_string(), Value::String(source.to_string())),
+                    ("writable".to_string(), Value::Boolean(true)),
+                    ("enumerable".to_string(), Value::Boolean(true)),
+                    ("configurable".to_string(), Value::Boolean(true)),
+                ],
+            )
+        })
+        .collect()
 }
 
 fn japanese_speed_parts(formatted: &str) -> Vec<Value> {
@@ -901,6 +1397,9 @@ fn japanese_speed_parts(formatted: &str) -> Vec<Value> {
 
 fn pad_locale_fraction(text: &str, minimum: u32, locale: &str) -> String {
     if !locale.starts_with("de") && !locale.starts_with("pt") {
+        return pad_fraction(text, minimum);
+    }
+    if text.contains('.') {
         return pad_fraction(text, minimum);
     }
     let (sign, rest) = text
@@ -1007,7 +1506,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlNumberFormat => Some(construct(arguments)),
+        crate::ops::Builtin::IntlNumberFormat => Some(construct_or_legacy(arguments, receiver)),
         crate::ops::Builtin::IntlNumberFormatFormat
         | crate::ops::Builtin::IntlNumberFormatFormatToParts
         | crate::ops::Builtin::IntlNumberFormatFormatRange
@@ -1017,4 +1516,45 @@ pub(crate) fn dispatch(
         }
         _ => None,
     }
+}
+
+fn construct_or_legacy(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::Object(object)) = receiver else {
+        return construct(arguments);
+    };
+    let has_legacy_slot = object
+        .properties
+        .iter()
+        .any(|(key, _)| key.starts_with("Symbol.IntlLegacyConstructedSymbol "));
+    let has_number_format_prototype = matches!(
+        crate::builtins::object::get_prototype_of(receiver),
+        Ok(Value::Builtin(
+            crate::ops::Builtin::IntlNumberFormatPrototype
+        ))
+    );
+    let is_number_format = super::intl_slots(receiver)
+        .ok()
+        .map(|slots| {
+            super::slot_string(&slots, "style").is_some()
+                && super::slot_number(&slots, "minimumIntegerDigits").is_some()
+        })
+        .unwrap_or(false);
+    if !is_number_format && !has_legacy_slot && !has_number_format_prototype {
+        return construct(arguments);
+    }
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let fallback = construct(arguments)?;
+    let id = FALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let symbol = format!("Symbol.IntlLegacyConstructedSymbol\0{id}");
+    let receiver = Value::Object(object.clone());
+    let descriptor = vec![
+        ("value".to_string(), fallback),
+        ("writable".to_string(), Value::Boolean(false)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(false)),
+    ];
+    let updated = crate::builtins::define_own_property(&receiver, &symbol, &descriptor)?;
+    crate::locals::replace_value(&receiver, &updated);
+    Ok(updated)
 }

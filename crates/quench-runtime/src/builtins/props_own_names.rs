@@ -202,6 +202,29 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "setPrototypeOf",
             "Symbol.toStringTag",
         ],
+        Builtin::Intl => &[
+            "getCanonicalLocales", "supportedValuesOf", "Collator", "DateTimeFormat",
+            "DisplayNames", "ListFormat", "Locale", "NumberFormat", "PluralRules",
+            "RelativeTimeFormat", "Segmenter", "Symbol.toStringTag",
+        ],
+        Builtin::IntlCollator
+        | Builtin::IntlDateTimeFormat
+        | Builtin::IntlDisplayNames
+        | Builtin::IntlListFormat
+        | Builtin::IntlLocale
+        | Builtin::IntlNumberFormat
+        | Builtin::IntlPluralRules
+        | Builtin::IntlRelativeTimeFormat
+        | Builtin::IntlSegmenter => &["length", "name", "prototype"],
+        Builtin::IntlCollatorPrototype => &["constructor", "compare", "resolvedOptions", "Symbol.toStringTag"],
+        Builtin::IntlDateTimeFormatPrototype => &["constructor", "format", "formatToParts", "formatRange", "formatRangeToParts", "resolvedOptions", "Symbol.toStringTag"],
+        Builtin::IntlDisplayNamesPrototype => &["constructor", "of", "resolvedOptions", "Symbol.toStringTag"],
+        Builtin::IntlListFormatPrototype => &["constructor", "format", "formatToParts", "resolvedOptions", "Symbol.toStringTag"],
+        Builtin::IntlLocalePrototype => &["constructor", "toString", "maximize", "minimize", "baseName", "calendar", "caseFirst", "collation", "firstDayOfWeek", "hourCycle", "language", "numberingSystem", "numeric", "region", "script", "textInfo", "variants", "getCalendars", "getCollations", "getHourCycles", "getNumberingSystems", "getTimeZones", "getTextInfo", "getWeekInfo", "Symbol.toStringTag"],
+        Builtin::IntlNumberFormatPrototype => &["constructor", "format", "formatToParts", "formatRange", "formatRangeToParts", "resolvedOptions", "Symbol.toStringTag"],
+        Builtin::IntlPluralRulesPrototype => &["constructor", "select", "resolvedOptions", "Symbol.toStringTag"],
+        Builtin::IntlRelativeTimeFormatPrototype => &["constructor", "format", "formatToParts", "resolvedOptions", "Symbol.toStringTag"],
+        Builtin::IntlSegmenterPrototype => &["constructor", "segment", "resolvedOptions", "Symbol.toStringTag"],
         _ => &[],
     }
 }
