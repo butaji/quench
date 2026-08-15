@@ -130,6 +130,12 @@ fn create_var(
         return Ok(());
     }
     let current = own_descriptor(name);
+    if current
+        .as_ref()
+        .is_some_and(|descriptor| !descriptor.configurable)
+    {
+        return Ok(());
+    }
     let cell = binding_cell(name, slot, current.as_ref().map(|value| &value.value));
     // Per spec, global var bindings are non-configurable.
     let descriptor = match current {
