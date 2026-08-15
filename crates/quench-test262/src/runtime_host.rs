@@ -1128,7 +1128,7 @@ impl LinkedModule {
             .map_or(self.program.ops().len() - start, |index| index + 1);
         let (completion, next) = self
             .scope
-            .execute_completion_step(
+            .execute_resumed_completion_step(
                 &self.program.ops()[start..start + end],
                 &mut registers,
                 host_context(),

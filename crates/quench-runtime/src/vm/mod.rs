@@ -438,10 +438,14 @@ pub(crate) fn execute_completion_step_in_environment(
     registers: &mut Vec<Value>,
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
+    drain_microtasks: bool,
 ) -> Result<CompletionStep, VmError> {
     let _context_guard = ContextGuard::install(context);
     let _global_guard = GlobalObjectGuard::install();
     let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    if drain_microtasks {
+        crate::promise::drain_microtasks();
+    }
     let step = run_ops_completion_step(ops, registers, context)?;
     let completion = preserve_frame_completion(step.completion)?;
     Ok(CompletionStep {
