@@ -208,7 +208,7 @@ impl NumberOptions {
                 ));
             }
         }
-        let raw = RawOptions::from_value(options)?;
+        let mut raw = RawOptions::from_value(options)?;
         validate_basic_options(&raw)?;
         validate_rounding_options(&raw)?;
         if !matches!(raw.unit_display.as_str(), "short" | "narrow" | "long") {
@@ -229,6 +229,9 @@ impl NumberOptions {
             return Err(crate::value::error::throw_type_error(
                 "currency is required",
             ));
+        }
+        if raw.style != "currency" {
+            raw.currency = None;
         }
         let nonstandard_currency = raw.style == "currency" && raw.notation != "standard";
         let minimum_fraction_digits = if nonstandard_currency && raw.minimum_fraction_digits < 0.0 {
