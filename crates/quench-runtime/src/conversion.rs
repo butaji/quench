@@ -1,4 +1,9 @@
 use crate::{execute::VmError, value::Value};
+use std::cell::Cell;
+
+thread_local! {
+    static PROPERTY_KEY_COERCION: Cell<bool> = const { Cell::new(false) };
+}
 
 pub(crate) fn to_property_key(value: &Value) -> Result<String, VmError> {
     if let Value::Builtin(builtin) = value {
@@ -9,13 +14,20 @@ pub(crate) fn to_property_key(value: &Value) -> Result<String, VmError> {
             return Ok(name.to_string());
         }
     }
-    let primitive = to_primitive(value, "string")?;
+    let previous = PROPERTY_KEY_COERCION.with(|flag| flag.replace(true));
+    let primitive = to_primitive(value, "string");
+    PROPERTY_KEY_COERCION.with(|flag| flag.set(previous));
+    let primitive = primitive?;
     match primitive {
         Value::String(value) => Ok(value),
         Value::Number(value) => Ok(number_to_string(value)),
         Value::BigInt(value) => Ok(value),
         value => Ok(crate::intl::tolocale::value::to_string(Some(&value))),
     }
+}
+
+pub(crate) fn property_key_coercion() -> bool {
+    PROPERTY_KEY_COERCION.with(Cell::get)
 }
 
 pub(crate) fn number_to_string(value: f64) -> String {

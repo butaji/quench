@@ -79,18 +79,16 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::Builtin(Builtin::SymbolPrototype)) => "Symbol",
         Some(Value::Builtin(Builtin::BigIntPrototype)) => "BigInt",
         Some(Value::Builtin(Builtin::ErrorPrototype)) => "Error",
-        Some(
-            Value::Builtin(
-                Builtin::EvalErrorPrototype
-                | Builtin::RangeErrorPrototype
-                | Builtin::ReferenceErrorPrototype
-                | Builtin::SyntaxErrorPrototype
-                | Builtin::TypeErrorPrototype
-                | Builtin::URIErrorPrototype
-                | Builtin::AggregateErrorPrototype
-                | Builtin::SuppressedErrorPrototype,
-            ),
-        ) => "Object",
+        Some(Value::Builtin(
+            Builtin::EvalErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::SuppressedErrorPrototype,
+        )) => "Object",
         Some(Value::Builtin(_)) => "Function",
         Some(Value::Proxy(_)) => "Object",
         Some(Value::Promise(_)) => "Promise",
@@ -130,6 +128,13 @@ pub(crate) fn function_prototype_to_string(
 ) -> Result<Value, crate::execute::VmError> {
     match receiver {
         Some(value) if crate::conversion::is_callable(value) => {
+            if crate::conversion::property_key_coercion() {
+                if let Value::Function(_) = value {
+                    if let Value::String(name) = crate::execute::get_property(value, "name") {
+                        return Ok(Value::String(format!("{name}(){{}}")));
+                    }
+                }
+            }
             let text = match value {
                 Value::Builtin(builtin) => {
                     format!("function {}() {{ [native code] }}", builtin_name(*builtin))
