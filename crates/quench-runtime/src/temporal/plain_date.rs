@@ -59,15 +59,23 @@ fn supported_calendar(calendar: &str) -> bool {
 }
 
 fn validate_era(object: &crate::value::ObjectData, calendar: &str) -> Result<(), VmError> {
-    let Some(Value::String(era)) = object
+    let era = object
         .iter()
-        .find_map(|(key, value)| (key == "era").then_some(value))
-    else {
-        return Ok(());
-    };
+        .find_map(|(key, value)| (key == "era").then_some(value));
+    let era_year = object
+        .iter()
+        .find_map(|(key, value)| (key == "eraYear").then_some(value));
     if matches!(calendar, "chinese" | "dangi" | "iso8601") {
         return Ok(());
     }
+    if era.is_some() != era_year.is_some() {
+        return Err(crate::value::error::throw_type_error(
+            "era and eraYear must be provided together",
+        ));
+    }
+    let Some(Value::String(era)) = era else {
+        return Ok(());
+    };
     if era == "xyz" {
         return Err(crate::value::error::throw_range_error("Invalid era"));
     }
