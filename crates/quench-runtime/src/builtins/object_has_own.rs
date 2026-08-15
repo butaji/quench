@@ -69,10 +69,10 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
 }
 
 fn bound_function_owns_property(bound: &crate::value::BoundFunctionValue, key: &str) -> bool {
-    if crate::vm::realm_is_intrinsic(bound) {
-        if let Value::Builtin(builtin) = bound.target {
-            return builtin_owns_property(builtin, key);
-        }
+    if crate::vm::realm_is_intrinsic(bound)
+        && bound.target == Value::Builtin(Builtin::AbstractModuleSource)
+    {
+        return builtin_owns_property(Builtin::AbstractModuleSource, key);
     }
     bound
         .properties
