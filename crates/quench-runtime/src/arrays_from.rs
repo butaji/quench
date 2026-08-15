@@ -137,7 +137,7 @@ fn collect_array_like(
     Ok(())
 }
 
-pub(crate) fn array_like_length(source: &Value) -> Result<usize, crate::execute::VmError> {
+fn array_like_length(source: &Value) -> Result<usize, crate::execute::VmError> {
     if matches!(source, Value::ArrayBuffer(_) | Value::DataView(_)) {
         return Ok(0);
     }
@@ -176,7 +176,7 @@ fn create_result(
     Ok(result)
 }
 
-pub(crate) fn write_result_element(
+fn write_result_element(
     result: Value,
     index: usize,
     value: Value,

@@ -6,7 +6,6 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
     match builtin {
         Builtin::ArrayIsArray => Some("isArray"),
         Builtin::ArrayFrom => Some("from"),
-        Builtin::ArrayFromAsync => Some("fromAsync"),
         Builtin::TypedArrayFrom => Some("from"),
         Builtin::TypedArrayOf => Some("of"),
         Builtin::Uint8ArrayFromBase64 => Some("fromBase64"),
@@ -27,7 +26,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::ArrayIncludes => Some("includes"),
         Builtin::ArrayIndexOf => Some("indexOf"),
         Builtin::ArrayLastIndexOf => Some("lastIndexOf"),
-        Builtin::ArraySlice | Builtin::ArrayBufferSlice => Some("slice"),
+        Builtin::ArraySlice => Some("slice"),
         Builtin::ArrayConcat => Some("concat"),
         Builtin::ArrayFlat => Some("flat"),
         Builtin::ArrayFlatMap => Some("flatMap"),
@@ -62,10 +61,7 @@ const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(builtin: Builtin) -> Option<f64> {
     match builtin {
-        Builtin::ArrayIsArray
-        | Builtin::ArrayFrom
-        | Builtin::ArrayFromAsync
-        | Builtin::TypedArrayFrom => Some(1.0),
+        Builtin::ArrayIsArray | Builtin::ArrayFrom | Builtin::TypedArrayFrom => Some(1.0),
         Builtin::TypedArrayOf => Some(0.0),
         Builtin::Uint8ArrayFromBase64
         | Builtin::Uint8ArrayFromHex
@@ -104,7 +100,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::ArrayJoin
         | Builtin::ArrayToLocaleString => Some(0.0),
         Builtin::ArrayCopyWithin => Some(2.0),
-        Builtin::ArraySlice | Builtin::ArrayBufferSlice | Builtin::ArraySplice => Some(2.0),
+        Builtin::ArraySlice | Builtin::ArraySplice => Some(2.0),
         Builtin::ArrayConcat => Some(1.0),
         _ => None,
     }
