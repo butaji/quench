@@ -35,7 +35,7 @@ pub(crate) fn execute_shared_array_buffer_builtin(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     let Some(Value::ArrayBuffer(buffer)) = receiver.filter(|value| {
-        matches!(value, Value::ArrayBuffer(data) if data.shared && !matches!(
+        matches!(value, Value::ArrayBuffer(data) if (data.shared || builtin == Builtin::SharedArrayBufferSlice) && !matches!(
             builtin,
             Builtin::ArrayBufferByteLengthGetter
                 | Builtin::ArrayBufferDetachedGetter
@@ -102,7 +102,7 @@ fn shared_array_buffer_slice(
         .unwrap_or(length)
         .max(start);
     let bytes = buffer.bytes.borrow()[start as usize..end as usize].to_vec();
-    let species = shared_array_buffer_species(receiver)?;
+    let species = array_buffer_species(receiver)?;
     if !crate::conversion::is_callable(&species) {
         return Err(type_error(
             "SharedArrayBuffer species must be a constructor",
@@ -123,7 +123,7 @@ fn shared_array_buffer_slice(
     Ok(Value::ArrayBuffer(result))
 }
 
-fn shared_array_buffer_species(receiver: Option<&Value>) -> Result<Value, VmError> {
+fn array_buffer_species(receiver: Option<&Value>) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(|| type_error("Missing SharedArrayBuffer receiver"))?;
     let constructor = crate::execute::get_property_result(receiver, "constructor")?;
     if matches!(constructor, Value::Null)
@@ -134,7 +134,11 @@ fn shared_array_buffer_species(receiver: Option<&Value>) -> Result<Value, VmErro
         ));
     }
     let species = if matches!(constructor, Value::Undefined) {
-        Value::Builtin(Builtin::SharedArrayBuffer)
+        if receiver_is_shared(Some(receiver)) {
+            Value::Builtin(Builtin::SharedArrayBuffer)
+        } else {
+            Value::Builtin(Builtin::ArrayBuffer)
+        }
     } else {
         let value = crate::execute::get_property_result(&constructor, "Symbol.species")?;
         if matches!(value, Value::Undefined) {
@@ -147,6 +151,10 @@ fn shared_array_buffer_species(receiver: Option<&Value>) -> Result<Value, VmErro
         Value::Undefined | Value::Null => Value::Builtin(Builtin::SharedArrayBuffer),
         species => species,
     })
+}
+
+fn receiver_is_shared(receiver: Option<&Value>) -> bool {
+    matches!(receiver, Some(Value::ArrayBuffer(buffer)) if buffer.shared)
 }
 
 fn species_property(constructor: &Value) -> Value {
