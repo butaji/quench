@@ -195,6 +195,14 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
         match key {
             "calendar" => {
                 let value = option_value(&text, "calendar")?;
+                if !value.split('-').all(|part| {
+                    (3..=8).contains(&part.len())
+                        && part
+                            .chars()
+                            .all(|character| character.is_ascii_alphanumeric())
+                }) {
+                    return Err(runtime_error("RangeError: invalid calendar"));
+                }
                 locale.calendar = Some(calendar_alias(&value));
             }
             "collation" => locale.collation = Some(option_value(&text, "collation")?),
