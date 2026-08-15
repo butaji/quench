@@ -380,14 +380,14 @@ fn construct_error(
 }
 
 fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let errors = crate::collections::iterator::collect_iterable(
-        arguments.first().cloned().unwrap_or(Value::Undefined),
-    )?;
     let message = arguments
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined))
         .map(crate::conversion::to_string)
         .transpose()?;
+    let errors = crate::collections::iterator::collect_iterable(
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+    )?;
     let mut properties = error_properties(&crate::ops::Builtin::AggregateError, message);
     append_error_cause_value(&mut properties, arguments.get(2))?;
     push_error_property(&mut properties, "errors", Value::array(errors));
