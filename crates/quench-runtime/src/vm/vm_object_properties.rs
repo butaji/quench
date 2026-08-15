@@ -76,10 +76,14 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
     if let Some(value) = boxed_string_property(properties, key) {
         return Some(value);
     }
-    let null_prototype = properties
+    null_prototype_value(properties)
+}
+
+fn null_prototype_value(properties: &crate::value::ObjectData) -> Option<Value> {
+    properties
         .iter()
-        .any(|(name, value)| name == "\0prototype" && matches!(value, Value::Null));
-    null_prototype.then_some(Value::Undefined)
+        .any(|(name, value)| name == "\0prototype" && matches!(value, Value::Null))
+        .then_some(Value::Undefined)
 }
 
 fn global_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
