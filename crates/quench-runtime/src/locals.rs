@@ -322,7 +322,11 @@ pub(crate) fn resolve_name(name: &str) -> Option<Value> {
         return Some(value);
     }
     if global_has_own_name(name) {
-        return global_lexical().and_then(|environment| environment.resolve_name(name));
+        if let Some(value) = global_lexical().and_then(|environment| environment.resolve_name(name))
+        {
+            return Some(value);
+        }
+        return crate::execute::get_property_result(&crate::vm::current_global_object(), name).ok();
     }
     None
 }
