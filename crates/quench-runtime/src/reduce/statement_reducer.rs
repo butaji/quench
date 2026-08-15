@@ -87,6 +87,22 @@ impl StatementReducer {
                     }
                 }
             }
+            for statement in statements {
+                if let Statement::ExportDefaultDeclaration(export) = statement {
+                    if let oxc::ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(
+                        function,
+                    ) = &export.declaration
+                    {
+                        if let Some(identifier) = &function.id {
+                            crate::reduce_support::reserve_names(
+                                &[identifier.name.to_string()],
+                                &mut self.locals,
+                                &mut self.next_slot,
+                            );
+                        }
+                    }
+                }
+            }
             crate::reduce_support::predeclare_functions(
                 statements,
                 &mut self.locals,
