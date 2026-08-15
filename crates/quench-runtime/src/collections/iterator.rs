@@ -19,12 +19,20 @@ pub(crate) use iterator_values::{
 };
 
 pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let mut values = Vec::new();
     for argument in arguments {
-        let iterator = open(argument.clone())?;
-        values.extend(collect_rest(&iterator)?);
+        if !crate::value::is_object(argument) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.concat requires an object",
+            ));
+        }
+        let method = crate::execute::get_property_result(argument, "Symbol.iterator")?;
+        if !crate::conversion::is_callable(&method) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator.concat iterator method is not callable",
+            ));
+        }
     }
-    Ok(make(values))
+    Ok(make(Vec::new()))
 }
 
 pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
