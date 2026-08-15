@@ -26,6 +26,12 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::MathAsin => Some("Math.asin"),
         Builtin::MathAcos => Some("Math.acos"),
         Builtin::MathAtan => Some("Math.atan"),
+        _ => fn_name_tail(builtin),
+    }
+}
+
+const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
         Builtin::MathAtan2 => Some("Math.atan2"),
         Builtin::MathAcosh => Some("Math.acosh"),
         Builtin::MathAsinh => Some("Math.asinh"),
