@@ -380,6 +380,10 @@ pub(crate) fn proxy_define_property(
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "defineProperty") {
+            let current = crate::builtins::object::descriptor(
+                Some(&proxy.target),
+                Some(&Value::String(prop.to_string())),
+            )?;
             let result = call_trap(
                 &trap,
                 &[
@@ -390,7 +394,7 @@ pub(crate) fn proxy_define_property(
                 Some(&proxy.handler),
             )?;
             if crate::execute::is_truthy(&result) {
-                validate_define_property_invariant(proxy, prop, descriptor)?;
+                validate_define_property_invariant(&proxy.target, &current, descriptor)?;
             }
             return Ok(result);
         }
@@ -409,25 +413,69 @@ pub(crate) fn proxy_define_property(
 }
 
 fn validate_define_property_invariant(
-    proxy: &crate::value::ProxyValue,
-    prop: &str,
+    target: &Value,
+    current: &Value,
     descriptor: &Value,
 ) -> Result<(), VmError> {
-    let current = crate::builtins::object::descriptor(
-        Some(&proxy.target),
-        Some(&Value::String(prop.to_string())),
-    )?;
     if matches!(current, Value::Undefined) {
+        if !crate::properties::object_is_extensible(target)
+            || matches!(
+                crate::execute::get_property_result(descriptor, "configurable")?,
+                Value::Boolean(false)
+            )
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy defineProperty trap violates target invariants",
+            ));
+        }
         return Ok(());
     }
-    let current_configurable = crate::execute::get_property_result(&current, "configurable")?;
-    let requested_configurable = crate::execute::get_property_result(descriptor, "configurable")?;
-    if matches!(current_configurable, Value::Boolean(true))
-        && matches!(requested_configurable, Value::Boolean(false))
+    validate_configurable_invariant(current, descriptor)?;
+    validate_writable_invariant(current, descriptor)?;
+    validate_value_invariant(current, descriptor)?;
+    Ok(())
+}
+
+fn validate_configurable_invariant(current: &Value, descriptor: &Value) -> Result<(), VmError> {
+    let current = crate::execute::get_property_result(current, "configurable")?;
+    let requested = crate::execute::get_property_result(descriptor, "configurable")?;
+    if matches!(current, Value::Boolean(false)) && matches!(requested, Value::Boolean(true)) {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy defineProperty trap violates target invariants",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_writable_invariant(current: &Value, descriptor: &Value) -> Result<(), VmError> {
+    let current_configurable = crate::execute::get_property_result(current, "configurable")?;
+    let current_writable = crate::execute::get_property_result(current, "writable")?;
+    let requested_writable = crate::execute::get_property_result(descriptor, "writable")?;
+    if matches!(current_configurable, Value::Boolean(false))
+        && matches!(current_writable, Value::Boolean(false))
+        && matches!(requested_writable, Value::Boolean(true))
     {
         return Err(crate::value::error::throw_type_error(
             "Proxy defineProperty trap violates target invariants",
         ));
+    }
+    Ok(())
+}
+
+fn validate_value_invariant(current: &Value, descriptor: &Value) -> Result<(), VmError> {
+    let current_configurable = crate::execute::get_property_result(current, "configurable")?;
+    let current_writable = crate::execute::get_property_result(current, "writable")?;
+    let requested = crate::execute::get_property_result(descriptor, "value")?;
+    if matches!(current_configurable, Value::Boolean(false))
+        && matches!(current_writable, Value::Boolean(false))
+        && !matches!(requested, Value::Undefined)
+    {
+        let current = crate::execute::get_property_result(current, "value")?;
+        if !crate::builtins::same_value(Some(&current), Some(&requested)) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy defineProperty trap violates target invariants",
+            ));
+        }
     }
     Ok(())
 }
