@@ -194,12 +194,36 @@ fn link_reexport(
     if binding.imported == "*all*" {
         return link_star_exports(units, from, target);
     }
-    let cell = import_cell(units, target, &binding.imported, true, false)?;
+    let cell = match import_cell(units, target, &binding.imported, true, false) {
+        Ok(cell) => cell,
+        Err(error) if declares_export(units, target, &binding.imported) => {
+            let _ = error;
+            ModuleBindingCell::unresolved()
+        }
+        Err(error) => return Err(error),
+    };
     units
         .get(&from)
         .ok_or_else(|| "module unit missing".to_string())?
         .link_export(&binding.exported, cell);
     Ok(())
+}
+
+fn declares_export(units: &HashMap<ModuleId, LinkedModule>, target: ModuleId, name: &str) -> bool {
+    let Some(metadata) = units
+        .get(&target)
+        .and_then(|unit| unit.program.module_metadata.as_ref())
+    else {
+        return false;
+    };
+    metadata
+        .exported_names
+        .iter()
+        .any(|exported| exported == name)
+        || metadata
+            .reexports
+            .iter()
+            .any(|binding| binding.exported == name)
 }
 
 fn link_star_exports(
@@ -500,6 +524,15 @@ impl LinkedModule {
     fn link_export(&self, name: &str, cell: ModuleBindingCell) {
         let mut candidates = self.export_candidates.borrow_mut();
         let entries = candidates.entry(name.to_string()).or_default();
+        if let Some(existing) = entries.first() {
+            if ModuleBindingCell::is_unresolved(&existing.get()) {
+                existing.forward_to(&cell);
+                self.linked_exports
+                    .borrow_mut()
+                    .insert(name.to_string(), existing.clone());
+                return;
+            }
+        }
         if entries
             .iter()
             .any(|candidate| Rc::ptr_eq(&candidate.shared(), &cell.shared()))
