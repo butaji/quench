@@ -374,20 +374,16 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
             'S' => 6,
             _ => return Err(crate::value::error::throw_range_error("Invalid duration")),
         };
-        if index == 6 {
-            if let Some((whole, fraction)) = raw.split_once('.') {
-                let whole: f64 = whole
-                    .parse()
-                    .map_err(|_| crate::value::error::throw_range_error("Invalid duration"))?;
-                let digits = fraction.chars().take(9).collect::<String>();
-                let nanos = format!("{digits:0<9}")
-                    .parse::<f64>()
-                    .map_err(|_| crate::value::error::throw_range_error("Invalid duration"))?;
-                let sign = if negative { -1.0 } else { 1.0 };
-                values[6] = Value::Number(sign * whole.abs());
-                values[9] = Value::Number(sign * nanos);
-                continue;
-            }
+        if matches!(index, 4 | 5 | 6) && raw.contains('.') {
+            let value = if index == 6 {
+                raw.split_once('.')
+                    .and_then(|(whole, _)| whole.parse().ok())
+                    .unwrap_or(value)
+            } else {
+                value
+            };
+            fractional_time(&mut values, index, value, negative);
+            continue;
         }
         values[index] = Value::Number(if negative { -value } else { value });
     }
@@ -401,6 +397,31 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         }
     }
     construct(&values)
+}
+
+fn fractional_time(values: &mut [Value], index: usize, value: f64, negative: bool) {
+    let sign = if negative { -1.0 } else { 1.0 };
+    let (scale, first_lower) = match index {
+        4 => (3_600_000_000_000.0, 5),
+        5 => (60_000_000_000.0, 6),
+        _ => (1_000_000_000.0, 9),
+    };
+    values[index] = Value::Number(sign * value.trunc().abs());
+    let mut remainder = (value.fract().abs() * scale).round();
+    for (target, unit) in [
+        (5, 60_000_000_000.0),
+        (6, 1_000_000_000.0),
+        (7, 1_000_000.0),
+        (8, 1_000.0),
+        (9, 1.0),
+    ] {
+        if target < first_lower {
+            continue;
+        }
+        let value = (remainder / unit).floor();
+        values[target] = Value::Number(sign * value);
+        remainder -= value * unit;
+    }
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
