@@ -174,6 +174,7 @@ fn function_source(
     let body = arguments
         .last()
         .map_or_else(|| Ok(String::new()), to_string)?;
+    let body = normalize_html_close_comments(&body);
     let prefix = match (kind, is_async) {
         (FunctionKind::Generator, true) => "async function*",
         (FunctionKind::Generator, false) => "function*",
@@ -181,6 +182,16 @@ fn function_source(
         (_, false) => "function",
     };
     Ok(format!("{prefix} anonymous({parameters}\n){{{body}\n}}"))
+}
+
+fn normalize_html_close_comments(body: &str) -> String {
+    body.lines()
+        .map(|line| {
+            line.strip_prefix("-->")
+                .map_or_else(|| line.to_string(), |rest| format!("//-->{rest}"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn to_string(value: &Value) -> Result<String, VmError> {
