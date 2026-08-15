@@ -12,5 +12,6 @@ pub enum IteratorState {
     Concat { items: Vec<(Value, Value)>, index: usize, current: Option<Value>, done: bool, executing: bool },
     Drop { iterator: Value, remaining: u64, done: bool },
     MapHelper { iterator: Value, callback: Value, index: u64, done: bool, executing: bool },
+    FilterHelper { iterator: Value, callback: Value, index: u64, done: bool, executing: bool },
     RegExpString { regexp: Value, input: String, global: bool, unicode: bool, done: bool },
 }

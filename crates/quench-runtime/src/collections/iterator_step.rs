@@ -18,6 +18,14 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
         }
         return map_step(data, iterator, callback, index);
     }
+    if let Some((iterator, callback, index)) = filter_target(data) {
+        if filter_executing(data) {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator filter helper is already executing",
+            ));
+        }
+        return filter_step(data, iterator, callback, index);
+    }
     match step_target(data)? {
         StepTarget::Value(value) => Ok(value),
         StepTarget::Protocol(iterator, cached) => {
@@ -59,6 +67,79 @@ fn map_executing(data: &IteratorData) -> bool {
             ..
         }
     )
+}
+
+fn filter_target(data: &IteratorData) -> Option<(Value, Value, u64)> {
+    let state = data.state.borrow();
+    let IteratorState::FilterHelper {
+        iterator,
+        callback,
+        index,
+        done,
+        ..
+    } = &*state
+    else {
+        return None;
+    };
+    (!*done).then(|| (iterator.clone(), callback.clone(), *index))
+}
+
+fn filter_executing(data: &IteratorData) -> bool {
+    matches!(
+        &*data.state.borrow(),
+        IteratorState::FilterHelper {
+            executing: true,
+            ..
+        }
+    )
+}
+
+fn filter_step(
+    data: &IteratorData,
+    iterator: Value,
+    callback: Value,
+    mut index: u64,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    loop {
+        let Some(value) = step_source(&iterator)? else {
+            mark_filter_done(data);
+            return Ok(None);
+        };
+        set_filter_executing(data, true);
+        let selected = crate::functions::execute_target(
+            &callback,
+            &Value::Undefined,
+            &[value.clone(), Value::Number(index as f64)],
+        );
+        set_filter_executing(data, false);
+        let selected = selected?;
+        index = index.saturating_add(1);
+        set_filter_index(data, index);
+        if crate::execute::is_truthy(&selected) {
+            return Ok(Some(value));
+        }
+    }
+}
+
+fn set_filter_index(data: &IteratorData, index: u64) {
+    if let IteratorState::FilterHelper { index: slot, .. } = &mut *data.state.borrow_mut() {
+        *slot = index;
+    }
+}
+
+fn set_filter_executing(data: &IteratorData, executing: bool) {
+    if let IteratorState::FilterHelper {
+        executing: slot, ..
+    } = &mut *data.state.borrow_mut()
+    {
+        *slot = executing;
+    }
+}
+
+fn mark_filter_done(data: &IteratorData) {
+    if let IteratorState::FilterHelper { done, .. } = &mut *data.state.borrow_mut() {
+        *done = true;
+    }
 }
 
 fn map_step(
@@ -234,6 +315,7 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
         IteratorState::Concat { .. } => StepTarget::Value(None),
         IteratorState::Drop { .. } => StepTarget::Value(None),
         IteratorState::MapHelper { .. } => StepTarget::Value(None),
+        IteratorState::FilterHelper { .. } => StepTarget::Value(None),
     })
 }
 
