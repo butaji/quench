@@ -92,7 +92,9 @@ fn local_fields(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, usize)> {
     Some((y, m, d, h, min, sec, day))
 }
 
-fn utc_fields(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, usize, u32)> {
+type UtcFields = (i32, u32, u32, u32, u32, u32, usize, u32);
+
+fn utc_fields(ms: f64) -> Option<UtcFields> {
     let (y, m, d, h, min, sec, milli) = chrono_utils::utc_components(ms)?;
     let day = chrono_utils::weekday(ms)?;
     Some((y, m, d, h, min, sec, day, milli))
