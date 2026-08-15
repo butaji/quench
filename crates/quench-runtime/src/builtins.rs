@@ -121,6 +121,12 @@ pub(crate) fn async_generator_prototype() -> Value {
             return value.clone();
         }
         let mut value = Value::Object(Rc::new(ObjectData::new(vec![
+            ("next".to_string(), Value::Builtin(Builtin::GeneratorNext)),
+            (
+                "return".to_string(),
+                Value::Builtin(Builtin::GeneratorReturn),
+            ),
+            ("throw".to_string(), Value::Builtin(Builtin::GeneratorThrow)),
             (
                 "Symbol.asyncIterator".to_string(),
                 Value::Builtin(Builtin::AsyncIteratorSelf),
@@ -139,6 +145,22 @@ pub(crate) fn async_generator_prototype() -> Value {
             ),
             ("\0prototype".to_string(), async_iterator_prototype()),
         ])));
+        for (key, method) in [
+            ("next", Builtin::GeneratorNext),
+            ("return", Builtin::GeneratorReturn),
+            ("throw", Builtin::GeneratorThrow),
+        ] {
+            store_descriptor_metadata(
+                &mut value,
+                key,
+                &[
+                    ("value".to_string(), Value::Builtin(method)),
+                    ("writable".to_string(), Value::Boolean(true)),
+                    ("enumerable".to_string(), Value::Boolean(false)),
+                    ("configurable".to_string(), Value::Boolean(true)),
+                ],
+            );
+        }
         for key in ["Symbol.asyncIterator", "Symbol.asyncDispose"] {
             let method = match key {
                 "Symbol.asyncIterator" => Value::Builtin(Builtin::AsyncIteratorSelf),
@@ -159,7 +181,10 @@ pub(crate) fn async_generator_prototype() -> Value {
             &mut value,
             "Symbol.toStringTag",
             &[
-                ("value".to_string(), Value::String("AsyncGenerator".to_string())),
+                (
+                    "value".to_string(),
+                    Value::String("AsyncGenerator".to_string()),
+                ),
                 ("writable".to_string(), Value::Boolean(false)),
                 ("enumerable".to_string(), Value::Boolean(false)),
                 ("configurable".to_string(), Value::Boolean(true)),
