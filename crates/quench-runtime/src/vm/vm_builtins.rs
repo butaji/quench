@@ -291,7 +291,17 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         ));
     }
     if is_native_error_prototype(value) {
-        return define_new_stack(value, stack.clone()).map(|()| Value::Undefined);
+        let Value::Builtin(builtin) = value else {
+            unreachable!();
+        };
+        let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+            ("value".to_string(), stack.clone()),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ])));
+        crate::builtins::write_intrinsic_override(*builtin, "stack", descriptor);
+        return Ok(Value::Undefined);
     }
     if !matches!(value, Value::Proxy(_)) {
         if let Some(setter) = own_stack_setter(value)? {
