@@ -153,6 +153,15 @@ fn shadow_type_error_with_constructor(message: &str, constructor: Value) -> VmEr
     ))
 }
 
+pub(crate) fn shadow_wrapped_object_error(realm: crate::ops::RealmId) -> VmError {
+    let _ = realm;
+    let constructor = crate::vm::realm_intrinsic(crate::ops::Builtin::TypeError);
+    shadow_type_error_with_constructor(
+        "ShadowRealm wrapped function must return a primitive",
+        constructor,
+    )
+}
+
 fn is_shadow_realm_receiver(receiver: Option<&Value>) -> bool {
     matches!(
         receiver,
