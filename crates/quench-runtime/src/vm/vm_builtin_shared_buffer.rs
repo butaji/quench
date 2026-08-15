@@ -123,6 +123,38 @@ fn shared_array_buffer_slice(
     Ok(Value::ArrayBuffer(result))
 }
 
+pub(crate) fn slice_to_immutable(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::ArrayBuffer(buffer)) = receiver else {
+        return Err(type_error("sliceToImmutable requires an ArrayBuffer"));
+    };
+    if buffer.shared {
+        return Err(type_error("sliceToImmutable requires an ArrayBuffer"));
+    }
+    if *buffer.detached.borrow() {
+        return Err(type_error(
+            "sliceToImmutable called on a detached ArrayBuffer",
+        ));
+    }
+    let length = buffer.byte_length() as i64;
+    let start = slice_index(arguments.first(), length)?.unwrap_or(0);
+    let end = slice_index(arguments.get(1), length)?
+        .unwrap_or(length)
+        .max(start);
+    if buffer.byte_length() < end as usize {
+        return Err(crate::value::error::throw_range_error(
+            "ArrayBuffer was resized during coercion",
+        ));
+    }
+    let bytes = buffer.bytes.borrow()[start as usize..end as usize].to_vec();
+    let mut result = crate::value::ArrayBufferData::new(bytes.len());
+    result.bytes.borrow_mut().copy_from_slice(&bytes);
+    result.immutable = true;
+    Ok(Value::ArrayBuffer(std::rc::Rc::new(result)))
+}
+
 fn array_buffer_species(receiver: Option<&Value>) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(|| type_error("Missing SharedArrayBuffer receiver"))?;
     let constructor = crate::execute::get_property_result(receiver, "constructor")?;
