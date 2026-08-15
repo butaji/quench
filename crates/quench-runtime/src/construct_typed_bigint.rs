@@ -9,7 +9,10 @@ pub(crate) fn construct_bigint64_array(
         Some(Value::BigInt64Array(view)) => copy_bigint64_array(view),
         Some(Value::Array(values)) => values_bigint64_array(values),
         Some(Value::Number(length)) => bigint64_with_length(to_index(*length)?),
-        Some(Value::Object(properties)) => excessive_object_length(properties),
+        Some(Value::Object(properties)) => {
+            bigint_object_values(properties, "BigInt64Array")
+                .and_then(|values| values_bigint64_array(&values))
+        }
         Some(_) => Err(type_error("BigInt64Array source must contain BigInts")),
     }
 }
@@ -23,7 +26,10 @@ pub(crate) fn construct_biguint64_array(
         Some(Value::BigUint64Array(view)) => copy_biguint64_array(view),
         Some(Value::Array(values)) => values_biguint64_array(values),
         Some(Value::Number(length)) => biguint64_with_length(to_index(*length)?),
-        Some(Value::Object(properties)) => excessive_object_length(properties),
+        Some(Value::Object(properties)) => {
+            bigint_object_values(properties, "BigUint64Array")
+                .and_then(|values| values_biguint64_array(&values))
+        }
         Some(_) => Err(type_error("BigUint64Array source must contain BigInts")),
     }
 }
@@ -62,18 +68,15 @@ fn new_biguint64_data(
     )))
 }
 
-fn excessive_object_length(
+fn bigint_object_values(
     properties: &Rc<crate::value::ObjectData>,
-) -> Result<Value, crate::execute::VmError> {
-    let length = crate::execute::get_property_result(
-        &Value::Object(properties.clone()),
-        "length",
-    )?;
-    let length = crate::conversion::to_number(&length)?;
-    if length >= 9_007_199_254_740_992.0 {
-        return Err(range_error("Typed-array length is too large"));
-    }
-    Err(type_error("BigInt typed-array source must contain BigInts"))
+    name: &str,
+) -> Result<Vec<Value>, crate::execute::VmError> {
+    let object = Value::Object(properties.clone());
+    let values = object_array_like(properties)?
+        .or_else(|| crate::collections::iterator::collect_iterable(object).ok())
+        .ok_or_else(|| type_error(&format!("{name} source must be iterable or a buffer")))?;
+    Ok(values)
 }
 
 fn values_bigint64_array(values: &[Value]) -> Result<Value, crate::execute::VmError> {
