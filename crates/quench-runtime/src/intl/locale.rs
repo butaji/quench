@@ -133,8 +133,9 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
     }
 }
 
-fn calendar_alias(value: &str) -> String {
-    match value {
+pub(crate) fn calendar_alias(value: &str) -> String {
+    let value = value.to_ascii_lowercase();
+    match value.as_str() {
         "islamicc" => "islamic-civil".to_string(),
         other => canonicalize(other).unwrap_or_else(|_| other.to_string()),
     }
@@ -159,7 +160,7 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
         match key.as_str() {
             "calendar" => {
                 let value = option_value(&text, "calendar")?;
-                locale.calendar = Some(calendar_alias(&value));
+                locale.calendar = Some(calendar_alias(&calendar_option(&value)?));
             }
             "collation" => locale.collation = Some(option_value(&text, "collation")?),
             "caseFirst" => locale.case_first = Some(normalize_case_first(&text)?),
@@ -185,6 +186,16 @@ fn option_value(value: &str, name: &str) -> Result<String, VmError> {
         return Err(runtime_error(&format!("RangeError: invalid {name}")));
     }
     Ok(value.to_string())
+}
+
+pub(crate) fn calendar_option(value: &str) -> Result<String, VmError> {
+    if value.split('-').all(|part| {
+        (3..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
+    }) {
+        Ok(value.to_string())
+    } else {
+        Err(runtime_error("RangeError: invalid calendar"))
+    }
 }
 
 fn normalize_case_first(value: &str) -> Result<String, VmError> {
