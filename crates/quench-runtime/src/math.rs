@@ -71,6 +71,22 @@ pub(crate) fn is_builtin(builtin: Builtin) -> bool {
 }
 
 fn property_name(builtin: Builtin) -> Option<&'static str> {
+    property_name_core(builtin).or_else(|| match builtin {
+        Builtin::MathClz32 => Some("clz32"),
+        Builtin::MathCosh => Some("cosh"),
+        Builtin::MathExpm1 => Some("expm1"),
+        Builtin::MathFround => Some("fround"),
+        Builtin::MathLog1p => Some("log1p"),
+        Builtin::MathSinh => Some("sinh"),
+        Builtin::MathTanh => Some("tanh"),
+        Builtin::MathF16Round => Some("f16round"),
+        Builtin::MathRandom => Some("random"),
+        Builtin::MathSumPrecise => Some("sumPrecise"),
+        _ => None,
+    })
+}
+
+fn property_name_core(builtin: Builtin) -> Option<&'static str> {
     match builtin {
         Builtin::MathAbs => Some("abs"),
         Builtin::MathFloor => Some("floor"),
@@ -98,16 +114,6 @@ fn property_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::MathAcosh => Some("acosh"),
         Builtin::MathAsinh => Some("asinh"),
         Builtin::MathAtanh => Some("atanh"),
-        Builtin::MathClz32 => Some("clz32"),
-        Builtin::MathCosh => Some("cosh"),
-        Builtin::MathExpm1 => Some("expm1"),
-        Builtin::MathFround => Some("fround"),
-        Builtin::MathLog1p => Some("log1p"),
-        Builtin::MathSinh => Some("sinh"),
-        Builtin::MathTanh => Some("tanh"),
-        Builtin::MathF16Round => Some("f16round"),
-        Builtin::MathRandom => Some("random"),
-        Builtin::MathSumPrecise => Some("sumPrecise"),
         _ => None,
     }
 }
