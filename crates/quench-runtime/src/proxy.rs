@@ -416,6 +416,9 @@ fn validate_define_property_invariant(
         Some(&proxy.target),
         Some(&Value::String(prop.to_string())),
     )?;
+    if matches!(current, Value::Undefined) {
+        return Ok(());
+    }
     let current_configurable = crate::execute::get_property_result(&current, "configurable")?;
     let requested_configurable = crate::execute::get_property_result(descriptor, "configurable")?;
     if matches!(current_configurable, Value::Boolean(true))
