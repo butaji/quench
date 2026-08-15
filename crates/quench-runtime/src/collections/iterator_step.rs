@@ -136,7 +136,7 @@ fn drop_step(
     Ok(value)
 }
 
-fn step_source(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
+pub(crate) fn step_source(value: &Value) -> Result<Option<Value>, crate::execute::VmError> {
     if matches!(value, Value::Iterator(_)) {
         return step_value(value);
     }
