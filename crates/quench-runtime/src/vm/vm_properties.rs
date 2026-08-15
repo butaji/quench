@@ -105,14 +105,15 @@ fn iterator_property(value: &Value, key: &str) -> Value {
     bind_method(value, property)
 }
 fn promise_value_property(promise: &crate::value::PromiseData, value: &Value, key: &str) -> Value {
-    promise
-        .property(key)
-        .or_else(|| {
-            promise
-                .prototype()
-                .map(|prototype| get_property(&prototype, key))
-        })
-        .unwrap_or_else(|| promise_property(value, key))
+    promise_property_value(promise, key).unwrap_or_else(|| promise_property(value, key))
+}
+
+fn promise_property_value(promise: &crate::value::PromiseData, key: &str) -> Option<Value> {
+    promise.property(key).or_else(|| {
+        promise
+            .prototype()
+            .map(|prototype| get_property(&prototype, key))
+    })
 }
 fn map_property(data: &crate::value::MapData, key: &str) -> Value {
     if key == "constructor" {
