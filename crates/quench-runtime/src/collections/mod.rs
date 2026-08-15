@@ -30,6 +30,7 @@ fn execute_core(
         return Some(result);
     }
     match builtin {
+        IteratorConcat => Some(iterator::concat(arguments)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
