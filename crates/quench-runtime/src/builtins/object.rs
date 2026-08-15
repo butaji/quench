@@ -222,16 +222,6 @@ fn data_view_descriptor(view: &crate::value::DataViewData, key: &str) -> Option<
 }
 
 fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> Option<Value> {
-    if let Value::Builtin(builtin) = function.target {
-        if let Ok(descriptor) = descriptor(
-            Some(&Value::Builtin(builtin)),
-            Some(&Value::String(key.to_string())),
-        ) {
-            if !matches!(descriptor, Value::Undefined) {
-                return Some(bind_realm_descriptor(function, descriptor));
-            }
-        }
-    }
     if let Some((_, metadata)) = function
         .properties
         .borrow()
@@ -248,24 +238,6 @@ fn bound_descriptor(function: &crate::value::BoundFunctionValue, key: &str) -> O
         .rev()
         .find(|(name, _)| name == key)
         .map(|(_, value)| descriptor_object(value))
-}
-
-fn bind_realm_descriptor(function: &crate::value::BoundFunctionValue, descriptor: Value) -> Value {
-    let Value::HostCapability(capability) = &function.receiver else {
-        return descriptor;
-    };
-    let Value::Object(properties) = descriptor else {
-        return descriptor;
-    };
-    let mut properties = properties.properties.clone();
-    for (name, value) in &mut properties {
-        if matches!(name.as_str(), "get" | "set") {
-            if let Value::Builtin(builtin) = value {
-                *value = crate::vm::intrinsic_for_realm(capability.realm(), *builtin);
-            }
-        }
-    }
-    Value::Object(Rc::new(ObjectData::new(properties)))
 }
 fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value> {
     if let Some((_, metadata)) = properties
@@ -309,9 +281,6 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::AsyncDisposableStackPrototype, "disposed") => {
             Builtin::AsyncDisposableStackDisposed
         }
-        (Builtin::AbstractModuleSourcePrototype, "Symbol.toStringTag") => {
-            Builtin::AbstractModuleSourceToStringTagGetter
-        }
         (Builtin::ErrorPrototype, "stack") => Builtin::ErrorPrototypeStackGetter,
         (Builtin::IntlLocalePrototype, "baseName") => Builtin::IntlLocaleBaseNameGetter,
         (Builtin::IntlLocalePrototype, "calendar") => Builtin::IntlLocaleCalendarGetter,
@@ -341,11 +310,44 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
-    if let Some(descriptor) = builtin_descriptor_special(builtin, key) {
-        return Some(descriptor);
+    if matches!(
+        builtin,
+        Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::SuppressedErrorPrototype
+    ) && key == "name"
+    {
+        let value = match builtin {
+            Builtin::RangeErrorPrototype => "RangeError",
+            Builtin::ReferenceErrorPrototype => "ReferenceError",
+            Builtin::SyntaxErrorPrototype => "SyntaxError",
+            Builtin::EvalErrorPrototype => "EvalError",
+            Builtin::URIErrorPrototype => "URIError",
+            Builtin::AggregateErrorPrototype => "AggregateError",
+            Builtin::TypeErrorPrototype => "TypeError",
+            Builtin::SuppressedErrorPrototype => "SuppressedError",
+            _ => "Error",
+        };
+        return Some(descriptor_object_with_flags(
+            Value::String(value.to_string()),
+            true,
+            false,
+            true,
+        ));
     }
-    if let Some(descriptor) = async_generator_descriptor(builtin, key) {
-        return descriptor;
+    if builtin == Builtin::Object && key == "hasOwn" {
+        return Some(descriptor_object_with_flags(
+            Value::Builtin(Builtin::ObjectHasOwn),
+            true,
+            false,
+            true,
+        ));
     }
     if let Some(descriptor) = intrinsic_accessor(builtin, key) {
         return Some(descriptor);
@@ -360,20 +362,9 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, key) {
         return Some(public_descriptor(&descriptor));
     }
-    if matches!(
-        builtin,
-        Builtin::AggregateErrorPrototype | Builtin::SuppressedErrorPrototype
-    ) && key == "name"
-    {
+    if builtin == Builtin::SuppressedErrorPrototype && key == "name" {
         return Some(descriptor_object_with_flags(
-            Value::String(
-                if builtin == Builtin::AggregateErrorPrototype {
-                    "AggregateError"
-                } else {
-                    "SuppressedError"
-                }
-                .to_string(),
-            ),
+            Value::String("SuppressedError".to_string()),
             true,
             false,
             true,
@@ -385,60 +376,34 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             Value::Undefined => None,
             value => Some(value),
         })?;
-    let writable = !((builtin == Builtin::AsyncGeneratorFunctionPrototype
-        || builtin == Builtin::AsyncGeneratorPrototype)
-        && key == "constructor")
-        && !matches!(
-            key,
-            "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
-        )
+    let writable = (!matches!(
+        key,
+        "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
+    ) || (key == "name"
+        && matches!(
+            builtin,
+            Builtin::ErrorPrototype
+                | Builtin::RangeErrorPrototype
+                | Builtin::ReferenceErrorPrototype
+                | Builtin::SyntaxErrorPrototype
+                | Builtin::EvalErrorPrototype
+                | Builtin::URIErrorPrototype
+                | Builtin::AggregateErrorPrototype
+                | Builtin::TypeErrorPrototype
+                | Builtin::SuppressedErrorPrototype
+        )))
         && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);
-    let configurable = (builtin == Builtin::AsyncGeneratorFunctionPrototype && key == "prototype")
-        || (!matches!(key, "prototype" | "unscopables")
-            && !is_well_known_symbol_property(builtin, key)
-            && builtin_property_configurable(builtin, key)
-            && !crate::conversion::is_symbol(&property));
+    let configurable = !matches!(key, "prototype" | "unscopables")
+        && !is_well_known_symbol_property(builtin, key)
+        && builtin_property_configurable(builtin, key)
+        && !crate::conversion::is_symbol(&property);
     Some(descriptor_object_with_flags(
         property,
         writable,
         false,
         configurable,
     ))
-}
-
-fn builtin_descriptor_special(builtin: Builtin, key: &str) -> Option<Value> {
-    if builtin == Builtin::ErrorPrototype && matches!(key, "name" | "message") {
-        let value = if key == "name" {
-            Value::String("Error".to_string())
-        } else {
-            Value::String(String::new())
-        };
-        return Some(descriptor_object_with_flags(value, true, false, true));
-    }
-    (builtin == Builtin::Object && key == "hasOwn").then(|| {
-        descriptor_object_with_flags(Value::Builtin(Builtin::ObjectHasOwn), true, false, true)
-    })
-}
-
-fn async_generator_descriptor(builtin: Builtin, key: &str) -> Option<Option<Value>> {
-    if builtin == Builtin::AsyncGeneratorPrototype {
-        let property = super::special_property(builtin, key)?;
-        let writable = !matches!(key, "constructor" | "Symbol.toStringTag");
-        return Some(Some(descriptor_object_with_flags(
-            property, writable, false, true,
-        )));
-    }
-    if builtin == Builtin::AsyncGeneratorFunctionPrototype && key == "prototype" {
-        let property = match super::property(builtin, key) {
-            Value::Undefined => return Some(None),
-            value => value,
-        };
-        return Some(Some(descriptor_object_with_flags(
-            property, false, false, true,
-        )));
-    }
-    None
 }
 fn accessor_descriptor(getter: Builtin) -> Value {
     Value::Object(Rc::new(ObjectData::new(vec![
