@@ -50,6 +50,7 @@ fn execute_core(
         IteratorEvery => Some(iterator_every(receiver, arguments)),
         IteratorSome => Some(iterator_some(receiver, arguments)),
         IteratorFind => Some(iterator_find(receiver, arguments)),
+        IteratorFilter => Some(iterator_filter(receiver, arguments)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
@@ -255,6 +256,29 @@ fn iterator_find(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
             return Ok(value);
         }
     }
+}
+
+fn iterator_filter(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    validate_iterator_receiver(receiver, "filter")?;
+    let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        let error =
+            crate::value::error::throw_type_error("Iterator.filter callback is not callable");
+        let _ = close_direct_receiver(receiver);
+        return Err(error);
+    }
+    let source = iterator_source(receiver, "filter")?;
+    Ok(Value::Iterator(std::rc::Rc::new(
+        crate::value::IteratorData {
+            state: std::cell::RefCell::new(crate::value::IteratorState::FilterHelper {
+                iterator: source,
+                callback,
+                index: 0,
+                done: false,
+                executing: false,
+            }),
+        },
+    )))
 }
 
 fn close_direct_receiver(receiver: Option<&Value>) -> Result<(), VmError> {
