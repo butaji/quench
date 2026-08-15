@@ -264,6 +264,7 @@ fn global_builtin_error(key: &str) -> Option<Builtin> {
         "SyntaxError" => SyntaxError,
         "EvalError" => EvalError,
         "URIError" => URIError,
+        "decodeURI" => DecodeURI,
         _ => return None,
     })
 }
