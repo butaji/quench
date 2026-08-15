@@ -20,6 +20,7 @@ pub(crate) mod value {
         }
         to_string_value(value)
     }
+    #[rustfmt::skip]
     fn to_string_value(value: Option<&Value>) -> String {
         match value {
             None | Some(Value::Undefined) => "undefined".to_string(),
@@ -29,8 +30,7 @@ pub(crate) mod value {
             Some(Value::String(value)) => symbol_string(value),
             Some(Value::StringUnits(value)) => String::from_utf16_lossy(value),
             Some(Value::Array(values)) => array_to_string(values),
-            Some(Value::ArrayBuffer(_)) => "[object ArrayBuffer]".to_string(),
-            Some(Value::DataView(_)) => "[object DataView]".to_string(),
+            Some(Value::ArrayBuffer(_)) => "[object ArrayBuffer]".to_string(), Some(Value::DataView(_)) => "[object DataView]".to_string(),
             Some(Value::Float32Array(_)) => "[object Float32Array]".to_string(),
             Some(Value::Float64Array(_)) => "[object Float64Array]".to_string(),
             Some(Value::Int16Array(_)) => "[object Int16Array]".to_string(),
