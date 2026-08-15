@@ -37,6 +37,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         }
         Builtin::TemporalPlainDateEquals => Some("Temporal.PlainDate.prototype.equals"),
         Builtin::TemporalPlainDateCompare => Some("Temporal.PlainDate.compare"),
+        Builtin::TemporalPlainDateValueOf => Some("Temporal.PlainDate.prototype.valueOf"),
         Builtin::TemporalPlainDateAdd => Some("Temporal.PlainDate.prototype.add"),
         Builtin::TemporalPlainDateSubtract => Some("Temporal.PlainDate.prototype.subtract"),
         Builtin::TemporalPlainDateUntil => Some("Temporal.PlainDate.prototype.until"),
@@ -70,6 +71,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateMonthsInYearGetter => Some("get monthsInYear"),
         Builtin::TemporalPlainDateEquals => Some("equals"),
         Builtin::TemporalPlainDateCompare => Some("compare"),
+        Builtin::TemporalPlainDateValueOf => Some("valueOf"),
         Builtin::TemporalPlainDateAdd => Some("add"),
         Builtin::TemporalPlainDateSubtract => Some("subtract"),
         Builtin::TemporalPlainDateUntil => Some("until"),
