@@ -425,6 +425,16 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             true,
         ));
     }
+    if key == "BYTES_PER_ELEMENT" {
+        if let Some(size) = typed_array_bytes_per_element(builtin) {
+            return Some(descriptor_object_with_flags(
+                Value::Number(size),
+                false,
+                false,
+                false,
+            ));
+        }
+    }
     if let Some(descriptor) = intrinsic_accessor(builtin, key) {
         return Some(descriptor);
     }
@@ -467,6 +477,24 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         false,
         configurable,
     ))
+}
+
+fn typed_array_bytes_per_element(builtin: Builtin) -> Option<f64> {
+    use Builtin::*;
+    Some(match builtin {
+        Float64Array | Float64ArrayPrototype => 8.0,
+        Float32Array | Float32ArrayPrototype => 4.0,
+        Int8Array
+        | Int8ArrayPrototype
+        | Uint8Array
+        | Uint8ArrayPrototype
+        | Uint8ClampedArray
+        | Uint8ClampedArrayPrototype => 1.0,
+        Int16Array | Int16ArrayPrototype | Uint16Array | Uint16ArrayPrototype => 2.0,
+        Int32Array | Int32ArrayPrototype | Uint32Array | Uint32ArrayPrototype => 4.0,
+        BigInt64Array | BigInt64ArrayPrototype | BigUint64Array | BigUint64ArrayPrototype => 8.0,
+        _ => return None,
+    })
 }
 fn accessor_descriptor(getter: Builtin) -> Value {
     Value::Object(Rc::new(ObjectData::new(vec![
