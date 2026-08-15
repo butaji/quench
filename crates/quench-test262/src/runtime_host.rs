@@ -246,9 +246,14 @@ fn namespace_cell(
             .collect::<Vec<_>>(),
     );
     for name in unit.export_names() {
+        let value = unit
+            .export_cell(&name)
+            .map(|cell| quench_runtime::value::Value::BindingCell(cell.shared()))
+            .unwrap_or(quench_runtime::value::Value::Undefined);
         properties.push((
             format!("\0quench:descriptor:\0{name}"),
             quench_runtime::value::Value::object(vec![
+                ("value".to_string(), value),
                 (
                     "writable".to_string(),
                     quench_runtime::value::Value::Boolean(true),
