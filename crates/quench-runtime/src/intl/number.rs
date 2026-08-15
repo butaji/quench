@@ -436,135 +436,24 @@ impl NumberOptions {
     }
 
     fn format_number(&self, number: f64) -> String {
-        let scaled = match self.style.as_str() {
-            "percent" => number * 100.0,
-            _ => number,
-        };
-        let scientific = match self.notation.as_str() {
-            "scientific" => Some(scientific_parts(scaled, false)),
-            "engineering" => Some(scientific_parts(scaled, true)),
-            _ => None,
-        };
-        let magnitude = if self.notation == "compact" {
-            compact_scale(scaled, &self.locale, &self.compact_display)
-        } else {
-            0
-        };
-        let value = if let Some((coefficient, _)) = scientific {
-            coefficient
-        } else if magnitude == 0 {
-            scaled
-        } else {
-            scaled / 10f64.powi(magnitude)
-        };
-        let compact_unscaled_de = self.notation == "compact"
-            && self.locale.starts_with("de")
-            && magnitude == 0
-            && scaled.abs() >= 1_000.0;
-        let fraction_digits = if self.notation == "compact" && !compact_unscaled_de {
-            compact_fraction_digits(value)
-        } else {
-            self.maximum_fraction_digits
-        };
-        let fraction_text = format_number_rounded(value, fraction_digits, self.rounding_increment);
-        let (mut text, significant_selected) =
-            if let Some(maximum) = self.maximum_significant_digits {
-                let significant_text = format_significant(
-                    value,
-                    self.minimum_significant_digits.unwrap_or(1),
-                    maximum,
-                    &self.rounding_mode,
-                );
-                let selected = match self.rounding_priority.as_str() {
-                    "morePrecision"
-                        if decimal_places(&fraction_text) > decimal_places(&significant_text) =>
-                    {
-                        (fraction_text, false)
-                    }
-                    "lessPrecision"
-                        if decimal_places(&fraction_text) < decimal_places(&significant_text) =>
-                    {
-                        (fraction_text, false)
-                    }
-                    _ => (significant_text, true),
-                };
-                (selected.0, selected.1)
-            } else {
-                (fraction_text, false)
-            };
-        if scientific.is_none()
-            && self.use_grouping
-            && (!self.grouping_min2 || scaled.abs() >= 10_000.0)
-            && (self.notation != "compact" || (compact_unscaled_de && scaled.abs() >= 10_000.0))
-        {
-            text = group_integer_locale(&text, &self.locale);
-        } else if self.notation == "compact" && self.locale.starts_with("de") {
-            text = text.replace('.', ",");
-        }
-        if let Some((_, exponent)) = scientific.filter(|(value, _)| value.is_finite()) {
-            if self.locale.starts_with("de") {
-                text = text.replace('.', ",");
-            }
-            let exponent = format!("E{exponent}");
-            text.push_str(&exponent);
-        }
-        text = apply_minimum_integer(&text, self.minimum_integer_digits);
-        if self.minimum_fraction_digits > 0 && !significant_selected {
-            text = pad_locale_fraction(&text, self.minimum_fraction_digits, &self.locale);
-        }
-        let negative = text.starts_with('-');
-        if number.is_nan() && self.locale.starts_with("zh") {
-            text = "非數值".to_string();
-        }
-        let zero = number == 0.0;
-        let rounded_zero = text
-            .trim_start_matches('-')
-            .chars()
-            .all(|character| matches!(character, '0' | '.' | ','));
-        let hide_negative = self.sign_display == "never"
-            || (self.sign_display == "auto"
-                && zero
-                && self.style == "currency"
-                && self.currency_sign != "accounting")
-            || (self.sign_display == "exceptZero" && rounded_zero)
-            || (self.sign_display == "negative" && rounded_zero);
-        if hide_negative && negative {
-            text.remove(0);
-        } else if !negative
-            && (!number.is_nan() || self.sign_display == "always")
-            && (self.sign_display == "always"
-                || (self.sign_display == "exceptZero" && !rounded_zero))
-        {
-            text.insert(0, '+');
-        }
-        match self.style.as_str() {
-            "percent" => text.push('%'),
-            "currency" => {
-                text = format_currency(
-                    &text,
-                    self.currency.as_deref(),
-                    &self.currency_display,
-                    &self.locale,
-                    &self.currency_sign,
-                )
-            }
-            "unit" => {
-                text = format_localized_unit(
-                    &text,
-                    self.unit.as_deref(),
-                    &self.unit_display,
-                    &self.locale,
-                )
-            }
-            _ => {}
-        }
-        if magnitude > 0 {
-            text.push_str(compact_suffix(
-                magnitude,
-                &self.locale,
-                &self.compact_display,
-            ));
-        }
+        let scaled = scale_number(self, number);
+        let scientific = scientific_notation(self, scaled);
+        let magnitude = compact_magnitude(self, scaled);
+        let value = notation_value(scaled, scientific, magnitude);
+        let compact_unscaled_de = compact_unscaled_german(self, scaled, magnitude);
+        let fraction_digits = fraction_digits(self, value, compact_unscaled_de);
+        let (mut text, significant_selected) = rounded_text(self, value, fraction_digits);
+        text = decorate_numeric_text(
+            self,
+            text,
+            scaled,
+            scientific,
+            compact_unscaled_de,
+            significant_selected,
+        );
+        text = apply_sign(self, text, number);
+        text = apply_style(self, text);
+        append_compact_suffix(&mut text, magnitude, self);
         text
     }
 
@@ -804,6 +693,169 @@ fn pad_locale_fraction(text: &str, minimum: u32, locale: &str) -> String {
     }
     result.extend(std::iter::repeat('0').take(minimum as usize - fraction_digits));
     result
+}
+
+fn scale_number(options: &NumberOptions, number: f64) -> f64 {
+    match options.style.as_str() {
+        "percent" => number * 100.0,
+        _ => number,
+    }
+}
+
+fn scientific_notation(options: &NumberOptions, value: f64) -> Option<(f64, i32)> {
+    match options.notation.as_str() {
+        "scientific" => Some(scientific_parts(value, false)),
+        "engineering" => Some(scientific_parts(value, true)),
+        _ => None,
+    }
+}
+
+fn compact_magnitude(options: &NumberOptions, value: f64) -> i32 {
+    if options.notation == "compact" {
+        compact_scale(value, &options.locale, &options.compact_display)
+    } else {
+        0
+    }
+}
+
+fn notation_value(scaled: f64, scientific: Option<(f64, i32)>, magnitude: i32) -> f64 {
+    if let Some((coefficient, _)) = scientific {
+        coefficient
+    } else if magnitude == 0 {
+        scaled
+    } else {
+        scaled / 10f64.powi(magnitude)
+    }
+}
+
+fn compact_unscaled_german(options: &NumberOptions, scaled: f64, magnitude: i32) -> bool {
+    options.notation == "compact"
+        && options.locale.starts_with("de")
+        && magnitude == 0
+        && scaled.abs() >= 1_000.0
+}
+
+fn fraction_digits(options: &NumberOptions, value: f64, compact_unscaled_de: bool) -> u32 {
+    if options.notation == "compact" && !compact_unscaled_de {
+        compact_fraction_digits(value)
+    } else {
+        options.maximum_fraction_digits
+    }
+}
+
+fn rounded_text(options: &NumberOptions, value: f64, fraction_digits: u32) -> (String, bool) {
+    let fraction_text = format_number_rounded(value, fraction_digits, options.rounding_increment);
+    let Some(maximum) = options.maximum_significant_digits else {
+        return (fraction_text, false);
+    };
+    let significant_text = format_significant(
+        value,
+        options.minimum_significant_digits.unwrap_or(1),
+        maximum,
+        &options.rounding_mode,
+    );
+    match options.rounding_priority.as_str() {
+        "morePrecision" if decimal_places(&fraction_text) > decimal_places(&significant_text) => {
+            (fraction_text, false)
+        }
+        "lessPrecision" if decimal_places(&fraction_text) < decimal_places(&significant_text) => {
+            (fraction_text, false)
+        }
+        _ => (significant_text, true),
+    }
+}
+
+fn decorate_numeric_text(
+    options: &NumberOptions,
+    mut text: String,
+    scaled: f64,
+    scientific: Option<(f64, i32)>,
+    compact_unscaled_de: bool,
+    significant_selected: bool,
+) -> String {
+    if scientific.is_none()
+        && options.use_grouping
+        && (!options.grouping_min2 || scaled.abs() >= 10_000.0)
+        && (options.notation != "compact" || (compact_unscaled_de && scaled.abs() >= 10_000.0))
+    {
+        text = group_integer_locale(&text, &options.locale);
+    } else if options.notation == "compact" && options.locale.starts_with("de") {
+        text = text.replace('.', ",");
+    }
+    if let Some((_, exponent)) = scientific.filter(|(value, _)| value.is_finite()) {
+        if options.locale.starts_with("de") {
+            text = text.replace('.', ",");
+        }
+        text.push_str(&format!("E{exponent}"));
+    }
+    text = apply_minimum_integer(&text, options.minimum_integer_digits);
+    if options.minimum_fraction_digits > 0 && !significant_selected {
+        text = pad_locale_fraction(&text, options.minimum_fraction_digits, &options.locale);
+    }
+    text
+}
+
+fn apply_sign(options: &NumberOptions, mut text: String, number: f64) -> String {
+    let negative = text.starts_with('-');
+    if number.is_nan() && options.locale.starts_with("zh") {
+        text = "非數值".to_string();
+    }
+    let rounded_zero = text
+        .trim_start_matches('-')
+        .chars()
+        .all(|character| matches!(character, '0' | '.' | ','));
+    let hide_negative = options.sign_display == "never"
+        || (options.sign_display == "auto"
+            && number == 0.0
+            && options.style == "currency"
+            && options.currency_sign != "accounting")
+        || (options.sign_display == "exceptZero" && rounded_zero)
+        || (options.sign_display == "negative" && rounded_zero);
+    if hide_negative && negative {
+        text.remove(0);
+    } else if !negative
+        && (!number.is_nan() || options.sign_display == "always")
+        && (options.sign_display == "always"
+            || (options.sign_display == "exceptZero" && !rounded_zero))
+    {
+        text.insert(0, '+');
+    }
+    text
+}
+
+fn apply_style(options: &NumberOptions, mut text: String) -> String {
+    match options.style.as_str() {
+        "percent" => text.push('%'),
+        "currency" => {
+            text = format_currency(
+                &text,
+                options.currency.as_deref(),
+                &options.currency_display,
+                &options.locale,
+                &options.currency_sign,
+            )
+        }
+        "unit" => {
+            text = format_localized_unit(
+                &text,
+                options.unit.as_deref(),
+                &options.unit_display,
+                &options.locale,
+            )
+        }
+        _ => {}
+    }
+    text
+}
+
+fn append_compact_suffix(text: &mut String, magnitude: i32, options: &NumberOptions) {
+    if magnitude > 0 {
+        text.push_str(compact_suffix(
+            magnitude,
+            &options.locale,
+            &options.compact_display,
+        ));
+    }
 }
 
 fn format_localized_unit(text: &str, unit: Option<&str>, display: &str, locale: &str) -> String {
