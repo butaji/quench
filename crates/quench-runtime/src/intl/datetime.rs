@@ -1432,16 +1432,22 @@ pub(crate) fn dispatch(
 }
 
 fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
-    let Some(Value::Object(_)) = receiver else {
-        return construct(arguments);
+    let (legacy_receiver, constructor_arguments) = match receiver {
+        Some(value) if crate::value::is_object(value) => (receiver, arguments),
+        Some(Value::HostCapability(_))
+            if arguments.first().is_some_and(crate::value::is_object) =>
+        {
+            (arguments.first(), &arguments[1..])
+        }
+        _ => return construct(arguments),
     };
-    let formatter = construct(arguments)?;
+    let formatter = construct(constructor_arguments)?;
     let slots = crate::execute::get_property(&formatter, SLOT);
     let symbol = format!(
         "Symbol.IntlLegacyConstructedSymbol\0{}",
         LEGACY_SYMBOL_ID.fetch_add(1, Ordering::Relaxed)
     );
-    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let receiver = legacy_receiver.cloned().unwrap_or(Value::Undefined);
     let receiver = crate::builtins::set_property(receiver, SLOT, slots.clone());
     Ok(crate::builtins::set_property(receiver, &symbol, slots))
 }
