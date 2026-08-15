@@ -15,7 +15,8 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::ThrowTypeError => Some(0.0),
-        Builtin::FunctionCall | Builtin::FunctionApply | Builtin::FunctionBind => Some(1.0),
+        Builtin::FunctionCall | Builtin::FunctionBind => Some(1.0),
+        Builtin::FunctionApply => Some(2.0),
         _ => None,
     }
 }
