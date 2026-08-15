@@ -130,7 +130,7 @@ pub enum Builtin {
     DateToJSON, DateToPrimitive,
     DateToTemporalInstant, Temporal,
     TemporalDuration, TemporalDurationPrototype,
-    TemporalDurationFrom, TemporalDurationCompare,
+    TemporalDurationFrom, TemporalDurationCompare, TemporalDurationAbs,
     TemporalPlainDate, TemporalPlainDatePrototype,
     TemporalPlainDateFrom, AbstractModuleSource,
     AbstractModuleSourcePrototype, AbstractModuleSourceToStringTagGetter, ShadowRealm,

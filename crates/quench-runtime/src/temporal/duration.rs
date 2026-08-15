@@ -41,14 +41,68 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
         crate::ops::Builtin::TemporalDurationFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalDurationCompare => Some(compare(arguments)),
+        crate::ops::Builtin::TemporalDurationAbs => Some(abs(receiver)),
         _ => None,
     }
+}
+
+fn abs(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    let arguments = absolute_fields(object);
+    construct(&arguments)
+}
+
+fn duration_receiver(receiver: Option<&Value>) -> Result<&crate::value::ObjectData, VmError> {
+    let Some(Value::Object(object)) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Temporal.Duration.prototype.abs called on incompatible receiver",
+        ));
+    };
+    let branded = object.iter().any(|(key, value)| {
+        key == "\0prototype"
+            && matches!(
+                value,
+                Value::Builtin(crate::ops::Builtin::TemporalDurationPrototype)
+            )
+    });
+    branded.then_some(object.as_ref()).ok_or_else(|| {
+        crate::value::error::throw_type_error(
+            "Temporal.Duration.prototype.abs called on incompatible receiver",
+        )
+    })
+}
+
+fn absolute_fields(object: &crate::value::ObjectData) -> Vec<Value> {
+    let names = [
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ];
+    names
+        .iter()
+        .map(|name| {
+            object
+                .iter()
+                .find(|(key, _)| key == name)
+                .map_or(Value::Number(0.0), |(_, value)| match value {
+                    Value::Number(value) => Value::Number(value.abs()),
+                    _ => Value::Number(0.0),
+                })
+        })
+        .collect()
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
