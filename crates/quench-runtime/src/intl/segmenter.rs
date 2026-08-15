@@ -201,7 +201,10 @@ fn word_segments(text: &str) -> Vec<Value> {
 
 fn decimal_point(text: &str, index: usize, character: char) -> bool {
     character == '.'
-        && text[..index].chars().next_back().is_some_and(|value| value.is_ascii_digit())
+        && text[..index]
+            .chars()
+            .next_back()
+            .is_some_and(|value| value.is_ascii_digit())
         && text[index + character.len_utf8()..]
             .chars()
             .next()

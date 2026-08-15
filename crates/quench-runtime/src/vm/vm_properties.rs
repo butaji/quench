@@ -372,13 +372,19 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         .find_map(|(name, value)| (name == field).then(|| value.clone()))
 }
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    if let Value::HostCapability(value) = value {
+        if let Some(property) = value.property(key) {
+            return property;
+        }
+    }
     if capability.kind == crate::ops::HostCapabilityKind::GetGlobal && key == "agent" {
-        return Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
-            HostCapabilityRef {
-                realm: capability.realm,
-                kind: crate::ops::HostCapabilityKind::Agent,
-            },
-        )));
+        let Value::HostCapability(parent) = value else {
+            return Value::Undefined;
+        };
+        return Value::HostCapability(Rc::new(parent.child(HostCapabilityRef {
+            realm: capability.realm,
+            kind: crate::ops::HostCapabilityKind::Agent,
+        })));
     }
     if capability.kind == crate::ops::HostCapabilityKind::Agent && key == "timeouts" {
         return Value::object(vec![

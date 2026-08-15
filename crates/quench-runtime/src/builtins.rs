@@ -519,6 +519,10 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
             view.set_own_property(key, value);
             Value::DataView(view)
         }
+        Value::HostCapability(capability) => {
+            capability.set_property(key, value);
+            Value::HostCapability(capability)
+        }
         other => other,
     }
 }
