@@ -234,8 +234,8 @@ fn bind_function_target(
         .unwrap_or(crate::value::Value::Undefined);
     let extra = arguments.get(1..).unwrap_or(&[]).to_vec();
     let mut properties = Vec::new();
-    let name = bound_function_name(&target)?;
-    let length = bound_function_length(&target, extra.len() as f64);
+    let name = bound_function_name(target)?;
+    let length = bound_function_length(target, extra.len() as f64);
     insert_bound_property(
         &mut properties,
         "name",
@@ -300,8 +300,7 @@ fn to_integer_or_infinity(value: f64) -> f64 {
     if value.is_infinite() {
         return f64::INFINITY;
     }
-    let value = if value == -0.0 { 0.0 } else { value.trunc() };
-    value
+    if value == -0.0 { 0.0 } else { value.trunc() }
 }
 
 fn length_descriptor(length: f64) -> crate::value::Value {
