@@ -240,13 +240,13 @@ impl NumberOptions {
         if !matches!(raw.unit_display.as_str(), "short" | "narrow" | "long") {
             return Err(crate::value::error::throw_range_error("invalid unitDisplay"));
         }
-        if raw.style == "currency" {
-            let Some(currency) = raw.currency.as_deref() else {
-                return Err(crate::value::error::throw_type_error("currency is required"));
-            };
+        if let Some(currency) = raw.currency.as_deref() {
             if currency.len() != 3 || !currency.chars().all(|character| character.is_ascii_alphabetic()) {
                 return Err(crate::value::error::throw_range_error("invalid currency"));
             }
+        }
+        if raw.style == "currency" && raw.currency.is_none() {
+            return Err(crate::value::error::throw_type_error("currency is required"));
         }
         let nonstandard_currency = raw.style == "currency" && raw.notation != "standard";
         let minimum_fraction_digits = if nonstandard_currency
