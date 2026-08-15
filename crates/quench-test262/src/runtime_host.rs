@@ -79,7 +79,14 @@ impl LinkedModuleGraph {
     }
 
     pub fn execute(&self, graph: &ModuleGraph, entry: ModuleId) -> Result<(), String> {
-        for id in graph.dependency_order(entry)? {
+        let order = graph.dependency_order(entry)?;
+        for id in &order {
+            self.units
+                .get(id)
+                .ok_or_else(|| "module unit missing".to_string())?
+                .instantiate()?;
+        }
+        for id in order {
             self.units
                 .get(&id)
                 .ok_or_else(|| "module unit missing".to_string())?
@@ -376,6 +383,22 @@ fn descriptor_value(unit: &LinkedModule, name: &str) -> Value {
 }
 
 impl LinkedModule {
+    fn instantiate(&self) -> Result<(), String> {
+        let Some(end) = self
+            .program
+            .ops()
+            .iter()
+            .position(|op| matches!(op, quench_runtime::ops::Op::ModuleEvaluationStart))
+        else {
+            return Ok(());
+        };
+        let mut registers = Vec::new();
+        self.scope
+            .execute_completion(&self.program.ops()[..end], &mut registers, host_context())
+            .map(|_| ())
+            .map_err(|error| format!("residual VM error: {}", error.render()))
+    }
+
     pub fn compile(source: &str) -> Result<Self, String> {
         let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
         Ok(Self {
@@ -600,10 +623,16 @@ impl LinkedModule {
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
+        let start = self
+            .program
+            .ops()
+            .iter()
+            .position(|op| matches!(op, quench_runtime::ops::Op::ModuleEvaluationStart))
+            .map_or(0, |index| index + 1);
         let mut registers = Vec::new();
         let result = self
             .scope
-            .execute(self.program.ops(), &mut registers, host_context())
+            .execute(&self.program.ops()[start..], &mut registers, host_context())
             .map_err(|error| format!("residual VM error: {}", error.render()))?;
         for (name, value) in &self.fixed_exports {
             let cell = self
