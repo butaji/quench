@@ -20,7 +20,15 @@ pub(crate) fn builtin(
         ));
     }
     let realm = crate::vm::realm_id_for_intrinsic_receiver(receiver);
-    let result = evaluate(value, false, realm)?;
+    let result = evaluate(value, false, realm).map_err(|error| {
+        if builtin == crate::ops::Builtin::ShadowRealmEvaluate
+            && matches!(error, VmError::Thrown(_))
+        {
+            crate::value::error::throw_type_error("ShadowRealm evaluation threw a value")
+        } else {
+            error
+        }
+    })?;
     if builtin == crate::ops::Builtin::ShadowRealmEvaluate
         && crate::conversion::is_callable(&result)
     {
