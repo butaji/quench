@@ -157,14 +157,8 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
     if let Some(value) = buffer.own_property(key) {
         return value;
     }
-    if key == "constructor" && buffer.shared {
-        return Value::Builtin(Builtin::SharedArrayBuffer);
-    }
-    if key == "grow" && buffer.shared {
-        return Value::Builtin(Builtin::SharedArrayBufferGrow);
-    }
-    if key == "slice" && buffer.shared {
-        return Value::Builtin(Builtin::SharedArrayBufferSlice);
+    if let Some(value) = shared_buffer_property(buffer, key) {
+        return value;
     }
     match key {
         "byteLength" => Value::Number(buffer.byte_length() as f64),
@@ -177,6 +171,18 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
         "transferToImmutable" => Value::Builtin(Builtin::ArrayBufferTransferToImmutable),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
     }
+}
+
+fn shared_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> Option<Value> {
+    if !buffer.shared {
+        return None;
+    }
+    Some(match key {
+        "constructor" => Value::Builtin(Builtin::SharedArrayBuffer),
+        "grow" => Value::Builtin(Builtin::SharedArrayBufferGrow),
+        "slice" => Value::Builtin(Builtin::SharedArrayBufferSlice),
+        _ => return None,
+    })
 }
 fn float64_array_property(view: &crate::value::Float64ArrayData, key: &str) -> Value {
     if let Some(value) = typed_index(key, |index| view.get(index)) {
