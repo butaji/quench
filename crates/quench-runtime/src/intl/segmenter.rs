@@ -12,29 +12,7 @@ use super::{default_locale, make_object, resolve_locales, runtime_error, slot_st
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let mut granularity = "grapheme".to_string();
-    if matches!(arguments.get(1), Some(Value::Null)) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot convert null to object",
-        ));
-    }
-    if let Some(Value::Object(properties)) = arguments.get(1) {
-        let options = Value::Object(properties.clone());
-        let matcher = crate::execute::get_property_result(&options, "localeMatcher")?;
-        if !matches!(matcher, Value::Undefined) {
-            let matcher = crate::conversion::to_string(&matcher)?;
-            if matcher != "lookup" && matcher != "best fit" {
-                return Err(runtime_error("RangeError: invalid localeMatcher"));
-            }
-        }
-        let value = crate::execute::get_property_result(&options, "granularity")?;
-        if !matches!(value, Value::Undefined) {
-            granularity = crate::conversion::to_string(&value)?;
-            if !matches!(granularity.as_str(), "grapheme" | "word" | "sentence") {
-                return Err(runtime_error("RangeError: invalid granularity"));
-            }
-        }
-    }
+    let granularity = segmenter_granularity(arguments.get(1))?;
     Ok(make_object(vec![
         (
             "segment".to_string(),
@@ -52,6 +30,33 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             ]),
         ),
     ]))
+}
+
+fn segmenter_granularity(option: Option<&Value>) -> Result<String, VmError> {
+    let mut granularity = "grapheme".to_string();
+    if matches!(option, Some(Value::Null)) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert null to object",
+        ));
+    }
+    if let Some(Value::Object(properties)) = option {
+        let options = Value::Object(properties.clone());
+        let matcher = crate::execute::get_property_result(&options, "localeMatcher")?;
+        if !matches!(matcher, Value::Undefined) {
+            let matcher = crate::conversion::to_string(&matcher)?;
+            if matcher != "lookup" && matcher != "best fit" {
+                return Err(runtime_error("RangeError: invalid localeMatcher"));
+            }
+        }
+        let value = crate::execute::get_property_result(&options, "granularity")?;
+        if !matches!(value, Value::Undefined) {
+            granularity = crate::conversion::to_string(&value)?;
+            if !matches!(granularity.as_str(), "grapheme" | "word" | "sentence") {
+                return Err(runtime_error("RangeError: invalid granularity"));
+            }
+        }
+    }
+    Ok(granularity)
 }
 
 pub(crate) fn prototype_method(
