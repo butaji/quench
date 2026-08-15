@@ -235,30 +235,27 @@ fn polish_word(unit: &str, style: &str, value: f64) -> String {
 
 fn polish_fractional_word(unit: &str, style: &str) -> String {
     if style != "long" {
-        return match unit {
-            "second" => {
-                if style == "narrow" {
-                    "s"
-                } else {
-                    "sek."
-                }
-            }
-            "minute" => "min",
-            "hour" => {
-                if style == "narrow" {
-                    "g."
-                } else {
-                    "godz."
-                }
-            }
-            "day" => "dnia",
-            "week" => "tyg.",
-            "month" => "mies.",
-            "quarter" => "kw.",
-            _ => "roku",
-        }
-        .to_string();
+        return fractional_short_word(unit, style).to_string();
     }
+    fractional_long_word(unit, style).to_string()
+}
+
+fn fractional_short_word(unit: &str, style: &str) -> &'static str {
+    match (unit, style) {
+        ("second", "narrow") => "s",
+        ("second", _) => "sek.",
+        ("minute", _) => "min",
+        ("hour", "narrow") => "g.",
+        ("hour", _) => "godz.",
+        ("day", _) => "dnia",
+        ("week", _) => "tyg.",
+        ("month", _) => "mies.",
+        ("quarter", _) => "kw.",
+        _ => "roku",
+    }
+}
+
+fn fractional_long_word(unit: &str, style: &str) -> &'static str {
     match unit {
         "day" => "dnia",
         "week" => "tygodnia",
@@ -292,7 +289,6 @@ fn polish_fractional_word(unit: &str, style: &str) -> String {
         }
         _ => "lat",
     }
-    .to_string()
 }
 
 fn polish_long_word(unit: &str, plural: usize) -> String {
