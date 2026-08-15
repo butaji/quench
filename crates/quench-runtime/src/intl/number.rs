@@ -150,15 +150,15 @@ impl NumberOptions {
         ) {
             return Err(crate::value::error::throw_range_error("invalid style"));
         }
-        if raw.style == "currency" {
-            let Some(currency) = raw.currency.as_deref() else {
-                return Err(crate::value::error::throw_type_error(
-                    "currency is required",
-                ));
-            };
+        if let Some(currency) = raw.currency.as_deref() {
             if currency.len() != 3 || !currency.chars().all(|value| value.is_ascii_alphabetic()) {
                 return Err(crate::value::error::throw_range_error("invalid currency"));
             }
+        }
+        if raw.style == "currency" && raw.currency.is_none() {
+            return Err(crate::value::error::throw_type_error(
+                "currency is required",
+            ));
         }
         if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
             return Err(crate::value::error::throw_range_error("invalid unit"));
