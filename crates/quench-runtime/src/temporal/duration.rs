@@ -12,14 +12,16 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             "Duration fields must be integral",
         ));
     }
-    let total_seconds = values[3] * 86_400.0
-        + values[4] * 3_600.0
-        + values[5] * 60.0
-        + values[6]
-        + values[7] / 1_000.0
-        + values[8] / 1_000_000.0
-        + values[9] / 1_000_000_000.0;
-    if total_seconds.abs() > 9_007_199_254_740_991.0 {
+    let whole_seconds = values[3] as i128 * 86_400
+        + values[4] as i128 * 3_600
+        + values[5] as i128 * 60
+        + values[6] as i128;
+    let subsecond_nanos =
+        values[7] as i128 * 1_000_000 + values[8] as i128 * 1_000 + values[9] as i128;
+    let total_nanos = whole_seconds * 1_000_000_000 + subsecond_nanos;
+    let max_seconds = 9_007_199_254_740_991_i128;
+    let max_nanos = max_seconds * 1_000_000_000 + 999_999_999;
+    if total_nanos.abs() > max_nanos {
         return Err(crate::value::error::throw_range_error(
             "Duration is outside the supported range",
         ));
@@ -360,6 +362,7 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         let value: f64 = number
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid duration"))?;
+        let raw = number.clone();
         number.clear();
         let index = match character {
             'Y' => 0,
@@ -371,7 +374,31 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
             'S' => 6,
             _ => return Err(crate::value::error::throw_range_error("Invalid duration")),
         };
+        if index == 6 {
+            if let Some((whole, fraction)) = raw.split_once('.') {
+                let whole: f64 = whole
+                    .parse()
+                    .map_err(|_| crate::value::error::throw_range_error("Invalid duration"))?;
+                let digits = fraction.chars().take(9).collect::<String>();
+                let nanos = format!("{digits:0<9}")
+                    .parse::<f64>()
+                    .map_err(|_| crate::value::error::throw_range_error("Invalid duration"))?;
+                let sign = if negative { -1.0 } else { 1.0 };
+                values[6] = Value::Number(sign * whole.abs());
+                values[9] = Value::Number(sign * nanos);
+                continue;
+            }
+        }
         values[index] = Value::Number(if negative { -value } else { value });
+    }
+    if let Value::Number(seconds) = values[6] {
+        if seconds.fract() != 0.0 {
+            values[6] = Value::Number(seconds.trunc());
+            values[9] = Value::Number(
+                (if negative { -1.0 } else { 1.0 })
+                    * (seconds.fract().abs() * 1_000_000_000.0).round(),
+            );
+        }
     }
     construct(&values)
 }
