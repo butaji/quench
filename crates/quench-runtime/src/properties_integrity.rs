@@ -15,8 +15,7 @@ pub(crate) fn integrity_level(
         return Ok(crate::value::Value::Boolean(false));
     }
     Ok(crate::value::Value::Boolean(integrity_props(
-        target,
-        frozen,
+        target, frozen,
     )))
 }
 
@@ -97,7 +96,9 @@ fn integrity_descriptor(
             }
         }
     } else {
-        if let Some(value) = descriptor_field_value(existing.as_ref(), "value") {
+        if let Some(value) = descriptor_field_value(existing.as_ref(), "value")
+            .or_else(|| property_value(properties, metadata_key))
+        {
             fields.push(("value".to_string(), value));
         }
         fields.push((
@@ -116,6 +117,17 @@ fn integrity_descriptor(
     descriptor_object(fields)
 }
 
+fn property_value(
+    properties: &crate::value::ObjectProperties,
+    metadata_key: &str,
+) -> Option<crate::value::Value> {
+    let key = metadata_key.strip_prefix(crate::builtins::descriptor_key("").as_str())?;
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == key).then_some(value.clone()))
+}
+
 fn is_accessor_descriptor(value: &crate::value::Value) -> bool {
     matches!(value, crate::value::Value::Object(fields) if fields.iter().any(|(name, _)| matches!(name.as_str(), "get" | "set")))
 }
@@ -124,9 +136,9 @@ fn descriptor_flag_field(value: Option<&crate::value::Value>, field: &str) -> Op
     let crate::value::Value::Object(fields) = value? else {
         return None;
     };
-    fields.iter().rev().find_map(
-        |(name, value)| (name == field).then_some(matches!(value, crate::value::Value::Boolean(true))),
-    )
+    fields.iter().rev().find_map(|(name, value)| {
+        (name == field).then_some(matches!(value, crate::value::Value::Boolean(true)))
+    })
 }
 
 fn descriptor_field_value(
@@ -191,7 +203,11 @@ fn integrity_array_keys(data: &crate::value::ArrayData) -> Vec<String> {
         .map(|index| index.to_string())
         .collect();
     keys.push("length".to_string());
-    for key in data.property_keys().into_iter().chain(data.descriptor_keys()) {
+    for key in data
+        .property_keys()
+        .into_iter()
+        .chain(data.descriptor_keys())
+    {
         if !key.contains('\0') && key != "length" && !keys.contains(&key) {
             keys.push(key);
         }
@@ -210,6 +226,14 @@ fn integrity_array_descriptor(
         descriptor_flag_field(existing.as_ref(), "enumerable").unwrap_or(true) && key != "length";
     let mut fields = Vec::new();
     if !accessor || key == "length" {
+        if key != "length" {
+            let value = crate::arrays::array_index(key)
+                .and_then(|index| data.get_index(index as usize))
+                .or_else(|| data.property(key));
+            if let Some(value) = value {
+                fields.push(("value".to_string(), value));
+            }
+        }
         fields.push((
             "writable".to_string(),
             crate::value::Value::Boolean(key != "length" && !frozen),
