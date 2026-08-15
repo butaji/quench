@@ -103,6 +103,9 @@ pub fn function_length(builtin: Builtin) -> Option<f64> {
     if let Some(v) = intl::fn_len(builtin) {
         return Some(v);
     }
+    if let Some(v) = temporal::fn_len(builtin) {
+        return Some(v);
+    }
     if let Some(v) = reflect::fn_len(builtin) {
         return Some(v);
     }
