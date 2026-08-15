@@ -665,6 +665,11 @@ pub(crate) fn prototype_method(
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts => {
             let (start, end) = range_values(arguments)?;
+            if nearly_equal_range(arguments)? {
+                if let Some(parts) = time_parts(&slots, start) {
+                    return Ok(make_array(parts));
+                }
+            }
             let start = format_number(&slots, start);
             let end = format_number(&slots, end);
             if start == end || nearly_equal_range(arguments)? {
