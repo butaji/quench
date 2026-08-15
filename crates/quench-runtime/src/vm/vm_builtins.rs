@@ -12,6 +12,7 @@ fn early_dispatch(
         .or_else(|| crate::promise::execute_builtin(builtin, receiver, arguments))
         .or_else(|| crate::disposable_stack::execute(builtin, receiver, arguments))
         .or_else(|| crate::finalization_registry::execute(builtin, receiver, arguments))
+        .or_else(|| crate::temporal::execute(builtin, receiver, arguments))
         .or_else(|| {
             (builtin != Builtin::Date)
                 .then(|| crate::date::execute(builtin, receiver, arguments))?
