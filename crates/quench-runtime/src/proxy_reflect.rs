@@ -9,7 +9,7 @@ fn reflect_define_property(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let descriptor = to_property_descriptor(&descriptor)?;
     match proxy_define_property(target, &prop, &descriptor) {
-        Ok(_) => Ok(Value::Boolean(true)),
+        Ok(value) => Ok(Value::Boolean(crate::execute::is_truthy(&value))),
         Err(error) if define_rejected(&error) => Ok(Value::Boolean(false)),
         Err(error) => Err(error),
     }
