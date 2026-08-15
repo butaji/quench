@@ -370,6 +370,7 @@ pub enum Builtin {
     TemporalInstantSubtract,
     TemporalZonedDateTime,
     TemporalZonedDateTimePrototype,
+    TemporalZonedDateTimeToString,
     TemporalDuration,
     TemporalDurationPrototype,
     TemporalDurationFrom,
