@@ -122,7 +122,7 @@ pub(crate) fn proxy_get(
                     Value::String(prop.to_string()),
                     receiver.clone(),
                 ],
-                None,
+                Some(&proxy.handler),
             );
         }
         return proxy_target_property(proxy, prop, receiver.unwrap_or(target));
