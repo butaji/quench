@@ -493,6 +493,10 @@ fn year_from_era(calendar: &str, era: &str, era_year: f64) -> f64 {
     }
 }
 
+fn calendar_uses_eras(calendar: &str) -> bool {
+    !matches!(calendar, "iso8601" | "chinese" | "dangi")
+}
+
 fn leap(year: f64) -> bool {
     year % 4.0 == 0.0 && (year % 100.0 != 0.0 || year % 400.0 == 0.0)
 }
@@ -617,7 +621,10 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             Value::String(calendar) => canonical_calendar(&Value::String(calendar))?,
             _ => "iso8601".into(),
         };
-        let year = if field(object, "year").is_err() && field(object, "era").is_ok() {
+        let year = if field(object, "year").is_err()
+            && field(object, "era").is_ok()
+            && calendar_uses_eras(&calendar)
+        {
             let era_year = field_number(object, "eraYear")?;
             let era = field(object, "era")?;
             let Value::String(era) = era else {
