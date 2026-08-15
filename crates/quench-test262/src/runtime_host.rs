@@ -106,8 +106,9 @@ fn bind_imports(
             .and_then(|unit| unit.program.module_metadata.as_ref())
             .ok_or_else(|| "module metadata missing".to_string())?;
         for binding in &metadata.imports {
+            let kind = import_kind(metadata, &binding.source);
             let target = graph
-                .resolve(id, &binding.source)
+                .resolve_kind(id, &binding.source, kind)
                 .ok_or_else(|| format!("unresolved module {}", binding.source))?;
             let cell = import_cell(units, target, &binding.imported, provisional)?;
             units
@@ -117,6 +118,20 @@ fn bind_imports(
         }
     }
     Ok(())
+}
+
+fn import_kind(metadata: &quench_runtime::reduce::ModuleMetadata, source: &str) -> ModuleKind {
+    metadata
+        .import_attributes
+        .iter()
+        .find(|(specifier, _)| specifier == source)
+        .and_then(|(_, value)| match value.as_str() {
+            "type=json" => Some(ModuleKind::Json),
+            "type=text" => Some(ModuleKind::Text),
+            "type=bytes" => Some(ModuleKind::Bytes),
+            _ => None,
+        })
+        .unwrap_or(ModuleKind::JavaScript)
 }
 
 fn link_reexports(
@@ -470,7 +485,12 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
     }
     let metadata = inspect_module_source(&source).map_err(|errors| errors.join("; "))?;
     for specifier in metadata.import_specifiers {
-        if graph.resolve(from, &specifier).is_some() {
+        let kind = module_kind(
+            &base.join(&specifier),
+            &metadata.import_attributes,
+            &specifier,
+        );
+        if graph.resolve_kind(from, &specifier, kind).is_some() {
             continue;
         }
         let path = base.join(&specifier);
@@ -478,6 +498,25 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
         load_module_dependencies(graph, dependency)?;
     }
     Ok(())
+}
+
+fn module_kind(path: &Path, attributes: &[(String, String)], specifier: &str) -> ModuleKind {
+    if let Some((_, attribute)) = attributes.iter().find(|(source, _)| source == specifier) {
+        return match attribute.as_str() {
+            "type=json" => ModuleKind::Json,
+            "type=text" => ModuleKind::Text,
+            "type=bytes" => ModuleKind::Bytes,
+            _ => ModuleKind::JavaScript,
+        };
+    }
+    if path
+        .extension()
+        .is_some_and(|extension| extension == "json")
+    {
+        ModuleKind::Json
+    } else {
+        ModuleKind::JavaScript
+    }
 }
 
 fn add_module_source(
