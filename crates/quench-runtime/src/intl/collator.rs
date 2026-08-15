@@ -10,47 +10,12 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let mut usage = "sort".to_string();
-    let mut sensitivity = "variant".to_string();
-    let mut ignore_punctuation = locale.starts_with("th");
-    let mut numeric = false;
-    let mut case_first = "false".to_string();
-    if let Some(Value::Object(properties)) = arguments.get(1) {
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
-            usage = to_string_value(value);
-            if !matches!(usage.as_str(), "sort" | "search") {
-                return Err(runtime_error("RangeError: invalid usage"));
-            }
-        }
-        if let Some((_, Value::Boolean(value))) =
-            properties.iter().find(|(name, _)| name == "numeric")
-        {
-            numeric = *value;
-        }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
-            case_first = to_string_value(value);
-            if !matches!(case_first.as_str(), "upper" | "lower" | "false") {
-                return Err(runtime_error("RangeError: invalid caseFirst"));
-            }
-        }
-        if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
-            sensitivity = to_string_value(value);
-            if !matches!(sensitivity.as_str(), "base" | "accent" | "case" | "variant") {
-                return Err(runtime_error("RangeError: invalid sensitivity"));
-            }
-        }
-        if case_first != "false" {
-            locale = remove_conflicting_extension(&locale, "kf", &case_first);
-        }
-        if numeric {
-            locale = remove_conflicting_extension(&locale, "kn", "true");
-        }
-        if let Some((_, Value::Boolean(value))) = properties
-            .iter()
-            .find(|(name, _)| name == "ignorePunctuation")
-        {
-            ignore_punctuation = *value;
-        }
+    let options = parse_options(arguments.get(1), locale.starts_with("th"))?;
+    if options.case_first != "false" {
+        locale = remove_conflicting_extension(&locale, "kf", &options.case_first);
+    }
+    if options.numeric {
+        locale = remove_conflicting_extension(&locale, "kn", "true");
     }
     Ok(make_object(vec![
         (
@@ -65,17 +30,88 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             SLOT.to_string(),
             make_object(vec![
                 ("locale".to_string(), Value::String(locale)),
-                ("usage".to_string(), Value::String(usage)),
-                ("numeric".to_string(), Value::Boolean(numeric)),
-                ("caseFirst".to_string(), Value::String(case_first)),
-                ("sensitivity".to_string(), Value::String(sensitivity)),
+                ("usage".to_string(), Value::String(options.usage)),
+                ("numeric".to_string(), Value::Boolean(options.numeric)),
+                ("caseFirst".to_string(), Value::String(options.case_first)),
+                (
+                    "sensitivity".to_string(),
+                    Value::String(options.sensitivity),
+                ),
                 (
                     "ignorePunctuation".to_string(),
-                    Value::Boolean(ignore_punctuation),
+                    Value::Boolean(options.ignore_punctuation),
                 ),
             ]),
         ),
     ]))
+}
+
+struct CollatorOptions {
+    usage: String,
+    sensitivity: String,
+    ignore_punctuation: bool,
+    numeric: bool,
+    case_first: String,
+}
+
+fn parse_options(value: Option<&Value>, default_ignore: bool) -> Result<CollatorOptions, VmError> {
+    let mut options = CollatorOptions {
+        usage: "sort".to_string(),
+        sensitivity: "variant".to_string(),
+        ignore_punctuation: default_ignore,
+        numeric: false,
+        case_first: "false".to_string(),
+    };
+    let Some(Value::Object(properties)) = value else {
+        return Ok(options);
+    };
+    apply_properties(&mut options, properties)?;
+    Ok(options)
+}
+
+fn apply_properties(
+    options: &mut CollatorOptions,
+    properties: &[(String, Value)],
+) -> Result<(), VmError> {
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "usage") {
+        options.usage = to_string_value(value);
+        validate_option(&options.usage, &["sort", "search"], "usage")?;
+    }
+    if let Some((_, Value::Boolean(value))) = properties.iter().find(|(name, _)| name == "numeric")
+    {
+        options.numeric = *value;
+    }
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "caseFirst") {
+        options.case_first = to_string_value(value);
+        validate_option(
+            &options.case_first,
+            &["upper", "lower", "false"],
+            "caseFirst",
+        )?;
+    }
+    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "sensitivity") {
+        options.sensitivity = to_string_value(value);
+        validate_option(
+            &options.sensitivity,
+            &["base", "accent", "case", "variant"],
+            "sensitivity",
+        )?;
+    }
+    if let Some((_, Value::Boolean(value))) = properties
+        .iter()
+        .find(|(name, _)| name == "ignorePunctuation")
+    {
+        options.ignore_punctuation = *value;
+    }
+    Ok(())
+}
+
+fn validate_option(value: &str, allowed: &[&str], name: &str) -> Result<(), VmError> {
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        Err(runtime_error(&format!("RangeError: invalid {name}")))
+    }
 }
 
 fn remove_conflicting_extension(locale: &str, key: &str, value: &str) -> String {
