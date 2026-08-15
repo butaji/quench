@@ -45,6 +45,10 @@ pub(crate) fn write_intrinsic_override(builtin: Builtin, key: &str, descriptor: 
     overrides::write(builtin, key, descriptor)
 }
 
+pub(crate) fn remove_intrinsic_override(builtin: Builtin, key: &str) {
+    overrides::remove(builtin, key)
+}
+
 /// Mark `key` as deleted from `builtin`'s prototype chain so a future
 /// hardcoded lookup for that combination observes the removal.
 pub(crate) fn mark_builtin_prototype_property_removed(builtin: Builtin, key: &str) {
