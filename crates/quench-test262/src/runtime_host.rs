@@ -437,6 +437,13 @@ fn host_context() -> &'static VmContext {
                 kind: HostCapabilityKind::GetGlobal,
             },
         )
+        .with_host_capability(
+            "receiveBroadcast",
+            HostCapabilityRef {
+                realm: RealmId::ROOT,
+                kind: HostCapabilityKind::AgentReceiveBroadcast,
+            },
+        )
     })
 }
 
