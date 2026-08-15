@@ -54,6 +54,7 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         ),
         ("style".to_string(), Value::String(style)),
     ];
+    let mut previous_numeric = false;
     for unit in [
         "years",
         "months",
@@ -66,10 +67,18 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         "microseconds",
         "nanoseconds",
     ] {
-        let value = option(options, unit)?.unwrap_or_else(|| "short".to_string());
-        if !valid_unit_style(unit, &value) {
+        let explicit = option(options, unit)?;
+        let value = explicit
+            .clone()
+            .unwrap_or_else(|| default_unit_style(unit, previous_numeric));
+        if !valid_unit_style(unit, &value)
+            || (previous_numeric
+                && explicit.is_some()
+                && !matches!(value.as_str(), "numeric" | "2-digit"))
+        {
             return Err(runtime_error("RangeError: invalid unit style"));
         }
+        previous_numeric = matches!(value.as_str(), "numeric" | "2-digit");
         resolved.push((unit.to_string(), Value::String(value)));
         let display =
             option(options, &format!("{unit}Display"))?.unwrap_or_else(|| "auto".to_string());
@@ -182,6 +191,17 @@ fn valid_unit_style(unit: &str, style: &str) -> bool {
         return matches!(style, "long" | "short" | "narrow");
     }
     matches!(style, "long" | "short" | "narrow" | "numeric" | "2-digit")
+}
+
+fn default_unit_style(unit: &str, previous_numeric: bool) -> String {
+    if !previous_numeric {
+        return "short".to_string();
+    }
+    match unit {
+        "minutes" | "seconds" => "2-digit".to_string(),
+        "milliseconds" | "microseconds" | "nanoseconds" => "numeric".to_string(),
+        _ => "numeric".to_string(),
+    }
 }
 
 fn method(
