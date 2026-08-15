@@ -248,3 +248,13 @@ fn module_metadata_marks_top_level_await() {
     let module = LinkedModule::compile("await 0;").expect("module compiles");
     assert!(module.has_top_level_await());
 }
+
+#[test]
+fn async_export_cell_is_initialized_after_resume() {
+    let module = LinkedModule::compile("export default await 42;").expect("module compiles");
+    let cell = module.export_cell("default").expect("default export cell");
+    module.instantiate().expect("module instantiates");
+    module.execute().expect("module starts");
+    module.resume_async().expect("module resumes");
+    assert_eq!(cell.get(), Value::Number(42.0));
+}
