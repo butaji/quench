@@ -217,11 +217,19 @@ fn internal_prototype(value: &Value) -> Option<Value> {
         } else {
             Builtin::FunctionPrototype
         })),
-        Value::BoundFunction(_) => {
-            Some(Value::Builtin(Builtin::FunctionPrototype))
-        }
+        Value::BoundFunction(bound) => bound_function_prototype(bound),
         _ => None,
     }
+}
+
+fn bound_function_prototype(bound: &crate::value::BoundFunctionValue) -> Option<Value> {
+    if bound.target == Value::Builtin(Builtin::AsyncFunction) {
+        return Some(
+            crate::vm::realm::intrinsic(bound.realm, Builtin::Function)
+                .unwrap_or(Value::Builtin(Builtin::Function)),
+        );
+    }
+    Some(Value::Builtin(Builtin::FunctionPrototype))
 }
 
 fn generator_instance_prototype(generator: &crate::value::GeneratorData) -> Option<Value> {
