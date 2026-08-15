@@ -279,7 +279,7 @@ pub enum Builtin {
     WeakRef, WeakRefPrototype,
     WeakRefDeref, IteratorNext,
     SetIteratorNext, MapIteratorNext,
-    IteratorSelf, GeneratorNext,
+    IteratorSelf, AsyncIteratorSelf, GeneratorNext,
     GeneratorReturn, GeneratorThrow,
     Error, ErrorPrototype, AggregateErrorPrototype,
     ErrorIsError, ErrorPrototypeToString,
