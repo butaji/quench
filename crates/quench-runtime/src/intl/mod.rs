@@ -17,7 +17,17 @@ pub(crate) mod number_format;
 pub(crate) mod plural;
 pub(crate) mod relative;
 pub(crate) mod segmenter;
+mod support;
+mod supported_values;
 pub(crate) mod tolocale;
+
+pub(crate) use support::{
+    intl_slots, make_array, make_object, runtime_error, slot_bool, slot_number, slot_string,
+};
+pub(crate) use supported_values::{
+    supported_calendars, supported_collations, supported_currencies, supported_numbering_systems,
+    supported_time_zones, supported_units,
+};
 
 /// Internal slot key stored on constructed Intl objects.
 pub(crate) const SLOT: &str = "__intl";
@@ -422,186 +432,4 @@ fn language_alias(language: String) -> String {
         "mo" => "ro".to_string(),
         other => other.to_string(),
     }
-}
-
-fn supported_calendars() -> Vec<Value> {
-    strings(&[
-        "buddhist",
-        "chinese",
-        "coptic",
-        "dangi",
-        "ethioaa",
-        "ethiopic",
-        "gregory",
-        "hebrew",
-        "indian",
-        "islamic",
-        "islamic-civil",
-        "islamic-rgsa",
-        "islamic-tbla",
-        "islamic-umalqura",
-        "iso8601",
-        "japanese",
-        "persian",
-        "roc",
-    ])
-}
-
-fn supported_collations() -> Vec<Value> {
-    strings(&["default"])
-}
-
-const CURRENCIES: &[&str] = &[
-    "ADP", "AED", "AFA", "AFN", "ALL", "AMD", "ANG", "AOA", "AOK", "AON", "AOR", "ARA", "ARP",
-    "ARS", "ATS", "AUD", "AWG", "AZM", "AZN", "BAM", "BBD", "BDT", "BEF", "BGL", "BGN", "BHD",
-    "BIF", "BMD", "BND", "BOB", "BOP", "BOV", "BRB", "BRC", "BRE", "BRL", "BRN", "BRR", "BSD",
-    "BTN", "BUK", "BWP", "BYB", "BYN", "BYR", "BZD", "CAD", "CDF", "CHF", "CLF", "CLP", "CNH",
-    "CNY", "COP", "CRC", "CSD", "CSK", "CUC", "CUP", "CVE", "CYP", "CZK", "DDM", "DEM", "DJF",
-    "DKK", "DOP", "DZD", "ECS", "ECV", "EEK", "EGP", "ERN", "ESA", "ESB", "ESP", "ETB", "EUR",
-    "FIM", "FJD", "FKP", "FRF", "GBP", "GEL", "GHC", "GHS", "GIP", "GMD", "GNF", "GNS", "GQE",
-    "GRD", "GTQ", "GWE", "GWP", "GYD", "HKD", "HNL", "HRD", "HRK", "HTG", "HUF", "IDR", "IEP",
-    "ILP", "ILR", "ILS", "INR", "IQD", "IRR", "ISK", "ITL", "JMD", "JOD", "JPY", "KES", "KGS",
-    "KHR", "KMF", "KPW", "KRW", "KWD", "KYD", "KZT", "LAK", "LBP", "LKR", "LRD", "LSL", "LTL",
-    "LTT", "LUC", "LUF", "LUL", "LVL", "LVR", "LWD", "LYD", "MAD", "MAF", "MDL", "MGA", "MGF",
-    "MKD", "MKN", "MLF", "MMK", "MNT", "MOP", "MRO", "MRU", "MTL", "MTP", "MUR", "MVR", "MWK",
-    "MXN", "MXP", "MXV", "MYR", "MZE", "MZM", "MZN", "NAD", "NGN", "NIO", "NLG", "NOK", "NPR",
-    "NZD", "OMR", "PAB", "PEI", "PEN", "PES", "PGK", "PHP", "PKR", "PLN", "PLZ", "PTE", "PYG",
-    "QAR", "RHD", "ROL", "RON", "RSD", "RUB", "RUR", "RWF", "SAR", "SBD", "SCR", "SDD", "SDG",
-    "SDP", "SEK", "SGD", "SHP", "SIT", "SKK", "SLL", "SOS", "SRD", "SRG", "SSP", "STD", "STN",
-    "SUR", "SVC", "SYP", "SZL", "THB", "TJR", "TJS", "TMM", "TMT", "TND", "TOP", "TPE", "TRL",
-    "TRY", "TTD", "TWD", "TZS", "UAH", "UAK", "UGS", "UGX", "USD", "USN", "USS", "UYI", "UYP",
-    "UYU", "UYW", "UZS", "VEB", "VED", "VEF", "VES", "VND", "VNN", "VUV", "WST", "XAF", "XAG",
-    "XAU", "XBA", "XBB", "XBC", "XBD", "XCD", "XDR", "XEU", "XFO", "XFU", "XOF", "XPD", "XPF",
-    "XPT", "XRE", "XSU", "XTS", "XUA", "XXX", "YDD", "YER", "YUD", "YUM", "YUN", "ZAL", "ZAR",
-    "ZMK", "ZMW", "ZRN", "ZRZ", "ZWD", "ZWL", "ZWR",
-];
-
-fn supported_currencies() -> Vec<Value> {
-    strings(CURRENCIES)
-}
-
-fn supported_numbering_systems() -> Vec<Value> {
-    strings(&["latn"])
-}
-
-fn supported_time_zones() -> Vec<Value> {
-    strings(&["UTC"])
-}
-
-const UNITS: &[&str] = &[
-    "acre",
-    "bit",
-    "byte",
-    "celsius",
-    "centimeter",
-    "day",
-    "degree",
-    "fahrenheit",
-    "fluid-ounce",
-    "foot",
-    "gallon",
-    "gigabit",
-    "gigabyte",
-    "gram",
-    "hectare",
-    "hour",
-    "inch",
-    "kilobit",
-    "kilobyte",
-    "kilogram",
-    "kilometer",
-    "liter",
-    "megabit",
-    "megabyte",
-    "meter",
-    "microsecond",
-    "mile",
-    "mile-scandinavian",
-    "milliliter",
-    "millimeter",
-    "millisecond",
-    "minute",
-    "month",
-    "nanosecond",
-    "ounce",
-    "percent",
-    "petabyte",
-    "pound",
-    "second",
-    "stone",
-    "terabit",
-    "terabyte",
-    "week",
-    "yard",
-    "year",
-];
-
-fn supported_units() -> Vec<Value> {
-    strings(UNITS)
-}
-
-fn strings(values: &[&str]) -> Vec<Value> {
-    values
-        .iter()
-        .map(|value| Value::String(value.to_string()))
-        .collect()
-}
-
-fn runtime_error(message: &str) -> VmError {
-    if let Some(message) = message.strip_prefix("TypeError: ") {
-        return crate::value::error::throw_type_error(message);
-    }
-    if let Some(message) = message.strip_prefix("RangeError: ") {
-        return crate::value::error::throw_range_error(message);
-    }
-    VmError::EvalError(message.to_string())
-}
-
-/// Return the internal slot map of an Intl object as an owned vector.
-pub(crate) fn intl_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
-    let Some(Value::Object(properties)) = receiver else {
-        return Err(runtime_error("TypeError: not an Intl object"));
-    };
-    let Some((_, Value::Object(slots))) = properties.iter().find(|(name, _)| name == SLOT) else {
-        return Err(runtime_error("TypeError: not an Intl object"));
-    };
-    Ok(slots.properties.clone())
-}
-
-pub(crate) fn slot_string(slots: &[(String, Value)], key: &str) -> Option<String> {
-    slots
-        .iter()
-        .find(|(name, _)| name == key)
-        .and_then(|(_, value)| match value {
-            Value::String(value) => Some(value.clone()),
-            _ => None,
-        })
-}
-
-pub(crate) fn slot_bool(slots: &[(String, Value)], key: &str) -> Option<bool> {
-    slots
-        .iter()
-        .find(|(name, _)| name == key)
-        .and_then(|(_, value)| match value {
-            Value::Boolean(value) => Some(*value),
-            _ => None,
-        })
-}
-
-pub(crate) fn slot_number(slots: &[(String, Value)], key: &str) -> Option<f64> {
-    slots
-        .iter()
-        .find(|(name, _)| name == key)
-        .and_then(|(_, value)| match value {
-            Value::Number(value) => Some(*value),
-            _ => None,
-        })
-}
-
-pub(crate) fn make_object(properties: Vec<(String, Value)>) -> Value {
-    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
-}
-
-pub(crate) fn make_array(values: Vec<Value>) -> Value {
-    Value::array(values)
 }
