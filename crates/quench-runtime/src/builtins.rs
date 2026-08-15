@@ -382,10 +382,8 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         _ => realm,
     };
     let prototype_value = crate::execute::get_property(&intrinsic, "prototype");
-    let message = arguments.first().map_or_else(String::new, value_to_string);
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), Value::String(message)),
         ("constructor".to_string(), intrinsic),
         (ERROR_SLOT.to_string(), Value::Boolean(true)),
         (
@@ -399,6 +397,13 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         ),
         ("\0prototype".to_string(), prototype_value),
     ];
+    if let Some(message) = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(value_to_string)
+    {
+        properties.push(("message".to_string(), Value::String(message)));
+    }
     if let Some(Value::Object(existing)) = arguments.first() {
         properties.extend(existing.properties.clone());
     }
