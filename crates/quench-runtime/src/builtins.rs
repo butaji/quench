@@ -8,26 +8,29 @@ use crate::{
     value::{ObjectData, Value},
 };
 use intrinsic_overrides as overrides;
+use std::collections::HashMap;
 use std::rc::Rc;
 const DESCRIPTOR_PREFIX: &str = "\0quench:descriptor:\0";
 const DELETED_PREFIX: &str = "\0quench:deleted:\0";
 pub(crate) const ERROR_SLOT: &str = "\0error_slot";
 
 thread_local! {
-    static ASYNC_GENERATOR_PROTOTYPE: std::cell::RefCell<Option<Value>> =
-        std::cell::RefCell::new(None);
+    static ASYNC_GENERATOR_PROTOTYPES:
+        std::cell::RefCell<HashMap<crate::ops::RealmId, Value>> =
+        std::cell::RefCell::new(HashMap::new());
 }
 
 pub(crate) fn async_generator_prototype() -> Value {
-    ASYNC_GENERATOR_PROTOTYPE.with(|cell| {
-        if let Some(value) = cell.borrow().as_ref() {
+    let realm = crate::vm::current_context_or_default().realm();
+    ASYNC_GENERATOR_PROTOTYPES.with(|prototypes| {
+        if let Some(value) = prototypes.borrow().get(&realm) {
             return value.clone();
         }
         let value = Value::Object(Rc::new(ObjectData::new(vec![(
             "\0prototype".to_string(),
             Value::Builtin(Builtin::ObjectPrototype),
         )])));
-        *cell.borrow_mut() = Some(value.clone());
+        prototypes.borrow_mut().insert(realm, value.clone());
         value
     })
 }
