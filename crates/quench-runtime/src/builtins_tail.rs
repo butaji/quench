@@ -206,3 +206,10 @@ fn set_function_property(
 include!("builtins/function_name.rs");
 include!("builtins_prototype.rs");
 include!("builtins_value_string.rs");
+
+pub(crate) fn same_value_zero(left: &Value, right: &Value) -> bool {
+    if let (Value::Number(left), Value::Number(right)) = (left, right) {
+        return left.is_nan() && right.is_nan() || left == right;
+    }
+    same_value(Some(left), Some(right))
+}
