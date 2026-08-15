@@ -393,7 +393,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let time_zone_annotations = text
         .split('[')
         .skip(1)
-        .filter(|part| !part.starts_with("u-ca=") && !part.starts_with("!u-ca="))
+        .filter(|part| !part.contains('='))
         .count();
     if time_zone_annotations > 1 {
         return Err(crate::value::error::throw_range_error(
