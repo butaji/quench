@@ -90,7 +90,9 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateTimeSubtract => {
             Some(add(_receiver, arguments.first(), -1.0))
         }
-        crate::ops::Builtin::TemporalPlainDateTimeWith => Some(with(_receiver, arguments.first())),
+        crate::ops::Builtin::TemporalPlainDateTimeWith => {
+            Some(with(_receiver, arguments.first(), arguments.get(1)))
+        }
         _ => None,
     }
 }
@@ -173,14 +175,23 @@ fn number_property(value: &Value, name: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
-fn with(receiver: Option<&Value>, changes: Option<&Value>) -> Result<Value, VmError> {
+fn with(
+    receiver: Option<&Value>,
+    changes: Option<&Value>,
+    options: Option<&Value>,
+) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
     let changes = changes
         .filter(|value| crate::value::is_object(value))
         .ok_or_else(|| crate::value::error::throw_type_error("Invalid date-time"))?;
     let mut values = fields(receiver)?;
+    let calendar = crate::execute::get_property_result(changes, "calendar")?;
+    if !matches!(calendar, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
     let month_code = crate::execute::get_property_result(changes, "monthCode")?;
+    let month = crate::execute::get_property_result(changes, "month")?;
     if !matches!(month_code, Value::Undefined) {
         values[1] = crate::conversion::to_number(&month_code_number(&month_code)?)?;
     }
@@ -194,7 +205,44 @@ fn with(receiver: Option<&Value>, changes: Option<&Value>) -> Result<Value, VmEr
             };
         }
     }
+    if !matches!(month_code, Value::Undefined)
+        && month != Value::Undefined
+        && crate::conversion::to_number(&month)?
+            != crate::conversion::to_number(&month_code_number(&month_code)?)?
+    {
+        return Err(crate::value::error::throw_range_error("Month mismatch"));
+    }
+    let recognized = NAMES.iter().any(|name| {
+        crate::execute::get_property_result(changes, name)
+            .is_ok_and(|value| !matches!(value, Value::Undefined))
+    }) || !matches!(month_code, Value::Undefined);
+    if !recognized {
+        return Err(crate::value::error::throw_type_error(
+            "Insufficient date-time data",
+        ));
+    }
+    let overflow = options
+        .and_then(|value| crate::execute::get_property_result(value, "overflow").ok())
+        .unwrap_or(Value::String("constrain".into()));
+    if values[2] > days_in_month(values[0] as i32, values[1] as u32) as f64 {
+        if matches!(overflow, Value::String(value) if value == "constrain") {
+            values[2] = days_in_month(values[0] as i32, values[1] as u32) as f64;
+        } else {
+            return Err(crate::value::error::throw_range_error("Invalid date-time"));
+        }
+    }
     construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    let (next_year, next_month) = if month == 12 {
+        (year + 1, 1)
+    } else {
+        (year, month + 1)
+    };
+    chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)
+        .map(|date| (date - chrono::Days::new(1)).day())
+        .unwrap_or(28)
 }
 
 fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
