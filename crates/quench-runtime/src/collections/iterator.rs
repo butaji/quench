@@ -69,6 +69,7 @@ pub(crate) fn return_(
             }
             IteratorState::Drop { iterator, done, .. }
             | IteratorState::MapHelper { iterator, done, .. }
+            | IteratorState::FilterHelper { iterator, done, .. }
             | IteratorState::Take { iterator, done, .. } => {
                 if *done {
                     return Ok(iterator_result(Value::Undefined, true));
