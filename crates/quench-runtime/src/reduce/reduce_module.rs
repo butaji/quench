@@ -379,14 +379,20 @@ fn reduce_default_function_declaration<'a>(
             .ok_or_else(|| vec!["Unsupported default declaration".to_string()])?;
         return store_default(src, ops, next_slot, locals);
     }
-    reduce_exported_default!(
+    let result = reduce_exported_default!(
         function function,
         ops,
         facts,
         next_register,
         next_slot,
         locals
-    )
+    );
+    if let Some(identifier) = function.id.as_ref() {
+        if let Some(&src_slot) = locals.get(identifier.name.as_str()) {
+            alias_default(src_slot, ops, next_register, next_slot, locals);
+        }
+    }
+    result
 }
 
 fn reduce_default_class_declaration<'a>(
