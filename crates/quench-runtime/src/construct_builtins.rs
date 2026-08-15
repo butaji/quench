@@ -370,7 +370,9 @@ fn construct_error(
 
     let message = arguments
         .first()
-        .map_or(Ok(String::new()), crate::conversion::to_string)?;
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(crate::conversion::to_string)
+        .transpose()?;
     let mut properties = error_properties(builtin, message);
     append_error_cause(&mut properties, arguments)?;
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
@@ -384,30 +386,35 @@ fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execut
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined))
         .map(crate::conversion::to_string)
-        .transpose()?
-        .unwrap_or_default();
+        .transpose()?;
     let mut properties = error_properties(&crate::ops::Builtin::AggregateError, message);
     append_error_cause(&mut properties, &arguments[1..])?;
-    properties.push(("errors".to_string(), Value::array(errors)));
+    push_error_property(&mut properties, "errors", Value::array(errors));
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
 }
 
-fn error_properties(builtin: &crate::ops::Builtin, message: String) -> Vec<(String, Value)> {
+fn error_properties(
+    builtin: &crate::ops::Builtin,
+    message: Option<String>,
+) -> Vec<(String, Value)> {
     let name = error_name(builtin);
     let constructor = crate::vm::realm_intrinsic(*builtin);
     let prototype_builtin = crate::builtin_meta::instance_prototype(*builtin)
         .unwrap_or(crate::ops::Builtin::ErrorPrototype);
     let prototype = crate::vm::realm_intrinsic(prototype_builtin);
-    vec![
+    let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), Value::String(message)),
         ("constructor".to_string(), constructor),
         (
             crate::builtins::ERROR_SLOT.to_string(),
             Value::Boolean(true),
         ),
         ("\0prototype".to_string(), prototype),
-    ]
+    ];
+    if let Some(message) = message {
+        push_error_property(&mut properties, "message", Value::String(message));
+    }
+    properties
 }
 
 fn error_name(builtin: &crate::ops::Builtin) -> &'static str {
@@ -436,9 +443,17 @@ fn append_error_cause(
             return Ok(());
         }
         let cause = crate::execute::get_property_result(&options, "cause")?;
-        properties.push(("cause".to_string(), cause));
+        push_error_property(properties, "cause", cause);
     }
     Ok(())
+}
+
+fn push_error_property(properties: &mut Vec<(String, Value)>, key: &str, value: Value) {
+    properties.push((
+        crate::builtins::descriptor_key(key),
+        crate::builtins::non_enumerable_descriptor(&value),
+    ));
+    properties.push((key.to_string(), value));
 }
 
 pub(crate) fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
