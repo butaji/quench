@@ -635,7 +635,12 @@ fn construct_function(
         if crate::value::is_object(&final_this) {
             return Ok(final_this);
         }
-        return Err(crate::value::error::throw_type_error(
+        if !matches!(result, Value::Undefined) {
+            return Err(crate::value::error::throw_type_error(
+                "Derived constructor returned a non-object",
+            ));
+        }
+        return Err(crate::value::error::throw_reference_error(
             "Derived constructor did not initialize this",
         ));
     }
