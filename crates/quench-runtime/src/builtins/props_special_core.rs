@@ -69,6 +69,13 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
+        _ => special_match_tail(builtin, key),
+    }
+}
+
+fn special_match_tail(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (FinalizationRegistry, "prototype") => Some(Value::Builtin(FinalizationRegistryPrototype)),
         (FinalizationRegistryPrototype, "Symbol.toStringTag") => {
             Some(Value::String("FinalizationRegistry".into()))
