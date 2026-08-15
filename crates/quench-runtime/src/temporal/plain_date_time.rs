@@ -524,6 +524,13 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if let Some(result) = from_zoned(value, options)? {
         return result;
     }
+    if crate::execute::get_property(value, "_temporal_kind") == Value::String("PlainDate".into()) {
+        let fields = ["_year", "_month", "_day"]
+            .iter()
+            .map(|name| crate::execute::get_property(value, name))
+            .chain(std::iter::repeat(Value::Number(0.0)).take(6));
+        return construct(&fields.collect::<Vec<_>>());
+    }
     let year = crate::execute::get_property_result(value, "year")?;
     let day = crate::execute::get_property_result(value, "day")?;
     let month = crate::execute::get_property_result(value, "month")?;
