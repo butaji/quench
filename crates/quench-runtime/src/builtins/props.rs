@@ -85,6 +85,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalZonedDateTimePrototype, "toString") => {
             Some(Value::Builtin(TemporalZonedDateTimeToString))
         }
+        (TemporalZonedDateTime, "from") => Some(Value::Builtin(TemporalZonedDateTimeFrom)),
         (TemporalDurationPrototype, "round") => Some(Value::Builtin(TemporalDurationRound)),
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
