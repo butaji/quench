@@ -538,9 +538,7 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
     let Value::String(calendar) = value else {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     };
-    if calendar.eq_ignore_ascii_case("iso8601")
-        || (calendar.chars().any(|character| character.is_ascii_digit()) && calendar.contains('-'))
-    {
+    if calendar.eq_ignore_ascii_case("iso8601") {
         Ok(())
     } else {
         Err(crate::value::error::throw_range_error("Invalid calendar"))
@@ -549,6 +547,20 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
 
 fn parse_string(text: &str) -> Result<Value, VmError> {
     validate_annotations(text)?;
+    let mut calendar_checked = false;
+    for annotation in text.split('[').skip(1) {
+        let Some(calendar) = annotation
+            .trim_end_matches(']')
+            .strip_prefix("u-ca=")
+            .or_else(|| annotation.trim_end_matches(']').strip_prefix("!u-ca="))
+        else {
+            continue;
+        };
+        if !calendar_checked {
+            validate_calendar(&Value::String(calendar.to_string()))?;
+            calendar_checked = true;
+        }
+    }
     if text.split('[').skip(1).any(|part| {
         part.split_once('=')
             .is_some_and(|(key, _)| key.chars().any(|character| character.is_ascii_uppercase()))
