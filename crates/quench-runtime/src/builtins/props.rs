@@ -101,6 +101,7 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ArrayBufferPrototype, "detached") => Some(ArrayBufferDetachedGetter),
         (ArrayBufferPrototype, "immutable") => Some(ArrayBufferImmutableGetter),
         (ArrayBufferPrototype, "maxByteLength") => Some(ArrayBufferMaxByteLengthGetter),
+        (ArrayBufferPrototype, "resizable") => Some(ArrayBufferResizableGetter),
         (ArrayBufferPrototype, "resize") => Some(ArrayBufferResize),
         (ArrayBufferPrototype, "transferToImmutable") => Some(ArrayBufferTransferToImmutable),
         (SharedArrayBufferPrototype, "constructor") => Some(SharedArrayBuffer),
