@@ -418,6 +418,10 @@ fn data_view_property(view: &crate::value::DataViewData, key: &str) -> Value {
     if let Some(prototype) = view.prototype() {
         return get_property(&prototype, key);
     }
+    data_view_prototype_property(key)
+}
+
+fn data_view_prototype_property(key: &str) -> Value {
     let value = crate::builtins::property(Builtin::DataViewPrototype, key);
     if matches!(value, Value::Undefined) {
         return crate::builtins::property(Builtin::ObjectPrototype, key);
