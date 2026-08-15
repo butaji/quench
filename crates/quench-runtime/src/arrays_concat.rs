@@ -131,7 +131,14 @@ fn is_concat_spreadable(value: &Value) -> Result<bool, crate::execute::VmError> 
     if !matches!(flag, Value::Undefined) {
         return Ok(crate::intl::tolocale::value::is_truthy(&flag));
     }
-    Ok(matches!(value, Value::Array(_)))
+    Ok(matches!(value, Value::Array(_)) || proxy_targets_array(value))
+}
+
+fn proxy_targets_array(value: &Value) -> bool {
+    let Value::Proxy(proxy) = value else {
+        return false;
+    };
+    matches!(&proxy.target, Value::Array(_))
 }
 
 fn concat_array_like_length(value: &Value) -> Result<usize, crate::execute::VmError> {
