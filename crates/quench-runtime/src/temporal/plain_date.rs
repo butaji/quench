@@ -61,10 +61,10 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
     let calendar_count = text.matches("[u-ca=").count();
-    if calendar_count > 1 || text.contains("[!u-ca=") && calendar_count > 0 {
+    if text.contains("[!u-ca=") && calendar_count > 0 {
         return Err(crate::value::error::throw_range_error("Multiple calendars"));
     }
-    let date = text.split('T').next().unwrap_or(text);
+    let date = date_part(text);
     let parts = date.split('-').collect::<Vec<_>>();
     if parts.len() == 1 && date.len() == 8 {
         let year = date[..4]
@@ -91,6 +91,10 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         .parse()
         .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
     checked_date_object(year, month, day)
+}
+
+fn date_part(text: &str) -> &str {
+    text.split(['T', '[']).next().unwrap_or(text)
 }
 
 fn checked_date_object(year: i32, month: i32, day: i32) -> Result<Value, VmError> {
