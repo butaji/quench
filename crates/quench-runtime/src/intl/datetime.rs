@@ -331,10 +331,7 @@ fn prototype_result(
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRange => {
             let (start, end) = range_values(arguments)?;
-            if start == end {
-                return Ok(Value::String(start));
-            }
-            Ok(Value::String(format!("{start} – {end}")))
+            Ok(Value::String(range_text_result(&start, &end)))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts => {
             let (start, end) = range_values(arguments)?;
@@ -342,6 +339,14 @@ fn prototype_result(
         }
         crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots)),
         _ => Err(runtime_error("TypeError: method not found")),
+    }
+}
+
+fn range_text_result(start: &str, end: &str) -> String {
+    if start == end {
+        start.to_string()
+    } else {
+        format!("{start} – {end}")
     }
 }
 

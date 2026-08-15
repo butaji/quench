@@ -313,6 +313,32 @@ fn format_duration_values(
     let minutes = minutes.abs();
     let seconds = seconds.abs();
     let style = duration_style(slots);
+    format_duration_shape(
+        slots,
+        style,
+        negative,
+        days,
+        hours,
+        minutes,
+        seconds,
+        milliseconds,
+        microseconds,
+        nanoseconds,
+    )
+}
+
+fn format_duration_shape(
+    slots: &[(String, Value)],
+    style: &str,
+    negative: bool,
+    days: i64,
+    hours: i64,
+    minutes: i64,
+    seconds: i64,
+    milliseconds: i64,
+    microseconds: i64,
+    nanoseconds: i64,
+) -> Result<String, VmError> {
     if slot_value(slots, "minutes") == Some("numeric")
         && slot_value(slots, "seconds") == Some("numeric")
     {
