@@ -421,6 +421,12 @@ fn same_property_receiver(value: &Value, receiver: &Value) -> bool {
         (Value::Map(left), Value::Map(right)) => std::rc::Rc::ptr_eq(left, right),
         (Value::Set(left), Value::Set(right)) => std::rc::Rc::ptr_eq(left, right),
         (Value::Array(left), Value::Array(right)) => std::rc::Rc::ptr_eq(left, right),
+        _ => primitive_property_receiver(value, receiver),
+    }
+}
+
+fn primitive_property_receiver(value: &Value, receiver: &Value) -> bool {
+    match (value, receiver) {
         (Value::Number(_), Value::Number(_))
         | (Value::Boolean(_), Value::Boolean(_))
         | (Value::BigInt(_), Value::BigInt(_))
