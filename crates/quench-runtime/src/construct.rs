@@ -275,13 +275,6 @@ fn construct_builtin(
 }
 
 include!("construct_builtins.rs");
-fn box_to_object(
-    value: Value,
-    constructor: crate::ops::Builtin,
-) -> Result<Value, crate::execute::VmError> {
-    Ok(boxed_primitive(value, constructor))
-}
-
 fn construct_function(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     target: &Value,
