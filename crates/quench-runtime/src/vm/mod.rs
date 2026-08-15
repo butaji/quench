@@ -411,7 +411,7 @@ pub(crate) fn bare_call_receiver(
     this_value.clone()
 }
 
-fn to_object_value(this_value: &Value) -> Value {
+pub(crate) fn to_object_value(this_value: &Value) -> Value {
     match this_value {
         Value::Object(_)
         | Value::Array(_)
@@ -475,6 +475,21 @@ pub fn execute_builtin_with_receiver(
     if let Some(result) = early_dispatch(builtin, receiver, arguments) {
         return result;
     }
+    if builtin == Builtin::ArrayBufferByteLengthGetter {
+        return execute_array_buffer_byte_length(receiver);
+    }
+    if builtin == Builtin::ArrayBufferDetachedGetter {
+        return execute_array_buffer_detached(receiver);
+    }
+    if builtin == Builtin::ArrayBufferMaxByteLengthGetter {
+        return execute_array_buffer_max_byte_length(receiver);
+    }
+    if builtin == Builtin::ArrayBufferResizableGetter {
+        return execute_array_buffer_resizable(receiver);
+    }
+    if builtin == Builtin::ArrayBufferImmutableGetter {
+        return execute_array_buffer_immutable(receiver);
+    }
     if is_data_view_builtin(builtin) {
         return execute_data_view_builtin(builtin, receiver, arguments);
     }
@@ -515,12 +530,24 @@ fn stateful_builtin(
 ) -> Option<Result<Value, VmError>> {
     match builtin {
         Builtin::GeneratorNext => Some(crate::generator::next(receiver, arguments)),
+        Builtin::AsyncGeneratorNext => Some(crate::generator::async_next(receiver, arguments)),
         Builtin::GeneratorReturn => Some(crate::generator::return_(receiver, arguments)),
+        Builtin::AsyncGeneratorReturn => Some(crate::generator::async_return(receiver, arguments)),
         Builtin::GeneratorThrow => Some(crate::generator::throw(receiver, arguments)),
         Builtin::ProxyRevoke => Some(crate::proxy::revoke(receiver)),
         Builtin::Math => Some(Err(not_callable())),
         _ => None,
     }
+}
+
+fn async_iterator_dispose(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let target = receiver.unwrap_or(&Value::Undefined);
+    let method = crate::execute::get_property_result(target, "return")?;
+    if matches!(method, Value::Undefined | Value::Null) {
+        return Ok(crate::promise::promise_resolve(&[Value::Undefined]));
+    }
+    let result = crate::functions::execute_target(&method, target, &[])?;
+    Ok(crate::promise::promise_resolve(&[result]))
 }
 
 fn is_object_special(builtin: Builtin) -> bool {

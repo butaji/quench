@@ -87,7 +87,7 @@ fn number(value: &Value) -> Option<f64> {
 fn to_string(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
-        Value::Number(value) => value.to_string(),
+        Value::Number(value) => crate::conversion::number_to_string(*value),
         Value::Boolean(value) => value.to_string(),
         Value::Null => "null".to_string(),
         Value::Undefined => "undefined".to_string(),

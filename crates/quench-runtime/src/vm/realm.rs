@@ -178,6 +178,7 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "Promise" => Promise,
         "RegExp" => RegExp,
         "Symbol" => Symbol,
+        "Intl" => Intl,
         "Number" => Number,
         "Boolean" => Boolean,
         "BigInt" => BigInt,
