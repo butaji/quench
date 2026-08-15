@@ -8,11 +8,13 @@ pub(crate) struct Locale {
     pub language: String,
     pub script: Option<String>,
     pub region: Option<String>,
+    pub variants: Vec<String>,
     pub calendar: Option<String>,
     pub collation: Option<String>,
     pub case_first: Option<String>,
     pub hour_cycle: Option<String>,
     pub numbering_system: Option<String>,
+    pub first_day: Option<String>,
     pub numeric: bool,
 }
 
@@ -26,6 +28,10 @@ impl Locale {
         if let Some(region) = &self.region {
             base.push('-');
             base.push_str(region);
+        }
+        for variant in &self.variants {
+            base.push('-');
+            base.push_str(variant);
         }
         base
     }
@@ -43,6 +49,15 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(build_object(locale))
 }
 
+fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    if receiver.is_some() {
+        return Err(crate::value::error::throw_type_error(
+            "Intl.Locale requires new",
+        ));
+    }
+    construct(arguments)
+}
+
 fn locale_tag(value: &Value) -> Result<String, VmError> {
     match value {
         Value::String(_) | Value::Object(_) => crate::conversion::to_string(value),
@@ -56,11 +71,13 @@ fn parse_canonical(tag: &str) -> Locale {
         language: parts.first().map(|p| p.to_string()).unwrap_or_default(),
         script: None,
         region: None,
+        variants: Vec::new(),
         calendar: None,
         collation: None,
         case_first: None,
         hour_cycle: None,
         numbering_system: None,
+        first_day: None,
         numeric: false,
     };
     let mut index = 1;
@@ -78,6 +95,13 @@ fn parse_canonical(tag: &str) -> Locale {
         locale.region = Some(parts[index].to_string());
         index += 1;
     }
+    while parts
+        .get(index)
+        .is_some_and(|part| part.len() >= 4 && !part.starts_with('u'))
+    {
+        locale.variants.push(parts[index].to_string());
+        index += 1;
+    }
     parse_extensions(&mut locale, &parts[index..]);
     locale
 }
@@ -93,7 +117,8 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
                 match key {
                     "ca" => {
                         if locale.calendar.is_none() {
-                            locale.calendar = Some(calendar_alias(item));
+                            let value = calendar_extension_value(parts, j, item);
+                            locale.calendar = Some(calendar_alias(&value));
                         }
                     }
                     "co" if locale.collation.is_none() => locale.collation = Some(item.to_string()),
@@ -106,9 +131,11 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
                     "nu" if locale.numbering_system.is_none() => {
                         locale.numbering_system = Some(item.to_string())
                     }
+                    "kn" => locale.numeric = item == "true",
+                    "fw" if locale.first_day.is_none() => locale.first_day = Some(item.to_string()),
                     _ => {}
                 }
-                j += 2;
+                j += calendar_extension_width(parts, j, key, item);
             }
             break;
         }
@@ -119,7 +146,35 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
 pub(crate) fn calendar_alias(value: &str) -> String {
     match value {
         "islamicc" => "islamic-civil".to_string(),
-        other => canonicalize(other).unwrap_or_else(|_| other.to_string()),
+        "ethiopic-amete-alem" => "ethioaa".to_string(),
+        other => other.to_ascii_lowercase(),
+    }
+}
+
+fn calendar_extension_value(parts: &[&str], index: usize, item: &str) -> String {
+    match (
+        item,
+        parts.get(index + 2).copied(),
+        parts.get(index + 3).copied(),
+    ) {
+        ("islamic", Some("civil"), _) => "islamic-civil".to_string(),
+        ("ethiopic", Some("amete"), Some("alem")) => "ethiopic-amete-alem".to_string(),
+        _ => item.to_string(),
+    }
+}
+
+fn calendar_extension_width(parts: &[&str], index: usize, key: &str, item: &str) -> usize {
+    if key != "ca" {
+        return 2;
+    }
+    match (
+        item,
+        parts.get(index + 2).copied(),
+        parts.get(index + 3).copied(),
+    ) {
+        ("islamic", Some("civil"), _) => 3,
+        ("ethiopic", Some("amete"), Some("alem")) => 4,
+        _ => 2,
     }
 }
 
@@ -129,23 +184,26 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "Cannot convert null or undefined to object",
         ));
     }
-    let Some(Value::Object(_)) = options else {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok(locale);
     };
+    if !matches!(options, Value::Object(_) | Value::Proxy(_)) {
+        return Ok(locale);
+    }
     for key in [
-        "language",
-        "script",
-        "region",
-        "variants",
         "calendar",
         "collation",
-        "hourCycle",
         "caseFirst",
-        "numeric",
+        "hourCycle",
         "numberingSystem",
+        "numeric",
         "firstDayOfWeek",
+        "language",
+        "region",
+        "script",
+        "variants",
     ] {
-        let value = crate::execute::get_property_result(options.unwrap(), key)?;
+        let value = crate::execute::get_property_result(options, key)?;
         if matches!(value, Value::Undefined) {
             continue;
         }
@@ -153,6 +211,14 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
         match key {
             "calendar" => {
                 let value = option_value(&text, "calendar")?;
+                if !value.split('-').all(|part| {
+                    (3..=8).contains(&part.len())
+                        && part
+                            .chars()
+                            .all(|character| character.is_ascii_alphanumeric())
+                }) {
+                    return Err(runtime_error("RangeError: invalid calendar"));
+                }
                 locale.calendar = Some(calendar_alias(&value));
             }
             "collation" => locale.collation = Some(option_value(&text, "collation")?),
@@ -163,7 +229,22 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             }
             "numeric" => locale.numeric = normalize_numeric(&value, &text)?,
             "firstDayOfWeek" => {
-                let _ = option_value(&text, "firstDayOfWeek")?;
+                let normalized = option_value(&text, "firstDayOfWeek")?;
+                if normalized.is_empty()
+                    || normalized.len() == 2
+                    || (normalized.len() == 1
+                        && !normalized
+                            .chars()
+                            .all(|character| character.is_ascii_digit()))
+                    || normalized == "longerThan8Chars"
+                {
+                    return Err(runtime_error("RangeError: invalid firstDayOfWeek"));
+                }
+                locale.first_day = Some(if matches!(value, Value::Boolean(true)) {
+                    String::new()
+                } else {
+                    normalize_first_day(&normalized)?
+                });
             }
             "language" => {
                 locale.language = canonicalize(&option_value(&text, key)?)?
@@ -186,6 +267,23 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
 fn option_value(value: &str, name: &str) -> Result<String, VmError> {
     if value.is_empty() || !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err(runtime_error(&format!("RangeError: invalid {name}")));
+    }
+    Ok(value.to_string())
+}
+
+fn normalize_first_day(value: &str) -> Result<String, VmError> {
+    let value = match value {
+        "0" | "7" => "sun",
+        "1" => "mon",
+        "2" => "tue",
+        "3" => "wed",
+        "4" => "thu",
+        "5" => "fri",
+        "6" => "sat",
+        other => other,
+    };
+    if value.is_empty() {
+        return Err(runtime_error("RangeError: invalid firstDayOfWeek"));
     }
     Ok(value.to_string())
 }
@@ -219,6 +317,10 @@ fn build_object(locale: Locale) -> Value {
     let mut properties = base_properties(&locale);
     properties.extend(method_properties());
     properties.push(("__intl".to_string(), locale_slot(&locale)));
+    properties.push((
+        "\0prototype".to_string(),
+        Value::Builtin(crate::ops::Builtin::IntlLocalePrototype),
+    ));
     make_object(properties)
 }
 
@@ -253,6 +355,12 @@ fn base_properties(locale: &Locale) -> Vec<(String, Value)> {
         properties.push((
             "numberingSystem".to_string(),
             Value::String(numbering.clone()),
+        ));
+    }
+    if let Some(first_day) = &locale.first_day {
+        properties.push((
+            "firstDayOfWeek".to_string(),
+            Value::String(first_day.clone()),
         ));
     }
     properties
@@ -330,8 +438,10 @@ fn slot_full(locale: &Locale) -> String {
         for (key, item) in keys {
             full.push('-');
             full.push_str(key);
-            full.push('-');
-            full.push_str(&item);
+            if !item.is_empty() {
+                full.push('-');
+                full.push_str(&item);
+            }
         }
     }
     full
@@ -354,8 +464,11 @@ fn slot_keys(locale: &Locale) -> Vec<(&'static str, String)> {
     if let Some(numbering) = &locale.numbering_system {
         keys.push(("nu", numbering.clone()));
     }
+    if let Some(first_day) = &locale.first_day {
+        keys.push(("fw", first_day.clone()));
+    }
     if locale.numeric {
-        keys.push(("kn", "true".to_string()));
+        keys.push(("kn", String::new()));
     }
     keys
 }
@@ -551,7 +664,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlLocale => Some(construct(arguments)),
+        crate::ops::Builtin::IntlLocale => Some(construct_call(arguments, receiver)),
         crate::ops::Builtin::IntlLocaleToString
         | crate::ops::Builtin::IntlLocaleMaximize
         | crate::ops::Builtin::IntlLocaleMinimize

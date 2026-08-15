@@ -199,7 +199,15 @@ pub(crate) fn execute_set_property(
     if is_primitive_property_target(&target) {
         return set_primitive_property(registers, object, &target, &key, value, strict);
     }
-    if inherited_write_blocked(&target, &key) {
+    validate_array_length_write(&target, &key, &value)?;
+    if matches!(
+        target,
+        crate::value::Value::String(_)
+            | crate::value::Value::StringUnits(_)
+            | crate::value::Value::Number(_)
+            | crate::value::Value::Boolean(_)
+            | crate::value::Value::BigInt(_)
+    ) {
         return write_failure(strict);
     }
     if let crate::value::Value::Builtin(builtin) = &target {
@@ -212,7 +220,24 @@ pub(crate) fn execute_set_property(
     Ok(())
 }
 
-pub(crate) fn inherits_error_prototype(target: &crate::value::Value) -> bool {
+fn validate_array_length_write(
+    target: &crate::value::Value,
+    key: &str,
+    value: &crate::value::Value,
+) -> Result<(), crate::execute::VmError> {
+    if !matches!(target, crate::value::Value::Array(_)) || key != "length" {
+        return Ok(());
+    }
+    let length = crate::conversion::to_number(value)?;
+    if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > 4_294_967_295.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
+    }
+    Ok(())
+}
+
+fn inherits_error_prototype(target: &crate::value::Value) -> bool {
     if matches!(
         target,
         crate::value::Value::Builtin(crate::ops::Builtin::ErrorPrototype)

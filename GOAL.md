@@ -1,10 +1,9 @@
-# Goal: stages 51–65
+# Goal: stages 95–103
 
-Bring test262 stages 51–65 to 100% passing through the canonical runner:
-Infinity, Iterator, JSON, Map, MapIteratorPrototype, Math, NaN, NativeErrors,
-Number, Object, Promise, Proxy, Reflect, RegExp, and
-RegExpStringIteratorPrototype. Implement shared intrinsic lookup, descriptors,
-prototype/realm identity, coercion, proxy traps, iterator and promise
-completion behavior without optimizing through observable behavior. Do not
-edit test262 or the harness. Re-run owned stages plus earlier regressions;
-finish with clean checks and committed verified changes.
+Bring test262 stages 95–103 to 100% passing through the canonical runner:
+Intl Array, BigInt, Collator, Date, DateTimeFormat, DisplayNames,
+DurationFormat, FallbackSymbol, and Intl. Preserve ECMA-402 option-getter
+order, locale canonicalization, prototype/accessor descriptors, formatting,
+completion behavior, and errors. Use the shared semantic path; do not alter
+the harness or test262. Re-run owned stages plus earlier regressions, run
+quality checks, and commit verified changes.
