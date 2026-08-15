@@ -18,8 +18,77 @@ pub(crate) fn execute(
         .or_else(|| match builtin {
             crate::ops::Builtin::TemporalPlainDateToString
             | crate::ops::Builtin::TemporalPlainDateToJSON => Some(to_string(receiver)),
+            crate::ops::Builtin::TemporalPlainDateCalendarIdGetter
+            | crate::ops::Builtin::TemporalPlainDateDayOfWeekGetter
+            | crate::ops::Builtin::TemporalPlainDateDayOfYearGetter
+            | crate::ops::Builtin::TemporalPlainDateDaysInMonthGetter
+            | crate::ops::Builtin::TemporalPlainDateDaysInWeekGetter
+            | crate::ops::Builtin::TemporalPlainDateDaysInYearGetter
+            | crate::ops::Builtin::TemporalPlainDateInLeapYearGetter
+            | crate::ops::Builtin::TemporalPlainDateMonthsInYearGetter => {
+                Some(accessor(builtin, receiver))
+            }
             _ => None,
         })
+}
+
+fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDate"))?
+    else {
+        return Err(crate::value::error::throw_type_error("Not a PlainDate"));
+    };
+    let year = field_number(object, "year")?;
+    let month = field_number(object, "month")?;
+    let day = field_number(object, "day")?;
+    let value = match builtin {
+        crate::ops::Builtin::TemporalPlainDateCalendarIdGetter => Value::String("iso8601".into()),
+        crate::ops::Builtin::TemporalPlainDateDaysInWeekGetter => Value::Number(7.0),
+        crate::ops::Builtin::TemporalPlainDateMonthsInYearGetter => Value::Number(12.0),
+        crate::ops::Builtin::TemporalPlainDateDaysInMonthGetter => {
+            Value::Number(days_in_month(year, month)?)
+        }
+        crate::ops::Builtin::TemporalPlainDateDaysInYearGetter => {
+            Value::Number(if leap(year) { 366.0 } else { 365.0 })
+        }
+        crate::ops::Builtin::TemporalPlainDateInLeapYearGetter => Value::Boolean(leap(year)),
+        crate::ops::Builtin::TemporalPlainDateDayOfYearGetter => {
+            Value::Number(day_of_year(year, month, day))
+        }
+        crate::ops::Builtin::TemporalPlainDateDayOfWeekGetter => {
+            Value::Number(day_of_week(year, month, day))
+        }
+        _ => Value::Undefined,
+    };
+    Ok(value)
+}
+
+fn leap(year: f64) -> bool {
+    year % 4.0 == 0.0 && (year % 100.0 != 0.0 || year % 400.0 == 0.0)
+}
+fn day_of_year(year: f64, month: f64, day: f64) -> f64 {
+    (1..month as i32)
+        .map(|m| days_in_month(year, m as f64).unwrap_or(0.0))
+        .sum::<f64>()
+        + day
+}
+fn day_of_week(year: f64, month: f64, day: f64) -> f64 {
+    let mut y = year as i64;
+    let m = month as i64;
+    if m < 3 {
+        y -= 1;
+    }
+    let value = (y + y / 4 - y / 100
+        + y / 400
+        + [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4][m as usize - 1]
+        + day as i64)
+        % 7;
+    let weekday = (value + 7) % 7;
+    if weekday == 0 {
+        7.0
+    } else {
+        weekday as f64
+    }
 }
 
 fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -194,6 +263,25 @@ fn date_object(year: f64, month: f64, day: f64) -> Value {
         ("monthCode".into(), Value::String(format!("M{month:02.0}"))),
         ("day".into(), Value::Number(day)),
         ("calendarId".into(), Value::String("iso8601".into())),
+        (
+            "dayOfWeek".into(),
+            Value::Number(day_of_week(year, month, day)),
+        ),
+        (
+            "dayOfYear".into(),
+            Value::Number(day_of_year(year, month, day)),
+        ),
+        (
+            "daysInMonth".into(),
+            Value::Number(days_in_month(year, month).unwrap_or(0.0)),
+        ),
+        ("daysInWeek".into(), Value::Number(7.0)),
+        (
+            "daysInYear".into(),
+            Value::Number(if leap(year) { 366.0 } else { 365.0 }),
+        ),
+        ("inLeapYear".into(), Value::Boolean(leap(year))),
+        ("monthsInYear".into(), Value::Number(12.0)),
         (
             "\0prototype".into(),
             Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype),
