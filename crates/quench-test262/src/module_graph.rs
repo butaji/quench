@@ -12,6 +12,7 @@ pub struct ModuleUnit {
     pub path: PathBuf,
     pub source: String,
     pub kind: ModuleKind,
+    pub bytes: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +20,7 @@ pub enum ModuleKind {
     JavaScript,
     Json,
     Text,
+    Bytes,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -48,6 +50,12 @@ impl ModuleGraph {
 
     pub fn add_text_dependency(&mut self, path: PathBuf, source: String) -> ModuleId {
         self.add_unit(path, source, ModuleKind::Text, false)
+    }
+
+    pub fn add_bytes_dependency(&mut self, path: PathBuf, bytes: Vec<u8>) -> ModuleId {
+        let id = self.add_unit(path, String::new(), ModuleKind::Bytes, false);
+        self.units[id.0 as usize].bytes = Some(bytes);
+        id
     }
 
     pub fn entry(&self) -> Option<ModuleId> {
@@ -175,6 +183,7 @@ impl ModuleGraph {
             path,
             source,
             kind,
+            bytes: None,
         });
         if entry {
             self.entry = Some(id);
