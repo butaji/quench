@@ -15,8 +15,10 @@ use std::{
 use walkdir::WalkDir;
 mod esm;
 mod host_context;
+mod js_runtime;
 
 mod polyfills;
+use js_runtime::{JsRuntime, QuenchRuntime, QuickJsRuntime};
 #[rustfmt::skip]
 static BOOTSTRAP_SOURCE: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| polyfills::node_compat().bootstrap_source());
@@ -47,16 +49,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return run_directory_reuse(&dir);
     }
     match mode.as_deref() {
-        Some("-e") | Some("--eval") => run_source(&args.next().unwrap_or_default()),
+        Some("-e") | Some("--eval") => {
+            let runtime = QuickJsRuntime::new()?;
+            runtime.execute(&args.next().unwrap_or_default(), None)
+        }
         Some(path) => {
             let source = fs::read_to_string(path)?;
-            run_source_with_runtime_at_path(
-                &source,
-                &Runtime::new()?,
-                Some(PathBuf::from(path).as_path()),
-            )
+            let runtime = QuickJsRuntime::new()?;
+            runtime.execute(&source, Some(PathBuf::from(path).as_path()))
         }
-        None => run_source(""),
+        None => {
+            let runtime = QuickJsRuntime::new()?;
+            runtime.execute("", None)
+        }
     }
 }
 fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
@@ -70,24 +75,14 @@ fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Some("-e") | Some("--eval") => {
-            run_quench_source(args.get(1).map_or("", String::as_str), None)
+            QuenchRuntime.execute(args.get(1).map_or("", String::as_str), None)
         }
         Some(path) => {
             let source = fs::read_to_string(path)?;
-            run_quench_source(&source, Some(path))
+            QuenchRuntime.execute(&source, Some(PathBuf::from(path).as_path()))
         }
-        None => run_quench_source("", None),
+        None => QuenchRuntime.execute("", None),
     }
-}
-fn run_quench_source(source: &str, path: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
-    let program = match path.is_some_and(|path| path.ends_with(".mjs")) {
-        true => quench_runtime::reduce::reduce_module_source(source),
-        false => quench_runtime::reduce::reduce_source(source),
-    }
-    .map_err(|errors| errors.join("\n"))?;
-    quench_runtime::execute::run_vm(program.ops())
-        .map(|_| ())
-        .map_err(|error| error.render().into())
 }
 fn cli_args() -> Vec<String> {
     let mut args: Vec<String> = env::args().skip(1).collect();
@@ -99,10 +94,6 @@ fn cli_args() -> Vec<String> {
 }
 fn print_help() {
     println!("quench-node [--stage N|--test-dir DIR|--reuse-dir DIR|-e CODE|SCRIPT]\n  --reuse-dir reuses one rquickjs runtime with isolated contexts per script");
-}
-fn run_source(source: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let runtime = Runtime::new()?;
-    run_source_with_runtime_at_path(source, &runtime, None)
 }
 fn run_source_with_runtime_at_path(
     source: &str,
@@ -227,13 +218,22 @@ fn run_directory_with_runtime(
 }
 #[cfg(test)]
 mod tests {
-    use super::run_source;
+    use super::{js_runtime::JsRuntime, QuickJsRuntime};
     #[test]
     fn evaluates_javascript_source() {
-        run_source("if (1 + 1 !== 2) throw new Error('bad arithmetic');").unwrap();
+        QuickJsRuntime::new()
+            .unwrap()
+            .execute("if (1 + 1 !== 2) throw new Error('bad arithmetic');", None)
+            .unwrap();
     }
     #[test]
     fn loads_node_compatibility_globals() {
-        run_source("if (typeof Buffer !== 'function') throw new Error('Buffer missing');").unwrap();
+        QuickJsRuntime::new()
+            .unwrap()
+            .execute(
+                "if (typeof Buffer !== 'function') throw new Error('Buffer missing');",
+                None,
+            )
+            .unwrap();
     }
 }
