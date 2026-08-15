@@ -4,7 +4,7 @@ use crate::{
     ops::Op,
     value::{GeneratorData, GeneratorState, Value},
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::{
     cell::{Ref, RefCell, RefMut},
     rc::Rc,
@@ -59,6 +59,8 @@ pub(crate) fn create(
         done: RefCell::new(false),
         state: RefCell::new(state),
         pending_yield: RefCell::new(false),
+        executing: RefCell::new(false),
+        async_next_queue: RefCell::new(VecDeque::new()),
     })))
 }
 
@@ -152,13 +154,42 @@ pub(crate) fn next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
 }
 
 pub(crate) fn async_next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    if matches!(receiver, Some(Value::Generator(generator)) if generator.function.is_async) {
-        return next(receiver, arguments);
+    let Some(Value::Generator(generator)) = receiver else {
+        return async_next_error();
+    };
+    if !generator.function.is_async {
+        return async_next_error();
     }
+    if *generator.executing.borrow() {
+        let promise = Rc::new(crate::value::PromiseData::default());
+        generator.async_next_queue.borrow_mut().push_back((
+            first_argument(arguments),
+            Rc::clone(&promise),
+        ));
+        return Ok(Value::Promise(promise));
+    }
+    *generator.executing.borrow_mut() = true;
+    let result = next(receiver, arguments);
+    *generator.executing.borrow_mut() = false;
+    drain_async_next_queue(generator);
+    result
+}
+
+fn async_next_error() -> Result<Value, VmError> {
     let error = crate::value::error::throw_type_error(
         "AsyncGenerator.next called on incompatible receiver",
     );
     Ok(crate::promise::from_async_completion(Err(error)))
+}
+
+fn drain_async_next_queue(generator: &Rc<GeneratorData>) {
+    let Some((value, promise)) = generator.async_next_queue.borrow_mut().pop_front() else {
+        return;
+    };
+    *generator.executing.borrow_mut() = true;
+    let completion = resume(generator, Resume::Next(value));
+    *generator.executing.borrow_mut() = false;
+    crate::promise::settle_async_generator_completion(completion, Rc::clone(generator), promise);
 }
 pub(crate) fn return_(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let generator = generator_receiver(receiver, "return")?;

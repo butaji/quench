@@ -216,15 +216,23 @@ pub(crate) fn from_async_generator_completion(
     generator: Rc<crate::value::GeneratorData>,
 ) -> Value {
     let promise = Rc::new(PromiseData::default());
+    settle_async_generator_completion(completion, generator, Rc::clone(&promise));
+    Value::Promise(promise)
+}
+
+pub(crate) fn settle_async_generator_completion(
+    completion: Result<Value, VmError>,
+    generator: Rc<crate::value::GeneratorData>,
+    promise: Rc<PromiseData>,
+) {
     match completion {
         Ok(value) => resolve_promise(&promise, value),
         Err(VmError::Suspended(awaited)) => {
-            register_async_generator(&awaited, generator, Rc::clone(&promise))
+            register_async_generator(&awaited, generator, promise)
         }
         Err(VmError::Thrown(reason)) => reject_promise(&promise, reason),
         Err(_) => reject_promise(&promise, Value::Undefined),
     }
-    Value::Promise(promise)
 }
 
 pub(crate) fn register_async_generator(
