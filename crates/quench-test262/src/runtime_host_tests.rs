@@ -96,6 +96,27 @@ fn resource_imports_survive_assert_harness_prefix() {
 }
 
 #[test]
+fn imported_javascript_module_preserves_harness_globals() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import { value } from './dep.js'; assert.sameValue(value, true); export default value;"
+            .to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const value = true;".to_string(),
+    );
+    let linked = LinkedModuleGraph::compile_with_entry_prefix(
+        &mut graph,
+        Some(entry),
+        &[include_str!("../../../tests/test262/harness/assert.js")],
+    )
+    .expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+}
+
+#[test]
 fn linked_import_reads_the_exporters_live_default_cell() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(
