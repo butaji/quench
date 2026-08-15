@@ -28,10 +28,14 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     primitive_prototype_property(value, key)
 }
 fn get_property_value(value: &Value, key: &str) -> Value {
-    use Value::*;
     if let Some(found) = crate::typed_array_prototype::own_property(value, key) {
         return found;
     }
+    property_for_value(value, key)
+}
+
+fn property_for_value(value: &Value, key: &str) -> Value {
+    use Value::*;
     match value {
         Builtin(builtin) if crate::intl::tolocale::symbol::name(*builtin).is_some() => {
             bind_callable_property(
