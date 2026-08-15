@@ -352,21 +352,29 @@ fn boxed_object(value: &Value) -> Value {
 
 pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     let (name, constructor, prototype) = match builtin {
-        Builtin::RangeError => ("RangeError", Builtin::RangeError, Builtin::ErrorPrototype),
+        Builtin::RangeError => (
+            "RangeError",
+            Builtin::RangeError,
+            Builtin::RangeErrorPrototype,
+        ),
         Builtin::ReferenceError => (
             "ReferenceError",
             Builtin::ReferenceError,
-            Builtin::ErrorPrototype,
+            Builtin::ReferenceErrorPrototype,
         ),
-        Builtin::SyntaxError => ("SyntaxError", Builtin::SyntaxError, Builtin::ErrorPrototype),
-        Builtin::EvalError => ("EvalError", Builtin::EvalError, Builtin::ErrorPrototype),
-        Builtin::URIError => ("URIError", Builtin::URIError, Builtin::ErrorPrototype),
+        Builtin::SyntaxError => (
+            "SyntaxError",
+            Builtin::SyntaxError,
+            Builtin::SyntaxErrorPrototype,
+        ),
+        Builtin::EvalError => ("EvalError", Builtin::EvalError, Builtin::EvalErrorPrototype),
+        Builtin::URIError => ("URIError", Builtin::URIError, Builtin::URIErrorPrototype),
         Builtin::AggregateError => (
             "AggregateError",
             Builtin::AggregateError,
-            Builtin::ErrorPrototype,
+            Builtin::AggregateErrorPrototype,
         ),
-        Builtin::TypeError => ("TypeError", Builtin::TypeError, Builtin::ErrorPrototype),
+        Builtin::TypeError => ("TypeError", Builtin::TypeError, Builtin::TypeErrorPrototype),
         Builtin::SuppressedError => (
             "SuppressedError",
             Builtin::SuppressedError,
