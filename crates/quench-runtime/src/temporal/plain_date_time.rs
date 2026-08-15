@@ -112,7 +112,7 @@ pub(crate) fn execute(
             Some(to_string(receiver, arguments.first()))
         }
         crate::ops::Builtin::TemporalPlainDateTimeToLocaleString => {
-            Some(to_string(receiver, arguments.get(1)))
+            Some(to_locale_string(receiver, arguments))
         }
         crate::ops::Builtin::TemporalPlainDateTimeCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalPlainDateTimeEquals => {
@@ -136,6 +136,17 @@ pub(crate) fn execute(
         }
         _ => None,
     }
+}
+
+fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let formatter = crate::intl::datetime::construct(arguments)?;
+    crate::intl::datetime::prototype_method(
+        crate::ops::Builtin::IntlDateTimeFormatFormat,
+        &[receiver
+            .cloned()
+            .ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?],
+        Some(&formatter),
+    )
 }
 
 fn to_zoned_date_time(
