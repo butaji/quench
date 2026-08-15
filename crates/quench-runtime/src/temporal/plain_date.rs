@@ -4,8 +4,27 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
     let month = number(arguments.get(1))?;
     let day = number(arguments.get(2))?;
+    if let Some(calendar @ Value::String(_)) = arguments.get(3) {
+        validate_constructor_calendar(calendar)?;
+    } else if matches!(arguments.get(3), Some(value) if !matches!(value, Value::Undefined)) {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
     validate_date(year, month, day)?;
     Ok(date_object(year, month, day))
+}
+
+fn validate_constructor_calendar(value: &Value) -> Result<(), VmError> {
+    if crate::conversion::is_symbol(value) {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
+    let Value::String(calendar) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    };
+    if calendar.eq_ignore_ascii_case("iso8601") {
+        Ok(())
+    } else {
+        Err(crate::value::error::throw_range_error("Invalid calendar"))
+    }
 }
 
 pub(crate) fn execute(
