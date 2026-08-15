@@ -310,6 +310,9 @@ fn validate_relative_era_year(relative_to: Option<&Value>) -> Result<(), VmError
     let Some(value) = crate::execute::get_property_result(relative_to, "eraYear").ok() else {
         return Ok(());
     };
+    if matches!(value, Value::Undefined) {
+        return Ok(());
+    }
     let number = crate::conversion::to_number(&value)?;
     if !number.is_finite() {
         return Err(crate::value::error::throw_range_error(
