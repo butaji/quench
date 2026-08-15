@@ -13,23 +13,23 @@ pub(crate) fn assign_set_property(
         }
         return Ok(target.clone());
     }
-    if rejects_new_property(target, key) || inherited_write_blocked(target, key) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot assign to read-only property",
-        ));
-    }
     if let Some(setter) = crate::property_define::accessor(target, key, "set") {
         if matches!(setter, crate::value::Value::Undefined) {
             return Err(crate::value::error::throw_type_error(
                 "Cannot set property without a setter",
             ));
         }
-        let (_, target) = crate::functions::execute_target_with_receiver(
+        crate::functions::execute_target(
             &setter,
             target,
             std::slice::from_ref(&value),
         )?;
-        return Ok(target);
+        return Ok(target.clone());
+    }
+    if rejects_new_property(target, key) || inherited_write_blocked(target, key) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to read-only property",
+        ));
     }
     Ok(crate::builtins::set_property(target.clone(), key, value))
 }

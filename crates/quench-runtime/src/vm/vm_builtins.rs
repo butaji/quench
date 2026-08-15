@@ -277,6 +277,16 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::FunctionPrototypeValueOf
             | Builtin::FunctionPrototypeHasInstance
             | Builtin::RegExpPrototypeToString
+            | Builtin::RegExpSourceGetter
+            | Builtin::RegExpFlagsGetter
+            | Builtin::RegExpGlobalGetter
+            | Builtin::RegExpIgnoreCaseGetter
+            | Builtin::RegExpMultilineGetter
+            | Builtin::RegExpDotAllGetter
+            | Builtin::RegExpUnicodeGetter
+            | Builtin::RegExpStickyGetter
+            | Builtin::RegExpHasIndicesGetter
+            | Builtin::RegExpUnicodeSetsGetter
             | Builtin::Function
             | Builtin::AsyncFunction
             | Builtin::GeneratorFunction
@@ -358,6 +368,16 @@ fn execute_simple_builtin(
             crate::vm::vm_arithmetic::function_has_instance(receiver, arguments)
         }
         Builtin::RegExpPrototypeToString => regexp_prototype_to_string(receiver),
+        Builtin::RegExpSourceGetter => regexp_prototype_accessor(receiver, "source"),
+        Builtin::RegExpFlagsGetter => regexp_prototype_accessor(receiver, "flags"),
+        Builtin::RegExpGlobalGetter => regexp_prototype_accessor(receiver, "global"),
+        Builtin::RegExpIgnoreCaseGetter => regexp_prototype_accessor(receiver, "ignoreCase"),
+        Builtin::RegExpMultilineGetter => regexp_prototype_accessor(receiver, "multiline"),
+        Builtin::RegExpDotAllGetter => regexp_prototype_accessor(receiver, "dotAll"),
+        Builtin::RegExpUnicodeGetter => regexp_prototype_accessor(receiver, "unicode"),
+        Builtin::RegExpStickyGetter => regexp_prototype_accessor(receiver, "sticky"),
+        Builtin::RegExpHasIndicesGetter => regexp_prototype_accessor(receiver, "hasIndices"),
+        Builtin::RegExpUnicodeSetsGetter => regexp_prototype_accessor(receiver, "unicodeSets"),
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
             crate::number_fmt::number_format(receiver, arguments.first(), builtin)
         }
