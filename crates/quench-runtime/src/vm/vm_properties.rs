@@ -116,11 +116,7 @@ fn promise_value_property(promise: &crate::value::PromiseData, value: &Value, ke
 }
 fn map_property(data: &crate::value::MapData, key: &str) -> Value {
     if key == "constructor" {
-        return Value::Builtin(if data.weak {
-            Builtin::WeakMap
-        } else {
-            Builtin::Map
-        });
+        return map_constructor(data.weak);
     }
     if key == "size" && !data.weak {
         return Value::Number(data.keys.borrow().len() as f64);
@@ -130,6 +126,10 @@ fn map_property(data: &crate::value::MapData, key: &str) -> Value {
     } else {
         crate::collections::map::property(key)
     }
+}
+
+fn map_constructor(weak: bool) -> Value {
+    Value::Builtin(if weak { Builtin::WeakMap } else { Builtin::Map })
 }
 /// Look up a property on the boxed prototype for a primitive value.
 ///
