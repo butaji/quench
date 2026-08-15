@@ -26,6 +26,7 @@ pub(crate) struct NumberOptions {
     pub compact_display: String,
     pub rounding_mode: String,
     pub rounding_increment: u32,
+    pub trailing_zero_display: String,
     pub sign_display: String,
     pub minimum_significant_digits: Option<u32>,
     pub maximum_significant_digits: Option<u32>,
@@ -48,6 +49,7 @@ pub(crate) struct RawOptions {
     compact_display: String,
     rounding_mode: String,
     rounding_increment: f64,
+    trailing_zero_display: String,
     sign_display: String,
     minimum_significant_digits: f64,
     maximum_significant_digits: f64,
@@ -96,6 +98,7 @@ impl RawOptions {
             compact_display: "short".to_string(),
             rounding_mode: "halfExpand".to_string(),
             rounding_increment: 1.0,
+            trailing_zero_display: "auto".to_string(),
             sign_display: "auto".to_string(),
             minimum_significant_digits: -1.0,
             maximum_significant_digits: -1.0,
@@ -111,39 +114,44 @@ impl RawOptions {
                 if matches!(value, Value::Undefined) {
                     continue;
                 }
-                let value = to_string_value(value);
                 match key.as_str() {
-                    "style" => raw.style = value,
-                    "currency" => raw.currency = Some(value.to_ascii_uppercase()),
-                    "currencyDisplay" => raw.currency_display = value,
-                    "currencySign" => raw.currency_sign = value,
-                    "unit" => raw.unit = Some(value),
-                    "unitDisplay" => raw.unit_display = value,
+                    "style" => raw.style = to_string_value(value),
+                    "currency" => raw.currency = Some(to_string_value(value).to_ascii_uppercase()),
+                    "currencyDisplay" => raw.currency_display = to_string_value(value),
+                    "currencySign" => raw.currency_sign = to_string_value(value),
+                    "unit" => raw.unit = Some(to_string_value(value)),
+                    "unitDisplay" => raw.unit_display = to_string_value(value),
                     "minimumFractionDigits" => {
-                        raw.minimum_fraction_digits = value.parse().unwrap_or(0.0)
+                        raw.minimum_fraction_digits = to_string_value(value).parse().unwrap_or(0.0)
                     }
                     "minimumIntegerDigits" => {
-                        raw.minimum_integer_digits = value.parse().unwrap_or(1.0)
+                        raw.minimum_integer_digits = to_string_value(value).parse().unwrap_or(1.0)
                     }
                     "maximumFractionDigits" => {
-                        raw.maximum_fraction_digits = value.parse().unwrap_or(3.0)
+                        raw.maximum_fraction_digits = to_string_value(value).parse().unwrap_or(3.0)
                     }
                     "useGrouping" => {
+                        let value = to_string_value(value);
                         raw.use_grouping = grouping_enabled(&value);
                         raw.grouping_min2 = value == "min2";
                     }
-                    "notation" => raw.notation = value,
-                    "compactDisplay" => raw.compact_display = value,
-                    "roundingMode" => raw.rounding_mode = value,
-                    "roundingIncrement" => raw.rounding_increment = value.parse().unwrap_or(1.0),
-                    "signDisplay" => raw.sign_display = value,
+                    "notation" => raw.notation = to_string_value(value),
+                    "compactDisplay" => raw.compact_display = to_string_value(value),
+                    "roundingMode" => raw.rounding_mode = crate::conversion::to_string(value)?,
+                    "roundingIncrement" => {
+                        raw.rounding_increment = crate::conversion::to_number(value)?
+                    }
+                    "roundingPriority" => raw.rounding_priority = to_string_value(value),
+                    "trailingZeroDisplay" => {
+                        raw.trailing_zero_display = crate::conversion::to_string(value)?
+                    }
+                    "signDisplay" => raw.sign_display = to_string_value(value),
                     "minimumSignificantDigits" => {
-                        raw.minimum_significant_digits = value.parse().unwrap_or(-1.0)
+                        raw.minimum_significant_digits = to_string_value(value).parse().unwrap_or(-1.0)
                     }
                     "maximumSignificantDigits" => {
-                        raw.maximum_significant_digits = value.parse().unwrap_or(-1.0)
+                        raw.maximum_significant_digits = to_string_value(value).parse().unwrap_or(-1.0)
                     }
-                    "roundingPriority" => raw.rounding_priority = value,
                     _ => {}
                 }
             }
@@ -218,6 +226,7 @@ impl NumberOptions {
             }
         }
         let raw = RawOptions::from_value(options)?;
+        validate_rounding_options(&raw)?;
         if raw.style == "currency" {
             let Some(currency) = raw.currency.as_deref() else {
                 return Err(crate::value::error::throw_type_error("currency is required"));
@@ -258,6 +267,7 @@ impl NumberOptions {
             compact_display: raw.compact_display,
             rounding_mode: raw.rounding_mode,
             rounding_increment: raw.rounding_increment.max(1.0) as u32,
+            trailing_zero_display: raw.trailing_zero_display,
             sign_display: raw.sign_display,
             minimum_significant_digits: significant_digits(raw.minimum_significant_digits),
             maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
@@ -498,6 +508,56 @@ pub(crate) fn prototype_method(
     }
 }
 
+fn validate_rounding_options(raw: &RawOptions) -> Result<(), VmError> {
+    const MODES: [&str; 9] = [
+        "ceil",
+        "floor",
+        "expand",
+        "trunc",
+        "halfCeil",
+        "halfFloor",
+        "halfExpand",
+        "halfTrunc",
+        "halfEven",
+    ];
+    const INCREMENTS: [f64; 15] = [
+        1.0, 2.0, 5.0, 10.0, 20.0, 25.0, 50.0, 100.0, 200.0, 250.0, 500.0, 1000.0,
+        2000.0, 2500.0, 5000.0,
+    ];
+    if !MODES.contains(&raw.rounding_mode.as_str()) {
+        return Err(crate::value::error::throw_range_error("invalid roundingMode"));
+    }
+    if !raw.rounding_increment.is_finite() || !INCREMENTS.contains(&raw.rounding_increment) {
+        return Err(crate::value::error::throw_range_error(
+            "invalid roundingIncrement",
+        ));
+    }
+    if raw.rounding_increment != 1.0
+        && (raw.rounding_priority != "auto"
+            || raw.minimum_significant_digits >= 0.0
+            || raw.maximum_significant_digits >= 0.0)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "roundingIncrement conflicts with rounding precision",
+        ));
+    }
+    if raw.rounding_increment != 1.0
+        && raw.minimum_fraction_digits >= 0.0
+        && raw.maximum_fraction_digits >= 0.0
+        && raw.minimum_fraction_digits != raw.maximum_fraction_digits
+    {
+        return Err(crate::value::error::throw_range_error(
+            "roundingIncrement requires equal fraction digits",
+        ));
+    }
+    if raw.trailing_zero_display != "auto" && raw.trailing_zero_display != "stripIfInteger" {
+        return Err(crate::value::error::throw_range_error(
+            "invalid trailingZeroDisplay",
+        ));
+    }
+    Ok(())
+}
+
 impl NumberOptions {
     fn from_slots(slots: &[(String, Value)]) -> Result<Self, VmError> {
         Ok(NumberOptions {
@@ -526,6 +586,8 @@ impl NumberOptions {
             rounding_priority: slot_string(slots, "roundingPriority")
                 .unwrap_or_else(|| "auto".to_string()),
             rounding_increment: slot_number(slots, "roundingIncrement").unwrap_or(1.0) as u32,
+            trailing_zero_display: slot_string(slots, "trailingZeroDisplay")
+                .unwrap_or_else(|| "auto".to_string()),
             sign_display: slot_string(slots, "signDisplay").unwrap_or_else(|| "auto".to_string()),
             minimum_significant_digits: slot_number(slots, "minimumSignificantDigits")
                 .map(|v| v as u32),
@@ -841,6 +903,14 @@ impl NumberOptions {
             (
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
+            ),
+            (
+                "roundingIncrement".to_string(),
+                Value::Number(self.rounding_increment as f64),
+            ),
+            (
+                "trailingZeroDisplay".to_string(),
+                Value::String(self.trailing_zero_display.clone()),
             ),
         ];
         if self.notation == "compact" {
