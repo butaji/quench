@@ -293,6 +293,13 @@ fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_property_is_writable(builtin: Builtin, key: &str) -> bool {
+    if matches!(
+        builtin,
+        Builtin::ErrorPrototype | Builtin::AggregateErrorPrototype
+    ) && matches!(key, "name" | "message")
+    {
+        return true;
+    }
     !matches!(
         key,
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
