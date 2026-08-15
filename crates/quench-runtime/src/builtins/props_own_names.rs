@@ -177,7 +177,6 @@ fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str]
             "constructor",
             "name",
             "message",
-            "cause",
             "stack",
             "toString",
         ],
