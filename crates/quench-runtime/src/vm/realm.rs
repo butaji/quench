@@ -19,7 +19,6 @@ struct RealmState {
 }
 
 struct ExecutionGuard {
-    state: Rc<RealmState>,
     previous: Option<ObjectProperties>,
 }
 
@@ -241,16 +240,15 @@ impl ExecutionGuard {
     fn install(state: Rc<RealmState>) -> Self {
         let global = state.global.borrow().clone();
         let previous = super::GLOBAL_OBJECT.with(|slot| slot.replace(Some(global)));
-        Self { state, previous }
+        Self { previous }
     }
 }
 
 impl Drop for ExecutionGuard {
     fn drop(&mut self) {
-        let current = super::GLOBAL_OBJECT.with(|slot| slot.replace(self.previous.take()));
-        if let Some(current) = current {
-            self.state.global.replace(current);
-        }
+        super::GLOBAL_OBJECT.with(|slot| {
+            slot.replace(self.previous.take());
+        });
     }
 }
 
