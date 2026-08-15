@@ -129,28 +129,9 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             "Object.setPrototypeOf target must be an object",
         ));
     };
-    if !matches!(
-        target,
-        Value::Object(_)
-            | Value::Array(_)
-            | Value::ObjectAlias(_)
-            | Value::Function(_)
-            | Value::BoundFunction(_)
-            | Value::Builtin(_)
-    ) {
-        return Err(crate::value::error::throw_type_error(
-            "Object.setPrototypeOf target must be an object",
-        ));
-    }
+    validate_set_prototype_target(target)?;
     let prototype = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-    if !matches!(
-        prototype,
-        Value::Object(_) | Value::ObjectAlias(_) | Value::Builtin(_) | Value::Null
-    ) {
-        return Err(crate::value::error::throw_type_error(
-            "Object prototype must be an object or null",
-        ));
-    }
+    validate_set_prototype_value(&prototype)?;
     let current = get_prototype_of(Some(target))?;
     if !crate::builtins::same_value(Some(&current), Some(&prototype))
         && !crate::properties::object_is_extensible(target)
@@ -162,6 +143,35 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
     let result = crate::builtins::set_property(target.clone(), "\0prototype", prototype);
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
+}
+
+fn validate_set_prototype_target(target: &Value) -> Result<(), VmError> {
+    if matches!(
+        target,
+        Value::Object(_)
+            | Value::Array(_)
+            | Value::ObjectAlias(_)
+            | Value::Function(_)
+            | Value::BoundFunction(_)
+            | Value::Builtin(_)
+    ) {
+        return Ok(());
+    }
+    Err(crate::value::error::throw_type_error(
+        "Object.setPrototypeOf target must be an object",
+    ))
+}
+
+fn validate_set_prototype_value(prototype: &Value) -> Result<(), VmError> {
+    if matches!(
+        prototype,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Builtin(_) | Value::Null
+    ) {
+        return Ok(());
+    }
+    Err(crate::value::error::throw_type_error(
+        "Object prototype must be an object or null",
+    ))
 }
 pub(crate) fn object_property_is_enumerable(
     receiver: Option<&Value>,
