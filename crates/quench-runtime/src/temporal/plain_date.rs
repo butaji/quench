@@ -339,6 +339,9 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
             if crate::conversion::is_symbol(&Value::String(calendar.clone())) {
                 return Err(crate::value::error::throw_type_error("Invalid calendar"));
             }
+            if calendar.starts_with("-000000") {
+                return Err(crate::value::error::throw_range_error("Invalid calendar"));
+            }
             let iso_calendar = calendar.eq_ignore_ascii_case("iso8601")
                 || (calendar.contains('-') && !calendar.contains("[u-ca="))
                 || calendar.contains("[u-ca=iso8601]");
