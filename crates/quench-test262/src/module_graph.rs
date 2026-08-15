@@ -173,10 +173,10 @@ impl ModuleGraph {
                 .deferred_imports
                 .iter()
                 .any(|item| item == specifier);
-            if !is_deferred {
+            let has_eager_request = metadata.eager_imports.iter().any(|item| item == specifier);
+            if !is_deferred || !has_eager_request {
                 self.link(from, target)?;
             }
-            let has_eager_request = metadata.eager_imports.iter().any(|item| item == specifier);
             if metadata
                 .deferred_imports
                 .iter()
@@ -309,7 +309,12 @@ impl ModuleGraph {
         let dependencies = self.edges.get(&id).cloned().unwrap_or_default();
         for dependency in dependencies {
             let deferred = self.deferred_edges.contains(&(id, dependency));
-            if deferred && !self.module_has_top_level_await(dependency)? {
+            if deferred {
+                let mut asynchronous = Vec::new();
+                self.gather_async_dependencies(dependency, &mut Vec::new(), &mut asynchronous)?;
+                for asynchronous in asynchronous {
+                    self.visit(asynchronous, state, order)?;
+                }
                 continue;
             }
             self.visit(dependency, state, order)?;
@@ -319,16 +324,35 @@ impl ModuleGraph {
         Ok(())
     }
 
-    fn module_has_top_level_await(&self, id: ModuleId) -> Result<bool, String> {
+    fn gather_async_dependencies(
+        &self,
+        id: ModuleId,
+        seen: &mut Vec<ModuleId>,
+        asynchronous: &mut Vec<ModuleId>,
+    ) -> Result<bool, String> {
+        if seen.contains(&id) {
+            return Ok(false);
+        }
+        seen.push(id);
         let Some(unit) = self.unit(id) else {
             return Err("module unit is unknown".to_string());
         };
         if unit.kind != ModuleKind::JavaScript {
             return Ok(false);
         }
-        Ok(quench_runtime::reduce::inspect_module_source(&unit.source)
+        if quench_runtime::reduce::inspect_module_source(&unit.source)
             .map_err(|errors| errors.join("; "))?
-            .has_top_level_await)
+            .has_top_level_await
+        {
+            if !asynchronous.contains(&id) {
+                asynchronous.push(id);
+            }
+            return Ok(true);
+        }
+        for dependency in self.edges.get(&id).into_iter().flatten() {
+            self.gather_async_dependencies(*dependency, seen, asynchronous)?;
+        }
+        Ok(!asynchronous.is_empty())
     }
 
     fn add_unit(
