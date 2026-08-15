@@ -321,6 +321,7 @@ fn property_from_descriptor(value: &Value, key: &str, receiver: &Value) -> Resul
 
 fn is_legacy_regexp_key(key: &str) -> bool {
     key == "$_"
+        || matches!(key, "$&" | "$`" | "$'" | "$+")
         || matches!(key, "input" | "lastMatch" | "lastParen" | "leftContext" | "rightContext")
         || key.strip_prefix('$').is_some_and(|suffix| {
             matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
