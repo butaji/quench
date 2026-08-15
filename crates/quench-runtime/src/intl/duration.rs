@@ -23,6 +23,7 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         .first()
         .cloned()
         .unwrap_or_else(default_locale);
+    let locale = sanitize_locale(&locale);
     let options = arguments.get(1);
     if let Some(value) = options {
         if !matches!(value, Value::Object(_) | Value::Proxy(_) | Value::Undefined) {
@@ -51,11 +52,13 @@ fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     if !matches!(style.as_str(), "long" | "short" | "narrow" | "digital") {
         return Err(runtime_error("RangeError: invalid style"));
     }
+    let resolved_numbering = resolved_numbering_system(options, &locale);
+    let resolved_locale = locale_for_numbering(&locale, &resolved_numbering);
     let mut resolved = vec![
-        ("locale".to_string(), Value::String(locale)),
+        ("locale".to_string(), Value::String(resolved_locale)),
         (
             "numberingSystem".to_string(),
-            Value::String(numbering_system(options)),
+            Value::String(resolved_numbering),
         ),
         ("style".to_string(), Value::String(style)),
     ];
@@ -129,6 +132,49 @@ fn numbering_system(options: Option<&Value>) -> String {
             })
         })
         .unwrap_or_else(|| "latn".to_string())
+}
+
+fn resolved_numbering_system(options: Option<&Value>, locale: &str) -> String {
+    let requested = numbering_system(options);
+    if valid_numbering_system(&requested) {
+        return requested;
+    }
+    locale
+        .split_once("-u-nu-")
+        .and_then(|(_, value)| value.split('-').next())
+        .filter(|value| valid_numbering_system(value))
+        .unwrap_or("latn")
+        .to_string()
+}
+
+fn sanitize_locale(locale: &str) -> String {
+    let Some((prefix, extension)) = locale.split_once("-u-nu-") else {
+        return locale.to_string();
+    };
+    let value = extension.split('-').next().unwrap_or_default();
+    if valid_numbering_system(value) {
+        locale.to_string()
+    } else {
+        prefix.to_string()
+    }
+}
+
+fn locale_for_numbering(locale: &str, numbering: &str) -> String {
+    let Some((prefix, extension)) = locale.split_once("-u-nu-") else {
+        return locale.to_string();
+    };
+    if extension.split('-').next() == Some(numbering) {
+        locale.to_string()
+    } else {
+        prefix.to_string()
+    }
+}
+
+fn valid_numbering_system(value: &str) -> bool {
+    matches!(
+        value,
+        "arab" | "arabext" | "deva" | "latn" | "thai" | "jpanfin"
+    )
 }
 
 fn valid_unit_style(unit: &str, style: &str) -> bool {
