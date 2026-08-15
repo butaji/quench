@@ -218,43 +218,11 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
-    if matches!(value, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(&format!(
-            "Cannot read property `{key}` of null or undefined"
-        )));
+    if let Some(result) = early_property_result(value, key, receiver) {
+        return result;
     }
-    if matches!(value, Value::Proxy(_)) {
-        return crate::proxy::proxy_get(value, key, Some(receiver));
-    }
-    if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
-        return Err(crate::value::error::throw_type_error(
-            "'callee' is unavailable on strict arguments",
-        ));
-    }
-    if has_restricted_function_property(value, key) {
-        return Err(crate::value::error::throw_type_error(
-            "'caller' and 'arguments' are unavailable on this function",
-        ));
-    }
-    if let Some(getter) = array_accessor(value, key, "get") {
-        if matches!(getter, Value::Undefined) {
-            return Ok(Value::Undefined);
-        }
-        return invoke_accessor(&getter, receiver);
-    }
-    if let Value::Array(values) = value {
-        let has_own = key == "length"
-            || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
-            || values.descriptor(key).is_some()
-            || values.property(key).is_some();
-        if !has_own {
-            if let Some(getter) = crate::arrays::prototype_override_getter(key) {
-                if matches!(getter, Value::Undefined) {
-                    return Ok(Value::Undefined);
-                }
-                return invoke_accessor(&getter, receiver);
-            }
-        }
+    if let Some(result) = array_property_result(value, key, receiver) {
+        return result;
     }
     if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
         return result;
@@ -262,34 +230,98 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = data_view_instance_accessor(value, key) {
         return result;
     }
-    if let Ok(descriptor) =
+    if let Some(result) = descriptor_property_result(value, key, receiver) {
+        return result;
+    }
+    match crate::property_define::accessor(value, key, "get") {
+        None => Ok(receiver_property(value, key, receiver)),
+        Some(Value::Undefined) => Ok(Value::Undefined),
+        Some(getter) => invoke_accessor(&getter, receiver),
+    }
+}
+
+fn early_property_result(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Some(Err(crate::value::error::throw_type_error(&format!(
+            "Cannot read property `{key}` of null or undefined"
+        ))));
+    }
+    if matches!(value, Value::Proxy(_)) {
+        return Some(crate::proxy::proxy_get(value, key, Some(receiver)));
+    }
+    if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
+        return Some(Err(crate::value::error::throw_type_error(
+            "'callee' is unavailable on strict arguments",
+        )));
+    }
+    if has_restricted_function_property(value, key) {
+        return Some(Err(crate::value::error::throw_type_error(
+            "'caller' and 'arguments' are unavailable on this function",
+        )));
+    }
+    None
+}
+
+fn array_property_result(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
+    if let Some(getter) = array_accessor(value, key, "get") {
+        return Some(match getter {
+            Value::Undefined => Ok(Value::Undefined),
+            getter => invoke_accessor(&getter, receiver),
+        });
+    }
+    let Value::Array(values) = value else {
+        return None;
+    };
+    if array_has_own_property(values, key) {
+        return None;
+    }
+    crate::arrays::prototype_override_getter(key).map(|getter| match getter {
+        Value::Undefined => Ok(Value::Undefined),
+        getter => invoke_accessor(&getter, receiver),
+    })
+}
+
+fn array_has_own_property(values: &crate::value::ArrayData, key: &str) -> bool {
+    key == "length"
+        || crate::arrays::array_index(key).is_some_and(|index| values.has_index(index as usize))
+        || values.descriptor(key).is_some()
+        || values.property(key).is_some()
+}
+
+fn descriptor_property_result(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
+    let Ok(descriptor) =
         crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))
-    {
-        if !matches!(descriptor, Value::Undefined) {
-            if let Value::Object(descriptor) = descriptor {
-                if let Some((_, getter)) = descriptor
-                    .iter()
-                    .rev()
-                    .find_map(|(name, value)| (name == "get").then_some((name, value)))
-                {
-                    return if matches!(getter, Value::Undefined) {
-                        Ok(Value::Undefined)
-                    } else {
-                        invoke_accessor(getter, receiver)
-                    };
-                }
-            }
-            return Ok(receiver_property(value, key, receiver));
+    else {
+        return None;
+    };
+    if matches!(descriptor, Value::Undefined) {
+        return None;
+    }
+    if let Value::Object(descriptor) = descriptor {
+        if let Some(getter) = descriptor
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "get").then_some(value))
+        {
+            return Some(match getter {
+                Value::Undefined => Ok(Value::Undefined),
+                getter => invoke_accessor(getter, receiver),
+            });
         }
     }
-    let getter = crate::property_define::accessor(value, key, "get");
-    let Some(getter) = getter else {
-        return Ok(receiver_property(value, key, receiver));
-    };
-    if matches!(getter, Value::Undefined) {
-        return Ok(Value::Undefined);
-    }
-    invoke_accessor(&getter, receiver)
+    Some(Ok(receiver_property(value, key, receiver)))
 }
 
 /// Invoke a getter using the receiver as `this`. The getter's own
@@ -309,40 +341,45 @@ fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
 
 fn receiver_property(value: &Value, key: &str, receiver: &Value) -> Value {
     let property = get_property(value, key);
+    if should_preserve_receiver_property(value, key, &property)
+        || same_property_receiver(value, receiver)
+    {
+        return property;
+    }
+    bind_receiver_property(property, receiver)
+}
+
+fn should_preserve_receiver_property(value: &Value, key: &str, property: &Value) -> bool {
     if let Value::Object(properties) = value {
         if properties.iter().rev().any(|(name, _)| name == key) {
-            return property;
+            return true;
         }
     }
-    if matches!(value, Value::Builtin(_)) {
-        return property;
-    }
-    if matches!(value, Value::Object(_)) && crate::vm::is_global_object(value) {
-        return property;
-    }
-    if matches!(
+    matches!(value, Value::Builtin(_))
+        || matches!(value, Value::Object(_)) && crate::vm::is_global_object(value)
+        || is_intl_number_format_property(property)
+        || matches!(key, "constructor" | "prototype")
+}
+
+fn is_intl_number_format_property(property: &Value) -> bool {
+    matches!(
         property,
         Value::Builtin(
             Builtin::IntlNumberFormatFormatToParts
                 | Builtin::IntlNumberFormatFormatRange
                 | Builtin::IntlNumberFormatFormatRangeToParts
         )
-    ) {
-        return property;
-    }
-    if matches!(key, "constructor" | "prototype") {
-        return property;
-    }
-    if same_property_receiver(value, receiver) {
-        return property;
-    }
+    )
+}
+
+fn bind_receiver_property(property: Value, receiver: &Value) -> Value {
     match property {
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)
                 && !is_iterator_next_builtin(builtin)
                 && crate::intl::tolocale::symbol::name(builtin).is_none() =>
         {
-            bind_method(receiver, property)
+            bind_method(receiver, Value::Builtin(builtin))
         }
         other => other,
     }
