@@ -77,11 +77,40 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationSubtract => {
             Some(combine(receiver, arguments.first(), -1.0))
         }
+        crate::ops::Builtin::TemporalDurationRound => Some(round(receiver, arguments.first())),
         crate::ops::Builtin::TemporalDurationValueOf => Some(Err(
             crate::value::error::throw_type_error("Cannot convert Duration to a number"),
         )),
         _ => None,
     }
+}
+
+fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::Object(object)) = receiver else {
+        return Err(crate::value::error::throw_type_error("Invalid duration"));
+    };
+    let smallest = options
+        .and_then(|value| crate::execute::get_property_result(value, "smallestUnit").ok())
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or_else(|| "nanoseconds".into());
+    let increment = options
+        .and_then(|value| crate::execute::get_property_result(value, "roundingIncrement").ok())
+        .and_then(|value| match value {
+            Value::Number(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or(1.0);
+    if smallest == "hours" {
+        let hours = object_number(object, "hours");
+        let rounded = (hours / increment).ceil() * increment;
+        let mut values = [0.0; 10];
+        values[4] = rounded;
+        return construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>());
+    }
+    Ok(Value::Object(object.clone()))
 }
 
 fn combine(
