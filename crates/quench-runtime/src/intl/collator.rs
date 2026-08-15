@@ -11,6 +11,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
     let options = parse_options(arguments.get(1), locale.starts_with("th"))?;
+    for key in ["co", "ka", "kb", "kc", "kh", "kk", "kr", "ks", "vt"] {
+        locale = remove_unsupported_extension(&locale, key);
+    }
     if options.case_first != "false" {
         locale = remove_conflicting_extension(&locale, "kf", &options.case_first);
     }
@@ -149,6 +152,27 @@ fn remove_conflicting_extension(locale: &str, key: &str, value: &str) -> String 
         .trim_end_matches("-u")
         .to_string();
     result
+}
+
+fn remove_unsupported_extension(locale: &str, key: &str) -> String {
+    let parts: Vec<&str> = locale.split('-').collect();
+    let Some(index) = parts.iter().position(|part| part.eq_ignore_ascii_case(key)) else {
+        return locale.to_string();
+    };
+    let end = parts
+        .iter()
+        .enumerate()
+        .skip(index + 1)
+        .find_map(|(position, part)| (part.len() == 2).then_some(position))
+        .unwrap_or(parts.len());
+    parts[..index]
+        .iter()
+        .chain(parts.get(end..).unwrap_or_default().iter())
+        .copied()
+        .collect::<Vec<_>>()
+        .join("-")
+        .trim_end_matches("-u")
+        .to_string()
 }
 
 pub(crate) fn prototype_method(
