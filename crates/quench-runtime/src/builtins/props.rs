@@ -74,6 +74,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalInstantPrototype, "toString") => Some(Value::Builtin(TemporalInstantToString)),
         (TemporalInstantPrototype, "toJSON") => Some(Value::Builtin(TemporalInstantToJSON)),
         (TemporalInstantPrototype, "equals") => Some(Value::Builtin(TemporalInstantEquals)),
+        (TemporalInstantPrototype, "add") => Some(Value::Builtin(TemporalInstantAdd)),
+        (TemporalInstantPrototype, "subtract") => Some(Value::Builtin(TemporalInstantSubtract)),
         (TemporalZonedDateTime, "prototype") => {
             Some(Value::Builtin(TemporalZonedDateTimePrototype))
         }
