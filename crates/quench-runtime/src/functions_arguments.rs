@@ -61,10 +61,12 @@ pub(crate) fn build_registers(
         }
     }
     let environment = crate::environment::Environment::child(&function.captures, parameters);
-    let arguments = arguments_object(function, original_arguments, &environment);
-    let arguments_slot = function.captures.len() as u16 + function.params;
-    environment.set(arguments_slot, arguments);
-    mark_arguments_immutable(function, &environment, arguments_slot);
+    if !matches!(function.kind, FunctionKind::Arrow) {
+        let arguments = arguments_object(function, original_arguments, &environment);
+        let arguments_slot = function.captures.len() as u16 + function.params;
+        environment.set(arguments_slot, arguments);
+        mark_arguments_immutable(function, &environment, arguments_slot);
+    }
     let register_count = function.ops().len().max(32);
     (
         vec![crate::value::Value::Undefined; register_count],
