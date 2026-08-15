@@ -336,7 +336,8 @@ pub(crate) fn char_at(
     let index = arguments
         .first()
         .map_or(Ok(0.0), crate::conversion::to_number)?;
-    if index.is_sign_negative() {
+    let index = index.trunc();
+    if index < 0.0 {
         return Ok(Value::String(String::new()));
     }
     let index = index as usize;
@@ -352,7 +353,8 @@ pub(crate) fn char_code_at(
     let index = arguments
         .first()
         .map_or(Ok(0.0), crate::conversion::to_number)?;
-    if index.is_sign_negative() {
+    let index = index.trunc();
+    if index < 0.0 {
         return Ok(Value::Number(f64::NAN));
     }
     let index = index as usize;
