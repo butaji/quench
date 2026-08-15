@@ -677,6 +677,9 @@ fn validate_calendar(value: &Value) -> Result<(), VmError> {
     if crate::conversion::is_symbol(value) {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     }
+    if crate::value::is_object(value) {
+        return Ok(());
+    }
     let Value::String(calendar) = value else {
         return Err(crate::value::error::throw_type_error("Invalid calendar"));
     };

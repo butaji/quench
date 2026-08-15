@@ -45,6 +45,10 @@ pub(crate) fn execute(
             | crate::ops::Builtin::TemporalPlainDateToJSON
             | crate::ops::Builtin::TemporalPlainDateToLocaleString => Some(to_string(receiver)),
             crate::ops::Builtin::TemporalPlainDateCalendarIdGetter
+            | crate::ops::Builtin::TemporalPlainDateYearGetter
+            | crate::ops::Builtin::TemporalPlainDateMonthGetter
+            | crate::ops::Builtin::TemporalPlainDateMonthCodeGetter
+            | crate::ops::Builtin::TemporalPlainDateDayGetter
             | crate::ops::Builtin::TemporalPlainDateDayOfWeekGetter
             | crate::ops::Builtin::TemporalPlainDateDayOfYearGetter
             | crate::ops::Builtin::TemporalPlainDateDaysInMonthGetter
@@ -280,6 +284,12 @@ fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Va
     let day = field_number(object, "day")?;
     let value = match builtin {
         crate::ops::Builtin::TemporalPlainDateCalendarIdGetter => Value::String("iso8601".into()),
+        crate::ops::Builtin::TemporalPlainDateYearGetter => Value::Number(year),
+        crate::ops::Builtin::TemporalPlainDateMonthGetter => Value::Number(month),
+        crate::ops::Builtin::TemporalPlainDateMonthCodeGetter => {
+            Value::String(format!("M{month:02}"))
+        }
+        crate::ops::Builtin::TemporalPlainDateDayGetter => Value::Number(day),
         crate::ops::Builtin::TemporalPlainDateDaysInWeekGetter => Value::Number(7.0),
         crate::ops::Builtin::TemporalPlainDateMonthsInYearGetter => Value::Number(12.0),
         crate::ops::Builtin::TemporalPlainDateDaysInMonthGetter => {
