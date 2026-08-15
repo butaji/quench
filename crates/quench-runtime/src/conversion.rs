@@ -4,7 +4,6 @@ use std::cell::Cell;
 thread_local! {
     static PROPERTY_KEY_COERCION: Cell<bool> = const { Cell::new(false) };
 }
-
 pub(crate) fn to_property_key(value: &Value) -> Result<String, VmError> {
     if let Value::Builtin(builtin) = value {
         if let Some(name) = crate::intl::tolocale::symbol::name(*builtin) {
@@ -197,7 +196,10 @@ pub(crate) fn is_callable(value: &Value) -> bool {
         Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin) => {
             false
         }
-        Value::Builtin(_) | Value::Function(_) | Value::BoundFunction(_) => true,
+        Value::Builtin(_) | Value::Function(_) => true,
+        Value::BoundFunction(bound) => {
+            !matches!(&bound.target, Value::Builtin(builtin) if crate::builtins::object::is_intrinsic_prototype(*builtin))
+        }
         Value::Proxy(proxy) => is_callable(&proxy.target),
         _ => false,
     }
