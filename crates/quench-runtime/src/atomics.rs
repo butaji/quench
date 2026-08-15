@@ -82,12 +82,12 @@ pub(crate) fn wait(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(view) = atomic_view(arguments.first()) else {
+    let Some(Value::Int32Array(view)) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
             "Atomics operation requires an Int32Array",
         ));
     };
-    if !view.shared() {
+    if !view.buffer.shared {
         return Err(crate::value::error::throw_type_error(
             "Atomics operation requires a shared buffer",
         ));
