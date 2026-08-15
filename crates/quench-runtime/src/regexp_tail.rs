@@ -90,11 +90,8 @@ fn unicode_mode(flags: &str) -> bool {
 
 pub(crate) fn regexp_exec(receiver: &Value, input: &str) -> Result<Value, VmError> {
     let method = crate::execute::get_property_result(receiver, "exec")?;
-    if matches!(method, Value::Undefined) {
-        return exec(Some(receiver), &[Value::String(input.to_string())]);
-    }
     if !crate::conversion::is_callable(&method) {
-        return Err(crate::vm::not_callable());
+        return exec(Some(receiver), &[Value::String(input.to_string())]);
     }
     let result =
         crate::functions::execute_target(&method, receiver, &[Value::String(input.to_string())])?;
