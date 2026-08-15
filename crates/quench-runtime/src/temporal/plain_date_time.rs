@@ -441,35 +441,7 @@ fn days_in_month(year: i32, month: u32) -> u32 {
 fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
-    if let Some(options) = options {
-        if !crate::value::is_object(options) {
-            return Err(crate::value::error::throw_type_error(
-                "Invalid string options",
-            ));
-        }
-        if let Value::String(calendar_name) =
-            crate::execute::get_property_result(options, "calendarName")?
-        {
-            if !matches!(calendar_name.as_str(), "auto" | "always" | "never") {
-                return Err(crate::value::error::throw_range_error(
-                    "Invalid calendarName",
-                ));
-            }
-        }
-        if let Value::String(smallest_unit) =
-            crate::execute::get_property_result(options, "smallestUnit")?
-        {
-            let unit = smallest_unit.strip_suffix('s').unwrap_or(&smallest_unit);
-            if !matches!(
-                unit,
-                "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
-            ) {
-                return Err(crate::value::error::throw_range_error(
-                    "Invalid smallestUnit",
-                ));
-            }
-        }
-    }
+    validate_string_options(options)?;
     let mut values = NAMES
         .iter()
         .map(|name| crate::execute::get_property_result(receiver, name))
@@ -531,6 +503,40 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
         "{year}-{:02}-{:02}T{:02}:{:02}:{:02}{suffix}{calendar_suffix}",
         values[1], values[2], values[3], values[4], values[5]
     )))
+}
+
+fn validate_string_options(options: Option<&Value>) -> Result<(), VmError> {
+    let Some(options) = options else {
+        return Ok(());
+    };
+    if !crate::value::is_object(options) {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid string options",
+        ));
+    }
+    if let Value::String(calendar_name) =
+        crate::execute::get_property_result(options, "calendarName")?
+    {
+        if !matches!(calendar_name.as_str(), "auto" | "always" | "never") {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid calendarName",
+            ));
+        }
+    }
+    if let Value::String(smallest_unit) =
+        crate::execute::get_property_result(options, "smallestUnit")?
+    {
+        let unit = smallest_unit.strip_suffix('s').unwrap_or(&smallest_unit);
+        if !matches!(
+            unit,
+            "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
+        ) {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid smallestUnit",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn year_text(year: i32) -> String {
