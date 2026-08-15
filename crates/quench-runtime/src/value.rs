@@ -96,10 +96,6 @@ pub(crate) struct TypedArrayMeta {
 }
 
 impl TypedArrayMeta {
-    pub(crate) fn prototype(&self) -> Option<Value> {
-        self.prototype.borrow().clone()
-    }
-
     pub(crate) fn set_prototype(&self, value: Value) {
         self.prototype.replace(Some(value));
     }
@@ -340,7 +336,6 @@ include!("value_typed_large.rs");
 macro_rules! typed_array_prototype_methods {
     ($($name:ident),+ $(,)?) => {
         $(impl $name {
-            pub(crate) fn prototype(&self) -> Option<Value> { self.meta.prototype() }
             pub(crate) fn set_prototype(&self, value: Value) { self.meta.set_prototype(value); }
         })+
     };
