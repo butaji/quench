@@ -154,6 +154,8 @@ impl LinkedModuleGraph {
                         ),
                     )));
                 };
+                let namespace = namespace_cell(unsafe { &(*graph_ptr).units }, target, deferred)
+                    .map_err(quench_runtime::execute::VmError::EvalError)?;
                 if !deferred {
                     if let Err(error) = unsafe { (&*graph_ptr).execute(graph, target) } {
                         let reason = dynamic_import_error(&error);
@@ -164,9 +166,7 @@ impl LinkedModuleGraph {
                         )));
                     }
                 }
-                namespace_cell(unsafe { &(*graph_ptr).units }, target, deferred)
-                    .map(|cell| fulfilled_import(cell.get()))
-                    .map_err(quench_runtime::execute::VmError::EvalError)
+                Ok(fulfilled_import(namespace.get()))
             },
         ));
         let order = graph.dependency_order(entry)?;
