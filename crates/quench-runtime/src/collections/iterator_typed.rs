@@ -54,7 +54,6 @@ macro_rules! length {
             } else {
                 Ok($data.logical_len())
             })()
-            }
         };
     }
     match value {
