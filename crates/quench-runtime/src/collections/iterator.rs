@@ -47,6 +47,11 @@ pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
 pub(crate) fn zip(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let inputs = arguments.first().cloned().unwrap_or(Value::Undefined);
     let options = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    if !crate::value::is_object(&inputs) {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.zip iterables",
+        ));
+    }
     let mode = zip_mode(&options)?;
     let iterators = collect_zip_iterators(inputs)?;
     Ok(Value::Iterator(Rc::new(IteratorData {
