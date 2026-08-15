@@ -415,6 +415,9 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 /// Canonicalize a single BCP-47 language tag.
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let tag = tag.trim();
+    if let Some(alias) = grandfathered_alias(tag) {
+        return Ok(alias.to_string());
+    }
     if tag.eq_ignore_ascii_case("nan")
         || tag.eq_ignore_ascii_case("en-gb-oed")
         || tag.eq_ignore_ascii_case("x-private")
@@ -452,6 +455,17 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
     Ok(canonicalize_subtags(parts.collect(), out, script_done)?.join("-"))
+}
+
+fn grandfathered_alias(tag: &str) -> Option<&'static str> {
+    match tag.to_ascii_lowercase().as_str() {
+        "art-lojban" => Some("jbo"),
+        "cel-gaulish" => Some("xtg"),
+        "zh-guoyu" => Some("zh"),
+        "zh-hakka" => Some("hak"),
+        "zh-xiang" => Some("hsn"),
+        _ => None,
+    }
 }
 
 fn canonicalize_subtags(
