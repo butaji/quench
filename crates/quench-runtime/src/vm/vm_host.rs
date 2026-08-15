@@ -14,11 +14,7 @@ pub(crate) fn execute_host_capability(
         context
             .borrow()
             .as_ref()
-            .is_some_and(|context| {
-                context.permits(descriptor)
-                    || (kind == HostCapabilityKind::EvalScript
-                        && realm::context(capability.realm()).is_some())
-            })
+            .is_some_and(|context| context.permits(descriptor))
     });
     if !permitted {
         return Err(VmError::NotCallable);
@@ -29,10 +25,7 @@ pub(crate) fn execute_host_capability(
         HostCapabilityKind::CreateRealm if arguments.is_empty() => Ok(create_realm_value()),
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
-        HostCapabilityKind::EvalScript => realm::with_realm(capability.realm(), || {
-            run_eval_script(arguments)
-        })
-        .ok_or(VmError::NotCallable)?,
+        HostCapabilityKind::EvalScript => run_eval_script(arguments),
     }
 }
 
@@ -61,6 +54,10 @@ fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
     }
 }
 
+pub(crate) fn create_shadow_realm_value() -> Value {
+    create_realm_value()
+}
+
 fn create_realm_value() -> Value {
     let parent = CURRENT_CONTEXT
         .with(|context| context.borrow().clone())
@@ -72,26 +69,24 @@ fn create_realm_value() -> Value {
     let Some(token) = realm::token(context.realm()) else {
         return Value::Undefined;
     };
+    let creation_realm = realm::token(crate::vm::current_context_or_default().realm())
+        .map(Value::HostCapability)
+        .unwrap_or(Value::Undefined);
     let Some(constructor) = realm::intrinsic(realm, Builtin::TypeError) else {
         return Value::Undefined;
     };
-    let properties = Rc::new(crate::value::ObjectData::new(vec![(
-        "TypeError".to_string(),
-        constructor,
-    )]));
+    let properties = Rc::new(crate::value::ObjectData::new(vec![
+        ("TypeError".to_string(), constructor),
+        ("\0realm".to_string(), Value::HostCapability(Rc::clone(&token))),
+    ]));
     if realm::id_for_token(&token).is_none() || !realm::register_global(&token, properties) {
         return Value::Undefined;
     }
     let global = realm::global(realm).unwrap_or(Value::Undefined);
-    let eval_script = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        target: Value::Builtin(Builtin::HostCapability(HostCapabilityKind::EvalScript)),
-        receiver: Value::HostCapability(token),
-        arguments: Vec::new(),
-        properties: RefCell::new(Vec::new()),
-    }));
     Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("global".to_string(), global),
-        ("evalScript".to_string(), eval_script),
+        ("\0realm".to_string(), Value::HostCapability(token)),
+        ("\0creation_realm".to_string(), creation_realm),
     ])))
 }
 
