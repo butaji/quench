@@ -161,7 +161,16 @@ fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, Strin
         return (", ".to_string(), ", ".to_string(), ", ".to_string());
     }
     let disjunction = list_type == "disjunction";
-    let word = if style == "short" && !spanish && !disjunction {
+    let word = list_word(style, spanish, disjunction);
+    if list_type == "unit" && spanish && style == "short" {
+        return (", ".to_string(), word.to_string(), ", ".to_string());
+    }
+    let final_joiner = final_joiner(style, spanish, disjunction, word);
+    (", ".to_string(), word.to_string(), final_joiner)
+}
+
+fn list_word(style: &str, spanish: bool, disjunction: bool) -> &'static str {
+    if style == "short" && !spanish && !disjunction {
         " & "
     } else if disjunction {
         if spanish {
@@ -173,22 +182,19 @@ fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, Strin
         " y "
     } else {
         " and "
-    };
-    if list_type == "unit" && spanish && style == "short" {
-        return (", ".to_string(), word.to_string(), ", ".to_string());
     }
-    let final_joiner = if spanish {
+}
+
+fn final_joiner(style: &str, spanish: bool, disjunction: bool, word: &str) -> String {
+    if spanish {
         word.to_string()
+    } else if style == "short" && disjunction {
+        ", or ".to_string()
     } else if style == "short" {
-        if disjunction {
-            ", or ".to_string()
-        } else {
-            ", & ".to_string()
-        }
+        ", & ".to_string()
     } else {
-        format!(",{}", word)
-    };
-    (", ".to_string(), word.to_string(), final_joiner)
+        format!(",{word}")
+    }
 }
 
 fn format_list(items: &[String], locale: &str, style: &str, list_type: &str) -> String {
