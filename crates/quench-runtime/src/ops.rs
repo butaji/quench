@@ -379,6 +379,7 @@ pub enum Builtin {
     TemporalDurationToJSON,
     TemporalDurationAdd,
     TemporalDurationSubtract,
+    TemporalDurationRound,
     TemporalDurationValueOf,
     TemporalPlainDate,
     TemporalPlainDatePrototype,
