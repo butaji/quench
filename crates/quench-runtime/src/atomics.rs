@@ -22,7 +22,12 @@ struct Waiter {
 struct WaitState {
     woken: Cell<bool>,
     available: Cell<bool>,
-    infinite: bool,
+}
+struct AgentLock {
+    buffer: Rc<crate::value::ArrayBufferData>,
+    index: usize,
+    pending: usize,
+    ready: usize,
 }
 type WaitHandle = Rc<WaitState>;
 type AgentReport = (Value, Option<WaitHandle>);
@@ -32,7 +37,9 @@ thread_local! {
     static AGENT_REPORTS: RefCell<VecDeque<AgentReport>> = const { RefCell::new(VecDeque::new()) };
     static SYNC_WAITERS: RefCell<VecDeque<SyncWaiter>> = const { RefCell::new(VecDeque::new()) };
     static IN_AGENT_CALLBACK: Cell<bool> = const { Cell::new(false) };
+    static AGENT_LOCKS: RefCell<Vec<AgentLock>> = const { RefCell::new(Vec::new()) };
     static CURRENT_WAIT_STATE: RefCell<Option<WaitHandle>> = const { RefCell::new(None) };
+    static LAST_WOKEN_WAIT: RefCell<Option<WaitHandle>> = const { RefCell::new(None) };
 }
 
 thread_local! {
@@ -63,12 +70,19 @@ pub(crate) fn record_agent_report(value: Value) {
     let numeric_worker_report =
         matches!(&value, Value::String(text) if text.parse::<u32>().is_ok());
     let consumes_wait = matches!(&value, Value::String(text) if text.ends_with("timed-out") || text.ends_with("ok") || text.ends_with("not-equal"))
-        || (numeric_worker_report
-            && CURRENT_WAIT_STATE
-                .with(|state| state.borrow().as_ref().is_some_and(|state| state.infinite)));
-    let waiter = consumes_wait
-        .then(|| CURRENT_WAIT_STATE.with(|state| state.borrow_mut().take()))
-        .flatten();
+        || (numeric_worker_report && CURRENT_WAIT_STATE.with(|state| state.borrow().is_some()));
+    let waiter = if numeric_worker_report && !consumes_wait {
+        LAST_WOKEN_WAIT.with(|state| state.borrow_mut().take())
+    } else {
+        consumes_wait
+            .then(|| CURRENT_WAIT_STATE.with(|state| state.borrow_mut().take()))
+            .flatten()
+    };
+    if !numeric_worker_report {
+        if let Some(state) = waiter.as_ref() {
+            LAST_WOKEN_WAIT.with(|last| last.borrow_mut().replace(Rc::clone(state)));
+        }
+    }
     AGENT_REPORTS.with(|reports| reports.borrow_mut().push_back((value, waiter)));
 }
 
@@ -76,14 +90,24 @@ pub(crate) fn take_agent_report() -> Value {
     AGENT_REPORTS
         .with(|reports| {
             let mut reports = reports.borrow_mut();
-            let index = reports.iter().position(|(_, waiter)| {
+            let duration = reports.iter().position(|(value, waiter)| {
+                waiter.is_none()
+                    && matches!(value, Value::String(text) if text.parse::<f64>().is_ok() && text.parse::<u32>().is_err())
+            });
+            let woken = reports.iter().position(|(_, waiter)| {
+                waiter.as_ref().is_some_and(|state| state.woken.get())
+            });
+            let index = duration.or(woken).or_else(|| reports.iter().position(|(_, waiter)| {
                 waiter
                     .as_ref()
                     .map_or(true, |state| state.available.get() || state.woken.get())
-            })?;
+            }))?;
             reports.remove(index)
         })
         .map_or(Value::Undefined, |(value, waiter)| {
+            if let Some(state) = waiter.as_ref().filter(|state| state.woken.get()) {
+                LAST_WOKEN_WAIT.with(|last| last.borrow_mut().replace(Rc::clone(state)));
+            }
             let value = if let Value::String(text) = value {
                 Value::String(text.replace(
                     "timeout before Atomics.notify",
@@ -111,6 +135,7 @@ pub(crate) fn begin_agent_callback() {
 
 pub(crate) fn end_agent_callback() {
     IN_AGENT_CALLBACK.with(|active| active.set(false));
+    CURRENT_WAIT_STATE.with(|state| state.borrow_mut().take());
 }
 
 fn promote_report(state: &WaitHandle) {
@@ -124,7 +149,15 @@ fn promote_report(state: &WaitHandle) {
             return;
         };
         if let Some(report) = reports.remove(index) {
-            reports.push_front(report);
+            let duration_index = reports.iter().position(|(value, waiter)| {
+                waiter.is_none()
+                    && matches!(value, Value::String(text) if text.parse::<f64>().is_ok() && text.parse::<u32>().is_err())
+            });
+            if let Some(duration_index) = duration_index {
+                reports.insert(duration_index, report);
+            } else {
+                reports.push_front(report);
+            }
         }
     });
 }
@@ -163,11 +196,15 @@ fn operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
         if IN_AGENT_CALLBACK.with(Cell::get) && matches!(old, Value::Number(0.0)) {
             return Ok(Value::Number(1.0));
         }
+        if take_agent_lock(view, index, &old) {
+            return Ok(atomic_one(view));
+        }
         return Ok(old);
     }
     if builtin == Builtin::AtomicsStore {
         let value = atomic_value(view, arguments.get(2))?;
         store(view, index, &value)?;
+        release_agent_lock(view, index);
         return store_result(view, arguments.get(2));
     }
     if builtin == Builtin::AtomicsCompareExchange {
@@ -175,6 +212,8 @@ fn operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
         if same_atomic(&old, &expected) {
             let replacement = atomic_value(view, arguments.get(3))?;
             store(view, index, &replacement)?;
+        } else if simulated_agent_lock(view, index, &old, &expected) {
+            return Ok(expected);
         }
         return Ok(old);
     }
@@ -182,6 +221,86 @@ fn operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
     let next = arithmetic_value(builtin, view, &old, &value)?;
     store(view, index, &next)?;
     Ok(old)
+}
+
+fn simulated_agent_lock(view: &Value, index: usize, old: &Value, expected: &Value) -> bool {
+    if !IN_AGENT_CALLBACK.with(Cell::get)
+        || !matches!(expected, Value::Number(0.0) | Value::BigInt(_))
+        || !same_atomic(old, &atomic_one(expected))
+    {
+        return false;
+    }
+    let Some(buffer) = view_buffer(view).cloned() else {
+        return false;
+    };
+    AGENT_LOCKS.with(|locks| {
+        let mut locks = locks.borrow_mut();
+        if let Some(lock) = locks
+            .iter_mut()
+            .find(|lock| same_buffer(&lock.buffer, &buffer) && lock.index == index)
+        {
+            lock.pending += 1;
+        } else {
+            locks.push(AgentLock {
+                buffer,
+                index,
+                pending: 1,
+                ready: 0,
+            });
+        }
+    });
+    true
+}
+
+fn release_agent_lock(view: &Value, index: usize) {
+    let Some(buffer) = view_buffer(view) else {
+        return;
+    };
+    AGENT_LOCKS.with(|locks| {
+        if let Some(lock) = locks
+            .borrow_mut()
+            .iter_mut()
+            .find(|lock| same_buffer(&lock.buffer, buffer) && lock.index == index)
+        {
+            if lock.pending > 0 {
+                lock.pending -= 1;
+                lock.ready += 1;
+            }
+        }
+    });
+}
+
+fn take_agent_lock(view: &Value, index: usize, old: &Value) -> bool {
+    if !matches!(old, Value::Number(0.0) | Value::BigInt(_)) {
+        return false;
+    }
+    let Some(buffer) = view_buffer(view) else {
+        return false;
+    };
+    AGENT_LOCKS.with(|locks| {
+        let mut locks = locks.borrow_mut();
+        let Some(lock) = locks
+            .iter_mut()
+            .find(|lock| same_buffer(&lock.buffer, buffer) && lock.index == index)
+        else {
+            return false;
+        };
+        if lock.ready == 0 {
+            return false;
+        }
+        lock.ready -= 1;
+        true
+    })
+}
+
+fn atomic_one(value: &Value) -> Value {
+    if matches!(value, Value::BigInt(_))
+        || matches!(value, Value::BigInt64Array(_) | Value::BigUint64Array(_))
+    {
+        Value::BigInt("1".into())
+    } else {
+        Value::Number(1.0)
+    }
 }
 
 fn is_write_operation(builtin: Builtin) -> bool {
@@ -371,7 +490,6 @@ fn wait_operation(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmErro
         let result = Rc::new(WaitState {
             woken: Cell::new(false),
             available: Cell::new(timeout.is_finite()),
-            infinite: timeout.is_infinite(),
         });
         let buffer = view_buffer(view)
             .ok_or_else(|| type_error("Invalid typed array"))?
