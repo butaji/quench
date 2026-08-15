@@ -38,6 +38,12 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlNumberFormatPrototype, "resolvedOptions") => {
             Builtin::IntlNumberFormatResolvedOptions
         }
+        _ => return prototype_property_tail(builtin, key),
+    })
+}
+
+fn prototype_property_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
+    Some(match (builtin, key) {
         (Builtin::IntlDateTimeFormatPrototype, "format") => Builtin::IntlDateTimeFormatFormat,
         (Builtin::IntlDateTimeFormatPrototype, "formatToParts") => {
             Builtin::IntlDateTimeFormatFormatToParts
