@@ -218,7 +218,17 @@ pub(crate) fn execute_set_property(
 pub(crate) fn inherits_error_prototype(target: &crate::value::Value) -> bool {
     if matches!(
         target,
-        crate::value::Value::Builtin(crate::ops::Builtin::ErrorPrototype)
+        crate::value::Value::Builtin(
+            crate::ops::Builtin::ErrorPrototype
+                | crate::ops::Builtin::RangeErrorPrototype
+                | crate::ops::Builtin::ReferenceErrorPrototype
+                | crate::ops::Builtin::SyntaxErrorPrototype
+                | crate::ops::Builtin::EvalErrorPrototype
+                | crate::ops::Builtin::URIErrorPrototype
+                | crate::ops::Builtin::AggregateErrorPrototype
+                | crate::ops::Builtin::TypeErrorPrototype
+                | crate::ops::Builtin::SuppressedErrorPrototype,
+        )
     ) {
         return true;
     }
