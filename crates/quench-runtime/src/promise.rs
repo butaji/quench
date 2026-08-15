@@ -503,6 +503,9 @@ pub fn execute_builtin(
         Builtin::PromiseAllSettled => {
             promise_combinator(PromiseAggregateKind::AllSettled, receiver, arguments)
         }
+        Builtin::PromiseAllSettledKeyed => {
+            promise_keyed_combinator(PromiseAggregateKind::AllSettled, receiver, arguments)
+        }
         Builtin::PromiseAny => promise_combinator(PromiseAggregateKind::Any, receiver, arguments),
         Builtin::PromiseRace => promise_combinator(PromiseAggregateKind::Race, receiver, arguments),
         Builtin::PromiseWithResolvers => with_resolvers(receiver),

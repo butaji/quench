@@ -6,6 +6,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::PromiseReject => Some("reject"),
         Builtin::PromiseAll => Some("all"),
         Builtin::PromiseAllSettled => Some("allSettled"),
+        Builtin::PromiseAllSettledKeyed => Some("allSettledKeyed"),
         Builtin::PromiseAny => Some("any"),
         Builtin::PromiseRace => Some("race"),
         Builtin::PromiseWithResolvers => Some("withResolvers"),
@@ -23,6 +24,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         | Builtin::PromiseReject
         | Builtin::PromiseAll
         | Builtin::PromiseAllSettled
+        | Builtin::PromiseAllSettledKeyed
         | Builtin::PromiseAny
         | Builtin::PromiseRace
         | Builtin::PromiseFinally
