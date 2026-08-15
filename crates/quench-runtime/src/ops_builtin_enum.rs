@@ -31,7 +31,7 @@ pub enum Builtin {
     DataViewSetFloat16, DataViewSetBigInt64,
     DataViewSetBigUint64, DataViewBufferGetter,
     DataViewByteLengthGetter, DataViewByteOffsetGetter,
-    ArrayBufferByteLengthGetter, SharedArrayBufferByteLengthGetter, SharedArrayBufferGrowableGetter,
+    ArrayBufferByteLengthGetter, ArrayBufferDetachedGetter, SharedArrayBufferByteLengthGetter, SharedArrayBufferGrowableGetter,
     SharedArrayBufferMaxByteLengthGetter, SharedArrayBufferGrow,
     SharedArrayBufferSlice, ArrayBufferTransferToImmutable,
     ArrayIsArray, ArrayFrom,
