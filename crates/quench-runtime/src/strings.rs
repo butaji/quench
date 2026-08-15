@@ -28,6 +28,32 @@ pub(crate) fn lossy(value: &Value) -> Option<String> {
     }
 }
 
+pub(crate) fn source_text(value: &Value) -> Option<String> {
+    let units = units_of(value)?;
+    let mut source = String::new();
+    for unit in units {
+        if (0xD800..=0xDFFF).contains(&unit) {
+            source.push_str(&format!("\\u{unit:04X}"));
+        } else if let Some(character) = char::from_u32(u32::from(unit)) {
+            source.push(character);
+        }
+    }
+    Some(source)
+}
+
+pub(crate) fn source_text(value: &Value) -> Option<String> {
+    let units = units_of(value)?;
+    let mut source = String::new();
+    for unit in units {
+        if (0xD800..=0xDFFF).contains(&unit) {
+            source.push_str(&format!("\\u{unit:04X}"));
+        } else if let Some(character) = char::from_u32(u32::from(unit)) {
+            source.push(character);
+        }
+    }
+    Some(source)
+}
+
 /// Whether two string values hold identical UTF-16 code units.
 pub(crate) fn units_equal(left: &Value, right: &Value) -> bool {
     match (units_of(left), units_of(right)) {
