@@ -55,6 +55,8 @@ impl LinkedModuleGraph {
                 LinkedModule::compile_with_prefix(prefix, &unit.source)?
             } else if unit.kind == ModuleKind::Json {
                 LinkedModule::compile_json(&unit.source)?
+            } else if unit.kind == ModuleKind::Text {
+                LinkedModule::compile_text(&unit.source)?
             } else {
                 LinkedModule::compile(&unit.source)?
             };
@@ -261,6 +263,11 @@ impl LinkedModule {
         Ok(module)
     }
 
+    pub fn compile_text(source: &str) -> Result<Self, String> {
+        let literal = serde_json::to_string(source).map_err(|error| error.to_string())?;
+        Self::compile(&format!("export default {literal};"))
+    }
+
     pub fn bind_import(&self, local: &str, cell: ModuleBindingCell) -> Result<(), String> {
         let slot = self
             .program
@@ -444,7 +451,7 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
         .ok_or_else(|| "module unit is unknown".to_string())?;
     if graph
         .unit(from)
-        .is_some_and(|unit| unit.kind == ModuleKind::Json)
+        .is_some_and(|unit| unit.kind != ModuleKind::JavaScript)
     {
         return Ok(());
     }
@@ -454,7 +461,7 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
             continue;
         }
         let path = base.join(&specifier);
-        let dependency = add_module_source(graph, path)?;
+        let dependency = add_module_source(graph, path, &metadata.import_attributes, &specifier)?;
         load_module_dependencies(graph, dependency)?;
     }
     Ok(())
@@ -463,7 +470,13 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
 fn add_module_source(
     graph: &mut ModuleGraph,
     path: std::path::PathBuf,
+    attributes: &[(String, String)],
+    specifier: &str,
 ) -> Result<ModuleId, String> {
+    let resource_type = attributes
+        .iter()
+        .find(|(source, _)| source == specifier)
+        .map(|(_, attribute)| attribute.as_str());
     let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("module {}: {error}", path.display()))?;
     if path
@@ -471,6 +484,9 @@ fn add_module_source(
         .is_some_and(|extension| extension == "json")
     {
         return Ok(graph.add_json_dependency(path, source));
+    }
+    if resource_type == Some("type=text") {
+        return Ok(graph.add_text_dependency(path, source));
     }
     Ok(graph.add_dependency(path, source))
 }
