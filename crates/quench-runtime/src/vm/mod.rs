@@ -30,6 +30,7 @@ type ObjectProperties = Rc<crate::value::ObjectData>;
 pub struct VmContext {
     output_sink: Option<OutputSink>,
     realm: RealmId,
+    can_block: bool,
     capabilities: Vec<HostCapabilityRef>,
     host_bindings: Vec<(String, HostCapabilityRef)>,
 }
@@ -38,6 +39,7 @@ impl Default for VmContext {
         Self {
             output_sink: None,
             realm: RealmId::ROOT,
+            can_block: true,
             capabilities: Vec::new(),
             host_bindings: Vec::new(),
         }
@@ -100,6 +102,15 @@ impl VmContext {
 
     pub fn realm(&self) -> RealmId {
         self.realm
+    }
+
+    pub fn with_can_block(mut self, can_block: bool) -> Self {
+        self.can_block = can_block;
+        self
+    }
+
+    pub(crate) fn can_block(&self) -> bool {
+        self.can_block
     }
 
     pub fn has_capability(&self, kind: HostCapabilityKind) -> bool {
