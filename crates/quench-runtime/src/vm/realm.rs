@@ -109,6 +109,7 @@ pub(super) fn execute(id: RealmId, ops: &[Op]) -> Result<Value, VmError> {
         let _context = super::ContextGuard::install(&context);
         let _realm = ExecutionGuard::install(Rc::clone(&state));
         let _environment = crate::locals::EnvironmentGuard::install(environment);
+        let _global_lexical = crate::locals::GlobalLexicalGuard::install(crate::locals::current());
         let _with_scope = crate::with_scope::FunctionGuard::isolate();
         super::run_ops(ops, &mut registers, &context)
     };
