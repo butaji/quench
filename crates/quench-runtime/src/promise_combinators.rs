@@ -5,7 +5,7 @@ pub(crate) fn promise_combinator(
 ) -> Result<Value, VmError> {
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     let result = Rc::new(PromiseData::default());
-    let (resolve, reject) = capability(receiver, &result)?;
+    let (resolve, reject, constructed) = capability(receiver, &result)?;
     validate_constructor(receiver)?;
     let values = match collect_resolved(source, receiver) {
         Ok(values) => values,
@@ -28,7 +28,7 @@ pub(crate) fn promise_combinator(
         finish_empty_aggregate(&aggregate);
     }
     crate::promise::drain_microtasks();
-    Ok(Value::Promise(result))
+    Ok(constructed.unwrap_or(Value::Promise(result)))
 }
 
 fn validate_constructor(receiver: Option<&Value>) -> Result<(), VmError> {
@@ -44,16 +44,16 @@ fn validate_constructor(receiver: Option<&Value>) -> Result<(), VmError> {
 fn capability(
     receiver: Option<&Value>,
     result: &Rc<PromiseData>,
-) -> Result<(Value, Value), VmError> {
+) -> Result<(Value, Value, Option<Value>), VmError> {
     let resolve =
         crate::promise::bound_settler_for_capability(crate::ops::Builtin::PromiseResolve, result);
     let reject =
         crate::promise::bound_settler_for_capability(crate::ops::Builtin::PromiseReject, result);
     let Some(constructor) = receiver else {
-        return Ok((resolve, reject));
+        return Ok((resolve, reject, None));
     };
     if matches!(constructor, Value::Builtin(crate::ops::Builtin::Promise)) {
-        return Ok((resolve, reject));
+        return Ok((resolve, reject, None));
     }
     let state = Value::BindingCell(Rc::new(RefCell::new(Value::Object(Rc::new(
         crate::value::ObjectData::new(vec![
@@ -67,7 +67,7 @@ fn capability(
         arguments: Vec::new(),
         properties: RefCell::new(Vec::new()),
     }));
-    let _ = crate::functions::execute_target(constructor, &Value::Undefined, &[executor])?;
+    let constructed = crate::construct::construct_value(constructor, &[executor])?;
     let state = match state {
         Value::BindingCell(cell) => cell.borrow().clone(),
         _ => unreachable!(),
@@ -79,7 +79,7 @@ fn capability(
             "Promise capability callbacks must be callable",
         ));
     }
-    Ok((resolve, reject))
+    Ok((resolve, reject, Some(constructed)))
 }
 
 fn collect_resolved(source: Value, receiver: Option<&Value>) -> Result<Vec<Value>, Value> {
