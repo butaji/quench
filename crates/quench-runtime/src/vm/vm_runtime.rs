@@ -208,6 +208,7 @@ fn stateful_builtin(
         | Builtin::AtomicsCompareExchange) => {
             Some(crate::atomics::execute(builtin, receiver, arguments))
         }
+        Builtin::AtomicsIsLockFree => Some(crate::atomics::is_lock_free(arguments)),
         _ => None,
     }
 }
