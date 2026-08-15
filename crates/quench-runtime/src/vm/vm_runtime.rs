@@ -164,7 +164,8 @@ pub fn execute_builtin_with_receiver(
 fn is_shared_array_buffer_builtin(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::SharedArrayBufferByteLengthGetter
+        Builtin::ArrayBufferByteLengthGetter
+            | Builtin::SharedArrayBufferByteLengthGetter
             | Builtin::SharedArrayBufferGrow
             | Builtin::SharedArrayBufferSlice
             | Builtin::SharedArrayBufferGrowableGetter
