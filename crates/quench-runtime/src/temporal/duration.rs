@@ -72,7 +72,8 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
         crate::ops::Builtin::TemporalDurationAbs => Some(absolute(receiver)),
-        crate::ops::Builtin::TemporalDurationToJSON => Some(to_json(receiver)),
+        crate::ops::Builtin::TemporalDurationToJSON
+        | crate::ops::Builtin::TemporalDurationToString => Some(to_json(receiver)),
         crate::ops::Builtin::TemporalDurationAdd => Some(combine(receiver, arguments.first(), 1.0)),
         crate::ops::Builtin::TemporalDurationSubtract => {
             Some(combine(receiver, arguments.first(), -1.0))
@@ -227,6 +228,9 @@ fn to_json(value: Option<&Value>) -> Result<Value, VmError> {
     let Some(Value::Object(object)) = value else {
         return Err(crate::value::error::throw_type_error("Invalid duration"));
     };
+    if !is_duration(&Value::Object(object.clone())) {
+        return Err(crate::value::error::throw_type_error("Invalid duration"));
+    }
     let mut date = String::new();
     for (name, suffix) in [
         ("years", 'Y'),
@@ -265,6 +269,19 @@ fn to_json(value: Option<&Value>) -> Result<Value, VmError> {
         "{}P{date}",
         if sign { "-" } else { "" }
     )))
+}
+
+fn is_duration(value: &Value) -> bool {
+    let Value::Object(object) = value else {
+        return false;
+    };
+    object.iter().any(|(name, value)| {
+        name == "\0prototype"
+            && matches!(
+                value,
+                Value::Builtin(crate::ops::Builtin::TemporalDurationPrototype)
+            )
+    })
 }
 
 fn number_text(value: f64) -> String {
