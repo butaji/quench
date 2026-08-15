@@ -98,7 +98,7 @@ fn link_reexports(
     graph: &ModuleGraph,
     units: &HashMap<ModuleId, LinkedModule>,
 ) -> Result<(), String> {
-    for unit in graph.units() {
+    for unit in graph.units().iter().rev() {
         let metadata = unit_metadata(units, unit.id)?;
         for binding in &metadata.reexports {
             let target = resolve_reexport(graph, unit.id, &binding.source)?;
@@ -146,7 +146,10 @@ fn link_star_exports(
     from: ModuleId,
     target: ModuleId,
 ) -> Result<(), String> {
-    let names = unit_metadata(units, target)?.exported_names.clone();
+    let names = units
+        .get(&target)
+        .ok_or_else(|| "module unit missing".to_string())?
+        .export_names();
     let from_unit = units
         .get(&from)
         .ok_or_else(|| "module unit missing".to_string())?;
