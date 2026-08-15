@@ -268,6 +268,7 @@ fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
     VmContext {
         output_sink: parent.output_sink.clone(),
         realm,
+        can_block: parent.can_block(),
         capabilities,
         host_bindings: parent
             .host_bindings
