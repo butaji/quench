@@ -99,6 +99,7 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Re
             let context = current()?;
             require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
+            trigger_deferred(&prototype, key)?;
             let value = get_with_receiver(&prototype, key, &context.receiver)?;
             crate::execute::write_value(registers, *dst, value);
             Ok(())
@@ -109,6 +110,7 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Re
             let prototype = require_super_base(&context.home)?;
             let key_value = crate::execute::read_register(registers, *key)?;
             let key_string = crate::properties::dynamic_property_key(&key_value)?;
+            trigger_deferred(&prototype, &key_string)?;
             let value = get_with_receiver(&prototype, &key_string, &context.receiver)?;
             crate::execute::write_value(registers, *dst, value);
             Ok(())
@@ -123,22 +125,35 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
             let context = current()?;
             require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
+            let receiver = actual_receiver(&context)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
-            put_with_receiver(&prototype, key, value, &context.receiver)?;
+            trigger_deferred(&prototype, key)?;
+            trigger_deferred(&receiver, key)?;
+            put_with_receiver(&prototype, key, value, &receiver)?;
             Ok(())
         }
         crate::ops::Op::SetSuperPropertyDynamic { key, src } => {
             let context = current()?;
             require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
+            let receiver = actual_receiver(&context)?;
             let key_value = crate::execute::read_register(registers, *key)?;
             let key_string = crate::properties::dynamic_property_key(&key_value)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
-            put_with_receiver(&prototype, &key_string, value, &context.receiver)?;
+            trigger_deferred(&prototype, &key_string)?;
+            trigger_deferred(&receiver, &key_string)?;
+            put_with_receiver(&prototype, &key_string, value, &receiver)?;
             Ok(())
         }
         _ => Err(VmError::MissingReturn),
     }
+}
+
+fn trigger_deferred(target: &Value, key: &str) -> Result<(), VmError> {
+    if let Some(id) = crate::vm::consume_deferred_namespace_marker(target, key) {
+        crate::vm::execute_deferred_module(id)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn execute_call(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Result<(), VmError> {
@@ -220,6 +235,20 @@ fn require_initialized_this(context: &Context) -> Result<(), VmError> {
     Ok(())
 }
 
+fn actual_receiver(context: &Context) -> Result<Value, VmError> {
+    if !crate::functions::is_derived_constructor(&context.function) {
+        return Ok(context.receiver.clone());
+    }
+    let slot = context
+        .function
+        .captures
+        .len()
+        .saturating_add(usize::from(context.function.params))
+        .saturating_add(1);
+    let slot = u16::try_from(slot).map_err(|_| VmError::MissingReturn)?;
+    Ok(crate::locals::current().get(slot))
+}
+
 pub(crate) fn check_initialized_this() -> Result<(), VmError> {
     let context = current()?;
     require_initialized_this(&context)
@@ -255,6 +284,11 @@ fn put_with_receiver(
         }
         crate::functions::execute_target(&setter, &receiver, std::slice::from_ref(&value))?;
         return Ok(());
+    }
+    if crate::builtins::namespace_uninitialized(&receiver, key) {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access an uninitialized module binding",
+        ));
     }
     if crate::builtins::descriptor_flag(target, key, "writable") == Some(false) {
         return strict_write_failure();

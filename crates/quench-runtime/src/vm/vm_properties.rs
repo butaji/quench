@@ -223,6 +223,9 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    if let Value::BindingCell(cell) = value {
+        return get_property_with_receiver(&cell.borrow(), key, receiver);
+    }
     if matches!(value, Value::Null | Value::Undefined) {
         return Err(crate::value::error::throw_type_error(&format!(
             "Cannot read property `{key}` of null or undefined"
@@ -454,6 +457,9 @@ pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Va
         .find_map(|(name, value)| (name == field).then(|| value.clone()))
 }
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    if capability.kind == HostCapabilityKind::GetGlobal && key == "AbstractModuleSource" {
+        return Value::Builtin(Builtin::Object);
+    }
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
     if matches!(property, Value::Builtin(_)) {

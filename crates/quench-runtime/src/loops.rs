@@ -217,7 +217,7 @@ fn unpack_for_in<'a>(
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let keys = for_in_keys(crate::execute::read_register(registers, *object)?);
+    let keys = for_in_keys(crate::execute::read_register(registers, *object)?)?;
     Ok((label, *slot, body, *per_iteration, keys))
 }
 

@@ -1,12 +1,20 @@
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn names(target: Option<&Value>) -> Result<Value, VmError> {
-    let keys = keys(require_object(target)?, false);
+    let target = require_object(target)?;
+    if let Some(id) = crate::vm::deferred_namespace_operation(target) {
+        crate::vm::execute_deferred_module(id)?;
+    }
+    let keys = keys(target, false);
     Ok(Value::array(keys.into_iter().map(Value::String).collect()))
 }
 
 pub(crate) fn symbols(target: Option<&Value>) -> Result<Value, VmError> {
-    let keys = keys(require_object(target)?, true);
+    let target = require_object(target)?;
+    if let Some(id) = crate::vm::deferred_namespace_operation(target) {
+        crate::vm::execute_deferred_module(id)?;
+    }
+    let keys = keys(target, true);
     Ok(Value::array(keys.into_iter().map(Value::String).collect()))
 }
 
@@ -15,6 +23,9 @@ pub(crate) fn all(target: &Value) -> Result<Value, VmError> {
         return Err(crate::value::error::throw_type_error(
             "Reflect.ownKeys target must be an object",
         ));
+    }
+    if let Some(id) = crate::vm::deferred_namespace_operation(target) {
+        crate::vm::execute_deferred_module(id)?;
     }
     let mut values = keys(target, false);
     values.extend(keys(target, true));
@@ -25,12 +36,27 @@ pub(crate) fn all(target: &Value) -> Result<Value, VmError> {
 
 pub(crate) fn keys_result(target: Option<&Value>) -> Result<Value, VmError> {
     let target = require_object(target)?;
-    Ok(Value::array(
-        own_enumerable_string_keys(target)
-            .into_iter()
-            .map(Value::String)
-            .collect(),
-    ))
+    if let Some(id) = crate::vm::deferred_namespace_operation(target) {
+        crate::vm::execute_deferred_module(id)?;
+    }
+    let keys = own_enumerable_string_keys(target);
+    check_namespace_bindings(target, &keys)?;
+    Ok(Value::array(keys.into_iter().map(Value::String).collect()))
+}
+
+fn check_namespace_bindings(target: &Value, keys: &[String]) -> Result<(), VmError> {
+    if !crate::builtins::is_module_namespace(target) {
+        return Ok(());
+    }
+    if keys
+        .iter()
+        .any(|key| crate::builtins::namespace_uninitialized(target, key))
+    {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access an uninitialized module binding",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn values(target: Option<&Value>, entries: bool) -> Result<Value, VmError> {
@@ -165,6 +191,17 @@ pub(crate) fn enumerable_key_strings(target: Option<&Value>) -> Vec<String> {
     }
 }
 
+pub(crate) fn enumerable_key_strings_result(
+    target: Option<&Value>,
+) -> Result<Vec<String>, VmError> {
+    let Some(target) = target else {
+        return Ok(Vec::new());
+    };
+    let keys = own_enumerable_string_keys(target);
+    check_namespace_bindings(target, &keys)?;
+    Ok(keys)
+}
+
 fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
     let Some((_, Value::String(value))) = properties.iter().find(|(key, _)| key == "_value") else {
         return ordered(properties, symbols);
@@ -293,9 +330,17 @@ fn bound_function_keys(bound: &crate::value::BoundFunctionValue, symbols: bool) 
 }
 
 fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
+    let namespace = properties.iter().any(|(key, value)| {
+        key == "\0quench:non_extensible" && matches!(value, Value::Boolean(true))
+    }) && properties
+        .iter()
+        .any(|(key, value)| key == "\0prototype" && matches!(value, Value::Null));
     let mut indices = Vec::new();
     let mut strings = Vec::new();
     for (key, _) in properties {
+        if namespace && !symbols && key == "Symbol.toStringTag" {
+            continue;
+        }
         if crate::builtins::is_descriptor_key(key) || key.starts_with('\0') {
             continue;
         }
@@ -308,11 +353,18 @@ fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
         }
     }
     indices.sort_by_key(|(index, _)| *index);
-    indices
+    let mut result = indices
         .into_iter()
         .map(|(_, key)| key)
         .chain(strings)
-        .collect()
+        .collect::<Vec<_>>();
+    if namespace {
+        result.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
+    }
+    if namespace && symbols {
+        result.push("Symbol.toStringTag\0".to_string());
+    }
+    result
 }
 
 fn array_index(key: &str) -> Option<u32> {

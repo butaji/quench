@@ -164,6 +164,9 @@ pub(crate) fn execute_set_property(
     let target = crate::execute::read_register(registers, object)?.clone();
     reject_nullish_property_write(&target)?;
     reject_restricted_property_write(&target, &key)?;
+    if crate::builtins::is_module_namespace(&target) {
+        return write_failure(strict);
+    }
     if rejects_new_property(&target, &key) {
         return write_failure(strict);
     }
@@ -501,6 +504,9 @@ pub(crate) fn execute_delete_property(
         ));
     }
     let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
+    if let Some(id) = crate::vm::consume_deferred_namespace_marker(&target, &key) {
+        crate::vm::execute_deferred_module(id)?;
+    }
     if matches!(target, crate::value::Value::Proxy(_)) {
         return delete_proxy_property(registers, *dst, &target, &key, *strict);
     }
