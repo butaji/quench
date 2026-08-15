@@ -81,26 +81,27 @@ pub(crate) fn prototype_method(
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
             Ok(Value::String(select(number, &plural_type, &locale)))
         }
-        crate::ops::Builtin::IntlPluralRulesResolvedOptions => {
-            let slots = super::intl_slots(receiver)?;
-            let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
-            let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
-            let notation =
-                slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
-            let compact_display =
-                slot_string(&slots, "compactDisplay").unwrap_or_else(|| "short".to_string());
-            let mut properties = vec![
-                ("locale".to_string(), Value::String(locale)),
-                ("type".to_string(), Value::String(plural_type)),
-                ("notation".to_string(), Value::String(notation.clone())),
-            ];
-            if notation == "compact" {
-                properties.push(("compactDisplay".to_string(), Value::String(compact_display)));
-            }
-            Ok(make_object(properties))
-        }
+        crate::ops::Builtin::IntlPluralRulesResolvedOptions => plural_resolved_options(receiver),
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn plural_resolved_options(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let slots = super::intl_slots(receiver)?;
+    let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
+    let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
+    let notation = slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
+    let compact_display =
+        slot_string(&slots, "compactDisplay").unwrap_or_else(|| "short".to_string());
+    let mut properties = vec![
+        ("locale".to_string(), Value::String(locale)),
+        ("type".to_string(), Value::String(plural_type)),
+        ("notation".to_string(), Value::String(notation.clone())),
+    ];
+    if notation == "compact" {
+        properties.push(("compactDisplay".to_string(), Value::String(compact_display)));
+    }
+    Ok(make_object(properties))
 }
 
 fn select(number: f64, plural_type: &str, locale: &str) -> String {
