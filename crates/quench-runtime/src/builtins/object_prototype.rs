@@ -10,6 +10,14 @@ fn prototype_for_value(value: &Value) -> Value {
     if let Value::BindingCell(cell) = value {
         return prototype_for_value(&cell.borrow());
     }
+    if let Value::ObjectAlias(alias) = value {
+        return alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(|object| prototype_for_value(&Value::Object(object)))
+            .unwrap_or(Value::Null);
+    }
     if let Some(prototype) = slot_prototype(value) {
         return prototype;
     }
