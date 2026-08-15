@@ -116,6 +116,7 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::RegExpUnicodeGetter
             | Builtin::RegExpStickyGetter
             | Builtin::RegExpHasIndicesGetter
+            | Builtin::RegExpUnicodeSetsGetter
             | Builtin::Function
             | Builtin::AsyncFunction
             | Builtin::GeneratorFunction
@@ -197,6 +198,7 @@ fn execute_simple_builtin(
         Builtin::RegExpUnicodeGetter => regexp_prototype_accessor(receiver, "unicode"),
         Builtin::RegExpStickyGetter => regexp_prototype_accessor(receiver, "sticky"),
         Builtin::RegExpHasIndicesGetter => regexp_prototype_accessor(receiver, "hasIndices"),
+        Builtin::RegExpUnicodeSetsGetter => regexp_prototype_accessor(receiver, "unicodeSets"),
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
             crate::number_fmt::number_format(receiver, arguments.first(), builtin)
         }
