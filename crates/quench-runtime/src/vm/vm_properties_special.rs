@@ -1,7 +1,7 @@
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
-    if matches!(property, Value::Builtin(_)) {
+    if matches!(property, Value::Builtin(Builtin::HostCapability(_))) {
         return bind_method(value, property);
     }
     property
