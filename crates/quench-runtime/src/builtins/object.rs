@@ -221,7 +221,7 @@ fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Opt
         .rev()
         .find(|(name, _)| name == &super::descriptor_key(key))
     {
-        return Some(public_descriptor(metadata));
+        return Some(stack_data_descriptor(key, public_descriptor(metadata)));
     }
     let value = function
         .properties
@@ -233,6 +233,24 @@ fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Opt
         return Some(descriptor_object_with_flags(value, false, false, false));
     }
     Some(descriptor_object(&value))
+}
+
+fn stack_data_descriptor(key: &str, descriptor: Value) -> Value {
+    if key != "stack" {
+        return descriptor;
+    }
+    let Value::Object(properties) = descriptor else {
+        return descriptor;
+    };
+    let has_value = properties.iter().any(|(name, _)| name == "value");
+    if !has_value {
+        return Value::Object(properties);
+    }
+    let mut properties = properties.properties.clone();
+    if let Some((_, value)) = properties.iter_mut().find(|(name, _)| name == "enumerable") {
+        *value = Value::Boolean(true);
+    }
+    Value::Object(Rc::new(ObjectData::new(properties)))
 }
 
 fn data_view_descriptor(view: &crate::value::DataViewData, key: &str) -> Option<Value> {
@@ -332,6 +350,10 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
+    if key == "stack" && native_error_prototype_receiver(&Value::Builtin(builtin)) {
+        return crate::builtins::read_intrinsic_override(builtin, key)
+            .map(|descriptor| public_descriptor(&descriptor));
+    }
     if matches!(
         builtin,
         Builtin::ErrorPrototype
