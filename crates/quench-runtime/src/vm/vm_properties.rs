@@ -235,29 +235,40 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    if let Some(result) = early_property_access(value, key, receiver) {
+        return result;
+    }
+    property_from_descriptor(value, key, receiver)
+}
+
+fn early_property_access(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
     if matches!(value, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(&format!(
+        return Some(Err(crate::value::error::throw_type_error(&format!(
             "Cannot read property `{key}` of null or undefined"
-        )));
+        ))));
     }
     if matches!(value, Value::Proxy(_)) {
-        return crate::proxy::proxy_get(value, key, Some(receiver));
+        return Some(crate::proxy::proxy_get(value, key, Some(receiver)));
     }
     if matches!(value, Value::Array(values) if values.is_strict_arguments() && key == "callee") {
-        return Err(crate::value::error::throw_type_error(
+        return Some(Err(crate::value::error::throw_type_error(
             "'callee' is unavailable on strict arguments",
-        ));
+        )));
     }
     if has_restricted_function_property(value, key) {
-        return Err(crate::value::error::throw_type_error(
+        return Some(Err(crate::value::error::throw_type_error(
             "'caller' and 'arguments' are unavailable on this function",
-        ));
+        )));
     }
     if let Some(getter) = array_accessor(value, key, "get") {
         if matches!(getter, Value::Undefined) {
-            return Ok(Value::Undefined);
+            return Some(Ok(Value::Undefined));
         }
-        return invoke_accessor(&getter, receiver);
+        return Some(invoke_accessor(&getter, receiver));
     }
     if let Value::Array(values) = value {
         let has_own = key == "length"
@@ -268,18 +279,26 @@ pub(crate) fn get_property_with_receiver(
         if !has_own {
             if let Some(getter) = crate::arrays::prototype_override_getter(key) {
                 if matches!(getter, Value::Undefined) {
-                    return Ok(Value::Undefined);
+                    return Some(Ok(Value::Undefined));
                 }
-                return invoke_accessor(&getter, receiver);
+                return Some(invoke_accessor(&getter, receiver));
             }
         }
     }
     if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
-        return result;
+        return Some(result);
     }
     if let Some(result) = data_view_instance_accessor(value, key) {
-        return result;
+        return Some(result);
     }
+    None
+}
+
+fn property_from_descriptor(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Result<Value, VmError> {
     let descriptor =
         crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))?;
     if !matches!(descriptor, Value::Undefined) {
