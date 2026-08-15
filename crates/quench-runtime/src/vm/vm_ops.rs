@@ -155,6 +155,10 @@ fn invoke_with_receiver(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     match callee_value {
+        Value::BindingCell(cell) => {
+            let value = cell.borrow().clone();
+            invoke_with_receiver(&value, receiver, arguments)
+        }
         Value::Function(body) => crate::functions::execute(body, receiver, arguments),
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
         Value::Builtin(builtin) if crate::conversion::is_callable(callee_value) => {
