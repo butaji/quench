@@ -175,7 +175,9 @@ fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
             .filter(|key| !matches!(key.as_str(), "_value" | "constructor"))
             .collect();
     }
-    let Value::String(value) = value else { unreachable!() };
+    let Value::String(value) = value else {
+        unreachable!()
+    };
     if crate::conversion::is_symbol_string(value) {
         return ordered(properties, symbols);
     }
