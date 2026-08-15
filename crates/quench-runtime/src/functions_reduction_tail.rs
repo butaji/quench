@@ -40,7 +40,7 @@ fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue
     let instance = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
         vec![("\0prototype".to_string(), parent)],
     )));
-    let function_prototype = crate::value::Value::Builtin(if function.is_async {
+    let function_prototype = crate::vm::realm_intrinsic(if function.is_async {
         crate::ops::Builtin::AsyncGeneratorFunctionPrototype
     } else {
         crate::ops::Builtin::GeneratorFunctionPrototype
