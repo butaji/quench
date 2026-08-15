@@ -96,6 +96,7 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
     };
     let builtin = match &*data.state.borrow() {
         IteratorState::RegExpString { .. } => crate::ops::Builtin::RegExpStringIteratorPrototype,
+        IteratorState::String { .. } => crate::ops::Builtin::StringIteratorPrototype,
         IteratorState::Set { .. } => crate::ops::Builtin::SetIteratorPrototype,
         IteratorState::Map { .. } => crate::ops::Builtin::MapIteratorPrototype,
         IteratorState::Native { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
@@ -159,6 +160,7 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
     let tag = match &*data.state.borrow() {
         IteratorState::Native { .. } | IteratorState::ArrayLike { .. } => "Array Iterator",
         IteratorState::RegExpString { .. } => "RegExp String Iterator",
+        IteratorState::String { .. } => "String Iterator",
         IteratorState::Set { .. } => "Set Iterator",
         IteratorState::Map { .. } => "Map Iterator",
         IteratorState::Protocol { .. } => "Iterator",
@@ -178,6 +180,7 @@ fn next_for(value: &Value) -> Value {
     };
     let builtin = match &*data.state.borrow() {
         IteratorState::RegExpString { .. } => Builtin::RegExpStringIteratorNext,
+        IteratorState::String { .. } => Builtin::StringIteratorNext,
         IteratorState::Set { .. } => Builtin::SetIteratorNext,
         IteratorState::Map { .. } => Builtin::MapIteratorNext,
         IteratorState::Native { .. } | IteratorState::Protocol { .. } => Builtin::IteratorNext,
@@ -200,10 +203,10 @@ pub(crate) fn make(values: Vec<Value>) -> Value {
     }))
 }
 
-pub(crate) fn make_array_like(value: Value) -> Value {
+pub(crate) fn make_string(input: Vec<u16>) -> Value {
     Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::ArrayLike {
-            value,
+        state: RefCell::new(IteratorState::String {
+            input,
             index: 0,
             done: false,
         }),

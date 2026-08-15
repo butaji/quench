@@ -1,9 +1,10 @@
-# Goal: stages 108–113
+# Goal: stages 66–81
 
-Bring test262 stages 108–113 to 100% passing through the canonical runner:
-PluralRules, RelativeTimeFormat, Segmenter, String, Temporal, and TypedArray.
-Preserve ECMA-402 option validation and getter order, locale behavior,
-formatting, prototype/accessor descriptors, completion/error ordering, and
-typed-array integration. Fix shared canonical semantics; never alter the
-harness or test262. Re-run owned stages and earlier regressions after each
-fix, finish quality checks, and commit verified changes.
+Bring test262 stages 66–81 to 100% passing through the canonical runner: Set,
+SetIteratorPrototype, ShadowRealm, SharedArrayBuffer, String,
+StringIteratorPrototype, SuppressedError, Symbol, Temporal, ThrowTypeError,
+TypedArray, TypedArrayConstructors, Uint8Array, WeakMap, WeakRef, and WeakSet.
+Preserve completion ordering, coercion, accessors, proxies, realms,
+iterators, typed-array invariants, and observable errors. No harness or
+test262 edits. Re-run owned stages and earlier regressions after each fix;
+finish with clean checks and committed verified changes.

@@ -1,25 +1,4 @@
 pub(crate) fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
-    if matches!(key, "length" | "name")
-        && matches!(
-            builtin,
-            Builtin::Function
-                | Builtin::AsyncFunction
-                | Builtin::GeneratorFunction
-                | Builtin::AsyncGeneratorFunction
-                | Builtin::FunctionPrototype
-        )
-    {
-        return false;
-    }
-    if matches!(
-        (builtin, key),
-        (
-            Builtin::GeneratorFunctionPrototype,
-            "prototype" | "constructor"
-        )
-    ) {
-        return false;
-    }
     if builtin == Builtin::DatePrototype && key == "Symbol.toPrimitive" {
         return false;
     }
@@ -49,23 +28,7 @@ pub(crate) fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
 }
 
 fn builtin_property_configurable(builtin: Builtin, key: &str) -> bool {
-    if builtin == Builtin::Math {
-        return crate::math::constant(key).is_none();
-    }
-    if builtin == Builtin::Number {
-        return !matches!(
-            key,
-            "EPSILON"
-                | "MAX_SAFE_INTEGER"
-                | "MAX_VALUE"
-                | "MIN_SAFE_INTEGER"
-                | "MIN_VALUE"
-                | "NaN"
-                | "NEGATIVE_INFINITY"
-                | "POSITIVE_INFINITY"
-        );
-    }
-    true
+    builtin != Builtin::Math || crate::math::constant(key).is_none()
 }
 pub(crate) fn is_well_known_symbol_property(builtin: Builtin, key: &str) -> bool {
     builtin == Builtin::Symbol

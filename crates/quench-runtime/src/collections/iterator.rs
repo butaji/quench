@@ -13,99 +13,20 @@ mod iterator_values;
 pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpdateGuard};
 pub(crate) use iterator_step::{step_source, step_value};
 pub(crate) use iterator_values::{
-    from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_array_like,
-    make_regexp_string, next, next_map, next_set, property_for, prototype_of,
+    from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_regexp_string,
+    make_string, next, next_map, next_set, property_for, prototype_of,
 };
 
-pub(crate) fn return_(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver else {
-        return Err(crate::vm::not_callable());
-    };
-    let Value::Iterator(data) = receiver else {
-        let method = crate::execute::get_property_result(receiver, "return")?;
-        if matches!(method, Value::Undefined | Value::Null) {
-            return Ok(Value::Undefined);
-        }
-        if !crate::conversion::is_callable(&method) {
-            return Err(crate::vm::not_callable());
-        }
-        crate::functions::execute_target(&method, receiver, &[])?;
-        return Ok(Value::Undefined);
-    };
-    let (iterator, arguments) = {
-        let mut state = data.state.borrow_mut();
-        match &mut *state {
-            IteratorState::Protocol { iterator, done, .. } => {
-                if *done {
-                    return Ok(iterator_result(Value::Undefined, true));
-                }
-                *done = true;
-                (iterator.clone(), arguments.to_vec())
-            }
-            IteratorState::Concat {
-                current: Some(iterator),
-                done,
-                executing,
-                ..
-            } => {
-                if *executing {
-                    return Err(crate::value::error::throw_type_error(
-                        "Iterator is already executing",
-                    ));
-                }
-                if *done {
-                    return Ok(iterator_result(Value::Undefined, true));
-                }
-                *done = true;
-                *executing = true;
-                (iterator.clone(), Vec::new())
-            }
-            IteratorState::Concat { done, .. } => {
-                *done = true;
-                return Ok(iterator_result(Value::Undefined, true));
-            }
-            IteratorState::Drop { iterator, done, .. }
-            | IteratorState::MapHelper { iterator, done, .. }
-            | IteratorState::Take { iterator, done, .. } => {
-                if *done {
-                    return Ok(iterator_result(Value::Undefined, true));
-                }
-                *done = true;
-                (iterator.clone(), Vec::new())
-            }
-            _ => return Ok(iterator_result(Value::Undefined, true)),
-        }
-    };
-    let method = crate::execute::get_property_result(&iterator, "return")?;
-    if matches!(method, Value::Undefined | Value::Null) {
-        clear_concat_executing(receiver);
-        return Ok(iterator_result(Value::Undefined, true));
+pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let branded = matches!(receiver, Some(Value::Iterator(data)) if matches!(
+        &*data.state.borrow(), IteratorState::String { .. }
+    ));
+    if !branded {
+        return Err(crate::value::error::throw_type_error(
+            "String iterator called on incompatible receiver",
+        ));
     }
-    if !crate::conversion::is_callable(&method) {
-        clear_concat_executing(receiver);
-        return Err(crate::vm::not_callable());
-    }
-    let result = crate::functions::execute_target(&method, &iterator, &arguments);
-    clear_concat_executing(receiver);
-    result
-}
-
-fn clear_concat_executing(receiver: &Value) {
-    if let Value::Iterator(data) = receiver {
-        if let IteratorState::Concat { executing, .. } = &mut *data.state.borrow_mut() {
-            *executing = false;
-        }
-    }
-}
-
-fn iterator_result(value: Value, done: bool) -> Value {
-    Value::Object(Rc::new(crate::value::ObjectData::new(vec![
-        ("value".to_string(), value),
-        ("done".to_string(), Value::Boolean(done)),
-    ])))
+    next(receiver)
 }
 fn make_protocol(iterator: Value) -> Value {
     Value::Iterator(Rc::new(IteratorData {
@@ -179,13 +100,13 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
     let mut state = data.state.borrow_mut();
     match &mut *state {
         IteratorState::Native { done: true, .. }
-        | IteratorState::ArrayLike { done: true, .. }
+        | IteratorState::String { done: true, .. }
         | IteratorState::Set { done: true, .. }
         | IteratorState::Map { done: true, .. }
         | IteratorState::Protocol { done: true, .. }
         | IteratorState::RegExpString { done: true, .. }
-        | IteratorState::Native { .. }
-        | IteratorState::ArrayLike { .. } => Ok(None),
+        | IteratorState::Native { .. } => Ok(None),
+        IteratorState::String { .. } => Ok(None),
         IteratorState::Set { .. } => Ok(None),
         IteratorState::Map { .. } => Ok(None),
         IteratorState::RegExpString { .. } => Ok(None),
@@ -455,6 +376,7 @@ pub fn delegate_next(
             }
             IteratorState::Set { .. }
             | IteratorState::Map { .. }
+            | IteratorState::String { .. }
             | IteratorState::RegExpString { .. } => {
                 return Ok(DelegationResult::Done(Value::Undefined));
             }
@@ -542,6 +464,7 @@ fn delegation_target(
         | IteratorState::ArrayLike { .. }
         | IteratorState::Set { .. }
         | IteratorState::Map { .. }
+        | IteratorState::String { .. }
         | IteratorState::RegExpString { .. } => None,
         IteratorState::Concat { .. } => None,
         IteratorState::Drop { iterator, .. } => Some(iterator.clone()),
@@ -594,7 +517,7 @@ pub(super) fn native_step(values: &[Value], index: &mut usize, done: &mut bool) 
 pub(super) fn mark_done(data: &IteratorData) {
     match &mut *data.state.borrow_mut() {
         IteratorState::Native { done, .. }
-        | IteratorState::ArrayLike { done, .. }
+        | IteratorState::String { done, .. }
         | IteratorState::Set { done, .. }
         | IteratorState::Map { done, .. }
         | IteratorState::Protocol { done, .. }

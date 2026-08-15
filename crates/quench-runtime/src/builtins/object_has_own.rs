@@ -43,7 +43,9 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
         ));
     }
     Ok(match receiver {
-        Value::Object(properties) => object_data_owns(properties, key),
+        Value::Object(properties) => {
+            object_data_owns(properties, key) || boxed_string_owns(properties, key)
+        }
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
@@ -53,6 +55,7 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
         Value::String(value) => {
             key == "length" || valid_index(key, crate::strings::utf16_len(value))
         }
+        Value::StringUnits(units) => key == "length" || valid_index(key, units.len()),
         Value::Builtin(builtin) => builtin_owns_property(*builtin, key),
         Value::Function(function) => function
             .properties
@@ -83,6 +86,9 @@ fn typed_array_owns(value: &Value, key: &str) -> bool {
 }
 
 fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
+    if crate::vm::is_legacy_global(key) {
+        return false;
+    }
     let deleted = properties
         .iter()
         .any(|(name, _)| name == &crate::builtins::deleted_key(key));
@@ -91,9 +97,9 @@ fn object_data_owns(properties: &Rc<ObjectData>, key: &str) -> bool {
         .any(|(name, _)| name == key && !super::is_descriptor_key(name))
         || boxed_string_owns(properties, key)
         || (!deleted
-            && crate::vm::is_global_object(&Value::Object(properties.clone()))
-            && (crate::vm::global_builtin_exists(key)
-                || crate::globals::is_global_constant(key)))
+            && (crate::vm::global_builtin_exists_for_object(properties, key)
+                || (crate::vm::is_global_object(&Value::Object(properties.clone()))
+                    && crate::vm::global_builtin_exists(key))))
 }
 
 fn boxed_string_owns(properties: &[(String, Value)], key: &str) -> bool {

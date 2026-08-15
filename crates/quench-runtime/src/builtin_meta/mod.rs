@@ -72,6 +72,7 @@ pub fn constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::RegExp => Some("RegExp"),
         Builtin::String => Some("String"),
         Builtin::Symbol => Some("Symbol"),
+        Builtin::ShadowRealm => Some("ShadowRealm"),
         Builtin::TypeError
         | Builtin::Error
         | Builtin::RangeError
@@ -91,7 +92,6 @@ fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::IntlCollator => "Intl.Collator",
         Builtin::IntlDateTimeFormat => "Intl.DateTimeFormat",
         Builtin::IntlDisplayNames => "Intl.DisplayNames",
-        Builtin::IntlDurationFormat => "Intl.DurationFormat",
         Builtin::IntlListFormat => "Intl.ListFormat",
         Builtin::IntlLocale => "Intl.Locale",
         Builtin::IntlNumberFormat => "Intl.NumberFormat",
@@ -100,6 +100,7 @@ fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::IntlSegmenter => "Intl.Segmenter",
         Builtin::TemporalDuration => "Temporal.Duration",
         Builtin::TemporalPlainDate => "Temporal.PlainDate",
+        Builtin::ShadowRealm => "ShadowRealm",
         _ => return None,
     })
 }
@@ -140,6 +141,9 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::Object => Some(Builtin::ObjectPrototype),
         Builtin::RegExp => Some(Builtin::RegExpPrototype),
         Builtin::String => Some(Builtin::ObjectPrototype),
+        Builtin::TemporalDuration => Some(Builtin::TemporalDurationPrototype),
+        Builtin::TemporalPlainDate => Some(Builtin::TemporalPlainDatePrototype),
+        Builtin::ShadowRealm => Some(Builtin::ShadowRealmPrototype),
         Builtin::Symbol => Some(Builtin::ObjectPrototype),
         Builtin::TemporalDuration => Some(Builtin::TemporalDurationPrototype),
         Builtin::TemporalInstant => Some(Builtin::TemporalInstantPrototype),
@@ -149,7 +153,6 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::IntlCollator => Some(Builtin::IntlCollatorPrototype),
         Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatPrototype),
         Builtin::IntlDisplayNames => Some(Builtin::IntlDisplayNamesPrototype),
-        Builtin::IntlDurationFormat => Some(Builtin::IntlDurationFormatPrototype),
         Builtin::IntlListFormat => Some(Builtin::IntlListFormatPrototype),
         Builtin::IntlLocale => Some(Builtin::IntlLocalePrototype),
         Builtin::IntlNumberFormat => Some(Builtin::IntlNumberFormatPrototype),
@@ -162,15 +165,14 @@ pub fn prototype(builtin: Builtin) -> Option<Builtin> {
         Builtin::SharedArrayBuffer => Some(Builtin::SharedArrayBufferPrototype),
         Builtin::WeakSet => Some(Builtin::WeakSetPrototype),
         Builtin::WeakRef => Some(Builtin::WeakRefPrototype),
-        Builtin::Error => Some(Builtin::ErrorPrototype),
-        Builtin::RangeError => Some(Builtin::RangeErrorPrototype),
-        Builtin::ReferenceError => Some(Builtin::ReferenceErrorPrototype),
-        Builtin::SyntaxError => Some(Builtin::SyntaxErrorPrototype),
-        Builtin::EvalError => Some(Builtin::EvalErrorPrototype),
-        Builtin::URIError => Some(Builtin::URIErrorPrototype),
-        Builtin::AggregateError => Some(Builtin::AggregateErrorPrototype),
+        Builtin::Error | Builtin::RangeError => Some(Builtin::ErrorPrototype),
+        Builtin::ReferenceError => Some(Builtin::ErrorPrototype),
+        Builtin::SyntaxError => Some(Builtin::ErrorPrototype),
+        Builtin::EvalError => Some(Builtin::ErrorPrototype),
+        Builtin::URIError => Some(Builtin::ErrorPrototype),
+        Builtin::AggregateError => Some(Builtin::ErrorPrototype),
         Builtin::SuppressedError => Some(Builtin::SuppressedErrorPrototype),
-        Builtin::TypeError => Some(Builtin::TypeErrorPrototype),
+        Builtin::TypeError => Some(Builtin::ErrorPrototype),
         _ => None,
     }
 }
@@ -227,16 +229,15 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::MapIteratorPrototype
             | Builtin::ObjectPrototype
             | Builtin::ArrayIteratorPrototype
+            | Builtin::StringIteratorPrototype
             | Builtin::NumberPrototype
             | Builtin::BooleanPrototype
             | Builtin::SymbolPrototype
             | Builtin::StringPrototype
             | Builtin::BigIntPrototype
             | Builtin::TemporalDurationPrototype
-            | Builtin::TemporalInstantPrototype
-            | Builtin::TemporalZonedDateTimePrototype
             | Builtin::TemporalPlainDatePrototype
-            | Builtin::TemporalPlainTimePrototype
+            | Builtin::ShadowRealmPrototype
     )
 }
 
@@ -290,7 +291,7 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::Date => Some(7.0),
         Builtin::TemporalDuration => Some(0.0),
         Builtin::TemporalPlainDate => Some(3.0),
-        Builtin::TemporalPlainTime => Some(0.0),
+        Builtin::ShadowRealm => Some(0.0),
         Builtin::DisposableStack => Some(0.0),
         Builtin::AsyncDisposableStack => Some(0.0),
         Builtin::FinalizationRegistry => Some(1.0),
@@ -319,12 +320,10 @@ pub fn constructor_length(builtin: Builtin) -> Option<f64> {
 
 fn intl_constructor_length(builtin: Builtin) -> Option<f64> {
     Some(match builtin {
-        Builtin::Intl
-        | Builtin::IntlCollator
-        | Builtin::IntlPluralRules
-        | Builtin::IntlDateTimeFormat
-        | Builtin::IntlListFormat => 0.0,
-        Builtin::IntlDisplayNames
+        Builtin::Intl | Builtin::IntlCollator | Builtin::IntlPluralRules => 0.0,
+        Builtin::IntlDateTimeFormat
+        | Builtin::IntlDisplayNames
+        | Builtin::IntlListFormat
         | Builtin::IntlNumberFormat
         | Builtin::IntlRelativeTimeFormat
         | Builtin::IntlSegmenter => 0.0,

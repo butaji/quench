@@ -4,6 +4,8 @@ use crate::ops::Builtin;
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::StringIterator => Some("[Symbol.iterator]"),
+        Builtin::StringIteratorNext => Some("StringIterator.prototype.next"),
         Builtin::StringFromCharCode => Some("String.fromCharCode"),
         Builtin::StringFromCodePoint => Some("String.fromCodePoint"),
         Builtin::StringRaw => Some("String.raw"),
@@ -13,6 +15,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringToWellFormed => Some("String.prototype.toWellFormed"),
         Builtin::StringStartsWith => Some("String.prototype.startsWith"),
         Builtin::StringEndsWith => Some("String.prototype.endsWith"),
+        Builtin::StringAt => Some("String.prototype.at"),
         Builtin::StringRepeat => Some("String.prototype.repeat"),
         Builtin::StringTrim => Some("String.prototype.trim"),
         Builtin::StringToLowerCase => Some("String.prototype.toLowerCase"),
@@ -44,6 +47,8 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
+        Builtin::StringIterator => Some(0.0),
+        Builtin::StringIteratorNext => Some(0.0),
         Builtin::StringFromCharCode => Some(1.0),
         Builtin::StringFromCodePoint => Some(1.0),
         Builtin::StringRaw => Some(1.0),
@@ -52,17 +57,9 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringTrim
         | Builtin::StringToLowerCase
         | Builtin::StringToUpperCase
-        | Builtin::StringCharAt
-        | Builtin::StringCharCodeAt
-        | Builtin::StringSlice
-        | Builtin::StringSubstring
-        | Builtin::StringSubstr
-        | Builtin::StringConcat
         | Builtin::StringTrimStart
         | Builtin::StringTrimEnd
         | Builtin::StringToString
-        | Builtin::StringSearch
-        | Builtin::StringMatch
         | Builtin::StringIsWellFormed
         | Builtin::StringToWellFormed
         | Builtin::StringToLocaleLowerCase
@@ -73,6 +70,11 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringIndexOf
         | Builtin::StringLastIndexOf
         | Builtin::StringCodePointAt => Some(1.0),
+        Builtin::StringAt => Some(1.0),
+        Builtin::StringCharAt | Builtin::StringCharCodeAt => Some(1.0),
+        Builtin::StringSearch | Builtin::StringMatch => Some(1.0),
+        Builtin::StringConcat => Some(1.0),
+        Builtin::StringSlice | Builtin::StringSubstring => Some(2.0),
         Builtin::StringSplit => Some(2.0),
         Builtin::StringPadStart | Builtin::StringPadEnd => Some(1.0),
         Builtin::StringReplace | Builtin::StringReplaceAll => Some(2.0),
@@ -83,6 +85,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::StringIteratorNext => Some("next"),
         Builtin::StringFromCharCode => Some("fromCharCode"),
         Builtin::StringFromCodePoint => Some("fromCodePoint"),
         Builtin::StringRaw => Some("raw"),
@@ -92,6 +95,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringToWellFormed => Some("toWellFormed"),
         Builtin::StringStartsWith => Some("startsWith"),
         Builtin::StringEndsWith => Some("endsWith"),
+        Builtin::StringAt => Some("at"),
         Builtin::StringRepeat => Some("repeat"),
         Builtin::StringTrim => Some("trim"),
         Builtin::StringToLowerCase => Some("toLowerCase"),

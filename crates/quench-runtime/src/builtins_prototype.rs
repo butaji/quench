@@ -50,10 +50,7 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::BigInt(_)) => "BigInt",
         Some(Value::Array(_)) => "Array",
         Some(Value::Object(properties)) => {
-            if properties
-                .iter()
-                .any(|(key, _)| key == crate::builtins::ERROR_SLOT)
-            {
+            if properties.iter().any(|(key, _)| key == crate::builtins::ERROR_SLOT) {
                 return "Error";
             }
             boxed_object_tag(properties).unwrap_or("Object")
@@ -78,19 +75,6 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::Builtin(Builtin::StringPrototype)) => "String",
         Some(Value::Builtin(Builtin::SymbolPrototype)) => "Symbol",
         Some(Value::Builtin(Builtin::BigIntPrototype)) => "BigInt",
-        Some(
-            Value::Builtin(
-                Builtin::IntlCollatorPrototype
-                | Builtin::IntlDateTimeFormatPrototype
-                | Builtin::IntlDisplayNamesPrototype
-                | Builtin::IntlListFormatPrototype
-                | Builtin::IntlLocalePrototype
-                | Builtin::IntlNumberFormatPrototype
-                | Builtin::IntlPluralRulesPrototype
-                | Builtin::IntlRelativeTimeFormatPrototype
-                | Builtin::IntlSegmenterPrototype,
-            ),
-        ) => "Object",
         Some(Value::Builtin(_)) => "Function",
         Some(Value::Proxy(_)) => "Object",
         Some(Value::Promise(_)) => "Promise",
@@ -125,30 +109,12 @@ fn boxed_object_tag(properties: &crate::value::ObjectData) -> Option<&'static st
     })
 }
 
-pub(crate) fn function_prototype_to_string(
-    receiver: Option<&Value>,
-) -> Result<Value, crate::execute::VmError> {
+pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
     match receiver {
-        Some(Value::Builtin(builtin)) => {
-            let name = crate::builtin_meta::constructor_name(*builtin).unwrap_or_else(|| builtin_name(*builtin));
-            Value::String(format!("function {name}() {{ [native code] }}"))
-        }
+        Some(Value::Builtin(builtin)) => Value::String(format!("function {}() {{ [native code] }}", builtin_name(*builtin))),
         Some(Value::Function(_)) | Some(Value::BoundFunction(_)) => Value::String("function () {{ [native code] }}".to_string()),
         _ => Value::String(String::new()),
     }
-}
-
-fn native_function_source(builtin: crate::ops::Builtin) -> String {
-    let raw = builtin_name(builtin)
-        .rsplit('.')
-        .next()
-        .unwrap_or(builtin_name(builtin));
-    let name: String = raw
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '$'))
-        .collect();
-    let name = if name.is_empty() { "anonymous".to_string() } else { name };
-    format!("function {name}() {{ [native code] }}")
 }
 
 pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {

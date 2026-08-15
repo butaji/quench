@@ -261,87 +261,22 @@ fn unicode_numbering_system(locale: &str) -> Option<String> {
 
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
-        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
-            if matches!(options, Value::Null) {
-                return Err(crate::value::error::throw_type_error(
-                    "Cannot convert null to object",
-                ));
-            }
-        }
-        let mut raw = RawOptions::from_value(options)?;
-        if raw.notation == "compact" && !raw.grouping_given {
-            raw.resolved_grouping = "min2".to_string();
-            raw.grouping_min2 = true;
-        }
-        validate_basic_options(&raw)?;
-        validate_rounding_options(&raw)?;
-        if !matches!(raw.unit_display.as_str(), "short" | "narrow" | "long") {
-            return Err(crate::value::error::throw_range_error(
-                "invalid unitDisplay",
-            ));
-        }
-        if let Some(currency) = raw.currency.as_deref() {
-            if currency.len() != 3
-                || !currency
-                    .chars()
-                    .all(|character| character.is_ascii_alphabetic())
-            {
-                return Err(crate::value::error::throw_range_error("invalid currency"));
-            }
-        }
-        if raw.style == "currency" && raw.currency.is_none() {
-            return Err(crate::value::error::throw_type_error(
-                "currency is required",
-            ));
-        }
-        if raw.style != "currency" {
-            raw.currency = None;
-        }
-        let nonstandard_currency = raw.style == "currency" && raw.notation != "standard";
-        let minimum_fraction_digits = if nonstandard_currency && raw.minimum_fraction_digits < 0.0 {
-            0
-        } else {
-            fraction_digits(
-                raw.style.as_str(),
-                raw.currency.as_deref(),
-                raw.minimum_fraction_digits,
-            )
-        };
-        let maximum_fraction_digits = if nonstandard_currency && raw.maximum_fraction_digits < 0.0 {
-            if raw.notation == "compact" {
-                0
-            } else {
-                3
-            }
-        } else {
-            maximum_fraction(
-                &raw.style,
-                &raw.currency,
-                raw.maximum_fraction_digits,
-                minimum_fraction_digits,
-            )
-        };
+        let raw = RawOptions::from_value(options);
+        let minimum_fraction_digits = fraction_digits(
+            raw.style.as_str(),
+            raw.currency.as_deref(),
+            raw.minimum_fraction_digits,
+        );
+        let maximum_fraction_digits = maximum_fraction(
+            &raw.style,
+            &raw.currency,
+            raw.maximum_fraction_digits,
+            minimum_fraction_digits,
+        );
         let minimum_fraction_digits = minimum_fraction_digits.min(maximum_fraction_digits);
-        if raw.unit.is_some() && !valid_unit(raw.unit.as_deref()) {
+        if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
             return Err(crate::value::error::throw_range_error("invalid unit"));
         }
-        if raw.style == "unit" && raw.unit.is_none() {
-            return Err(crate::value::error::throw_type_error("unit is required"));
-        }
-        let extension_numbering = raw
-            .numbering_system
-            .as_ref()
-            .and_then(|_| unicode_numbering_system(&locale));
-        let numbering_system = raw
-            .numbering_system
-            .filter(|value| is_supported(value))
-            .or(extension_numbering.clone())
-            .unwrap_or_else(|| "latn".to_string());
-        let resolved_locale = if extension_numbering.as_deref() == Some(&numbering_system) {
-            locale.clone()
-        } else {
-            strip_unicode_extensions(&locale)
-        };
         Ok(NumberOptions {
             locale: strip_unicode_extensions(&locale),
             resolved_locale,
@@ -511,32 +446,10 @@ impl NumberOptions {
     }
 }
 
-fn validate_locale_matcher(options: Option<&Value>) -> Result<(), VmError> {
-    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
-        return Ok(());
-    };
-    let value = crate::execute::get_property_result(options, "localeMatcher")?;
-    if matches!(value, Value::Undefined) {
-        return Ok(());
-    }
-    let matcher = crate::conversion::to_string(&value)?;
-    if !matches!(matcher.as_str(), "lookup" | "best fit") {
-        return Err(crate::value::error::throw_range_error(
-            "invalid localeMatcher",
-        ));
-    }
-    Ok(())
-}
-
 fn valid_unit(unit: Option<&str>) -> bool {
-    let Some(unit) = unit else {
-        return false;
-    };
-    unit.split_once("-per-").map_or_else(
-        || super::UNITS.contains(&unit),
-        |(numerator, denominator)| {
-            super::UNITS.contains(&numerator) && super::UNITS.contains(&denominator)
-        },
+    matches!(
+        unit,
+        Some("percent" | "meter" | "kilometer" | "kilometer-per-hour")
     )
 }
 
@@ -1483,13 +1396,7 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 }
 
 fn to_number_result(value: Option<&Value>) -> Result<f64, VmError> {
-    let value = value.unwrap_or(&Value::Undefined);
-    if let Value::BigInt(value) = value {
-        return value
-            .parse::<f64>()
-            .map_err(|_| crate::value::error::throw_type_error("Cannot convert BigInt to number"));
-    }
-    crate::conversion::to_number(value)
+    crate::conversion::to_number(value.unwrap_or(&Value::Undefined))
 }
 
 pub(crate) fn to_number(value: Option<&Value>) -> f64 {
