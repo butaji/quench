@@ -173,7 +173,7 @@ fn function_source(
         .join(",");
     let body = arguments
         .last()
-        .map_or_else(|| Ok(String::new()), |value| to_string(value))?;
+        .map_or_else(|| Ok(String::new()), to_string)?;
     let prefix = match (kind, is_async) {
         (FunctionKind::Generator, true) => "async function*",
         (FunctionKind::Generator, false) => "function*",
