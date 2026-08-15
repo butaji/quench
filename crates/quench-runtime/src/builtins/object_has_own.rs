@@ -37,6 +37,11 @@ fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError>
     }
 }
 fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
+    if crate::builtins::namespace_uninitialized(receiver, key) {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access an uninitialized module binding",
+        ));
+    }
     Ok(match receiver {
         Value::Object(properties) => object_data_owns(properties, key),
         Value::ObjectAlias(alias) => alias
