@@ -721,6 +721,9 @@ impl LinkedModule {
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
+        if self.executed.get() {
+            return Ok(Value::Undefined);
+        }
         if self.evaluating.replace(true) {
             return Ok(Value::Undefined);
         }
