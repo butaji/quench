@@ -120,7 +120,15 @@ pub(crate) fn execute(
     if let Some(value) = transcendental(builtin, &numbers) {
         return Ok(Value::Number(value));
     }
-    let value = match builtin {
+    let value = match discrete_math(builtin, &numbers) {
+        Some(value) => value,
+        None => return Err(crate::execute::VmError::NotCallable),
+    };
+    Ok(Value::Number(value))
+}
+
+fn discrete_math(builtin: Builtin, numbers: &[f64]) -> Option<f64> {
+    Some(match builtin {
         Builtin::MathAbs => numbers.first().copied().unwrap_or(f64::NAN).abs(),
         Builtin::MathFloor => numbers.first().copied().unwrap_or(f64::NAN).floor(),
         Builtin::MathCeil => numbers.first().copied().unwrap_or(f64::NAN).ceil(),
@@ -139,9 +147,8 @@ pub(crate) fn execute(
             crate::value::f16_round(numbers.first().copied().unwrap_or(f64::NAN))
         }
         Builtin::MathRandom => 0.5,
-        _ => return Err(crate::execute::VmError::NotCallable),
-    };
-    Ok(Value::Number(value))
+        _ => return None,
+    })
 }
 
 fn transcendental(builtin: Builtin, numbers: &[f64]) -> Option<f64> {
