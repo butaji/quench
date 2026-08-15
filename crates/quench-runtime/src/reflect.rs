@@ -110,18 +110,7 @@ pub(crate) fn wrap_shadow_function_with_caller(
         Value::Number(value) if value.is_infinite() && value.is_sign_positive() => value,
         _ => 0.0,
     };
-    let mut properties = vec![
-        ("name".to_string(), Value::String(name.clone())),
-        (
-            crate::builtins::descriptor_key("name"),
-            name_descriptor(&name),
-        ),
-        ("length".to_string(), Value::Number(length)),
-        (
-            crate::builtins::descriptor_key("length"),
-            length_descriptor(length),
-        ),
-    ];
+    let mut properties = shadow_function_properties(target, &name, length);
     if let Some(realm) = realm.and_then(crate::vm::realm_token) {
         properties.push(("\0realm".to_string(), realm));
     }
@@ -137,6 +126,21 @@ pub(crate) fn wrap_shadow_function_with_caller(
             properties: std::cell::RefCell::new(properties),
         },
     )))
+}
+
+fn shadow_function_properties(target: &Value, name: &str, length: f64) -> Vec<(String, Value)> {
+    vec![
+        ("name".to_string(), Value::String(name.clone())),
+        (
+            crate::builtins::descriptor_key("name"),
+            name_descriptor(&name),
+        ),
+        ("length".to_string(), Value::Number(length)),
+        (
+            crate::builtins::descriptor_key("length"),
+            length_descriptor(length),
+        ),
+    ]
 }
 
 fn shadow_property(
