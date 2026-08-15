@@ -85,6 +85,26 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
     Ok(Value::Number(value as f64))
 }
 
+pub(crate) fn exchange(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Int32Array(view)) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics.exchange requires an Int32Array",
+        ));
+    };
+    if !view.buffer.shared {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics.exchange requires a shared buffer",
+        ));
+    }
+    let index = atomic_index(arguments.get(1))?;
+    let old = view.get(index).ok_or_else(|| {
+        crate::value::error::throw_range_error("Atomics.exchange index is out of range")
+    })?;
+    let value = atomic_value(arguments.get(2))?;
+    view.set(index, value);
+    Ok(Value::Number(old as f64))
+}
+
 pub(crate) fn execute(
     builtin: Builtin,
     _receiver: Option<&Value>,
