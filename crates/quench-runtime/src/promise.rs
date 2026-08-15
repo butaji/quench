@@ -96,9 +96,7 @@ fn process_continuation(continuation: PromiseContinuation, state: &PromiseState)
         PromiseContinuation::AsyncGeneratorYield { generator, result } => {
             process_async_continuation(generator, result, true, state)
         }
-        PromiseContinuation::AsyncGeneratorQueue { generator } => {
-            process_async_queue(&generator)
-        }
+        PromiseContinuation::AsyncGeneratorQueue { generator } => process_async_queue(&generator),
     }
 }
 
@@ -138,7 +136,9 @@ fn process_async_queue(generator: &Rc<crate::value::GeneratorData>) {
     };
     match crate::generator::resume_async_next(generator, input) {
         Ok(value) => finish_async_queue(generator, result, Ok(value)),
-        Err(VmError::Suspended(awaited)) => register_async_generator(&awaited, generator.clone(), result),
+        Err(VmError::Suspended(awaited)) => {
+            register_async_generator(&awaited, generator.clone(), result)
+        }
         Err(VmError::Thrown(reason)) => finish_async_queue(generator, result, Err(reason)),
         Err(_) => finish_async_queue(generator, result, Err(Value::Undefined)),
     }

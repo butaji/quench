@@ -97,7 +97,10 @@ fn async_iterator_dispose(receiver: Option<&Value>) -> Result<Value, VmError> {
     crate::functions::execute_target(
         &then,
         &wrapped,
-        &[Value::Builtin(Builtin::AsyncIteratorDisposeResult), Value::Undefined],
+        &[
+            Value::Builtin(Builtin::AsyncIteratorDisposeResult),
+            Value::Undefined,
+        ],
     )
 }
 
