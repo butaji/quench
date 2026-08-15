@@ -126,7 +126,13 @@ pub(crate) fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, 
                     return Ok(boxed);
                 }
             }
-            if name == "toString" && !present {
+            if name == "toString"
+                && !present
+                && !matches!(
+                    crate::builtins::object::get_prototype_of(Some(value)),
+                    Ok(Value::Null)
+                )
+            {
                 return Ok(crate::builtins::prototype_to_string(Some(value)));
             }
             continue;
