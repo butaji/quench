@@ -31,11 +31,7 @@ pub(crate) fn is_legacy_global(key: &str) -> bool {
 }
 
 pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
-    let builtin = crate::globals::builtin(key)?;
-    if builtin == Builtin::Eval {
-        return Some(realm_intrinsic(builtin));
-    }
-    Some(Value::Builtin(builtin))
+    crate::globals::builtin(key).map(Value::Builtin)
 }
 
 pub(crate) fn realm_token(realm: RealmId) -> Option<Value> {
