@@ -46,6 +46,7 @@ pub(crate) fn execute_special(
             }
             descriptor(target, key)
         }
+        Builtin::ObjectGetOwnPropertyDescriptors => get_own_property_descriptors(arguments),
         Builtin::ObjectGetOwnPropertyNames => object_proxy_names(arguments.first(), false),
         Builtin::ObjectGetOwnPropertySymbols => object_proxy_names(arguments.first(), true),
         Builtin::ObjectKeys => object_keys(arguments.first()),
@@ -58,6 +59,30 @@ pub(crate) fn execute_special(
         Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => legacy_accessor_special(builtin, receiver, arguments),
     }
+}
+
+fn get_own_property_descriptors(arguments: &[Value]) -> Result<Value, VmError> {
+    let target = arguments.first().ok_or_else(|| {
+        crate::value::error::throw_type_error("Object.getOwnPropertyDescriptors requires an object")
+    })?;
+    require_object_coercible(Some(target))?;
+    let names = crate::own_keys::names(Some(target))?;
+    let symbols = crate::own_keys::symbols(Some(target))?;
+    let mut properties = Vec::new();
+    for keys in [names, symbols] {
+        let Value::Array(keys) = keys else { continue };
+        for key in keys.snapshot() {
+            let descriptor = descriptor(Some(target), Some(&key))?;
+            if !matches!(descriptor, Value::Undefined) {
+                if let Value::String(key) = key {
+                    properties.push((key, descriptor));
+                }
+            }
+        }
+    }
+    Ok(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(properties),
+    )))
 }
 fn legacy_accessor_special(
     builtin: Builtin,
@@ -172,6 +197,10 @@ pub(crate) fn descriptor(
             {
                 let value = crate::execute::get_property(&global, &key);
                 Some(descriptor_object_with_flags(value, true, false, true))
+            } else if is_child_realm_global(&global)
+                && !matches!(key.as_str(), "undefined" | "Infinity" | "NaN")
+            {
+                configurable_global_descriptor(&global, &key)
             } else {
                 object_descriptor(properties, &key)
             }
@@ -191,6 +220,32 @@ pub(crate) fn descriptor(
         _ => None,
     };
     Ok(descriptor.unwrap_or(Value::Undefined))
+}
+
+fn is_child_realm_global(value: &Value) -> bool {
+    crate::vm::is_child_global_object(value)
+        || matches!(value, Value::Object(properties) if properties.iter().any(|(key, _)| key == "\0realm"))
+}
+
+fn configurable_global_descriptor(global: &Value, key: &str) -> Option<Value> {
+    let descriptor = object_descriptor(
+        match global {
+            Value::Object(properties) => properties,
+            _ => return None,
+        },
+        key,
+    )?;
+    let Value::Object(properties) = descriptor else {
+        return None;
+    };
+    let mut properties = properties.properties.clone();
+    if let Some((_, value)) = properties
+        .iter_mut()
+        .find(|(name, _)| name == "configurable")
+    {
+        *value = Value::Boolean(true);
+    }
+    Some(Value::Object(Rc::new(ObjectData::new(properties))))
 }
 fn buffer_descriptor(buffer: &crate::value::ArrayBufferData, key: &str) -> Option<Value> {
     buffer

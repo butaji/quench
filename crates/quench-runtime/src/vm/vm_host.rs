@@ -80,10 +80,10 @@ fn create_realm_value() -> Value {
         return Value::Undefined;
     }
     let global = realm::global(realm).unwrap_or(Value::Undefined);
-    Value::Object(Rc::new(crate::value::ObjectData::new(vec![(
-        "global".to_string(),
-        global,
-    )])))
+    Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("global".to_string(), global),
+        ("\0realm".to_string(), Value::HostCapability(token)),
+    ])))
 }
 
 fn current_global_value() -> Result<Value, VmError> {
