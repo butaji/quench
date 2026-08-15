@@ -158,10 +158,14 @@ fn bigint_view_bounds(
         return Err(range_error(&format!("Invalid {name} byte offset")));
     }
     let length = match arguments.get(2) {
+        None | Some(Value::Undefined) => view_length(buffer, available / BIGINT_ELEMENT_SIZE),
         Some(value) => to_index(crate::conversion::to_number(value)?)?,
-        None => view_length(buffer, available / BIGINT_ELEMENT_SIZE),
     };
-    if arguments.get(2).is_some() && typed_byte_length(length)? > available {
+    if arguments
+        .get(2)
+        .is_some_and(|value| !matches!(value, Value::Undefined))
+        && typed_byte_length(length)? > available
+    {
         return Err(range_error(&format!("Invalid {name} length")));
     }
     Ok((offset, length))
