@@ -174,7 +174,7 @@ fn generator_property(value: &Value, key: &str) -> Value {
 
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
     if key == "constructor" {
-        return Value::Builtin(function_constructor(function));
+        return function_constructor(function);
     }
     let properties = function.properties.borrow();
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
@@ -202,13 +202,21 @@ fn property_value(value: &Value) -> Value {
     }
 }
 
-fn function_constructor(function: &crate::value::FunctionValue) -> Builtin {
-    match (function.kind, function.is_async) {
+fn function_constructor(function: &crate::value::FunctionValue) -> Value {
+    let builtin = match (function.kind, function.is_async) {
         (crate::ops::FunctionKind::Generator, true) => Builtin::AsyncGeneratorFunction,
         (crate::ops::FunctionKind::Generator, false) => Builtin::GeneratorFunction,
         (_, true) => Builtin::AsyncFunction,
         (_, false) => Builtin::Function,
+    };
+    if let Value::Object(global) = function.captures.get(0) {
+        if let Some(realm) = crate::vm::realm::id_for_global(&global) {
+            if let Some(value) = crate::vm::realm::intrinsic(realm, builtin) {
+                return value;
+            }
+        }
     }
+    Value::Builtin(builtin)
 }
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     get_property_with_receiver(value, key, value)
