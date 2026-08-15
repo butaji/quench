@@ -94,6 +94,9 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateTimeWith => {
             Some(with(_receiver, arguments.first(), arguments.get(1)))
         }
+        crate::ops::Builtin::TemporalPlainDateTimeRound => {
+            Some(round(_receiver, arguments.first()))
+        }
         _ => None,
     }
 }
@@ -174,6 +177,59 @@ fn number_property(value: &Value, name: &str) -> f64 {
         .ok()
         .and_then(|value| crate::conversion::to_number(&value).ok())
         .unwrap_or(0.0)
+}
+
+fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
+    let receiver =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    let options = options
+        .filter(|value| crate::value::is_object(value))
+        .ok_or_else(|| crate::value::error::throw_type_error("Invalid rounding options"))?;
+    let unit = crate::execute::get_property_result(options, "smallestUnit")?;
+    let Value::String(unit) = unit else {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid smallestUnit",
+        ));
+    };
+    let quantum = match unit.as_str() {
+        "hour" => 3_600_000_000_000.0,
+        "minute" => 60_000_000_000.0,
+        "second" => 1_000_000_000.0,
+        "millisecond" => 1_000_000.0,
+        "microsecond" => 1_000.0,
+        "nanosecond" => 1.0,
+        _ => {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid smallestUnit",
+            ))
+        }
+    };
+    let increment = crate::execute::get_property_result(options, "roundingIncrement")
+        .ok()
+        .and_then(|value| crate::conversion::to_number(&value).ok())
+        .unwrap_or(1.0);
+    round_values(fields(receiver)?, quantum, increment)
+}
+
+fn round_values(mut values: Vec<f64>, quantum: f64, increment: f64) -> Result<Value, VmError> {
+    let total = values[3] * 3_600_000_000_000.0
+        + values[4] * 60_000_000_000.0
+        + values[5] * 1_000_000_000.0
+        + values[6] * 1_000_000.0
+        + values[7] * 1_000.0
+        + values[8];
+    let rounded = (total / (quantum * increment)).round() * quantum * increment;
+    values[3] = (rounded / 3_600_000_000_000.0).floor();
+    let mut remainder = rounded - values[3] * 3_600_000_000_000.0;
+    values[4] = (remainder / 60_000_000_000.0).floor();
+    remainder -= values[4] * 60_000_000_000.0;
+    values[5] = (remainder / 1_000_000_000.0).floor();
+    remainder -= values[5] * 1_000_000_000.0;
+    values[6] = (remainder / 1_000_000.0).floor();
+    remainder -= values[6] * 1_000_000.0;
+    values[7] = (remainder / 1_000.0).floor();
+    values[8] = remainder - values[7] * 1_000.0;
+    construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
 }
 
 fn with(

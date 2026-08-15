@@ -128,6 +128,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             Some(Value::Builtin(TemporalPlainDateTimeSubtract))
         }
         (TemporalPlainDateTimePrototype, "with") => Some(Value::Builtin(TemporalPlainDateTimeWith)),
+        (TemporalPlainDateTimePrototype, "round") => {
+            Some(Value::Builtin(TemporalPlainDateTimeRound))
+        }
         (TemporalPlainTime, "prototype") => Some(Value::Builtin(TemporalPlainTimePrototype)),
         (TemporalPlainTime, "from") => Some(Value::Builtin(TemporalPlainTimeFrom)),
         (TemporalPlainTime, "compare") => Some(Value::Builtin(TemporalPlainTimeCompare)),
