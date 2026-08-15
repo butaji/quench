@@ -56,6 +56,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringCharCodeAt
         | Builtin::StringSlice
         | Builtin::StringSubstring
+        | Builtin::StringSubstr
         | Builtin::StringConcat
         | Builtin::StringTrimStart
         | Builtin::StringTrimEnd
@@ -101,6 +102,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringLastIndexOf => Some("lastIndexOf"),
         Builtin::StringSlice => Some("slice"),
         Builtin::StringSubstring => Some("substring"),
+        Builtin::StringSubstr => Some("substr"),
         Builtin::StringConcat => Some("concat"),
         Builtin::StringSplit => Some("split"),
         Builtin::StringPadStart => Some("padStart"),
