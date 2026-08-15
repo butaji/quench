@@ -54,6 +54,16 @@ fn prototype_for_value_tail(value: &Value) -> Value {
     match value {
         Value::Function(function) => {
             if function.is_async {
+                if function.kind == crate::ops::FunctionKind::Generator {
+                    return crate::vm::realm_id_for_global_value(&function.captures.get(0))
+                        .map(|realm| {
+                            crate::vm::realm_intrinsic_for(
+                                realm,
+                                Builtin::AsyncGeneratorFunctionPrototype,
+                            )
+                        })
+                        .unwrap_or(Value::Builtin(Builtin::AsyncGeneratorFunctionPrototype));
+                }
                 if let Some((_, prototype)) = function
                     .properties
                     .borrow()
