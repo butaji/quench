@@ -148,7 +148,6 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlPluralRulesSelect
         | Builtin::IntlPluralRulesResolvedOptions
         | Builtin::IntlDateTimeFormatFormat
-        | Builtin::IntlDateTimeFormatFormatToParts
         | Builtin::IntlDateTimeFormatResolvedOptions
         | Builtin::IntlCollatorCompare
         | Builtin::IntlCollatorResolvedOptions
@@ -159,7 +158,9 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlSegmenterResolvedOptions
         | Builtin::IntlDisplayNamesOf
         | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
-        Builtin::IntlNumberFormatFormatToParts => Some(1.0),
+        Builtin::IntlNumberFormatFormatToParts | Builtin::IntlDateTimeFormatFormatToParts => {
+            Some(1.0)
+        }
         Builtin::IntlNumberFormatFormatRange
         | Builtin::IntlNumberFormatFormatRangeToParts
         | Builtin::IntlDateTimeFormatFormatRange
