@@ -8,6 +8,15 @@ pub(crate) fn construct_bigint64_array(
         Some(Value::ArrayBuffer(buffer)) => view_bigint64_array(buffer, arguments),
         Some(Value::BigInt64Array(view)) => copy_bigint64_array(view),
         Some(Value::Array(values)) => values_bigint64_array(values),
+        Some(Value::Object(properties)) => {
+            let object = Value::Object(properties.clone());
+            let values = object_array_like(properties)
+                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            values.map_or_else(
+                || Err(type_error("BigInt64Array source must be iterable or a buffer")),
+                |values| values_bigint64_array(&values),
+            )
+        }
         Some(Value::Number(length)) => bigint64_with_length(to_index(*length)?),
         Some(_) => Err(type_error("BigInt64Array source must contain BigInts")),
     }
@@ -21,6 +30,15 @@ pub(crate) fn construct_biguint64_array(
         Some(Value::ArrayBuffer(buffer)) => view_biguint64_array(buffer, arguments),
         Some(Value::BigUint64Array(view)) => copy_biguint64_array(view),
         Some(Value::Array(values)) => values_biguint64_array(values),
+        Some(Value::Object(properties)) => {
+            let object = Value::Object(properties.clone());
+            let values = object_array_like(properties)
+                .or_else(|| crate::collections::iterator::collect_iterable(object).ok());
+            values.map_or_else(
+                || Err(type_error("BigUint64Array source must be iterable or a buffer")),
+                |values| values_biguint64_array(&values),
+            )
+        }
         Some(Value::Number(length)) => biguint64_with_length(to_index(*length)?),
         Some(_) => Err(type_error("BigUint64Array source must contain BigInts")),
     }

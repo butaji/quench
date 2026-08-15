@@ -4,6 +4,7 @@ use crate::{
     value::{ObjectData, Value},
 };
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
+const MAX_HOST_BUFFER_BYTES: usize = 256 * 1024 * 1024;
 pub(crate) fn reduce(
     expression: &oxc::ast::ast::NewExpression<'_>,
     ops: &mut Vec<Op>,
@@ -89,8 +90,9 @@ fn construct_with_new_target(
 ) -> Result<Value, crate::execute::VmError> {
     let result = match target {
         Value::Builtin(builtin) => {
+            let prefetched = prefetch_buffer_prototype(*builtin, target, new_target)?;
             let value = construct_builtin(*builtin, arguments)?;
-            let value = with_new_target_prototype(value, target, new_target)?;
+            let value = with_new_target_prototype_cached(value, target, new_target, prefetched)?;
             if let Value::DataView(view) = &value {
                 if *view.buffer.detached.borrow() {
                     return Err(type_error("Cannot use a detached ArrayBuffer"));
@@ -107,15 +109,40 @@ fn construct_with_new_target(
     };
     result
 }
+fn prefetch_buffer_prototype(
+    builtin: crate::ops::Builtin,
+    target: &Value,
+    new_target: &Value,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    let buffer = matches!(
+        builtin,
+        crate::ops::Builtin::ArrayBuffer | crate::ops::Builtin::SharedArrayBuffer
+    );
+    if buffer && !crate::builtins::same_value(Some(target), Some(new_target)) {
+        return crate::execute::get_property_result(new_target, "prototype").map(Some);
+    }
+    Ok(None)
+}
 fn with_new_target_prototype(
     value: Value,
     target: &Value,
     new_target: &Value,
 ) -> Result<Value, crate::execute::VmError> {
+    with_new_target_prototype_cached(value, target, new_target, None)
+}
+
+fn with_new_target_prototype_cached(
+    value: Value,
+    target: &Value,
+    new_target: &Value,
+    prefetched: Option<Value>,
+) -> Result<Value, crate::execute::VmError> {
     if crate::builtins::same_value(Some(target), Some(new_target)) {
         return Ok(value);
     }
-    let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+    let prototype = prefetched
+        .map(Ok)
+        .unwrap_or_else(|| crate::execute::get_property_result(new_target, "prototype"))?;
     let prototype = if crate::value::is_object(&prototype) {
         Some(prototype)
     } else {
@@ -216,7 +243,7 @@ fn construct_builtin(
             crate::finalization_registry::construct(arguments)
         }
         crate::ops::Builtin::RegExp => construct_regexp(arguments),
-        _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
+        _ if crate::intl::is_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::vm::not_callable()),
     }
@@ -271,22 +298,6 @@ fn construct_typed_builtin(
     })
 }
 
-fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
-    use crate::ops::Builtin;
-    matches!(
-        builtin,
-        Builtin::IntlNumberFormat
-            | Builtin::IntlDateTimeFormat
-            | Builtin::IntlCollator
-            | Builtin::IntlPluralRules
-            | Builtin::IntlListFormat
-            | Builtin::IntlRelativeTimeFormat
-            | Builtin::IntlSegmenter
-            | Builtin::IntlDisplayNames
-            | Builtin::IntlLocale
-    )
-}
-
 fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let source = arguments
         .first()
@@ -294,6 +305,7 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     let flags = arguments
         .get(1)
         .map_or_else(|| Ok(String::new()), crate::conversion::to_string)?;
+    validate_regexp_pattern(&source, &flags)?;
     let last_index = Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))));
     let mut entries = vec![
         ("\0regexp".to_string(), Value::Boolean(true)),
@@ -319,6 +331,20 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     ];
     entries.extend(regexp_flag_entries(&flags));
     Ok(Value::Object(Rc::new(ObjectData::new(entries))))
+}
+
+fn validate_regexp_pattern(source: &str, flags: &str) -> Result<(), crate::execute::VmError> {
+    crate::regexp::validate_flags(flags)
+        .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
+    crate::regexp::validate_literal(source)
+        .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
+    crate::regexp::validate_pattern(source)
+        .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
+    if flags.contains('u') {
+        crate::regexp::validate_unicode(source, flags)
+            .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
+    }
+    Ok(())
 }
 
 fn regexp_data_descriptor(writable: bool, configurable: bool, value: Value) -> Value {
@@ -373,9 +399,15 @@ fn construct_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::
         crate::intl::tolocale::value::to_number(Some(value))
     });
     let length = to_index(length)?;
+    if length > MAX_HOST_BUFFER_BYTES {
+        return Err(range_error("ArrayBuffer allocation is too large"));
+    }
     let buffer = match arguments.get(1) {
-        Some(options) => resizable_array_buffer(length, options)?,
+        Some(options) if crate::value::is_object(options) => {
+            resizable_array_buffer(length, options)?
+        }
         None => crate::value::ArrayBufferData::new(length),
+        _ => crate::value::ArrayBufferData::new(length),
     };
     Ok(Value::ArrayBuffer(Rc::new(buffer)))
 }
@@ -384,8 +416,14 @@ fn resizable_array_buffer(
     length: usize,
     options: &Value,
 ) -> Result<crate::value::ArrayBufferData, crate::execute::VmError> {
-    let maximum = crate::execute::get_property(options, "maxByteLength");
-    let maximum = to_index(crate::intl::tolocale::value::to_number(Some(&maximum)))?;
+    let maximum = crate::execute::get_property_result(options, "maxByteLength")?;
+    if matches!(maximum, Value::Undefined) {
+        return Ok(crate::value::ArrayBufferData::new(length));
+    }
+    let maximum = to_index(crate::conversion::to_number(&maximum)?)?;
+    if maximum > MAX_HOST_BUFFER_BYTES {
+        return Err(range_error("ArrayBuffer allocation is too large"));
+    }
     if maximum < length {
         return Err(range_error("maxByteLength is smaller than byteLength"));
     }
@@ -478,10 +516,7 @@ fn construct_string(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
 }
 
 fn boxed_primitive(value: Value, constructor: crate::ops::Builtin) -> Value {
-    let mut properties = vec![
-        ("_value".to_string(), value),
-        ("constructor".to_string(), Value::Builtin(constructor)),
-    ];
+    let mut properties = vec![("_value".to_string(), value)];
     if let Some(prototype) = crate::builtin_meta::instance_prototype(constructor) {
         properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
     }
@@ -494,6 +529,9 @@ fn construct_error(
 ) -> Result<Value, crate::execute::VmError> {
     if *builtin == crate::ops::Builtin::SuppressedError {
         return crate::builtins::suppressed_error(arguments);
+    }
+    if *builtin == crate::ops::Builtin::AggregateError {
+        return construct_aggregate_error(arguments);
     }
 
     let name = match builtin {
@@ -510,16 +548,32 @@ fn construct_error(
     let message = arguments
         .first()
         .map_or(Ok(String::new()), crate::conversion::to_string)?;
+    let message_value = Value::String(message.clone());
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), Value::String(message)),
+        ("message".to_string(), message_value.clone()),
+        (
+            crate::builtins::descriptor_key("name"),
+            error_property_descriptor(Value::String(name.to_string())),
+        ),
+        (
+            crate::builtins::descriptor_key("message"),
+            error_property_descriptor(message_value),
+        ),
+        (
+            "constructor".to_string(),
+            crate::vm::current_realm_intrinsic(*builtin).unwrap_or(Value::Builtin(*builtin)),
+        ),
         (
             crate::builtins::ERROR_SLOT.to_string(),
             Value::Boolean(true),
         ),
         (
             "\0prototype".to_string(),
-            Value::Builtin(crate::ops::Builtin::ErrorPrototype),
+            Value::Builtin(
+                crate::builtin_meta::instance_prototype(*builtin)
+                    .unwrap_or(crate::ops::Builtin::ErrorPrototype),
+            ),
         ),
     ];
 
@@ -532,13 +586,86 @@ fn construct_error(
             return Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))));
         }
         let cause = crate::execute::get_property_result(&options, "cause")?;
-        properties.push(("cause".to_string(), cause));
+        properties.push(("cause".to_string(), cause.clone()));
+        properties.push((
+            crate::builtins::descriptor_key("cause"),
+            error_property_descriptor(cause),
+        ));
     }
 
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
 }
 
-fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
+fn construct_aggregate_error(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let message = arguments
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map(crate::conversion::to_string)
+        .transpose()?;
+    let iterable = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let iterator = crate::collections::iterator::open(iterable)?;
+    let mut values = Vec::new();
+    loop {
+        let Some(value) = crate::collections::iterator::step_value(&iterator)? else {
+            break;
+        };
+        values.push(value);
+    }
+    let errors = Value::array(values);
+    let mut properties = vec![
+        ("errors".to_string(), errors.clone()),
+        (
+            crate::builtins::descriptor_key("errors"),
+            error_property_descriptor(errors),
+        ),
+        (
+            "name".to_string(),
+            Value::String("AggregateError".to_string()),
+        ),
+        (
+            crate::builtins::descriptor_key("name"),
+            error_property_descriptor(Value::String("AggregateError".to_string())),
+        ),
+        (
+            "\0prototype".to_string(),
+            crate::builtins::aggregate_error_prototype(),
+        ),
+    ];
+    if let Some(message) = message {
+        let message_value = Value::String(message);
+        properties.push(("message".to_string(), message_value.clone()));
+        properties.push((
+            crate::builtins::descriptor_key("message"),
+            error_property_descriptor(message_value),
+        ));
+    }
+    if let Some(options) = arguments
+        .get(2)
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
+        let options = to_object(options)?;
+        if crate::with_scope::has_property(&options, "cause")? {
+            let cause = crate::execute::get_property_result(&options, "cause")?;
+            properties.push(("cause".to_string(), cause.clone()));
+            properties.push((
+                crate::builtins::descriptor_key("cause"),
+                error_property_descriptor(cause),
+            ));
+        }
+    }
+    Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
+}
+
+fn error_property_descriptor(value: Value) -> Value {
+    Value::Object(std::rc::Rc::new(ObjectData::new(vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])))
+}
+
+pub(crate) fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
     match value {
         Value::Object(_)
         | Value::Array(_)

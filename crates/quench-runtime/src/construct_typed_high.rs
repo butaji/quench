@@ -346,7 +346,7 @@ pub(crate) fn to_index(value: f64) -> Result<usize, crate::execute::VmError> {
         return Ok(0);
     }
     let truncated = value.trunc();
-    if !value.is_finite() || truncated < 0.0 {
+    if !value.is_finite() || truncated < 0.0 || truncated > 9_007_199_254_740_991.0 {
         return Err(range_error("Invalid typed-array length"));
     }
     usize::try_from(truncated as u128)
