@@ -411,6 +411,14 @@ pub(super) fn make(
     let has_prototype = matches!(metadata.kind, FunctionKind::Generator)
         || matches!(metadata.kind, FunctionKind::Ordinary) && !metadata.is_async;
     let value = make_function_value(code, params, captures, length, metadata);
+    if metadata.is_async && metadata.kind == FunctionKind::Ordinary {
+        if let crate::value::Value::Function(function) = &value {
+            function.properties.borrow_mut().push((
+                "\0prototype".to_string(),
+                crate::value::Value::Builtin(crate::ops::Builtin::AsyncFunctionPrototype),
+            ));
+        }
+    }
     attach_lexical_super(&value, metadata.kind);
     if has_prototype {
         attach_prototype(&value);
@@ -507,6 +515,22 @@ fn attach_generator_prototype(function: &std::rc::Rc<crate::value::FunctionValue
             prototype_descriptor(instance),
         ),
     ]);
+}
+
+fn async_generator_property(
+    name: &str,
+    value: crate::value::Value,
+    writable: bool,
+) -> Vec<(String, crate::value::Value)> {
+    let descriptor = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+        vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), crate::value::Value::Boolean(writable)),
+            ("enumerable".to_string(), crate::value::Value::Boolean(false)),
+            ("configurable".to_string(), crate::value::Value::Boolean(true)),
+        ],
+    )));
+    vec![(name.to_string(), value), (crate::builtins::descriptor_key(name), descriptor)]
 }
 
 fn prototype_descriptor(value: crate::value::Value) -> crate::value::Value {

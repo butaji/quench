@@ -83,6 +83,7 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         );
     }
     Some(match (value, constructor) {
+        (Value::Generator(_), Builtin::Object) => true,
         (Value::Array(values), Builtin::Array) if !values.is_arguments() => true,
         (Value::BigInt64Array(_), Builtin::BigInt64Array)
         | (Value::BigUint64Array(_), Builtin::BigUint64Array)
@@ -255,9 +256,16 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
     }
     if matches!(
         builtin,
+        Builtin::AsyncFunction | Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction
+    ) {
+        return Some(Value::Builtin(Builtin::Function));
+    }
+    if matches!(
+        builtin,
         Builtin::ArrayIteratorPrototype
             | Builtin::SetIteratorPrototype
             | Builtin::MapIteratorPrototype
+            | Builtin::AsyncIteratorPrototype
     ) {
         return Some(Value::Builtin(Builtin::IteratorPrototype));
     }

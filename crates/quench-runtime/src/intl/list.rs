@@ -187,7 +187,11 @@ fn standard_joiners(style: &str, list_type: &str, spanish: bool) -> (String, Str
     if list_type == "unit" && spanish && style == "short" {
         return (", ".to_string(), word.to_string(), ", ".to_string());
     }
-    let final_joiner = if spanish {
+}
+
+fn final_joiner(word: &str, style: &str, spanish: bool, list_type: &str) -> String {
+    let disjunction = list_type == "disjunction";
+    if spanish {
         word.to_string()
     } else if style == "short" {
         if disjunction {
@@ -197,8 +201,7 @@ fn standard_joiners(style: &str, list_type: &str, spanish: bool) -> (String, Str
         }
     } else {
         format!(",{}", word)
-    };
-    (", ".to_string(), word.to_string(), final_joiner)
+    }
 }
 
 fn repeated_joiner(separator: &str) -> (String, String, String) {

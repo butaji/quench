@@ -13,6 +13,19 @@ pub(crate) fn construct(
     reduce_dynamic(&source, kind, is_async)
 }
 
+fn invalid_async_generator_parameters(arguments: &[Value]) -> bool {
+    arguments
+        .get(..arguments.len().saturating_sub(1))
+        .is_some_and(|parameters| {
+            parameters.iter().any(|value| {
+                let source = to_string(value);
+                source
+                    .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+                    .any(|token| matches!(token, "await" | "yield"))
+            })
+        })
+}
+
 pub(crate) fn construct_builtin(
     builtin: crate::ops::Builtin,
     arguments: &[Value],

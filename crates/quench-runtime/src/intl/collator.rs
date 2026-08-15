@@ -37,13 +37,16 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             SLOT.to_string(),
             make_object(vec![
                 ("locale".to_string(), Value::String(locale)),
-                ("usage".to_string(), Value::String(usage)),
-                ("numeric".to_string(), Value::Boolean(numeric)),
-                ("caseFirst".to_string(), Value::String(case_first)),
-                ("sensitivity".to_string(), Value::String(sensitivity)),
+                ("usage".to_string(), Value::String(options.usage)),
+                ("numeric".to_string(), Value::Boolean(options.numeric)),
+                ("caseFirst".to_string(), Value::String(options.case_first)),
+                (
+                    "sensitivity".to_string(),
+                    Value::String(options.sensitivity),
+                ),
                 (
                     "ignorePunctuation".to_string(),
-                    Value::Boolean(ignore_punctuation),
+                    Value::Boolean(options.ignore_punctuation),
                 ),
             ]),
         ),
