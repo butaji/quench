@@ -274,6 +274,10 @@ fn resolve_value(value: Value) -> Value {
         resolve_promise(&promise, value);
         return Value::Promise(promise);
     }
+    resolve_object_value(promise, value)
+}
+
+fn resolve_object_value(promise: Rc<PromiseData>, value: Value) -> Value {
     let then = match crate::execute::get_property_result(&value, "then") {
         Ok(then) => then,
         Err(VmError::Thrown(reason)) => {
