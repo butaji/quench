@@ -111,7 +111,7 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
             Value::String(value) => Some(value),
             _ => None,
         })
-        .unwrap_or_else(|| "ceil".into());
+        .unwrap_or_else(|| "halfExpand".into());
     if smallest == "hours" {
         let hours = object_number(object, "hours");
         let rounded = (hours / increment).ceil() * increment;
@@ -141,10 +141,11 @@ fn round(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmE
 }
 
 fn round_duration(value: f64, mode: &str) -> f64 {
-    if mode == "halfTrunc" {
-        value.floor()
-    } else {
-        value.ceil()
+    match mode {
+        "ceil" => value.ceil(),
+        "expand" => value.signum() * value.abs().ceil(),
+        "halfExpand" => (value + 0.5).floor(),
+        _ => value.floor(),
     }
 }
 
