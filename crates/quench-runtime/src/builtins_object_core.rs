@@ -87,10 +87,7 @@ pub(crate) fn object(arguments: &[Value]) -> Value {
 
 fn boxed_object(value: &Value) -> Value {
     let constructor = object::boxed_constructor(value);
-    let mut properties = vec![
-        ("_value".to_string(), value.clone()),
-        ("constructor".to_string(), Value::Builtin(constructor)),
-    ];
+    let mut properties = vec![("_value".to_string(), value.clone())];
     if let Some(prototype) = crate::builtin_meta::instance_prototype(constructor) {
         properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
     }

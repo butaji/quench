@@ -28,9 +28,7 @@ pub(crate) fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
 }
 
 fn builtin_property_configurable(builtin: Builtin, key: &str) -> bool {
-    if builtin == Builtin::Number
-        && crate::builtins::props::special_property(builtin, key).is_some()
-    {
+    if builtin == Builtin::Number && crate::builtins::props::number_constant(key).is_some() {
         return false;
     }
     builtin != Builtin::Math || crate::math::constant(key).is_none()
