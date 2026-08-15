@@ -1,4 +1,16 @@
 pub(crate) fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
+    if matches!(key, "length" | "name")
+        && matches!(
+            builtin,
+            Builtin::Function
+                | Builtin::AsyncFunction
+                | Builtin::GeneratorFunction
+                | Builtin::AsyncGeneratorFunction
+                | Builtin::FunctionPrototype
+        )
+    {
+        return false;
+    }
     if matches!(
         (builtin, key),
         (
