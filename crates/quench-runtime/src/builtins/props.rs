@@ -89,19 +89,10 @@ fn string_static_method(key: &str) -> Option<Builtin> {
     })
 }
 fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
+    if let Some(method) = builtin_method_special(builtin, key) {
+        return Some(method);
+    }
     use Builtin::*;
-    if let Some(method) = builtin_method_prefix(builtin, key) {
-        return Some(method);
-    }
-    if let Some(method) = promise_builtin_method(builtin, key) {
-        return Some(method);
-    }
-    if builtin == ObjectPrototype {
-        return object_prototype_method(key);
-    }
-    if let Some(method) = regexp_method(builtin, key) {
-        return Some(method);
-    }
     match (builtin, key) {
         (Array, "prototype") => Some(ArrayPrototype),
         (ArrayBuffer, "isView") => Some(ArrayBufferIsView),
@@ -133,6 +124,20 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Date, "parse") => Some(DateParse),
         _ => builtin_method_core_tail(builtin, key),
     }
+}
+
+fn builtin_method_special(builtin: Builtin, key: &str) -> Option<Builtin> {
+    use Builtin::*;
+    if let Some(method) = builtin_method_prefix(builtin, key) {
+        return Some(method);
+    }
+    if let Some(method) = promise_builtin_method(builtin, key) {
+        return Some(method);
+    }
+    if builtin == ObjectPrototype {
+        return object_prototype_method(key);
+    }
+    regexp_method(builtin, key)
 }
 
 fn builtin_method_core_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
