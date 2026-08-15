@@ -245,6 +245,10 @@ fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {
             true,
         ));
     }
+    builtin_descriptor_for_property(builtin, key)
+}
+
+fn builtin_descriptor_for_property(builtin: Builtin, key: &str) -> Option<Value> {
     let property = super::callable_property(builtin, key)
         .or_else(|| super::special_property(builtin, key))
         .or_else(|| match super::property(builtin, key) {
