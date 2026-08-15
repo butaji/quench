@@ -414,11 +414,29 @@ pub(super) fn make(
 ) -> crate::value::Value {
     let has_prototype = matches!(metadata.kind, FunctionKind::Ordinary | FunctionKind::Generator);
     let value = make_function_value(code, params, captures, length, metadata);
+    attach_realm_marker(&value);
     attach_lexical_super(&value, metadata.kind);
     if has_prototype {
         attach_prototype(&value);
     }
     value
+}
+
+fn attach_realm_marker(value: &crate::value::Value) {
+    let crate::value::Value::Function(function) = value else {
+        return;
+    };
+    let realm = crate::vm::realm_id_for_global_value(&function.captures.get(0))
+        .unwrap_or(crate::vm::current_context_or_default().realm());
+    if realm == crate::ops::RealmId::ROOT {
+        return;
+    }
+    if let Some(token) = crate::vm::realm_token(realm) {
+        function.properties.borrow_mut().push((
+            "\0realm".to_string(),
+            token,
+        ));
+    }
 }
 
 fn make_function_value(

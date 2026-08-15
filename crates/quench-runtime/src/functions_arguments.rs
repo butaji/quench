@@ -183,12 +183,18 @@ pub(crate) fn execute_bound(
                     _ => crate::ops::RealmId::ROOT,
                 })
             });
-            match realm {
+            let call_arguments = wrap_shadow_arguments(&combined, realm)?;
+            let result = match realm {
                 Some(realm) if realm != crate::ops::RealmId::ROOT => {
-                    crate::vm::with_realm(realm, || execute(function, &bound.receiver, &combined))
-                        .unwrap_or_else(|| execute(function, &bound.receiver, &combined))
+                    crate::vm::with_realm(realm, || execute(function, &bound.receiver, &call_arguments))
+                        .unwrap_or_else(|| execute(function, &bound.receiver, &call_arguments))
                 }
-                _ => execute(function, &bound.receiver, &combined),
+                _ => execute(function, &bound.receiver, &call_arguments),
+            }?;
+            if realm.is_some() && crate::conversion::is_callable(&result) {
+                crate::reflect::wrap_shadow_function(&result, realm)
+            } else {
+                Ok(result)
             }
         }
         crate::value::Value::BoundFunction(next) => execute_bound(next, &combined),
@@ -197,6 +203,25 @@ pub(crate) fn execute_bound(
         }
         _ => Err(crate::execute::VmError::NotCallable),
     }
+}
+
+fn wrap_shadow_arguments(
+    arguments: &[crate::value::Value],
+    realm: Option<crate::ops::RealmId>,
+) -> Result<Vec<crate::value::Value>, crate::execute::VmError> {
+    let Some(realm) = realm else {
+        return Ok(arguments.to_vec());
+    };
+    arguments
+        .iter()
+        .map(|argument| {
+            if crate::conversion::is_callable(argument) {
+                crate::reflect::wrap_shadow_function(argument, Some(realm))
+            } else {
+                Ok(argument.clone())
+            }
+        })
+        .collect()
 }
 
 fn execute_bound_builtin(

@@ -436,6 +436,12 @@ fn bound_function_property(
     bound: &crate::value::BoundFunctionValue,
     key: &str,
 ) -> Value {
+    let shadow_wrapper = bound
+        .properties
+        .borrow()
+        .iter()
+        .any(|(name, _)| name == "\0realm")
+        && !realm::is_intrinsic(bound);
     if let Some((_, value)) = bound
         .properties
         .borrow()
@@ -456,6 +462,8 @@ fn bound_function_property(
         }
     } else if key == "name" && !realm::is_intrinsic(bound) {
         Value::String(String::new())
+    } else if shadow_wrapper {
+        function_prototype_property(key)
     } else {
         let result = get_property(&bound.target, key);
         if !matches!(result, Value::Undefined) {
