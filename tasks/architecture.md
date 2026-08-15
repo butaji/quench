@@ -243,7 +243,53 @@ The following are hard physical gates:
 - Preserve zero warnings, 500-line files, 40-line functions, and cognitive
   complexity ≤ 10 for every Rust change.
 
-## 9. Test262 domain work plan
+## 9. Declarative builtin consolidation
+
+Collapse the distributed builtin vtable (enum variants, property tables,
+metadata functions, and handler dispatch) into one declarative definition per
+builtin. The current system spreads each builtin's facts across 4-6 files,
+requiring ~5,900 lines of hand-maintained match arms and tables for 579
+builtin variants. Target: ~150 declarative definitions generating the same
+mechanical output.
+
+### 9.1 Current duplication inventory
+
+- `Builtin` enum: 579 variants in `ops.rs` (586 lines)
+- Property dispatch: 281 match arms in `builtins/props.rs` + subfiles (972 lines)
+- Constructor metadata: 143 match arms in `builtin_meta/` (2,313 lines across 21 files)
+- Intl property dispatch: additional match arms in `intl/mod.rs` (724 lines)
+- Handler dispatch: 102 match arms in `vm/vm_builtins.rs` (882 lines)
+- Op dispatch: 94 match arms in `vm/vm_dispatch.rs` (470 lines)
+- 134 `include!` directives scattering related code across artificial file
+  boundaries
+
+### 9.2 Consolidation sub-tasks
+
+- Replace `include!` chains with proper `mod`/`pub mod` hierarchies. This
+  forces clean API boundaries between subsystems and reveals natural
+  deduplication points.
+- Define one `builtin!` declarative macro that accepts per-builtin config
+  (name, constructor, prototype, length, properties, handler) and generates
+  the enum variant, property table, metadata function, and dispatch arm.
+- Replace the `(String, Value)` descriptor pairs and `\0quench:descriptor:\0`
+  sentinel keys with a compact `PropertyDescriptor` struct.
+- Unify the 8 intl modules behind a shared `trait IntlConstructor` or
+  `define_intl_constructor!` macro, collapsing identical `construct`,
+  `from_options`, `build_object`, `prototype_method`, and `resolved_options`
+  patterns.
+- Collapse the `(Builtin, key) -> Builtin -> handler fn` double-dispatch
+  into a single-step property-to-handler table.
+- Unify `Map` and `Set` behind a generic `OrderedCollection<K, V>` and merge
+  the duplicated `canonicalize` and `same_value_zero` helpers.
+- Replace sentinel-key internal slots (`\0prototype`, `\0error_slot`) with
+  dedicated struct fields.
+- Eliminate `.to_string()` calls on static string literals (~450 occurrences)
+  with a `static_str` helper or `.into()`.
+
+See `docs/loc-reduction.md` for the full analysis with per-item LOC savings
+estimates.
+
+## 10. Test262 domain work plan
 
 Start domain breadth only after sections 1–5 establish canonical semantics,
 compact representation, flat execution, operational facts, and generation.
