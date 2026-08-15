@@ -380,6 +380,14 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
             },
         )));
     }
+    if capability.kind == crate::ops::HostCapabilityKind::Agent && key == "timeouts" {
+        return Value::object(vec![
+            ("yield".into(), Value::Number(1.0)),
+            ("small".into(), Value::Number(100.0)),
+            ("long".into(), Value::Number(1_000.0)),
+            ("huge".into(), Value::Number(10_000.0)),
+        ]);
+    }
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
     if matches!(property, Value::Builtin(_)) {
