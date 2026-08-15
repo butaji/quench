@@ -97,9 +97,6 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         (AsyncGeneratorFunctionPrototype, "Symbol.toStringTag") => {
             Some(Value::String("AsyncGeneratorFunction".into()))
         }
-        (AsyncGeneratorFunctionPrototype, "prototype") => {
-            Some(crate::builtins::async_generator_prototype())
-        }
         _ => special_match_tail(builtin, key),
     }
 }
