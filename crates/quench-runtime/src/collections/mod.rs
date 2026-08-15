@@ -111,20 +111,20 @@ fn iterator_to_array(receiver: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn iterator_drop(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let receiver = iterator_source(receiver, "drop")?;
+    validate_iterator_receiver(receiver, "drop")?;
     let count = arguments.first().cloned().unwrap_or(Value::Undefined);
     let number = crate::conversion::to_number(&count)?;
     let integer = number.trunc();
     if number.is_nan() || integer < 0.0 {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid iterator drop count",
-        ));
+        let error = crate::value::error::throw_range_error("Invalid iterator drop count");
+        return Err(error);
     }
     let remaining = if integer.is_infinite() {
         u64::MAX
     } else {
         integer as u64
     };
+    let receiver = iterator_source(receiver, "drop")?;
     Ok(Value::Iterator(std::rc::Rc::new(
         crate::value::IteratorData {
             state: std::cell::RefCell::new(crate::value::IteratorState::Drop {
@@ -134,6 +134,20 @@ fn iterator_drop(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
             }),
         },
     )))
+}
+
+fn validate_iterator_receiver(receiver: Option<&Value>, method: &str) -> Result<(), VmError> {
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(&format!(
+            "Iterator.{method} called on incompatible receiver"
+        )));
+    };
+    if !crate::value::is_object(receiver) {
+        return Err(crate::value::error::throw_type_error(&format!(
+            "Iterator.{method} called on incompatible receiver"
+        )));
+    }
+    Ok(())
 }
 
 fn iterator_map(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
