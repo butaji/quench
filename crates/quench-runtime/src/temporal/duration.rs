@@ -47,8 +47,41 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalDurationCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
+        crate::ops::Builtin::TemporalDurationAbs => Some(absolute(receiver)),
         _ => None,
     }
+}
+
+fn absolute(value: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::Object(object)) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid duration"));
+    };
+    let names = [
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ];
+    let values = names
+        .iter()
+        .map(|name| {
+            match object
+                .iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value)
+            {
+                Some(Value::Number(value)) => Value::Number(value.abs()),
+                _ => Value::Number(0.0),
+            }
+        })
+        .collect::<Vec<_>>();
+    construct(&values)
 }
 
 fn negated(value: Option<&Value>) -> Result<Value, VmError> {
