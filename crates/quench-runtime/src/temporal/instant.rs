@@ -27,6 +27,9 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalInstantEpochNanosecondsGetter => Some(get_epoch(receiver)),
         crate::ops::Builtin::TemporalInstantToString
         | crate::ops::Builtin::TemporalInstantToJSON => Some(to_string(receiver)),
+        crate::ops::Builtin::TemporalInstantToLocaleString => {
+            Some(to_locale_string(receiver, arguments))
+        }
         crate::ops::Builtin::TemporalInstantEquals => Some(equals(receiver, arguments.first())),
         crate::ops::Builtin::TemporalInstantAdd => Some(arithmetic(receiver, arguments.first(), 1)),
         crate::ops::Builtin::TemporalInstantSubtract => {
@@ -34,6 +37,17 @@ pub(crate) fn execute(
         }
         _ => None,
     }
+}
+
+fn to_locale_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let instant =
+        receiver.ok_or_else(|| crate::value::error::throw_type_error("Not an Instant"))?;
+    let formatter = crate::intl::datetime::construct(arguments)?;
+    crate::intl::datetime::prototype_method(
+        crate::ops::Builtin::IntlDateTimeFormatFormat,
+        std::slice::from_ref(instant),
+        Some(&formatter),
+    )
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
