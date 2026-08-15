@@ -402,12 +402,29 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
     let property = builtin_property(builtin, key);
-    if matches!(key, "prototype" | "constructor") {
-        return property;
+    if let Some(result) = constructor_property(builtin, key, property.clone()) {
+        return result;
     }
     if !matches!(property, Value::Undefined) {
         return property;
     }
+    callable_fallback(value, builtin, key)
+}
+
+fn constructor_property(builtin: Builtin, key: &str, property: Value) -> Option<Value> {
+    if !matches!(key, "prototype" | "constructor") {
+        return None;
+    }
+    if key == "constructor"
+        && matches!(property, Value::Undefined)
+        && crate::builtin_meta::constructor_name(builtin).is_some()
+    {
+        return Some(Value::Builtin(Builtin::Function));
+    }
+    Some(property)
+}
+
+fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
     if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
         return bind_function_property(value, key);
     }
