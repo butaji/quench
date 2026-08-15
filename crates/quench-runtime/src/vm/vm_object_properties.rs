@@ -196,9 +196,15 @@ fn global_property(
     if key == "globalThis" {
         return Value::Object(properties.clone());
     }
-    if realm.is_none() {
+    if realm.is_none() || key == "receiveBroadcast" {
         if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
-            return Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(binding)));
+            let capability = Value::HostCapability(Rc::new(
+                crate::value::HostCapabilityValue::new(binding),
+            ));
+            if key == "receiveBroadcast" {
+                return host_capability_property(&capability, binding, key);
+            }
+            return capability;
         }
     }
     realm::global_builtin(key).map_or_else(
