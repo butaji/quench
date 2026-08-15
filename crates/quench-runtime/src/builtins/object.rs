@@ -184,8 +184,9 @@ pub(crate) fn descriptor(
     let (Some(value), Some(key)) = (value, key) else {
         return Ok(Value::Undefined);
     };
+    let value = crate::locals::resolved_replacement(value.clone());
     let key = crate::conversion::to_property_key(key)?;
-    let descriptor = match value {
+    let descriptor = match &value {
         Value::Object(properties) => {
             let global = Value::Object(properties.clone());
             let deleted = properties
@@ -502,6 +503,7 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         configurable,
     ))
 }
+
 fn accessor_descriptor(getter: Builtin) -> Value {
     Value::Object(Rc::new(ObjectData::new(vec![
         ("get".to_string(), Value::Builtin(getter)),
