@@ -88,6 +88,9 @@ fn concat_species(this: &Value) -> Result<Option<Value>, crate::execute::VmError
             "Species constructor is not a constructor",
         ));
     }
+    if matches!(constructor, Value::Builtin(crate::ops::Builtin::Array)) {
+        return Ok(None);
+    }
     let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
     if matches!(species, Value::Undefined | Value::Null) {
         return Ok(None);
