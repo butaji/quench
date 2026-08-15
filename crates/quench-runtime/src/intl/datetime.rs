@@ -58,6 +58,7 @@ pub(crate) struct DateTimeOptions {
     components: Vec<(String, String)>,
     fractional_second_digits: Option<u32>,
     hour12: Option<bool>,
+    explicit_date_options: bool,
 }
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -77,6 +78,7 @@ impl DateTimeOptions {
             components: Vec::new(),
             fractional_second_digits: None,
             hour12: None,
+            explicit_date_options: false,
         };
         if let Some(Value::Object(properties)) = options {
             for (key, value) in properties.iter() {
@@ -94,6 +96,11 @@ impl DateTimeOptions {
             return Ok(());
         }
         let text = to_string_value(value);
+        if EXPLICIT_COMPONENTS.contains(&key)
+            || matches!(key, "dateStyle" | "timeStyle" | "fractionalSecondDigits")
+        {
+            self.explicit_date_options = true;
+        }
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
             if let Some(valid) = valid_component(&text, allowed) {
                 self.set_component(name, valid);
@@ -221,6 +228,10 @@ impl DateTimeOptions {
                 Value::String(self.time_zone.clone()),
             ),
         ];
+        props.push((
+            "__explicitDateOptions".to_string(),
+            Value::Boolean(self.explicit_date_options),
+        ));
         let has_hour = self.contains("hour");
         for (key, value) in &self.components {
             props.push((key.clone(), Value::String(value.clone())));
@@ -299,6 +310,7 @@ pub(crate) fn prototype_method(
     let temporal_input = arguments
         .first()
         .is_some_and(|value| matches!(value, Value::Object(object) if object.iter().any(|(key, _)| key == "epochNanoseconds")));
+    let no_options = slot_bool(&slots, "__explicitDateOptions") != Some(true);
     if temporal_input
         && slot_string(&slots, "dateStyle").is_some()
         && slot_string(&slots, "timeStyle").is_none()
@@ -318,9 +330,10 @@ pub(crate) fn prototype_method(
     }
     if temporal_input
         && (slot_string(&slots, "hour").is_none() || slot_string(&slots, "timeStyle").is_some())
-        && !["year", "month", "day", "weekday", "era"]
-            .iter()
-            .any(|name| slot_string(&slots, name).is_some())
+        && (no_options
+            || !["year", "month", "day", "weekday", "era"]
+                .iter()
+                .any(|name| slot_string(&slots, name).is_some()))
     {
         for name in ["hour", "minute", "second"] {
             slots.push((name.to_string(), Value::String("numeric".into())));
