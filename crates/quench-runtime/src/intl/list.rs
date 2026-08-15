@@ -144,19 +144,35 @@ fn joiner_for(index: usize, length: usize, joiners: &(String, String, String)) -
 
 fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, String) {
     if style == "narrow" {
-        let separator = if list_type == "unit" { " " } else { ", " };
-        return (
-            separator.to_string(),
-            separator.to_string(),
-            separator.to_string(),
-        );
+        return narrow_joiners(list_type);
     }
     let spanish = locale.starts_with("es");
     if list_type == "unit" && !spanish {
         return (", ".to_string(), ", ".to_string(), ", ".to_string());
     }
+    let word = list_word(style, spanish, list_type);
+    if list_type == "unit" && spanish && style == "short" {
+        return (", ".to_string(), word.to_string(), ", ".to_string());
+    }
+    (
+        ", ".to_string(),
+        word.to_string(),
+        final_joiner(word, style, spanish, list_type),
+    )
+}
+
+fn narrow_joiners(list_type: &str) -> (String, String, String) {
+    let separator = if list_type == "unit" { " " } else { ", " };
+    (
+        separator.to_string(),
+        separator.to_string(),
+        separator.to_string(),
+    )
+}
+
+fn list_word(style: &str, spanish: bool, list_type: &str) -> &'static str {
     let disjunction = list_type == "disjunction";
-    let word = if style == "short" && !spanish && !disjunction {
+    if style == "short" && !spanish && !disjunction {
         " & "
     } else if disjunction {
         if spanish {
@@ -168,11 +184,12 @@ fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, Strin
         " y "
     } else {
         " and "
-    };
-    if list_type == "unit" && spanish && style == "short" {
-        return (", ".to_string(), word.to_string(), ", ".to_string());
     }
-    let final_joiner = if spanish {
+}
+
+fn final_joiner(word: &str, style: &str, spanish: bool, list_type: &str) -> String {
+    let disjunction = list_type == "disjunction";
+    if spanish {
         word.to_string()
     } else if style == "short" {
         if disjunction {
@@ -182,8 +199,7 @@ fn joiners(locale: &str, style: &str, list_type: &str) -> (String, String, Strin
         }
     } else {
         format!(",{}", word)
-    };
-    (", ".to_string(), word.to_string(), final_joiner)
+    }
 }
 
 fn format_list(items: &[String], locale: &str, style: &str, list_type: &str) -> String {
