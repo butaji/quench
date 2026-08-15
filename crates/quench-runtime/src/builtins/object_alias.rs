@@ -107,7 +107,7 @@ fn retarget(value: &mut Value, old: &Rc<ObjectData>, new: &WeakObject) {
     }
 }
 
-pub(crate) fn alias(object: &Rc<ObjectData>) -> Value {
+fn alias(object: &Rc<ObjectData>) -> Value {
     Value::ObjectAlias(ObjectAliasValue(Rc::new(RefCell::new(Rc::downgrade(
         object,
     )))))
