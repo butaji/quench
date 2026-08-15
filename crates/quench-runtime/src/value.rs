@@ -461,6 +461,7 @@ pub enum PrivateSlot {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionValue {
+    pub(crate) realm: crate::ops::RealmId,
     pub(crate) code: crate::machine::FunctionCode,
     pub params: u16,
     pub captures: Rc<crate::environment::Environment>,
