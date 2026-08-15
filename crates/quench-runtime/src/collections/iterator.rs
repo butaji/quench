@@ -434,10 +434,11 @@ pub(super) fn native_step(
         return Ok(None);
     }
     let value = if let Some(value) = typed_receiver {
-        let values = iterator_typed::typed_values(value.clone())?;
         if typed_keys {
-            (values.get(*index).is_some()).then_some(Value::Number(*index as f64))
+            let length = iterator_typed::typed_length(value)?;
+            (*index < length).then_some(Value::Number(*index as f64))
         } else {
+            let values = iterator_typed::typed_values(value.clone())?;
             values.get(*index).cloned()
         }
     } else if let Some(data) = receiver {
