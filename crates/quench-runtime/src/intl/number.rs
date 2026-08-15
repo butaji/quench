@@ -172,9 +172,9 @@ pub(crate) fn format_with_options(
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
-            if !crate::value::is_object(options) {
+            if matches!(options, Value::Null) {
                 return Err(crate::value::error::throw_type_error(
-                    "NumberFormat options must be an object",
+                    "Cannot convert null to object",
                 ));
             }
         }
