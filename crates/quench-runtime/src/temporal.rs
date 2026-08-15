@@ -41,17 +41,39 @@ fn zoned_date_time_from(
     let zone = annotation
         .strip_suffix(']')
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
-    let date_time = chrono::NaiveDateTime::parse_from_str(main, "%Y-%m-%dT%H:%M:%S")
-        .or_else(|_| chrono::NaiveDateTime::parse_from_str(main, "%Y-%m-%dT%H:%M"))
+    let offset_index = main
+        .get(11..)
+        .and_then(|tail| tail.find(['+', '-']).map(|index| index + 11));
+    let (wall_time, offset) = match offset_index {
+        Some(index) => (&main[..index], parse_zoned_offset(&main[index..])?),
+        None => (main, 0),
+    };
+    let date_time = chrono::NaiveDateTime::parse_from_str(wall_time, "%Y-%m-%dT%H:%M:%S")
+        .or_else(|_| chrono::NaiveDateTime::parse_from_str(wall_time, "%Y-%m-%dT%H:%M"))
         .map_err(|_| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
     let epoch = date_time
         .and_utc()
         .timestamp_nanos_opt()
         .ok_or_else(|| crate::value::error::throw_range_error("Invalid ZonedDateTime"))?;
     zoned_date_time_construct(&[
-        crate::value::Value::BigInt(epoch.to_string()),
+        crate::value::Value::BigInt((epoch - offset * 60_000_000_000).to_string()),
         crate::value::Value::String(zone.to_string()),
     ])
+}
+
+fn parse_zoned_offset(offset: &str) -> Result<i64, crate::execute::VmError> {
+    let sign = if offset.starts_with('-') { -1 } else { 1 };
+    let parts = offset[1..].split(':').collect::<Vec<_>>();
+    if parts.len() != 2 {
+        return Err(crate::value::error::throw_range_error("Invalid offset"));
+    }
+    let hours = parts[0]
+        .parse::<i64>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid offset"))?;
+    let minutes = parts[1]
+        .parse::<i64>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid offset"))?;
+    Ok(sign * (hours * 60 + minutes))
 }
 
 fn zoned_date_time_to_string(
