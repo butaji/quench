@@ -47,6 +47,10 @@ pub(crate) fn realm_intrinsic(builtin: Builtin) -> Value {
 pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
     crate::globals::builtin(key).map(Value::Builtin)
 }
+
+pub(crate) fn realm_token(realm: RealmId) -> Option<Value> {
+    realm::token(realm).map(Value::HostCapability)
+}
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
