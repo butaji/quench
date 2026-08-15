@@ -381,9 +381,10 @@ fn canonicalize_calendar(value: &str) -> Result<String, VmError> {
     }
     Ok(match value.as_str() {
         "islamicc" => "islamic-civil".to_string(),
+        "ethiopic-amete-alem" => "ethioaa".to_string(),
         "gregory" | "buddhist" | "japanese" | "islamic-civil" | "persian" | "iso8601"
-        | "chinese" | "coptic" | "ethiopic" | "hebrew" | "indian" | "islamic-tbla"
-        | "islamic-umalqura" | "roc" => value,
+        | "chinese" | "coptic" | "dangi" | "ethioaa" | "ethiopic" | "hebrew" | "indian"
+        | "islamic-tbla" | "islamic-umalqura" | "roc" => value,
         "islamic" | "islamic-rgsa" => "islamic-civil".to_string(),
         _ => "gregory".to_string(),
     })
