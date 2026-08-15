@@ -59,6 +59,12 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
         Builtin::IntlPluralRulesResolvedOptions => {
             Some("Intl.PluralRules.prototype.resolvedOptions")
         }
+        _ => intl_name_group_a_tail(b),
+    }
+}
+
+const fn intl_name_group_a_tail(b: Builtin) -> Option<&'static str> {
+    match b {
         Builtin::IntlDateTimeFormatFormat => Some("Intl.DateTimeFormat.prototype.format"),
         Builtin::IntlDateTimeFormatFormatToParts => {
             Some("Intl.DateTimeFormat.prototype.formatToParts")
@@ -145,6 +151,12 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlSegmenterResolvedOptions
         | Builtin::IntlDisplayNamesOf
         | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
+        _ => intl_fn_len_tail(b),
+    }
+}
+
+const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
+    match b {
         Builtin::IntlNumberFormatFormatToParts => Some(1.0),
         Builtin::IntlNumberFormatFormatRange
         | Builtin::IntlNumberFormatFormatRangeToParts
