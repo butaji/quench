@@ -139,6 +139,12 @@ pub(crate) fn execute(
     _receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    if matches!(
+        arguments.first(),
+        Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
+    ) {
+        return execute_bigint(builtin, arguments);
+    }
     let Some(view) = atomic_view(arguments.first()) else {
         return Err(crate::value::error::throw_type_error(
             "Atomics operation requires an Int32Array",
@@ -171,6 +177,107 @@ pub(crate) fn execute(
     };
     view.set(index, updated);
     Ok(Value::Number(old as f64))
+}
+
+fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
+    let view = bigint_view(args.first())?;
+    require_bigint_shared(view)?;
+    let index = atomic_index(args.get(1))?;
+    let old = bigint_old(view, index)?;
+    let replacement = bigint_result(builtin, args, &old)?;
+    bigint_write(
+        view,
+        index,
+        &replacement,
+        builtin == Builtin::AtomicsCompareExchange && replacement == old,
+    )?;
+    Ok(Value::BigInt(old))
+}
+
+fn bigint_view(value: Option<&Value>) -> Result<&Value, VmError> {
+    match value {
+        Some(value @ (Value::BigInt64Array(_) | Value::BigUint64Array(_))) => Ok(value),
+        _ => Err(crate::value::error::throw_type_error(
+            "Atomics requires a BigInt typed array",
+        )),
+    }
+}
+
+fn require_bigint_shared(view: &Value) -> Result<(), VmError> {
+    let shared = match view {
+        Value::BigInt64Array(v) => v.buffer.shared,
+        Value::BigUint64Array(v) => v.buffer.shared,
+        _ => false,
+    };
+    shared
+        .then_some(())
+        .ok_or_else(|| crate::value::error::throw_type_error("Atomics requires a shared buffer"))
+}
+
+fn bigint_old(view: &Value, index: usize) -> Result<String, VmError> {
+    let value = match view {
+        Value::BigInt64Array(v) => v.get(index).map(|x| x.to_string()),
+        Value::BigUint64Array(v) => v.get(index).map(|x| x.to_string()),
+        _ => None,
+    };
+    value.ok_or_else(|| crate::value::error::throw_range_error("Atomics index is out of range"))
+}
+
+fn bigint_result(builtin: Builtin, args: &[Value], old: &str) -> Result<String, VmError> {
+    let old = old
+        .parse::<i128>()
+        .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt"))?;
+    let value = bigint_argument(args.get(2))?;
+    let result = if builtin == Builtin::AtomicsCompareExchange {
+        if old == value {
+            bigint_argument(args.get(3))?
+        } else {
+            old
+        }
+    } else {
+        match builtin {
+            Builtin::AtomicsAdd => old.wrapping_add(value),
+            Builtin::AtomicsAnd => old & value,
+            Builtin::AtomicsOr => old | value,
+            Builtin::AtomicsSub => old.wrapping_sub(value),
+            Builtin::AtomicsXor => old ^ value,
+            _ => return Err(crate::vm::not_callable()),
+        }
+    };
+    Ok(result.to_string())
+}
+
+fn bigint_write(view: &Value, index: usize, value: &str, unchanged: bool) -> Result<(), VmError> {
+    if unchanged {
+        return Ok(());
+    }
+    match view {
+        Value::BigInt64Array(v) => v.set(
+            index,
+            value
+                .parse::<i64>()
+                .map_err(|_| crate::value::error::throw_type_error("BigInt64 out of range"))?,
+        ),
+        Value::BigUint64Array(v) => v.set(
+            index,
+            value
+                .parse::<u64>()
+                .map_err(|_| crate::value::error::throw_type_error("BigUint64 out of range"))?,
+        ),
+        _ => false,
+    };
+    Ok(())
+}
+
+fn bigint_argument(value: Option<&Value>) -> Result<i128, VmError> {
+    let Some(Value::BigInt(value)) = value else {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics requires BigInt values",
+        ));
+    };
+    value
+        .parse()
+        .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt"))
 }
 
 enum AtomicView<'a> {
