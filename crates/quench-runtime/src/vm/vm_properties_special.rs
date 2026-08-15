@@ -103,6 +103,16 @@ fn bound_function_fallback(
     if shadow_wrapper {
         return function_prototype_property(key);
     }
+    if let Value::Builtin(builtin) = bound.target {
+        let intrinsic = match (builtin, key) {
+            (Builtin::AsyncFunction, "prototype") => Some(Builtin::AsyncFunctionPrototype),
+            (Builtin::AsyncFunctionPrototype, "constructor") => Some(Builtin::AsyncFunction),
+            _ => None,
+        };
+        if let Some(intrinsic) = intrinsic {
+            return realm::intrinsic(bound.realm, intrinsic).unwrap_or(Value::Builtin(intrinsic));
+        }
+    }
     let result = get_property(&bound.target, key);
     if matches!(result, Value::Undefined) {
         function_prototype_property(key)
