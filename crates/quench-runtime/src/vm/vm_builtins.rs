@@ -314,7 +314,13 @@ fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
                 "Cannot add property 'stack'",
             ));
         }
-        crate::builtins::set_property(value.clone(), "stack", stack)
+        let descriptor = [
+            ("value".to_string(), stack),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ];
+        crate::builtins::define_own_property(value, "stack", &descriptor)?
     };
     crate::locals::replace_value(value, &updated);
     Ok(())
