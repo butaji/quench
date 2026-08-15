@@ -36,7 +36,9 @@ fn builtin_error_instance(value: &Value, constructor: &Value) -> bool {
             | Builtin::URIError
             | Builtin::AggregateError
             | Builtin::TypeError
-    ) && own_constructor(value) == Some(Value::Builtin(constructor))
+    ) && (own_constructor(value) == Some(Value::Builtin(constructor))
+        || (own_constructor(value).is_none()
+            && crate::vm::has_error_slot(value)))
 }
 
 fn intrinsic_builtin(value: &Value) -> Option<Builtin> {
@@ -306,11 +308,21 @@ fn custom_object_prototype(value: &Value) -> Option<Value> {
 }
 
 fn own_constructor(value: &Value) -> Option<Value> {
-    let Value::Object(properties) = value else {
-        return None;
-    };
-    properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "constructor").then(|| value.clone()))
+    match value {
+        Value::Object(properties) => properties
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "constructor").then(|| value.clone())),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .and_then(|properties| {
+                properties
+                    .iter()
+                    .rev()
+                    .find_map(|(name, value)| (name == "constructor").then(|| value.clone()))
+            }),
+        _ => None,
+    }
 }

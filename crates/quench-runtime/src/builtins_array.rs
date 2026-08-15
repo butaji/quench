@@ -34,6 +34,7 @@ pub(crate) fn delete_property(target: Value, key: &str) -> (Value, bool) {
         Value::Builtin(builtin) => {
             let deletable = crate::builtins::props::is_builtin_deletable(builtin, key);
             if deletable {
+                crate::builtins::remove_intrinsic_override(builtin, key);
                 crate::builtins::mark_builtin_prototype_property_removed(builtin, key);
             }
             (Value::Builtin(builtin), deletable)
