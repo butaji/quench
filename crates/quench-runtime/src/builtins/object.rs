@@ -181,8 +181,9 @@ pub(crate) fn descriptor(
     let (Some(value), Some(key)) = (value, key) else {
         return Ok(Value::Undefined);
     };
+    let value = crate::locals::resolved_replacement(value.clone());
     let key = crate::conversion::to_property_key(key)?;
-    let descriptor = match value {
+    let descriptor = match &value {
         Value::Object(properties) => {
             let global = Value::Object(properties.clone());
             let deleted = properties
@@ -350,48 +351,8 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
-    if key == "stack" && native_error_prototype_receiver(&Value::Builtin(builtin)) {
-        return crate::builtins::read_intrinsic_override(builtin, key)
-            .map(|descriptor| public_descriptor(&descriptor));
-    }
-    if matches!(
-        builtin,
-        Builtin::ErrorPrototype
-            | Builtin::RangeErrorPrototype
-            | Builtin::ReferenceErrorPrototype
-            | Builtin::SyntaxErrorPrototype
-            | Builtin::EvalErrorPrototype
-            | Builtin::URIErrorPrototype
-            | Builtin::AggregateErrorPrototype
-            | Builtin::TypeErrorPrototype
-            | Builtin::SuppressedErrorPrototype
-    ) && key == "name"
-    {
-        let value = match builtin {
-            Builtin::RangeErrorPrototype => "RangeError",
-            Builtin::ReferenceErrorPrototype => "ReferenceError",
-            Builtin::SyntaxErrorPrototype => "SyntaxError",
-            Builtin::EvalErrorPrototype => "EvalError",
-            Builtin::URIErrorPrototype => "URIError",
-            Builtin::AggregateErrorPrototype => "AggregateError",
-            Builtin::TypeErrorPrototype => "TypeError",
-            Builtin::SuppressedErrorPrototype => "SuppressedError",
-            _ => "Error",
-        };
-        return Some(descriptor_object_with_flags(
-            Value::String(value.to_string()),
-            true,
-            false,
-            true,
-        ));
-    }
-    if builtin == Builtin::Object && key == "hasOwn" {
-        return Some(descriptor_object_with_flags(
-            Value::Builtin(Builtin::ObjectHasOwn),
-            true,
-            false,
-            true,
-        ));
+    if let Some(descriptor) = builtin_descriptor_early(builtin, key) {
+        return descriptor;
     }
     if let Some(descriptor) = intrinsic_accessor(builtin, key) {
         return Some(descriptor);
@@ -448,6 +409,51 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
         false,
         configurable,
     ))
+}
+
+fn builtin_descriptor_early(builtin: Builtin, key: &str) -> Option<Option<Value>> {
+    if let Some(descriptor) = native_stack_descriptor(builtin, key) {
+        return Some(descriptor);
+    }
+    if key == "name"
+        && (builtin == Builtin::ErrorPrototype
+            || native_error_prototype_receiver(&Value::Builtin(builtin)))
+    {
+        return Some(Some(native_error_name_descriptor(builtin)));
+    }
+    (builtin == Builtin::Object && key == "hasOwn").then(|| {
+        Some(descriptor_object_with_flags(
+            Value::Builtin(Builtin::ObjectHasOwn),
+            true,
+            false,
+            true,
+        ))
+    })
+}
+
+fn native_error_name_descriptor(builtin: Builtin) -> Value {
+    let value = match builtin {
+        Builtin::RangeErrorPrototype => "RangeError",
+        Builtin::ReferenceErrorPrototype => "ReferenceError",
+        Builtin::SyntaxErrorPrototype => "SyntaxError",
+        Builtin::EvalErrorPrototype => "EvalError",
+        Builtin::URIErrorPrototype => "URIError",
+        Builtin::AggregateErrorPrototype => "AggregateError",
+        Builtin::TypeErrorPrototype => "TypeError",
+        Builtin::SuppressedErrorPrototype => "SuppressedError",
+        _ => "Error",
+    };
+    descriptor_object_with_flags(Value::String(value.to_string()), true, false, true)
+}
+
+fn native_stack_descriptor(builtin: Builtin, key: &str) -> Option<Option<Value>> {
+    if key != "stack" || !native_error_prototype_receiver(&Value::Builtin(builtin)) {
+        return None;
+    }
+    Some(
+        crate::builtins::read_intrinsic_override(builtin, key)
+            .map(|descriptor| public_descriptor(&descriptor)),
+    )
 }
 fn accessor_descriptor(getter: Builtin) -> Value {
     Value::Object(Rc::new(ObjectData::new(vec![
