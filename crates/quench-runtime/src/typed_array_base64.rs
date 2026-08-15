@@ -49,6 +49,7 @@ fn syntax_error() -> VmError {
 fn string_argument(arguments: &[Value]) -> Result<String, VmError> {
     match arguments.first() {
         Some(Value::String(text)) => Ok(text.clone()),
+        Some(Value::StringUnits(units)) => Ok(String::from_utf16_lossy(units)),
         _ => Err(crate::value::error::throw_type_error(
             "Uint8Array base64/hex input must be a string",
         )),
