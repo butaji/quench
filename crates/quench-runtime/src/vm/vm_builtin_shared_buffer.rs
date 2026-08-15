@@ -148,7 +148,10 @@ fn array_buffer_species(receiver: Option<&Value>) -> Result<Value, VmError> {
         }
     };
     Ok(match species {
-        Value::Undefined | Value::Null => Value::Builtin(Builtin::SharedArrayBuffer),
+        Value::Undefined | Value::Null if receiver_is_shared(Some(receiver)) => {
+            Value::Builtin(Builtin::SharedArrayBuffer)
+        }
+        Value::Undefined | Value::Null => Value::Builtin(Builtin::ArrayBuffer),
         species => species,
     })
 }
