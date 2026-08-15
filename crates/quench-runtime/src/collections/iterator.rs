@@ -162,15 +162,42 @@ pub(crate) fn return_iterator(
         ));
     };
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let completion = close(
-        receiver.cloned().unwrap_or(Value::Undefined),
-        crate::completion::Completion::Normal,
-    )?;
+    let completion = if let Some(iterators) = zip_iterators(data) {
+        close_iterators(iterators, crate::completion::Completion::Normal)?
+    } else {
+        close(
+            receiver.cloned().unwrap_or(Value::Undefined),
+            crate::completion::Completion::Normal,
+        )?
+    };
     mark_done(data);
     match completion {
         crate::completion::Completion::Normal => Ok(result(value, true)),
         completion => completion.into_vm_error().map(|_| result(value, true)),
     }
+}
+
+fn zip_iterators(data: &IteratorData) -> Option<Vec<Value>> {
+    match &*data.state.borrow() {
+        IteratorState::Zip { iterators, .. } => Some(iterators.clone()),
+        _ => None,
+    }
+}
+
+pub(crate) fn close_iterators(
+    iterators: Vec<Value>,
+    mut completion: crate::completion::Completion,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    for iterator in iterators.into_iter().rev() {
+        match close(iterator, completion.clone()) {
+            Ok(next) => completion = next,
+            Err(error) if !matches!(completion, crate::completion::Completion::Throw(_)) => {
+                completion = crate::completion::Completion::from_vm_error(error)?;
+            }
+            Err(_) => {}
+        }
+    }
+    Ok(completion)
 }
 fn make_protocol(iterator: Value) -> Value {
     make_protocol_with_next(iterator, Value::Undefined)

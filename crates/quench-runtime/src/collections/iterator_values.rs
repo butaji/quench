@@ -124,7 +124,16 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
         return next_for(value);
     }
     if key == "return"
-        && matches!(value, Value::Iterator(data) if matches!(&*data.state.borrow(), IteratorState::Protocol { .. } | IteratorState::Mapped { .. }))
+        && matches!(
+            value,
+            Value::Iterator(data)
+                if matches!(
+                    &*data.state.borrow(),
+                    IteratorState::Protocol { .. }
+                        | IteratorState::Mapped { .. }
+                        | IteratorState::Zip { .. }
+                )
+        )
     {
         return Value::Builtin(crate::ops::Builtin::IteratorReturn);
     }
