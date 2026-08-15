@@ -440,32 +440,8 @@ impl NumberOptions {
             "percent" => number * 100.0,
             _ => number,
         };
-        let scientific = match self.notation.as_str() {
-            "scientific" => Some(scientific_parts(scaled, false)),
-            "engineering" => Some(scientific_parts(scaled, true)),
-            _ => None,
-        };
-        let magnitude = if self.notation == "compact" {
-            compact_scale(scaled, &self.locale, &self.compact_display)
-        } else {
-            0
-        };
-        let value = if let Some((coefficient, _)) = scientific {
-            coefficient
-        } else if magnitude == 0 {
-            scaled
-        } else {
-            scaled / 10f64.powi(magnitude)
-        };
-        let compact_unscaled_de = self.notation == "compact"
-            && self.locale.starts_with("de")
-            && magnitude == 0
-            && scaled.abs() >= 1_000.0;
-        let fraction_digits = if self.notation == "compact" && !compact_unscaled_de {
-            compact_fraction_digits(value)
-        } else {
-            self.maximum_fraction_digits
-        };
+        let (value, scientific, magnitude, compact_unscaled_de, fraction_digits) =
+            self.number_parts(scaled);
         let fraction_text = format_number_rounded(value, fraction_digits, self.rounding_increment);
         let (mut text, significant_selected) =
             if let Some(maximum) = self.maximum_significant_digits {
@@ -492,15 +468,7 @@ impl NumberOptions {
             } else {
                 (fraction_text, false)
             };
-        if scientific.is_none()
-            && self.use_grouping
-            && (!self.grouping_min2 || scaled.abs() >= 10_000.0)
-            && (self.notation != "compact" || (compact_unscaled_de && scaled.abs() >= 10_000.0))
-        {
-            text = group_integer_locale(&text, &self.locale);
-        } else if self.notation == "compact" && self.locale.starts_with("de") {
-            text = text.replace('.', ",");
-        }
+        text = self.group_number(&text, scientific.is_some(), scaled, compact_unscaled_de);
         if let Some((_, exponent)) = scientific.filter(|(value, _)| value.is_finite()) {
             if self.locale.starts_with("de") {
                 text = text.replace('.', ",");
@@ -512,6 +480,69 @@ impl NumberOptions {
         if self.minimum_fraction_digits > 0 && !significant_selected {
             text = pad_locale_fraction(&text, self.minimum_fraction_digits, &self.locale);
         }
+        self.finish_number(text, number, magnitude, significant_selected)
+    }
+
+    fn group_number(
+        &self,
+        text: &str,
+        scientific: bool,
+        scaled: f64,
+        compact_unscaled_de: bool,
+    ) -> String {
+        if !scientific
+            && self.use_grouping
+            && (!self.grouping_min2 || scaled.abs() >= 10_000.0)
+            && (self.notation != "compact" || (compact_unscaled_de && scaled.abs() >= 10_000.0))
+        {
+            group_integer_locale(text, &self.locale)
+        } else if self.notation == "compact" && self.locale.starts_with("de") {
+            text.replace('.', ",")
+        } else {
+            text.to_string()
+        }
+    }
+
+    fn number_parts(&self, scaled: f64) -> (f64, Option<(f64, i32)>, i32, bool, u32) {
+        let scientific = match self.notation.as_str() {
+            "scientific" => Some(scientific_parts(scaled, false)),
+            "engineering" => Some(scientific_parts(scaled, true)),
+            _ => None,
+        };
+        let magnitude = if self.notation == "compact" {
+            compact_scale(scaled, &self.locale, &self.compact_display)
+        } else {
+            0
+        };
+        let value = scientific.map_or_else(
+            || scaled / 10f64.powi(magnitude),
+            |(coefficient, _)| coefficient,
+        );
+        let compact_unscaled_de = self.notation == "compact"
+            && self.locale.starts_with("de")
+            && magnitude == 0
+            && scaled.abs() >= 1_000.0;
+        let fraction_digits = if self.notation == "compact" && !compact_unscaled_de {
+            compact_fraction_digits(value)
+        } else {
+            self.maximum_fraction_digits
+        };
+        (
+            value,
+            scientific,
+            magnitude,
+            compact_unscaled_de,
+            fraction_digits,
+        )
+    }
+
+    fn finish_number(
+        &self,
+        mut text: String,
+        number: f64,
+        magnitude: i32,
+        _significant_selected: bool,
+    ) -> String {
         let negative = text.starts_with('-');
         if number.is_nan() && self.locale.starts_with("zh") {
             text = "非數值".to_string();
