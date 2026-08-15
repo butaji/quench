@@ -13,11 +13,6 @@ pub(crate) fn assign_set_property(
         }
         return Ok(target.clone());
     }
-    if rejects_new_property(target, key) || inherited_write_blocked(target, key) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot assign to read-only property",
-        ));
-    }
     if let Some(setter) = crate::property_define::accessor(target, key, "set") {
         if matches!(setter, crate::value::Value::Undefined) {
             return Err(crate::value::error::throw_type_error(
@@ -30,6 +25,11 @@ pub(crate) fn assign_set_property(
             std::slice::from_ref(&value),
         )?;
         return Ok(target);
+    }
+    if rejects_new_property(target, key) || inherited_write_blocked(target, key) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot assign to read-only property",
+        ));
     }
     Ok(crate::builtins::set_property(target.clone(), key, value))
 }
