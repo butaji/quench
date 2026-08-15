@@ -318,6 +318,14 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         "microseconds",
         "nanoseconds",
     ];
+    if !names
+        .iter()
+        .any(|name| object.iter().any(|(key, _)| key == name))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Duration-like object has no duration fields",
+        ));
+    }
     let arguments = names
         .iter()
         .map(|name| {
