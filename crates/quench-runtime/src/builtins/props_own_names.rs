@@ -12,6 +12,7 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "toString", "toJSON", "valueOf",
             "equals",
             "toLocaleString",
+            "add",
         ],
         Builtin::TemporalPlainDate => &["length", "name", "prototype", "from"],
         Builtin::TemporalPlainDatePrototype => &[
