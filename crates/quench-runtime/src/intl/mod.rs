@@ -467,7 +467,38 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     } else {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
-    Ok(canonicalize_subtags(parts.collect(), out, script_done)?.join("-"))
+    let canonical = canonicalize_subtags(parts.collect(), out, script_done)?.join("-");
+    Ok(canonicalize_unicode_aliases(&canonical))
+}
+
+fn canonicalize_unicode_aliases(tag: &str) -> String {
+    let mut canonical = tag.to_string();
+    for (from, to) in [
+        ("-ca-ethiopic-amete-alem", "-ca-ethioaa"),
+        ("-ca-islamicc", "-ca-islamic-civil"),
+        ("-sd-cn11", "-sd-cnbj"),
+        ("-sd-cz10a", "-sd-cz110"),
+        ("-sd-fra", "-sd-frges"),
+        ("-sd-no23", "-sd-no50"),
+        ("-rg-cn11", "-rg-cnbj"),
+        ("-rg-cz10a", "-rg-cz110"),
+        ("-rg-fra", "-rg-frges"),
+        ("-rg-no23", "-rg-no50"),
+        ("-tz-eire", "-tz-iedub"),
+        ("-tz-est", "-tz-papty"),
+        ("-tz-gmt0", "-tz-gmt"),
+        ("-tz-cnckg", "-tz-cnsha"),
+        ("-ks-primary", "-ks-level1"),
+        ("-ks-tertiary", "-ks-level3"),
+        ("-ms-imperial", "-ms-uksystem"),
+        ("-kb-yes", "-kb"),
+        ("-kc-yes", "-kc"),
+        ("-kh-yes", "-kh"),
+        ("-kk-yes", "-kk"),
+    ] {
+        canonical = canonical.replace(from, to);
+    }
+    canonical
 }
 
 fn grandfathered_alias(tag: &str) -> Option<&'static str> {
