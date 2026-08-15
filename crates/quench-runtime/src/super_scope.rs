@@ -125,20 +125,22 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
             let context = current()?;
             require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
+            let receiver = actual_receiver(&context)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
             trigger_deferred(&prototype, key)?;
-            put_with_receiver(&prototype, key, value, &context.receiver)?;
+            put_with_receiver(&prototype, key, value, &receiver)?;
             Ok(())
         }
         crate::ops::Op::SetSuperPropertyDynamic { key, src } => {
             let context = current()?;
             require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
+            let receiver = actual_receiver(&context)?;
             let key_value = crate::execute::read_register(registers, *key)?;
             let key_string = crate::properties::dynamic_property_key(&key_value)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
             trigger_deferred(&prototype, &key_string)?;
-            put_with_receiver(&prototype, &key_string, value, &context.receiver)?;
+            put_with_receiver(&prototype, &key_string, value, &receiver)?;
             Ok(())
         }
         _ => Err(VmError::MissingReturn),
@@ -231,6 +233,20 @@ fn require_initialized_this(context: &Context) -> Result<(), VmError> {
     Ok(())
 }
 
+fn actual_receiver(context: &Context) -> Result<Value, VmError> {
+    if !crate::functions::is_derived_constructor(&context.function) {
+        return Ok(context.receiver.clone());
+    }
+    let slot = context
+        .function
+        .captures
+        .len()
+        .saturating_add(usize::from(context.function.params))
+        .saturating_add(1);
+    let slot = u16::try_from(slot).map_err(|_| VmError::MissingReturn)?;
+    Ok(crate::locals::current().get(slot))
+}
+
 pub(crate) fn check_initialized_this() -> Result<(), VmError> {
     let context = current()?;
     require_initialized_this(&context)
@@ -256,6 +272,11 @@ fn put_with_receiver(
     receiver: &Value,
 ) -> Result<(), VmError> {
     let receiver = crate::locals::resolved_replacement(receiver.clone());
+    if crate::builtins::namespace_uninitialized(&receiver, key) {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access an uninitialized module binding",
+        ));
+    }
     if matches!(target, Value::Proxy(_)) {
         crate::proxy::proxy_set(target, key, &value, Some(&receiver))?;
         return Ok(());
