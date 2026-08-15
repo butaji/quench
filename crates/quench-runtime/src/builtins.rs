@@ -350,7 +350,7 @@ fn boxed_object(value: &Value) -> Value {
     Value::Object(Rc::new(ObjectData::new(properties)))
 }
 
-pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
+pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     let (name, constructor, prototype) = match builtin {
         Builtin::RangeError => ("RangeError", Builtin::RangeError, Builtin::ErrorPrototype),
         Builtin::ReferenceError => (
@@ -523,10 +523,6 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
         Value::DataView(view) => {
             view.set_own_property(key, value);
             Value::DataView(view)
-        }
-        Value::HostCapability(capability) => {
-            capability.set_property(key, value);
-            Value::HostCapability(capability)
         }
         other => other,
     }

@@ -12,20 +12,45 @@ pub struct ModuleUnit {
     pub path: PathBuf,
     pub source: String,
     pub kind: ModuleKind,
+    pub bytes: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModuleKind {
     JavaScript,
     Json,
+    Text,
+    Bytes,
+}
+
+fn dynamic_kind(specifier: &str) -> ModuleKind {
+    if specifier.ends_with(".json") {
+        ModuleKind::Json
+    } else if specifier.ends_with(".txt") {
+        ModuleKind::Text
+    } else if specifier.ends_with(".bin") {
+        ModuleKind::Bytes
+    } else {
+        ModuleKind::JavaScript
+    }
+}
+
+fn import_attribute_kind(value: &str) -> Option<ModuleKind> {
+    match value {
+        "type=json" => Some(ModuleKind::Json),
+        "type=text" => Some(ModuleKind::Text),
+        "type=bytes" => Some(ModuleKind::Bytes),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ModuleGraph {
     entry: Option<ModuleId>,
     units: Vec<ModuleUnit>,
-    paths: HashMap<PathBuf, ModuleId>,
+    paths: HashMap<(PathBuf, ModuleKind), ModuleId>,
     edges: HashMap<ModuleId, Vec<ModuleId>>,
+    deferred_edges: std::collections::HashSet<(ModuleId, ModuleId)>,
 }
 
 impl ModuleGraph {
@@ -45,6 +70,16 @@ impl ModuleGraph {
         self.add_unit(path, source, ModuleKind::Json, false)
     }
 
+    pub fn add_text_dependency(&mut self, path: PathBuf, source: String) -> ModuleId {
+        self.add_unit(path, source, ModuleKind::Text, false)
+    }
+
+    pub fn add_bytes_dependency(&mut self, path: PathBuf, bytes: Vec<u8>) -> ModuleId {
+        let id = self.add_unit(path, String::new(), ModuleKind::Bytes, false);
+        self.units[id.0 as usize].bytes = Some(bytes);
+        id
+    }
+
     pub fn entry(&self) -> Option<ModuleId> {
         self.entry
     }
@@ -57,14 +92,38 @@ impl ModuleGraph {
         self.units.get(id.0 as usize).filter(|unit| unit.id == id)
     }
 
+    pub fn dependencies(&self, id: ModuleId) -> Vec<ModuleId> {
+        self.edges.get(&id).into_iter().flatten().copied().collect()
+    }
+
+    pub fn is_deferred_edge(&self, from: ModuleId, to: ModuleId) -> bool {
+        self.deferred_edges.contains(&(from, to))
+    }
+
+    pub fn has_async_dependency(&self, id: ModuleId) -> Result<bool, String> {
+        self.gather_async_dependencies(id, &mut Vec::new(), &mut Vec::new())
+    }
+
     pub fn units(&self) -> &[ModuleUnit] {
         &self.units
     }
 
     pub fn resolve(&self, from: ModuleId, specifier: &str) -> Option<ModuleId> {
+        self.resolve_kind(from, specifier, ModuleKind::JavaScript)
+    }
+
+    pub fn resolve_kind(
+        &self,
+        from: ModuleId,
+        specifier: &str,
+        kind: ModuleKind,
+    ) -> Option<ModuleId> {
+        if specifier == "<module source>" {
+            return Some(from);
+        }
         let base = self.units.get(from.0 as usize)?.path.parent()?;
         let path = normalize_module_path(&base.join(specifier));
-        self.paths.get(&path).copied()
+        self.paths.get(&(path, kind)).copied()
     }
 
     /// Record a statically resolved import edge. The graph owns resolution;
@@ -101,20 +160,128 @@ impl ModuleGraph {
         let unit = self
             .unit(from)
             .ok_or_else(|| "module unit is unknown".to_string())?;
-        if unit.kind == ModuleKind::Json {
+        if unit.kind != ModuleKind::JavaScript {
             return Ok(());
         }
         let source = unit.source.clone();
         let metadata = quench_runtime::reduce::inspect_module_source(&source)
             .map_err(|errors| errors.join("; "))?;
-        self.link_specifiers(
-            from,
-            metadata
-                .import_specifiers
+        for specifier in &metadata.import_specifiers {
+            let kind = metadata
+                .import_attributes
                 .iter()
-                .map(String::as_str)
-                .filter(|specifier| *specifier != "<module source>"),
-        )
+                .find(|(source, _)| source == specifier)
+                .and_then(|(_, value)| match value.as_str() {
+                    "type=json" => Some(ModuleKind::Json),
+                    "type=text" => Some(ModuleKind::Text),
+                    "type=bytes" => Some(ModuleKind::Bytes),
+                    _ => None,
+                })
+                .unwrap_or(ModuleKind::JavaScript);
+            let target = self.resolve_kind(from, specifier, kind).ok_or_else(|| {
+                format!("unresolved module specifier {specifier:?} from {from:?}")
+            })?;
+            let is_deferred = metadata
+                .deferred_imports
+                .iter()
+                .any(|item| item == specifier);
+            let has_eager_request = metadata.eager_imports.iter().any(|item| item == specifier);
+            if !is_deferred || !has_eager_request {
+                self.link(from, target)?;
+            }
+            if metadata
+                .deferred_imports
+                .iter()
+                .any(|item| item == specifier)
+                && !has_eager_request
+            {
+                self.deferred_edges.insert((from, target));
+            }
+        }
+        for specifier in &metadata.eager_imports {
+            if metadata
+                .deferred_imports
+                .iter()
+                .any(|item| item == specifier)
+            {
+                let kind = metadata
+                    .import_attributes
+                    .iter()
+                    .find(|(source, _)| source == specifier)
+                    .and_then(|(_, value)| import_attribute_kind(value))
+                    .unwrap_or(ModuleKind::JavaScript);
+                let target = self.resolve_kind(from, specifier, kind).ok_or_else(|| {
+                    format!("unresolved module specifier {specifier:?} from {from:?}")
+                })?;
+                self.link(from, target)?;
+            }
+        }
+        for specifier in &metadata.dynamic_imports {
+            let kind = dynamic_kind(specifier);
+            let _ = self.ensure_dependency(from, specifier, kind);
+        }
+        Ok(())
+    }
+
+    fn ensure_dependency(
+        &mut self,
+        from: ModuleId,
+        specifier: &str,
+        kind: ModuleKind,
+    ) -> Result<ModuleId, String> {
+        if let Some(target) = self.resolve_kind(from, specifier, kind) {
+            return Ok(target);
+        }
+        let base = self
+            .unit(from)
+            .and_then(|unit| unit.path.parent())
+            .ok_or_else(|| "dynamic import source has no base path".to_string())?;
+        let path = normalize_module_path(&base.join(specifier));
+        match kind {
+            ModuleKind::Json | ModuleKind::Text | ModuleKind::JavaScript => {
+                let source = std::fs::read_to_string(&path)
+                    .map_err(|error| format!("module {}: {error}", path.display()))?;
+                if kind == ModuleKind::JavaScript {
+                    Self::validate_static_source(&path, &source, &mut Vec::new())?;
+                }
+                Ok(match kind {
+                    ModuleKind::Json => self.add_json_dependency(path, source),
+                    ModuleKind::Text => self.add_text_dependency(path, source),
+                    ModuleKind::JavaScript => self.add_dependency(path, source),
+                    ModuleKind::Bytes => unreachable!(),
+                })
+            }
+            ModuleKind::Bytes => {
+                let bytes = std::fs::read(&path)
+                    .map_err(|error| format!("module {}: {error}", path.display()))?;
+                Ok(self.add_bytes_dependency(path, bytes))
+            }
+        }
+    }
+
+    fn validate_static_source(
+        path: &Path,
+        source: &str,
+        seen: &mut Vec<PathBuf>,
+    ) -> Result<(), String> {
+        let path = normalize_module_path(path);
+        if seen.contains(&path) {
+            return Ok(());
+        }
+        seen.push(path.clone());
+        let metadata = quench_runtime::reduce::inspect_module_source(source)
+            .map_err(|errors| errors.join("; "))?;
+        let base = path.parent().unwrap_or_else(|| Path::new(""));
+        for imported in metadata.import_specifiers {
+            if imported == "<module source>" {
+                continue;
+            }
+            let imported_path = normalize_module_path(&base.join(&imported));
+            let imported_source = std::fs::read_to_string(&imported_path)
+                .map_err(|_| format!("unresolved module {}", imported_path.display()))?;
+            Self::validate_static_source(&imported_path, &imported_source, seen)?;
+        }
+        Ok(())
     }
 
     /// Link every currently loaded unit from its canonical static metadata.
@@ -151,12 +318,53 @@ impl ModuleGraph {
             return Ok(());
         }
         state.insert(id, 1);
-        for dependency in self.edges.get(&id).into_iter().flatten() {
-            self.visit(*dependency, state, order)?;
+        let dependencies = self.edges.get(&id).cloned().unwrap_or_default();
+        for dependency in dependencies {
+            let deferred = self.deferred_edges.contains(&(id, dependency));
+            if deferred {
+                let mut asynchronous = Vec::new();
+                self.gather_async_dependencies(dependency, &mut Vec::new(), &mut asynchronous)?;
+                for asynchronous in asynchronous {
+                    self.visit(asynchronous, state, order)?;
+                }
+                continue;
+            }
+            self.visit(dependency, state, order)?;
         }
         state.insert(id, 2);
         order.push(id);
         Ok(())
+    }
+
+    fn gather_async_dependencies(
+        &self,
+        id: ModuleId,
+        seen: &mut Vec<ModuleId>,
+        asynchronous: &mut Vec<ModuleId>,
+    ) -> Result<bool, String> {
+        if seen.contains(&id) {
+            return Ok(false);
+        }
+        seen.push(id);
+        let Some(unit) = self.unit(id) else {
+            return Err("module unit is unknown".to_string());
+        };
+        if unit.kind != ModuleKind::JavaScript {
+            return Ok(false);
+        }
+        if quench_runtime::reduce::inspect_module_source(&unit.source)
+            .map_err(|errors| errors.join("; "))?
+            .has_top_level_await
+        {
+            if !asynchronous.contains(&id) {
+                asynchronous.push(id);
+            }
+            return Ok(true);
+        }
+        for dependency in self.edges.get(&id).into_iter().flatten() {
+            self.gather_async_dependencies(*dependency, seen, asynchronous)?;
+        }
+        Ok(!asynchronous.is_empty())
     }
 
     fn add_unit(
@@ -167,16 +375,17 @@ impl ModuleGraph {
         entry: bool,
     ) -> ModuleId {
         let path = normalize_module_path(&path);
-        if let Some(id) = self.paths.get(&path).copied() {
+        if let Some(id) = self.paths.get(&(path.clone(), kind)).copied() {
             return id;
         }
         let id = ModuleId(self.units.len() as u32);
-        self.paths.insert(path.clone(), id);
+        self.paths.insert((path.clone(), kind), id);
         self.units.push(ModuleUnit {
             id,
             path,
             source,
             kind,
+            bytes: None,
         });
         if entry {
             self.entry = Some(id);

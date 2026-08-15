@@ -47,6 +47,10 @@ pub enum Op {
         slot: u16,
         src: u16,
     },
+    AliasLocal {
+        slot: u16,
+        source: u16,
+    },
     StoreFunctionName {
         slot: u16,
         src: u16,
@@ -175,6 +179,11 @@ pub enum Op {
         key: u16,
     },
     GetPrivate {
+        dst: u16,
+        object: u16,
+        name: crate::facts::PrivateNameId,
+    },
+    HasPrivate {
         dst: u16,
         object: u16,
         name: crate::facts::PrivateNameId,
