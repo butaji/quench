@@ -309,6 +309,9 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         Value::Null => Err(crate::value::error::throw_type_error(
             "Cannot convert null to object",
         )),
+        Value::String(_) if crate::conversion::is_symbol(locales) => {
+            Ok(vec![default_locale()])
+        }
         Value::String(_) => Ok(vec![canonicalize(&to_string_value(locales))?]),
         Value::Object(properties) if locale_slot(properties).is_some() => {
             Ok(vec![canonicalize(&locale_slot(properties).unwrap_or_default())?])
