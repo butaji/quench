@@ -34,6 +34,7 @@ pub(crate) struct NumberOptions {
 }
 
 pub(crate) struct RawOptions {
+    numbering_system: Option<String>,
     style: String,
     currency: Option<String>,
     currency_display: String,
@@ -83,6 +84,7 @@ const OPTION_READ_ORDER: [&str; 21] = [
 impl RawOptions {
     fn from_value(options: Option<&Value>) -> Result<Self, VmError> {
         let mut raw = RawOptions {
+            numbering_system: None,
             style: "decimal".to_string(),
             currency: None,
             currency_display: "symbol".to_string(),
@@ -111,6 +113,9 @@ impl RawOptions {
                     continue;
                 }
                 match key {
+                    "numberingSystem" => {
+                        raw.numbering_system = Some(crate::conversion::to_string(&value)?)
+                    }
                     "style" => raw.style = crate::conversion::to_string(&value)?,
                     "currency" => {
                         raw.currency = Some(crate::conversion::to_string(&value)?.to_ascii_uppercase())
@@ -197,6 +202,7 @@ impl NumberOptions {
             }
         }
         let raw = RawOptions::from_value(options)?;
+        validate_basic_options(&raw)?;
         validate_rounding_options(&raw)?;
         if !matches!(raw.unit_display.as_str(), "short" | "narrow" | "long") {
             return Err(crate::value::error::throw_range_error("invalid unitDisplay"));
@@ -504,6 +510,23 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlNumberFormatResolvedOptions => Ok(options.resolved()),
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn validate_basic_options(raw: &RawOptions) -> Result<(), VmError> {
+    if !matches!(raw.style.as_str(), "decimal" | "percent" | "currency" | "unit") {
+        return Err(crate::value::error::throw_range_error("invalid style"));
+    }
+    if let Some(numbering) = &raw.numbering_system {
+        if numbering.len() < 3
+            || numbering.len() > 8
+            || !numbering.chars().all(|character| character.is_ascii_alphanumeric())
+        {
+            return Err(crate::value::error::throw_range_error(
+                "invalid numberingSystem",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_rounding_options(raw: &RawOptions) -> Result<(), VmError> {
