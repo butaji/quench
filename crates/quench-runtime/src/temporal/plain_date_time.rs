@@ -46,7 +46,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn validate(fields: &[f64]) -> Result<(), VmError> {
-    if !(1.0..=12.0).contains(&fields[1])
+    if fields
+        .iter()
+        .any(|value| !value.is_finite() || value.fract() != 0.0)
+        || !(1.0..=12.0).contains(&fields[1])
         || !(1.0..=31.0).contains(&fields[2])
         || !(0.0..=23.0).contains(&fields[3])
         || !(0.0..=59.0).contains(&fields[4])
@@ -638,6 +641,12 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     validate_time_offset(time)?;
     validate_fraction_digits(time)?;
     let time = time.split(['+', '-']).next().unwrap_or(time);
+    if !date.starts_with(['+', '-']) && date.contains('-') && {
+        let parts = date.split('-').collect::<Vec<_>>();
+        parts.len() != 3 || parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2
+    } {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     let date_fields = if date.starts_with(['+', '-']) && !date.contains('-') && date.len() == 11 {
         vec![&date[..7], &date[7..9], &date[9..]]
     } else if date.starts_with(['+', '-']) && date.matches('-').count() >= 2 {
@@ -665,6 +674,9 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     } else {
         clock.to_string()
     };
+    if clock.contains(':') && clock.split(':').any(|part| part.len() != 2) {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     let clock = clock.split(':').collect::<Vec<_>>();
     if clock.len() < 2 || clock.len() > 3 || fraction.len() > 9 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
