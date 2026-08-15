@@ -307,6 +307,22 @@ fn days_in_month(year: i32, month: u32) -> u32 {
 fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not a PlainDateTime"))?;
+    if let Some(options) = options {
+        if !crate::value::is_object(options) {
+            return Err(crate::value::error::throw_type_error(
+                "Invalid string options",
+            ));
+        }
+        if let Value::String(calendar_name) =
+            crate::execute::get_property_result(options, "calendarName")?
+        {
+            if !matches!(calendar_name.as_str(), "auto" | "always" | "never") {
+                return Err(crate::value::error::throw_range_error(
+                    "Invalid calendarName",
+                ));
+            }
+        }
+    }
     let values = NAMES
         .iter()
         .map(|name| crate::execute::get_property_result(receiver, name))
