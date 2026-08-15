@@ -13,6 +13,8 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "dayOfWeek", "dayOfYear", "weekOfYear", "daysInWeek", "daysInMonth", "daysInYear",
             "monthsInYear", "inLeapYear", "toString", "toJSON", "toLocaleString", "valueOf",
         ],
+        Builtin::ShadowRealm => &["length", "name", "prototype"],
+        Builtin::ShadowRealmPrototype => &["constructor", "evaluate"],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => {
             &["constructor", "toString", "valueOf", "Symbol.toStringTag"]
