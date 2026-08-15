@@ -8,9 +8,6 @@ mod date_kind;
 pub(crate) mod parse_num;
 pub(crate) use date_kind::DateLocaleKind;
 
-#[path = "tolocale_number.rs"]
-mod number;
-
 pub(crate) mod value {
     use crate::value::Value;
     pub(crate) fn to_string(value: Option<&Value>) -> String {
@@ -426,7 +423,7 @@ fn element_to_locale_string(
     arguments: &[Value],
 ) -> Result<String, VmError> {
     match value {
-        Value::Number(number) => Ok(format_number(*number, locales, arguments.get(1))),
+        Value::Number(number) => super::number::format_with_options(*number, locales, options),
         Value::Null | Value::Undefined => Ok(String::new()),
         _ => locale_element_call(value, arguments),
     }
@@ -451,63 +448,69 @@ pub(crate) fn number_to_locale_string(
 ) -> Result<Value, VmError> {
     let number = match receiver {
         Some(Value::Number(number)) => *number,
+        Some(Value::Object(properties)) => match properties
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == "_value").then_some(value))
+        {
+            Some(Value::Number(number)) => *number,
+            _ => return Err(runtime_error("TypeError: Number.prototype.toLocaleString")),
+        },
         _ => return Err(runtime_error("TypeError: Number.prototype.toLocaleString")),
     };
     let locales = resolve_locales(arguments)?;
-    Ok(Value::String(format_number(
+    validate_number_options(arguments.get(1))?;
+    Ok(Value::String(super::number::format_with_options(
         number,
         &locales,
         arguments.get(1),
-    )))
+    )?))
 }
-fn format_number(number: f64, locales: &[String], options: Option<&Value>) -> String {
-    let locale = locales.first().cloned().unwrap_or_else(|| "en".to_string());
-    let resolved = number_resolved(locale, options);
-    number::format_resolved(number, &resolved)
-}
-fn number_resolved(locale: String, options: Option<&Value>) -> Vec<(String, Value)> {
-    let mut properties = vec![
-        ("locale".to_string(), Value::String(locale)),
-        ("style".to_string(), Value::String("decimal".to_string())),
-        ("useGrouping".to_string(), Value::Boolean(true)),
-        ("minimumIntegerDigits".to_string(), Value::Number(1.0)),
-        ("minimumFractionDigits".to_string(), Value::Number(0.0)),
-        ("maximumFractionDigits".to_string(), Value::Number(3.0)),
-    ];
-    if let Some(Value::Object(option_map)) = options {
-        for (key, value) in option_map.iter() {
-            let value = to_string_value(value);
-            match key.as_str() {
-                "minimumFractionDigits" => {
-                    if let Ok(number) = value.parse() {
-                        set_number_option(&mut properties, "minimumFractionDigits", number);
-                    }
-                }
-                "maximumFractionDigits" => {
-                    if let Ok(number) = value.parse() {
-                        set_number_option(&mut properties, "maximumFractionDigits", number);
-                    }
-                }
-                "minimumSignificantDigits" | "maximumSignificantDigits" => {
-                    if let Ok(number) = value.parse() {
-                        set_number_option(&mut properties, key, number);
-                    }
-                }
-                _ => {}
+
+fn validate_number_options(options: Option<&Value>) -> Result<(), VmError> {
+    let Some(Value::Object(properties)) = options else {
+        if matches!(options, Some(Value::Null)) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot convert null to object",
+            ));
+        }
+        return Ok(());
+    };
+    let mut style = "decimal";
+    let mut currency = None;
+    for (key, value) in properties.iter() {
+        if matches!(value, Value::Undefined) {
+            continue;
+        }
+        let text = to_string_value(value);
+        match key.as_str() {
+            "localeMatcher" if !matches!(value, Value::String(_)) => {
+                return Err(runtime_error("RangeError: invalid localeMatcher"));
             }
+            "style" => style = Box::leak(text.into_boxed_str()),
+            "currency" => currency = Some(text),
+            "maximumSignificantDigits" => {
+                let valid = text.parse::<f64>().is_ok_and(|number| (1.0..=21.0).contains(&number));
+                if !valid {
+                    return Err(runtime_error("RangeError: invalid significant digits"));
+                }
+            }
+            _ => {}
         }
     }
-    properties
-}
-
-fn set_number_option(properties: &mut Vec<(String, Value)>, key: &str, value: f64) {
-    if let Some((_, current)) = properties.iter_mut().find(|(name, _)| name == key) {
-        *current = Value::Number(value);
-    } else {
-        properties.push((key.to_string(), Value::Number(value)));
+    if !matches!(style, "decimal" | "percent" | "currency" | "unit") {
+        return Err(runtime_error("RangeError: invalid style"));
     }
+    if style == "currency" {
+        let Some(currency) = currency else {
+            return Err(crate::value::error::throw_type_error("currency is required"));
+        };
+        if currency.len() != 3 || !currency.chars().all(|character| character.is_ascii_alphabetic()) {
+            return Err(runtime_error("RangeError: invalid currency"));
+        }
+    }
+    Ok(())
 }
-
 pub(crate) fn string_to_locale_case(
     receiver: Option<&Value>,
     upper: bool,

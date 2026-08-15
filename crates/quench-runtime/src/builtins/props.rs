@@ -114,6 +114,16 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
+        (Intl, "Symbol.toStringTag") => Some(Value::String("Intl".into())),
+        (IntlListFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.ListFormat".into()))
+        }
+        (IntlLocalePrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.Locale".into()))
+        }
+        (IntlNumberFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.NumberFormat".into()))
+        }
         (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Atomics, "Symbol.toStringTag") => Some(Value::String("Atomics".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
@@ -730,11 +740,7 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
-    if matches!(
-        builtin,
-        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype
-    ) && matches!(key, "length" | "name")
-    {
+    if builtin == Builtin::ObjectPrototype {
         return None;
     }
     match key {

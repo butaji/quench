@@ -15,14 +15,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined))
     {
-        if !matches!(options, Value::Object(_) | Value::Proxy(_)) {
+        if !crate::value::is_object(options) {
             return Err(crate::value::error::throw_type_error(
                 "ListFormat options must be an object",
-            ));
-        }
-        if matches!(options, Value::Null) {
-            return Err(crate::value::error::throw_type_error(
-                "Cannot convert null or undefined to object",
             ));
         }
         let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
@@ -131,18 +126,22 @@ fn iterable_items(value: Option<&Value>) -> Result<Vec<String>, VmError> {
             return Ok(items);
         };
         let Value::String(value) = value else {
-            let error =
-                crate::value::error::throw_type_error("ListFormat iterable values must be strings");
-            if let VmError::Thrown(reason) = &error {
-                let _ = crate::collections::iterator::close(
-                    iterator.clone(),
-                    crate::completion::Completion::Throw(reason.clone()),
-                );
-            }
-            return Err(error);
+            return reject_iterator_item(&iterator);
         };
         items.push(value);
     }
+}
+
+fn reject_iterator_item(iterator: &Value) -> Result<Vec<String>, VmError> {
+    let error =
+        crate::value::error::throw_type_error("ListFormat iterable elements must be strings");
+    if let VmError::Thrown(reason) = &error {
+        let _ = crate::collections::iterator::close(
+            iterator.clone(),
+            crate::completion::Completion::Throw(reason.clone()),
+        );
+    }
+    Err(error)
 }
 
 fn format_parts(items: &[String], locale: &str, style: &str, list_type: &str) -> Vec<Value> {
@@ -277,7 +276,9 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlListFormat => Some(construct_call(arguments, receiver)),
+        crate::ops::Builtin::IntlListFormat => Some(Err(crate::value::error::throw_type_error(
+            "Intl.ListFormat requires 'new'",
+        ))),
         crate::ops::Builtin::IntlListFormatFormat
         | crate::ops::Builtin::IntlListFormatFormatToParts
         | crate::ops::Builtin::IntlListFormatResolvedOptions => {

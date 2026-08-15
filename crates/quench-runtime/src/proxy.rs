@@ -167,12 +167,12 @@ pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
             );
         }
     }
-    let target = match target {
-        Value::Proxy(proxy) => &proxy.target,
-        target => target,
+    let Value::Proxy(proxy) = target else {
+        return Ok(Value::Boolean(false));
     };
     Ok(Value::Boolean(crate::with_scope::has_property(
-        target, prop,
+        &proxy.target,
+        prop,
     )?))
 }
 

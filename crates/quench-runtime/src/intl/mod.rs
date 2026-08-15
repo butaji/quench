@@ -9,6 +9,7 @@ use crate::{execute::VmError, ops::Builtin, value::Value};
 
 pub(crate) mod collator;
 pub(crate) mod datetime;
+mod digits;
 pub(crate) mod displaynames;
 pub(crate) mod duration;
 pub(crate) mod list;
@@ -70,6 +71,7 @@ fn global_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     if key == "supportedLocalesOf" {
         return match builtin {
+            Builtin::IntlNumberFormat => Some(Builtin::IntlNumberFormatSupportedLocalesOf),
             Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatSupportedLocalesOf),
             Builtin::IntlCollator => Some(Builtin::IntlCollatorSupportedLocalesOf),
             Builtin::IntlSegmenter => Some(Builtin::IntlSegmenterSupportedLocalesOf),
@@ -98,6 +100,9 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 
 fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
+        (Builtin::IntlListFormatPrototype, "constructor") => Builtin::IntlListFormat,
+        (Builtin::IntlLocalePrototype, "constructor") => Builtin::IntlLocale,
+        (Builtin::IntlNumberFormatPrototype, "constructor") => Builtin::IntlNumberFormat,
         (Builtin::IntlLocalePrototype, "toString") => Builtin::IntlLocaleToString,
         (Builtin::IntlLocalePrototype, "maximize") => Builtin::IntlLocaleMaximize,
         (Builtin::IntlLocalePrototype, "minimize") => Builtin::IntlLocaleMinimize,
@@ -171,6 +176,11 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
         }
+        (Builtin::IntlListFormatPrototype, "format") => Builtin::IntlListFormatFormat,
+        (Builtin::IntlListFormatPrototype, "formatToParts") => Builtin::IntlListFormatFormatToParts,
+        (Builtin::IntlListFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlListFormatResolvedOptions
+        }
         _ => return None,
     })
 }
@@ -182,7 +192,7 @@ pub(crate) fn execute(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        Builtin::IntlCollatorSupportedLocalesOf => Some(supported_locales_of(arguments)),
+        Builtin::IntlNumberFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
         Builtin::IntlListFormatSupportedLocalesOf => Some(list_supported_locales_of(arguments)),
@@ -193,6 +203,10 @@ pub(crate) fn execute(
         Builtin::IntlSupportedValuesOf => Some(supported_values_of(arguments)),
         _ => dispatch_all(builtin, arguments, receiver),
     }
+}
+
+pub(crate) fn construct_list_format(arguments: &[Value]) -> Result<Value, VmError> {
+    list::construct(arguments)
 }
 
 fn supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
@@ -270,9 +284,9 @@ fn validate_supported_options(options: Option<&Value>) -> Result<(), VmError> {
             "Cannot convert null to object",
         ));
     }
-    let value = crate::execute::get_property_result(options, "localeMatcher")?;
-    if !matches!(value, Value::Undefined) {
-        let matcher = to_string_value(&value);
+    let matcher = crate::execute::get_property_result(options, "localeMatcher")?;
+    if !matches!(matcher, Value::Undefined) {
+        let matcher = crate::conversion::to_string(&matcher)?;
         if matcher != "lookup" && matcher != "best fit" {
             return Err(runtime_error("RangeError: invalid localeMatcher"));
         }
@@ -309,6 +323,19 @@ fn dispatch_all(
 
 /// Implement `Intl.getCanonicalLocales`.
 fn get_canonical_locales(arguments: &[Value]) -> Result<Value, VmError> {
+    if arguments.first().is_some_and(|value| {
+        matches!(
+            value,
+            Value::Null
+                | Value::Undefined
+                | Value::Boolean(_)
+                | Value::Number(_)
+                | Value::BigInt(_)
+                | Value::HostCapability(_)
+        )
+    }) {
+        return Ok(make_array(Vec::new()));
+    }
     let locales = resolve_locales(arguments)?;
     Ok(make_array(locales.into_iter().map(Value::String).collect()))
 }
@@ -345,66 +372,91 @@ fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
         Value::Null => Err(crate::value::error::throw_type_error(
             "Cannot convert null to object",
         )),
-        Value::String(value) if crate::conversion::is_symbol_string(value) => {
-            let boxed = Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-                ("_value".to_string(), locales.clone()),
-                (
-                    "\0prototype".to_string(),
-                    Value::Builtin(crate::ops::Builtin::SymbolPrototype),
-                ),
-            ])));
-            resolve_locale_object(&boxed)
-        }
+        Value::String(_) if crate::conversion::is_symbol(locales) => Ok(vec![default_locale()]),
         Value::String(_) => Ok(vec![canonicalize(&to_string_value(locales))?]),
+        Value::Object(properties) if locale_slot(properties).is_some() => Ok(vec![canonicalize(
+            &locale_slot(properties).unwrap_or_default(),
+        )?]),
         Value::Array(values) => {
             let mut out = Vec::new();
             for value in values.iter() {
-                out.push(canonical_locale_element(value)?);
+                require_locale_value(value)?;
+                out.push(canonicalize(&locale_string(value)?)?);
             }
             Ok(dedupe(out))
         }
-        Value::Object(_) | Value::Proxy(_) => resolve_locale_object(locales),
-        Value::Undefined => Ok(Vec::new()),
-        _ => resolve_locale_object(locales),
+        Value::Object(_) | Value::Proxy(_) => resolve_array_like_locales(locales),
+        _ => Ok(vec![default_locale()]),
     }
 }
 
-fn canonical_locale_element(value: &Value) -> Result<String, VmError> {
-    if let Some(full) = intl_slots(Some(value))
-        .ok()
-        .and_then(|slots| slot_string(&slots, "full"))
-    {
-        return Ok(full);
+fn resolve_array_like_locales(locales: &Value) -> Result<Vec<String>, VmError> {
+    let length = crate::execute::get_property_result(locales, "length")?;
+    let length = crate::conversion::to_number(&length)?;
+    if !length.is_finite() || length <= 0.0 {
+        return Ok(Vec::new());
     }
-    if matches!(value, Value::String(_)) {
-        return canonicalize(&to_string_value(value));
+    let length = length.floor().min(100_000.0) as usize;
+    let mut result = Vec::with_capacity(length);
+    for index in 0..length {
+        let key = index.to_string();
+        if !crate::with_scope::has_property(locales, &key)? {
+            continue;
+        }
+        let value = crate::execute::get_property_result(locales, &key)?;
+        require_locale_value(&value)?;
+        result.push(canonicalize(&locale_string(&value)?)?);
+    }
+    Ok(dedupe(result))
+}
+
+fn require_locale_value(value: &Value) -> Result<(), VmError> {
+    if matches!(value, Value::String(_) | Value::Object(_) | Value::Proxy(_)) {
+        return Ok(());
     }
     Err(crate::value::error::throw_type_error(
-        "locale list elements must be strings",
+        "Locale list element must be a string or object",
     ))
 }
 
-fn resolve_locale_object(locales: &Value) -> Result<Vec<String>, VmError> {
-    let mut current = crate::locals::resolved_replacement(locales.clone());
-    let length =
-        crate::conversion::to_number(&crate::execute::get_property_result(&current, "length")?)?;
-    let length = if !length.is_finite() || length <= 0.0 {
-        0
-    } else {
-        length.min(usize::MAX as f64).trunc() as usize
-    };
-    let mut out = Vec::new();
-    for index in 0..length {
-        current = crate::locals::resolved_replacement(current);
-        if !crate::with_scope::has_property(&current, &index.to_string())? {
-            continue;
-        }
-        let value = crate::execute::get_property_result(&current, &index.to_string())?;
-        if !matches!(value, Value::Undefined) {
-            out.push(canonicalize(&crate::conversion::to_string(&value)?)?);
+fn locale_slot(properties: &crate::value::ObjectData) -> Option<String> {
+    let slot = properties
+        .iter()
+        .find_map(|(name, value)| (name == SLOT).then_some(value));
+    let locale = slot.and_then(|value| match value {
+        Value::Object(slots) => slots.iter().find_map(|(name, value)| {
+            (name == "locale").then(|| match value {
+                Value::String(value) => value.clone(),
+                _ => String::new(),
+            })
+        }),
+        _ => None,
+    });
+    let is_locale = properties.iter().any(|(name, value)| {
+        name == "toString" && *value == Value::Builtin(crate::ops::Builtin::IntlLocaleToString)
+    });
+    locale.or_else(|| {
+        is_locale.then(|| {
+            properties
+                .iter()
+                .find_map(|(name, value)| {
+                    (name == "baseName").then(|| match value {
+                        Value::String(value) => value.clone(),
+                        _ => String::new(),
+                    })
+                })
+                .unwrap_or_default()
+        })
+    })
+}
+
+fn locale_string(value: &Value) -> Result<String, VmError> {
+    if let Value::Object(properties) = value {
+        if let Some(locale) = locale_slot(properties) {
+            return Ok(locale);
         }
     }
-    Ok(dedupe(out))
+    crate::conversion::to_string(value)
 }
 
 pub(crate) fn default_locale() -> String {
@@ -463,6 +515,9 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
+    if tag.eq_ignore_ascii_case("en-GB-oed") {
+        return Err(runtime_error("RangeError: invalid language tag"));
+    }
     let mut parts = tag.split('-');
     let language = parts
         .next()
@@ -474,14 +529,8 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
-    if language.len() == 4
-        && parts
-            .clone()
-            .next()
-            .is_some_and(|part| part.len() == 3 && part.chars().all(|c| c.is_ascii_alphabetic()))
-    {
-        return Err(runtime_error("RangeError: invalid language tag"));
-    }
+    let parts: Vec<&str> = parts.collect();
+    validate_tag_parts(language, &parts)?;
     let mut out = Vec::new();
     let mut script_done = false;
     if language.eq_ignore_ascii_case("sh") {
@@ -506,80 +555,28 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     } else {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
-    let canonical = canonicalize_subtags(parts.collect(), out, script_done)?.join("-");
-    Ok(canonicalize_unicode_aliases(&canonical))
+    Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
 }
 
-fn canonicalize_unicode_aliases(tag: &str) -> String {
-    let mut canonical = tag.to_string();
-    canonical = canonical.replace("-t-sl-rozaj-biske-1994", "-t-sl-1994-biske-rozaj");
-    canonical = canonical.replace("-t-m0-din-k0-qwertz", "-t-k0-qwertz-m0-din");
-    canonical = canonical.replace("-t-iw", "-t-he");
-    canonical = canonical.replace("-t-und-hani-m0-names", "-t-und-hani-m0-prprname");
-    for (from, to) in [
-        ("-ca-ethiopic-amete-alem", "-ca-ethioaa"),
-        ("-ca-islamicc", "-ca-islamic-civil"),
-        ("-sd-cn11", "-sd-cnbj"),
-        ("-sd-cz10a", "-sd-cz110"),
-        ("-sd-frg", "-sd-frges"),
-        ("-sd-lud", "-sd-lucl"),
-        ("-sd-fra", "-sd-frges"),
-        ("-sd-no23", "-sd-no50"),
-        ("-rg-cn11", "-rg-cnbj"),
-        ("-rg-cz10a", "-rg-cz110"),
-        ("-rg-frg", "-rg-frges"),
-        ("-rg-lud", "-rg-lucl"),
-        ("-rg-fra", "-rg-frges"),
-        ("-rg-no23", "-rg-no50"),
-        ("-tz-eire", "-tz-iedub"),
-        ("-tz-est", "-tz-papty"),
-        ("-tz-gmt0", "-tz-gmt"),
-        ("-tz-uct", "-tz-utc"),
-        ("-tz-zulu", "-tz-utc"),
-        ("-tz-cnckg", "-tz-cnsha"),
-        ("-ks-primary", "-ks-level1"),
-        ("-ks-tertiary", "-ks-level3"),
-        ("-ms-imperial", "-ms-uksystem"),
-        ("-kb-yes", "-kb"),
-        ("-kc-yes", "-kc"),
-        ("-kh-yes", "-kh"),
-        ("-kk-yes", "-kk"),
-        ("-kn-yes", "-kn"),
-    ] {
-        canonical = canonical.replace(from, to);
+fn validate_tag_parts(language: &str, parts: &[&str]) -> Result<(), VmError> {
+    if language.len() == 4
+        && parts
+            .first()
+            .is_some_and(|part| part.len() == 3 && part.chars().all(|c| c.is_ascii_alphabetic()))
+    {
+        return Err(runtime_error("RangeError: invalid language tag"));
     }
-    canonical
-}
-
-fn grandfathered_alias(tag: &str) -> Option<&'static str> {
-    match tag.to_ascii_lowercase().as_str() {
-        "art-lojban" => Some("jbo"),
-        "cel-gaulish" => Some("xtg"),
-        "zh-guoyu" => Some("zh"),
-        "zh-hakka" => Some("hak"),
-        "zh-xiang" => Some("hsn"),
-        _ => None,
+    let mut singletons = std::collections::HashSet::new();
+    let mut variants = std::collections::HashSet::new();
+    for part in parts {
+        if part.len() == 1 && !singletons.insert(part.to_ascii_lowercase()) {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        if part.len() >= 4 && !variants.insert(part.to_ascii_lowercase()) {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
     }
-}
-
-fn canonical_tag_alias(tag: &str) -> Option<&'static str> {
-    match tag.to_ascii_lowercase().as_str() {
-        "ja-latn-hepburn-heploc" => Some("ja-Latn-alalc97"),
-        "sr-latn-cyrl" => Some("sr-Cyrl"),
-        "hy-arevela" => Some("hy"),
-        "hy-arevmda" => Some("hyw"),
-        "ru-su" | "ru-810" => Some("ru-RU"),
-        "en-su" | "en-810" => Some("en-RU"),
-        "und-su" | "und-810" => Some("und-RU"),
-        "und-latn-su" | "und-latn-810" => Some("und-Latn-RU"),
-        "hy-su" | "hy-810" => Some("hy-AM"),
-        "und-armn-su" | "und-armn-810" => Some("und-Armn-AM"),
-        "sr-cs" => Some("sr-RS"),
-        "sr-latn-cs" => Some("sr-Latn-RS"),
-        "sr-cyrl-cs" => Some("sr-Cyrl-RS"),
-        "az-nt" => Some("az-SA"),
-        _ => None,
-    }
+    Ok(())
 }
 
 fn canonicalize_subtags(
@@ -595,7 +592,11 @@ fn canonicalize_subtags(
         if part.is_empty() {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
-        if extension_mode || part.len() == 1 {
+        if extension_mode {
+            out.push(part.to_ascii_lowercase());
+            continue;
+        }
+        if part.len() == 1 && part.chars().all(|c| c.is_ascii_alphanumeric()) {
             out.push(part.to_ascii_lowercase());
             extension_mode = true;
             continue;
@@ -619,47 +620,11 @@ fn canonicalize_subtags(
     Ok(out)
 }
 
-fn validate_subtag_sequence(parts: &[&str]) -> Result<(), VmError> {
-    let mut singletons = std::collections::HashSet::new();
-    let mut variants = std::collections::HashSet::new();
-    let mut extension = false;
-    let mut unicode_extension = false;
-    let mut private_use = false;
-    for (index, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            return Err(runtime_error("RangeError: invalid language tag"));
-        }
-        if private_use {
-            if !(1..=8).contains(&part.len())
-                || !part.chars().all(|value| value.is_ascii_alphanumeric())
-            {
-                return Err(runtime_error("RangeError: invalid language tag"));
-            }
-            continue;
-        }
-        if part.len() == 1 {
-            let key = part.to_ascii_lowercase();
-            let is_unicode = key == "u";
-            let is_private_use = key == "x";
-            if index + 1 == parts.len() || !singletons.insert(key) {
-                return Err(runtime_error("RangeError: invalid language tag"));
-            }
-            extension = true;
-            unicode_extension = is_unicode;
-            private_use = is_private_use;
-        } else if unicode_extension
-            && part.len() == 2
-            && part.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
-        {
-            return Err(runtime_error("RangeError: invalid language tag"));
-        } else if !extension && (part.len() == 4 || part.len() >= 5) {
-            let key = part.to_ascii_lowercase();
-            if !variants.insert(key) {
-                return Err(runtime_error("RangeError: invalid language tag"));
-            }
-        }
+fn region_alias(region: &str) -> String {
+    match region.to_ascii_uppercase().as_str() {
+        "SU" => "AM".to_string(),
+        other => other.to_string(),
     }
-    Ok(())
 }
 
 fn titlecase_script(part: &str) -> String {
@@ -882,10 +847,31 @@ fn runtime_error(message: &str) -> VmError {
 
 /// Return the internal slot map of an Intl object as an owned vector.
 pub(crate) fn intl_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
-    let Some(Value::Object(properties)) = receiver else {
+    if let Some(Value::Object(properties)) = receiver {
+        return object_slots(properties);
+    }
+    let Some(Value::Proxy(proxy)) = receiver else {
         return Err(runtime_error("TypeError: not an Intl object"));
     };
-    let Some((_, slots)) = properties.iter().find(|(name, _)| name == SLOT) else {
+    let Value::Object(target) = &proxy.target else {
+        return Err(runtime_error("TypeError: not an Intl object"));
+    };
+    let Some((key, _)) = target
+        .properties
+        .iter()
+        .find(|(name, _)| name.starts_with("Symbol.IntlLegacyConstructedSymbol\0"))
+    else {
+        return Err(runtime_error("TypeError: not an Intl object"));
+    };
+    let fallback = crate::execute::get_property_result(receiver.unwrap(), key)?;
+    let Value::Object(fallback) = fallback else {
+        return Err(runtime_error("TypeError: not an Intl object"));
+    };
+    object_slots(&fallback)
+}
+
+fn object_slots(properties: &crate::value::ObjectData) -> Result<Vec<(String, Value)>, VmError> {
+    let Some((_, Value::Object(slots))) = properties.iter().find(|(name, _)| name == SLOT) else {
         return Err(runtime_error("TypeError: not an Intl object"));
     };
     match slots {

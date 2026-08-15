@@ -271,7 +271,8 @@ fn construct_builtin(
             crate::finalization_registry::construct(arguments)
         }
         crate::ops::Builtin::RegExp => construct_regexp(arguments),
-        _ if crate::intl::is_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
+        crate::ops::Builtin::IntlListFormat => crate::intl::construct_list_format(arguments),
+        _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::vm::not_callable()),
     }
