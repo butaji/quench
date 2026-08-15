@@ -108,6 +108,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IteratorConcat => Some("Iterator.concat"),
         Builtin::IteratorFrom => Some("Iterator.from"),
+        Builtin::IteratorZip => Some("Iterator.zip"),
         Builtin::IteratorToArray => Some("Iterator.prototype.toArray"),
         Builtin::IteratorMap => Some("Iterator.prototype.map"),
         Builtin::IteratorSelf => Some("Iterator.prototype[Symbol.iterator]"),
@@ -168,6 +169,7 @@ const fn set_fn_name(b: Builtin) -> Option<&'static str> {
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::IteratorConcat
+        | Builtin::IteratorZip
         | Builtin::IteratorSelf
         | Builtin::AsyncIteratorSelf
         | Builtin::AsyncIteratorDispose => Some(0.0),
@@ -218,6 +220,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IteratorConcat => Some("concat"),
         Builtin::IteratorFrom => Some("from"),
+        Builtin::IteratorZip => Some("zip"),
         Builtin::IteratorToArray => Some("toArray"),
         Builtin::IteratorMap => Some("map"),
         Builtin::IteratorSelf => Some("[Symbol.iterator]"),

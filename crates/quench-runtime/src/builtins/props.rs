@@ -65,6 +65,9 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     if builtin == Iterator && key == "from" {
         return Some(IteratorFrom);
     }
+    if builtin == Iterator && key == "zip" {
+        return Some(IteratorZip);
+    }
     if builtin == SharedArrayBuffer && key == "prototype" {
         return Some(SharedArrayBufferPrototype);
     }
