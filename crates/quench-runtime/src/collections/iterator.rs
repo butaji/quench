@@ -67,6 +67,14 @@ pub(crate) fn return_(
                 *done = true;
                 return Ok(iterator_result(Value::Undefined, true));
             }
+            IteratorState::Drop { iterator, done, .. }
+            | IteratorState::MapHelper { iterator, done, .. } => {
+                if *done {
+                    return Ok(iterator_result(Value::Undefined, true));
+                }
+                *done = true;
+                (iterator.clone(), Vec::new())
+            }
             _ => return Ok(iterator_result(Value::Undefined, true)),
         }
     };
