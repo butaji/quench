@@ -248,7 +248,20 @@ impl LinkedModule {
         let mut module = Self::compile("export default null;")?;
         module.fixed_exports.push((
             "default".to_string(),
-            quench_runtime::value::Value::String(source.to_string()),
+            quench_runtime::value::Value::Object(std::rc::Rc::new(
+                quench_runtime::value::ObjectData::new(vec![
+                    (
+                        "\0prototype".to_string(),
+                        quench_runtime::value::Value::Builtin(
+                            quench_runtime::ops::Builtin::AbstractModuleSourcePrototype,
+                        ),
+                    ),
+                    (
+                        "source".to_string(),
+                        quench_runtime::value::Value::String(source.to_string()),
+                    ),
+                ]),
+            )),
         ));
         Ok(module)
     }
