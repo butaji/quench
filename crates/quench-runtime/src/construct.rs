@@ -91,10 +91,21 @@ fn construct_with_new_target(
     let result = match target {
         Value::Proxy(_) => crate::proxy::proxy_construct(target, arguments, Some(new_target)),
         Value::Builtin(builtin) => {
-            if is_intl_constructor(*builtin)
+            if *builtin == crate::ops::Builtin::SharedArrayBuffer
                 && !crate::builtins::same_value(Some(target), Some(new_target))
             {
-                crate::execute::get_property_result(new_target, "prototype")?;
+                validate_shared_array_buffer_length(arguments)?;
+                let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+                let value = construct_builtin(*builtin, arguments)?;
+                let prototype = if crate::value::is_object(&prototype) {
+                    Some(prototype)
+                } else {
+                    realm_default_prototype(target, new_target)
+                };
+                let value = prototype.map_or(value.clone(), |prototype| {
+                    crate::builtins::set_property(value, "\0prototype", prototype)
+                });
+                return Ok(value);
             }
             let value = construct_builtin(*builtin, arguments)?;
             let value = with_new_target_prototype(value, target, new_target)?;
@@ -114,19 +125,28 @@ fn construct_with_new_target(
     };
     result
 }
-fn prefetch_buffer_prototype(
-    builtin: crate::ops::Builtin,
-    target: &Value,
-    new_target: &Value,
-) -> Result<Option<Value>, crate::execute::VmError> {
-    let buffer = matches!(
-        builtin,
-        crate::ops::Builtin::ArrayBuffer | crate::ops::Builtin::SharedArrayBuffer
-    );
-    if buffer && !crate::builtins::same_value(Some(target), Some(new_target)) {
-        return crate::execute::get_property_result(new_target, "prototype").map(Some);
+
+fn validate_shared_array_buffer_length(arguments: &[Value]) -> Result<(), crate::execute::VmError> {
+    let length = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
+    let length = to_index(length)?;
+    let Some(options) = arguments
+        .get(1)
+        .filter(|value| crate::value::is_object(value))
+    else {
+        return Ok(());
+    };
+    let maximum = crate::execute::get_property_result(options, "maxByteLength")?;
+    if matches!(maximum, Value::Undefined) {
+        return Ok(());
     }
-    Ok(None)
+    if to_index(crate::conversion::to_number(&maximum)?)? < length {
+        return Err(range_error("maxByteLength is smaller than byteLength"));
+    }
+    Ok(())
 }
 fn with_new_target_prototype(
     value: Value,
@@ -194,7 +214,6 @@ fn construct_bound(
                 return Err(crate::vm::not_callable());
             }
             let value = construct_bound_in_realm(bound, *builtin, &combined)?;
-            install_dynamic_global(bound, &value);
             with_new_target_prototype(value, &Value::Builtin(*builtin), &new_target)?
         }
         Value::Function(function) => construct_function(function, &new_target, &combined)?,
@@ -206,30 +225,19 @@ fn construct_bound(
         )?,
         _ => return Err(crate::vm::not_callable()),
     };
-    Ok(if let Value::HostCapability(capability) = &bound.receiver {
-        crate::builtins::set_property(value, "\0realm", Value::HostCapability(capability.clone()))
-    } else {
-        value
-    })
-}
-
-fn install_dynamic_global(bound: &crate::value::BoundFunctionValue, value: &Value) {
-    let Value::Function(function) = value else {
-        return;
-    };
-    let dynamic = function
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| name == "\0dynamic_function");
-    if !dynamic {
-        return;
+    if let Value::HostCapability(capability) = &bound.receiver {
+        let value = crate::builtins::set_property(
+            value,
+            "\0realm",
+            Value::HostCapability(capability.clone()),
+        );
+        return Ok(crate::builtins::set_property(
+            value,
+            "\0creation_realm",
+            Value::HostCapability(capability.clone()),
+        ));
     }
-    if let Some(Some(global)) =
-        crate::vm::with_realm(bound.realm, || Some(crate::vm::current_global_object()))
-    {
-        function.captures.set(0, global);
-    }
+    Ok(value)
 }
 fn construct_builtin(
     builtin: crate::ops::Builtin,
@@ -272,26 +280,15 @@ fn construct_builtin(
         }
         crate::ops::Builtin::RegExp => construct_regexp(arguments),
         crate::ops::Builtin::TemporalDuration => crate::temporal::duration::construct(arguments),
-        crate::ops::Builtin::TemporalZonedDateTime => {
-            crate::temporal::execute(crate::ops::Builtin::TemporalZonedDateTime, None, arguments)
-                .unwrap_or_else(|| Err(crate::vm::not_callable()))
-        }
-        crate::ops::Builtin::TemporalInstant => crate::temporal::instant::construct(arguments),
         crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
-        crate::ops::Builtin::TemporalPlainDateTime => {
-            crate::temporal::plain_date_time::construct(arguments)
+        crate::ops::Builtin::ShadowRealm => {
+            let realm = crate::vm::create_shadow_realm_value();
+            Ok(crate::builtins::set_property(
+                realm,
+                "\0prototype",
+                Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype),
+            ))
         }
-        crate::ops::Builtin::TemporalPlainTime => crate::temporal::plain_time::construct(arguments),
-        crate::ops::Builtin::TemporalPlainYearMonth
-        | crate::ops::Builtin::TemporalPlainMonthDay => {
-            crate::temporal::construct_calendar_object(builtin, arguments)
-        }
-        crate::ops::Builtin::IntlDurationFormat => Ok(Value::Object(std::rc::Rc::new(
-            crate::value::ObjectData::new(vec![(
-                "\0prototype".into(),
-                Value::Builtin(crate::ops::Builtin::IntlDurationFormatPrototype),
-            )]),
-        ))),
         _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::vm::not_callable()),
@@ -359,7 +356,6 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
             | Builtin::IntlRelativeTimeFormat
             | Builtin::IntlSegmenter
             | Builtin::IntlDisplayNames
-            | Builtin::IntlDurationFormat
             | Builtin::IntlLocale
     )
 }
@@ -464,19 +460,19 @@ fn construct_promise(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
 }
 
 fn construct_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let length = arguments.first().map_or(0.0, |value| {
-        crate::intl::tolocale::value::to_number(Some(value))
-    });
+    let length = arguments
+        .first()
+        .map(crate::conversion::to_number)
+        .transpose()?
+        .unwrap_or(0.0);
     let length = to_index(length)?;
-    if length > MAX_HOST_BUFFER_BYTES {
-        return Err(range_error("ArrayBuffer allocation is too large"));
-    }
-    let buffer = match arguments.get(1) {
-        Some(options) if crate::value::is_object(options) => {
-            resizable_array_buffer(length, options)?
-        }
-        None => crate::value::ArrayBufferData::new(length),
-        _ => crate::value::ArrayBufferData::new(length),
+    let buffer = match arguments
+        .get(1)
+        .filter(|options| crate::value::is_object(options))
+    {
+        Some(options) => resizable_array_buffer(length, options)?,
+        None => crate::value::ArrayBufferData::try_new(length)
+            .ok_or_else(|| range_error("ArrayBuffer length is too large"))?,
     };
     Ok(Value::ArrayBuffer(Rc::new(buffer)))
 }
@@ -487,18 +483,23 @@ fn resizable_array_buffer(
 ) -> Result<crate::value::ArrayBufferData, crate::execute::VmError> {
     let maximum = crate::execute::get_property_result(options, "maxByteLength")?;
     if matches!(maximum, Value::Undefined) {
-        return Ok(crate::value::ArrayBufferData::new(length));
+        return crate::value::ArrayBufferData::try_new(length)
+            .ok_or_else(|| range_error("ArrayBuffer length is too large"));
     }
     let maximum = to_index(crate::conversion::to_number(&maximum)?)?;
-    if maximum > MAX_HOST_BUFFER_BYTES {
-        return Err(range_error("ArrayBuffer allocation is too large"));
-    }
     if maximum < length {
         return Err(range_error("maxByteLength is smaller than byteLength"));
     }
-    Ok(crate::value::ArrayBufferData::new_resizable(
-        length, maximum,
-    ))
+    if !allocation_possible(maximum) {
+        return Err(range_error("ArrayBuffer maxByteLength is too large"));
+    }
+    crate::value::ArrayBufferData::try_new_resizable(length, maximum)
+        .ok_or_else(|| range_error("ArrayBuffer length is too large"))
+}
+
+fn allocation_possible(length: usize) -> bool {
+    let mut bytes: Vec<u8> = Vec::new();
+    bytes.try_reserve_exact(length).is_ok()
 }
 
 fn view_length(buffer: &crate::value::ArrayBufferData, fixed_length: usize) -> usize {
@@ -626,10 +627,7 @@ fn construct_error(
         ),
         (
             "\0prototype".to_string(),
-            Value::Builtin(
-                crate::builtin_meta::instance_prototype(*builtin)
-                    .unwrap_or(crate::ops::Builtin::ErrorPrototype),
-            ),
+            Value::Builtin(crate::ops::Builtin::ErrorPrototype),
         ),
     ];
     if let Some(message) = arguments
@@ -646,30 +644,13 @@ fn construct_error(
         .filter(|value| !matches!(value, Value::Undefined))
     {
         let options = to_object(cause_source)?;
-        if crate::with_scope::has_property(&options, "cause")? {
-            let cause = crate::execute::get_property_result(&options, "cause")?;
-            properties.push(("cause".to_string(), cause));
+        if !crate::with_scope::has_property(&options, "cause")? {
+            return Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))));
         }
-    }
-
-    for key in ["name", "message", "cause"] {
-        if let Some((_, value)) = properties.iter().rev().find(|(current, _)| current == key) {
-            properties.push((
-                crate::builtins::descriptor_key(key),
-                non_enumerable_descriptor(value),
-            ));
-        }
+        let cause = crate::execute::get_property_result(&options, "cause")?;
+        properties.push(("cause".to_string(), cause));
     }
     Ok(Value::Object(std::rc::Rc::new(ObjectData::new(properties))))
-}
-
-fn non_enumerable_descriptor(value: &Value) -> Value {
-    Value::Object(std::rc::Rc::new(ObjectData::new(vec![
-        ("value".to_string(), value.clone()),
-        ("writable".to_string(), Value::Boolean(true)),
-        ("enumerable".to_string(), Value::Boolean(false)),
-        ("configurable".to_string(), Value::Boolean(true)),
-    ])))
 }
 
 fn to_object(value: &Value) -> Result<Value, crate::execute::VmError> {
@@ -750,11 +731,6 @@ fn construct_function(
         if crate::value::is_object(&final_this) {
             return Ok(final_this);
         }
-        if !matches!(result, Value::Undefined) {
-            return Err(crate::value::error::throw_type_error(
-                "Derived constructor returned a non-object",
-            ));
-        }
         return Err(crate::value::error::throw_reference_error(
             "Derived constructor did not initialize this",
         ));
@@ -781,16 +757,6 @@ include!("construct_instance_fields.rs");
 pub(crate) fn derived_constructor(
     function: &crate::value::FunctionValue,
 ) -> Result<Value, crate::execute::VmError> {
-    let derived = function
-        .properties
-        .borrow()
-        .iter()
-        .any(|(name, _)| name == "\0derived_constructor");
-    if !derived {
-        return Err(crate::value::error::throw_reference_error(
-            "super is unavailable",
-        ));
-    }
     function
         .properties
         .borrow()

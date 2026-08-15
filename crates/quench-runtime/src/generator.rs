@@ -60,7 +60,6 @@ pub(crate) fn create(
         done: RefCell::new(false),
         state: RefCell::new(state),
         pending_yield: RefCell::new(false),
-        executing: RefCell::new(false),
     })))
 }
 
@@ -235,7 +234,6 @@ pub(crate) fn throw(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     let generator = generator_receiver(receiver, "throw")?;
     resume(generator, Resume::Throw(first_argument(arguments)))
 }
-#[derive(Clone)]
 enum Resume {
     Next(Value),
     Return(Value),
@@ -243,30 +241,8 @@ enum Resume {
 }
 
 fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
-    let global = generator.function.captures.get(0);
-    if let Some(result) =
-        crate::vm::with_global_realm(&global, || resume_in_realm(generator, resume.clone()))
-    {
-        return result;
-    }
-    resume_in_realm(generator, resume)
-}
-
-fn resume_in_realm(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
-    crate::vm::with_function_global(&generator.function.captures.get(0), || {
-        resume_with_global(generator, resume)
-    })
-}
-
-fn resume_with_global(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     if *generator.done.borrow() {
         return completed_resume(resume);
-    }
-    if *generator.executing.borrow() {
-        *generator.done.borrow_mut() = true;
-        return Err(crate::value::error::throw_type_error(
-            "Generator is already executing",
-        ));
     }
     initialize_state(generator);
     let mut state = current_state(generator)?;
@@ -278,26 +254,17 @@ fn resume_with_global(generator: &GeneratorData, resume: Resume) -> Result<Value
         }
     }
     let completion = resume.completion();
-    if let Resume::Next(input) = &resume {
-        install_resume_input(generator, &mut state, input.clone());
+    let direct_suspension = state.suspension.is_some();
+    if let Resume::Next(input) = resume {
+        install_resume_input(generator, &mut state, input);
     }
-    let has_loop_frame = generator
-        .machine
-        .borrow()
-        .frames
-        .frames
-        .last()
-        .is_some_and(|frame| matches!(frame, crate::machine::Frame::Loop { .. }));
-    if has_loop_frame || !direct_suspension {
+    if !direct_suspension {
         if let Some(result) = resume_suspended_contexts(generator, &mut state, &completion)? {
             generator.state.replace(Some(state));
             return Ok(result);
         }
     }
-    *generator.executing.borrow_mut() = true;
-    let step = execute_generator_step(generator, &mut state, completion);
-    *generator.executing.borrow_mut() = false;
-    let step = step?;
+    let step = execute_generator_step(generator, &mut state, completion)?;
     set_machine_pc(generator, step.pc);
     state.suspension = step.suspension;
     capture_suspended_private_environment(generator, &mut state, &step.completion);
@@ -373,9 +340,6 @@ fn resume_suspended_contexts(
         return resume_machine_frame(generator, state, completion).map(Some);
     }
     if let Some(completion) = resume_try_frame(generator, state, completion.clone())? {
-        if generator.machine.borrow().frame_count() > 0 && !completion.is_suspension() {
-            return resume_suspended_contexts(generator, state, &completion);
-        }
         return resume_machine_frame(generator, state, completion).map(Some);
     }
     if let Some(completion) = resume_branch_frame(generator, state, completion.clone())? {
@@ -464,78 +428,11 @@ fn suspended_try<'a>(
         return None;
     };
     let body = body.ops()?;
-    if let Some(found) = find_outer_suspended_try(op, body, generator) {
-        return Some(found);
-    }
-    None
-}
-
-fn find_outer_suspended_try<'a>(
-    op: &'a Op,
-    body: &'a [Op],
-    generator: &GeneratorData,
-) -> Option<(&'a Op, &'a Op, &'a [Op])> {
-    for (index, candidate) in body.iter().enumerate() {
-        if suspended_try_op(candidate, generator) {
-            return Some((op, candidate, &body[index + 1..]));
-        }
-        if let Op::Try {
-            body: nested_body,
-            handler,
-            finalizer,
-            ..
-        } = candidate
-        {
-            if let Some(yield_op) =
-                nested_suspended_yield(nested_body, handler, finalizer, generator)
-            {
-                return Some((op, yield_op, &body[index + 1..]));
-            }
-        }
-    }
-    None
-}
-
-fn nested_suspended_yield<'a>(
-    body: &'a crate::machine::FunctionCode,
-    handler: &'a Option<crate::machine::FunctionCode>,
-    finalizer: &'a Option<crate::machine::FunctionCode>,
-    generator: &GeneratorData,
-) -> Option<&'a Op> {
-    body.ops()
-        .and_then(|ops| find_suspended_yield(ops, generator))
-        .or_else(|| {
-            handler
-                .as_ref()
-                .and_then(|code| code.ops())
-                .and_then(|ops| find_suspended_yield(ops, generator))
-        })
-        .or_else(|| {
-            finalizer
-                .as_ref()
-                .and_then(|code| code.ops())
-                .and_then(|ops| find_suspended_yield(ops, generator))
-        })
-}
-
-fn find_suspended_yield<'a>(ops: &'a [Op], generator: &GeneratorData) -> Option<&'a Op> {
-    for op in ops {
-        if suspended_try_op(op, generator) {
-            return Some(op);
-        }
-        if let Op::Try {
-            body,
-            handler,
-            finalizer,
-            ..
-        } = op
-        {
-            if let Some(found) = nested_suspended_yield(body, handler, finalizer, generator) {
-                return Some(found);
-            }
-        }
-    }
-    None
+    let (yield_index, yield_op) = body
+        .iter()
+        .enumerate()
+        .find(|(_, candidate)| suspended_try_op(candidate, generator))?;
+    Some((op, yield_op, &body[yield_index + 1..]))
 }
 
 fn resume_suspended_try(

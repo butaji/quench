@@ -3,13 +3,6 @@ include!("props_modules.rs");
 include!("props_own_names.rs");
 include!("props_collections.rs");
 pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
-    if matches!(
-        builtin,
-        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype
-    ) && matches!(key, "length" | "name")
-    {
-        return Value::Undefined;
-    }
     if crate::builtins::builtin_prototype_property_is_removed(builtin, key) {
         return Value::Undefined;
     }
@@ -111,268 +104,26 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     }
     match (builtin, key) {
         (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
-        (Temporal, "Instant") => Some(Value::Builtin(TemporalInstant)),
-        (Temporal, "ZonedDateTime") => Some(Value::Builtin(TemporalZonedDateTime)),
         (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
-        (Temporal, "PlainDateTime") => Some(Value::Builtin(TemporalPlainDateTime)),
-        (Temporal, "PlainYearMonth") => Some(Value::Builtin(TemporalPlainYearMonth)),
-        (Temporal, "PlainMonthDay") => Some(Value::Builtin(TemporalPlainMonthDay)),
-        (Temporal, "PlainTime") => Some(Value::Builtin(TemporalPlainTime)),
-        (Temporal, "Symbol.toStringTag") => Some(Value::String("Temporal".into())),
-        (Temporal, "Now") => Some(Value::Builtin(TemporalNow)),
-        (TemporalNow, "zonedDateTimeISO") => Some(Value::Builtin(TemporalNowZonedDateTimeISO)),
-        (TemporalNow, "plainDateTimeISO") => Some(Value::Builtin(TemporalNowPlainDateTimeISO)),
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
         (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
         (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
-        (TemporalInstant, "prototype") => Some(Value::Builtin(TemporalInstantPrototype)),
-        (TemporalInstant, "from") => Some(Value::Builtin(TemporalInstantFrom)),
-        (TemporalInstantPrototype, "epochNanoseconds") => {
-            Some(Value::Builtin(TemporalInstantEpochNanosecondsGetter))
-        }
-        (TemporalInstantPrototype, "epochMilliseconds") => {
-            Some(Value::Builtin(TemporalInstantEpochMillisecondsGetter))
-        }
-        (TemporalInstantPrototype, "toString") => Some(Value::Builtin(TemporalInstantToString)),
-        (TemporalInstantPrototype, "toJSON") => Some(Value::Builtin(TemporalInstantToJSON)),
-        (TemporalInstantPrototype, "toLocaleString") => {
-            Some(Value::Builtin(TemporalInstantToLocaleString))
-        }
-        (TemporalInstantPrototype, "toZonedDateTimeISO") => {
-            Some(Value::Builtin(TemporalInstantToZonedDateTimeISO))
-        }
-        (TemporalInstantPrototype, "equals") => Some(Value::Builtin(TemporalInstantEquals)),
-        (TemporalInstantPrototype, "add") => Some(Value::Builtin(TemporalInstantAdd)),
-        (TemporalInstantPrototype, "subtract") => Some(Value::Builtin(TemporalInstantSubtract)),
-        (TemporalZonedDateTime, "prototype") => {
-            Some(Value::Builtin(TemporalZonedDateTimePrototype))
-        }
-        (TemporalZonedDateTimePrototype, "constructor") => {
-            Some(Value::Builtin(TemporalZonedDateTime))
-        }
-        (TemporalZonedDateTimePrototype, "toString") => {
-            Some(Value::Builtin(TemporalZonedDateTimeToString))
-        }
-        (TemporalZonedDateTime, "from") => Some(Value::Builtin(TemporalZonedDateTimeFrom)),
-        (TemporalDurationPrototype, "round") => Some(Value::Builtin(TemporalDurationRound)),
-        (TemporalDurationPrototype, "total") => Some(Value::Builtin(TemporalDurationTotal)),
-        (TemporalDurationPrototype, "years") => Some(Value::Builtin(TemporalDurationYearsGetter)),
-        (TemporalDurationPrototype, "months") => Some(Value::Builtin(TemporalDurationMonthsGetter)),
-        (TemporalDurationPrototype, "weeks") => Some(Value::Builtin(TemporalDurationWeeksGetter)),
-        (TemporalDurationPrototype, "days") => Some(Value::Builtin(TemporalDurationDaysGetter)),
-        (TemporalDurationPrototype, "hours") => Some(Value::Builtin(TemporalDurationHoursGetter)),
-        (TemporalDurationPrototype, "minutes") => {
-            Some(Value::Builtin(TemporalDurationMinutesGetter))
-        }
-        (TemporalDurationPrototype, "seconds") => {
-            Some(Value::Builtin(TemporalDurationSecondsGetter))
-        }
-        (TemporalDurationPrototype, "milliseconds") => {
-            Some(Value::Builtin(TemporalDurationMillisecondsGetter))
-        }
-        (TemporalDurationPrototype, "microseconds") => {
-            Some(Value::Builtin(TemporalDurationMicrosecondsGetter))
-        }
-        (TemporalDurationPrototype, "nanoseconds") => {
-            Some(Value::Builtin(TemporalDurationNanosecondsGetter))
-        }
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
-        (TemporalPlainDate, "compare") => Some(Value::Builtin(TemporalPlainDateCompare)),
-        (TemporalPlainDatePrototype, "era") => Some(Value::Builtin(TemporalPlainDateEraGetter)),
-        (TemporalPlainDatePrototype, "eraYear") => {
-            Some(Value::Builtin(TemporalPlainDateEraYearGetter))
-        }
-        (TemporalPlainDateTime, "prototype") => {
-            Some(Value::Builtin(TemporalPlainDateTimePrototype))
-        }
-        (TemporalPlainDateTime, "from") => Some(Value::Builtin(TemporalPlainDateTimeFrom)),
-        (TemporalPlainDateTime, "compare") => Some(Value::Builtin(TemporalPlainDateTimeCompare)),
-        (TemporalPlainDateTimePrototype, "constructor") => {
-            Some(Value::Builtin(TemporalPlainDateTime))
-        }
-        (TemporalPlainDateTimePrototype, "calendarId") => {
-            Some(Value::Builtin(TemporalPlainDateTimeCalendarIdGetter))
-        }
-        (TemporalPlainDateTimePrototype, "year") => {
-            Some(Value::Builtin(TemporalPlainDateTimeYearGetter))
-        }
-        (TemporalPlainDateTimePrototype, "month") => {
-            Some(Value::Builtin(TemporalPlainDateTimeMonthGetter))
-        }
-        (TemporalPlainDateTimePrototype, "monthCode") => {
-            Some(Value::Builtin(TemporalPlainDateTimeMonthCodeGetter))
-        }
-        (TemporalPlainDateTimePrototype, "day") => {
-            Some(Value::Builtin(TemporalPlainDateTimeDayGetter))
-        }
-        (TemporalPlainDateTimePrototype, "hour") => {
-            Some(Value::Builtin(TemporalPlainDateTimeHourGetter))
-        }
-        (TemporalPlainDateTimePrototype, "minute") => {
-            Some(Value::Builtin(TemporalPlainDateTimeMinuteGetter))
-        }
-        (TemporalPlainDateTimePrototype, "second") => {
-            Some(Value::Builtin(TemporalPlainDateTimeSecondGetter))
-        }
-        (TemporalPlainDateTimePrototype, "millisecond") => {
-            Some(Value::Builtin(TemporalPlainDateTimeMillisecondGetter))
-        }
-        (TemporalPlainDateTimePrototype, "microsecond") => {
-            Some(Value::Builtin(TemporalPlainDateTimeMicrosecondGetter))
-        }
-        (TemporalPlainDateTimePrototype, "nanosecond") => {
-            Some(Value::Builtin(TemporalPlainDateTimeNanosecondGetter))
-        }
-        (TemporalPlainDateTimePrototype, "toString") => {
-            Some(Value::Builtin(TemporalPlainDateTimeToString))
-        }
-        (TemporalPlainDateTimePrototype, "toJSON") => {
-            Some(Value::Builtin(TemporalPlainDateTimeToJSON))
-        }
-        (TemporalPlainDateTimePrototype, "toLocaleString") => {
-            Some(Value::Builtin(TemporalPlainDateTimeToLocaleString))
-        }
-        (TemporalPlainDateTimePrototype, "equals") => {
-            Some(Value::Builtin(TemporalPlainDateTimeEquals))
-        }
-        (TemporalPlainDateTimePrototype, "valueOf") => {
-            Some(Value::Builtin(TemporalPlainDateTimeValueOf))
-        }
-        (TemporalPlainDateTimePrototype, "add") => Some(Value::Builtin(TemporalPlainDateTimeAdd)),
-        (TemporalPlainDateTimePrototype, "subtract") => {
-            Some(Value::Builtin(TemporalPlainDateTimeSubtract))
-        }
-        (TemporalPlainDateTimePrototype, "with") => Some(Value::Builtin(TemporalPlainDateTimeWith)),
-        (TemporalPlainDateTimePrototype, "round") => {
-            Some(Value::Builtin(TemporalPlainDateTimeRound))
-        }
-        (TemporalPlainDateTimePrototype, "toZonedDateTime") => {
-            Some(Value::Builtin(TemporalPlainDateTimeToZonedDateTime))
-        }
-        (TemporalPlainTime, "prototype") => Some(Value::Builtin(TemporalPlainTimePrototype)),
-        (TemporalPlainTime, "from") => Some(Value::Builtin(TemporalPlainTimeFrom)),
-        (TemporalPlainTime, "compare") => Some(Value::Builtin(TemporalPlainTimeCompare)),
-        (TemporalPlainTimePrototype, "constructor") => Some(Value::Builtin(TemporalPlainTime)),
-        (TemporalPlainTimePrototype, "hour") => Some(Value::Builtin(TemporalPlainTimeHourGetter)),
-        (TemporalPlainTimePrototype, "minute") => {
-            Some(Value::Builtin(TemporalPlainTimeMinuteGetter))
-        }
-        (TemporalPlainTimePrototype, "second") => {
-            Some(Value::Builtin(TemporalPlainTimeSecondGetter))
-        }
-        (TemporalPlainTimePrototype, "millisecond") => {
-            Some(Value::Builtin(TemporalPlainTimeMillisecondGetter))
-        }
-        (TemporalPlainTimePrototype, "microsecond") => {
-            Some(Value::Builtin(TemporalPlainTimeMicrosecondGetter))
-        }
-        (TemporalPlainTimePrototype, "nanosecond") => {
-            Some(Value::Builtin(TemporalPlainTimeNanosecondGetter))
-        }
-        (TemporalPlainTimePrototype, "toString") => Some(Value::Builtin(TemporalPlainTimeToString)),
-        (TemporalPlainTimePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainTimeToJSON)),
-        (TemporalPlainTimePrototype, "valueOf") => Some(Value::Builtin(TemporalPlainTimeValueOf)),
-        (TemporalPlainTimePrototype, "equals") => Some(Value::Builtin(TemporalPlainTimeEquals)),
-        (TemporalPlainTimePrototype, "toLocaleString") => {
-            Some(Value::Builtin(TemporalPlainTimeToLocaleString))
-        }
-        (TemporalPlainTimePrototype, "add") => Some(Value::Builtin(TemporalPlainTimeAdd)),
-        (TemporalPlainTimePrototype, "subtract") => Some(Value::Builtin(TemporalPlainTimeSubtract)),
-        (TemporalPlainTimePrototype, "with") => Some(Value::Builtin(TemporalPlainTimeWith)),
-        (TemporalPlainTimePrototype, "round") => Some(Value::Builtin(TemporalPlainTimeRound)),
-        (TemporalPlainTimePrototype, "until") => Some(Value::Builtin(TemporalPlainTimeUntil)),
-        (TemporalPlainTimePrototype, "since") => Some(Value::Builtin(TemporalPlainTimeSince)),
         (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
-        (TemporalPlainDatePrototype, "toString") => Some(Value::Builtin(TemporalPlainDateToString)),
-        (TemporalPlainDatePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainDateToJSON)),
-        (TemporalPlainDatePrototype, "calendarId") => {
-            Some(Value::Builtin(TemporalPlainDateCalendarIdGetter))
-        }
-        (TemporalPlainDatePrototype, "year") => Some(Value::Builtin(TemporalPlainDateYearGetter)),
-        (TemporalPlainDatePrototype, "month") => Some(Value::Builtin(TemporalPlainDateMonthGetter)),
-        (TemporalPlainDatePrototype, "monthCode") => {
-            Some(Value::Builtin(TemporalPlainDateMonthCodeGetter))
-        }
-        (TemporalPlainDatePrototype, "day") => Some(Value::Builtin(TemporalPlainDateDayGetter)),
-        (TemporalPlainDatePrototype, "dayOfWeek") => {
-            Some(Value::Builtin(TemporalPlainDateDayOfWeekGetter))
-        }
-        (TemporalPlainDatePrototype, "dayOfYear") => {
-            Some(Value::Builtin(TemporalPlainDateDayOfYearGetter))
-        }
-        (TemporalPlainDatePrototype, "daysInMonth") => {
-            Some(Value::Builtin(TemporalPlainDateDaysInMonthGetter))
-        }
-        (TemporalPlainDatePrototype, "daysInWeek") => {
-            Some(Value::Builtin(TemporalPlainDateDaysInWeekGetter))
-        }
-        (TemporalPlainDatePrototype, "daysInYear") => {
-            Some(Value::Builtin(TemporalPlainDateDaysInYearGetter))
-        }
-        (TemporalPlainDatePrototype, "inLeapYear") => {
-            Some(Value::Builtin(TemporalPlainDateInLeapYearGetter))
-        }
-        (TemporalPlainDatePrototype, "monthsInYear") => {
-            Some(Value::Builtin(TemporalPlainDateMonthsInYearGetter))
-        }
-        (TemporalPlainDatePrototype, "equals") => Some(Value::Builtin(TemporalPlainDateEquals)),
-        (TemporalPlainDatePrototype, "valueOf") => Some(Value::Builtin(TemporalPlainDateValueOf)),
-        (TemporalPlainDatePrototype, "toLocaleString") => {
-            Some(Value::Builtin(TemporalPlainDateToLocaleString))
-        }
-        (TemporalPlainDatePrototype, "add") => Some(Value::Builtin(TemporalPlainDateAdd)),
-        (TemporalPlainDatePrototype, "subtract") => Some(Value::Builtin(TemporalPlainDateSubtract)),
-        (TemporalPlainDatePrototype, "until") => Some(Value::Builtin(TemporalPlainDateUntil)),
-        (TemporalPlainDatePrototype, "since") => Some(Value::Builtin(TemporalPlainDateSince)),
-        (TemporalDurationPrototype, "constructor") => Some(Value::Builtin(TemporalDuration)),
-        (TemporalDurationPrototype, "negated") => Some(Value::Builtin(TemporalDurationNegated)),
-        (TemporalDurationPrototype, "abs") => Some(Value::Builtin(TemporalDurationAbs)),
-        (TemporalDurationPrototype, "toJSON") => Some(Value::Builtin(TemporalDurationToJSON)),
-        (TemporalDurationPrototype, "toString") => Some(Value::Builtin(TemporalDurationToString)),
-        (TemporalDurationPrototype, "toLocaleString") => {
-            Some(Value::Builtin(TemporalDurationToLocaleString))
-        }
-        (TemporalDurationPrototype, "add") => Some(Value::Builtin(TemporalDurationAdd)),
-        (TemporalDurationPrototype, "subtract") => Some(Value::Builtin(TemporalDurationSubtract)),
-        (TemporalDurationPrototype, "valueOf") => Some(Value::Builtin(TemporalDurationValueOf)),
-        (IntlCollatorPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.Collator".into()))
-        }
-        (IntlDateTimeFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.DateTimeFormat".into()))
-        }
-        (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.DisplayNames".into()))
-        }
-        (IntlListFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.ListFormat".into()))
-        }
-        (IntlLocalePrototype, "Symbol.toStringTag") => Some(Value::String("Intl.Locale".into())),
-        (IntlNumberFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.NumberFormat".into()))
-        }
-        (IntlPluralRulesPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.PluralRules".into()))
-        }
-        (IntlRelativeTimeFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.RelativeTimeFormat".into()))
-        }
-        (IntlSegmenterPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.Segmenter".into()))
-        }
+        (ShadowRealmPrototype, "constructor") => Some(Value::Builtin(ShadowRealm)),
+        (ShadowRealm, "prototype") => Some(Value::Builtin(ShadowRealmPrototype)),
+        (ShadowRealmPrototype, "evaluate") => Some(Value::Builtin(ShadowRealmEvaluate)),
+        (ShadowRealmPrototype, "importValue") => Some(Value::Builtin(ShadowRealmImportValue)),
+        (ShadowRealmPrototype, "Symbol.toStringTag") => Some(Value::String("ShadowRealm".into())),
         (RegExpStringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("RegExp String Iterator".into()))
         }
-        (Intl, "Symbol.toStringTag") => Some(Value::String("Intl".into())),
-        (IntlListFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.ListFormat".into()))
+        (SharedArrayBufferPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("SharedArrayBuffer".into()))
         }
-        (IntlLocalePrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.Locale".into()))
-        }
-        (IntlNumberFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.NumberFormat".into()))
+        (StringIteratorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("String Iterator".into()))
         }
         (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Atomics, "Symbol.toStringTag") => Some(Value::String("Atomics".into())),
@@ -389,26 +140,6 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
             collections_prop(builtin, k)
         }
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
-        (IntlCollatorPrototype, "constructor") => Some(Value::Builtin(IntlCollator)),
-        (IntlCollatorPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.Collator".to_string()))
-        }
-        (IntlDateTimeFormatPrototype, "constructor") => Some(Value::Builtin(IntlDateTimeFormat)),
-        (IntlDateTimeFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.DateTimeFormat".to_string()))
-        }
-        (IntlDurationFormatPrototype, "constructor") => Some(Value::Builtin(IntlDurationFormat)),
-        (IntlDurationFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.DurationFormat".to_string()))
-        }
-        (IntlDisplayNamesPrototype, "constructor") => Some(Value::Builtin(IntlDisplayNames)),
-        (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.DisplayNames".to_string()))
-        }
-        (IntlListFormatPrototype, "constructor") => Some(Value::Builtin(IntlListFormat)),
-        (IntlListFormatPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("Intl.ListFormat".to_string()))
-        }
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
         (FinalizationRegistry, "prototype") => Some(Value::Builtin(FinalizationRegistryPrototype)),
         (FinalizationRegistryPrototype, "Symbol.toStringTag") => {
@@ -440,34 +171,6 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (ErrorPrototype, "message") => Some(Value::String("".to_string())),
         (ErrorPrototype, "cause") => Some(Value::Undefined),
         (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
-        (EvalErrorPrototype, "name") => Some(Value::String("EvalError".to_string())),
-        (RangeErrorPrototype, "name") => Some(Value::String("RangeError".to_string())),
-        (ReferenceErrorPrototype, "name") => Some(Value::String("ReferenceError".to_string())),
-        (SyntaxErrorPrototype, "name") => Some(Value::String("SyntaxError".to_string())),
-        (TypeErrorPrototype, "name") => Some(Value::String("TypeError".to_string())),
-        (URIErrorPrototype, "name") => Some(Value::String("URIError".to_string())),
-        (AggregateErrorPrototype, "name") => Some(Value::String("AggregateError".to_string())),
-        (EvalErrorPrototype, "message")
-        | (RangeErrorPrototype, "message")
-        | (ReferenceErrorPrototype, "message")
-        | (SyntaxErrorPrototype, "message")
-        | (TypeErrorPrototype, "message")
-        | (URIErrorPrototype, "message")
-        | (AggregateErrorPrototype, "message") => Some(Value::String(std::string::String::new())),
-        (EvalErrorPrototype, "constructor") => Some(Value::Builtin(EvalError)),
-        (RangeErrorPrototype, "constructor") => Some(Value::Builtin(RangeError)),
-        (ReferenceErrorPrototype, "constructor") => Some(Value::Builtin(ReferenceError)),
-        (SyntaxErrorPrototype, "constructor") => Some(Value::Builtin(SyntaxError)),
-        (TypeErrorPrototype, "constructor") => Some(Value::Builtin(TypeError)),
-        (URIErrorPrototype, "constructor") => Some(Value::Builtin(URIError)),
-        (AggregateErrorPrototype, "constructor") => Some(Value::Builtin(AggregateError)),
-        (EvalErrorPrototype, "toString")
-        | (RangeErrorPrototype, "toString")
-        | (ReferenceErrorPrototype, "toString")
-        | (SyntaxErrorPrototype, "toString")
-        | (TypeErrorPrototype, "toString")
-        | (URIErrorPrototype, "toString")
-        | (AggregateErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
         (SuppressedError, "prototype") => Some(Value::Builtin(SuppressedErrorPrototype)),
         (AggregateError, "prototype") => Some(Value::Builtin(AggregateErrorPrototype)),
         (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
@@ -664,43 +367,23 @@ fn builtin_method_core(builtin: Builtin, key: &str) -> Option<Builtin> {
         (ArrayBufferPrototype, "resizable") => Some(ArrayBufferResizableGetter),
         (ArrayBufferPrototype, "immutable") => Some(ArrayBufferImmutableGetter),
         (ArrayBufferPrototype, "transferToImmutable") => Some(ArrayBufferTransferToImmutable),
-        (ArrayBufferPrototype, "transfer") => Some(ArrayBufferTransfer),
-        (ArrayBufferPrototype, "slice") => Some(ArrayBufferSlice),
-        (SharedArrayBufferPrototype, "slice") => Some(ArrayBufferSlice),
-        (Atomics, "add") => Some(AtomicsAdd),
-        (Atomics, "sub") => Some(AtomicsSub),
-        (Atomics, "exchange") => Some(AtomicsExchange),
-        (Atomics, "store") => Some(AtomicsStore),
-        (Atomics, "load") => Some(AtomicsLoad),
-        (Atomics, "and") => Some(AtomicsAnd),
-        (Atomics, "or") => Some(AtomicsOr),
-        (Atomics, "xor") => Some(AtomicsXor),
-        (Atomics, "isLockFree") => Some(AtomicsIsLockFree),
-        (Atomics, "pause") => Some(AtomicsPause),
-        (Atomics, "compareExchange") => Some(AtomicsCompareExchange),
+        (SharedArrayBufferPrototype, "constructor") => Some(SharedArrayBuffer),
+        (SharedArrayBufferPrototype, "byteLength") => Some(SharedArrayBufferByteLengthGetter),
+        (SharedArrayBufferPrototype, "growable") => Some(SharedArrayBufferGrowableGetter),
+        (SharedArrayBufferPrototype, "maxByteLength") => Some(SharedArrayBufferMaxByteLengthGetter),
+        (SharedArrayBufferPrototype, "grow") => Some(SharedArrayBufferGrow),
+        (SharedArrayBufferPrototype, "slice") => Some(SharedArrayBufferSlice),
         (DataView, "prototype") => Some(DataViewPrototype),
         (DataViewPrototype, "constructor") => Some(DataView),
         (Function, "prototype") => Some(FunctionPrototype),
-        (FunctionPrototype, "constructor") => Some(Function),
         (AsyncFunction, "prototype") => Some(FunctionPrototype),
         (GeneratorFunction, "prototype") => Some(GeneratorFunctionPrototype),
         (AsyncGeneratorFunction, "prototype") => Some(AsyncGeneratorFunctionPrototype),
         (GeneratorFunctionPrototype, "constructor") => Some(GeneratorFunction),
-        (GeneratorFunctionPrototype, "toString" | "valueOf") => Some(if key == "toString" {
-            FunctionPrototypeToString
-        } else {
-            FunctionPrototypeValueOf
-        }),
         (AsyncGeneratorFunctionPrototype, "constructor") => Some(AsyncGeneratorFunction),
-        (AsyncGeneratorFunctionPrototype, "toString" | "valueOf") => Some(if key == "toString" {
-            FunctionPrototypeToString
-        } else {
-            FunctionPrototypeValueOf
-        }),
         (FunctionPrototype, "apply") => Some(FunctionApply),
         (FunctionPrototype, "call") => Some(FunctionCall),
         (FunctionPrototype, "bind") => Some(FunctionBind),
-        (FunctionPrototype, "Symbol.hasInstance") => Some(FunctionPrototypeHasInstance),
         (FunctionCall, "bind") => Some(FunctionBind),
         (Object, "prototype") => Some(ObjectPrototype),
         (Object, "fromEntries") => Some(ObjectFromEntries),
@@ -726,6 +409,7 @@ fn regexp_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         (RegExpPrototype, "Symbol.split") => RegExpSymbolSplit,
         (RegExpPrototype, "Symbol.matchAll") => RegExpSymbolMatchAll,
         (RegExpStringIteratorPrototype, "next") => RegExpStringIteratorNext,
+        (StringIteratorPrototype, "next") => StringIteratorNext,
         _ => return None,
     })
 }
@@ -736,20 +420,19 @@ fn builtin_method_prefix(builtin: Builtin, key: &str) -> Option<Builtin> {
     specialized_method(builtin, key).or_else(|| error_prototype(builtin, key))
 }
 fn error_prototype(builtin: Builtin, key: &str) -> Option<Builtin> {
-    if key != "prototype" {
-        return None;
-    }
-    Some(match builtin {
-        Builtin::Error => Builtin::ErrorPrototype,
-        Builtin::RangeError => Builtin::RangeErrorPrototype,
-        Builtin::ReferenceError => Builtin::ReferenceErrorPrototype,
-        Builtin::SyntaxError => Builtin::SyntaxErrorPrototype,
-        Builtin::EvalError => Builtin::EvalErrorPrototype,
-        Builtin::URIError => Builtin::URIErrorPrototype,
-        Builtin::AggregateError => Builtin::AggregateErrorPrototype,
-        Builtin::TypeError => Builtin::TypeErrorPrototype,
-        _ => return None,
-    })
+    (key == "prototype"
+        && matches!(
+            builtin,
+            Builtin::Error
+                | Builtin::RangeError
+                | Builtin::ReferenceError
+                | Builtin::SyntaxError
+                | Builtin::EvalError
+                | Builtin::URIError
+                | Builtin::AggregateError
+                | Builtin::TypeError
+        ))
+    .then_some(Builtin::ErrorPrototype)
 }
 fn specialized_method(builtin: Builtin, key: &str) -> Option<Builtin> {
     typed_array_property(builtin, key).or_else(|| {
@@ -942,6 +625,7 @@ fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Map, "prototype") => Some(MapPrototype),
         (Set, "prototype") => Some(SetPrototype),
         (FunctionPrototype, "toString") => Some(FunctionPrototypeToString),
+        (FunctionPrototype, "valueOf") => Some(FunctionPrototypeValueOf),
         (RegExpPrototype, "toString") => Some(RegExpPrototypeToString),
         _ => builtin_method3(builtin, key),
     }
@@ -984,8 +668,7 @@ fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
         (BigInt, "asUintN") => Some(BigIntAsUintN),
         (BigIntPrototype, "valueOf") => Some(BigIntValueOf),
         (BigIntPrototype, "constructor") => Some(BigInt),
-        (BigIntPrototype, "toString") => Some(BigIntToString),
-        (BigIntPrototype, "toLocaleString") => Some(BigIntToLocaleString),
+        (BigIntPrototype, "toString" | "toLocaleString") => Some(BigIntToString),
         _ => None,
     }
 }
@@ -993,9 +676,6 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
-    if builtin == Builtin::ObjectPrototype {
-        return None;
-    }
     match key {
         "call" => Some(Value::Builtin(Builtin::FunctionCall)),
         "bind" => Some(Value::Builtin(Builtin::FunctionBind)),
@@ -1005,32 +685,20 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
     }
 }
 pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
-    if _builtin == Builtin::Number
-        && matches!(
-            key,
-            "EPSILON"
-                | "MAX_SAFE_INTEGER"
-                | "MAX_VALUE"
-                | "MIN_SAFE_INTEGER"
-                | "MIN_VALUE"
-                | "NaN"
-                | "NEGATIVE_INFINITY"
-                | "POSITIVE_INFINITY"
-        )
-    {
+    if matches!(
+        (_builtin, key),
+        (Builtin::ThrowTypeError, "length" | "name")
+    ) {
         return false;
     }
     if key == "prototype" {
         return false;
     }
-    if key == "prototype" && builtin != Builtin::GeneratorFunctionPrototype {
-        return false;
-    }
-    if crate::builtins::object::is_well_known_symbol_property(builtin, key) {
+    if crate::builtins::object::is_well_known_symbol_property(_builtin, key) {
         return false;
     }
     if matches!(
-        (builtin, key),
+        (_builtin, key),
         (
             Builtin::Math,
             "E" | "LN2" | "LN10" | "LOG2E" | "LOG10E" | "PI" | "SQRT1_2" | "SQRT2"

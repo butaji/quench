@@ -334,10 +334,9 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
             index,
             done,
         } => StepTarget::Value(native_step(values, index, done)),
-        IteratorState::ArrayLike { value, index, done } if !*done => {
-            StepTarget::ArrayLike(value.clone(), *index)
+        IteratorState::String { input, index, done } => {
+            StepTarget::Value(string_step(input, index, done))
         }
-        IteratorState::ArrayLike { .. } => StepTarget::Value(None),
         IteratorState::Set {
             data,
             index,
@@ -374,41 +373,21 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
     })
 }
 
-fn concat_step(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
-    loop {
-        let item = {
-            let mut state = data.state.borrow_mut();
-            let IteratorState::Concat {
-                items,
-                index,
-                current,
-                done,
-                ..
-            } = &mut *state
-            else {
-                return Ok(StepTarget::Value(None));
-            };
-            if *done {
-                return Ok(StepTarget::Value(None));
-            }
-            if current.is_none() {
-                let Some((value, method)) = items.get(*index).cloned() else {
-                    *done = true;
-                    return Ok(StepTarget::Value(None));
-                };
-                *index += 1;
-                *current = Some(super::open_with_method(value, method)?);
-            }
-            current.clone()
-        };
-        let Some(item) = item else { continue };
-        if let Some(value) = super::step_value(&item)? {
-            return Ok(StepTarget::Value(Some(value)));
-        }
-        if let IteratorState::Concat { current, .. } = &mut *data.state.borrow_mut() {
-            *current = None;
-        }
+fn string_step(input: &[u16], index: &mut usize, done: &mut bool) -> Option<Value> {
+    if *done || *index >= input.len() {
+        *done = true;
+        return None;
     }
+    let start = *index;
+    *index += if *index + 1 < input.len()
+        && (0xD800..0xDC00).contains(&input[*index])
+        && (0xDC00..0xE000).contains(&input[*index + 1])
+    {
+        2
+    } else {
+        1
+    };
+    Some(crate::strings::from_units(input[start..*index].to_vec()))
 }
 
 fn resolve_next(
