@@ -166,7 +166,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::IteratorSelf | Builtin::AsyncIteratorSelf | Builtin::AsyncIteratorDispose => {
             Some(0.0)
         }
-        Builtin::IteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some(0.0),
+        Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some(0.0),
         Builtin::MapSet => Some(2.0),
         Builtin::MapSizeGetter | Builtin::SetSizeGetter => Some(0.0),
         Builtin::MapGet | Builtin::MapHas | Builtin::MapDelete => Some(1.0),
@@ -209,9 +209,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorSelf => Some("[Symbol.iterator]"),
         Builtin::AsyncIteratorSelf => Some("[Symbol.asyncIterator]"),
         Builtin::AsyncIteratorDispose => Some("[Symbol.asyncDispose]"),
-        Builtin::IteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext => {
-            Some("next")
-        }
+        Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some("next"),
         Builtin::MapSet => Some("set"),
         Builtin::MapGet => Some("get"),
         Builtin::MapHas => Some("has"),
