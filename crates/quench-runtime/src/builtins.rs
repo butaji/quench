@@ -108,144 +108,7 @@ pub(crate) fn builtin_name(builtin: Builtin) -> &'static str {
 
 include!("builtins_escape.rs");
 include!("builtins_uri.rs");
-
-pub(crate) fn array(arguments: &[Value]) -> Value {
-    if let [Value::Number(length)] = arguments {
-        if *length >= 0.0 && length.fract() == 0.0 && *length <= u32::MAX as f64 {
-            let mut values = Value::array(Vec::new());
-            if let Value::Array(values) = &mut values {
-                Rc::make_mut(values).set_length(*length as usize);
-            }
-            return values;
-        }
-    }
-    Value::array(arguments.to_vec())
-}
-
-pub(crate) fn array_map(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver else {
-        return Ok(Value::array(Vec::new()));
-    };
-    let Some(callback) = arguments.first() else {
-        return Ok(Value::array(Vec::new()));
-    };
-    let length = map_length(receiver)?;
-    if length > u32::MAX as usize {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid array length",
-        ));
-    }
-    let mut mapped = Value::array(Vec::new());
-    if let Value::Array(values) = &mut mapped {
-        Rc::make_mut(values).set_length(length);
-    }
-    for index in 0..length {
-        let Some(value) = map_value(receiver, index)? else {
-            continue;
-        };
-        let args = [value, Value::Number(index as f64), receiver.clone()];
-        let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-        let result = crate::functions::execute_target(callback, this_arg, &args)?;
-        if let Value::Array(values) = &mut mapped {
-            Rc::make_mut(values).set_index(index, result);
-        }
-    }
-    Ok(mapped)
-}
-fn map_length(receiver: &Value) -> Result<usize, crate::execute::VmError> {
-    if let Value::Array(values) = receiver {
-        return Ok(values.logical_len());
-    }
-    let length = crate::execute::get_property_result(receiver, "length")?;
-    let number = crate::conversion::to_number(&length)?;
-    if number.is_nan() || number <= 0.0 {
-        return Ok(0);
-    }
-    Ok(number.floor().min(9_007_199_254_740_991.0) as usize)
-}
-fn map_value(receiver: &Value, index: usize) -> Result<Option<Value>, crate::execute::VmError> {
-    if let Value::Array(values) = receiver {
-        return Ok(values
-            .has_index(index)
-            .then(|| values.get_index(index))
-            .flatten());
-    }
-    let key = index.to_string();
-    if !crate::with_scope::has_property(receiver, &key)? {
-        return Ok(None);
-    }
-    crate::execute::get_property_result(receiver, &key).map(Some)
-}
-pub(crate) fn array_for_each(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Array(values)) = receiver else {
-        return Ok(Value::Undefined);
-    };
-    if let Some(callback) = arguments.first() {
-        let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-        for (index, value) in values.iter().enumerate() {
-            crate::functions::execute_target(
-                callback,
-                this_arg,
-                &[value.clone(), Value::Number(index as f64), Value::Undefined],
-            )?;
-        }
-    }
-    Ok(Value::Undefined)
-}
-pub(crate) fn array_filter(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Array(values)) = receiver else {
-        return Ok(Value::array(Vec::new()));
-    };
-    let Some(callback) = arguments.first() else {
-        return Ok(Value::Array(values.clone()));
-    };
-    let mut filtered = Vec::new();
-    let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    for (index, value) in values.iter().enumerate() {
-        let args = [value.clone(), Value::Number(index as f64), Value::Undefined];
-        let result = crate::functions::execute_target(callback, this_arg, &args)?;
-        if crate::execute::is_truthy(&result) {
-            filtered.push(value.clone());
-        }
-    }
-    Ok(Value::array(filtered))
-}
-
-pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::Array(values)) = receiver else {
-        return Value::String(String::new());
-    };
-    let separator = arguments
-        .first()
-        .map_or_else(|| ",".to_string(), value_to_string);
-    Value::String(
-        values
-            .iter()
-            .map(value_to_string)
-            .collect::<Vec<_>>()
-            .join(&separator),
-    )
-}
-
-pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(receiver @ Value::Array(values)) = receiver else {
-        return Value::Number(f64::NAN);
-    };
-    let mut result = values.to_vec();
-    result.extend_from_slice(arguments);
-    let length = result.len();
-    crate::locals::replace_value(receiver, &Value::array(result));
-    Value::Number(length as f64)
-}
+include!("builtins_core.rs");
 include!("builtins_array_shift.rs");
 include!("builtins_array_reverse.rs");
 include!("builtins_array_pop.rs");
@@ -264,108 +127,7 @@ pub(crate) fn math_pow(arguments: &[Value]) -> Result<Value, crate::execute::VmE
     Ok(Value::Number(pow(base, exponent)))
 }
 
-fn pow(base: f64, exponent: f64) -> f64 {
-    if exponent == 0.0 {
-        return 1.0;
-    }
-    if exponent.is_nan() || base.is_nan() || base.abs() == 1.0 && exponent.is_infinite() {
-        return f64::NAN;
-    }
-    if base.is_infinite() {
-        return infinite_pow(base, exponent);
-    }
-    if base == 0.0 {
-        return zero_pow(base, exponent);
-    }
-    base.powf(exponent)
-}
-
-fn infinite_pow(base: f64, exponent: f64) -> f64 {
-    if exponent.is_sign_positive() {
-        if base.is_sign_negative() && is_odd_integer(exponent) {
-            f64::NEG_INFINITY
-        } else {
-            f64::INFINITY
-        }
-    } else if base.is_sign_negative() && is_odd_integer(exponent) {
-        -0.0
-    } else {
-        0.0
-    }
-}
-
-fn zero_pow(base: f64, exponent: f64) -> f64 {
-    if exponent.is_sign_positive() {
-        if base.is_sign_negative() && is_odd_integer(exponent) {
-            -0.0
-        } else {
-            0.0
-        }
-    } else if base.is_sign_negative() && is_odd_integer(exponent) {
-        f64::NEG_INFINITY
-    } else {
-        f64::INFINITY
-    }
-}
-
-fn is_odd_integer(value: f64) -> bool {
-    value.is_finite()
-        && value == value.trunc()
-        && value.abs() < 9_007_199_254_740_992.0
-        && value as i64 % 2 != 0
-}
-
-pub(crate) fn is_array(value: Option<&Value>) -> Value {
-    Value::Boolean(matches!(value, Some(Value::Array(_))))
-}
-
-fn value_to_number(value: &Value) -> f64 {
-    match value {
-        Value::Number(value) => *value,
-        Value::String(value) => value.parse().unwrap_or(f64::NAN),
-        _ => f64::NAN,
-    }
-}
-
-pub(crate) fn object(arguments: &[Value]) -> Value {
-    match arguments.first() {
-        Some(Value::Array(_))
-        | Some(Value::ArrayBuffer(_))
-        | Some(Value::DataView(_))
-        | Some(Value::Float32Array(_))
-        | Some(Value::Float64Array(_))
-        | Some(Value::Int16Array(_))
-        | Some(Value::Int8Array(_))
-        | Some(Value::Int32Array(_))
-        | Some(Value::Uint16Array(_))
-        | Some(Value::Uint8Array(_))
-        | Some(Value::Uint8ClampedArray(_))
-        | Some(Value::Uint32Array(_))
-        | Some(Value::Object(_))
-        | Some(Value::Function(_))
-        | Some(Value::Builtin(_)) => arguments[0].clone(),
-        Some(
-            value @ (Value::String(_) | Value::Number(_) | Value::Boolean(_) | Value::BigInt(_)),
-        ) => boxed_object(value),
-        _ => Value::Object(Rc::new(ObjectData::new(vec![(
-            "constructor".to_string(),
-            Value::Builtin(Builtin::Object),
-        )]))),
-    }
-}
-
-fn boxed_object(value: &Value) -> Value {
-    let constructor = object::boxed_constructor(value);
-    let mut properties = vec![
-        ("_value".to_string(), value.clone()),
-        ("constructor".to_string(), Value::Builtin(constructor)),
-    ];
-    if let Some(prototype) = crate::builtin_meta::instance_prototype(constructor) {
-        properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
-    }
-    Value::Object(Rc::new(ObjectData::new(properties)))
-}
-
+include!("builtins_object_core.rs");
 pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     let (name, constructor, prototype) = match builtin {
         Builtin::RangeError => ("RangeError", Builtin::RangeError, Builtin::ErrorPrototype),
@@ -449,14 +211,7 @@ pub(crate) fn suppressed_error(arguments: &[Value]) -> Result<Value, crate::exec
     Ok(Value::Object(Rc::new(ObjectData::new(properties))))
 }
 
-fn non_enumerable_descriptor(value: &Value) -> Value {
-    Value::Object(Rc::new(ObjectData::new(vec![
-        ("value".to_string(), value.clone()),
-        ("writable".to_string(), Value::Boolean(true)),
-        ("enumerable".to_string(), Value::Boolean(false)),
-        ("configurable".to_string(), Value::Boolean(true)),
-    ])))
-}
+include!("builtins_descriptor_core.rs");
 pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
     let (Some(left), Some(right)) = (left, right) else {
         return matches!((left, right), (None, None));
@@ -555,13 +310,7 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
     }
 }
 
-fn boxed_string_immutable_key(properties: &ObjectData, key: &str) -> bool {
-    let is_string = properties
-        .iter()
-        .any(|(name, value)| name == "_value" && matches!(value, Value::String(_)));
-    is_string && (key == "length" || key.parse::<usize>().is_ok())
-}
-
+include!("builtins_string_core.rs");
 fn set_object_alias_property(
     alias: crate::value::ObjectAliasValue,
     key: &str,
