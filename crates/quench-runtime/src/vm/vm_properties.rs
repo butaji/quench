@@ -427,6 +427,20 @@ fn descriptor_property_result(
 /// functions; strict functions keep the receiver as-is.
 fn invoke_accessor(getter: &Value, receiver: &Value) -> Result<Value, VmError> {
     match getter {
+        Value::BoundFunction(bound)
+            if crate::vm::is_intrinsic_bound(bound)
+                && matches!(bound.target, Value::Builtin(_)) =>
+        {
+            let Value::Builtin(builtin) = bound.target else {
+                unreachable!()
+            };
+            crate::vm::with_realm(bound.realm, || {
+                crate::vm::execute_builtin_with_receiver(builtin, &[], Some(receiver))
+            })
+            .unwrap_or_else(|| {
+                crate::vm::execute_builtin_with_receiver(builtin, &[], Some(receiver))
+            })
+        }
         Value::Function(_) | Value::BoundFunction(_) => {
             crate::functions::execute_target(getter, receiver, &[])
         }
