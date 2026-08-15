@@ -28,50 +28,6 @@ pub(crate) fn lossy(value: &Value) -> Option<String> {
     }
 }
 
-pub(crate) fn source_text(value: &Value) -> Option<String> {
-    let units = units_of(value)?;
-    let mut source = String::new();
-    for unit in units {
-        if (0xD800..=0xDFFF).contains(&unit) {
-            source.push_str(&format!("\\u{unit:04X}"));
-        } else if let Some(character) = char::from_u32(u32::from(unit)) {
-            source.push(character);
-        }
-    }
-    Some(source)
-}
-
-pub(crate) fn decode_surrogate_escapes(value: &str) -> Value {
-    let bytes = value.as_bytes();
-    let mut index = 0;
-    let mut units = Vec::new();
-    let mut changed = false;
-    while index < bytes.len() {
-        let unit = bytes
-            .get(index..index + 6)
-            .filter(|slice| slice[0] == b'\\' && slice[1] == b'u')
-            .and_then(|slice| std::str::from_utf8(&slice[2..]).ok())
-            .and_then(|hex| u16::from_str_radix(hex, 16).ok())
-            .filter(|unit| (0xD800..=0xDFFF).contains(unit));
-        if let Some(unit) = unit {
-            units.push(unit);
-            index += 6;
-            changed = true;
-            continue;
-        }
-        let character = value[index..].chars().next().unwrap_or('\0');
-        let mut encoded = [0; 2];
-        let length = character.encode_utf16(&mut encoded).len();
-        units.extend_from_slice(&encoded[..length]);
-        index += character.len_utf8();
-    }
-    if changed {
-        from_units(units)
-    } else {
-        Value::String(value.to_string())
-    }
-}
-
 /// Whether two string values hold identical UTF-16 code units.
 pub(crate) fn units_equal(left: &Value, right: &Value) -> bool {
     match (units_of(left), units_of(right)) {
