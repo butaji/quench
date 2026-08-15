@@ -94,10 +94,8 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         return Ok(Value::Undefined);
     }
     let key = Value::String("stack".to_string());
-    if !matches!(
-        crate::builtins::object::descriptor(Some(value), Some(&key))?,
-        Value::Undefined
-    ) {
+    let owns_stack = crate::builtins::object::has_own_property(Some(value), Some(&key));
+    if matches!(owns_stack, Value::Boolean(true)) {
         crate::builtins::set_property(value.clone(), "stack", stack.clone());
     } else {
         define_own_stack(value, stack.clone())?;
