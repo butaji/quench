@@ -440,6 +440,13 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
+    if matches!(
+        builtin,
+        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype
+    ) && matches!(key, "length" | "name")
+    {
+        return None;
+    }
     match key {
         "call" => Some(Value::Builtin(Builtin::FunctionCall)),
         "bind" => Some(Value::Builtin(Builtin::FunctionBind)),
