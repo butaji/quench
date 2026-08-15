@@ -336,13 +336,33 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
             }
         }
     }
-    let values = NAMES
+    let mut values = NAMES
         .iter()
         .map(|name| crate::execute::get_property_result(receiver, name))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .map(|value| crate::conversion::to_number(&value))
         .collect::<Result<Vec<_>, _>>()?;
+    if let Some(Value::String(smallest_unit)) =
+        options.and_then(|value| crate::execute::get_property_result(value, "smallestUnit").ok())
+    {
+        match smallest_unit.strip_suffix('s').unwrap_or(&smallest_unit) {
+            "minute" => values[5] = 0.0,
+            "second" => {}
+            "millisecond" => values[7] = 0.0,
+            "microsecond" => values[8] = 0.0,
+            _ => {}
+        }
+        if matches!(smallest_unit.as_str(), "minute" | "minutes") {
+            values[6] = 0.0;
+            values[7] = 0.0;
+            values[8] = 0.0;
+        } else if matches!(smallest_unit.as_str(), "second" | "seconds") {
+            values[6] = 0.0;
+            values[7] = 0.0;
+            values[8] = 0.0;
+        }
+    }
     let fraction = values[6] as u32 * 1_000_000 + values[7] as u32 * 1_000 + values[8] as u32;
     let digits = options
         .and_then(|value| crate::execute::get_property_result(value, "fractionalSecondDigits").ok())
