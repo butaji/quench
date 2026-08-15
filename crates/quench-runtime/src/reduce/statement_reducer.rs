@@ -319,4 +319,12 @@ fn is_function_declaration(statement: &Statement<'_>) -> bool {
                     Some(oxc::ast::ast::Declaration::FunctionDeclaration(_))
                 )
         )
+        || matches!(
+            statement,
+            Statement::ExportDefaultDeclaration(export)
+                if matches!(
+                    &export.declaration,
+                    oxc::ast::ast::ExportDefaultDeclarationKind::FunctionDeclaration(_)
+                )
+        )
 }
