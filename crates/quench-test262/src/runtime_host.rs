@@ -615,6 +615,7 @@ impl Test262Host for RuntimeHost {
         source: &str,
         path: &Path,
     ) -> Result<(), String> {
+        quench_runtime::vm::reset_current_global();
         reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
         let mut graph = module_graph(path, source)?;
         let entry = graph
