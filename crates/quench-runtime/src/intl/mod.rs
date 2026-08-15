@@ -573,16 +573,24 @@ fn validate_subtag_sequence(parts: &[&str]) -> Result<(), VmError> {
     let mut singletons = std::collections::HashSet::new();
     let mut variants = std::collections::HashSet::new();
     let mut extension = false;
+    let mut unicode_extension = false;
     for (index, part) in parts.iter().enumerate() {
         if part.is_empty() {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
         if part.len() == 1 {
             let key = part.to_ascii_lowercase();
+            let is_unicode = key == "u";
             if index + 1 == parts.len() || !singletons.insert(key) {
                 return Err(runtime_error("RangeError: invalid language tag"));
             }
             extension = true;
+            unicode_extension = is_unicode;
+        } else if unicode_extension
+            && part.len() == 2
+            && part.chars().nth(1).is_some_and(|c| c.is_ascii_digit())
+        {
+            return Err(runtime_error("RangeError: invalid language tag"));
         } else if !extension && (part.len() == 4 || part.len() >= 5) {
             let key = part.to_ascii_lowercase();
             if !variants.insert(key) {
