@@ -76,7 +76,8 @@ pub(crate) fn execute(
             Some(getter(builtin, _receiver))
         }
         crate::ops::Builtin::TemporalPlainDateTimeToString
-        | crate::ops::Builtin::TemporalPlainDateTimeToJSON => Some(to_string(_receiver)),
+        | crate::ops::Builtin::TemporalPlainDateTimeToJSON
+        | crate::ops::Builtin::TemporalPlainDateTimeToLocaleString => Some(to_string(_receiver)),
         crate::ops::Builtin::TemporalPlainDateTimeCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalPlainDateTimeEquals => {
             Some(equals(_receiver, arguments.first()))

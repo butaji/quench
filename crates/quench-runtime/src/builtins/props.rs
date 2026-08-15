@@ -114,6 +114,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDateTimePrototype, "toJSON") => {
             Some(Value::Builtin(TemporalPlainDateTimeToJSON))
         }
+        (TemporalPlainDateTimePrototype, "toLocaleString") => {
+            Some(Value::Builtin(TemporalPlainDateTimeToLocaleString))
+        }
         (TemporalPlainDateTimePrototype, "equals") => {
             Some(Value::Builtin(TemporalPlainDateTimeEquals))
         }
