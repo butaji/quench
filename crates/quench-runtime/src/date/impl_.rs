@@ -3,7 +3,7 @@ use crate::{execute::VmError, ops::Builtin, value::Value};
 use chrono::Datelike;
 use std::rc::Rc;
 
-use super::{chrono_utils, extract_time, helpers, store_time, DateValue};
+use super::{chrono_utils, extract_time, helpers, DateValue};
 
 /// Execute Date builtin methods.
 pub fn execute(
@@ -60,15 +60,16 @@ pub fn execute(
         return Some(date_to_json(receiver));
     }
     let result = match builtin {
-        Builtin::DateNow => Value::Number(chrono_utils::current_time_ms()),
-        Builtin::DateParse => date_parse(arguments),
+        Builtin::DateNow => Ok(Value::Number(chrono_utils::current_time_ms())),
+        Builtin::DateParse => Ok(date_parse(arguments)),
         _ => {
             let val = dispatch_get(builtin, receiver)
+                .map(Ok)
                 .or_else(|| dispatch_set(builtin, receiver, arguments));
-            val?
+            val.unwrap_or(Ok(Value::Undefined))
         }
     };
-    Some(Ok(result))
+    Some(result)
 }
 
 fn is_date_getter(builtin: Builtin) -> bool {
@@ -129,7 +130,11 @@ fn dispatch_get(builtin: Builtin, receiver: Option<&Value>) -> Option<Value> {
     }
 }
 
-fn dispatch_set(builtin: Builtin, receiver: Option<&Value>, args: &[Value]) -> Option<Value> {
+fn dispatch_set(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Option<Result<Value, VmError>> {
     match builtin {
         Builtin::DateSetYear => Some(date_set_year(receiver, args)),
         _ => None,
@@ -385,14 +390,22 @@ fn date_get_year(receiver: Option<&Value>) -> Value {
     Value::Number(if year.is_nan() { f64::NAN } else { year })
 }
 
-fn date_set_year(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let year = helpers::to_int32(arguments.first().unwrap_or(&Value::Undefined));
+fn date_set_year(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let current = super::setter::time_value(receiver)?;
+    let year_value = arguments.first().unwrap_or(&Value::Undefined);
+    let year_number = crate::conversion::to_number(year_value)?;
+    if year_number.is_nan() {
+        return Ok(super::store_time(
+            receiver.unwrap_or(&Value::Undefined),
+            f64::NAN,
+        ));
+    }
+    let year = helpers::to_int32(&Value::Number(year_number));
     let year = if (0.0..=99.0).contains(&year) {
         year + 1900.0
     } else {
         year
     };
-    let current = extract_time(receiver);
     let (_, m, d, h, min, s, ms) =
         chrono_utils::local_components(current).unwrap_or((2000, 1, 1, 0, 0, 0, 0));
     let result = chrono_utils::make_local_ms(
@@ -404,6 +417,8 @@ fn date_set_year(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         s as f64,
         ms as f64,
     );
-    store_time(receiver.unwrap_or(&Value::Undefined), result);
-    Value::Number(chrono_utils::time_clip(result))
+    Ok(super::store_time(
+        receiver.unwrap_or(&Value::Undefined),
+        result,
+    ))
 }
