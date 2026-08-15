@@ -78,6 +78,9 @@ fn iterator_from(arguments: &[Value]) -> Result<Value, VmError> {
     if matches!(value, Value::String(_) | Value::StringUnits(_)) {
         return iterator::open(value.clone());
     }
+    if !crate::value::is_object(value) {
+        return Err(crate::value::error::throw_type_error("value is not iterable"));
+    }
     let method = crate::execute::get_property_result(value, "Symbol.iterator")?;
     if crate::conversion::is_callable(&method) {
         return iterator::open(value.clone());
