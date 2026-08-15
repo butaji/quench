@@ -63,9 +63,7 @@ pub fn inspect_module_source(source: &str) -> Result<crate::reduce::ModuleMetada
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::mjs()).parse();
     crate::reduce_support::validate_parse(&parsed)?;
-    Ok(crate::reduce::ModuleMetadata::from_statements(
-        &parsed.program.body,
-    ))
+    Ok(crate::reduce::ModuleMetadata::from_program(&parsed.program))
 }
 pub fn reduce_source_with_type(
     source: &str,
@@ -115,18 +113,18 @@ fn reduce_program(
         ops,
         analysis.scope_count,
         analysis.symbol_count,
-        module_metadata(source_type, &program.body),
+        module_metadata(source_type, program),
         local_slots,
     ))
 }
 
 fn module_metadata(
     source_type: SourceType,
-    statements: &[Statement<'_>],
+    program: &oxc::ast::ast::Program<'_>,
 ) -> Option<crate::reduce::ModuleMetadata> {
     source_type
         .is_module()
-        .then(|| crate::reduce::ModuleMetadata::from_statements(statements))
+        .then(|| crate::reduce::ModuleMetadata::from_program(program))
 }
 
 fn reduce_statements(
@@ -464,7 +462,7 @@ fn reduce_function_body(
         &function.params,
         facts,
         locals,
-        function.id.as_ref().map_or("", |id| id.name.as_str()),
+        "",
         functions::function_kind(function),
         function.r#async,
     )?;
