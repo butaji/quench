@@ -551,8 +551,17 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
     let (date, time) = main
         .split_once('T')
         .or_else(|| main.split_once('t'))
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid date-time"))?;
-    let date_fields = date.split('-').collect::<Vec<_>>();
+        .unwrap_or((main, "00:00"));
+    let time = time.split(['+', '-']).next().unwrap_or(time);
+    let date_fields = if date.starts_with(['+', '-']) && date.matches('-').count() >= 2 {
+        vec![&date[..7], &date[8..10], &date[11..]]
+    } else if date.contains('-') {
+        date.split('-').collect::<Vec<_>>()
+    } else if date.len() == 8 {
+        vec![&date[..4], &date[4..6], &date[6..]]
+    } else {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    };
     if date_fields.len() != 3 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
@@ -560,6 +569,15 @@ fn parse_string(text: &str) -> Result<Value, VmError> {
         .split_once('.')
         .or_else(|| time.split_once(','))
         .map_or((time, ""), |parts| parts);
+    let clock = if !clock.contains(':') && clock.len() == 2 {
+        format!("{clock}:00")
+    } else if !clock.contains(':') && clock.len() == 4 {
+        format!("{}:{}", &clock[..2], &clock[2..])
+    } else if !clock.contains(':') && clock.len() == 6 {
+        format!("{}:{}:{}", &clock[..2], &clock[2..4], &clock[4..])
+    } else {
+        clock.to_string()
+    };
     let clock = clock.split(':').collect::<Vec<_>>();
     if clock.len() < 2 || clock.len() > 3 || fraction.len() > 9 {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
