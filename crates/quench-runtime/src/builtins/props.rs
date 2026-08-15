@@ -67,6 +67,10 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
         (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
         (TemporalInstant, "prototype") => Some(Value::Builtin(TemporalInstantPrototype)),
+        (TemporalInstant, "from") => Some(Value::Builtin(TemporalInstantFrom)),
+        (TemporalInstantPrototype, "epochNanoseconds") => {
+            Some(Value::Builtin(TemporalInstantEpochNanosecondsGetter))
+        }
         (TemporalZonedDateTime, "prototype") => {
             Some(Value::Builtin(TemporalZonedDateTimePrototype))
         }
