@@ -277,6 +277,31 @@ fn namespace_cell(
         "Symbol.toStringTag".to_string(),
         quench_runtime::value::Value::String("Module".to_string()),
     ));
+    for name in unit.export_names() {
+        if let Some(cell) = unit.export_cell(&name) {
+            properties.push((
+                format!("\0quench:descriptor:\0{name}"),
+                quench_runtime::value::Value::object(vec![
+                    (
+                        "value".to_string(),
+                        quench_runtime::value::Value::BindingCell(cell.shared()),
+                    ),
+                    (
+                        "writable".to_string(),
+                        quench_runtime::value::Value::Boolean(true),
+                    ),
+                    (
+                        "enumerable".to_string(),
+                        quench_runtime::value::Value::Boolean(true),
+                    ),
+                    (
+                        "configurable".to_string(),
+                        quench_runtime::value::Value::Boolean(false),
+                    ),
+                ]),
+            ));
+        }
+    }
     let cell = ModuleBindingCell::new(quench_runtime::value::Value::object(properties));
     *unit.namespace_cell.borrow_mut() = Some(cell.clone());
     Ok(cell)
@@ -420,6 +445,31 @@ impl LinkedModule {
             "Symbol.toStringTag".to_string(),
             quench_runtime::value::Value::String("Module".to_string()),
         ));
+        for name in self.export_names() {
+            if let Some(cell) = self.export_cell(&name) {
+                properties.push((
+                    format!("\0quench:descriptor:\0{name}"),
+                    quench_runtime::value::Value::object(vec![
+                        (
+                            "value".to_string(),
+                            quench_runtime::value::Value::BindingCell(cell.shared()),
+                        ),
+                        (
+                            "writable".to_string(),
+                            quench_runtime::value::Value::Boolean(true),
+                        ),
+                        (
+                            "enumerable".to_string(),
+                            quench_runtime::value::Value::Boolean(true),
+                        ),
+                        (
+                            "configurable".to_string(),
+                            quench_runtime::value::Value::Boolean(false),
+                        ),
+                    ]),
+                ));
+            }
+        }
         cell.set(quench_runtime::value::Value::object(properties));
     }
 
