@@ -48,8 +48,85 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
         crate::ops::Builtin::TemporalDurationAbs => Some(absolute(receiver)),
+        crate::ops::Builtin::TemporalDurationToJSON => Some(to_json(receiver)),
         _ => None,
     }
+}
+
+fn to_json(value: Option<&Value>) -> Result<Value, VmError> {
+    let Some(Value::Object(object)) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid duration"));
+    };
+    let mut date = String::new();
+    for (name, suffix) in [
+        ("years", 'Y'),
+        ("months", 'M'),
+        ("weeks", 'W'),
+        ("days", 'D'),
+    ] {
+        let number = object_number(object, name);
+        if number != 0.0 {
+            date.push_str(&format!("{}{}", number_text(number), suffix));
+        }
+    }
+    let mut time = String::new();
+    for (name, suffix) in [("hours", 'H'), ("minutes", 'M')] {
+        let number = object_number(object, name);
+        if number != 0.0 {
+            time.push_str(&format!("{}{}", number_text(number), suffix));
+        }
+    }
+    let seconds = object_number(object, "seconds")
+        + object_number(object, "milliseconds") / 1_000.0
+        + object_number(object, "microseconds") / 1_000_000.0
+        + object_number(object, "nanoseconds") / 1_000_000_000.0;
+    if seconds != 0.0 {
+        time.push_str(&format!("{}S", seconds_text(seconds)));
+    }
+    if time.is_empty() && date.is_empty() {
+        return Ok(Value::String("PT0S".into()));
+    }
+    if !time.is_empty() {
+        date.push('T');
+        date.push_str(&time);
+    }
+    let sign = object_number(object, "sign") < 0.0;
+    Ok(Value::String(format!(
+        "{}P{date}",
+        if sign { "-" } else { "" }
+    )))
+}
+
+fn number_text(value: f64) -> String {
+    let value = value.abs();
+    if value.fract() == 0.0 {
+        format!("{}", value as i64)
+    } else {
+        format!("{value}")
+    }
+}
+
+fn seconds_text(value: f64) -> String {
+    let nanos = (value.abs() * 1_000_000_000.0).round() as i64;
+    let whole = nanos / 1_000_000_000;
+    let fraction = nanos % 1_000_000_000;
+    if fraction == 0 {
+        return whole.to_string();
+    }
+    format!("{whole}.{:09}", fraction)
+        .trim_end_matches('0')
+        .to_string()
+}
+
+fn object_number(object: &crate::value::ObjectData, name: &str) -> f64 {
+    object
+        .iter()
+        .find(|(key, _)| key == name)
+        .and_then(|(_, value)| match value {
+            Value::Number(value) => Some(*value),
+            _ => None,
+        })
+        .unwrap_or(0.0)
 }
 
 fn absolute(value: Option<&Value>) -> Result<Value, VmError> {
