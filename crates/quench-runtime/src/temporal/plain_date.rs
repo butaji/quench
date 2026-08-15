@@ -371,6 +371,17 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let Value::String(text) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
+    if let Some(calendar) = text
+        .split('[')
+        .skip(1)
+        .find_map(|part| part.strip_prefix("u-ca="))
+    {
+        if !calendar.starts_with("iso8601]") {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid calendar annotation",
+            ));
+        }
+    }
     let invalid_annotation = text.split('[').skip(1).any(|part| {
         if part.starts_with('!') && part.contains('=') && !part.starts_with("!u-ca=iso8601") {
             return true;
@@ -382,6 +393,67 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_range_error(
             "Invalid calendar annotation",
         ));
+    }
+    if text
+        .rsplit_once(']')
+        .is_some_and(|(_, suffix)| !suffix.is_empty())
+    {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
+    if text
+        .split('[')
+        .next()
+        .is_some_and(|value| value.ends_with('T'))
+    {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
+    if let Some(time) = text.split_once('T').map(|(_, value)| value) {
+        if !time.contains('[')
+            && time
+                .chars()
+                .any(|character| character.is_ascii_alphabetic() && character != 'Z')
+        {
+            return Err(crate::value::error::throw_range_error("Invalid ISO time"));
+        }
+        if time.contains('[') {
+            // Time-zone annotations are validated by the date grammar below.
+        } else {
+            let hour = time.get(..2).and_then(|value| value.parse::<u32>().ok());
+            if time.len() > 2 && !matches!(time.as_bytes()[2] as char, ':' | '+' | '-' | 'Z' | '[')
+            {
+                return Err(crate::value::error::throw_range_error("Invalid ISO time"));
+            }
+            if hour.is_some_and(|value| value > 23) {
+                return Err(crate::value::error::throw_range_error("Invalid ISO time"));
+            }
+            if let Some(minute) = time.get(3..5).and_then(|value| value.parse::<u32>().ok()) {
+                if minute > 59 {
+                    return Err(crate::value::error::throw_range_error("Invalid ISO time"));
+                }
+            }
+            if time.as_bytes().get(2) == Some(&b':')
+                && time.len() > 5
+                && !matches!(
+                    time.as_bytes()[5] as char,
+                    ':' | '.' | ',' | '+' | '-' | 'Z' | '['
+                )
+            {
+                return Err(crate::value::error::throw_range_error("Invalid ISO time"));
+            }
+            if time.as_bytes().get(2) == Some(&b':') && time.as_bytes().get(5) == Some(&b':') {
+                if time.len() < 8 || time[6..8].parse::<u32>().is_err() {
+                    return Err(crate::value::error::throw_range_error("Invalid ISO time"));
+                }
+                if time.len() > 8
+                    && !matches!(
+                        time.as_bytes()[8] as char,
+                        '.' | ',' | '+' | '-' | 'Z' | '['
+                    )
+                {
+                    return Err(crate::value::error::throw_range_error("Invalid ISO time"));
+                }
+            }
+        }
     }
     let date = text
         .split('[')
@@ -406,7 +478,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         let day = date[day_start..]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        return make_date(year, month, day, options);
+        return make_date_reject(year, month, day);
     }
     if parts.len() == 4 && parts[0].is_empty() {
         let year = format!("-{}", parts[1])
@@ -418,9 +490,15 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         let day = parts[3]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        return make_date(year, month, day, options);
+        return make_date_reject(year, month, day);
     }
     if parts.len() != 3 {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
+    if parts[0].len() != 4 && !(parts[0].starts_with('+') && parts[0].len() == 7) {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
+    if parts[1].len() != 2 || parts[2].len() != 2 {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
     let year = parts[0]
@@ -432,7 +510,12 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     let day = parts[2]
         .parse()
         .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-    make_date(year, month, day, options)
+    make_date_reject(year, month, day)
+}
+
+fn make_date_reject(year: f64, month: f64, day: f64) -> Result<Value, VmError> {
+    validate_date(year, month, day)?;
+    Ok(date_object(year, month, day))
 }
 
 fn make_date(year: f64, month: f64, day: f64, options: Option<&Value>) -> Result<Value, VmError> {
