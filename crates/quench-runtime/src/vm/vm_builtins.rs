@@ -323,9 +323,9 @@ fn own_stack_setter(value: &Value) -> Result<Option<Value>, VmError> {
 
 fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
     let key = Value::String("stack".to_string());
-    let own = crate::builtins::object::has_own_property(Some(value), Some(&key));
-    let updated = if matches!(own, Value::Boolean(true)) {
-        let descriptor = crate::builtins::object::descriptor(Some(value), Some(&key))?;
+    let current = crate::builtins::object::descriptor(Some(value), Some(&key))?;
+    let updated = if !matches!(current, Value::Undefined) {
+        let descriptor = current;
         if let Some(setter) = descriptor_field(&descriptor, "set") {
             if matches!(setter, Value::Undefined) {
                 return Err(crate::value::error::throw_type_error(
