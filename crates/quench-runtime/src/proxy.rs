@@ -178,11 +178,12 @@ pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError>
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "deleteProperty") {
-            return call_trap(
+            let result = call_trap(
                 &trap,
                 &[proxy.target.clone(), Value::String(prop.to_string())],
                 Some(&proxy.handler),
-            );
+            )?;
+            return Ok(Value::Boolean(crate::execute::is_truthy(&result)));
         }
     }
     let (updated, deleted) = crate::builtins::delete_property(target.clone(), prop);
