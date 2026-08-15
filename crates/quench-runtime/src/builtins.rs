@@ -657,9 +657,25 @@ pub(crate) fn namespace_uninitialized(target: &Value, key: &str) -> bool {
     else {
         return false;
     };
-    descriptor.iter().any(|(name, value)| {
+    let marked = descriptor.iter().any(|(name, value)| {
         name == "\0quench:uninitialized" && matches!(value, Value::Boolean(true))
-    })
+    });
+    if !marked {
+        return false;
+    }
+    properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)
+        .is_some_and(|(_, value)| match value {
+            Value::BindingCell(cell) => {
+                let binding = crate::module_bindings::ModuleBindingCell::from_shared(
+                    std::rc::Rc::clone(cell),
+                );
+                crate::module_bindings::ModuleBindingCell::is_uninitialized(&binding.get())
+            }
+            _ => true,
+        })
 }
 
 fn define_namespace_property(
