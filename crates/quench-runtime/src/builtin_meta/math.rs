@@ -87,6 +87,12 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::MathLog1p
         | Builtin::MathSinh
         | Builtin::MathTanh => Some(1.0),
+        _ => fn_len_tail(b),
+    }
+}
+
+const fn fn_len_tail(b: Builtin) -> Option<f64> {
+    match b {
         Builtin::MathF16Round | Builtin::MathSumPrecise => Some(1.0),
         Builtin::MathRandom => Some(0.0),
         _ => None,
