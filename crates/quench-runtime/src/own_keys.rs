@@ -39,12 +39,24 @@ pub(crate) fn keys_result(target: Option<&Value>) -> Result<Value, VmError> {
     if let Some(id) = crate::vm::deferred_namespace_operation(target) {
         crate::vm::execute_deferred_module(id)?;
     }
-    Ok(Value::array(
-        own_enumerable_string_keys(target)
-            .into_iter()
-            .map(Value::String)
-            .collect(),
-    ))
+    let keys = own_enumerable_string_keys(target);
+    check_namespace_bindings(target, &keys)?;
+    Ok(Value::array(keys.into_iter().map(Value::String).collect()))
+}
+
+fn check_namespace_bindings(target: &Value, keys: &[String]) -> Result<(), VmError> {
+    if !crate::builtins::is_module_namespace(target) {
+        return Ok(());
+    }
+    if keys
+        .iter()
+        .any(|key| crate::builtins::namespace_uninitialized(target, key))
+    {
+        return Err(crate::value::error::throw_reference_error(
+            "Cannot access an uninitialized module binding",
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn values(target: Option<&Value>, entries: bool) -> Result<Value, VmError> {
