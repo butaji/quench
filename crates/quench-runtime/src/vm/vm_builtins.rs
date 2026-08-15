@@ -374,6 +374,7 @@ fn define_proxy_stack(value: &Value, stack: Value) -> Result<Value, VmError> {
 }
 
 
+
 fn set_error_stack_home() -> Option<Value> {
     let value = crate::execute::get_property(&crate::vm::current_global_object(), "Error");
     let Ok(value) = crate::execute::get_property_result(&value, "prototype") else {
