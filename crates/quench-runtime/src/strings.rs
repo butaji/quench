@@ -200,6 +200,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "lastIndexOf" => Some(crate::ops::Builtin::StringLastIndexOf),
         "slice" => Some(crate::ops::Builtin::StringSlice),
         "substring" => Some(crate::ops::Builtin::StringSubstring),
+        "substr" => Some(crate::ops::Builtin::StringSubstr),
         "concat" => Some(crate::ops::Builtin::StringConcat),
         "split" => Some(crate::ops::Builtin::StringSplit),
         "padStart" => Some(crate::ops::Builtin::StringPadStart),
@@ -400,6 +401,18 @@ pub(crate) fn substring(
         .map_or(length, |value| substring_index(Some(value), length));
     let range = start.min(end) as usize..end.max(start) as usize;
     Ok(from_units(units[range].to_vec()))
+}
+
+fn substr(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let Some(units) = receiver.and_then(units_of) else {
+        return Value::String(String::new());
+    };
+    let length = units.len() as isize;
+    let start = string_index(arguments.first(), length);
+    let end = arguments.get(1).and_then(number).map_or(length, |value| {
+        (start + value.max(0.0).trunc() as isize).min(length)
+    });
+    from_units(units[start as usize..end as usize].to_vec())
 }
 
 fn string_index(value: Option<&Value>, length: isize) -> isize {
