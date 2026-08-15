@@ -59,6 +59,9 @@ pub(crate) fn execute(
     if builtin == crate::ops::Builtin::TemporalZonedDateTime {
         return Some(zoned_date_time_construct(arguments));
     }
+    if builtin == crate::ops::Builtin::TemporalNowZonedDateTimeISO {
+        return Some(now_zoned_date_time_iso(arguments.first()));
+    }
     if builtin == crate::ops::Builtin::TemporalZonedDateTimeToString {
         return Some(zoned_date_time_to_string(receiver));
     }
@@ -70,6 +73,36 @@ pub(crate) fn execute(
         .or_else(|| plain_date::execute(builtin, receiver, arguments))
         .or_else(|| plain_date_time::execute(builtin, receiver, arguments))
         .or_else(|| plain_time::execute(builtin, receiver, arguments))
+}
+
+fn now_zoned_date_time_iso(
+    time_zone: Option<&crate::value::Value>,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let crate::value::Value::String(time_zone) =
+        time_zone.unwrap_or(&crate::value::Value::Undefined)
+    else {
+        return Err(crate::value::error::throw_type_error("Invalid time zone"));
+    };
+    Ok(crate::value::Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(vec![
+            (
+                "epochNanoseconds".into(),
+                crate::value::Value::BigInt("0".into()),
+            ),
+            (
+                "timeZoneId".into(),
+                crate::value::Value::String(time_zone.clone()),
+            ),
+            (
+                "calendarId".into(),
+                crate::value::Value::String("iso8601".into()),
+            ),
+            (
+                "\0prototype".into(),
+                crate::value::Value::Builtin(crate::ops::Builtin::TemporalZonedDateTimePrototype),
+            ),
+        ]),
+    )))
 }
 
 fn zoned_date_time_from(
