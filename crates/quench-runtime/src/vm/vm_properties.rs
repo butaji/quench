@@ -173,6 +173,7 @@ fn generator_property(value: &Value, key: &str) -> Value {
         "map" => crate::ops::Builtin::IteratorMap,
         "every" => crate::ops::Builtin::IteratorEvery,
         "some" => crate::ops::Builtin::IteratorSome,
+        "find" => crate::ops::Builtin::IteratorFind,
         _ => return Value::Undefined,
     };
     bind_method(value, Value::Builtin(builtin))
