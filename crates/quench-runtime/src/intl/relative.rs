@@ -235,18 +235,7 @@ fn polish_word(unit: &str, style: &str, value: f64) -> String {
 
 fn polish_fractional(unit: &str, style: &str) -> &'static str {
     if style != "long" {
-        return match unit {
-            "second" if style == "narrow" => "s",
-            "second" => "sek.",
-            "minute" => "min",
-            "hour" if style == "narrow" => "g.",
-            "hour" => "godz.",
-            "day" => "dnia",
-            "week" => "tyg.",
-            "month" => "mies.",
-            "quarter" => "kw.",
-            _ => "roku",
-        };
+        return polish_fractional_short(unit, style);
     }
     match unit {
         "day" => "dnia",
@@ -254,32 +243,25 @@ fn polish_fractional(unit: &str, style: &str) -> &'static str {
         "month" => "miesiąca",
         "quarter" => "kwartału",
         "year" => "roku",
-        "second" => {
-            if style == "narrow" {
-                "s"
-            } else if style == "short" {
-                "sek."
-            } else {
-                "sekundy"
-            }
-        }
-        "minute" => {
-            if style == "long" {
-                "minuty"
-            } else {
-                "min"
-            }
-        }
-        "hour" => {
-            if style == "narrow" {
-                "g."
-            } else if style == "short" {
-                "godz."
-            } else {
-                "godziny"
-            }
-        }
+        "second" => "sekundy",
+        "minute" => "minuty",
+        "hour" => "godziny",
         _ => "lat",
+    }
+}
+
+fn polish_fractional_short(unit: &str, style: &str) -> &'static str {
+    match unit {
+        "second" if style == "narrow" => "s",
+        "second" => "sek.",
+        "minute" => "min",
+        "hour" if style == "narrow" => "g.",
+        "hour" => "godz.",
+        "day" => "dnia",
+        "week" => "tyg.",
+        "month" => "mies.",
+        "quarter" => "kw.",
+        _ => "roku",
     }
 }
 
