@@ -76,7 +76,8 @@ fn prototype_tag(receiver: Option<&Value>) -> &'static str {
         Some(Value::Builtin(Builtin::SymbolPrototype)) => "Symbol",
         Some(Value::Builtin(Builtin::BigIntPrototype)) => "BigInt",
         Some(Value::Builtin(
-            Builtin::IntlLocalePrototype
+            Builtin::Intl
+            | Builtin::IntlLocalePrototype
             | Builtin::IntlNumberFormatPrototype
             | Builtin::IntlPluralRulesPrototype
             | Builtin::IntlDateTimeFormatPrototype
