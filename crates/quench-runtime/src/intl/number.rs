@@ -237,6 +237,9 @@ impl NumberOptions {
         }
         let raw = RawOptions::from_value(options)?;
         validate_rounding_options(&raw)?;
+        if !matches!(raw.unit_display.as_str(), "short" | "narrow" | "long") {
+            return Err(crate::value::error::throw_range_error("invalid unitDisplay"));
+        }
         if raw.style == "currency" {
             let Some(currency) = raw.currency.as_deref() else {
                 return Err(crate::value::error::throw_type_error("currency is required"));
@@ -268,8 +271,11 @@ impl NumberOptions {
             )
         };
         let minimum_fraction_digits = minimum_fraction_digits.min(maximum_fraction_digits);
-        if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
+        if raw.unit.is_some() && !valid_unit(raw.unit.as_deref()) {
             return Err(crate::value::error::throw_range_error("invalid unit"));
+        }
+        if raw.style == "unit" && raw.unit.is_none() {
+            return Err(crate::value::error::throw_type_error("unit is required"));
         }
         Ok(NumberOptions {
             locale,
@@ -410,9 +416,14 @@ impl NumberOptions {
 }
 
 fn valid_unit(unit: Option<&str>) -> bool {
-    matches!(
-        unit,
-        Some("percent" | "meter" | "kilometer" | "kilometer-per-hour")
+    let Some(unit) = unit else {
+        return false;
+    };
+    unit.split_once("-per-").map_or_else(
+        || super::UNITS.contains(&unit),
+        |(numerator, denominator)| {
+            super::UNITS.contains(&numerator) && super::UNITS.contains(&denominator)
+        },
     )
 }
 
