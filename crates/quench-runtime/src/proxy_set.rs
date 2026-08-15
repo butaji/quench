@@ -11,7 +11,7 @@ pub(crate) fn proxy_set(
             let result = call_trap(
                 &trap,
                 &[
-                    target.clone(),
+                    proxy.target.clone(),
                     Value::String(prop.to_string()),
                     value.clone(),
                     receiver.clone(),

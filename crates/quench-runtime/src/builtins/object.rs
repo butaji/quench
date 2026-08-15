@@ -134,17 +134,16 @@ pub(crate) fn object_property_is_enumerable(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Value {
-    if matches!(receiver, Some(Value::Builtin(_))) {
-        return Value::Boolean(false);
-    }
     let (Some(receiver), Some(key)) = (receiver, arguments.first()) else {
         return Value::Boolean(false);
     };
+    let receiver = crate::locals::resolved_replacement(receiver.clone());
     let Ok(key) = crate::properties::dynamic_property_key(key) else {
         return Value::Boolean(false);
     };
-    let owned = owns_property(receiver, &key).unwrap_or(false);
-    let enumerable = crate::builtins::descriptor_flag(receiver, &key, "enumerable").unwrap_or(true);
+    let owned = owns_property(&receiver, &key).unwrap_or(false);
+    let enumerable =
+        crate::builtins::descriptor_flag(&receiver, &key, "enumerable").unwrap_or(true);
     Value::Boolean(owned && enumerable)
 }
 pub(crate) fn object_special(
@@ -347,107 +346,36 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
-    if key == "BYTES_PER_ELEMENT" {
-        let bytes = match builtin {
-            Builtin::Float64Array | Builtin::Float32Array => Some(8.0),
-            Builtin::Int8Array | Builtin::Uint8Array | Builtin::Uint8ClampedArray => Some(1.0),
-            Builtin::Int16Array | Builtin::Uint16Array => Some(2.0),
-            Builtin::Int32Array | Builtin::Uint32Array => Some(4.0),
-            Builtin::BigInt64Array | Builtin::BigUint64Array => Some(8.0),
-            _ => None,
-        }?;
-        return Some(descriptor_object_with_flags(
-            Value::Number(bytes),
-            false,
-            false,
-            false,
-        ));
-    }
-    if builtin == Builtin::AsyncIteratorPrototype
-        && (matches!(key, "Symbol.asyncDispose" | "asyncDispose")
-            || key.starts_with("asyncDispose\0")
-            || key.starts_with("Symbol.asyncDispose\0")
-            || key.contains("asyncDispose"))
+    if matches!(
+        builtin,
+        Builtin::ErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::SuppressedErrorPrototype
+    ) && key == "name"
     {
+        let value = match builtin {
+            Builtin::RangeErrorPrototype => "RangeError",
+            Builtin::ReferenceErrorPrototype => "ReferenceError",
+            Builtin::SyntaxErrorPrototype => "SyntaxError",
+            Builtin::EvalErrorPrototype => "EvalError",
+            Builtin::URIErrorPrototype => "URIError",
+            Builtin::AggregateErrorPrototype => "AggregateError",
+            Builtin::TypeErrorPrototype => "TypeError",
+            Builtin::SuppressedErrorPrototype => "SuppressedError",
+            _ => "Error",
+        };
         return Some(descriptor_object_with_flags(
-            Value::Builtin(Builtin::AsyncIteratorDispose),
+            Value::String(value.to_string()),
             true,
             false,
             true,
         ));
-    }
-    if builtin == Builtin::AsyncIteratorPrototype
-        && (matches!(key, "Symbol.asyncIterator" | "asyncIterator")
-            || key.starts_with("asyncIterator\0")
-            || key.starts_with("Symbol.asyncIterator\0")
-            || key.contains("asyncIterator"))
-    {
-        return Some(descriptor_object_with_flags(
-            Value::Builtin(Builtin::AsyncIteratorMethod),
-            true,
-            false,
-            true,
-        ));
-    }
-    if builtin == Builtin::AsyncGeneratorPrototype {
-        let value = match key {
-            "constructor" => Value::Builtin(Builtin::AsyncGeneratorFunctionPrototype),
-            "Symbol.toStringTag" | "toStringTag" => Value::String("AsyncGenerator".into()),
-            _ => Value::Undefined,
-        };
-        if !matches!(value, Value::Undefined) {
-            return Some(descriptor_object_with_flags(value, false, false, true));
-        }
-    }
-    if builtin == Builtin::GeneratorPrototype {
-        let value = match key {
-            "constructor" => Value::Builtin(Builtin::GeneratorFunctionPrototype),
-            "next" => Value::Builtin(Builtin::GeneratorNext),
-            "return" => Value::Builtin(Builtin::GeneratorReturn),
-            "throw" => Value::Builtin(Builtin::GeneratorThrow),
-            "Symbol.toStringTag" | "toStringTag" => Value::String("Generator".into()),
-            _ => Value::Undefined,
-        };
-        if !matches!(value, Value::Undefined) {
-            let writable = matches!(key, "next" | "return" | "throw");
-            return Some(descriptor_object_with_flags(value, writable, false, true));
-        }
-    }
-    if builtin == Builtin::AsyncGeneratorFunctionPrototype {
-        let value = match key {
-            "constructor" => Value::Builtin(Builtin::AsyncGeneratorFunction),
-            "prototype" => Value::Builtin(Builtin::AsyncGeneratorPrototype),
-            "Symbol.toStringTag" | "toStringTag" => Value::String("AsyncGeneratorFunction".into()),
-            _ => Value::Undefined,
-        };
-        if !matches!(value, Value::Undefined) {
-            return Some(descriptor_object_with_flags(value, false, false, true));
-        }
-    }
-    if builtin == Builtin::GeneratorFunctionPrototype {
-        let value = match key {
-            "constructor" => Value::Builtin(Builtin::GeneratorFunction),
-            "prototype" => Value::Builtin(Builtin::GeneratorPrototype),
-            "Symbol.toStringTag" | "toStringTag" => Value::String("GeneratorFunction".into()),
-            _ => Value::Undefined,
-        };
-        if !matches!(value, Value::Undefined) {
-            return Some(descriptor_object_with_flags(value, false, false, true));
-        }
-    }
-    if builtin == Builtin::GeneratorFunctionPrototype && key == "Symbol.toStringTag" {
-        return Some(descriptor_object_with_flags(
-            Value::String("GeneratorFunction".into()),
-            false,
-            false,
-            true,
-        ));
-    }
-    if builtin == Builtin::AsyncFunctionPrototype && matches!(key, "length" | "name") {
-        return None;
-    }
-    if builtin == Builtin::AsyncGeneratorFunctionPrototype && matches!(key, "length" | "name") {
-        return None;
     }
     if builtin == Builtin::Object && key == "hasOwn" {
         return Some(descriptor_object_with_flags(
@@ -484,10 +412,23 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
             Value::Undefined => None,
             value => Some(value),
         })?;
-    let writable = !matches!(
+    let writable = (!matches!(
         key,
         "length" | "name" | "prototype" | "Symbol.toStringTag" | "unscopables"
-    ) && !is_well_known_symbol_property(builtin, key)
+    ) || (key == "name"
+        && matches!(
+            builtin,
+            Builtin::ErrorPrototype
+                | Builtin::RangeErrorPrototype
+                | Builtin::ReferenceErrorPrototype
+                | Builtin::SyntaxErrorPrototype
+                | Builtin::EvalErrorPrototype
+                | Builtin::URIErrorPrototype
+                | Builtin::AggregateErrorPrototype
+                | Builtin::TypeErrorPrototype
+                | Builtin::SuppressedErrorPrototype
+        )))
+        && !is_well_known_symbol_property(builtin, key)
         && builtin_property_writable(builtin, key);
     let configurable = !matches!(key, "prototype" | "unscopables")
         && !is_well_known_symbol_property(builtin, key)
