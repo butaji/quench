@@ -27,7 +27,6 @@ pub struct ImportBinding {
     pub source: String,
     pub imported: String,
     pub local: String,
-    pub deferred: bool,
     pub source_phase: bool,
 }
 
@@ -66,7 +65,32 @@ impl ModuleMetadata {
 
     fn visit_statement(&mut self, statement: &Statement<'_>) {
         match statement {
-            Statement::ImportDeclaration(import) => self.visit_import(import),
+            Statement::ImportDeclaration(import) => {
+                let source = import.source.value.to_string();
+                push_unique(&mut self.import_specifiers, &source);
+                if let Some(specifiers) = &import.specifiers {
+                    for specifier in specifiers {
+                        let (imported, local) = match specifier {
+                            oxc::ast::ast::ImportDeclarationSpecifier::ImportSpecifier(value) => (
+                                module_export_name(&value.imported),
+                                value.local.name.to_string(),
+                            ),
+                            oxc::ast::ast::ImportDeclarationSpecifier::ImportDefaultSpecifier(
+                                value,
+                            ) => ("default".to_string(), value.local.name.to_string()),
+                            oxc::ast::ast::ImportDeclarationSpecifier::ImportNamespaceSpecifier(
+                                value,
+                            ) => ("*".to_string(), value.local.name.to_string()),
+                        };
+                        self.imports.push(ImportBinding {
+                            source: source.clone(),
+                            imported,
+                            local,
+                            source_phase: matches!(import.phase, Some(ImportPhase::Source)),
+                        });
+                    }
+                }
+            }
             Statement::ExportNamedDeclaration(export) => self.visit_named(export),
             Statement::ExportDefaultDeclaration(export) => self.visit_default(export),
             Statement::ExportAllDeclaration(export) => self.visit_all(export),

@@ -177,9 +177,6 @@ pub(crate) fn descriptor(
         return Ok(Value::Undefined);
     };
     let key = crate::conversion::to_property_key(key)?;
-    if let Some(id) = crate::vm::consume_deferred_namespace_marker(value, &key) {
-        crate::vm::execute_deferred_module(id)?;
-    }
     if crate::builtins::namespace_uninitialized(value, &key) {
         return Err(crate::value::error::throw_reference_error(
             "Cannot access an uninitialized module binding",
@@ -335,6 +332,9 @@ fn intrinsic_accessor(builtin: Builtin, key: &str) -> Option<Value> {
         (Builtin::AsyncDisposableStackPrototype, "disposed") => {
             Builtin::AsyncDisposableStackDisposed
         }
+        (Builtin::AbstractModuleSourcePrototype, "Symbol.toStringTag") => {
+            Builtin::AbstractModuleSourceToStringTagGetter
+        }
         (Builtin::ErrorPrototype, "stack") => Builtin::ErrorPrototypeStackGetter,
         (Builtin::IntlLocalePrototype, "baseName") => Builtin::IntlLocaleBaseNameGetter,
         (Builtin::IntlLocalePrototype, "calendar") => Builtin::IntlLocaleCalendarGetter,
@@ -416,9 +416,20 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = crate::builtins::read_intrinsic_override(builtin, key) {
         return Some(public_descriptor(&descriptor));
     }
-    if builtin == Builtin::SuppressedErrorPrototype && key == "name" {
+    if matches!(
+        builtin,
+        Builtin::AggregateErrorPrototype | Builtin::SuppressedErrorPrototype
+    ) && key == "name"
+    {
         return Some(descriptor_object_with_flags(
-            Value::String("SuppressedError".to_string()),
+            Value::String(
+                if builtin == Builtin::AggregateErrorPrototype {
+                    "AggregateError"
+                } else {
+                    "SuppressedError"
+                }
+                .to_string(),
+            ),
             true,
             false,
             true,

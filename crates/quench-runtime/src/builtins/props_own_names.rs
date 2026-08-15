@@ -1,19 +1,11 @@
 pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::Atomics => &[
+            "add", "and", "compareExchange", "exchange", "isLockFree", "load", "notify",
+            "or", "pause", "store", "sub", "wait", "waitAsync", "xor", "Symbol.toStringTag",
+        ],
         Builtin::AbstractModuleSource => &["length", "name", "prototype"],
         Builtin::AbstractModuleSourcePrototype => &["constructor", "Symbol.toStringTag"],
-        Builtin::ArrayIteratorPrototype => &["next", "Symbol.toStringTag"],
-        Builtin::AsyncFunctionPrototype => &["constructor", "Symbol.toStringTag"],
-        Builtin::AsyncGeneratorFunctionPrototype => {
-            &["constructor", "prototype", "Symbol.toStringTag"]
-        }
-        Builtin::AsyncGeneratorPrototype => {
-            &[
-                "constructor", "next", "return", "throw", "Symbol.toStringTag",
-                "Symbol.asyncIterator", "Symbol.asyncDispose",
-            ]
-        }
-        Builtin::AsyncIteratorPrototype => &["Symbol.asyncIterator", "Symbol.asyncDispose"],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => &["constructor", "toString", "valueOf", "Symbol.toStringTag"],
         Builtin::Error => &["length", "name", "prototype", "isError"],

@@ -1,8 +1,7 @@
-# Goal: stage 46 residuals
+# Goal: stage 20 residuals
 
-Bring test262 stage 46 (`built-ins/Error`) to 100% through the canonical
-runner. Start from the current branch baseline, reproduce the remaining
-subclass Error stack receiver failures, and implement the smallest shared
-completion/prototype fix. Preserve realms, constructors, descriptors,
-accessors, proxies, and observable errors. Do not edit test262 or the harness.
-Run stage 46 plus regressions, strict format/clippy, and commit verified work.
+Bring test262 stage 20 (`language/module-code`) to 100% through the canonical
+runner, starting from the current 597/599 baseline. Fix only shared module
+linking, evaluation, completion, and error-ordering semantics; do not alter
+test262 or the harness. Re-run stage 20 and earlier regressions, verify strict
+format/clippy, and commit the verified result.
