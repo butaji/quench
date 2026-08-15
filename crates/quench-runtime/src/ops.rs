@@ -380,6 +380,7 @@ pub enum Builtin {
     TemporalDurationAbs,
     TemporalDurationToJSON,
     TemporalDurationToString,
+    TemporalDurationToLocaleString,
     TemporalDurationAdd,
     TemporalDurationSubtract,
     TemporalDurationRound,
