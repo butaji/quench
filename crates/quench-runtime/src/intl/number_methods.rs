@@ -1,5 +1,5 @@
-use super::*;
 use super::number_render::to_number_result;
+use super::*;
 
 pub(crate) fn prototype_method(
     builtin: crate::ops::Builtin,
@@ -244,7 +244,7 @@ impl NumberOptions {
     }
 
     fn resolved(&self) -> Value {
-        make_object(vec![
+        let mut properties = vec![
             ("locale".to_string(), Value::String(self.locale.clone())),
             (
                 "numberingSystem".to_string(),
@@ -266,10 +266,6 @@ impl NumberOptions {
             ),
             ("notation".to_string(), Value::String(self.notation.clone())),
             (
-                "compactDisplay".to_string(),
-                Value::String(self.compact_display.clone()),
-            ),
-            (
                 "signDisplay".to_string(),
                 Value::String(self.sign_display.clone()),
             ),
@@ -277,6 +273,13 @@ impl NumberOptions {
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
             ),
-        ])
+        ];
+        if self.notation == "compact" {
+            properties.push((
+                "compactDisplay".to_string(),
+                Value::String(self.compact_display.clone()),
+            ));
+        }
+        make_object(properties)
     }
 }
