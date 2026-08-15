@@ -530,6 +530,7 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
                 return Err(crate::value::error::throw_type_error("Invalid monthCode"));
             };
             code.strip_prefix('M')
+                .and_then(|value| value.strip_suffix('L').or(Some(value)))
                 .and_then(|value| value.parse().ok())
                 .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))
         })?;
