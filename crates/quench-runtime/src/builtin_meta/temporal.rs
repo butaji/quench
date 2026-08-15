@@ -89,6 +89,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalDurationFrom => Some(1.0),
         Builtin::TemporalDurationCompare => Some(2.0),
         Builtin::TemporalPlainDateFrom => Some(1.0),
+        Builtin::TemporalPlainDateCompare => Some(2.0),
         Builtin::TemporalPlainDateToString | Builtin::TemporalPlainDateToJSON => Some(0.0),
         _ => None,
     }
