@@ -105,6 +105,15 @@ fn has_yield_expression(parameters: &oxc::ast::ast::FormalParameters<'_>) -> boo
     }
 
     impl<'a> Visit<'a> for Validator {
+        fn visit_identifier_reference(
+            &mut self,
+            identifier: &oxc::ast::ast::IdentifierReference<'a>,
+        ) {
+            if identifier.name == "yield" {
+                self.found = true;
+            }
+        }
+
         fn visit_yield_expression(&mut self, _: &oxc::ast::ast::YieldExpression<'a>) {
             self.found = true;
         }
