@@ -461,7 +461,7 @@ pub(crate) fn format_unit(text: &str, unit: Option<&str>, display: &str) -> Stri
         (Some("kilometer-per-hour"), "long") => "kilometers per hour",
         (Some("kilometer-per-hour"), "narrow") => "km/h",
         (Some("kilometer-per-hour"), _) => "km/h",
-        _ => "",
+        _ => return format!("{text} {}", unit.unwrap_or_default().replace("-per-", "/")),
     };
     if suffix.is_empty() {
         text.to_string()
@@ -644,14 +644,7 @@ pub(crate) fn unit_parts(
     } else {
         text.to_string()
     };
-    let number = localized_text
-        .strip_suffix('%')
-        .unwrap_or(&localized_text)
-        .find(|character: char| character.is_ascii_alphabetic())
-        .map_or(
-            localized_text.strip_suffix('%').unwrap_or(&localized_text),
-            |index| localized_text[..index].trim(),
-        );
+    let number = unit_numeric_text(&localized_text);
     let mut parts = numeric_parts(number, locale);
     if locale.starts_with("ko") && display == "long" {
         parts.insert(0, part("unit", "시속"));
@@ -668,6 +661,19 @@ pub(crate) fn unit_parts(
     }
     parts.push(part("unit", &suffix));
     parts
+}
+
+fn unit_numeric_text(text: &str) -> &str {
+    let start = text
+        .find(|character: char| character.is_ascii_digit() || matches!(character, '-' | '+'))
+        .unwrap_or(0);
+    let text = &text[start..];
+    let end = text
+        .find(|character: char| {
+            !character.is_ascii_digit() && !matches!(character, '.' | ',' | 'E' | '-' | '+')
+        })
+        .unwrap_or(text.len());
+    &text[..end]
 }
 
 fn unit_suffix(unit: Option<&str>, display: &str, locale: &str) -> String {
