@@ -8,21 +8,32 @@ use super::{
 };
 
 pub fn function_name(builtin: Builtin) -> Option<&'static str> {
-    lookup(builtin, &NAME_PROVIDERS[..14])
+    eval_name(builtin)
+        .or_else(|| lookup(builtin, &NAME_PROVIDERS[..14]))
         .or_else(|| shadow_realm_name(builtin))
         .or_else(|| lookup(builtin, &NAME_PROVIDERS[14..]))
 }
 
 pub fn function_length(builtin: Builtin) -> Option<f64> {
-    lookup(builtin, &LENGTH_PROVIDERS[..14])
+    eval_length(builtin)
+        .or_else(|| lookup(builtin, &LENGTH_PROVIDERS[..14]))
         .or_else(|| shadow_realm_length(builtin))
         .or_else(|| lookup(builtin, &LENGTH_PROVIDERS[14..]))
 }
 
 pub fn short_name(builtin: Builtin) -> Option<&'static str> {
-    lookup(builtin, &SHORT_NAME_PROVIDERS[..14])
+    eval_name(builtin)
+        .or_else(|| lookup(builtin, &SHORT_NAME_PROVIDERS[..14]))
         .or_else(|| shadow_realm_short_name(builtin))
         .or_else(|| lookup(builtin, &SHORT_NAME_PROVIDERS[14..]))
+}
+
+fn eval_name(builtin: Builtin) -> Option<&'static str> {
+    (builtin == Builtin::Eval).then_some("eval")
+}
+
+fn eval_length(builtin: Builtin) -> Option<f64> {
+    (builtin == Builtin::Eval).then_some(1.0)
 }
 
 const NAME_PROVIDERS: &[fn(Builtin) -> Option<&'static str>] = &[
