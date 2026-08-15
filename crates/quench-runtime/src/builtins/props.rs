@@ -73,6 +73,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "filter" {
         return Some(Value::Builtin(IteratorFilter));
     }
+    if builtin == IteratorPrototype && key == "take" {
+        return Some(Value::Builtin(IteratorTake));
+    }
     if builtin == IteratorPrototype && key == "Symbol.dispose" {
         return Some(Value::Builtin(IteratorReturn));
     }

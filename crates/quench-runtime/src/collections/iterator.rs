@@ -68,7 +68,8 @@ pub(crate) fn return_(
                 return Ok(iterator_result(Value::Undefined, true));
             }
             IteratorState::Drop { iterator, done, .. }
-            | IteratorState::MapHelper { iterator, done, .. } => {
+            | IteratorState::MapHelper { iterator, done, .. }
+            | IteratorState::Take { iterator, done, .. } => {
                 if *done {
                     return Ok(iterator_result(Value::Undefined, true));
                 }
@@ -202,6 +203,10 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
         }
         IteratorState::MapHelper { iterator, done, .. }
         | IteratorState::FilterHelper { iterator, done, .. } => {
+            *done = true;
+            Ok(Some(iterator.clone()))
+        }
+        IteratorState::Take { iterator, done, .. } => {
             *done = true;
             Ok(Some(iterator.clone()))
         }
@@ -454,6 +459,7 @@ pub fn delegate_next(
             IteratorState::Drop { .. } => None,
             IteratorState::MapHelper { .. } => None,
             IteratorState::FilterHelper { .. } => None,
+            IteratorState::Take { .. } => None,
         }
     };
     let Some(iterator) = protocol else {
@@ -535,6 +541,7 @@ fn delegation_target(
         IteratorState::Drop { iterator, .. } => Some(iterator.clone()),
         IteratorState::MapHelper { iterator, .. } => Some(iterator.clone()),
         IteratorState::FilterHelper { iterator, .. } => Some(iterator.clone()),
+        IteratorState::Take { iterator, .. } => Some(iterator.clone()),
     };
     Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
 }
@@ -589,6 +596,7 @@ pub(super) fn mark_done(data: &IteratorData) {
         IteratorState::Drop { done, .. } => *done = true,
         IteratorState::MapHelper { done, .. } => *done = true,
         IteratorState::FilterHelper { done, .. } => *done = true,
+        IteratorState::Take { done, .. } => *done = true,
     }
 }
 fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {

@@ -10,6 +10,9 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
     if let Some(iterator) = drop_target(data) {
         return drop_step(data, iterator);
     }
+    if let Some(iterator) = take_target(data) {
+        return take_step(data, iterator);
+    }
     if let Some((iterator, callback, index)) = map_target(data) {
         if map_executing(data) {
             return Err(crate::value::error::throw_type_error(
@@ -42,6 +45,36 @@ fn drop_target(data: &IteratorData) -> Option<Value> {
         return None;
     };
     Some(iterator.clone())
+}
+
+fn take_target(data: &IteratorData) -> Option<Value> {
+    let state = data.state.borrow();
+    let IteratorState::Take { iterator, done, .. } = &*state else {
+        return None;
+    };
+    (!*done).then(|| iterator.clone())
+}
+
+fn take_step(
+    data: &IteratorData,
+    iterator: Value,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    let remaining = match &*data.state.borrow() {
+        IteratorState::Take { remaining, .. } => *remaining,
+        _ => return Ok(None),
+    };
+    if remaining == 0 {
+        crate::collections::iterator::return_(Some(&iterator), &[])?;
+        mark_take_done(data);
+        return Ok(None);
+    }
+    let value = step_source(&iterator)?;
+    if value.is_none() {
+        mark_take_done(data);
+    } else {
+        set_take_remaining(data, remaining - 1);
+    }
+    Ok(value)
 }
 
 fn map_target(data: &IteratorData) -> Option<(Value, Value, u64)> {
@@ -238,6 +271,21 @@ fn set_drop_remaining(data: &IteratorData, remaining: u64) {
     }
 }
 
+fn set_take_remaining(data: &IteratorData, remaining: u64) {
+    if let IteratorState::Take {
+        remaining: slot, ..
+    } = &mut *data.state.borrow_mut()
+    {
+        *slot = remaining;
+    }
+}
+
+fn mark_take_done(data: &IteratorData) {
+    if let IteratorState::Take { done, .. } = &mut *data.state.borrow_mut() {
+        *done = true;
+    }
+}
+
 fn mark_drop_done(data: &IteratorData) {
     if let IteratorState::Drop { done, .. } = &mut *data.state.borrow_mut() {
         *done = true;
@@ -314,6 +362,7 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
         }
         IteratorState::Concat { .. } => StepTarget::Value(None),
         IteratorState::Drop { .. } => StepTarget::Value(None),
+        IteratorState::Take { .. } => StepTarget::Value(None),
         IteratorState::MapHelper { .. } => StepTarget::Value(None),
         IteratorState::FilterHelper { .. } => StepTarget::Value(None),
     })
