@@ -310,6 +310,12 @@ pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
 
 fn set_property_tail(target: Value, key: &str, value: Value) -> Value {
     match target {
+        Value::BoundFunction(bound)
+            if bound.target == Value::Builtin(crate::ops::Builtin::AbstractModuleSource)
+                && matches!(key, "length" | "name" | "prototype") =>
+        {
+            Value::BoundFunction(bound)
+        }
         Value::BoundFunction(bound) => {
             {
                 let mut properties = bound.properties.borrow_mut();
