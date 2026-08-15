@@ -1,0 +1,39 @@
+use std::path::Path;
+
+pub(crate) trait JsRuntime {
+    fn execute(&self, source: &str, path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>>;
+}
+
+pub(crate) struct QuenchRuntime;
+
+impl JsRuntime for QuenchRuntime {
+    fn execute(&self, source: &str, path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
+        let program =
+            match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
+                true => quench_runtime::reduce::reduce_module_source(source),
+                false => quench_runtime::reduce::reduce_source(source),
+            }
+            .map_err(|errors| errors.join("\n"))?;
+        quench_runtime::execute::run_vm(program.ops())
+            .map(|_| ())
+            .map_err(|error| error.render().into())
+    }
+}
+
+pub(crate) struct QuickJsRuntime {
+    runtime: rquickjs::Runtime,
+}
+
+impl QuickJsRuntime {
+    pub(crate) fn new() -> Result<Self, rquickjs::Error> {
+        Ok(Self {
+            runtime: rquickjs::Runtime::new()?,
+        })
+    }
+}
+
+impl JsRuntime for QuickJsRuntime {
+    fn execute(&self, source: &str, path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
+        crate::run_source_with_runtime_at_path(source, &self.runtime, path)
+    }
+}
