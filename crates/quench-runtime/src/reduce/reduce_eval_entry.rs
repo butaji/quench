@@ -46,9 +46,31 @@ pub(crate) fn reduce_eval_source_in_context(
         global,
     );
     let (locals, next_slot, mut prefix, behavior, deletable) = binding_state;
-    facts.eval_deletable = deletable;
-    let mut ops = reduce_eval_body(
+    reduce_eval_program(
         &parsed.program.body,
+        facts,
+        prefix,
+        locals,
+        next_slot,
+        behavior,
+        directive_completion,
+        deletable,
+    )
+}
+
+fn reduce_eval_program(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    mut facts: ProgramDb,
+    prefix: Vec<crate::ops::Op>,
+    locals: HashMap<String, u16>,
+    next_slot: u16,
+    behavior: crate::reduce_support::EvalBehavior,
+    directive_completion: Option<String>,
+    deletable: bool,
+) -> Result<ResidualProgram, Vec<String>> {
+    facts.eval_deletable = deletable;
+    let ops = reduce_eval_body(
+        statements,
         &mut facts,
         locals,
         next_slot,
