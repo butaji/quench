@@ -298,8 +298,8 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 
 fn compare(left: &str, right: &str, locale: &str, slots: &[(String, Value)]) -> f64 {
     let _ = locale;
-    let left = comparison_key(left, slots);
-    let right = comparison_key(right, slots);
+    let left = comparison_key(left, locale, slots);
+    let right = comparison_key(right, locale, slots);
     match left.cmp(&right) {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => 0.0,
@@ -307,11 +307,12 @@ fn compare(left: &str, right: &str, locale: &str, slots: &[(String, Value)]) -> 
     }
 }
 
-fn comparison_key(value: &str, slots: &[(String, Value)]) -> String {
+fn comparison_key(value: &str, locale: &str, slots: &[(String, Value)]) -> String {
     let ignore_punctuation = slot_bool(slots, "ignorePunctuation").unwrap_or(false);
     let sensitivity = slot_string(slots, "sensitivity").unwrap_or_else(|| "variant".to_string());
     let normalized = value.nfd();
     let mut key = String::new();
+    let mut secondary = String::new();
     for ch in normalized {
         if ignore_punctuation && !ch.is_alphanumeric() {
             continue;
@@ -320,11 +321,22 @@ fn comparison_key(value: &str, slots: &[(String, Value)]) -> String {
         {
             continue;
         }
-        key.push(if matches!(sensitivity.as_str(), "base" | "accent") {
-            ch.to_ascii_lowercase()
-        } else {
-            ch
-        });
+        key.extend(ch.to_lowercase());
+        if sensitivity == "case" {
+            secondary.push(if ch.is_uppercase() { 'U' } else { 'l' });
+        } else if sensitivity == "variant" {
+            secondary.push(ch);
+        }
+    }
+    if locale.starts_with("de") {
+        key = key
+            .replace("a\u{308}", "ae")
+            .replace("o\u{308}", "oe")
+            .replace("u\u{308}", "ue");
+    }
+    if !secondary.is_empty() {
+        key.push('\0');
+        key.push_str(&secondary);
     }
     key
 }
