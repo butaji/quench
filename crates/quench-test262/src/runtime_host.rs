@@ -272,10 +272,17 @@ fn bind_imports(
                 .resolve_kind(id, &binding.source, kind)
                 .ok_or_else(|| format!("unresolved module {}", binding.source))?;
             let deferred = binding.deferred;
-            let cell = match import_cell(units, target, &binding.imported, provisional, deferred) {
-                Ok(cell) => cell,
-                Err(_error) if provisional && binding.imported != "*" => continue,
-                Err(error) => return Err(error),
+            let cell = if binding.source_phase {
+                ModuleBindingCell::new(Value::object(vec![(
+                    "\0quench:module-source".to_string(),
+                    Value::Boolean(true),
+                )]))
+            } else {
+                match import_cell(units, target, &binding.imported, provisional, deferred) {
+                    Ok(cell) => cell,
+                    Err(_error) if provisional && binding.imported != "*" => continue,
+                    Err(error) => return Err(error),
+                }
             };
             units
                 .get(&id)
@@ -1000,6 +1007,9 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
     }
     let metadata = inspect_module_source(&source).map_err(|errors| errors.join("; "))?;
     for specifier in metadata.import_specifiers {
+        if specifier == "<module source>" {
+            continue;
+        }
         let kind = module_kind(
             &base.join(&specifier),
             &metadata.import_attributes,
