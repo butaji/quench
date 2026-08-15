@@ -81,6 +81,21 @@ fn self_text_import_with_prefix_uses_text_module_identity() {
 }
 
 #[test]
+fn resource_imports_survive_assert_harness_prefix() {
+    let source = "import value from './entry.js' with { type: 'text' }; assert.sameValue(typeof value, 'string');";
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(PathBuf::from("entry.js"), source.to_string());
+    graph.add_text_dependency(PathBuf::from("entry.js"), source.to_string());
+    let linked = LinkedModuleGraph::compile_with_entry_prefix(
+        &mut graph,
+        Some(entry),
+        &[include_str!("../../../tests/test262/harness/assert.js")],
+    )
+    .expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+}
+
+#[test]
 fn linked_import_reads_the_exporters_live_default_cell() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(
