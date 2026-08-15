@@ -99,12 +99,21 @@ fn get_property_value_collection_tail(value: &Value, key: &str) -> Value {
     use Value::*;
     match value {
         Map(data) => map_property(data, key),
-        Set(data) if key == "size" => Value::Number(data.values.borrow().len() as f64),
-        Set(data) if data.weak => crate::collections::set::weak_property(key),
-        Set(_) => crate::collections::set::property(key),
+        Set(data) => set_property(data, key),
         Iterator(_) => iterator_property(value, key),
         Generator(_) => generator_property(value, key),
         _ => get_property_value_async_tail(value, key),
+    }
+}
+
+fn set_property(data: &crate::value::SetData, key: &str) -> Value {
+    if key == "size" && !data.weak {
+        return Value::Number(data.values.borrow().len() as f64);
+    }
+    if data.weak {
+        crate::collections::set::weak_property(key)
+    } else {
+        crate::collections::set::property(key)
     }
 }
 
