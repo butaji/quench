@@ -173,6 +173,7 @@ fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             Builtin::IntlDurationFormatResolvedOptions
         }
         (Builtin::IntlPluralRulesPrototype, "select") => Builtin::IntlPluralRulesSelect,
+        (Builtin::IntlPluralRulesPrototype, "selectRange") => Builtin::IntlPluralRulesSelectRange,
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
         }
@@ -191,10 +192,32 @@ pub(crate) fn execute(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
+    if receiver.is_some()
+        && matches!(
+            builtin,
+            Builtin::IntlCollator
+                | Builtin::IntlDateTimeFormat
+                | Builtin::IntlDisplayNames
+                | Builtin::IntlListFormat
+                | Builtin::IntlLocale
+                | Builtin::IntlNumberFormat
+                | Builtin::IntlPluralRules
+                | Builtin::IntlRelativeTimeFormat
+                | Builtin::IntlSegmenter
+        )
+    {
+        return Some(Err(crate::value::error::throw_type_error(
+            "Intl constructor requires new",
+        )));
+    }
     match builtin {
         Builtin::IntlCollatorSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
+        Builtin::IntlPluralRulesSupportedLocalesOf
+        | Builtin::IntlRelativeTimeFormatSupportedLocalesOf => {
+            Some(supported_locales_of(arguments))
+        }
         Builtin::IntlListFormatSupportedLocalesOf => Some(list_supported_locales_of(arguments)),
         Builtin::IntlDurationFormatSupportedLocalesOf => {
             Some(duration_supported_locales_of(arguments))
@@ -640,11 +663,17 @@ fn canonicalize_subtags(
                 region_done = true;
             }
             Subtag::Variant => {
+                if !variants.insert(part.to_ascii_lowercase()) {
+                    return Err(runtime_error("RangeError: invalid language tag"));
+                }
                 out.push(part.to_ascii_lowercase());
                 variant_done = true;
             }
             Subtag::Extension => out.push(part.to_ascii_lowercase()),
         }
+    }
+    if extension_pending {
+        return Err(runtime_error("RangeError: invalid language tag"));
     }
     Ok(out)
 }
@@ -933,6 +962,16 @@ pub(crate) fn slot_number(slots: &[(String, Value)], key: &str) -> Option<f64> {
 
 pub(crate) fn make_object(properties: Vec<(String, Value)>) -> Value {
     Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
+}
+
+pub(crate) fn make_instance(
+    constructor: crate::ops::Builtin,
+    mut properties: Vec<(String, Value)>,
+) -> Value {
+    if let Some(prototype) = crate::builtin_meta::instance_prototype(constructor) {
+        properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
+    }
+    make_object(properties)
 }
 
 pub(crate) fn make_array(values: Vec<Value>) -> Value {
