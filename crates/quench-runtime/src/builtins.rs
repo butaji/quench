@@ -112,10 +112,7 @@ pub(crate) fn async_generator_prototype() -> Value {
                 "Symbol.asyncDispose".to_string(),
                 Value::Builtin(Builtin::AsyncIteratorDispose),
             ),
-            (
-                "\0prototype".to_string(),
-                Value::Builtin(Builtin::ObjectPrototype),
-            ),
+            ("\0prototype".to_string(), async_iterator_prototype()),
         ])));
         for key in ["Symbol.asyncIterator", "Symbol.asyncDispose"] {
             let method = match key {
