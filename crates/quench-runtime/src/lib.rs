@@ -16,6 +16,7 @@
 //! `Fact`, and `Continuation`) before adding breadth.
 
 mod arrays;
+mod atomics;
 pub mod benchmark;
 mod bigint;
 mod binding_patterns;

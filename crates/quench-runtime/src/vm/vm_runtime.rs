@@ -200,24 +200,14 @@ fn stateful_builtin(
         Builtin::AsyncIteratorDisposeFulfilled => Some(Ok(Value::Undefined)),
         Builtin::ProxyRevoke => Some(crate::proxy::revoke(receiver)),
         Builtin::Math => Some(Err(not_callable())),
-        Builtin::AtomicsAdd => Some(Err(crate::value::error::throw_type_error(
-            "Atomics.add requires a valid typed array",
-        ))),
-        Builtin::AtomicsAnd => Some(Err(crate::value::error::throw_type_error(
-            "Atomics.and requires a valid typed array",
-        ))),
-        Builtin::AtomicsOr => Some(Err(crate::value::error::throw_type_error(
-            "Atomics.or requires a valid typed array",
-        ))),
-        Builtin::AtomicsSub => Some(Err(crate::value::error::throw_type_error(
-            "Atomics.sub requires a valid typed array",
-        ))),
-        Builtin::AtomicsXor => Some(Err(crate::value::error::throw_type_error(
-            "Atomics.xor requires a valid typed array",
-        ))),
-        Builtin::AtomicsCompareExchange => Some(Err(crate::value::error::throw_type_error(
-            "Atomics.compareExchange requires a valid typed array",
-        ))),
+        builtin @ (Builtin::AtomicsAdd
+        | Builtin::AtomicsAnd
+        | Builtin::AtomicsOr
+        | Builtin::AtomicsSub
+        | Builtin::AtomicsXor
+        | Builtin::AtomicsCompareExchange) => {
+            Some(crate::atomics::execute(builtin, receiver, arguments))
+        }
         _ => None,
     }
 }
