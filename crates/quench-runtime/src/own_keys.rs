@@ -321,6 +321,9 @@ fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
         .map(|(_, key)| key)
         .chain(strings)
         .collect::<Vec<_>>();
+    if namespace {
+        result.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
+    }
     if namespace && symbols {
         result.push("Symbol.toStringTag\0".to_string());
     }
