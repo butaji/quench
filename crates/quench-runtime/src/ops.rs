@@ -392,6 +392,8 @@ pub enum Builtin {
     TemporalPlainDateSince,
     TemporalPlainTime,
     TemporalPlainTimePrototype,
+    TemporalPlainTimeFrom,
+    TemporalPlainTimeCompare,
     IntlGetCanonicalLocales,
     IntlSupportedValuesOf,
     IntlLocale,

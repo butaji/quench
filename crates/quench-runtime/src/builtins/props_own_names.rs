@@ -19,7 +19,7 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "subtract", "until", "since", "equals", "toString", "toJSON", "toLocaleString",
             "valueOf",
         ],
-        Builtin::TemporalPlainTime => &["length", "name", "prototype"],
+        Builtin::TemporalPlainTime => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalPlainTimePrototype => &["constructor"],
         Builtin::BigIntPrototype => {
             &["constructor", "toString", "valueOf", "Symbol.toStringTag"]

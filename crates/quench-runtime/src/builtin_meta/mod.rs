@@ -211,6 +211,7 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::BigIntPrototype
             | Builtin::TemporalDurationPrototype
             | Builtin::TemporalPlainDatePrototype
+            | Builtin::TemporalPlainTimePrototype
     )
 }
 
