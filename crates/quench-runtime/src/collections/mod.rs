@@ -47,6 +47,7 @@ fn execute_core(
         IteratorToArray => Some(iterator_to_array(receiver)),
         IteratorDrop => Some(iterator_drop(receiver, arguments)),
         IteratorMap => Some(iterator_map(receiver, arguments)),
+        IteratorEvery => Some(iterator_every(receiver, arguments)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
@@ -170,6 +171,34 @@ fn iterator_map(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
             }),
         },
     )))
+}
+
+fn iterator_every(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    validate_iterator_receiver(receiver, "every")?;
+    let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&callback) {
+        let error =
+            crate::value::error::throw_type_error("Iterator.every callback is not callable");
+        let _ = close_direct_receiver(receiver);
+        return Err(error);
+    }
+    let source = iterator_source(receiver, "every")?;
+    let mut index = 0_u64;
+    loop {
+        let Some(value) = crate::collections::iterator::step_source(&source)? else {
+            return Ok(Value::Boolean(true));
+        };
+        let result = crate::functions::execute_target(
+            &callback,
+            &Value::Undefined,
+            &[value, Value::Number(index as f64)],
+        )?;
+        index = index.saturating_add(1);
+        if !crate::execute::is_truthy(&result) {
+            let _ = close_direct_receiver(Some(&source));
+            return Ok(Value::Boolean(false));
+        }
+    }
 }
 
 fn close_direct_receiver(receiver: Option<&Value>) -> Result<(), VmError> {

@@ -119,6 +119,7 @@ pub(crate) fn property(key: &str) -> Value {
         "toArray" => Value::Builtin(crate::ops::Builtin::IteratorToArray),
         "drop" => Value::Builtin(crate::ops::Builtin::IteratorDrop),
         "map" => Value::Builtin(crate::ops::Builtin::IteratorMap),
+        "every" => Value::Builtin(crate::ops::Builtin::IteratorEvery),
         "Symbol.iterator" => Value::Builtin(crate::ops::Builtin::IteratorSelf),
         _ => Value::Undefined,
     }
@@ -127,6 +128,21 @@ pub(crate) fn property(key: &str) -> Value {
 pub(crate) fn property_for(value: &Value, key: &str) -> Value {
     if key == "next" {
         return next_for(value);
+    }
+    if key == "return" {
+        let Value::Iterator(data) = value else {
+            return property(key);
+        };
+        let state = data.state.borrow();
+        if matches!(
+            &*state,
+            IteratorState::Native { .. }
+                | IteratorState::Set { .. }
+                | IteratorState::Map { .. }
+                | IteratorState::RegExpString { .. }
+        ) {
+            return Value::Undefined;
+        }
     }
     if key != "Symbol.toStringTag" {
         return property(key);
