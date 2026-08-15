@@ -33,7 +33,7 @@ pub enum Builtin {
     DataViewByteLengthGetter, DataViewByteOffsetGetter,
     ArrayBufferByteLengthGetter, ArrayBufferDetachedGetter, ArrayBufferImmutableGetter, ArrayBufferMaxByteLengthGetter, ArrayBufferResizableGetter, SharedArrayBufferByteLengthGetter, SharedArrayBufferGrowableGetter,
     SharedArrayBufferMaxByteLengthGetter, SharedArrayBufferGrow,
-    SharedArrayBufferSlice, ArrayBufferTransferToImmutable,
+    SharedArrayBufferSlice, ArrayBufferTransferToImmutable, ArrayBufferSliceToImmutable,
     ArrayIsArray, ArrayFrom,
     TypedArrayFrom, TypedArrayOf,
     ArrayMap, ArrayFilter,

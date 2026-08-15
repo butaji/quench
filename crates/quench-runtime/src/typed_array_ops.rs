@@ -162,6 +162,9 @@ pub(crate) fn execute(
             crate::typed_array_base64::execute(builtin, receiver, arguments)
         }
         Builtin::ArrayBufferTransferToImmutable => Some(transfer_to_immutable(receiver)),
+        Builtin::ArrayBufferSliceToImmutable => Some(crate::vm::vm_builtins::slice_to_immutable(
+            receiver, arguments,
+        )),
         _ => None,
     }
 }

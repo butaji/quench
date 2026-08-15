@@ -178,6 +178,7 @@ fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str]
             "slice",
             "resize",
             "transferToImmutable",
+            "sliceToImmutable",
             "Symbol.toStringTag",
         ],
         Builtin::SharedArrayBufferPrototype => &[
