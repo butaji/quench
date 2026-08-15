@@ -332,6 +332,14 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
     if let Value::Object(object) = value {
+        if let Ok(calendar) = field(object, "calendar") {
+            let Value::String(calendar) = calendar else {
+                return Err(crate::value::error::throw_type_error("Invalid calendar"));
+            };
+            if !calendar.eq_ignore_ascii_case("iso8601") {
+                return Err(crate::value::error::throw_range_error("Invalid calendar"));
+            }
+        }
         let year = field_number(object, "year")?;
         let day = field_number(object, "day")?;
         let month = field_number(object, "month").or_else(|_| {
