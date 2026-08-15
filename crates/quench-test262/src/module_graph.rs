@@ -275,18 +275,29 @@ impl ModuleGraph {
             return Ok(());
         }
         state.insert(id, 1);
-        for dependency in self
-            .edges
-            .get(&id)
-            .into_iter()
-            .flatten()
-            .filter(|dependency| !self.deferred_edges.contains(&(id, **dependency)))
-        {
-            self.visit(*dependency, state, order)?;
+        let dependencies = self.edges.get(&id).cloned().unwrap_or_default();
+        for dependency in dependencies {
+            let deferred = self.deferred_edges.contains(&(id, dependency));
+            if deferred && !self.module_has_top_level_await(dependency)? {
+                continue;
+            }
+            self.visit(dependency, state, order)?;
         }
         state.insert(id, 2);
         order.push(id);
         Ok(())
+    }
+
+    fn module_has_top_level_await(&self, id: ModuleId) -> Result<bool, String> {
+        let Some(unit) = self.unit(id) else {
+            return Err("module unit is unknown".to_string());
+        };
+        if unit.kind != ModuleKind::JavaScript {
+            return Ok(false);
+        }
+        Ok(quench_runtime::reduce::inspect_module_source(&unit.source)
+            .map_err(|errors| errors.join("; "))?
+            .has_top_level_await)
     }
 
     fn add_unit(
