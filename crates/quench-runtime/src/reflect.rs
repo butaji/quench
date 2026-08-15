@@ -24,6 +24,14 @@ pub(crate) fn builtin(
             "ShadowRealm.prototype.evaluate requires a string",
         ));
     }
+    evaluate_builtin(builtin, value, receiver)
+}
+
+fn evaluate_builtin(
+    builtin: crate::ops::Builtin,
+    value: &Value,
+    receiver: Option<&Value>,
+) -> Result<Value, VmError> {
     let realm = crate::vm::realm_id_for_intrinsic_receiver(receiver);
     let direct_syntax_error = matches!(
         value,
