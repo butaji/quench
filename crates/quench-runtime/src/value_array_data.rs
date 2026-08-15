@@ -80,11 +80,17 @@ impl ArrayData {
             self.values.truncate(length);
             self.deleted.truncate(length);
             self.mapped.truncate(length);
+            self.properties.retain(|(key, _)| keep_index(key, length));
+            self.descriptors.retain(|(key, _)| keep_index(key, length));
         }
         self.length = length;
     }
 
     pub fn set_index(&mut self, index: usize, value: Value) {
+        if index > self.values.len() {
+            self.set_sparse_index(index, value);
+            return;
+        }
         if let Some(live) = &self.argument_live {
             let mut live = live.borrow_mut();
             set_live_index(&mut live, index, value.clone());
@@ -104,6 +110,16 @@ impl ArrayData {
         self.length = self.length.max(index.saturating_add(1));
     }
 
+    fn set_sparse_index(&mut self, index: usize, value: Value) {
+        self.set_property(&index.to_string(), value);
+        let length = index.saturating_add(1);
+        if let Some(live) = &self.argument_live {
+            let mut live = live.borrow_mut();
+            live.length = live.length.max(length);
+        }
+        self.length = self.length.max(length);
+    }
+
     pub(crate) fn append_live(&self, values: &[Value]) {
         let Some(live) = &self.argument_live else {
             return;
@@ -121,7 +137,7 @@ impl ArrayData {
 
     pub(crate) fn get_index(&self, index: usize) -> Option<Value> {
         if let Some(live) = &self.argument_live {
-            return live_index(&live.borrow(), index);
+            return live_index(&live.borrow(), index).or_else(|| self.property(&index.to_string()));
         }
         if self.deleted.get(index) == Some(&true) {
             return None;
@@ -136,19 +152,16 @@ impl ArrayData {
     pub(crate) fn has_index(&self, index: usize) -> bool {
         if let Some(live) = &self.argument_live {
             let live = live.borrow();
-            return index < live.length
+            return (index < live.length
                 && live.deleted.get(index) != Some(&true)
                 && (index < live.values.len()
-                    || live.mapped.get(index).and_then(Option::as_ref).is_some());
+                    || live.mapped.get(index).and_then(Option::as_ref).is_some()))
+                || self.property(&index.to_string()).is_some();
         }
         index < self.length
             && self.deleted.get(index) != Some(&true)
             && (index < self.values.len()
-                || self
-                    .mapped
-                    .get(index)
-                    .and_then(Option::as_ref)
-                    .is_some())
+                || self.mapped.get(index).and_then(Option::as_ref).is_some())
     }
 
     pub(crate) fn snapshot(&self) -> Vec<Value> {
@@ -242,6 +255,9 @@ impl ArrayData {
         self.descriptors.retain(|(name, _)| name != key);
         if let Some(index) = crate::arrays::array_index(key) {
             let index = index as usize;
+            if index >= self.values.len() {
+                return;
+            }
             self.disconnect_index(index);
             self.deleted.resize(index.saturating_add(1), false);
             self.deleted[index] = true;
@@ -252,6 +268,10 @@ impl ArrayData {
             }
         }
     }
+}
+
+fn keep_index(key: &str, length: usize) -> bool {
+    crate::arrays::array_index(key).is_none_or(|index| (index as usize) < length)
 }
 
 fn set_live_index(live: &mut ArgumentLive, index: usize, value: Value) {
