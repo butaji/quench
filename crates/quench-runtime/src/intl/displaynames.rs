@@ -198,7 +198,11 @@ fn valid_language_part(
 }
 
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
-    super::intl_slots(receiver)
+    let slots = super::intl_slots(receiver)?;
+    if !slots.iter().any(|(name, _)| name == "type") {
+        return Err(runtime_error("TypeError: not an Intl.DisplayNames object"));
+    }
+    Ok(slots)
 }
 
 fn option_string(options: &Value, name: &str, default: &str) -> Result<String, VmError> {
