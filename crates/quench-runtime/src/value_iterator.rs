@@ -5,6 +5,12 @@ pub struct IteratorData {
 
 #[derive(Debug, PartialEq)]
 pub enum IteratorState {
+    Mapped {
+        iterator: Value,
+        mapper: Value,
+        index: usize,
+        done: bool,
+    },
     Native {
         values: Vec<Value>,
         receiver: Option<Rc<crate::value::ArrayData>>,

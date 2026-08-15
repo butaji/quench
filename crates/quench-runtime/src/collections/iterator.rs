@@ -66,6 +66,28 @@ pub(crate) fn to_array(receiver: Option<&Value>) -> Result<Value, crate::execute
     Ok(Value::array(collect_rest(&iterator)?))
 }
 
+pub(crate) fn map(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let receiver = receiver.ok_or_else(not_iterable)?;
+    let mapper = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&mapper) {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.prototype.map mapper is not callable",
+        ));
+    }
+    let iterator = from(std::slice::from_ref(receiver))?;
+    Ok(Value::Iterator(Rc::new(IteratorData {
+        state: RefCell::new(IteratorState::Mapped {
+            iterator,
+            mapper,
+            index: 0,
+            done: false,
+        }),
+    })))
+}
+
 pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let branded = matches!(receiver, Some(Value::Iterator(data)) if matches!(
         &*data.state.borrow(), IteratorState::String { .. }
@@ -145,6 +167,7 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
         IteratorState::Map { .. } => Ok(None),
         IteratorState::RegExpString { .. } => Ok(None),
         IteratorState::Protocol { iterator, .. } => Ok(Some(iterator.clone())),
+        IteratorState::Mapped { iterator, .. } => Ok(Some(iterator.clone())),
     }
 }
 fn get_return_method(iterator: &Value) -> Result<Option<Value>, crate::execute::VmError> {
@@ -354,6 +377,7 @@ pub fn delegate_next(
             }
             IteratorState::Protocol { iterator, done, .. } if !*done => Some(iterator.clone()),
             IteratorState::Protocol { .. } => None,
+            IteratorState::Mapped { .. } => None,
         }
     };
     let Some(iterator) = protocol else {
@@ -436,6 +460,7 @@ fn delegation_target(
         | IteratorState::Map { .. }
         | IteratorState::String { .. }
         | IteratorState::RegExpString { .. } => None,
+        IteratorState::Mapped { .. } => None,
     };
     Ok(iterator.map(|iterator| (data.as_ref(), iterator)))
 }
@@ -517,6 +542,7 @@ pub(super) fn mark_done(data: &IteratorData) {
         | IteratorState::Map { done, .. }
         | IteratorState::Protocol { done, .. }
         | IteratorState::RegExpString { done, .. } => *done = true,
+        IteratorState::Mapped { done, .. } => *done = true,
     }
 }
 fn call(callee: &Value, receiver: &Value) -> Result<Value, crate::execute::VmError> {
