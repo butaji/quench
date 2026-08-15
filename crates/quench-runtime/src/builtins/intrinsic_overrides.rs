@@ -29,6 +29,13 @@ pub(crate) fn write(builtin: Builtin, key: &str, descriptor: Value) {
     });
 }
 
+pub(crate) fn remove(builtin: Builtin, key: &str) {
+    INTRINSIC_OVERRIDES.with(|overrides| {
+        overrides.borrow_mut().remove(&(builtin, key.to_string()));
+    });
+    mark_removed(builtin, key);
+}
+
 /// Record that `key` was deleted from `builtin`'s prototype chain so a
 /// future hardcoded prototype-chain lookup can observe the deletion.
 pub(crate) fn mark_removed(builtin: Builtin, key: &str) {
