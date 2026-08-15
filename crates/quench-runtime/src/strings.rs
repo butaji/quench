@@ -366,19 +366,11 @@ pub(crate) fn concat(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let receiver = receiver.ok_or_else(|| {
-        crate::value::error::throw_type_error("Cannot convert undefined to object")
-    })?;
-    let mut units = match units_of(receiver) {
-        Some(units) => units,
-        None => string_receiver(Some(receiver))?.encode_utf16().collect(),
-    };
+    let mut units = string_receiver(receiver)?
+        .encode_utf16()
+        .collect::<Vec<_>>();
     for argument in arguments {
-        if let Some(argument_units) = units_of(argument) {
-            units.extend(argument_units);
-        } else {
-            units.extend(crate::conversion::to_string(argument)?.encode_utf16());
-        }
+        units.extend(crate::conversion::to_string(argument)?.encode_utf16());
     }
     Ok(from_units(units))
 }
