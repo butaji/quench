@@ -3,6 +3,8 @@ enum ForOfPattern<'a> {
     Assignment(&'a oxc::ast::ast::AssignmentTarget<'a>),
 }
 
+type ForOfSlot<'a> = (u16, bool, Option<ForOfPattern<'a>>);
+
 fn prepend_for_of_binding(
     pattern: ForOfPattern<'_>,
     slot: u16,
@@ -42,7 +44,7 @@ fn for_of_slot<'a>(
     left: &'a oxc::ast::ast::ForStatementLeft<'a>,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
-) -> Result<(u16, bool, Option<ForOfPattern<'a>>), Vec<String>> {
+) -> Result<ForOfSlot<'a>, Vec<String>> {
     let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
         if let Some(result) = assignment_slot(left, next_slot)? {
             return Ok(result);
@@ -77,7 +79,7 @@ fn for_of_slot<'a>(
 fn assignment_slot<'a>(
     left: &'a oxc::ast::ast::ForStatementLeft<'a>,
     next_slot: &mut u16,
-) -> Result<Option<(u16, bool, Option<ForOfPattern<'a>>)>, Vec<String>> {
+) -> Result<Option<ForOfSlot<'a>>, Vec<String>> {
     if !matches!(
         left,
         oxc::ast::ast::ForStatementLeft::ArrayAssignmentTarget(_)
