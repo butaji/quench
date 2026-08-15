@@ -43,10 +43,17 @@ pub(crate) fn reduce_method_call(
     let callee = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::GetProperty { dst: callee, object, key: key.clone() });
-    let args = reduce_call_arguments(call, ops, facts, next_register, locals)?;
+    let (args, spreads) = reduce_call_arguments(call, ops, facts, next_register, locals)?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::CallMethod { dst, object, key, callee: Some(callee), args });
+    ops.push(Op::CallMethod {
+        dst,
+        object,
+        key,
+        callee: Some(callee),
+        args,
+        spreads,
+    });
     Some(dst)
 }
 
@@ -58,7 +65,7 @@ fn reduce_super_method_call(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let key = super_method_key(&call.callee)?;
-    let args = reduce_call_arguments(call, ops, facts, next, locals)?;
+    let (args, _) = reduce_call_arguments(call, ops, facts, next, locals)?;
     let dst = *next;
     *next = next.saturating_add(1);
     ops.push(Op::CallSuperMethod { dst, key, args });
@@ -83,13 +90,17 @@ fn reduce_call_arguments(
     facts: &mut ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
-) -> Option<Vec<u16>> {
-    call.arguments
+) -> Option<(Vec<u16>, Vec<bool>)> {
+    let mut spreads = Vec::new();
+    let args = call
+        .arguments
         .iter()
         .map(|argument| {
+            spreads.push(matches!(argument, oxc::ast::ast::Argument::SpreadElement(_)));
             crate::reduce::reduce_expression(argument.as_expression()?, ops, facts, next, locals)
         })
-        .collect()
+        .collect::<Option<Vec<_>>>()?;
+    Some((args, spreads))
 }
 
 fn computed_method_key(expression: &Expression<'_>) -> Option<String> {
