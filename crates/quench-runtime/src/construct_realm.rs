@@ -16,6 +16,12 @@ fn realm_default_prototype(target: &Value, new_target: &Value) -> Option<Value> 
             }) {
                 return Some(value);
             }
+            if matches!(target, Value::Builtin(crate::ops::Builtin::AsyncFunction)) {
+                return crate::vm::realm::intrinsic(
+                    capability.realm(),
+                    crate::ops::Builtin::AsyncFunctionPrototype,
+                );
+            }
         }
         if let Value::Function(function) = &bound.target {
             let global = function.captures.get(0);
