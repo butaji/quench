@@ -7,6 +7,9 @@ pub(super) fn to_locale_string(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
+    if is_invalid_date(receiver) {
+        return Ok(Value::String("Invalid Date".into()));
+    }
     let mut formatter_arguments = arguments.to_vec();
     if formatter_arguments.len() < 2 {
         formatter_arguments.push(Value::Object(std::rc::Rc::new(
@@ -19,6 +22,14 @@ pub(super) fn to_locale_string(
         &[receiver.cloned().unwrap_or(Value::Undefined)],
         Some(&formatter),
     )
+}
+
+fn is_invalid_date(receiver: Option<&Value>) -> bool {
+    let Some(Value::Object(properties)) = receiver else {
+        return false;
+    };
+    properties.iter().any(|(name, _)| name == "timeValue")
+        && crate::date::extract_time(receiver).is_nan()
 }
 
 fn default_options(kind: DateLocaleKind) -> Vec<(String, Value)> {
