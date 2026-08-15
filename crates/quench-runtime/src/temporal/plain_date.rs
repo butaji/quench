@@ -60,6 +60,9 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     let Some(Value::String(text)) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
+    if has_excess_fraction(text) {
+        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
+    }
     let calendar_count = text.matches("[u-ca=").count();
     if has_uppercase_annotation_key(text) {
         return Err(crate::value::error::throw_range_error(
@@ -119,6 +122,13 @@ fn has_unknown_critical_annotation(text: &str) -> bool {
     text.split('[').skip(1).any(|annotation| {
         annotation.starts_with('!') && annotation.contains('=') && !annotation.starts_with("!u-ca=")
     })
+}
+
+fn has_excess_fraction(text: &str) -> bool {
+    text.split('[')
+        .next()
+        .and_then(|value| value.find('.').map(|index| &value[index + 1..]))
+        .is_some_and(|fraction| fraction.bytes().take_while(u8::is_ascii_digit).count() > 9)
 }
 
 fn date_part(text: &str) -> &str {
