@@ -113,6 +113,15 @@ fn is_simple_builtin(builtin: Builtin) -> bool {
             | Builtin::FunctionPrototypeToString
             | Builtin::FunctionPrototypeValueOf
             | Builtin::RegExpPrototypeToString
+            | Builtin::RegExpSourceGetter
+            | Builtin::RegExpFlagsGetter
+            | Builtin::RegExpGlobalGetter
+            | Builtin::RegExpIgnoreCaseGetter
+            | Builtin::RegExpMultilineGetter
+            | Builtin::RegExpDotAllGetter
+            | Builtin::RegExpUnicodeGetter
+            | Builtin::RegExpStickyGetter
+            | Builtin::RegExpHasIndicesGetter
             | Builtin::Function
             | Builtin::AsyncFunction
             | Builtin::GeneratorFunction
@@ -186,6 +195,15 @@ fn execute_simple_builtin(
             function_prototype_builtin(builtin, receiver)
         }
         Builtin::RegExpPrototypeToString => regexp_prototype_to_string(receiver),
+        Builtin::RegExpSourceGetter => regexp_prototype_accessor(receiver, "source"),
+        Builtin::RegExpFlagsGetter => regexp_prototype_accessor(receiver, "flags"),
+        Builtin::RegExpGlobalGetter => regexp_prototype_accessor(receiver, "global"),
+        Builtin::RegExpIgnoreCaseGetter => regexp_prototype_accessor(receiver, "ignoreCase"),
+        Builtin::RegExpMultilineGetter => regexp_prototype_accessor(receiver, "multiline"),
+        Builtin::RegExpDotAllGetter => regexp_prototype_accessor(receiver, "dotAll"),
+        Builtin::RegExpUnicodeGetter => regexp_prototype_accessor(receiver, "unicode"),
+        Builtin::RegExpStickyGetter => regexp_prototype_accessor(receiver, "sticky"),
+        Builtin::RegExpHasIndicesGetter => regexp_prototype_accessor(receiver, "hasIndices"),
         Builtin::NumberToFixed | Builtin::NumberToPrecision | Builtin::NumberToExponential => {
             crate::number_fmt::number_format(receiver, arguments.first(), builtin)
         }
@@ -994,4 +1012,28 @@ fn regexp_prototype_to_string(receiver: Option<&Value>) -> Result<Value, VmError
         String::new()
     };
     Ok(Value::String(format!("/{source_str}/{flags_str}")))
+}
+
+fn regexp_prototype_accessor(
+    receiver: Option<&Value>,
+    key: &str,
+) -> Result<Value, VmError> {
+    let Some(value) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp accessor called on incompatible receiver",
+        ));
+    };
+    if matches!(value, Value::Builtin(Builtin::RegExpPrototype)) {
+        return Ok(Value::String(if key == "source" {
+            "(?:)".to_string()
+        } else {
+            String::new()
+        }));
+    }
+    if !crate::regexp::has_regexp_internal_slot(value) {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp accessor called on incompatible receiver",
+        ));
+    }
+    Ok(crate::execute::get_property(value, key))
 }
