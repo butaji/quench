@@ -1310,6 +1310,24 @@ fn construct_or_legacy(arguments: &[Value], receiver: Option<&Value>) -> Result<
     let Some(Value::Object(object)) = receiver else {
         return construct(arguments);
     };
+    let has_legacy_slot = object
+        .properties
+        .iter()
+        .any(|(key, _)| key.starts_with("Symbol.IntlLegacyConstructedSymbol "));
+    let has_number_format_prototype = matches!(
+        crate::builtins::object::get_prototype_of(receiver),
+        Ok(Value::Builtin(crate::ops::Builtin::IntlNumberFormatPrototype))
+    );
+    let is_number_format = super::intl_slots(receiver)
+        .ok()
+        .map(|slots| {
+            super::slot_string(&slots, "style").is_some()
+                && super::slot_number(&slots, "minimumIntegerDigits").is_some()
+        })
+        .unwrap_or(false);
+    if !is_number_format && !has_legacy_slot && !has_number_format_prototype {
+        return construct(arguments);
+    }
     use std::sync::atomic::{AtomicU64, Ordering};
     static FALLBACK_COUNTER: AtomicU64 = AtomicU64::new(0);
     let fallback = construct(arguments)?;
