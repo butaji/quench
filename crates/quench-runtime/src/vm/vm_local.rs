@@ -2,6 +2,7 @@ fn run_local_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
     use Op::*;
     match op {
         StoreLocal { slot, src } => crate::locals::store(registers, *slot, *src)?,
+        AliasLocal { slot, source } => crate::locals::alias_slot(*slot, *source),
         StoreFunctionName { slot, src, strict } => {
             crate::locals::store_function_name(registers, *slot, *src, *strict)?
         }
