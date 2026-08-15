@@ -33,7 +33,10 @@ fn constructor_property(builtin: Builtin, key: &str, property: Value) -> Option<
             property => property,
         });
     }
-    Some(property)
+    Some(match property {
+        Value::Builtin(target) => crate::vm::realm_intrinsic(target),
+        property => property,
+    })
 }
 
 fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
