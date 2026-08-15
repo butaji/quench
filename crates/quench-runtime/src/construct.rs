@@ -13,13 +13,17 @@ pub(crate) fn reduce(
 ) -> Option<u16> {
     let callee =
         crate::reduce::reduce_expression(&expression.callee, ops, facts, next_register, locals)?;
-    let (args, spreads) = crate::reduce::reduce_expressions::calls_reduce::reduce_arguments(
-        &expression.arguments,
-        ops,
-        facts,
-        next_register,
-        locals,
-    )?;
+    let (args, spreads) = if is_aggregate_error_callee(&expression.callee) {
+        reduce_aggregate_error_arguments(&expression.arguments, ops, facts, next_register, locals)?
+    } else {
+        crate::reduce::reduce_expressions::calls_reduce::reduce_arguments(
+            &expression.arguments,
+            ops,
+            facts,
+            next_register,
+            locals,
+        )?
+    };
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::Construct {
@@ -29,6 +33,36 @@ pub(crate) fn reduce(
         spreads,
     });
     Some(dst)
+}
+
+fn is_aggregate_error_callee(expression: &oxc::ast::ast::Expression<'_>) -> bool {
+    matches!(
+        expression,
+        oxc::ast::ast::Expression::Identifier(identifier) if identifier.name == "AggregateError"
+    )
+}
+
+fn reduce_aggregate_error_arguments(
+    arguments: &[oxc::ast::ast::Argument<'_>],
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<(Vec<u16>, Vec<bool>)> {
+    let first = arguments.first()?.as_expression()?;
+    let errors = crate::reduce::reduce_expression(first, ops, facts, next_register, locals)?;
+    let iterator = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::GetIterator { dst: iterator, iterable: errors });
+    let (mut args, spreads) =
+        crate::reduce::reduce_expressions::calls_reduce::reduce_arguments(
+            &arguments[1..], ops, facts, next_register, locals,
+        )?;
+    args.insert(0, iterator);
+    let mut all_spreads = Vec::with_capacity(spreads.len() + 1);
+    all_spreads.push(false);
+    all_spreads.extend(spreads);
+    Some((args, all_spreads))
 }
 pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::execute::VmError> {
     let Op::Construct {
