@@ -161,7 +161,10 @@ impl RawOptions {
                             Value::Number(value) => *value != 0.0,
                             Value::String(value) => {
                                 !value.is_empty()
-                                    && !matches!(value.as_str(), "auto" | "min2" | "always")
+                                    && !matches!(
+                                        value.as_str(),
+                                        "auto" | "min2" | "always" | "true" | "false"
+                                    )
                             }
                             _ => true,
                         };
