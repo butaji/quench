@@ -26,7 +26,7 @@ fn execute_core(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     use Builtin::*;
-    if let Some(result) = execute_iterator_next(builtin, receiver) {
+    if let Some(result) = execute_iterator_next(builtin, receiver, arguments) {
         return Some(result);
     }
     match builtin {
@@ -66,10 +66,12 @@ fn execute_core(
 fn execute_iterator_next(
     builtin: Builtin,
     receiver: Option<&Value>,
+    arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     use Builtin::*;
     Some(match builtin {
         IteratorNext => iterator::next(receiver),
+        IteratorReturn => iterator::return_iterator(receiver, arguments),
         SetIteratorNext => iterator::next_set(receiver),
         MapIteratorNext => iterator::next_map(receiver),
         IteratorSelf | AsyncIteratorSelf => iterator_self(receiver),
