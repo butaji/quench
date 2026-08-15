@@ -283,12 +283,31 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         crate::functions::execute_target(&setter, value, std::slice::from_ref(&argument))?;
         return Ok(Value::Undefined);
     }
+    if matches!(value, Value::Proxy(_)) && proxy_has_own_stack(value)? {
+        let result = crate::proxy::proxy_set(value, "stack", stack, Some(value))?;
+        if matches!(result, Value::Boolean(false)) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy set trap returned false",
+            ));
+        }
+        return Ok(Value::Undefined);
+    }
     if matches!(value, Value::Proxy(_)) {
         define_proxy_stack(value, stack.clone())?;
         return Ok(Value::Undefined);
     }
     define_own_stack(value, stack.clone())?;
     Ok(Value::Undefined)
+}
+
+fn proxy_has_own_stack(value: &Value) -> Result<bool, VmError> {
+    Ok(!matches!(
+        crate::builtins::object::descriptor(
+            Some(value),
+            Some(&Value::String("stack".to_string())),
+        )?,
+        Value::Undefined
+    ))
 }
 
 fn own_stack_setter(value: &Value) -> Result<Option<Value>, VmError> {
@@ -318,6 +337,15 @@ fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
             return Err(crate::value::error::throw_type_error(
                 "Cannot assign to read only property 'stack'",
             ));
+        }
+        if matches!(value, Value::Proxy(_)) {
+            let result = crate::proxy::proxy_set(value, "stack", &stack, Some(value))?;
+            if matches!(result, Value::Boolean(false)) {
+                return Err(crate::value::error::throw_type_error(
+                    "Proxy set trap returned false",
+                ));
+            }
+            return Ok(());
         }
         let descriptor = [("value".to_string(), stack)];
         crate::builtins::define_own_property(value, "stack", &descriptor)?
