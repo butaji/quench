@@ -10,9 +10,18 @@ fn execute_generator_step(
     let _with_scope = crate::with_scope::FunctionGuard::install(&generator.function.with_captures);
     let (store, pc, mut registers) = take_machine_execution(generator)?;
     let ops = store.get(generator.function.code.range).ok_or(VmError::MissingReturn)?;
-    let result = crate::vm::execute_generator_step(
-        ops, &mut registers, machine_environment(generator)?, pc, completion,
-    );
+    let environment = machine_environment(generator)?;
+    let execute = || {
+        crate::vm::execute_generator_step(ops, &mut registers, environment, pc, completion)
+    };
+    let result = match generator.function.captures.get(0) {
+        Value::Object(global) => match crate::vm::realm::id_for_global(&global) {
+            Some(realm) => crate::vm::with_realm(realm, execute)
+                .unwrap_or(Err(VmError::MissingReturn)),
+            None => execute(),
+        },
+        _ => execute(),
+    };
     restore_machine_execution(generator, registers, result)
 }
 

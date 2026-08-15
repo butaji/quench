@@ -68,6 +68,9 @@ fn execute_iterator_next(
         SetIteratorNext => iterator::next_set(receiver),
         MapIteratorNext => iterator::next_map(receiver),
         IteratorSelf => iterator_self(receiver),
+        AsyncIteratorSelf => iterator_self(receiver),
+        AsyncIteratorDispose => async_iterator_dispose(receiver),
+        AsyncIteratorDisposeResult => Ok(Value::Undefined),
         _ => return None,
     })
 }
@@ -80,6 +83,25 @@ fn constructor_requires_new(name: &str) -> Result<Value, VmError> {
 
 fn iterator_self(receiver: Option<&Value>) -> Result<Value, VmError> {
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn async_iterator_dispose(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let receiver = receiver.cloned().unwrap_or(Value::Undefined);
+    let method = crate::execute::get_property_result(&receiver, "return")?;
+    if matches!(method, Value::Undefined | Value::Null) {
+        return Ok(crate::promise::promise_resolve(&[Value::Undefined]));
+    }
+    let result = crate::functions::execute_target(&method, &receiver, &[Value::Undefined])?;
+    let wrapped = crate::promise::promise_resolve(&[result]);
+    let then = crate::execute::get_property_result(&wrapped, "then")?;
+    crate::functions::execute_target(
+        &then,
+        &wrapped,
+        &[
+            Value::Builtin(Builtin::AsyncIteratorDisposeResult),
+            Value::Undefined,
+        ],
+    )
 }
 
 fn execute_weak(
