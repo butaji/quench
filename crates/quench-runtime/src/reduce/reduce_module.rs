@@ -283,13 +283,40 @@ fn reduce_default_expression(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    reduce_exported_default!(
-        expression expression,
-        ops,
-        facts,
-        next_register,
-        next_slot,
-        locals
+    let result = crate::reduce::reduce_expression(expression, ops, facts, next_register, locals);
+    if let Some(src) = result {
+        if anonymous_default_definition(expression) {
+            ops.push(Op::SetFunctionName {
+                function: src,
+                name: "default".to_string(),
+            });
+        }
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        locals.insert("default".to_string(), slot);
+        ops.push(Op::DeclareEvalBinding {
+            name: "default".to_string(),
+            slot,
+        });
+        ops.push(Op::StoreLocal { slot, src });
+    }
+    Ok(None)
+}
+
+fn anonymous_default_definition(expression: &oxc::ast::ast::Expression<'_>) -> bool {
+    let mut expression = expression;
+    while let oxc::ast::ast::Expression::ParenthesizedExpression(parenthesized) = expression {
+        expression = &parenthesized.expression;
+    }
+    matches!(
+        expression,
+        oxc::ast::ast::Expression::ArrowFunctionExpression(_)
+    ) || matches!(
+        expression,
+        oxc::ast::ast::Expression::FunctionExpression(function) if function.id.is_none()
+    ) || matches!(
+        expression,
+        oxc::ast::ast::Expression::ClassExpression(class) if class.id.is_none()
     )
 }
 
