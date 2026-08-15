@@ -503,6 +503,13 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
     if crate::conversion::is_symbol(value) {
         return Err(crate::value::error::throw_type_error("Invalid date-time"));
     }
+    if matches!(
+        value,
+        Value::Builtin(crate::ops::Builtin::TemporalPlainDateTime)
+            | Value::Builtin(crate::ops::Builtin::TemporalPlainDateTimePrototype)
+    ) {
+        return Err(crate::value::error::throw_type_error("Invalid date-time"));
+    }
     if let Value::String(text) = value {
         let result = parse_string(text);
         if result.is_ok() {
