@@ -45,6 +45,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateSubtract => Some("Temporal.PlainDate.prototype.subtract"),
         Builtin::TemporalPlainDateUntil => Some("Temporal.PlainDate.prototype.until"),
         Builtin::TemporalPlainDateSince => Some("Temporal.PlainDate.prototype.since"),
+        Builtin::TemporalPlainTime => Some("Temporal.PlainTime"),
         _ => None,
     }
 }
@@ -80,6 +81,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateSubtract => Some("subtract"),
         Builtin::TemporalPlainDateUntil => Some("until"),
         Builtin::TemporalPlainDateSince => Some("since"),
+        Builtin::TemporalPlainTime => Some("PlainTime"),
         _ => None,
     }
 }
