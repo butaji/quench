@@ -60,7 +60,6 @@ impl LinkedModuleGraph {
             };
             units.insert(unit.id, module);
         }
-        link_reexports(graph, &units)?;
         let ids = units.keys().copied().collect::<Vec<_>>();
         for id in ids {
             let metadata = units
@@ -78,6 +77,7 @@ impl LinkedModuleGraph {
                     .bind_import(&binding.local, cell)?;
             }
         }
+        link_reexports(graph, &units)?;
         Ok(Self { units })
     }
 
