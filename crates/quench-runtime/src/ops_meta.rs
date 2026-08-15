@@ -48,6 +48,10 @@ pub enum HostCapabilityKind {
     AgentGetReport,
     AgentLeaving,
     AgentReceiveBroadcast,
+    AgentSleep,
+    AgentTryYield,
+    AgentTrySleep,
+    AgentSetTimeout,
 }
 
 /// Non-JavaScript capability descriptor; exposure is owned by the host.
