@@ -12,6 +12,7 @@ const TEMPORAL_DURATION_PROTOTYPE_NAMES: &[&str] = &[
     "nanoseconds",
     "sign",
     "blank",
+    "abs",
     "toString",
     "toJSON",
     "valueOf",
