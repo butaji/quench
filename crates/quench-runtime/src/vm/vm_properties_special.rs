@@ -136,6 +136,12 @@ fn bound_function_fallback(
         return function_prototype_property_for_builtin(Builtin::FunctionPrototype, key);
     }
     if let Value::Builtin(builtin) = bound.target {
+        if key == "prototype" {
+            if let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) {
+                return realm::intrinsic(bound.realm, prototype)
+                    .unwrap_or(Value::Builtin(prototype));
+            }
+        }
         let intrinsic = match (builtin, key) {
             (Builtin::GeneratorFunctionPrototype, "constructor") => {
                 Some(Builtin::GeneratorFunction)
