@@ -99,15 +99,28 @@ fn bind_imports(
 ) -> Result<(), String> {
     for id in units.keys().copied().collect::<Vec<_>>() {
         let metadata = unit_metadata(units, id)?;
-        for binding in &metadata.imports {
-            let target = graph
-                .resolve(id, &binding.source)
-                .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-            let cell = import_cell(units, target, &binding.imported, provisional)?;
-            units
-                .get(&id)
-                .ok_or_else(|| "module unit missing".to_string())?
-                .bind_import(&binding.local, cell)?;
+        for source_phase in [true, false] {
+            for binding in metadata
+                .imports
+                .iter()
+                .filter(|binding| binding.source_phase == source_phase)
+            {
+                let cell = if binding.source_phase {
+                    ModuleBindingCell::new(quench_runtime::value::Value::object(vec![(
+                        "\0quench:module-source".to_string(),
+                        quench_runtime::value::Value::Boolean(true),
+                    )]))
+                } else {
+                    let target = graph
+                        .resolve(id, &binding.source)
+                        .ok_or_else(|| format!("unresolved module {}", binding.source))?;
+                    import_cell(units, target, &binding.imported, provisional)?
+                };
+                units
+                    .get(&id)
+                    .ok_or_else(|| "module unit missing".to_string())?
+                    .bind_import(&binding.local, cell)?;
+            }
         }
     }
     Ok(())
@@ -671,6 +684,9 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
     }
     let metadata = inspect_module_source(&source).map_err(|errors| errors.join("; "))?;
     for specifier in metadata.import_specifiers {
+        if specifier == "<module source>" {
+            continue;
+        }
         if graph.resolve(from, &specifier).is_some() {
             continue;
         }
