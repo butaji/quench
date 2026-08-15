@@ -226,7 +226,7 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     if let Some(descriptor) = intrinsic_accessor(builtin, key) {
         return Some(descriptor);
     }
-    return builtin_descriptor_tail(builtin, key);
+    builtin_descriptor_tail(builtin, key)
 }
 
 fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {

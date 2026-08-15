@@ -56,7 +56,7 @@ fn typed_array_constructor_property(builtin: Builtin, key: &str) -> Option<Built
     if key == "of" && is_typed_array_constructor(builtin) {
         return Some(TypedArrayOf);
     }
-    Some(typed_array_prototype_property(builtin, key)?)
+    typed_array_prototype_property(builtin, key)
 }
 
 fn typed_array_prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
