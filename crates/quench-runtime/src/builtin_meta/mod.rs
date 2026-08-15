@@ -178,6 +178,7 @@ fn prototype_tail(builtin: Builtin) -> Option<Builtin> {
         }
         Builtin::URIError => Some(Builtin::ErrorPrototype),
         Builtin::AggregateError => Some(Builtin::AggregateErrorPrototype),
+        Builtin::AggregateErrorPrototype => Some(Builtin::ErrorPrototype),
         Builtin::SuppressedError => Some(Builtin::SuppressedErrorPrototype),
         Builtin::TypeError => Some(Builtin::ErrorPrototype),
         _ => None,
