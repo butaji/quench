@@ -89,21 +89,10 @@ fn construct_with_new_target(
 ) -> Result<Value, crate::execute::VmError> {
     let result = match target {
         Value::Builtin(builtin) => {
-            if *builtin == crate::ops::Builtin::SharedArrayBuffer
+            if is_intl_constructor(*builtin)
                 && !crate::builtins::same_value(Some(target), Some(new_target))
             {
-                validate_shared_array_buffer_length(arguments)?;
-                let prototype = crate::execute::get_property_result(new_target, "prototype")?;
-                let value = construct_builtin(*builtin, arguments)?;
-                let prototype = if crate::value::is_object(&prototype) {
-                    Some(prototype)
-                } else {
-                    realm_default_prototype(target, new_target)
-                };
-                let value = prototype.map_or(value.clone(), |prototype| {
-                    crate::builtins::set_property(value, "\0prototype", prototype)
-                });
-                return Ok(value);
+                crate::execute::get_property_result(new_target, "prototype")?;
             }
             let value = construct_builtin(*builtin, arguments)?;
             let value = with_new_target_prototype(value, target, new_target)?;
@@ -122,29 +111,6 @@ fn construct_with_new_target(
         _ => Err(crate::vm::not_callable()),
     };
     result
-}
-
-fn validate_shared_array_buffer_length(arguments: &[Value]) -> Result<(), crate::execute::VmError> {
-    let length = arguments
-        .first()
-        .map(crate::conversion::to_number)
-        .transpose()?
-        .unwrap_or(0.0);
-    let length = to_index(length)?;
-    let Some(options) = arguments
-        .get(1)
-        .filter(|value| crate::value::is_object(value))
-    else {
-        return Ok(());
-    };
-    let maximum = crate::execute::get_property_result(options, "maxByteLength")?;
-    if matches!(maximum, Value::Undefined) {
-        return Ok(());
-    }
-    if to_index(crate::conversion::to_number(&maximum)?)? < length {
-        return Err(range_error("maxByteLength is smaller than byteLength"));
-    }
-    Ok(())
 }
 fn with_new_target_prototype(
     value: Value,
@@ -255,16 +221,6 @@ fn construct_builtin(
             crate::finalization_registry::construct(arguments)
         }
         crate::ops::Builtin::RegExp => construct_regexp(arguments),
-        crate::ops::Builtin::TemporalDuration => crate::temporal::duration::construct(arguments),
-        crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
-        crate::ops::Builtin::ShadowRealm => {
-            let realm = crate::vm::create_shadow_realm_value();
-            Ok(crate::builtins::set_property(
-                realm,
-                "\0prototype",
-                Value::Builtin(crate::ops::Builtin::ShadowRealmPrototype),
-            ))
-        }
         _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::vm::not_callable()),
@@ -332,6 +288,7 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
             | Builtin::IntlRelativeTimeFormat
             | Builtin::IntlSegmenter
             | Builtin::IntlDisplayNames
+            | Builtin::IntlDurationFormat
             | Builtin::IntlLocale
     )
 }
@@ -418,19 +375,13 @@ fn construct_promise(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
 }
 
 fn construct_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let length = arguments
-        .first()
-        .map(crate::conversion::to_number)
-        .transpose()?
-        .unwrap_or(0.0);
+    let length = arguments.first().map_or(0.0, |value| {
+        crate::intl::tolocale::value::to_number(Some(value))
+    });
     let length = to_index(length)?;
-    let buffer = match arguments
-        .get(1)
-        .filter(|options| crate::value::is_object(options))
-    {
+    let buffer = match arguments.get(1) {
         Some(options) => resizable_array_buffer(length, options)?,
-        None => crate::value::ArrayBufferData::try_new(length)
-            .ok_or_else(|| range_error("ArrayBuffer length is too large"))?,
+        None => crate::value::ArrayBufferData::new(length),
     };
     Ok(Value::ArrayBuffer(Rc::new(buffer)))
 }
@@ -439,25 +390,14 @@ fn resizable_array_buffer(
     length: usize,
     options: &Value,
 ) -> Result<crate::value::ArrayBufferData, crate::execute::VmError> {
-    let maximum = crate::execute::get_property_result(options, "maxByteLength")?;
-    if matches!(maximum, Value::Undefined) {
-        return crate::value::ArrayBufferData::try_new(length)
-            .ok_or_else(|| range_error("ArrayBuffer length is too large"));
-    }
-    let maximum = to_index(crate::conversion::to_number(&maximum)?)?;
+    let maximum = crate::execute::get_property(options, "maxByteLength");
+    let maximum = to_index(crate::intl::tolocale::value::to_number(Some(&maximum)))?;
     if maximum < length {
         return Err(range_error("maxByteLength is smaller than byteLength"));
     }
-    if !allocation_possible(maximum) {
-        return Err(range_error("ArrayBuffer maxByteLength is too large"));
-    }
-    crate::value::ArrayBufferData::try_new_resizable(length, maximum)
-        .ok_or_else(|| range_error("ArrayBuffer length is too large"))
-}
-
-fn allocation_possible(length: usize) -> bool {
-    let mut bytes: Vec<u8> = Vec::new();
-    bytes.try_reserve_exact(length).is_ok()
+    Ok(crate::value::ArrayBufferData::new_resizable(
+        length, maximum,
+    ))
 }
 
 fn view_length(buffer: &crate::value::ArrayBufferData, fixed_length: usize) -> usize {
@@ -570,6 +510,7 @@ fn construct_error(
         crate::ops::Builtin::URIError => "URIError",
         crate::ops::Builtin::AggregateError => "AggregateError",
         crate::ops::Builtin::TypeError => "TypeError",
+        crate::ops::Builtin::Error => "Error",
         _ => "Error",
     };
 

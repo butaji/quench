@@ -4,10 +4,6 @@ fn early_dispatch(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     crate::intl::tolocale::symbol::dispatch(builtin, arguments, receiver)
-        .or_else(|| {
-            (builtin == Builtin::ShadowRealmEvaluate)
-                .then(|| crate::reflect::builtin(builtin, arguments, receiver))
-        })
         .or_else(|| crate::json::execute(builtin, arguments))
         .or_else(|| crate::typed_array_ops::execute(builtin, receiver, arguments))
         .or_else(|| crate::arrays::execute_builtin(builtin, receiver, arguments))
@@ -447,14 +443,6 @@ fn boolean_receiver(receiver: Option<&Value>) -> Option<bool> {
         _ => None,
     }
 }
-
-fn realm_from_marker(receiver: Option<&Value>) -> Option<RealmId> {
-    let marker = crate::execute::get_property(receiver.unwrap_or(&Value::Undefined), "\0realm");
-    let Value::HostCapability(token) = marker else {
-        return None;
-    };
-    realm::id_for_token(&token)
-}
 fn boolean_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     let value = match receiver {
         Some(Value::Builtin(Builtin::BooleanPrototype)) => false,
@@ -491,16 +479,10 @@ fn weak_ref_deref(receiver: Option<&Value>) -> Result<Value, VmError> {
     Ok(target.clone())
 }
 pub(crate) fn realm_id_for_intrinsic_receiver(receiver: Option<&Value>) -> Option<RealmId> {
-    match receiver {
-        Some(Value::HostCapability(token)) => realm::id_for_token(token),
-        Some(Value::Object(properties)) => properties.iter().find_map(|(key, value)| {
-            (key == "\0realm").then(|| match value {
-                Value::HostCapability(token) => realm::id_for_token(token),
-                _ => None,
-            })?
-        }),
-        _ => realm_from_marker(receiver),
-    }
+    let Some(Value::HostCapability(token)) = receiver else {
+        return None;
+    };
+    realm::id_for_token(token)
 }
 pub(crate) fn explicit_number(value: Option<&Value>) -> Result<f64, VmError> {
     let Some(value) = value else {
