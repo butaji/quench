@@ -39,7 +39,7 @@ pub(crate) fn global_builtin_exists(key: &str) -> bool {
 }
 
 pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
-    crate::globals::builtin(key).map(Value::Builtin)
+    crate::globals::builtin(key).map(realm_intrinsic)
 }
 
 pub(crate) fn intrinsic_for_global(global: &Value, builtin: Builtin) -> Option<Value> {
