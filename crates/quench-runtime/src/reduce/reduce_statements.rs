@@ -63,9 +63,7 @@ pub fn inspect_module_source(source: &str) -> Result<crate::reduce::ModuleMetada
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, SourceType::mjs()).parse();
     crate::reduce_support::validate_parse(&parsed)?;
-    Ok(crate::reduce::ModuleMetadata::from_statements(
-        &parsed.program.body,
-    ))
+    Ok(crate::reduce::ModuleMetadata::from_program(&parsed.program))
 }
 pub fn reduce_source_with_type(
     source: &str,
