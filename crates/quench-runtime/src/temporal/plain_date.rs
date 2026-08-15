@@ -134,6 +134,8 @@ pub(crate) fn execute(
             | crate::ops::Builtin::TemporalPlainDateToJSON
             | crate::ops::Builtin::TemporalPlainDateToLocaleString => Some(to_string(receiver)),
             crate::ops::Builtin::TemporalPlainDateCalendarIdGetter
+            | crate::ops::Builtin::TemporalPlainDateEraGetter
+            | crate::ops::Builtin::TemporalPlainDateEraYearGetter
             | crate::ops::Builtin::TemporalPlainDateYearGetter
             | crate::ops::Builtin::TemporalPlainDateMonthGetter
             | crate::ops::Builtin::TemporalPlainDateMonthCodeGetter
@@ -382,10 +384,14 @@ fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Va
     let year = field_number(object, "_year")?;
     let month = field_number(object, "_month")?;
     let day = field_number(object, "_day")?;
+    let calendar = field(object, "calendarId").unwrap_or_else(|_| Value::String("iso8601".into()));
+    let (era, era_year) = era_values(&calendar, year);
     let value = match builtin {
         crate::ops::Builtin::TemporalPlainDateCalendarIdGetter => {
             field(object, "calendarId").unwrap_or_else(|_| Value::String("iso8601".into()))
         }
+        crate::ops::Builtin::TemporalPlainDateEraGetter => era,
+        crate::ops::Builtin::TemporalPlainDateEraYearGetter => era_year,
         crate::ops::Builtin::TemporalPlainDateYearGetter => Value::Number(year),
         crate::ops::Builtin::TemporalPlainDateMonthGetter => Value::Number(month),
         crate::ops::Builtin::TemporalPlainDateMonthCodeGetter => {
@@ -410,6 +416,18 @@ fn accessor(builtin: crate::ops::Builtin, receiver: Option<&Value>) -> Result<Va
         _ => Value::Undefined,
     };
     Ok(value)
+}
+
+fn era_values(calendar: &Value, year: f64) -> (Value, Value) {
+    let Value::String(calendar) = calendar else {
+        return (Value::Undefined, Value::Undefined);
+    };
+    match calendar.as_str() {
+        "hebrew" => (Value::String("am".into()), Value::Number(year)),
+        "gregory" if year > 0.0 => (Value::String("ce".into()), Value::Number(year)),
+        "gregory" => (Value::String("bce".into()), Value::Number(1.0 - year)),
+        _ => (Value::Undefined, Value::Undefined),
+    }
 }
 
 fn leap(year: f64) -> bool {
@@ -755,7 +773,7 @@ fn make_date_with_calendar(
     options: Option<&Value>,
     calendar: &str,
 ) -> Result<Value, VmError> {
-    let max = days_in_month(year, month)?;
+    let max = days_in_month_for_calendar(year, month, calendar)?;
     if !day.is_finite() || day <= 0.0 {
         return Err(crate::value::error::throw_range_error("Invalid date"));
     }
@@ -819,6 +837,31 @@ fn days_in_month(year: f64, month: f64) -> Result<f64, VmError> {
     })
 }
 
+fn days_in_month_for_calendar(year: f64, month: f64, calendar: &str) -> Result<f64, VmError> {
+    if calendar != "hebrew" {
+        return days_in_month(year, month);
+    }
+    let leap = is_hebrew_leap_year(year);
+    let max_month = if leap { 13.0 } else { 12.0 };
+    if !(1.0..=max_month).contains(&month) || !year.is_finite() {
+        return Err(crate::value::error::throw_range_error("Invalid date"));
+    }
+    let lengths = if leap {
+        [
+            30.0, 30.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 29.0,
+        ]
+    } else {
+        [
+            30.0, 30.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 30.0, 29.0, 0.0,
+        ]
+    };
+    Ok(lengths[month as usize - 1])
+}
+
+fn is_hebrew_leap_year(year: f64) -> bool {
+    matches!((year as i64).rem_euclid(19), 0 | 3 | 6 | 8 | 11 | 14 | 17)
+}
+
 fn field(object: &crate::value::ObjectData, name: &str) -> Result<Value, VmError> {
     object
         .iter()
@@ -858,7 +901,7 @@ fn date_object_with_calendar(year: f64, month: f64, day: f64, calendar: &str) ->
         ),
         (
             "daysInMonth".into(),
-            Value::Number(days_in_month(year, month).unwrap_or(0.0)),
+            Value::Number(days_in_month_for_calendar(year, month, calendar).unwrap_or(0.0)),
         ),
         ("daysInWeek".into(), Value::Number(7.0)),
         (
@@ -866,7 +909,14 @@ fn date_object_with_calendar(year: f64, month: f64, day: f64, calendar: &str) ->
             Value::Number(if leap(year) { 366.0 } else { 365.0 }),
         ),
         ("inLeapYear".into(), Value::Boolean(leap(year))),
-        ("monthsInYear".into(), Value::Number(12.0)),
+        (
+            "monthsInYear".into(),
+            Value::Number(if calendar == "hebrew" && is_hebrew_leap_year(year) {
+                13.0
+            } else {
+                12.0
+            }),
+        ),
         (
             "weekOfYear".into(),
             Value::Number(iso_week(year, month, day).0),
