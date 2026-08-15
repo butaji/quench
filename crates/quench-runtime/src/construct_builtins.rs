@@ -227,10 +227,11 @@ fn construct_array_buffer(arguments: &[Value]) -> Result<Value, crate::execute::
         .transpose()?
         .unwrap_or(0.0);
     let length = to_index(length)?;
-    let buffer = match arguments
-        .get(1)
-        .filter(|options| crate::value::is_object(options))
-    {
+    let options = match arguments.get(1) {
+        None | Some(Value::Undefined) => None,
+        Some(options) => Some(to_object(options)?),
+    };
+    let buffer = match options.as_ref() {
         Some(options) => resizable_array_buffer(length, options)?,
         None => crate::value::ArrayBufferData::try_new(length)
             .ok_or_else(|| range_error("ArrayBuffer length is too large"))?,
