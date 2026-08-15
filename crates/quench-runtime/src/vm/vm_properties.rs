@@ -21,6 +21,10 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     if let Value::BindingCell(cell) = value {
         return get_property(&cell.borrow(), key);
     }
+    direct_or_primitive_property(value, key)
+}
+
+fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
     let direct = get_property_value(value, key);
     if !matches!(direct, Value::Undefined) {
         return direct;
