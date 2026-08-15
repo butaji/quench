@@ -62,6 +62,11 @@ pub(crate) fn integrity_apply(
     if matches!(target, crate::value::Value::Proxy(_)) {
         return proxy_integrity_apply(target, frozen);
     }
+    if frozen && typed_array_backed_by_resizable_buffer(target) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot freeze a typed array backed by a resizable buffer",
+        ));
+    }
     match target {
         crate::value::Value::Object(properties) => {
             let mut sealed = integrity_properties(properties, frozen);
@@ -80,6 +85,28 @@ pub(crate) fn integrity_apply(
             Ok(target.clone())
         }
         _ => Ok(target.clone()),
+    }
+}
+
+fn typed_array_backed_by_resizable_buffer(target: &crate::value::Value) -> bool {
+    macro_rules! view_buffer {
+        ($view:expr) => {
+            $view.buffer.max_byte_length.is_some()
+        };
+    }
+    match target {
+        crate::value::Value::Float64Array(view) => view_buffer!(view),
+        crate::value::Value::Float32Array(view) => view_buffer!(view),
+        crate::value::Value::Int8Array(view) => view_buffer!(view),
+        crate::value::Value::Int16Array(view) => view_buffer!(view),
+        crate::value::Value::Int32Array(view) => view_buffer!(view),
+        crate::value::Value::BigInt64Array(view) => view_buffer!(view),
+        crate::value::Value::BigUint64Array(view) => view_buffer!(view),
+        crate::value::Value::Uint32Array(view) => view_buffer!(view),
+        crate::value::Value::Uint8Array(view) => view_buffer!(view),
+        crate::value::Value::Uint8ClampedArray(view) => view_buffer!(view),
+        crate::value::Value::Uint16Array(view) => view_buffer!(view),
+        _ => false,
     }
 }
 
