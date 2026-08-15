@@ -63,11 +63,11 @@ pub(crate) fn typed_length(value: &Value) -> Result<usize, crate::execute::VmErr
         _ => Err(crate::collections::iterator::not_iterable()),
     }
 }
-fn collect_typed(
+fn collect_typed<T>(
     length: usize,
     out_of_bounds: bool,
-    mut get: impl FnMut(usize) -> Option<Value>,
-) -> Result<Vec<Value>, crate::execute::VmError> {
+    mut get: impl FnMut(usize) -> Option<T>,
+) -> Result<Vec<T>, crate::execute::VmError> {
     if out_of_bounds {
         return Err(crate::collections::iterator::not_iterable());
     }
