@@ -493,16 +493,4 @@ fn same_property_receiver(value: &Value, receiver: &Value) -> bool {
     }
 }
 
-pub(crate) fn array_accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
-    let Value::Array(values) = value else {
-        return None;
-    };
-    let Value::Object(descriptor) = values.descriptor(key)? else {
-        return None;
-    };
-    descriptor
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == field).then(|| value.clone()))
-}
 include!("vm_properties_special.rs");
