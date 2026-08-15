@@ -303,6 +303,9 @@ pub(crate) fn get_property_with_receiver(
 }
 
 pub(crate) fn consume_deferred_namespace_marker(value: &Value, key: &str) -> Option<u32> {
+    if key == "then" {
+        return None;
+    }
     let Value::Object(properties) = value else {
         return None;
     };
