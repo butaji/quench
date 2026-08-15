@@ -301,21 +301,8 @@ fn property_from_descriptor(
 ) -> Result<Value, VmError> {
     let descriptor =
         crate::builtins::object::descriptor(Some(value), Some(&Value::String(key.to_string())))?;
-    if !matches!(descriptor, Value::Undefined) {
-        if let Value::Object(descriptor) = descriptor {
-            if let Some((_, getter)) = descriptor
-                .iter()
-                .rev()
-                .find_map(|(name, value)| (name == "get").then_some((name, value)))
-            {
-                return if matches!(getter, Value::Undefined) {
-                    Ok(Value::Undefined)
-                } else {
-                    invoke_accessor(getter, receiver)
-                };
-            }
-        }
-        return Ok(receiver_property(value, key, receiver));
+    if let Some(result) = descriptor_result(&descriptor, receiver, value, key) {
+        return result;
     }
     let getter = crate::property_define::accessor(value, key, "get");
     let Some(getter) = getter else {
@@ -325,6 +312,27 @@ fn property_from_descriptor(
         return Ok(Value::Undefined);
     }
     invoke_accessor(&getter, receiver)
+}
+
+fn descriptor_result(
+    descriptor: &Value,
+    receiver: &Value,
+    value: &Value,
+    key: &str,
+) -> Option<Result<Value, VmError>> {
+    let Value::Object(descriptor) = descriptor else {
+        return (!matches!(descriptor, Value::Undefined))
+            .then_some(Ok(receiver_property(value, key, receiver)));
+    };
+    let getter = descriptor
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "get").then_some(value));
+    Some(match getter {
+        Some(Value::Undefined) => Ok(Value::Undefined),
+        Some(getter) => invoke_accessor(getter, receiver),
+        None => Ok(receiver_property(value, key, receiver)),
+    })
 }
 
 /// Invoke a getter using the receiver as `this`. The getter's own
