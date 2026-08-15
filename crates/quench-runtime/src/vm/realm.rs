@@ -180,6 +180,7 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "DisposableStack" => DisposableStack,
         "AsyncDisposableStack" => AsyncDisposableStack,
         "FinalizationRegistry" => FinalizationRegistry,
+        "ShadowRealm" => ShadowRealm,
         _ => return global_builtin_error(key),
     })
 }
