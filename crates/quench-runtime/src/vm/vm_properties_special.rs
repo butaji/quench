@@ -21,11 +21,14 @@ fn constructor_property(builtin: Builtin, key: &str, property: Value) -> Option<
     if !matches!(key, "prototype" | "constructor") {
         return None;
     }
-    if key == "constructor"
-        && matches!(property, Value::Undefined)
-        && crate::builtin_meta::constructor_name(builtin).is_some()
-    {
-        return Some(Value::Builtin(Builtin::Function));
+    if key == "constructor" {
+        return Some(match property {
+            Value::Builtin(target) => crate::vm::realm_intrinsic(target),
+            Value::Undefined if crate::builtin_meta::constructor_name(builtin).is_some() => {
+                Value::Builtin(Builtin::Function)
+            }
+            property => property,
+        });
     }
     Some(property)
 }
@@ -101,10 +104,7 @@ fn bound_function_fallback(
     key: &str,
 ) -> Value {
     if shadow_wrapper {
-        return function_prototype_property_for_builtin(
-            Builtin::FunctionPrototype,
-            key,
-        );
+        return function_prototype_property_for_builtin(Builtin::FunctionPrototype, key);
     }
     if let Value::Builtin(builtin) = bound.target {
         let intrinsic = match (builtin, key) {
@@ -128,10 +128,7 @@ fn bound_function_fallback(
     }
     let result = get_property(&bound.target, key);
     if matches!(result, Value::Undefined) {
-        function_prototype_property_for_builtin(
-            Builtin::FunctionPrototype,
-            key,
-        )
+        function_prototype_property_for_builtin(Builtin::FunctionPrototype, key)
     } else {
         result
     }
