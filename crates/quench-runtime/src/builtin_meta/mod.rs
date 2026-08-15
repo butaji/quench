@@ -324,8 +324,8 @@ fn constructor_length_tail(builtin: Builtin) -> Option<f64> {
         | Builtin::ReferenceError
         | Builtin::SyntaxError
         | Builtin::EvalError
-        | Builtin::URIError
-        | Builtin::AggregateError => Some(1.0),
+        | Builtin::URIError => Some(1.0),
+        Builtin::AggregateError => Some(2.0),
         Builtin::SuppressedError => Some(3.0),
         _ => None,
     }
