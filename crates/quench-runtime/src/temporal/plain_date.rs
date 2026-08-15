@@ -426,6 +426,11 @@ fn from(value: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
     if let Some(time) = text.split_once('T').map(|(_, value)| value) {
+        if time.contains('Z') {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid UTC designator",
+            ));
+        }
         for separator in ['.', ','] {
             if let Some(start) = time.find(separator) {
                 let digits = time[start + 1..]
