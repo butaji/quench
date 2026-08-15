@@ -371,6 +371,7 @@ pub enum Builtin {
     TemporalZonedDateTime,
     TemporalZonedDateTimePrototype,
     TemporalZonedDateTimeToString,
+    TemporalZonedDateTimeFrom,
     TemporalDuration,
     TemporalDurationPrototype,
     TemporalDurationFrom,
