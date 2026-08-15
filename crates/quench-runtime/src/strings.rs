@@ -426,7 +426,14 @@ pub(crate) fn code_point_at(
     };
     let position = match arguments.first() {
         None => 0.0,
-        Some(value) => crate::conversion::to_number(value)?,
+        Some(value) => {
+            let number = crate::conversion::to_number(value)?;
+            if number.is_nan() {
+                0.0
+            } else {
+                number.trunc()
+            }
+        }
     };
     if position < 0.0 || position.is_nan() || position >= units.len() as f64 {
         return Ok(Value::Undefined);
