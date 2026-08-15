@@ -1,5 +1,5 @@
 pub(crate) fn search(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::String(value)) = receiver else {
+    let Some(value) = receiver.and_then(crate::strings::lossy) else {
         return Value::Number(-1.0);
     };
     if let Some(Value::Object(pattern)) = arguments.first() {
