@@ -5,27 +5,9 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_literal_ranges(pattern)?;
     validate_flags(flags)?;
     let reg_flags: Flags = flags.into();
-    let pattern = normalize_null_escape(pattern);
-    catch_unwind(AssertUnwindSafe(|| Regex::with_flags(&pattern, reg_flags)))
+    catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
         .map_err(|_| "invalid regular expression".to_string())?
         .map_err(|e| e.to_string())
-}
-
-fn normalize_null_escape(pattern: &str) -> String {
-    let mut output = String::with_capacity(pattern.len());
-    let mut chars = pattern.chars().peekable();
-    while let Some(character) = chars.next() {
-        if character == '\\' && chars.next_if_eq(&'0').is_some() {
-            if !chars.peek().is_some_and(|next| next.is_ascii_digit()) {
-                output.push('\0');
-                continue;
-            }
-            output.push_str("\\0");
-            continue;
-        }
-        output.push(character);
-    }
-    output
 }
 
 fn validate_flags(flags: &str) -> Result<(), String> {
