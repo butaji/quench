@@ -387,14 +387,17 @@ fn data_view_instance_accessor(value: &Value, key: &str) -> Option<Result<Value,
                     "Detached DataView",
                 )));
             }
-            let value = if key == "byteLength" {
-                view.byte_length()
-            } else {
-                view.byte_offset
-            };
-            Some(Ok(Value::Number(value as f64)))
+            Some(Ok(Value::Number(data_view_length(view, key) as f64)))
         }
         _ => None,
+    }
+}
+
+fn data_view_length(view: &crate::value::DataViewData, key: &str) -> usize {
+    if key == "byteLength" {
+        view.byte_length()
+    } else {
+        view.byte_offset
     }
 }
 
