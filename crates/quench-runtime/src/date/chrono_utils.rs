@@ -92,12 +92,12 @@ fn make_date_unclipped(
     let second = second.trunc();
     let ms = ms.trunc();
     let year_of = year + (month / 12.0).floor();
-    if !year_of.is_finite() || year_of.abs() > 1_000_000.0 || day.abs() > 1_000_000_000.0 {
+    if !year_of.is_finite() {
         return f64::NAN;
     }
     let month_of = month.rem_euclid(12.0) + 1.0;
-    let first_day = days_from_civil(year_of as i64, month_of as i64, 1);
-    let day_ms = (first_day + day as i64 - 1) as f64 * MS_PER_DAY;
+    let first_day = days_from_civil(year_of, month_of, 1.0);
+    let day_ms = (first_day + day - 1.0) * MS_PER_DAY;
     let time_ms = hour * MS_PER_HOUR + minute * MS_PER_MINUTE + second * MS_PER_SECOND + ms;
     day_ms + time_ms
 }
@@ -275,13 +275,13 @@ fn fields_from_ms(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
     ))
 }
 
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = year - i64::from(month <= 2);
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let yoe = year - era * 400;
-    let month = month + if month > 2 { -3 } else { 9 };
-    let doy = (153 * month + 2) / 5 + day - 1;
-    era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468
+fn days_from_civil(year: f64, month: f64, day: f64) -> f64 {
+    let year = year - f64::from(month <= 2.0);
+    let era = (year / 400.0).floor();
+    let yoe = year - era * 400.0;
+    let month = month + if month > 2.0 { -3.0 } else { 9.0 };
+    let doy = ((153.0 * month + 2.0) / 5.0).floor() + day - 1.0;
+    era * 146_097.0 + yoe * 365.0 + (yoe / 4.0).floor() - (yoe / 100.0).floor() + doy - 719_468.0
 }
 
 fn civil_from_days(days: i64) -> (i64, i64, i64) {
