@@ -161,6 +161,13 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
+        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+            if !crate::value::is_object(options) {
+                return Err(crate::value::error::throw_type_error(
+                    "NumberFormat options must be an object",
+                ));
+            }
+        }
         if let Some(Value::Object(properties)) = options {
             if let Some((_, value)) = properties.iter().find(|(key, _)| key == "numberingSystem") {
                 if !matches!(value, Value::Undefined) {
