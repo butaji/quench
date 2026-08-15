@@ -283,6 +283,28 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
     let [_, _, _, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] =
         duration_values(properties);
     validate_duration(properties)?;
+    format_duration_values(
+        slots,
+        days,
+        hours,
+        minutes,
+        seconds,
+        milliseconds,
+        microseconds,
+        nanoseconds,
+    )
+}
+
+fn format_duration_values(
+    slots: &[(String, Value)],
+    days: i64,
+    hours: i64,
+    minutes: i64,
+    seconds: i64,
+    milliseconds: i64,
+    microseconds: i64,
+    nanoseconds: i64,
+) -> Result<String, VmError> {
     let negative = [days, hours, minutes, seconds]
         .iter()
         .any(|value| *value < 0);
@@ -290,14 +312,7 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
     let hours = hours.abs();
     let minutes = minutes.abs();
     let seconds = seconds.abs();
-    let style = slots
-        .iter()
-        .find_map(|(key, value)| (key == "style").then_some(value))
-        .and_then(|value| match value {
-            Value::String(value) => Some(value.as_str()),
-            _ => None,
-        })
-        .unwrap_or("short");
+    let style = duration_style(slots);
     if slot_value(slots, "minutes") == Some("numeric")
         && slot_value(slots, "seconds") == Some("numeric")
     {
@@ -325,6 +340,17 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
         microseconds,
         nanoseconds,
     ))
+}
+
+fn duration_style(slots: &[(String, Value)]) -> &str {
+    slots
+        .iter()
+        .find_map(|(key, value)| (key == "style").then_some(value))
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.as_str()),
+            _ => None,
+        })
+        .unwrap_or("short")
 }
 
 fn duration_values(properties: &[(String, Value)]) -> [i64; 10] {

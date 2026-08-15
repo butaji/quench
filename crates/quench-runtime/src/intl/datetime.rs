@@ -297,6 +297,14 @@ pub(crate) fn prototype_method(
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
     let slots = receiver_slots(receiver)?;
+    prototype_result(builtin, arguments, &slots)
+}
+
+fn prototype_result(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+    slots: &[(String, Value)],
+) -> Result<Value, VmError> {
     match builtin {
         crate::ops::Builtin::IntlDateTimeFormatFormat => {
             let input = arguments.first().unwrap_or(&Value::Undefined);
@@ -330,18 +338,18 @@ pub(crate) fn prototype_method(
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts => {
             let (start, end) = range_values(arguments)?;
-            if start == end {
-                return Ok(make_array(vec![literal_part(&start)]));
-            }
-            Ok(make_array(vec![
-                literal_part(&start),
-                literal_part(" – "),
-                literal_part(&end),
-            ]))
+            Ok(make_array(range_parts(&start, &end)))
         }
         crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots)),
         _ => Err(runtime_error("TypeError: method not found")),
     }
+}
+
+fn range_parts(start: &str, end: &str) -> Vec<Value> {
+    if start == end {
+        return vec![literal_part(start)];
+    }
+    vec![literal_part(start), literal_part(" – "), literal_part(end)]
 }
 
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
