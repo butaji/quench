@@ -375,19 +375,12 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
         Builtin::Error => ("Error", Builtin::Error, Builtin::ErrorPrototype),
         _ => ("Error", Builtin::Error, Builtin::ErrorPrototype),
     };
+    let constructor_builtin = constructor;
+    let constructor = crate::vm::realm_intrinsic(constructor_builtin);
+    let prototype_builtin = crate::builtin_meta::instance_prototype(constructor_builtin)
+        .unwrap_or(prototype);
+    let prototype = crate::vm::realm_intrinsic(prototype_builtin);
     let message = arguments.first().map_or_else(String::new, value_to_string);
-    let constructor =
-        if crate::vm::current_context_or_default().realm() != crate::ops::RealmId::ROOT {
-            crate::vm::realm_intrinsic(constructor)
-        } else {
-            Value::Builtin(constructor)
-        };
-    let prototype = if crate::vm::current_context_or_default().realm() != crate::ops::RealmId::ROOT
-    {
-        crate::vm::realm_intrinsic(prototype)
-    } else {
-        Value::Builtin(prototype)
-    };
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
         ("message".to_string(), Value::String(message)),
