@@ -54,12 +54,29 @@ fn validate(fields: &[f64]) -> Result<(), VmError> {
     {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
-    if chrono::NaiveDate::from_ymd_opt(fields[0] as i32, fields[1] as u32, fields[2] as u32)
-        .is_none()
+    if fields[0].abs() < 262_000.0
+        && chrono::NaiveDate::from_ymd_opt(fields[0] as i32, fields[1] as u32, fields[2] as u32)
+            .is_none()
     {
         return Err(crate::value::error::throw_range_error("Invalid date-time"));
     }
+    if outside_temporal_range(fields) {
+        return Err(crate::value::error::throw_range_error("Invalid date-time"));
+    }
     Ok(())
+}
+
+fn outside_temporal_range(fields: &[f64]) -> bool {
+    let year = fields[0] as i32;
+    let date_before_min = year < -271_821
+        || (year == -271_821 && (fields[1] < 4.0 || (fields[1] == 4.0 && fields[2] < 19.0)));
+    let at_min_midnight = year == -271_821
+        && fields[1] == 4.0
+        && fields[2] == 19.0
+        && fields[3..].iter().all(|value| *value == 0.0);
+    let after_max = year > 275_760
+        || (year == 275_760 && (fields[1] > 9.0 || (fields[1] == 9.0 && fields[2] > 13.0)));
+    date_before_min || at_min_midnight || after_max
 }
 
 pub(crate) fn execute(
