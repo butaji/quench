@@ -19,7 +19,7 @@ pub(crate) fn function_builtin(
         }
         crate::ops::Builtin::ArrayFill => Ok(crate::builtins::array_fill(receiver, arguments)),
         crate::ops::Builtin::ArrayCopyWithin => {
-            Ok(crate::builtins::array_copy_within(receiver, arguments))
+            crate::builtins::array_copy_within(receiver, arguments)
         }
         crate::ops::Builtin::ArrayFindLast => crate::builtins::array_find_last(receiver, arguments),
         crate::ops::Builtin::ArrayFindLastIndex => {
