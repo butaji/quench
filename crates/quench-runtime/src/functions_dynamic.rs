@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use oxc::{allocator::Allocator, parser::Parser, span::SourceType};
+use oxc::{allocator::Allocator, ast::visit::Visit, parser::Parser, span::SourceType};
 
 use crate::{execute::VmError, facts::ProgramDb, ops::FunctionKind, value::Value};
 
@@ -43,7 +43,7 @@ pub(crate) fn construct_builtin(
 
 fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Value, VmError> {
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, SourceType::default()).parse();
+    let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
     if parsed.panicked || !parsed.errors.is_empty() {
         return Err(syntax_error("Invalid function source"));
     }
@@ -217,10 +217,10 @@ fn function_source(
 
 fn mark_dynamic(value: &Value) {
     if let Value::Function(function) = value {
-        function
-            .properties
-            .borrow_mut()
-            .push(("\0dynamic_function".to_string(), Value::Boolean(true)));
+        function.properties.borrow_mut().extend([
+            ("\0dynamic_function".to_string(), Value::Boolean(true)),
+            ("name".to_string(), Value::String("anonymous".to_string())),
+        ]);
     }
 }
 

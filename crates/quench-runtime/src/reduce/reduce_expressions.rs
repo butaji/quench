@@ -85,21 +85,7 @@ fn reduce_static_if(
     let Some(selected) = selected else {
         return Ok(None);
     };
-    match selected {
-        Statement::EmptyStatement(_) => Ok(None),
-        Statement::BlockStatement(_) => {
-            crate::reduce::reduce_statement(selected, ops, facts, next_register, next_slot, locals)
-        }
-        Statement::ExpressionStatement(expression) => {
-            reduce_expression_statement(&expression.expression, ops, facts, next_register, locals)
-                .map(Some)
-        }
-        Statement::VariableDeclaration(declaration) => {
-            reduce_declaration(declaration, ops, facts, next_register, next_slot, locals)?;
-            Ok(None)
-        }
-        _ => Err(vec!["Unsupported conditional statement".to_string()]),
-    }
+    crate::reduce::reduce_statement(selected, ops, facts, next_register, next_slot, locals)
 }
 pub fn reduce_expression_statement(
     expression: &Expression<'_>,

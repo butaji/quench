@@ -69,6 +69,9 @@ fn prototype_for_value(value: &Value) -> Value {
             | Builtin::TypeErrorPrototype,
         ) => Value::Builtin(Builtin::ErrorPrototype),
         Value::Builtin(builtin @ (Builtin::ArrayIteratorPrototype | Builtin::RegExpStringIteratorPrototype | Builtin::SetIteratorPrototype | Builtin::MapIteratorPrototype | Builtin::IteratorPrototype)) => iterator_prototype(*builtin),
+        Value::Function(function) if function.kind == crate::ops::FunctionKind::Generator => {
+            Value::Builtin(Builtin::GeneratorFunctionPrototype)
+        }
         Value::Function(function) => {
             internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
         }
@@ -344,7 +347,17 @@ fn add_group_value(
 pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::NumberPrototype
+        Builtin::ObjectPrototype
+            | Builtin::ArrayPrototype
+            | Builtin::NumberPrototype
+            | Builtin::RegExpPrototype
+            | Builtin::DatePrototype
+            | Builtin::IteratorPrototype
+            | Builtin::ArrayIteratorPrototype
+            | Builtin::SetIteratorPrototype
+            | Builtin::MapIteratorPrototype
+            | Builtin::RegExpStringIteratorPrototype
+            | Builtin::PromisePrototype
             | Builtin::BooleanPrototype
             | Builtin::StringPrototype
             | Builtin::MapPrototype

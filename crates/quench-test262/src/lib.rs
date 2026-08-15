@@ -74,7 +74,7 @@ impl TestMetadata {
         let frontmatter = extract_frontmatter(source)?;
         let mut metadata = Self::default();
         let mut in_negative = false;
-        for line in frontmatter.lines() {
+        for line in frontmatter.split(['\r', '\n']) {
             let trimmed = line.trim();
             if trimmed.starts_with("flags:") {
                 let flags = list_after_colon(trimmed);

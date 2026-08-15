@@ -228,6 +228,14 @@ fn is_runtime_prototype(builtin: Builtin) -> bool {
             | Builtin::SymbolPrototype
             | Builtin::StringPrototype
             | Builtin::BigIntPrototype
+            | Builtin::ErrorPrototype
+            | Builtin::EvalErrorPrototype
+            | Builtin::RangeErrorPrototype
+            | Builtin::ReferenceErrorPrototype
+            | Builtin::SyntaxErrorPrototype
+            | Builtin::TypeErrorPrototype
+            | Builtin::URIErrorPrototype
+            | Builtin::AggregateErrorPrototype
     )
 }
 
