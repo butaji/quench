@@ -64,6 +64,18 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
 
 fn own_property_names_standard(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::ShadowRealm
+        | Builtin::ShadowRealmPrototype
+        | Builtin::BigInt
+        | Builtin::BigIntPrototype
+        | Builtin::Error
+        | Builtin::ThrowTypeError => own_property_names_standard_core(builtin),
+        _ => own_property_names_standard_tail(builtin),
+    }
+}
+
+fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str] {
+    match builtin {
         Builtin::ShadowRealm => &["length", "name", "prototype"],
         Builtin::ShadowRealmPrototype => &[
             "constructor",
@@ -75,6 +87,12 @@ fn own_property_names_standard(builtin: Builtin) -> &'static [&'static str] {
         Builtin::BigIntPrototype => &["constructor", "toString", "valueOf", "Symbol.toStringTag"],
         Builtin::Error => &["length", "name", "prototype", "isError"],
         Builtin::ThrowTypeError => &["length", "name"],
+        _ => &[],
+    }
+}
+
+fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str] {
+    match builtin {
         Builtin::SharedArrayBufferPrototype => &[
             "constructor",
             "byteLength",
