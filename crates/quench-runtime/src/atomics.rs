@@ -6,6 +6,30 @@ pub(crate) fn is_lock_free(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Boolean(matches!(size, 1.0 | 2.0 | 4.0)))
 }
 
+pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Int32Array(view)) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics.notify requires an Int32Array",
+        ));
+    };
+    if !view.buffer.shared {
+        return Err(crate::value::error::throw_type_error(
+            "Atomics.notify requires a shared buffer",
+        ));
+    }
+    let index = atomic_index(arguments.get(1))?;
+    if view.get(index).is_none() {
+        return Err(crate::value::error::throw_range_error(
+            "Atomics.notify index is out of range",
+        ));
+    }
+    let _count = arguments
+        .get(2)
+        .map(crate::conversion::to_number)
+        .transpose()?;
+    Ok(Value::Number(0.0))
+}
+
 pub(crate) fn execute(
     builtin: Builtin,
     _receiver: Option<&Value>,
