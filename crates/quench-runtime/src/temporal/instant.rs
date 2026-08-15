@@ -1,4 +1,5 @@
 use crate::{execute::VmError, value::Value};
+use chrono::Timelike;
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let epoch = arguments
@@ -24,6 +25,9 @@ pub(crate) fn execute(
     match builtin {
         crate::ops::Builtin::TemporalInstantFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalInstantEpochNanosecondsGetter => Some(get_epoch(receiver)),
+        crate::ops::Builtin::TemporalInstantToString
+        | crate::ops::Builtin::TemporalInstantToJSON => Some(to_string(receiver)),
+        crate::ops::Builtin::TemporalInstantEquals => Some(equals(receiver, arguments.first())),
         _ => None,
     }
 }
@@ -47,6 +51,37 @@ fn get_epoch(receiver: Option<&Value>) -> Result<Value, VmError> {
     let receiver =
         receiver.ok_or_else(|| crate::value::error::throw_type_error("Not an Instant"))?;
     crate::execute::get_property_result(receiver, "epochNanoseconds")
+}
+
+fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::BigInt(epoch) = get_epoch(receiver)? else {
+        return Err(crate::value::error::throw_type_error("Invalid instant"));
+    };
+    let epoch = epoch
+        .parse::<i128>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid instant"))?;
+    let seconds = epoch.div_euclid(1_000_000_000) as i64;
+    let nanos = epoch.rem_euclid(1_000_000_000) as u32;
+    let date = chrono::DateTime::from_timestamp(seconds, nanos)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid instant"))?;
+    let fraction = if nanos == 0 {
+        String::new()
+    } else {
+        format!(".{nanos:09}").trim_end_matches('0').to_string()
+    };
+    Ok(Value::String(format!(
+        "{}T{:02}:{:02}:{:02}{fraction}Z",
+        date.format("%Y-%m-%d"),
+        date.hour(),
+        date.minute(),
+        date.second()
+    )))
+}
+
+fn equals(receiver: Option<&Value>, other: Option<&Value>) -> Result<Value, VmError> {
+    let left = get_epoch(receiver)?;
+    let right = get_epoch(other)?;
+    Ok(Value::Boolean(left == right))
 }
 
 fn epoch_nanos(text: &str) -> Result<i128, VmError> {
