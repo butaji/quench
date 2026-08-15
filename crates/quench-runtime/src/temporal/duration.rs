@@ -73,7 +73,8 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
         crate::ops::Builtin::TemporalDurationAbs => Some(absolute(receiver)),
         crate::ops::Builtin::TemporalDurationToJSON
-        | crate::ops::Builtin::TemporalDurationToString => Some(to_json(receiver)),
+        | crate::ops::Builtin::TemporalDurationToString
+        | crate::ops::Builtin::TemporalDurationToLocaleString => Some(to_json(receiver)),
         crate::ops::Builtin::TemporalDurationAdd => Some(combine(receiver, arguments.first(), 1.0)),
         crate::ops::Builtin::TemporalDurationSubtract => {
             Some(combine(receiver, arguments.first(), -1.0))
