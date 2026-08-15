@@ -37,6 +37,7 @@ pub(crate) struct NumberOptions {
 }
 
 pub(crate) struct RawOptions {
+    locale_matcher: String,
     numbering_system: Option<String>,
     style: String,
     currency: Option<String>,
@@ -91,6 +92,7 @@ const OPTION_READ_ORDER: [&str; 21] = [
 impl RawOptions {
     fn from_value(options: Option<&Value>) -> Result<Self, VmError> {
         let mut raw = RawOptions {
+            locale_matcher: "best fit".to_string(),
             numbering_system: None,
             style: "decimal".to_string(),
             currency: None,
@@ -124,6 +126,7 @@ impl RawOptions {
                     continue;
                 }
                 match key {
+                    "localeMatcher" => raw.locale_matcher = crate::conversion::to_string(&value)?,
                     "numberingSystem" => {
                         raw.numbering_system = Some(crate::conversion::to_string(&value)?)
                     }
@@ -570,6 +573,11 @@ pub(crate) fn prototype_method(
 }
 
 fn validate_basic_options(raw: &RawOptions) -> Result<(), VmError> {
+    if !matches!(raw.locale_matcher.as_str(), "lookup" | "best fit") {
+        return Err(crate::value::error::throw_range_error(
+            "invalid localeMatcher",
+        ));
+    }
     if !matches!(
         raw.style.as_str(),
         "decimal" | "percent" | "currency" | "unit"
@@ -613,6 +621,14 @@ fn validate_basic_options(raw: &RawOptions) -> Result<(), VmError> {
 }
 
 fn validate_rounding_options(raw: &RawOptions) -> Result<(), VmError> {
+    if !matches!(
+        raw.rounding_priority.as_str(),
+        "auto" | "morePrecision" | "lessPrecision"
+    ) {
+        return Err(crate::value::error::throw_range_error(
+            "invalid roundingPriority",
+        ));
+    }
     const MODES: [&str; 9] = [
         "ceil",
         "floor",
