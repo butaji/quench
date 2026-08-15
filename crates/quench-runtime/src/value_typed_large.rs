@@ -315,7 +315,7 @@ impl Uint8ArrayData {
     }
 
     pub fn set(&self, index: usize, value: u8) -> bool {
-        if index >= self.logical_len() || self.is_out_of_bounds() {
+        if self.buffer.immutable || index >= self.logical_len() || self.is_out_of_bounds() {
             return false;
         }
         let offset = self.byte_offset + index;

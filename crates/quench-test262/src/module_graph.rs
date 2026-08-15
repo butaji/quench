@@ -11,6 +11,7 @@ pub struct ModuleUnit {
     pub id: ModuleId,
     pub path: PathBuf,
     pub source: String,
+    pub bytes: Vec<u8>,
     pub kind: ModuleKind,
 }
 
@@ -19,6 +20,7 @@ pub enum ModuleKind {
     JavaScript,
     Json,
     Text,
+    Bytes,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -60,11 +62,16 @@ impl ModuleGraph {
                 id,
                 path,
                 source,
+                bytes: Vec::new(),
                 kind: ModuleKind::Text,
             });
             return id;
         }
         self.add_unit(path, source, ModuleKind::Text, false)
+    }
+
+    pub fn add_bytes_dependency(&mut self, path: PathBuf, bytes: Vec<u8>) -> ModuleId {
+        self.add_unit_with_bytes(path, String::new(), bytes, ModuleKind::Bytes, false)
     }
 
     pub fn entry(&self) -> Option<ModuleId> {
@@ -126,7 +133,7 @@ impl ModuleGraph {
         let unit = self
             .unit(from)
             .ok_or_else(|| "module unit is unknown".to_string())?;
-        if unit.kind == ModuleKind::Json {
+        if matches!(unit.kind, ModuleKind::Json | ModuleKind::Bytes) {
             return Ok(());
         }
         let source = unit.source.clone();
@@ -194,6 +201,34 @@ impl ModuleGraph {
             id,
             path,
             source,
+            bytes: Vec::new(),
+            kind,
+        });
+        if entry {
+            self.entry = Some(id);
+        }
+        id
+    }
+
+    fn add_unit_with_bytes(
+        &mut self,
+        path: PathBuf,
+        source: String,
+        bytes: Vec<u8>,
+        kind: ModuleKind,
+        entry: bool,
+    ) -> ModuleId {
+        let path = normalize_module_path(&path);
+        if let Some(id) = self.paths.get(&path).copied() {
+            return id;
+        }
+        let id = ModuleId(self.units.len() as u32);
+        self.paths.insert(path.clone(), id);
+        self.units.push(ModuleUnit {
+            id,
+            path,
+            source,
+            bytes,
             kind,
         });
         if entry {
