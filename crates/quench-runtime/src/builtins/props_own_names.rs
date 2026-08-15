@@ -11,6 +11,14 @@ pub(crate) fn own_property_names(builtin: Builtin) -> &'static [&'static str] {
             "seconds", "milliseconds", "microseconds", "nanoseconds", "sign", "blank",
             "toString", "toJSON", "valueOf",
         ],
+        Builtin::TemporalPlainDate => &["length", "name", "prototype", "from"],
+        Builtin::TemporalPlainDatePrototype => &[
+            "constructor", "calendarId", "era", "eraYear", "year", "month", "monthCode",
+            "day", "dayOfWeek", "dayOfYear", "weekOfYear", "daysInWeek", "daysInMonth",
+            "daysInYear", "monthsInYear", "inLeapYear", "with", "withCalendar", "add",
+            "subtract", "until", "since", "equals", "toString", "toJSON", "toLocaleString",
+            "valueOf",
+        ],
         Builtin::BigIntPrototype => {
             &["constructor", "toString", "valueOf", "Symbol.toStringTag"]
         }
