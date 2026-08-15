@@ -255,6 +255,8 @@ fn construct_builtin(
             crate::finalization_registry::construct(arguments)
         }
         crate::ops::Builtin::RegExp => construct_regexp(arguments),
+        crate::ops::Builtin::TemporalDuration => crate::temporal::duration::construct(arguments),
+        crate::ops::Builtin::TemporalPlainDate => crate::temporal::plain_date::construct(arguments),
         _ if is_intl_constructor(builtin) => crate::intl::execute(builtin, arguments, None)
             .unwrap_or_else(|| Ok(crate::builtins::object(arguments))),
         _ => Err(crate::vm::not_callable()),
