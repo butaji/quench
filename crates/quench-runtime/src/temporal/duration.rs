@@ -3,15 +3,7 @@ use crate::{execute::VmError, value::Value};
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let values = (0..10)
         .map(|index| number(arguments.get(index)))
-        .collect::<Vec<_>>();
-    if values
-        .iter()
-        .any(|value| !value.is_finite() || value.fract() != 0.0)
-    {
-        return Err(crate::value::error::throw_range_error(
-            "Duration fields must be integral",
-        ));
-    }
+        .collect::<Result<Vec<_>, _>>()?;
     let sign = values
         .iter()
         .find(|value| **value != 0.0)
@@ -172,11 +164,16 @@ fn number_property(value: &Value, name: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
-fn number(value: Option<&Value>) -> f64 {
-    match value {
-        Some(Value::Number(value)) if *value != 0.0 => *value,
-        Some(Value::Number(_)) => 0.0,
-        Some(Value::Undefined) | None => 0.0,
-        _ => f64::NAN,
+fn number(value: Option<&Value>) -> Result<f64, VmError> {
+    let value = match value {
+        Some(Value::Number(value)) => Ok(*value),
+        Some(Value::Undefined) | None => Ok(0.0),
+        Some(value) => crate::conversion::to_number(value),
+    }?;
+    if !value.is_finite() || value.fract() != 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "Duration fields must be integral",
+        ));
     }
+    Ok(value)
 }
