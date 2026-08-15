@@ -477,13 +477,6 @@ fn relative_index(value: Option<&Value>, length: isize) -> isize {
         integer.min(length)
     }
 }
-fn strict_equal(left: &Value, right: &Value) -> bool {
-    crate::equality::strict_equal(left, right)
-}
-fn same_value_zero(left: &Value, right: &Value) -> bool {
-    crate::builtins::same_value_zero(left, right)
-}
-
 include!("arrays_concat.rs");
 include!("arrays_slice.rs");
 include!("arrays_index_of.rs");
