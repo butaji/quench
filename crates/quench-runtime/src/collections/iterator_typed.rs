@@ -53,6 +53,7 @@ macro_rules! length {
                 Err(crate::collections::iterator::not_iterable())
             } else {
                 Ok($data.logical_len())
+            }
             })()
         };
     }
