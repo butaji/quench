@@ -90,6 +90,15 @@ fn create_realm_value() -> Value {
         return Value::Undefined;
     }
     let global = realm::global(realm).unwrap_or(Value::Undefined);
+    let global = match &global {
+        Value::Object(object) => {
+            let alias =
+                crate::value::ObjectAliasValue(Rc::new(RefCell::new(Rc::downgrade(object))));
+            realm::register_global_alias(realm, &alias);
+            Value::ObjectAlias(alias)
+        }
+        _ => global,
+    };
     Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("global".to_string(), global),
         ("\0realm".to_string(), Value::HostCapability(token)),
