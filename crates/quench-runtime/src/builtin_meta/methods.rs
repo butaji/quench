@@ -8,186 +8,116 @@ use super::{
 };
 
 pub fn function_name(builtin: Builtin) -> Option<&'static str> {
-    if let Some(v) = dataview::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = array::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = date::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = disposable::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = finalization_registry::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = function::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = regexp::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = object::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = number::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = error::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = bigint::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = symbol::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = intl::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = temporal::fn_name(builtin) {
-        return Some(v);
-    }
-    if builtin == Builtin::ShadowRealmEvaluate {
-        return Some("ShadowRealm.prototype.evaluate");
-    }
-    if builtin == Builtin::ShadowRealmImportValue {
-        return Some("ShadowRealm.prototype.importValue");
-    }
-    if let Some(v) = reflect::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = math::fn_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = collections::fn_name(builtin) {
-        return Some(v);
-    }
-    json::fn_name(builtin)
-        .or_else(|| promise::fn_name(builtin).or_else(|| string::fn_name(builtin)))
+    lookup(builtin, &NAME_PROVIDERS[..14])
+        .or_else(|| shadow_realm_name(builtin))
+        .or_else(|| lookup(builtin, &NAME_PROVIDERS[14..]))
 }
 
 pub fn function_length(builtin: Builtin) -> Option<f64> {
-    if let Some(v) = dataview::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = array::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = date::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = disposable::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = finalization_registry::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = function::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = regexp::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = object::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = number::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = error::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = bigint::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = symbol::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = intl::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = temporal::fn_len(builtin) {
-        return Some(v);
-    }
-    if builtin == Builtin::ShadowRealmEvaluate {
-        return Some(1.0);
-    }
-    if builtin == Builtin::ShadowRealmImportValue {
-        return Some(2.0);
-    }
-    if let Some(v) = reflect::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = math::fn_len(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = collections::fn_len(builtin) {
-        return Some(v);
-    }
-    json::fn_len(builtin).or_else(|| promise::fn_len(builtin).or_else(|| string::fn_len(builtin)))
+    lookup(builtin, &LENGTH_PROVIDERS[..14])
+        .or_else(|| shadow_realm_length(builtin))
+        .or_else(|| lookup(builtin, &LENGTH_PROVIDERS[14..]))
 }
 
 pub fn short_name(builtin: Builtin) -> Option<&'static str> {
-    if let Some(v) = dataview::short_name(builtin) {
-        return Some(v);
+    lookup(builtin, &SHORT_NAME_PROVIDERS[..14])
+        .or_else(|| shadow_realm_short_name(builtin))
+        .or_else(|| lookup(builtin, &SHORT_NAME_PROVIDERS[14..]))
+}
+
+const NAME_PROVIDERS: &[fn(Builtin) -> Option<&'static str>] = &[
+    dataview::fn_name,
+    array::fn_name,
+    date::fn_name,
+    disposable::fn_name,
+    finalization_registry::fn_name,
+    function::fn_name,
+    regexp::fn_name,
+    object::fn_name,
+    number::fn_name,
+    error::fn_name,
+    bigint::fn_name,
+    symbol::fn_name,
+    intl::fn_name,
+    temporal::fn_name,
+    reflect::fn_name,
+    math::fn_name,
+    collections::fn_name,
+    json::fn_name,
+    promise::fn_name,
+    string::fn_name,
+];
+
+const LENGTH_PROVIDERS: &[fn(Builtin) -> Option<f64>] = &[
+    dataview::fn_len,
+    array::fn_len,
+    date::fn_len,
+    disposable::fn_len,
+    finalization_registry::fn_len,
+    function::fn_len,
+    regexp::fn_len,
+    object::fn_len,
+    number::fn_len,
+    error::fn_len,
+    bigint::fn_len,
+    symbol::fn_len,
+    intl::fn_len,
+    temporal::fn_len,
+    reflect::fn_len,
+    math::fn_len,
+    collections::fn_len,
+    json::fn_len,
+    promise::fn_len,
+    string::fn_len,
+];
+
+const SHORT_NAME_PROVIDERS: &[fn(Builtin) -> Option<&'static str>] = &[
+    dataview::short_name,
+    array::short_name,
+    date::short_name,
+    disposable::short_name,
+    finalization_registry::short_name,
+    function::short_name,
+    regexp::short_name,
+    object::short_name,
+    number::short_name,
+    error::short_name,
+    bigint::short_name,
+    symbol::short_name,
+    intl::short_name,
+    temporal::short_name,
+    reflect::short_name,
+    math::short_name,
+    collections::short_name,
+    json::short_name,
+    promise::short_name,
+    string::short_name,
+];
+
+fn lookup<T: Copy>(builtin: Builtin, providers: &[fn(Builtin) -> Option<T>]) -> Option<T> {
+    providers.iter().find_map(|provider| provider(builtin))
+}
+
+fn shadow_realm_name(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
+        Builtin::ShadowRealmEvaluate => Some("ShadowRealm.prototype.evaluate"),
+        Builtin::ShadowRealmImportValue => Some("ShadowRealm.prototype.importValue"),
+        _ => None,
     }
-    if let Some(v) = array::short_name(builtin) {
-        return Some(v);
+}
+
+fn shadow_realm_length(builtin: Builtin) -> Option<f64> {
+    match builtin {
+        Builtin::ShadowRealmEvaluate => Some(1.0),
+        Builtin::ShadowRealmImportValue => Some(2.0),
+        _ => None,
     }
-    if let Some(v) = date::short_name(builtin) {
-        return Some(v);
+}
+
+fn shadow_realm_short_name(builtin: Builtin) -> Option<&'static str> {
+    match builtin {
+        Builtin::ShadowRealmEvaluate => Some("evaluate"),
+        Builtin::ShadowRealmImportValue => Some("importValue"),
+        _ => None,
     }
-    if let Some(v) = disposable::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = finalization_registry::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = function::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = regexp::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = object::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = number::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = error::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = bigint::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = symbol::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = intl::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = temporal::short_name(builtin) {
-        return Some(v);
-    }
-    if builtin == Builtin::ShadowRealmEvaluate {
-        return Some("evaluate");
-    }
-    if builtin == Builtin::ShadowRealmImportValue {
-        return Some("importValue");
-    }
-    if let Some(v) = reflect::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = math::short_name(builtin) {
-        return Some(v);
-    }
-    if let Some(v) = collections::short_name(builtin) {
-        return Some(v);
-    }
-    json::short_name(builtin)
-        .or_else(|| promise::short_name(builtin).or_else(|| string::short_name(builtin)))
 }
