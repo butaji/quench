@@ -429,29 +429,22 @@ pub(super) fn native_step(
     if *done {
         return Ok(None);
     }
-    let value = if let Some(value) = typed_receiver {
-        crate::collections::iterator_typed::typed_values(value.clone())?
-            .get(*index)
-            .cloned()
-    } else if let Some(data) = receiver {
-        array_receiver_step(data, *index)?
-    } else {
-        values.get(*index).cloned()
-    };
+    let value = typed_receiver
+        .map(|value| {
+            crate::collections::iterator_typed::typed_values(value.clone())
+                .map(|values| values.get(*index).cloned())
+        })
+        .transpose()?
+        .flatten()
+        .or_else(|| receiver.map(|data| array_receiver_step(data, *index)))
+        .or_else(|| values.get(*index).cloned());
     *index = index.saturating_add(1);
     *done = value.is_none();
     Ok(value)
 }
 
-fn array_receiver_step(
-    data: &Rc<crate::value::ArrayData>,
-    index: usize,
-) -> Result<Option<Value>, crate::execute::VmError> {
-    if index >= data.logical_len() {
-        return Ok(None);
-    }
-    let array = Value::Array(Rc::clone(data));
-    crate::execute::get_property_result(&array, &index.to_string()).map(Some)
+fn array_receiver_step(data: &Rc<crate::value::ArrayData>, index: usize) -> Option<Value> {
+    (index < data.logical_len()).then(|| data.get_index(index).unwrap_or(Value::Undefined))
 }
 pub(super) fn mark_done(data: &IteratorData) {
     match &mut *data.state.borrow_mut() {
