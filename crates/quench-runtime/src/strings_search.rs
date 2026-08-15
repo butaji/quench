@@ -136,7 +136,10 @@ fn rfind_units(units: &[u16], pattern: &[u16], max_start: usize) -> Option<usize
     if pattern.is_empty() {
         return Some(max_start.min(units.len()));
     }
-    (0..=max_start.min(units.len().saturating_sub(pattern.len())))
+    if pattern.len() > units.len() {
+        return None;
+    }
+    (0..=max_start.min(units.len() - pattern.len()))
         .rev()
         .find(|index| units[*index..].starts_with(pattern))
 }
