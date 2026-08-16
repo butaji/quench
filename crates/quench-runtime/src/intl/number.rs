@@ -118,6 +118,17 @@ impl RawOptions {
                     } else {
                         to_string_value(&value)
                     };
+                    if matches!(*key, "minimumFractionDigits" | "maximumFractionDigits") {
+                        let digits = text.parse::<f64>().unwrap_or(f64::NAN);
+                        if !digits.is_finite()
+                            || digits.fract() != 0.0
+                            || !(0.0..=100.0).contains(&digits)
+                        {
+                            return Err(crate::value::error::throw_range_error(
+                                "fraction digits out of range",
+                            ));
+                        }
+                    }
                     if *key == "numberingSystem" {
                         let _ = super::locale::calendar_option(&text)?;
                     }
