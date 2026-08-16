@@ -82,7 +82,13 @@ fn is_util_resolver(id: u16) -> bool {
                 | CapabilityName::CryptoHashEnd
                 | CapabilityName::CryptoHashUpdate
                 | CapabilityName::CryptoHashDigest
+                | CapabilityName::DgramDrainCallbacks
         )
+}
+
+fn is_util_promisified(id: u16) -> bool {
+    (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilDeprecatedFirst).contains(&id)
+        && !matches!(id, CapabilityName::ProcessOn | CapabilityName::ProcessEmit)
 }
 
 include!("js_runtime_host_impl.rs");
