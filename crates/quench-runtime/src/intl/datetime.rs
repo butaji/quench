@@ -162,10 +162,10 @@ impl DateTimeOptions {
         }
         if key == "fractionalSecondDigits" {
             let digits = conversion::to_number(value)?;
-            if !digits.is_finite() || !(1.0..=3.0).contains(&digits) || digits.fract() != 0.0 {
+            if !digits.is_finite() || !(1.0..=3.0).contains(&digits) {
                 return Err(runtime_error("RangeError: invalid fractionalSecondDigits"));
             }
-            self.fractional_second_digits = Some(digits as u32);
+            self.fractional_second_digits = Some(digits.floor() as u32);
             return Ok(());
         }
         let text = conversion::to_string(value)?;
