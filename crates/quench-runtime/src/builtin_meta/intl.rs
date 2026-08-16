@@ -192,7 +192,7 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleGetTimeZones => Some("getTimeZones"),
         Builtin::IntlLocaleGetTextInfo => Some("getTextInfo"),
         Builtin::IntlLocaleGetWeekInfo => Some("getWeekInfo"),
-        Builtin::IntlLocaleBaseNameGetter => Some("baseName"),
+        Builtin::IntlLocaleBaseNameGetter => Some("get baseName"),
         Builtin::IntlLocaleCalendarGetter => Some("calendar"),
         Builtin::IntlLocaleCaseFirstGetter => Some("caseFirst"),
         Builtin::IntlLocaleCollationGetter => Some("collation"),
