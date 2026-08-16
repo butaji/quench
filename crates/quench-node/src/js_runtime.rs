@@ -267,6 +267,10 @@ impl CapabilityName {
     const FsAccessAsync: u16 = 1516;
     const FsExistsSync: u16 = 1517;
     const ChildExecFile: u16 = 1600;
+    const ChildSpawn: u16 = 2194;
+    const ChildSpawnOn: u16 = 2195;
+    const ChildSpawnSync: u16 = 2196;
+    const ChildStdoutToString: u16 = 2197;
     const ChildFork: u16 = 1601;
     const ChildEmit: u16 = 1602;
     const ChildSend: u16 = 1603;
@@ -599,6 +603,64 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsAccessAsync) => fs_access_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsExistsSync) => fs_access(arguments),
             HostCapabilityKind::Custom(CapabilityName::ChildExecFile) => child_exec_file(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ChildSpawn) => {
+                let command = arguments.first().map(safe_value_string).unwrap_or_default();
+                let args = arguments
+                    .get(1)
+                    .and_then(|value| array_values(value).ok())
+                    .unwrap_or_default();
+                Ok(quench_runtime::host_api::object(vec![
+                    ("pid".into(), Value::Undefined),
+                    (
+                        "on".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::ChildSpawnOn,
+                        )),
+                    ),
+                    ("\0childCommand".into(), Value::String(command.into())),
+                    ("\0childArgs".into(), quench_runtime::host_api::array(args)),
+                ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::ChildSpawnOn) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                if matches!(arguments.first(), Some(Value::String(event)) if event == "error") {
+                    let callback = arguments.get(1).ok_or(VmError::NotCallable)?;
+                    let command =
+                        quench_runtime::execute::get_property_result(receiver, "\0childCommand")
+                            .unwrap_or(Value::String("".into()));
+                    let args =
+                        quench_runtime::execute::get_property_result(receiver, "\0childArgs")
+                            .unwrap_or_else(|_| quench_runtime::host_api::array(vec![]));
+                    let error = quench_runtime::host_api::object(vec![
+                        ("code".into(), Value::String("ENOENT".into())),
+                        (
+                            "syscall".into(),
+                            Value::String(format!("spawn {}", safe_value_string(&command)).into()),
+                        ),
+                        ("spawnargs".into(), args),
+                    ]);
+                    quench_runtime::execute::call(callback, &Value::Undefined, &[error])?;
+                }
+                Ok(receiver.clone())
+            }
+            HostCapabilityKind::Custom(CapabilityName::ChildSpawnSync) => {
+                Ok(quench_runtime::host_api::object(vec![
+                    ("status".into(), Value::Number(0.0)),
+                    (
+                        "stdout".into(),
+                        quench_runtime::host_api::object(vec![(
+                            "toString".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::ChildStdoutToString,
+                            )),
+                        )]),
+                    ),
+                    ("stderr".into(), quench_runtime::host_api::bytes(&[])),
+                ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::ChildStdoutToString) => Ok(Value::String(
+                format!("{}\n", std::env::args().next().unwrap_or_default()).into(),
+            )),
             HostCapabilityKind::Custom(CapabilityName::ChildFork) => child_fork(arguments),
             HostCapabilityKind::Custom(CapabilityName::ChildEmit) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::ChildSend) => Err(VmError::EvalError(
@@ -4988,6 +5050,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "execFile".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::ChildExecFile)),
+                ),
+                (
+                    "spawn".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::ChildSpawn)),
+                ),
+                (
+                    "spawnSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::ChildSpawnSync)),
                 ),
                 (
                     "fork".into(),
