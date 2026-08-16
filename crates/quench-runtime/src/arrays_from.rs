@@ -36,8 +36,8 @@ fn from_live_array(
     mapper: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let mut result = construct_result(receiver, 0, true)?;
     let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
+    let mut values = Vec::new();
     let mut index = 0;
     loop {
         let mut current = source.clone();
@@ -50,12 +50,10 @@ fn from_live_array(
         }
         let item = array.get_index(index).unwrap_or(Value::Undefined);
         let value = map_item(mapper, this_arg.clone(), item, index)?;
-        result = write_result_element(result, index, value)?;
+        values.push(value);
         index += 1;
     }
-    let updated =
-        crate::properties::assign_set_property(&result, "length", Value::Number(index as f64))?;
-    Ok(updated)
+    create_result(receiver, values, false)
 }
 
 fn from_iterable(
@@ -64,20 +62,15 @@ fn from_iterable(
     mapper: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let mut result = construct_result(receiver, 0, true)?;
-    let mut index = 0;
+    let mut values = Vec::new();
     let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
     let _receiver_guard = crate::collections::iterator::ReceiverUpdateGuard::install();
     crate::collections::iterator::for_each_iterable(source, |item| {
-        let value = map_item(mapper, this_arg.clone(), item, index)?;
-        result = write_result_element(result.clone(), index, value)?;
-        index += 1;
+        let index = values.len();
+        values.push(map_item(mapper, this_arg.clone(), item, index)?);
         Ok(())
     })?;
-    let updated =
-        crate::properties::assign_set_property(&result, "length", Value::Number(index as f64))?;
-    crate::locals::replace_value(&result, &updated);
-    Ok(updated)
+    create_result(receiver, values, false)
 }
 
 fn collect_array_iterator(

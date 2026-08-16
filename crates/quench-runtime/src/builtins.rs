@@ -625,6 +625,8 @@ pub(crate) fn define_own_property(
         .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
     let mut result = if accessor {
         define_accessor_placeholder(target.clone(), key)
+    } else if let Some(updated) = crate::typed_array_ops::set_property(target, key, &value) {
+        updated?
     } else {
         define_property_value(target.clone(), key, value)
     };
