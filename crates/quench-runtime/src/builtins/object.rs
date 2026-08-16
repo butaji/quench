@@ -190,6 +190,8 @@ fn validate_set_prototype_value(prototype: &Value) -> Result<(), VmError> {
             | Value::ObjectAlias(_)
             | Value::Proxy(_)
             | Value::Builtin(_)
+            | Value::Function(_)
+            | Value::BoundFunction(_)
             | Value::Null
     ) {
         return Ok(());
