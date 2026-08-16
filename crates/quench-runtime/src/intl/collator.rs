@@ -486,6 +486,10 @@ fn icu_ordering(
     numeric: bool,
     case_first: &str,
 ) -> Option<f64> {
+    let collation = locale_collation(locale).unwrap_or_else(|| "standard".to_string());
+    if !provider_has_collation(locale, &collation) {
+        return None;
+    }
     let locale = icu_locale_core::Locale::try_from_str(locale).ok()?;
     let preferences = icu_preferences(&locale, usage, numeric, case_first);
     let options = icu_options(ignore_punctuation, sensitivity);
