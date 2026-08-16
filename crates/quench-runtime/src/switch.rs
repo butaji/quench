@@ -98,7 +98,9 @@ fn prepare_case_locals(
         };
         let name = identifier.name.as_str();
         if let Some(slot) = locals.get(name).copied() {
-            locals.insert(format!("\0annex-b-outer:{name}"), slot);
+            locals
+                .entry(format!("\0annex-b-outer:{name}"))
+                .or_insert(slot);
         }
         locals.insert(name.to_string(), *next_slot);
         *next_slot = next_slot.saturating_add(1);
