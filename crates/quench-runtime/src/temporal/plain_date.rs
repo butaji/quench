@@ -69,6 +69,7 @@ pub(crate) fn execute(
         }
         crate::ops::Builtin::TemporalPlainDateDaysInYearGetter => Some(days_in_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateDaysInWeekGetter => Some(days_in_week(receiver)),
+        crate::ops::Builtin::TemporalPlainDateMonthsInYearGetter => Some(months_in_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateInLeapYearGetter => Some(in_leap_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraGetter => Some(era(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era(receiver)),
@@ -150,6 +151,16 @@ fn days_in_week(receiver: Option<&Value>) -> Result<Value, VmError> {
         return Err(invalid_receiver());
     }
     Ok(Value::Number(7.0))
+}
+
+fn months_in_year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(Value::Number(12.0))
 }
 
 fn in_leap_year(receiver: Option<&Value>) -> Result<Value, VmError> {
