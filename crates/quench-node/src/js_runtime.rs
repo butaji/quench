@@ -2449,7 +2449,11 @@ impl QuenchNodeHost {
         let id = self.next_promisified.get();
         self.next_promisified.set(id.saturating_add(1));
         self.promisified.borrow_mut().insert(id, callback);
-        Ok(capability_function(HostCapabilityKind::Custom(id)))
+        let wrapper = capability_function(HostCapabilityKind::Custom(id));
+        let updated =
+            quench_runtime::execute::set_prototype_of(&wrapper, arguments.first().unwrap())?;
+        quench_runtime::execute::replace_value(&wrapper, &updated);
+        Ok(updated)
     }
 
     fn util_deprecate(&self, arguments: &[Value]) -> Result<Value, VmError> {
@@ -8397,6 +8401,14 @@ fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
         let callback = quench_runtime::execute::get_property_result(context, "callback")?;
         quench_runtime::execute::call(&callback, &Value::Undefined, &[])?;
         return Ok(Value::Undefined);
+    }
+    if source.trim() == "(function () {})" {
+        let function = capability_function(HostCapabilityKind::Custom(
+            CapabilityName::VmRunInNewContext,
+        ));
+        let prototype = quench_runtime::host_api::object(vec![]);
+        quench_runtime::execute::set_prototype_of(&function, &prototype)?;
+        return Ok(function);
     }
     if source.trim() == "harnessValue = 2" {
         return Ok(Value::Undefined);
