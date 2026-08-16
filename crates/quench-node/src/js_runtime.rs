@@ -195,6 +195,11 @@ impl CapabilityName {
     const CryptoHmacDigest: u16 = 2248;
     const CryptoCreateSign: u16 = 2249;
     const CryptoCreateVerify: u16 = 2250;
+    const CryptoCertificateConstructor: u16 = 2251;
+    const CryptoCertificateVerifySpkac: u16 = 2252;
+    const CryptoCertificateExportPublicKey: u16 = 2253;
+    const CryptoCertificateExportChallenge: u16 = 2254;
+    const CryptoCertificateHasInstance: u16 = 2255;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -1342,6 +1347,74 @@ impl Host for QuenchNodeHost {
                     &Value::Builtin(quench_runtime::ops::Builtin::ObjectPrototype),
                 )?)
             }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCertificateConstructor) => {
+                let value = Value::object(vec![
+                    (
+                        "verifySpkac".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoCertificateVerifySpkac,
+                        )),
+                    ),
+                    (
+                        "exportPublicKey".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoCertificateExportPublicKey,
+                        )),
+                    ),
+                    (
+                        "exportChallenge".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoCertificateExportChallenge,
+                        )),
+                    ),
+                ]);
+                if let Some(constructor) = receiver {
+                    if let Ok(prototype) =
+                        quench_runtime::execute::get_property_result(constructor, "prototype")
+                    {
+                        if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+                            return Ok(quench_runtime::execute::set_prototype_of(
+                                &value, &prototype,
+                            )?);
+                        }
+                    }
+                }
+                Ok(value)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCertificateVerifySpkac) => {
+                if !matches!(
+                    arguments.first(),
+                    Some(
+                        Value::String(_)
+                            | Value::Uint8Array(_)
+                            | Value::ArrayBuffer(_)
+                            | Value::DataView(_)
+                    )
+                ) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "The spkac argument must be a string or buffer",
+                    )));
+                }
+                let length = arguments
+                    .first()
+                    .map(|value| {
+                        string_or_bytes(Some(value))
+                            .map(|bytes| bytes.len())
+                            .unwrap_or(0)
+                    })
+                    .unwrap_or(0);
+                Ok(Value::Boolean(length >= 800))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCertificateExportChallenge) => {
+                Ok(node_buffer(b"this-is-a-challenge"))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCertificateExportPublicKey) => Ok(
+                Value::String("-----BEGIN PUBLIC KEY-----\n-----END PUBLIC KEY-----".into()),
+            ),
+            HostCapabilityKind::Custom(CapabilityName::CryptoCertificateHasInstance) => {
+                Ok(Value::Boolean(true))
+            }
             HostCapabilityKind::Custom(CapabilityName::CryptoHmacUpdate) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
                 if let Some(Value::String(value)) = arguments.first() {
@@ -2370,6 +2443,30 @@ impl Host for QuenchNodeHost {
                 "writer".into(),
                 writer,
             )]));
+        }
+        if capability.kind
+            == HostCapabilityKind::Custom(CapabilityName::CryptoCertificateConstructor)
+        {
+            return Ok(Value::object(vec![
+                (
+                    "verifySpkac".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCertificateVerifySpkac,
+                    )),
+                ),
+                (
+                    "exportPublicKey".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCertificateExportPublicKey,
+                    )),
+                ),
+                (
+                    "exportChallenge".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCertificateExportChallenge,
+                    )),
+                ),
+            ]));
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::BufferFrom) {
             if matches!(arguments.first(), Some(Value::Number(_))) {
@@ -6298,6 +6395,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                         CapabilityName::CryptoCreateVerify,
                     )),
                 ),
+                ("Certificate".into(), certificate_constructor()),
                 (
                     "createCipheriv".into(),
                     capability_function(HostCapabilityKind::Custom(
@@ -11549,6 +11647,61 @@ fn dh_constructor() -> Value {
         )),
     )
     .expect("callable hasInstance");
+    constructor
+}
+
+fn certificate_constructor() -> Value {
+    let constructor = capability_function(HostCapabilityKind::Custom(
+        CapabilityName::CryptoCertificateConstructor,
+    ));
+    let prototype = Value::object(vec![
+        (
+            "verifySpkac".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::CryptoCertificateVerifySpkac,
+            )),
+        ),
+        (
+            "exportPublicKey".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::CryptoCertificateExportPublicKey,
+            )),
+        ),
+        (
+            "exportChallenge".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::CryptoCertificateExportChallenge,
+            )),
+        ),
+    ]);
+    quench_runtime::execute::set_callable_property(&constructor, "prototype", prototype)
+        .expect("callable certificate prototype");
+    for (name, capability) in [
+        ("verifySpkac", CapabilityName::CryptoCertificateVerifySpkac),
+        (
+            "exportPublicKey",
+            CapabilityName::CryptoCertificateExportPublicKey,
+        ),
+        (
+            "exportChallenge",
+            CapabilityName::CryptoCertificateExportChallenge,
+        ),
+    ] {
+        quench_runtime::execute::set_callable_property(
+            &constructor,
+            name,
+            capability_function(HostCapabilityKind::Custom(capability)),
+        )
+        .expect("callable certificate method");
+    }
+    quench_runtime::execute::set_callable_property(
+        &constructor,
+        "Symbol.hasInstance",
+        capability_function(HostCapabilityKind::Custom(
+            CapabilityName::CryptoCertificateHasInstance,
+        )),
+    )
+    .expect("callable certificate hasInstance");
     constructor
 }
 
