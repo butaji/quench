@@ -121,6 +121,7 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
             | Builtin::IntlRelativeTimeFormat
             | Builtin::IntlSegmenter
             | Builtin::IntlDisplayNames
+            | Builtin::IntlDurationFormat
             | Builtin::IntlLocale
     )
 }
