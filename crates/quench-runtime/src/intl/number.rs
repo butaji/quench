@@ -205,6 +205,7 @@ impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         let raw = RawOptions::from_value(options)?;
         validate_rounding_mode(&raw.rounding_mode)?;
+        validate_unit_display(&raw.unit_display)?;
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),
@@ -309,6 +310,12 @@ fn validate_rounding_mode(value: &str) -> Result<(), VmError> {
         .ok_or_else(|| crate::value::error::throw_range_error("invalid roundingMode"))
 }
 
+fn validate_unit_display(value: &str) -> Result<(), VmError> {
+    matches!(value, "short" | "narrow" | "long")
+        .then_some(())
+        .ok_or_else(|| crate::value::error::throw_range_error("invalid unitDisplay"))
+}
+
 fn number_options(
     locale: String,
     raw: RawOptions,
@@ -403,7 +410,7 @@ fn slot_primary(number: &NumberOptions) -> Vec<(String, Value)> {
 fn valid_unit(unit: Option<&str>) -> bool {
     matches!(
         unit,
-        Some("percent" | "meter" | "kilometer" | "kilometer-per-hour")
+        Some("percent" | "hour" | "meter" | "kilometer" | "kilometer-per-hour")
     )
 }
 
