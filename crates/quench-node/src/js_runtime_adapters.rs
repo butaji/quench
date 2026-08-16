@@ -239,6 +239,18 @@ let __quench_import_meta_alias = __quench_import_meta;
             capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParams)),
         )
         .with_host_value(
+            "TextEncoder",
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::TextEncoderConstructor,
+            )),
+        )
+        .with_host_value(
+            "TextDecoder",
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::TextDecoderConstructor,
+            )),
+        )
+        .with_host_value(
             "setImmediate",
             capability_function(HostCapabilityKind::Custom(CapabilityName::TimerImmediate)),
         )
