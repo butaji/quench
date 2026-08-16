@@ -44,7 +44,10 @@ pub(super) fn instantiate_functions(
     behavior: EvalBehavior,
 ) -> Result<(), Vec<String>> {
     let (ops, next_register, next_slot, locals) = state;
-    let (selected, variables, lexical) = instantiate_context(statements, behavior);
+    if !facts.strict && is_global_behavior(behavior) {
+        reserve_annex_b_bindings(statements, locals, next_slot);
+    }
+    let (selected, variables, lexical) = instantiate_context(statements, behavior, !facts.strict);
     if is_global_behavior(behavior) {
         emit_global_checks(
             &selected,
@@ -81,16 +84,53 @@ pub(super) fn instantiate_functions(
 fn instantiate_context<'a>(
     statements: &'a [Statement<'a>],
     behavior: EvalBehavior,
+    annex_b: bool,
 ) -> (Vec<&'a Statement<'a>>, Vec<String>, Vec<String>) {
     let selected = selected_functions(statements);
     let winners = selected_function_names(&selected);
-    let variables = global_variable_names(statements, &winners);
+    let mut variables = global_variable_names(statements, &winners);
+    if annex_b {
+        variables.extend(annex_b_function_names(statements));
+        variables.sort_unstable();
+        variables.dedup();
+    }
     let lexical = if matches!(behavior, EvalBehavior::Script) {
         lexical_variable_names(statements)
     } else {
         Vec::new()
     };
     (selected, variables, lexical)
+}
+
+fn annex_b_function_names(statements: &[Statement<'_>]) -> Vec<String> {
+    let mut names = Vec::new();
+    for statement in statements {
+        match statement {
+            Statement::BlockStatement(block) => collect_block_annex_names(&block.body, &mut names),
+            Statement::IfStatement(statement) => {
+                collect_block_annex_names(std::slice::from_ref(&statement.consequent), &mut names);
+                if let Some(alternate) = &statement.alternate {
+                    collect_block_annex_names(std::slice::from_ref(alternate), &mut names);
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn collect_block_annex_names(statements: &[Statement<'_>], names: &mut Vec<String>) {
+    for statement in statements {
+        match statement {
+            Statement::FunctionDeclaration(function) => {
+                if let Some(identifier) = &function.id {
+                    names.push(identifier.name.to_string());
+                }
+            }
+            Statement::BlockStatement(block) => collect_block_annex_names(&block.body, names),
+            _ => {}
+        }
+    }
 }
 
 fn emit_function_declarations(
@@ -211,6 +251,43 @@ fn global_variable_names(statements: &[Statement<'_>], winners: &HashSet<String>
         .into_iter()
         .filter(|name| !winners.contains(name))
         .collect()
+}
+
+fn reserve_annex_b_bindings(
+    statements: &[Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    for statement in statements {
+        match statement {
+            Statement::BlockStatement(block) => {
+                reserve_annex_b_bindings(&block.body, locals, next_slot);
+            }
+            Statement::FunctionDeclaration(function) => {
+                if let Some(identifier) = &function.id {
+                    reserve_annex_b_name(identifier.name.as_str(), locals, next_slot);
+                }
+            }
+            Statement::IfStatement(statement) => {
+                reserve_annex_b_bindings(
+                    std::slice::from_ref(&statement.consequent),
+                    locals,
+                    next_slot,
+                );
+                if let Some(alternate) = &statement.alternate {
+                    reserve_annex_b_bindings(std::slice::from_ref(alternate), locals, next_slot);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn reserve_annex_b_name(name: &str, locals: &mut HashMap<String, u16>, next_slot: &mut u16) {
+    if !locals.contains_key(name) {
+        locals.insert(name.to_string(), *next_slot);
+        *next_slot = next_slot.saturating_add(1);
+    }
 }
 
 fn lexical_variable_names(statements: &[Statement<'_>]) -> Vec<String> {
