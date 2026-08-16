@@ -36,6 +36,7 @@ pub(crate) struct NumberOptions {
     pub minimum_significant_digits: Option<u32>,
     pub maximum_significant_digits: Option<u32>,
     pub rounding_priority: String,
+    pub trailing_zero_display: String,
 }
 
 pub(crate) struct RawOptions {
@@ -58,6 +59,7 @@ pub(crate) struct RawOptions {
     minimum_significant_digits: f64,
     maximum_significant_digits: f64,
     rounding_priority: String,
+    trailing_zero_display: String,
 }
 
 const OPTION_KEYS: &[&str] = &[
@@ -106,12 +108,13 @@ impl RawOptions {
             minimum_significant_digits: -1.0,
             maximum_significant_digits: -1.0,
             rounding_priority: "auto".to_string(),
+            trailing_zero_display: "auto".to_string(),
         };
         if let Some(options) = options.filter(|value| crate::value::is_object(value)) {
             for key in OPTION_KEYS {
                 let value = crate::execute::get_property_result(options, key)?;
                 if !matches!(value, Value::Undefined) {
-                    let text = if *key == "roundingMode" {
+                    let text = if matches!(*key, "roundingMode" | "trailingZeroDisplay") {
                         crate::conversion::to_string(&value)?
                     } else if *key == "roundingIncrement" {
                         crate::conversion::to_number(&value)?.to_string()
@@ -131,6 +134,13 @@ impl RawOptions {
                     }
                     if *key == "numberingSystem" {
                         let _ = super::locale::calendar_option(&text)?;
+                    }
+                    if *key == "trailingZeroDisplay"
+                        && !matches!(text.as_str(), "auto" | "stripIfInteger")
+                    {
+                        return Err(crate::value::error::throw_range_error(
+                            "invalid trailingZeroDisplay",
+                        ));
                     }
                     apply_option(&mut raw, key, &text);
                 }
@@ -167,6 +177,7 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
             raw.maximum_significant_digits = value.parse().unwrap_or(-1.0)
         }
         "roundingPriority" => raw.rounding_priority = value.to_string(),
+        "trailingZeroDisplay" => raw.trailing_zero_display = value.to_string(),
         _ => {}
     }
 }
@@ -385,6 +396,7 @@ fn number_options(
         maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
             .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
         rounding_priority: raw.rounding_priority,
+        trailing_zero_display: raw.trailing_zero_display,
     }
 }
 
@@ -410,6 +422,10 @@ fn slot_base(number: &NumberOptions) -> Vec<(String, Value)> {
         (
             "roundingIncrement".to_string(),
             Value::Number(number.rounding_increment as f64),
+        ),
+        (
+            "trailingZeroDisplay".to_string(),
+            Value::String(number.trailing_zero_display.clone()),
         ),
     ]);
     if number.notation == "compact" {
