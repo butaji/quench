@@ -329,6 +329,7 @@ fn add_fractional_time(values: &mut [f64; 10], index: usize, fraction: f64) {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
+    validate_compare_options(arguments.get(2))?;
     if same_fields(arguments.first(), arguments.get(1)) {
         return Ok(Value::Number(0.0));
     }
@@ -351,6 +352,17 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
         return Ok(Value::Number(0.0));
     }
     Ok(Value::Number(difference.signum()))
+}
+
+fn validate_compare_options(options: Option<&Value>) -> Result<(), VmError> {
+    if let Some(options) = options {
+        if !matches!(options, Value::Undefined) && !crate::value::is_object(options) {
+            return Err(crate::value::error::throw_type_error(
+                "Duration.compare options must be an object",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn date_units(value: &Value) -> bool {
