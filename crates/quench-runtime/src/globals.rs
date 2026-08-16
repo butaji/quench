@@ -55,7 +55,7 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         .collect()
 }
 
-fn script_property_names() -> [&'static str; 43] {
+fn script_property_names() -> [&'static str; 45] {
     [
         "Object",
         "Function",
@@ -72,6 +72,8 @@ fn script_property_names() -> [&'static str; 43] {
         "SyntaxError",
         "EvalError",
         "URIError",
+        "escape",
+        "unescape",
         "encodeURI",
         "encodeURIComponent",
         "decodeURI",
