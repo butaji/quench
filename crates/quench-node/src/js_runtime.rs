@@ -150,6 +150,7 @@ impl CapabilityName {
     const FsStatsIsNotSymbolicLink: u16 = 1545;
     const FsFtruncateSync: u16 = 1571;
     const FsTruncateAsync: u16 = 1572;
+    const FsTruncateSync: u16 = 1573;
     const FsFsyncSync: u16 = 1546;
     const FsFdatasyncSync: u16 = 1547;
     const FsFsyncAsync: u16 = 1548;
@@ -450,6 +451,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsTruncateAsync) => {
                 fs_truncate_async(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::FsTruncateSync) => {
+                fs_truncate_sync(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsFsyncSync)
             | HostCapabilityKind::Custom(CapabilityName::FsFdatasyncSync) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::FsFsyncAsync)
@@ -493,7 +497,7 @@ impl Host for QuenchNodeHost {
                 self.fs_read_fd(arguments, true)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferToString) => {
-                buffer_to_string(receiver)
+                buffer_to_string(receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferConcat) => buffer_concat(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferEquals) => {
@@ -2070,7 +2074,7 @@ fn fs_write_options(arguments: &[Value]) -> Result<Value, VmError> {
 fn fs_truncate_async(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
     let length = match arguments.get(1) {
-        Some(Value::Number(value)) if *value >= 0.0 => *value as u64,
+        Some(Value::Number(value)) if *value >= 0.0 && value.fract() == 0.0 => *value as u64,
         _ => {
             return Err(VmError::Thrown(fs_error(
                 "ERR_INVALID_ARG_TYPE",
@@ -2087,6 +2091,26 @@ fn fs_truncate_async(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(callback) = arguments.last() {
         quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
     }
+    Ok(Value::Undefined)
+}
+
+fn fs_truncate_sync(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    let length = match arguments.get(1) {
+        Some(Value::Number(value)) if *value >= 0.0 && value.fract() == 0.0 => *value as u64,
+        _ => {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_OUT_OF_RANGE",
+                "length out of range",
+            )))
+        }
+    };
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    file.set_len(length)
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
     Ok(Value::Undefined)
 }
 
@@ -2236,14 +2260,58 @@ fn read_file_sync(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::EvalError("readFileSync expects a path".into()));
     };
     let path = fixture_common_path(path);
+    let options = arguments.get(1);
+    let flag = options.and_then(|value| match value {
+        Value::Object(_) => quench_runtime::execute::get_property_result(value, "flag").ok(),
+        _ => Some(value.clone()),
+    });
+    if matches!(flag, Some(Value::String(value)) if value.contains('+') || value.contains('w'))
+        && !Path::new(path.as_ref()).exists()
+    {
+        std::fs::write(Path::new(path.as_ref()), [])
+            .map_err(|error| VmError::EvalError(error.to_string()))?;
+    }
     let bytes = std::fs::read(Path::new(path.as_ref()))
         .map_err(|error| VmError::EvalError(error.to_string()))?;
-    if matches!(arguments.get(1), Some(Value::String(encoding)) if encoding == "utf8") {
+    if let Some(Value::Object(options)) = options {
+        if let Ok(Value::Uint8Array(buffer)) =
+            quench_runtime::execute::get_property_result(&Value::Object(options.clone()), "buffer")
+        {
+            let count = bytes.len().min(buffer.length);
+            buffer.buffer.bytes.borrow_mut()[buffer.byte_offset..buffer.byte_offset + count]
+                .copy_from_slice(&bytes[..count]);
+            return Ok(node_buffer(&bytes[..count]));
+        }
+    }
+    let encoding = match options {
+        Some(Value::String(encoding)) => Some(encoding.clone()),
+        Some(Value::Object(options)) => match quench_runtime::execute::get_property_result(
+            &Value::Object(options.clone()),
+            "encoding",
+        )
+        .ok()
+        {
+            Some(Value::String(value)) => Some(value),
+            _ => None,
+        },
+        _ => None,
+    };
+    if matches!(encoding.as_deref(), Some("utf8")) {
         return String::from_utf8(bytes)
             .map(Value::String)
             .map_err(|error| VmError::EvalError(error.to_string()));
     }
-    Ok(node_buffer(&bytes))
+    match encoding.as_deref() {
+        Some("hex") => Ok(Value::String(
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+                .into(),
+        )),
+        Some("base64") => Ok(Value::String(base64_encode(&bytes).into())),
+        _ => Ok(node_buffer(&bytes)),
+    }
 }
 
 fn fixture_common_path(path: &str) -> std::borrow::Cow<'_, str> {
@@ -2583,6 +2651,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::FsTruncateAsync,
                     )),
+                ),
+                (
+                    "truncateSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsTruncateSync)),
                 ),
                 (
                     "constants".into(),
@@ -3148,11 +3220,46 @@ fn node_buffer(bytes: &[u8]) -> Value {
     )
 }
 
-fn buffer_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let bytes = string_or_bytes(receiver)?;
+    if matches!(arguments.first(), Some(Value::String(value)) if value == "hex") {
+        return Ok(Value::String(
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+                .into(),
+        ));
+    }
+    if matches!(arguments.first(), Some(Value::String(value)) if value == "base64") {
+        return Ok(Value::String(base64_encode(&bytes).into()));
+    }
     Ok(Value::String(
         String::from_utf8_lossy(&bytes).into_owned().into(),
     ))
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::new();
+    for chunk in bytes.chunks(3) {
+        let value = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        output.push(TABLE[((value >> 18) & 63) as usize] as char);
+        output.push(TABLE[((value >> 12) & 63) as usize] as char);
+        output.push(if chunk.len() > 1 {
+            TABLE[((value >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            TABLE[(value & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    output
 }
 
 fn buffer_concat(arguments: &[Value]) -> Result<Value, VmError> {
