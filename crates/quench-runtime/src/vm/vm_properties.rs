@@ -510,24 +510,11 @@ fn should_preserve_receiver_property(
     if object_has_property(value, key) {
         return true;
     }
-    if intrinsic_prototype_property(value) {
-        return true;
-    }
     matches!(value, Value::Builtin(_))
         || matches!(value, Value::Object(_)) && crate::vm::is_global_object(value)
         || is_intl_number_format_property(property)
         || is_boxed_primitive(receiver) && matches!(property, Value::Builtin(_))
         || matches!(key, "constructor" | "prototype")
-}
-
-fn intrinsic_prototype_property(value: &Value) -> bool {
-    let Value::BoundFunction(bound) = value else {
-        return false;
-    };
-    let Value::Builtin(builtin) = bound.target else {
-        return false;
-    };
-    crate::vm::realm::is_intrinsic(bound) && crate::builtin_meta::is_prototype(builtin)
 }
 
 fn is_boxed_primitive(value: &Value) -> bool {
