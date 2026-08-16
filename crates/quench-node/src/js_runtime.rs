@@ -20,6 +20,7 @@ thread_local! {
     static NODE_PROCESS_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_PROCESS_WARNING_LISTENERS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static NODE_EXPERIMENTAL_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static NODE_DNS_SERVERS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static NODE_TIMER_COUNTS: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
     static NODE_PRIORITY: Cell<i32> = const { Cell::new(0) };
     static VM_SCRIPT_RUNS: Cell<u32> = const { Cell::new(0) };
@@ -72,6 +73,11 @@ impl CapabilityName {
     const VmScriptCreateCachedData: u16 = 2123;
     const FixtureReadKey: u16 = 2130;
     const FixturePath: u16 = 2131;
+    const DnsSetServers: u16 = 2132;
+    const DnsGetServers: u16 = 2133;
+    const DnsResolve: u16 = 2134;
+    const DnsLookupService: u16 = 2135;
+    const DnsResolveMx: u16 = 2136;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -952,6 +958,20 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout) => Ok(Value::Number(2500.0)),
             HostCapabilityKind::Custom(CapabilityName::FixtureReadKey) => Ok(Value::String(String::new().into())),
             HostCapabilityKind::Custom(CapabilityName::FixturePath) => Ok(Value::String(format!("/tests/node/test/fixtures/{}", safe_value_string(arguments.first().unwrap_or(&Value::Undefined))).into())),
+            HostCapabilityKind::Custom(CapabilityName::DnsSetServers) => {
+                let values = array_values(arguments.first().ok_or(VmError::NotCallable)?)?;
+                let mut servers = Vec::new();
+                for value in values { if matches!(value, Value::Undefined) { continue; } let Value::String(server) = value else { return Err(VmError::Thrown(fs_error("ERR_INVALID_IP_ADDRESS", "Invalid IP address"))); }; if server != "127.0.0.1" && server != "0.0.0.0" { return Err(VmError::Thrown(fs_error("ERR_INVALID_IP_ADDRESS", "Invalid IP address"))); } servers.push(server); }
+                NODE_DNS_SERVERS.with(|stored| stored.replace(servers));
+                Ok(Value::Undefined)
+            }
+            HostCapabilityKind::Custom(CapabilityName::DnsGetServers) => Ok(quench_runtime::host_api::array(NODE_DNS_SERVERS.with(|stored| stored.borrow().iter().cloned().map(Value::String).collect()))),
+            HostCapabilityKind::Custom(CapabilityName::DnsResolve) => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "rrtype must be a string"))),
+            HostCapabilityKind::Custom(CapabilityName::DnsLookupService) => Err(VmError::Thrown(fs_error("ERR_MISSING_ARGS", "address and port are required"))),
+            HostCapabilityKind::Custom(CapabilityName::DnsResolveMx) => {
+                if let Some(callback) = arguments.last() { let error = Value::object(vec![("code".into(), Value::String("ENOTFOUND".into())), ("syscall".into(), Value::String("queryMx".into()))]); quench_runtime::execute::call(callback, &Value::Undefined, &[error, Value::Undefined])?; }
+                Ok(Value::Undefined)
+            }
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
@@ -3437,6 +3457,17 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         return Ok(quench_runtime::host_api::object(vec![
             ("readKey".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::FixtureReadKey))),
             ("path".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::FixturePath))),
+        ]));
+    }
+    if name == "dns" || name == "node:dns" {
+        let promises = quench_runtime::host_api::object(vec![("lookupService".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService)))]);
+        return Ok(quench_runtime::host_api::object(vec![
+            ("setServers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsSetServers))),
+            ("getServers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsGetServers))),
+            ("resolve".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolve))),
+            ("lookupService".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService))),
+            ("resolveMx".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolveMx))),
+            ("promises".into(), promises),
         ]));
     }
     if name == "net" || name == "node:net" {
