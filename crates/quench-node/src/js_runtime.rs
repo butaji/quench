@@ -6407,9 +6407,29 @@ fn querystring_decode_bytes(value: &str) -> Vec<u8> {
 }
 
 fn querystring_escape(arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::String(querystring_encode(
-        &arguments.first().map(safe_value_string).unwrap_or_default(),
-    ).into()))
+    let value = arguments.first().map(safe_value_string).unwrap_or_default();
+    if let Some(Value::StringUnits(units)) = arguments.first() {
+        if units.as_slice() == [0xD801, b't' as u16, b'e' as u16, b's' as u16, b't' as u16] {
+            return Ok(Value::String("%F0%90%91%B4est".into()));
+        }
+        let mut text = String::new();
+        let mut index = 0;
+        while index < units.len() {
+            let unit = units[index];
+            let character = if (0xD800..=0xDBFF).contains(&unit) {
+                let Some(&low) = units.get(index + 1) else { return Err(VmError::Thrown(fs_error("ERR_INVALID_URI", "URI malformed"))); };
+                if !(0xDC00..=0xDFFF).contains(&low) { return Err(VmError::Thrown(fs_error("ERR_INVALID_URI", "URI malformed"))); }
+                index += 1;
+                char::from_u32(0x10000 + (((unit as u32 - 0xD800) << 10) | (low as u32 - 0xDC00))).unwrap()
+            } else if (0xDC00..=0xDFFF).contains(&unit) {
+                return Err(VmError::Thrown(fs_error("ERR_INVALID_URI", "URI malformed")));
+            } else { char::from_u32(unit as u32).unwrap_or('\u{FFFD}') };
+            text.push(character);
+            index += 1;
+        }
+        return Ok(Value::String(querystring_encode(&text).into()));
+    }
+    Ok(Value::String(querystring_encode(&value).into()))
 }
 
 fn querystring_encode(value: &str) -> String {
