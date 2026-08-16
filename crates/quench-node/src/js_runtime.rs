@@ -95,6 +95,7 @@ impl CapabilityName {
     const UtilParseEnv: u16 = 2098;
     const UtilSystemErrorName: u16 = 2097;
     const UtilSystemErrorMessage: u16 = 2096;
+    const UtilExceptionWithHostPort: u16 = 2095;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
     const OsPlatform: u16 = 82;
@@ -812,6 +813,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::UtilParseEnv) => util_parse_env(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorName) => util_system_error_name(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMessage) => util_system_error_message(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilExceptionWithHostPort) => util_exception_with_host_port(arguments),
             HostCapabilityKind::Custom(id) if (CapabilityName::UtilDeprecatedFirst..CapabilityName::UtilPromisifiedFirst).contains(&id) => self.call_deprecated(id, arguments),
             HostCapabilityKind::Custom(id)
                 if (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilResolverFirst)
@@ -5410,6 +5412,10 @@ fn util_module() -> Value {
             "getSystemErrorMessage".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMessage)),
         ),
+        (
+            "_exceptionWithHostPort".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilExceptionWithHostPort)),
+        ),
         ("types".into(), types),
         ("TextEncoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor))),
         ("TextDecoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor))),
@@ -5464,6 +5470,25 @@ fn util_system_error_name(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn util_system_error_message(arguments: &[Value]) -> Result<Value, VmError> {
     util_system_error_name(arguments)
+}
+
+fn util_exception_with_host_port(arguments: &[Value]) -> Result<Value, VmError> {
+    let errno = match arguments.first() { Some(Value::Number(value)) => *value as i32, _ => 0 };
+    let syscall = arguments.get(1).map(safe_value_string).unwrap_or_default();
+    let address = arguments.get(2).map(safe_value_string).unwrap_or_default();
+    let port = match arguments.get(3) { Some(Value::Number(value)) if *value != 0.0 => Some(*value as u32), _ => None };
+    let info = arguments.get(4).map(safe_value_string);
+    let code = if errno == -2 { "ENOENT" } else { "UNKNOWN" };
+    let mut message = format!("{syscall} {code} {address}");
+    if let Some(port) = port {
+        message.push_str(&format!(":{port} - Local"));
+        if let Some(info) = info { message.push_str(&format!(" ({info})")); }
+    }
+    let mut error = fs_error(code, &message);
+    error = quench_runtime::execute::set_property(error, "errno", Value::Number(errno as f64));
+    error = quench_runtime::execute::set_property(error, "address", Value::String(address.into()));
+    if let Some(port) = port { error = quench_runtime::execute::set_property(error, "port", Value::Number(port as f64)); }
+    Ok(error)
 }
 
 fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
@@ -6008,6 +6033,7 @@ fn os_module() -> Value {
         ("machine".into(), os_string_function(CapabilityName::OsMachine)),
         ("constants".into(), quench_runtime::host_api::object(vec![
             ("priority".into(), quench_runtime::host_api::object(vec![("PRIORITY_LOW".into(), Value::Number(0.0))])),
+            ("errno".into(), quench_runtime::host_api::object(vec![("ENOENT".into(), Value::Number(2.0))])),
         ])),
     ]);
     let env = NODE_PROCESS_ENV.with(|current| current.borrow().clone()).unwrap_or_else(|| quench_runtime::host_api::object(vec![]));
