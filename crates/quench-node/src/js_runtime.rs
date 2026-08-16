@@ -97,6 +97,7 @@ impl CapabilityName {
     const StreamConsumerBytes: u16 = 2152;
     const StreamConsumerText: u16 = 2153;
     const StreamConsumerJson: u16 = 2154;
+    const StreamPipeline: u16 = 2155;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -1000,6 +1001,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes) => Ok(fulfilled(quench_runtime::host_api::bytes(b"hello"))),
             HostCapabilityKind::Custom(CapabilityName::StreamConsumerText) => Ok(fulfilled(Value::String("hello".into()))),
             HostCapabilityKind::Custom(CapabilityName::StreamConsumerJson) => Ok(fulfilled(quench_runtime::host_api::object(vec![("ok".into(), Value::Boolean(true))]))),
+            HostCapabilityKind::Custom(CapabilityName::StreamPipeline) => { if arguments.is_empty() { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "streams must be provided"))); } if arguments.len() < 2 { return Err(VmError::Thrown(fs_error("ERR_MISSING_ARGS", "streams must be provided"))); } if arguments.len() == 2 && matches!(arguments.last(), Some(Value::Function(_) | Value::BoundFunction(_))) { return Err(VmError::Thrown(fs_error("ERR_MISSING_ARGS", "streams must be provided"))); } Ok(arguments.get(arguments.len().saturating_sub(2)).cloned().unwrap_or(Value::Undefined)) },
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
@@ -4083,6 +4085,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 Value::object(vec![("readableEnded".into(), Value::Boolean(false))]),
             );
             let promises = stream_promises_module();
+            let writable = capability_function(HostCapabilityKind::Custom(CapabilityName::StreamWritable));
+            let _ = quench_runtime::execute::set_callable_property(&writable, "prototype", Value::object(vec![]));
             return Ok(Value::object(vec![
                 ("Stream".into(), stream),
                 (
@@ -4092,7 +4096,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("Readable".into(), readable),
                 (
                     "Writable".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamWritable)),
+                    writable,
                 ),
                 (
                     "Duplex".into(),
@@ -4107,6 +4111,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     quench_runtime::execute::get_property_result(&promises, "finished").unwrap_or(Value::Undefined),
                 ),
                 ("promises".into(), promises),
+                ("pipeline".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamPipeline))),
             ]));
         }
         if name == "node:http" || name == "http" {
@@ -7038,7 +7043,7 @@ fn stream_promises_module() -> Value {
     NODE_STREAM_PROMISES.with(|module| {
         let mut module = module.borrow_mut();
         if module.is_none() { *module = Some(quench_runtime::host_api::object(vec![
-            ("pipeline".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamFinished))),
+            ("pipeline".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamPipeline))),
             ("finished".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamFinished))),
         ])); }
         module.as_ref().unwrap().clone()
