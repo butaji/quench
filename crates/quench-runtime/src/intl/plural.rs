@@ -3,7 +3,8 @@
 use crate::{execute::VmError, value::Value};
 
 use super::{
-    default_locale, make_object, resolve_locales, runtime_error, slot_number, slot_string, SLOT,
+    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
+    slot_string, SLOT,
 };
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -120,8 +121,8 @@ fn plural_resolved_options(receiver: Option<&Value>) -> Result<Value, VmError> {
     let compact_display =
         slot_string(&slots, "compactDisplay").unwrap_or_else(|| "short".to_string());
     let mut properties = vec![
-        ("locale".to_string(), Value::String(locale)),
-        ("type".to_string(), Value::String(plural_type)),
+        ("locale".to_string(), Value::String(locale.clone())),
+        ("type".to_string(), Value::String(plural_type.clone())),
         ("notation".to_string(), Value::String(notation.clone())),
         (
             "minimumIntegerDigits".to_string(),
@@ -135,11 +136,35 @@ fn plural_resolved_options(receiver: Option<&Value>) -> Result<Value, VmError> {
             "maximumFractionDigits".to_string(),
             number_slot_value(&slots, "maximumFractionDigits", 3.0),
         ),
+        (
+            "pluralCategories".to_string(),
+            plural_categories(&locale, &plural_type),
+        ),
     ];
     if notation == "compact" {
         properties.push(("compactDisplay".to_string(), Value::String(compact_display)));
     }
     Ok(make_object(properties))
+}
+
+fn plural_categories(locale: &str, plural_type: &str) -> Value {
+    let categories = if plural_type == "ordinal" {
+        vec!["one", "two", "few", "other"]
+    } else if locale.starts_with("ar") {
+        vec!["zero", "one", "two", "few", "many", "other"]
+    } else if locale.starts_with("ru") || locale.starts_with("uk") {
+        vec!["one", "few", "many", "other"]
+    } else if locale.starts_with("fr") {
+        vec!["one", "other"]
+    } else {
+        vec!["one", "other"]
+    };
+    make_array(
+        categories
+            .into_iter()
+            .map(|value| Value::String(value.to_string()))
+            .collect(),
+    )
 }
 
 fn number_slot_value(slots: &[(String, Value)], key: &str, default: f64) -> Value {
