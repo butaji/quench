@@ -43,7 +43,7 @@ pub(crate) fn async_iterator_prototype() -> Value {
             ),
             (
                 "\0prototype".to_string(),
-                Value::Builtin(Builtin::ObjectPrototype),
+                Value::Builtin(Builtin::IteratorPrototype),
             ),
         ])));
         for (key, method) in [
