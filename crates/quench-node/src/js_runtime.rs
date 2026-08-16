@@ -826,6 +826,12 @@ impl Host for QuenchNodeHost {
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::BufferFrom) {
+            if matches!(arguments.first(), Some(Value::Number(_))) {
+                return buffer_alloc(arguments);
+            }
+            return buffer_from(arguments);
+        }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor) {
             return text_encoder_constructor();
         }
@@ -4038,7 +4044,7 @@ fn node_buffer(bytes: &[u8]) -> Value {
 
 fn node_buffer_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -> Value {
     let value = quench_runtime::execute::set_property(
-        Value::Uint8Array(Rc::new(Uint8ArrayData::new(buffer, offset, length))),
+        Value::Uint8Array(Rc::new(Uint8ArrayData::new(buffer.clone(), offset, length))),
         "toString",
         capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString)),
     );
@@ -4048,6 +4054,7 @@ fn node_buffer_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -
         capability_function(HostCapabilityKind::Custom(CapabilityName::BufferEquals)),
     );
     let mut value = value;
+    value = quench_runtime::execute::set_property(value, "parent", Value::ArrayBuffer(buffer.clone()));
     value = quench_runtime::execute::set_property(
         value,
         "constructor",
@@ -4196,10 +4203,22 @@ fn node_buffer_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -
 
 fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let mut bytes = string_or_bytes(receiver)?;
+    let encoding = match arguments.first() {
+        None | Some(Value::Undefined) => "utf8".into(),
+        Some(Value::String(value)) => value.to_ascii_lowercase(),
+        Some(Value::Object(_) | Value::ObjectAlias(_)) => quench_runtime::execute::get_property_result(arguments.first().unwrap(), "toString")
+            .ok().and_then(|method| quench_runtime::execute::call(&method, arguments.first().unwrap(), &[]).ok())
+            .and_then(|value| match value { Value::String(value) => Some(value.to_ascii_lowercase()), _ => None })
+            .unwrap_or_else(|| "utf8".into()),
+        Some(value) => return Err(VmError::Thrown(fs_error("ERR_UNKNOWN_ENCODING", &format!("Unknown encoding: {}", safe_value_string(value))))),
+    };
+    if !matches!(encoding.as_str(), "utf8" | "utf-8" | "hex" | "base64" | "base64url" | "ascii" | "utf16le" | "utf-16le") {
+        return Err(VmError::Thrown(fs_error("ERR_UNKNOWN_ENCODING", &format!("Unknown encoding: {encoding}"))));
+    }
     let start = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some(value.max(0.0) as usize), _ => None }).unwrap_or(0).min(bytes.len());
     let end = match arguments.get(2) { None | Some(Value::Undefined) => bytes.len(), Some(Value::Number(value)) => (*value).max(0.0) as usize, Some(_) => 0 } .min(bytes.len());
     bytes = if end >= start { bytes[start..end].to_vec() } else { Vec::new() };
-    if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("hex")) {
+    if encoding == "hex" {
         return Ok(Value::String(
             bytes
                 .iter()
@@ -4208,16 +4227,16 @@ fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
                 .into(),
         ));
     }
-    if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("base64")) {
+    if encoding == "base64" {
         return Ok(Value::String(base64_encode(&bytes).into()));
     }
-    if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("base64url")) {
+    if encoding == "base64url" {
         return Ok(Value::String(base64_encode(&bytes).trim_end_matches('=').replace('+', "-").replace('/', "_").into()));
     }
-    if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("ascii")) {
+    if encoding == "ascii" {
         return Ok(Value::String(bytes.iter().map(|byte| char::from(*byte & 0x7f)).collect::<String>().into()));
     }
-    if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("utf16le") || value.eq_ignore_ascii_case("utf-16le")) {
+    if encoding == "utf16le" || encoding == "utf-16le" {
         let values = bytes.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>();
         return Ok(Value::String(String::from_utf16_lossy(&values).into()));
     }
