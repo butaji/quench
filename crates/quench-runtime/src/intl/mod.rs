@@ -264,10 +264,12 @@ fn resolve_locale_list(locales: &Value) -> Result<Vec<String>, VmError> {
             continue;
         }
         let value = crate::execute::get_property_result(locales, &index.to_string())?;
-        if matches!(value, Value::Undefined) {
-            continue;
-        }
-        out.push(canonicalize(&crate::conversion::to_string(&value)?)?);
+        let value = match value {
+            Value::String(_) | Value::StringUnits(_) => crate::conversion::to_string(&value)?,
+            value if crate::value::is_object(&value) => crate::conversion::to_string(&value)?,
+            _ => return Err(crate::value::error::throw_type_error("invalid locale")),
+        };
+        out.push(canonicalize(&value)?);
     }
     Ok(dedupe(out))
 }
