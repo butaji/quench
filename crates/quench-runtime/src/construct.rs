@@ -109,16 +109,9 @@ fn construct_builtin_target(
     {
         return construct_shared_array_buffer_with_target(builtin, target, new_target, arguments);
     }
-    let prototype = if builtin == crate::ops::Builtin::ArrayBuffer
-        && !crate::builtins::same_value(Some(target), Some(new_target))
-    {
-        Some(crate::execute::get_property_result(
-            new_target,
-            "prototype",
-        )?)
-    } else {
-        None
-    };
+    let prototype = (!crate::builtins::same_value(Some(target), Some(new_target)))
+        .then(|| crate::execute::get_property_result(new_target, "prototype"))
+        .transpose()?;
     let value = construct_builtin(builtin, arguments)?;
     let value = if let Some(prototype) = prototype {
         apply_new_target_prototype(value, target, new_target, prototype)?
