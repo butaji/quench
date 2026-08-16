@@ -222,6 +222,15 @@ fn finish_set_property(
         }
         return set_builtin_property(registers, object, target, key, value);
     }
+    if let crate::value::Value::BoundFunction(bound) = &target {
+        if crate::vm::is_intrinsic_bound(bound) {
+            if let crate::value::Value::Builtin(builtin) = bound.target {
+                if !crate::builtins::object::builtin_property_is_writable(builtin, key) {
+                    return write_failure(strict);
+                }
+            }
+        }
+    }
     finish_property_write(registers, object, target, key, value);
     Ok(())
 }
