@@ -116,11 +116,21 @@ fn day_of_week(receiver: Option<&Value>) -> Result<Value, VmError> {
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
-    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
-    Ok(Value::Number(f64::from(
-        date.weekday().number_from_monday(),
-    )))
+    Ok(Value::Number(f64::from(proleptic_weekday(
+        year, month, day,
+    ))))
+}
+
+fn proleptic_weekday(year: i32, month: u32, day: u32) -> u32 {
+    let year = i64::from(year) - i64::from(month <= 2);
+    let era = (if year >= 0 { year } else { year - 399 }) / 400;
+    let year_of_era = year - era * 400;
+    let month = i64::from(month);
+    let month_index = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_index + 2) / 5 + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    (days.rem_euclid(7) as u32 + 3) % 7 + 1
 }
 
 fn day_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
