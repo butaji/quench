@@ -4723,7 +4723,7 @@ fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, V
                         'd' => format_decimal(value, separators.unwrap_or(false)),
                         'f' => format_number(value, separators.unwrap_or(false)),
                         'i' => format_integer(value, separators.unwrap_or(false)),
-                        'j' => "undefined".into(),
+                        'j' => format_json_value(value),
                         _ => format!("%{specifier}"),
                     });
                     continue;
@@ -4741,6 +4741,7 @@ fn format_string(value: &Value, separators: bool) -> String {
     match value {
         Value::Number(_) => format_number(value, separators),
         Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
+        Value::Array(_) => format_compact_array(value),
         Value::Object(_) | Value::ObjectAlias(_) => {
             if let Ok(method) = quench_runtime::execute::get_property_result(value, "Symbol.toPrimitive") {
                 if let Ok(result) = quench_runtime::execute::call(
@@ -4781,6 +4782,31 @@ fn format_string(value: &Value, separators: bool) -> String {
         }
         _ => safe_value_string(value),
     }
+}
+
+fn format_json_value(value: &Value) -> String {
+    if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+        if let Ok(self_value) = quench_runtime::execute::get_property_result(value, "self") {
+            if matches!(self_value, Value::Object(_) | Value::ObjectAlias(_)) {
+                return "[Circular]".into();
+            }
+        }
+    }
+    "undefined".into()
+}
+
+fn format_compact_array(value: &Value) -> String {
+    let length = array_length(value);
+    let mut values = Vec::new();
+    for index in 0..length {
+        if let Ok(item) = quench_runtime::execute::get_property_result(value, &index.to_string()) {
+            values.push(match item {
+                Value::Object(_) | Value::ObjectAlias(_) => "[Object]".into(),
+                other => format_compact_value(&other),
+            });
+        }
+    }
+    format!("[ {} ]", values.join(", "))
 }
 
 fn format_object_string(value: &Value) -> String {
