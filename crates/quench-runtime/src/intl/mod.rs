@@ -64,6 +64,7 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     if key == "supportedLocalesOf" {
         return match builtin {
             Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatSupportedLocalesOf),
+            Builtin::IntlPluralRules => Some(Builtin::IntlPluralRulesSupportedLocalesOf),
             Builtin::IntlSegmenter => Some(Builtin::IntlSegmenterSupportedLocalesOf),
             Builtin::IntlListFormat => Some(Builtin::IntlListFormatSupportedLocalesOf),
             Builtin::IntlRelativeTimeFormat => {
@@ -98,6 +99,7 @@ pub(crate) fn execute(
 ) -> Option<Result<Value, VmError>> {
     match builtin {
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
+        Builtin::IntlPluralRulesSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
         Builtin::IntlListFormatSupportedLocalesOf => Some(list_supported_locales_of(arguments)),
         Builtin::IntlGetCanonicalLocales => Some(get_canonical_locales(arguments)),

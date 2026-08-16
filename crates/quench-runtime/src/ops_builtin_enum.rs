@@ -217,6 +217,7 @@ pub enum Builtin {
     IntlNumberFormatFormat, IntlNumberFormatFormatToParts,
     IntlNumberFormatFormatRange, IntlNumberFormatFormatRangeToParts,
     IntlNumberFormatResolvedOptions, IntlPluralRules,
+    IntlPluralRulesSupportedLocalesOf,
     IntlPluralRulesSelect, IntlPluralRulesResolvedOptions,
     IntlDateTimeFormat, IntlDateTimeFormatSupportedLocalesOf,
     IntlDateTimeFormatFormat, IntlDateTimeFormatFormatToParts,
