@@ -143,6 +143,13 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(32) => buffer_is_buffer(arguments),
             HostCapabilityKind::Custom(80) => util_format(arguments),
             HostCapabilityKind::Custom(81) => util_inspect(arguments),
+            HostCapabilityKind::Custom(82) => os_platform(),
+            HostCapabilityKind::Custom(83) => os_arch(),
+            HostCapabilityKind::Custom(84) => os_tmpdir(),
+            HostCapabilityKind::Custom(85) => os_homedir(),
+            HostCapabilityKind::Custom(86..=89)
+            | HostCapabilityKind::Custom(96..=99)
+            | HostCapabilityKind::Custom(1000) => os_extra(capability.kind),
             HostCapabilityKind::Custom(94) => events_get_max(arguments),
             HostCapabilityKind::Custom(95) => events_set_max(arguments),
             HostCapabilityKind::Custom(id) if (900..1000).contains(&id) => {
@@ -626,6 +633,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "util" || name == "node:util" {
             return Ok(util_module());
         }
+        if name == "os" || name == "node:os" {
+            return Ok(os_module());
+        }
         if name == "events" || name == "node:events" {
             return Ok(events_module());
         }
@@ -689,6 +699,17 @@ fn process_module() -> Value {
             Value::String(std::env::args().next().unwrap_or_default()),
         ),
         ("argv0".into(), Value::String("node".into())),
+        (
+            "platform".into(),
+            Value::String(
+                match std::env::consts::OS {
+                    "macos" => "darwin",
+                    value => value,
+                }
+                .into(),
+            ),
+        ),
+        ("arch".into(), Value::String(std::env::consts::ARCH.into())),
         (
             "cwd".into(),
             capability_function(HostCapabilityKind::Custom(6)),
@@ -873,6 +894,110 @@ fn util_inspect(arguments: &[Value]) -> Result<Value, VmError> {
             .map(safe_value_string)
             .unwrap_or_else(|| "undefined".into()),
     ))
+}
+
+fn os_module() -> Value {
+    quench_runtime::host_api::object(vec![
+        (
+            "platform".into(),
+            capability_function(HostCapabilityKind::Custom(82)),
+        ),
+        (
+            "arch".into(),
+            capability_function(HostCapabilityKind::Custom(83)),
+        ),
+        (
+            "tmpdir".into(),
+            capability_function(HostCapabilityKind::Custom(84)),
+        ),
+        (
+            "homedir".into(),
+            capability_function(HostCapabilityKind::Custom(85)),
+        ),
+        ("EOL".into(), Value::String("\n".into())),
+        (
+            "devNull".into(),
+            Value::String(if cfg!(windows) { "NUL" } else { "/dev/null" }.into()),
+        ),
+        (
+            "cpus".into(),
+            capability_function(HostCapabilityKind::Custom(86)),
+        ),
+        (
+            "freemem".into(),
+            capability_function(HostCapabilityKind::Custom(87)),
+        ),
+        (
+            "totalmem".into(),
+            capability_function(HostCapabilityKind::Custom(88)),
+        ),
+        (
+            "type".into(),
+            capability_function(HostCapabilityKind::Custom(89)),
+        ),
+        (
+            "release".into(),
+            capability_function(HostCapabilityKind::Custom(96)),
+        ),
+        (
+            "endianness".into(),
+            capability_function(HostCapabilityKind::Custom(97)),
+        ),
+        (
+            "loadavg".into(),
+            capability_function(HostCapabilityKind::Custom(98)),
+        ),
+        (
+            "networkInterfaces".into(),
+            capability_function(HostCapabilityKind::Custom(99)),
+        ),
+        (
+            "userInfo".into(),
+            capability_function(HostCapabilityKind::Custom(1000)),
+        ),
+    ])
+}
+
+fn os_platform() -> Result<Value, VmError> {
+    let platform = match std::env::consts::OS {
+        "macos" => "darwin",
+        value => value,
+    };
+    Ok(Value::String(platform.into()))
+}
+
+fn os_arch() -> Result<Value, VmError> {
+    Ok(Value::String(std::env::consts::ARCH.into()))
+}
+
+fn os_tmpdir() -> Result<Value, VmError> {
+    Ok(Value::String(
+        std::env::temp_dir().to_string_lossy().into_owned(),
+    ))
+}
+
+fn os_homedir() -> Result<Value, VmError> {
+    Ok(Value::String(
+        std::env::var("HOME").unwrap_or_else(|_| "/".into()),
+    ))
+}
+
+fn os_extra(kind: HostCapabilityKind) -> Result<Value, VmError> {
+    match kind {
+        HostCapabilityKind::Custom(86) => Ok(quench_runtime::host_api::array(vec![])),
+        HostCapabilityKind::Custom(87) | HostCapabilityKind::Custom(88) => Ok(Value::Number(0.0)),
+        HostCapabilityKind::Custom(89) => Ok(Value::String("Darwin".into())),
+        HostCapabilityKind::Custom(96) => Ok(Value::String("unknown".into())),
+        HostCapabilityKind::Custom(97) => Ok(Value::String("LE".into())),
+        HostCapabilityKind::Custom(98) => Ok(quench_runtime::host_api::array(vec![
+            Value::Number(0.0),
+            Value::Number(0.0),
+            Value::Number(0.0),
+        ])),
+        HostCapabilityKind::Custom(99) => Ok(quench_runtime::host_api::object(vec![])),
+        HostCapabilityKind::Custom(1000) => Ok(quench_runtime::host_api::object(vec![])),
+        _ => Err(VmError::NotCallable),
+    }
 }
 
 fn safe_value_string(value: &Value) -> String {
