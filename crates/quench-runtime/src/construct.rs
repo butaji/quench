@@ -88,6 +88,15 @@ fn construct_with_new_target(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     match target {
+        Value::HostCapability(capability) => crate::vm::current_context_or_default()
+            .construct_host(
+                crate::ops::HostCapabilityRef {
+                    realm: capability.realm(),
+                    kind: crate::ops::HostCapabilityKind::Custom(0),
+                },
+                arguments,
+            )
+            .unwrap_or(Err(crate::vm::not_callable())),
         Value::Builtin(builtin) => {
             construct_builtin_target(*builtin, target, new_target, arguments)
         }
@@ -265,6 +274,20 @@ fn construct_bound_target(
 ) -> Result<Value, crate::execute::VmError> {
     match target {
         Value::Builtin(builtin) => {
+            if let crate::ops::Builtin::HostCapability(kind) = builtin {
+                let Value::HostCapability(capability) = &bound.receiver else {
+                    return Err(crate::vm::not_callable());
+                };
+                return crate::vm::current_context_or_default()
+                    .construct_host(
+                        crate::ops::HostCapabilityRef {
+                            realm: capability.realm(),
+                            kind: *kind,
+                        },
+                        arguments,
+                    )
+                    .unwrap_or(Err(crate::vm::not_callable()));
+            }
             if crate::builtin_meta::constructor_name(*builtin).is_none() {
                 return Err(crate::vm::not_callable());
             }
