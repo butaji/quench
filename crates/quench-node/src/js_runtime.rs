@@ -1,3 +1,4 @@
+use hmac::{Hmac, Mac};
 use oxc_resolver::{ResolveOptions, Resolver};
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
@@ -189,6 +190,9 @@ impl CapabilityName {
     const CryptoCipherSetAad: u16 = 2243;
     const CryptoCipherGetAuthTag: u16 = 2244;
     const CryptoCipherSetAuthTag: u16 = 2245;
+    const CryptoCreateHmac: u16 = 2246;
+    const CryptoHmacUpdate: u16 = 2247;
+    const CryptoHmacDigest: u16 = 2248;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -1286,6 +1290,86 @@ impl Host for QuenchNodeHost {
                 );
                 quench_runtime::execute::replace_value(receiver, &updated);
                 Ok(receiver.clone())
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCreateHmac) => {
+                let algorithm = match arguments.first() {
+                    Some(Value::String(value)) => value.to_ascii_lowercase(),
+                    _ => "sha256".into(),
+                };
+                let key = match arguments.get(1) {
+                    Some(Value::String(value)) => value.clone(),
+                    _ => String::new(),
+                };
+                Ok(Value::object(vec![
+                    (
+                        "update".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoHmacUpdate,
+                        )),
+                    ),
+                    (
+                        "digest".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoHmacDigest,
+                        )),
+                    ),
+                    ("\0hmacAlgorithm".into(), Value::String(algorithm)),
+                    ("\0hmacKey".into(), Value::String(key)),
+                    ("\0hmacData".into(), Value::String(String::new())),
+                ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoHmacUpdate) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                if let Some(Value::String(value)) = arguments.first() {
+                    let current =
+                        quench_runtime::execute::get_property_result(receiver, "\0hmacData")
+                            .ok()
+                            .and_then(|value| match value {
+                                Value::String(value) => Some(value),
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                    let updated = quench_runtime::execute::set_property(
+                        receiver.clone(),
+                        "\0hmacData",
+                        Value::String(format!("{current}{value}")),
+                    );
+                    quench_runtime::execute::replace_value(receiver, &updated);
+                }
+                Ok(receiver.clone())
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoHmacDigest) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                let get = |name| {
+                    quench_runtime::execute::get_property_result(receiver, name)
+                        .ok()
+                        .and_then(|value| match value {
+                            Value::String(value) => Some(value),
+                            _ => None,
+                        })
+                        .unwrap_or_default()
+                };
+                let algorithm = get("\0hmacAlgorithm");
+                let key = get("\0hmacKey");
+                let data = get("\0hmacData");
+                let digest = if algorithm == "sha1" {
+                    let mut mac = Hmac::<Sha1>::new_from_slice(key.as_bytes())
+                        .map_err(|_| VmError::EvalError("invalid key".into()))?;
+                    Mac::update(&mut mac, data.as_bytes());
+                    mac.finalize().into_bytes().to_vec()
+                } else {
+                    let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes())
+                        .map_err(|_| VmError::EvalError("invalid key".into()))?;
+                    Mac::update(&mut mac, data.as_bytes());
+                    mac.finalize().into_bytes().to_vec()
+                };
+                if matches!(arguments.first(), Some(Value::String(value)) if value == "hex") {
+                    Ok(Value::String(
+                        digest.iter().map(|byte| format!("{byte:02x}")).collect(),
+                    ))
+                } else {
+                    Ok(quench_runtime::host_api::bytes(&digest))
+                }
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoHashOn) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
@@ -6171,6 +6255,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "createHash".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash)),
+                ),
+                (
+                    "createHmac".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCreateHmac,
+                    )),
                 ),
                 (
                     "createCipheriv".into(),
