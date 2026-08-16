@@ -109,11 +109,22 @@ fn delete_function_property(function: Rc<crate::value::FunctionValue>, key: &str
 }
 
 fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -> Value {
+    let cell = properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == key).then_some(value))
+        .and_then(|value| match value {
+            Value::BindingCell(cell) => Some(Rc::clone(cell)),
+            _ => None,
+        });
     let mut values: Vec<(String, Value)> = properties
         .iter()
         .filter(|(name, _)| name != key && name != &descriptor_key(key))
         .cloned()
         .collect();
+    if let Some(cell) = cell {
+        values.push((crate::builtins::deleted_key(key), Value::BindingCell(cell)));
+    }
     if crate::vm::is_global_object(&Value::Object(Rc::clone(&properties)))
         && crate::vm::global_builtin_exists(key)
     {
