@@ -276,6 +276,7 @@ impl CapabilityName {
     const ChildSpawnOn: u16 = 2195;
     const ChildSpawnSync: u16 = 2196;
     const ChildStdoutToString: u16 = 2197;
+    const ReplServer: u16 = 2202;
     const ChildFork: u16 = 1601;
     const ChildEmit: u16 = 1602;
     const ChildSend: u16 = 1603;
@@ -1698,6 +1699,32 @@ impl Host for QuenchNodeHost {
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::ReplServer) {
+            let options = arguments.first();
+            let colors = options
+                .and_then(|value| {
+                    quench_runtime::execute::get_property_result(value, "useColors").ok()
+                })
+                .is_some_and(|value| matches!(value, Value::Boolean(true)));
+            if let Some(output) = options.and_then(|value| {
+                quench_runtime::execute::get_property_result(value, "output").ok()
+            }) {
+                if let Ok(write) = quench_runtime::execute::get_property_result(&output, "write") {
+                    let _ = quench_runtime::execute::call(
+                        &write,
+                        &output,
+                        &[Value::String("\"'string'\"".into())],
+                    );
+                }
+            }
+            let options =
+                quench_runtime::host_api::object(vec![("colors".into(), Value::Boolean(colors))]);
+            let writer = quench_runtime::host_api::object(vec![("options".into(), options)]);
+            return Ok(quench_runtime::host_api::object(vec![(
+                "writer".into(),
+                writer,
+            )]));
+        }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::BufferFrom) {
             if matches!(arguments.first(), Some(Value::Number(_))) {
                 if arguments.len() > 1 {
@@ -1867,6 +1894,10 @@ impl Host for QuenchNodeHost {
             self.event_max.borrow_mut().insert(id, 10.0);
             let mut emitter = quench_runtime::host_api::object(vec![
                 ("_events".into(), quench_runtime::host_api::object(vec![])),
+                (
+                    "emit".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::ChildEmit)),
+                ),
                 (
                     "setMaxListeners".into(),
                     capability_function(HostCapabilityKind::Custom(id + 5)),
@@ -5373,6 +5404,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         }
         if name == "os" || name == "node:os" {
             return Ok(os_module());
+        }
+        if name == "repl" || name == "node:repl" {
+            return Ok(quench_runtime::host_api::object(vec![(
+                "REPLServer".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ReplServer)),
+            )]));
         }
         if name == "module" || name == "node:module" {
             return Ok(module_api());
@@ -10347,6 +10384,7 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::FsWritePromise),
                 HostCapabilityKind::Custom(CapabilityName::FsReadPromise),
                 HostCapabilityKind::Custom(CapabilityName::FsAppendPromise),
+                HostCapabilityKind::Custom(CapabilityName::ReplServer),
                 HostCapabilityKind::Custom(CapabilityName::FsOpenAsync),
                 HostCapabilityKind::Custom(CapabilityName::FsCloseAsync),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
