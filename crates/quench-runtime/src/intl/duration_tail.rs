@@ -166,6 +166,9 @@ fn option(options: Option<&Value>, key: &str) -> Result<Option<String>, VmError>
     let Some(options) = options else {
         return Ok(None);
     };
+    if matches!(options, Value::Undefined | Value::Null) {
+        return Ok(None);
+    }
     let value = crate::execute::get_property_result(options, key)?;
     if matches!(value, Value::Undefined) {
         return Ok(None);

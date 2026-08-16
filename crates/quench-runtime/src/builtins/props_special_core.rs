@@ -43,6 +43,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
         (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
         (TemporalDurationPrototype, "abs") => Some(Value::Builtin(TemporalDurationAbs)),
+        (TemporalDurationPrototype, "toLocaleString") => {
+            Some(Value::Builtin(TemporalDurationToLocaleString))
+        }
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
         (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
