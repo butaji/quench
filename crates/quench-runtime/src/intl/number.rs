@@ -321,19 +321,7 @@ impl NumberOptions {
     }
 
     fn slot(&self) -> Value {
-        let mut properties = slot_base(self);
-        if let Some(value) = self.minimum_significant_digits {
-            properties.push((
-                "minimumSignificantDigits".to_string(),
-                Value::Number(value as f64),
-            ));
-        }
-        if let Some(value) = self.maximum_significant_digits {
-            properties.push((
-                "maximumSignificantDigits".to_string(),
-                Value::Number(value as f64),
-            ));
-        }
+        let mut properties = slot_primary(self);
         if let Some(currency) = &self.currency {
             properties.push(("currency".to_string(), Value::String(currency.clone())));
             properties.push((
@@ -352,6 +340,41 @@ impl NumberOptions {
                 Value::String(self.unit_display.clone()),
             ));
         }
+        properties.extend([
+            (
+                "minimumIntegerDigits".to_string(),
+                Value::Number(self.minimum_integer_digits as f64),
+            ),
+            (
+                "minimumFractionDigits".to_string(),
+                Value::Number(self.minimum_fraction_digits as f64),
+            ),
+            (
+                "maximumFractionDigits".to_string(),
+                Value::Number(self.maximum_fraction_digits as f64),
+            ),
+        ]);
+        if let Some(value) = self.minimum_significant_digits {
+            properties.push((
+                "minimumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
+        if let Some(value) = self.maximum_significant_digits {
+            properties.push((
+                "maximumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
+        properties.push((
+            "useGrouping".to_string(),
+            Value::String(self.grouping.clone()),
+        ));
+        properties.push((
+            "groupingMin2".to_string(),
+            Value::Boolean(self.grouping_min2),
+        ));
+        properties.extend(slot_tail(self));
         make_object(properties)
     }
 }
@@ -462,20 +485,26 @@ fn number_options(
     }
 }
 
-fn slot_base(number: &NumberOptions) -> Vec<(String, Value)> {
-    let mut properties = slot_primary(number);
+fn slot_tail(number: &NumberOptions) -> Vec<(String, Value)> {
+    let mut properties = Vec::new();
+    properties.push((
+        "notation".to_string(),
+        Value::String(number.notation.clone()),
+    ));
+    if number.notation == "compact" {
+        properties.push((
+            "compactDisplay".to_string(),
+            Value::String(number.compact_display.clone()),
+        ));
+    }
     properties.extend([
-        (
-            "numberingSystem".to_string(),
-            Value::String(number.numbering_system.clone()),
-        ),
-        (
-            "notation".to_string(),
-            Value::String(number.notation.clone()),
-        ),
         (
             "signDisplay".to_string(),
             Value::String(number.sign_display.clone()),
+        ),
+        (
+            "roundingIncrement".to_string(),
+            Value::Number(number.rounding_increment as f64),
         ),
         (
             "roundingMode".to_string(),
@@ -486,47 +515,21 @@ fn slot_base(number: &NumberOptions) -> Vec<(String, Value)> {
             Value::String(number.rounding_priority.clone()),
         ),
         (
-            "roundingIncrement".to_string(),
-            Value::Number(number.rounding_increment as f64),
-        ),
-        (
             "trailingZeroDisplay".to_string(),
             Value::String(number.trailing_zero_display.clone()),
         ),
     ]);
-    if number.notation == "compact" {
-        properties.push((
-            "compactDisplay".to_string(),
-            Value::String(number.compact_display.clone()),
-        ));
-    }
     properties
 }
 
 fn slot_primary(number: &NumberOptions) -> Vec<(String, Value)> {
     vec![
         ("locale".to_string(), Value::String(number.locale.clone())),
+        (
+            "numberingSystem".to_string(),
+            Value::String(number.numbering_system.clone()),
+        ),
         ("style".to_string(), Value::String(number.style.clone())),
-        (
-            "useGrouping".to_string(),
-            Value::String(number.grouping.clone()),
-        ),
-        (
-            "groupingMin2".to_string(),
-            Value::Boolean(number.grouping_min2),
-        ),
-        (
-            "minimumIntegerDigits".to_string(),
-            Value::Number(number.minimum_integer_digits as f64),
-        ),
-        (
-            "minimumFractionDigits".to_string(),
-            Value::Number(number.minimum_fraction_digits as f64),
-        ),
-        (
-            "maximumFractionDigits".to_string(),
-            Value::Number(number.maximum_fraction_digits as f64),
-        ),
     ]
 }
 
