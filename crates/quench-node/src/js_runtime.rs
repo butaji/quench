@@ -115,6 +115,7 @@ impl CapabilityName {
     const FsOpenAsync: u16 = 1524;
     const CommonMustSucceed: u16 = 1701;
     const CommonMustNotCall: u16 = 1702;
+    const CommonWrapperFirst: u16 = 1800;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -215,6 +216,8 @@ struct QuenchNodeHost {
     fd_paths: RefCell<HashMap<i32, String>>,
     next_fd: Cell<i32>,
     fd_modes: RefCell<HashMap<i32, u32>>,
+    common_wrappers: RefCell<HashMap<u16, (Value, bool)>>,
+    next_common_wrapper: Cell<u16>,
 }
 
 struct StreamState {
@@ -252,6 +255,8 @@ impl Default for QuenchNodeHost {
             fd_paths: RefCell::new(HashMap::new()),
             next_fd: Cell::new(3),
             fd_modes: RefCell::new(HashMap::new()),
+            common_wrappers: RefCell::new(HashMap::new()),
+            next_common_wrapper: Cell::new(CapabilityName::CommonWrapperFirst),
         }
     }
 }
@@ -316,9 +321,10 @@ impl Host for QuenchNodeHost {
                 arguments.first().cloned().ok_or(VmError::NotCallable)
             }
             HostCapabilityKind::Custom(CapabilityName::CommonMustSucceed)
-            | HostCapabilityKind::Custom(CapabilityName::CommonMustNotCall) => {
-                arguments.first().cloned().ok_or(VmError::NotCallable)
-            }
+            | HostCapabilityKind::Custom(CapabilityName::CommonMustNotCall) => self.common_wrapper(
+                arguments,
+                capability.kind == HostCapabilityKind::Custom(CapabilityName::CommonMustSucceed),
+            ),
             HostCapabilityKind::Custom(CapabilityName::FsWriteAsync) => fs_write_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReadAsync) => fs_read_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsWritePromise) => {
@@ -327,6 +333,13 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsReadPromise) => fs_read_promise(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsOpenAsync) => {
                 self.fs_open_async(arguments)
+            }
+            HostCapabilityKind::Custom(id)
+                if (CapabilityName::CommonWrapperFirst
+                    ..(CapabilityName::CommonWrapperFirst + 100))
+                    .contains(&id) =>
+            {
+                self.common_wrapper_call(id, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
@@ -558,6 +571,29 @@ impl Host for QuenchNodeHost {
 }
 
 impl QuenchNodeHost {
+    fn common_wrapper(&self, arguments: &[Value], succeeds: bool) -> Result<Value, VmError> {
+        let callback = arguments.first().cloned().ok_or(VmError::NotCallable)?;
+        let id = self.next_common_wrapper.get();
+        self.next_common_wrapper.set(id.saturating_add(1));
+        self.common_wrappers
+            .borrow_mut()
+            .insert(id, (callback, succeeds));
+        Ok(capability_function(HostCapabilityKind::Custom(id)))
+    }
+
+    fn common_wrapper_call(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
+        let (callback, succeeds) = self
+            .common_wrappers
+            .borrow()
+            .get(&id)
+            .cloned()
+            .ok_or(VmError::NotCallable)?;
+        if !succeeds {
+            return Err(VmError::EvalError("unexpected callback call".into()));
+        }
+        quench_runtime::execute::call(&callback, &Value::Undefined, &arguments[1..])
+    }
+
     fn fs_open(&self, arguments: &[Value]) -> Result<Value, VmError> {
         let path = path_arg(arguments, 0)?;
         let flags = arguments
