@@ -55,8 +55,40 @@ fn collect_annex_b_collisions(
                     );
                 }
             }
+            Statement::ForInStatement(statement) => {
+                let mut nested = visible.to_vec();
+                extend_loop_lexicals(&statement.left, &mut nested);
+                collect_annex_b_collisions(
+                    std::slice::from_ref(&statement.body),
+                    &nested,
+                    collisions,
+                );
+            }
+            Statement::ForOfStatement(statement) => {
+                let mut nested = visible.to_vec();
+                extend_loop_lexicals(&statement.left, &mut nested);
+                collect_annex_b_collisions(
+                    std::slice::from_ref(&statement.body),
+                    &nested,
+                    collisions,
+                );
+            }
             _ => {}
         }
+    }
+}
+
+fn extend_loop_lexicals(left: &oxc::ast::ast::ForStatementLeft<'_>, names: &mut Vec<String>) {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        return;
+    };
+    if declaration.kind != VariableDeclarationKind::Var {
+        names.extend(
+            declaration
+                .declarations
+                .iter()
+                .flat_map(|declarator| crate::binding_patterns::names(&declarator.id)),
+        );
     }
 }
 

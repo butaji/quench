@@ -32,6 +32,7 @@ fn reduce_body(
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
     let mut block_locals = locals.clone();
+    crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, next_slot);
     block_locals.retain(|name, _| !name.starts_with("\0lexical-predeclared:"));
     let mut last = None;
     for statement in &block.body {
