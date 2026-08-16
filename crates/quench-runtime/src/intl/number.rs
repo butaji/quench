@@ -60,8 +60,32 @@ pub(crate) struct RawOptions {
     rounding_priority: String,
 }
 
+const OPTION_KEYS: &[&str] = &[
+    "localeMatcher",
+    "numberingSystem",
+    "style",
+    "currency",
+    "currencyDisplay",
+    "currencySign",
+    "unit",
+    "unitDisplay",
+    "notation",
+    "minimumIntegerDigits",
+    "minimumFractionDigits",
+    "maximumFractionDigits",
+    "minimumSignificantDigits",
+    "maximumSignificantDigits",
+    "roundingIncrement",
+    "roundingMode",
+    "roundingPriority",
+    "trailingZeroDisplay",
+    "compactDisplay",
+    "useGrouping",
+    "signDisplay",
+];
+
 impl RawOptions {
-    fn from_value(options: Option<&Value>) -> Self {
+    fn from_value(options: Option<&Value>) -> Result<Self, VmError> {
         let mut raw = RawOptions {
             style: "decimal".to_string(),
             currency: None,
@@ -83,16 +107,15 @@ impl RawOptions {
             maximum_significant_digits: -1.0,
             rounding_priority: "auto".to_string(),
         };
-        if let Some(Value::Object(properties)) = options {
-            for (key, value) in properties.iter() {
-                if matches!(value, Value::Undefined) {
-                    continue;
+        if let Some(options) = options.filter(|value| crate::value::is_object(value)) {
+            for key in OPTION_KEYS {
+                let value = crate::execute::get_property_result(options, key)?;
+                if !matches!(value, Value::Undefined) {
+                    apply_option(&mut raw, key, &to_string_value(&value));
                 }
-                let value = to_string_value(value);
-                apply_option(&mut raw, key, &value);
             }
         }
-        raw
+        Ok(raw)
     }
 }
 
@@ -129,7 +152,6 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    validate_options(arguments.get(1))?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
     let options = NumberOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
@@ -171,7 +193,7 @@ pub(crate) fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
 
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
-        let raw = RawOptions::from_value(options);
+        let raw = RawOptions::from_value(options)?;
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),
