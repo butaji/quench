@@ -141,6 +141,7 @@ pub enum Builtin {
     TemporalPlainDate, TemporalPlainDatePrototype,
     TemporalPlainDateFrom, TemporalPlainDateCompare, TemporalPlainDateWithCalendar,
     TemporalPlainDateValueOf,
+    TemporalPlainDateToString,
     TemporalPlainDateToJSON,
     TemporalPlainDateDayOfWeekGetter, TemporalPlainDateDayOfYearGetter,
     TemporalPlainDateDaysInMonthGetter,
