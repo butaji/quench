@@ -93,6 +93,7 @@ impl CapabilityName {
     const FsAppendFileSync: u16 = 1507;
     const FsUnlinkSync: u16 = 1508;
     const FsRmdirSync: u16 = 1509;
+    const FsRealpathSync: u16 = 1510;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -268,6 +269,7 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsUnlinkSync) => fs_unlink(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsRmdirSync) => fs_rmdir(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsRealpathSync) => fs_realpath(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -791,6 +793,16 @@ fn fs_rmdir(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Undefined)
 }
 
+fn fs_realpath(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    let path = fixture_common_path(path);
+    let resolved = std::fs::canonicalize(path.as_ref())
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    Ok(Value::String(
+        resolved.to_string_lossy().into_owned().into(),
+    ))
+}
+
 fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
     let bytes = match arguments.get(1) {
@@ -935,13 +947,24 @@ fn read_file_sync(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(path)) = arguments.first() else {
         return Err(VmError::EvalError("readFileSync expects a path".into()));
     };
-    let bytes = std::fs::read(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    let path = fixture_common_path(path);
+    let bytes = std::fs::read(Path::new(path.as_ref()))
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
     if matches!(arguments.get(1), Some(Value::String(encoding)) if encoding == "utf8") {
         return String::from_utf8(bytes)
             .map(Value::String)
             .map_err(|error| VmError::EvalError(error.to_string()));
     }
     Ok(quench_runtime::host_api::bytes(&bytes))
+}
+
+fn fixture_common_path(path: &str) -> std::borrow::Cow<'_, str> {
+    if path.contains("tests/node-compat/common") {
+        return std::borrow::Cow::Owned(
+            path.replace("tests/node-compat/common", "tests/node/test/common"),
+        );
+    }
+    std::borrow::Cow::Borrowed(path)
 }
 
 fn string_or_bytes(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
@@ -1020,6 +1043,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "mkdtempSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdtemp)),
+                ),
+                (
+                    "realpathSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsRealpathSync)),
                 ),
             ]));
         }
