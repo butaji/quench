@@ -108,6 +108,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(7) => read_file_sync(arguments),
             HostCapabilityKind::Custom(8) => self.create_hash(arguments),
             HostCapabilityKind::Custom(9) => buffer_byte_length(arguments),
+            HostCapabilityKind::Custom(30) => buffer_from(arguments),
+            HostCapabilityKind::Custom(31) => buffer_alloc(arguments),
+            HostCapabilityKind::Custom(32) => buffer_is_buffer(arguments),
             HostCapabilityKind::Custom(21) => next_tick(arguments),
             HostCapabilityKind::Custom(27 | 28 | 29) => timer_call(arguments),
             HostCapabilityKind::Custom(id) if (13..=20).contains(&id) => {
@@ -484,6 +487,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "process" || name == "node:process" {
             return Ok(process_module());
         }
+        if name == "buffer" || name == "node:buffer" {
+            return Ok(Value::object(vec![("Buffer".into(), buffer_module())]));
+        }
         if name == "node:fs" || name == "fs" {
             return Ok(Value::object(vec![(
                 "readFileSync".into(),
@@ -563,6 +569,45 @@ fn process_module() -> Value {
             capability_function(HostCapabilityKind::Custom(21)),
         ),
     ])
+}
+
+fn buffer_module() -> Value {
+    let mut buffer = capability_function(HostCapabilityKind::Custom(30));
+    for (name, kind) in [
+        ("from", HostCapabilityKind::Custom(30)),
+        ("alloc", HostCapabilityKind::Custom(31)),
+        ("isBuffer", HostCapabilityKind::Custom(32)),
+    ] {
+        buffer = quench_runtime::execute::set_property(buffer, name, capability_function(kind));
+    }
+    buffer
+}
+
+fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
+    match arguments.first() {
+        Some(Value::String(value)) => Ok(quench_runtime::host_api::bytes(value.as_bytes())),
+        Some(Value::Uint8Array(view)) => Ok(Value::Uint8Array(view.clone())),
+        _ => Err(VmError::EvalError(
+            "Buffer.from expects bytes or a string".into(),
+        )),
+    }
+}
+
+fn buffer_alloc(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Number(length)) = arguments.first() else {
+        return Err(VmError::EvalError("Buffer.alloc expects a length".into()));
+    };
+    if !length.is_finite() || *length < 0.0 {
+        return Err(VmError::EvalError("invalid buffer length".into()));
+    }
+    Ok(quench_runtime::host_api::bytes(&vec![0; *length as usize]))
+}
+
+fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::Boolean(matches!(
+        arguments.first(),
+        Some(Value::Uint8Array(_))
+    )))
 }
 
 fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
@@ -727,13 +772,7 @@ impl JsRuntime for QuenchRuntime {
             "clearImmediate",
             capability_function(HostCapabilityKind::Custom(29)),
         )
-        .with_host_value(
-            "Buffer",
-            Value::object(vec![(
-                "byteLength".into(),
-                capability_function(HostCapabilityKind::Custom(9)),
-            )]),
-        );
+        .with_host_value("Buffer", buffer_module());
         quench_runtime::execute::execute_with_context(program.ops(), &context)
             .map(|_| ())
             .map_err(|error| error.render().into())
