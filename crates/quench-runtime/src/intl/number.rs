@@ -480,12 +480,6 @@ fn is_decimal_integer(value: &str) -> bool {
     !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-fn decimal_integer_greater(first: &str, second: &str) -> bool {
-    let first = first.trim_start_matches('0');
-    let second = second.trim_start_matches('0');
-    first.len() > second.len() || (first.len() == second.len() && first > second)
-}
-
 fn strip_positive_sign(text: &str) -> String {
     text.strip_prefix('+').unwrap_or(text).to_string()
 }
