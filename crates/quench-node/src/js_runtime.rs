@@ -137,6 +137,8 @@ impl CapabilityName {
     const FsDirentFileDirectory: u16 = 1536;
     const FsDirentDirectoryFile: u16 = 1537;
     const FsReaddirPromise: u16 = 1538;
+    const FsStatSync: u16 = 1539;
+    const FsStringToFlags: u16 = 1540;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -366,6 +368,10 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsReaddirPromise) => {
                 Ok(fulfilled(fs_readdir(arguments)?))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsStatSync) => fs_stat_sync(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsStringToFlags) => {
+                string_to_flags(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::FsDirentFile) => Ok(Value::Boolean(true)),
             HostCapabilityKind::Custom(CapabilityName::FsDirentDirectory) => {
@@ -670,6 +676,11 @@ impl QuenchNodeHost {
             };
             VmError::Thrown(fs_error(code, &error.to_string()))
         })?;
+        if let Some(mode) = arguments.get(2).and_then(file_mode) {
+            #[cfg(unix)]
+            std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode))
+                .map_err(|error| VmError::EvalError(error.to_string()))?;
+        }
         let fd = self.next_fd.get();
         self.next_fd.set(fd.saturating_add(1));
         self.fd_paths.borrow_mut().insert(fd, path.to_owned());
@@ -692,10 +703,17 @@ impl QuenchNodeHost {
 
     fn fs_close(&self, arguments: &[Value]) -> Result<Value, VmError> {
         let Some(Value::Number(fd)) = arguments.first() else {
-            return Err(VmError::EvalError("fd must be a number".into()));
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "fd must be a number",
+            )));
         };
-        self.fd_paths.borrow_mut().remove(&(*fd as i32));
-        self.fd_modes.borrow_mut().remove(&(*fd as i32));
+        let fd = *fd as i32;
+        if !self.fd_paths.borrow().contains_key(&fd) {
+            return Err(VmError::Thrown(fs_error("EBADF", "bad file descriptor")));
+        }
+        self.fd_paths.borrow_mut().remove(&fd);
+        self.fd_modes.borrow_mut().remove(&fd);
         Ok(Value::Undefined)
     }
 
@@ -1108,6 +1126,57 @@ fn fs_readdir_async(arguments: &[Value]) -> Result<Value, VmError> {
         quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null, entries])?;
     }
     Ok(Value::Undefined)
+}
+
+fn fs_stat_sync(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    let metadata =
+        std::fs::metadata(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    #[cfg(unix)]
+    let mode = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions())
+        | if metadata.is_dir() { 0o40000 } else { 0o100000 };
+    #[cfg(not(unix))]
+    let mode = if metadata.is_dir() { 0o40777 } else { 0o100666 };
+    Ok(fs_stats(mode))
+}
+
+fn string_to_flags(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(flags)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_VALUE",
+            "flags must be a string",
+        )));
+    };
+    let value = match flags.as_str() {
+        "r" => 0,
+        "r+" => 2,
+        "rs" | "rs+" => 1_052_674,
+        "w" => 577,
+        "wx" => 705,
+        "w+" => 578,
+        "wx+" => 706,
+        "a" => 1_089,
+        "ax" => 1_217,
+        "a+" => 1_090,
+        "ax+" => 1_218,
+        "as" => 1_053_761,
+        "as+" => 1_053_762,
+        _ => {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_VALUE",
+                "invalid flag",
+            )))
+        }
+    };
+    Ok(Value::Number(value as f64))
+}
+
+fn file_mode(value: &Value) -> Option<u32> {
+    match value {
+        Value::Number(number) => Some(*number as u32),
+        Value::String(string) => u32::from_str_radix(string.trim_start_matches('0'), 8).ok(),
+        _ => None,
+    }
 }
 
 fn fs_error(code: &str, message: &str) -> Value {
@@ -1551,6 +1620,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::EvalError("require expects a module name".into()));
     };
     if name != "node:path" && name != "path" {
+        if name == "internal/fs/utils" || name == "node:internal/fs/utils" {
+            return Ok(Value::object(vec![(
+                "stringToFlags".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsStringToFlags)),
+            )]));
+        }
         if name == "../common" || name.ends_with("/common") {
             return Ok(Value::object(vec![
                 (
@@ -1644,8 +1719,16 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsFchmod)),
                 ),
                 (
+                    "fchmodSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsFchmod)),
+                ),
+                (
                     "fstatSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsFstatSync)),
+                ),
+                (
+                    "statSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsStatSync)),
                 ),
                 (
                     "stat".into(),
