@@ -1,5 +1,6 @@
 const TEMPORAL_DURATION_PROTOTYPE_NAMES: &[&str] = &[
     "constructor",
+    "Symbol.toStringTag",
     "years",
     "months",
     "weeks",
