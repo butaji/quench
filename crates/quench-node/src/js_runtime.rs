@@ -86,6 +86,12 @@ impl CapabilityName {
     const DgramDisconnect: u16 = 2142;
     const DgramAddress: u16 = 2143;
     const DgramRemoteAddress: u16 = 2144;
+    const DgramRef: u16 = 2145;
+    const DgramUnref: u16 = 2146;
+    const DgramSetBroadcast: u16 = 2147;
+    const DgramSetTtl: u16 = 2148;
+    const DgramGetRecvBufferSize: u16 = 2149;
+    const DgramGetSendBufferSize: u16 = 2150;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -985,7 +991,7 @@ impl Host for QuenchNodeHost {
                 Ok(Value::Undefined)
             }
             HostCapabilityKind::Custom(CapabilityName::DgramCreateSocket) => self.dgram_socket(arguments),
-            HostCapabilityKind::Custom(id @ (CapabilityName::DgramBind | CapabilityName::DgramClose | CapabilityName::DgramSend | CapabilityName::DgramConnect | CapabilityName::DgramDisconnect | CapabilityName::DgramAddress | CapabilityName::DgramRemoteAddress)) => self.dgram_call(id, receiver, arguments),
+            HostCapabilityKind::Custom(id @ (CapabilityName::DgramBind | CapabilityName::DgramClose | CapabilityName::DgramSend | CapabilityName::DgramConnect | CapabilityName::DgramDisconnect | CapabilityName::DgramAddress | CapabilityName::DgramRemoteAddress | CapabilityName::DgramRef | CapabilityName::DgramUnref | CapabilityName::DgramSetBroadcast | CapabilityName::DgramSetTtl | CapabilityName::DgramGetRecvBufferSize | CapabilityName::DgramGetSendBufferSize)) => self.dgram_call(id, receiver, arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
@@ -1576,6 +1582,9 @@ impl Host for QuenchNodeHost {
 
 impl QuenchNodeHost {
     fn dgram_socket(&self, _arguments: &[Value]) -> Result<Value, VmError> {
+        let valid = match _arguments.first() { Some(Value::String(value)) => value == "udp4" || value == "udp6", Some(Value::Object(options)) => matches!(quench_runtime::execute::get_property_result(&Value::Object(options.clone()), "type"), Ok(Value::String(value)) if value == "udp4" || value == "udp6"), _ => false };
+        if !valid { return Err(VmError::Thrown(fs_error("ERR_SOCKET_BAD_TYPE", "Bad socket type"))); }
+        if let Some(Value::Object(options)) = _arguments.first() { if matches!(quench_runtime::execute::get_property_result(&Value::Object(options.clone()), "recvBufferSize"), Ok(Value::String(_))) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "recvBufferSize must be a number"))); } }
         let id = self.next_dgram.get(); self.next_dgram.set(id + 1); self.dgram_states.borrow_mut().insert(id, (false, false, 0));
         Ok(quench_runtime::host_api::object(vec![
             ("bind".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramBind))),
@@ -1585,6 +1594,13 @@ impl QuenchNodeHost {
             ("disconnect".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramDisconnect))),
             ("address".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramAddress))),
             ("remoteAddress".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramRemoteAddress))),
+            ("ref".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramRef))),
+            ("unref".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramUnref))),
+            ("setBroadcast".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramSetBroadcast))),
+            ("setTTL".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramSetTtl))),
+            ("getRecvBufferSize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramGetRecvBufferSize))),
+            ("getSendBufferSize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramGetSendBufferSize))),
+            ("type".into(), Value::String("udp4".into())),
             ("\0dgramId".into(), Value::Number(id as f64)),
         ]))
     }
@@ -1602,6 +1618,11 @@ impl QuenchNodeHost {
             CapabilityName::DgramDisconnect => { if !state.1 { return Err(VmError::Thrown(fs_error("ERR_SOCKET_DGRAM_NOT_CONNECTED", "Not connected"))); } state.1 = false; Ok(Value::Undefined) }
             CapabilityName::DgramAddress => Ok(Value::object(vec![("address".into(), Value::String("0.0.0.0".into())), ("port".into(), Value::Number(state.2 as f64)), ("family".into(), Value::String("IPv4".into()))])),
             CapabilityName::DgramRemoteAddress => Ok(Value::object(vec![("address".into(), Value::String("127.0.0.1".into())), ("port".into(), Value::Number(state.2 as f64)), ("family".into(), Value::String("IPv4".into()))])),
+            CapabilityName::DgramRef | CapabilityName::DgramUnref => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
+            CapabilityName::DgramSetBroadcast => if state.0 { Ok(Value::Boolean(true)) } else { Err(VmError::EvalError("setBroadcast EBADF".into())) },
+            CapabilityName::DgramSetTtl => if state.0 { Ok(arguments.first().cloned().unwrap_or(Value::Number(0.0))) } else { Err(VmError::EvalError("setTTL EBADF".into())) },
+            CapabilityName::DgramGetRecvBufferSize => Ok(Value::Number(10000.0)),
+            CapabilityName::DgramGetSendBufferSize => Ok(Value::Number(15000.0)),
             CapabilityName::DgramSend => { let callback = arguments.last().cloned(); let total = arguments.first().map(|value| match value { Value::Array(array) => array.len(), Value::Uint8Array(view) => view.length, _ => 0 }).unwrap_or(0); let offset = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some(*value as usize), _ => None }).unwrap_or(0); let length = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some(*value as usize), _ => None }).unwrap_or(total.saturating_sub(offset)); let bytes = length.min(total.saturating_sub(offset)); drop(states); if let Some(callback) = callback { quench_runtime::execute::call(&callback, &Value::Undefined, &[Value::Null, Value::Number(bytes as f64)])?; } Ok(Value::Undefined) }
             _ => Err(VmError::NotCallable),
         }
