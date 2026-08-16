@@ -154,6 +154,32 @@ fn parse_canonical(tag: &str) -> Locale {
     locale
 }
 
+pub(crate) fn calendar_from_tag(tag: &str) -> Option<String> {
+    parse_canonical(tag).calendar
+}
+
+pub(crate) fn remove_unicode_extension(tag: &str, key: &str) -> String {
+    let Some((base, extension)) = tag.split_once("-u-") else {
+        return tag.to_string();
+    };
+    let mut parts = extension.split('-').collect::<Vec<_>>();
+    let Some(key_index) = parts.iter().position(|part| *part == key) else {
+        return tag.to_string();
+    };
+    let end = parts
+        .iter()
+        .enumerate()
+        .skip(key_index + 1)
+        .find(|(_, part)| part.len() == 2)
+        .map_or(parts.len(), |(index, _)| index);
+    parts.drain(key_index..end);
+    if parts.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}-u-{}", parts.join("-"))
+    }
+}
+
 fn parse_other_extensions(parts: &[&str]) -> Vec<OtherExtension> {
     let mut extensions = Vec::new();
     let mut index = 0;
