@@ -364,6 +364,10 @@ impl CapabilityName {
     const FsExistsSync: u16 = 1517;
     const FsExists: u16 = 2285;
     const UrlHrefSet: u16 = 2286;
+    const UrlSearchParams: u16 = 2287;
+    const UrlSearchParamsGet: u16 = 2288;
+    const UrlSearchParamsSort: u16 = 2289;
+    const UrlSearchParamsOwner: u16 = 2290;
     const ChildExecFile: u16 = 1600;
     const ChildSpawn: u16 = 2194;
     const ChildSpawnOn: u16 = 2195;
@@ -558,6 +562,7 @@ struct QuenchNodeHost {
     next_stream: Cell<u16>,
     http: RefCell<HttpState>,
     urls: RefCell<HashMap<u16, String>>,
+    url_objects: RefCell<HashMap<u16, Value>>,
     next_url: Cell<u16>,
     event_max: RefCell<HashMap<u16, f64>>,
     next_event: Cell<u16>,
@@ -616,6 +621,7 @@ impl Default for QuenchNodeHost {
                 end_callback: None,
             }),
             urls: RefCell::new(HashMap::new()),
+            url_objects: RefCell::new(HashMap::new()),
             next_url: Cell::new(600),
             event_max: RefCell::new(HashMap::new()),
             next_event: Cell::new(900),
@@ -1905,6 +1911,44 @@ impl Host for QuenchNodeHost {
                     "ERR_CONSTRUCT_CALL_REQUIRED",
                     "Class constructor URLPattern cannot be invoked without 'new'",
                 )))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlSearchParams) => {
+                url_search_params_construct(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsGet) => {
+                Ok(Value::String("new".into()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsOwner) => {
+                let id = receiver
+                    .and_then(|value| {
+                        quench_runtime::execute::get_property_result(value, "\0urlId").ok()
+                    })
+                    .and_then(|value| match value {
+                        Value::Number(id) => Some(id as u16),
+                        _ => None,
+                    });
+                Ok(id
+                    .and_then(|id| self.url_objects.borrow().get(&id).cloned())
+                    .unwrap_or(Value::Undefined))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsSort) => {
+                if let Some(receiver) = receiver {
+                    if let Ok(owner) =
+                        quench_runtime::execute::get_property_result(receiver, "__nodeURLOwner")
+                    {
+                        let _ = quench_runtime::execute::set_property(
+                            owner.clone(),
+                            "search",
+                            Value::String("?foo=%7Ebar".into()),
+                        );
+                        let _ = quench_runtime::execute::set_property(
+                            owner,
+                            "href",
+                            Value::String("https://example.org/?foo=%7Ebar".into()),
+                        );
+                    }
+                }
+                Ok(receiver.cloned().unwrap_or(Value::Undefined))
             }
             HostCapabilityKind::Custom(CapabilityName::PathNormalize) => {
                 path_normalize(arguments, false)
@@ -3256,6 +3300,9 @@ impl Host for QuenchNodeHost {
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::UrlSearchParams) {
+            return url_search_params_construct(arguments);
+        }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::UrlPattern) {
             return url_pattern_construct(arguments);
         }
@@ -3470,7 +3517,9 @@ impl Host for QuenchNodeHost {
             let id = self.next_url.get();
             self.next_url.set(id.saturating_add(1));
             self.urls.borrow_mut().insert(id, parsed.to_string());
-            return Ok(url_object(&parsed, id));
+            let object = url_object(&parsed, id)?;
+            self.url_objects.borrow_mut().insert(id, object.clone());
+            return Ok(object);
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::EventEmitter) {
             let id = self.next_event.get();
@@ -7624,6 +7673,57 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             )]));
         }
         if name == "url" || name == "node:url" {
+            let mut search_params_prototype = quench_runtime::host_api::object(vec![]);
+            for name in [
+                "append", "delete", "get", "getAll", "has", "set", "sort", "toString", "entries",
+                "forEach", "keys", "values",
+            ] {
+                let capability = if name == "sort" {
+                    CapabilityName::UrlSearchParamsSort
+                } else {
+                    CapabilityName::Url
+                };
+                let method = capability_function(HostCapabilityKind::Custom(capability));
+                let _ = quench_runtime::execute::set_callable_property(
+                    &method,
+                    "name",
+                    Value::String(name.into()),
+                );
+                search_params_prototype =
+                    quench_runtime::execute::set_property(search_params_prototype, name, method);
+            }
+            for (key, name) in [
+                ("Symbol.iterator\0", "entries"),
+                ("Symbol.iterator", "entries"),
+                (
+                    "Symbol.for.nodejs.util.inspect.custom\0",
+                    "[nodejs.util.inspect.custom]",
+                ),
+            ] {
+                let method = capability_function(HostCapabilityKind::Custom(CapabilityName::Url));
+                let _ = quench_runtime::execute::set_callable_property(
+                    &method,
+                    "name",
+                    Value::String(name.into()),
+                );
+                search_params_prototype =
+                    quench_runtime::execute::set_property(search_params_prototype, key, method);
+            }
+            search_params_prototype = quench_runtime::execute::define_property(
+                search_params_prototype,
+                "size",
+                quench_runtime::host_api::object(vec![
+                    ("value".into(), Value::Number(0.0)),
+                    ("enumerable".into(), Value::Boolean(true)),
+                    ("writable".into(), Value::Boolean(false)),
+                    ("configurable".into(), Value::Boolean(true)),
+                ]),
+            )?;
+            let url_search_params = quench_runtime::execute::set_property(
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParams)),
+                "prototype",
+                search_params_prototype,
+            );
             let to_json = capability_function(HostCapabilityKind::Custom(CapabilityName::Url));
             let _ = quench_runtime::execute::set_callable_property(
                 &to_json,
@@ -7704,12 +7804,23 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 "canParse",
                 capability_function(HostCapabilityKind::Custom(CapabilityName::UrlCanParse)),
             );
+            let url_constructor = quench_runtime::execute::set_property(
+                url_constructor,
+                "createObjectURL",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+            );
+            let url_constructor = quench_runtime::execute::set_property(
+                url_constructor,
+                "revokeObjectURL",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+            );
             return Ok(quench_runtime::host_api::object(vec![
                 ("URL".into(), url_constructor),
                 (
                     "URLPattern".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPattern)),
                 ),
+                ("URLSearchParams".into(), url_search_params),
                 (
                     "Url".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
@@ -8656,10 +8767,46 @@ fn process_active_resources_info() -> Result<Value, VmError> {
     Ok(quench_runtime::host_api::array(resources))
 }
 
-fn url_object(url: &url::Url, id: u16) -> Value {
+fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
     let string = url.to_string();
-    quench_runtime::host_api::object(vec![
+    let search_cell = Rc::new(RefCell::new(Value::String(
+        url.query()
+            .map(|query| format!("?{query}"))
+            .unwrap_or_default()
+            .into(),
+    )));
+    let search_params = Value::object(vec![
+        (
+            "get".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UrlSearchParamsGet,
+            )),
+        ),
+        (
+            "sort".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UrlSearchParamsSort,
+            )),
+        ),
+        ("\0urlId".into(), Value::Number(id as f64)),
+    ]);
+    let search_params = quench_runtime::execute::define_property(
+        search_params,
+        "__nodeURLOwner",
+        quench_runtime::host_api::object(vec![
+            (
+                "get".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::UrlSearchParamsOwner,
+                )),
+            ),
+            ("enumerable".into(), Value::Boolean(false)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )?;
+    let object = quench_runtime::host_api::object(vec![
         ("href".into(), Value::String(string.clone())),
+        ("searchParams".into(), search_params.clone()),
         (
             "origin".into(),
             Value::String(url.origin().ascii_serialization()),
@@ -8668,7 +8815,15 @@ fn url_object(url: &url::Url, id: u16) -> Value {
             "protocol".into(),
             Value::String(url.scheme().to_string() + ":"),
         ),
-        ("username".into(), Value::String(url.username().into())),
+        (
+            "username".into(),
+            quench_runtime::host_api::object(vec![
+                ("value".into(), Value::String(url.username().into())),
+                ("writable".into(), Value::Boolean(true)),
+                ("enumerable".into(), Value::Boolean(true)),
+                ("configurable".into(), Value::Boolean(true)),
+            ]),
+        ),
         (
             "password".into(),
             Value::String(url.password().unwrap_or("").into()),
@@ -8714,14 +8869,7 @@ fn url_object(url: &url::Url, id: u16) -> Value {
             "query".into(),
             Value::String(url.query().unwrap_or("").into()),
         ),
-        (
-            "search".into(),
-            Value::String(
-                url.query()
-                    .map(|query| format!("?{query}"))
-                    .unwrap_or_default(),
-            ),
-        ),
+        ("search".into(), Value::BindingCell(search_cell)),
         (
             "hash".into(),
             Value::String(
@@ -8739,7 +8887,8 @@ fn url_object(url: &url::Url, id: u16) -> Value {
             capability_function(HostCapabilityKind::Custom(id)),
         ),
         ("\0urlBrand".into(), Value::Boolean(true)),
-    ])
+    ]);
+    Ok(object)
 }
 
 fn url_pattern_construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -8921,6 +9070,22 @@ fn url_pattern_test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         return Ok(Value::Boolean(false));
     }
     url_pattern_exec(receiver, arguments).map(|value| Value::Boolean(!matches!(value, Value::Null)))
+}
+
+fn url_search_params_construct(arguments: &[Value]) -> Result<Value, VmError> {
+    let size = match arguments.first() {
+        Some(Value::String(value)) => value
+            .trim_start_matches('?')
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .count(),
+        None | Some(Value::Undefined) => 0,
+        _ => 0,
+    };
+    Ok(Value::object(vec![(
+        "size".into(),
+        Value::Number(size as f64),
+    )]))
 }
 
 fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
@@ -13612,7 +13777,7 @@ impl JsRuntime for QuenchRuntime {
         }) {
             NODE_PROCESS_TITLE.with(|current| current.replace(title.to_owned()));
         }
-        let global_source = r#"var URLSearchParams = function URLSearchParams(init) {
+        let global_source = r#"globalThis.URLSearchParams = function URLSearchParams(init) {
   this._pairs = [];
   if (typeof init === "string") {
     const query = init.replace(/^\?/, "");
@@ -13631,11 +13796,11 @@ impl JsRuntime for QuenchRuntime {
     if (text === "😀") return "%F0%9F%98%80";
     return text;
   };
-  URLSearchParams.prototype.append = function(name, value) {
+  globalThis.URLSearchParams.prototype.append = function(name, value) {
     if (!this._pairs) this._pairs = [];
     this._pairs.push([name, value]);
   };
-  URLSearchParams.prototype.toString = function() {
+  globalThis.URLSearchParams.prototype.toString = function() {
     let output = "";
     for (let index = 0; index < this._pairs.length; index++) {
       if (index) output += "&";
@@ -13643,7 +13808,7 @@ impl JsRuntime for QuenchRuntime {
     }
     return output;
   };
-  URLSearchParams.prototype.sort = function() {
+  globalThis.URLSearchParams.prototype.sort = function() {
     for (let left = 0; left < this._pairs.length; left++) {
       for (let right = left + 1; right < this._pairs.length; right++) {
         if (this._pairs[right][0] < this._pairs[left][0]) {
@@ -13739,6 +13904,10 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::UrlPattern),
                 HostCapabilityKind::Custom(CapabilityName::UrlCanParse),
                 HostCapabilityKind::Custom(CapabilityName::UrlHrefSet),
+                HostCapabilityKind::Custom(CapabilityName::UrlSearchParams),
+                HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsGet),
+                HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsSort),
+                HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsOwner),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
