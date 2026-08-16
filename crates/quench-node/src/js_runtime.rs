@@ -73,6 +73,18 @@ include!("js_runtime_dispatch_crypto_a.rs");
 include!("js_runtime_dispatch_buffer.rs");
 include!("js_runtime_dispatch_core.rs");
 
+fn is_util_resolver(id: u16) -> bool {
+    id >= CapabilityName::UtilResolverFirst
+        && !matches!(
+            id,
+            CapabilityName::CryptoHashOn
+                | CapabilityName::CryptoHashWrite
+                | CapabilityName::CryptoHashEnd
+                | CapabilityName::CryptoHashUpdate
+                | CapabilityName::CryptoHashDigest
+        )
+}
+
 include!("js_runtime_host_impl.rs");
 include!("js_runtime_host_zlib.rs");
 impl QuenchNodeHost {}
