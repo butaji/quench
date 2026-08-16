@@ -223,6 +223,9 @@ fn dispatch_all(
 
 /// Implement `Intl.getCanonicalLocales`.
 fn get_canonical_locales(arguments: &[Value]) -> Result<Value, VmError> {
+    if arguments.is_empty() {
+        return Ok(make_array(Vec::new()));
+    }
     let locales = resolve_locales(arguments)?;
     Ok(make_array(locales.into_iter().map(Value::String).collect()))
 }
