@@ -2451,9 +2451,23 @@ fn string_or_bytes(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
 }
 
 fn buffer_byte_length(arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::Number(
-        string_or_bytes(arguments.first())?.len() as f64
-    ))
+    let encoding = arguments.get(1).and_then(|value| match value { Value::String(value) => Some(value.as_str()), _ => None }).unwrap_or("utf8");
+    let length = match arguments.first() {
+        Some(Value::String(value)) if encoding == "utf16le" || encoding == "ucs2" || encoding == "ucs-2" => value.encode_utf16().count() * 2,
+        Some(Value::String(value)) => value.len(),
+        Some(Value::ArrayBuffer(buffer)) => buffer.bytes.borrow().len(),
+        Some(Value::Uint8Array(view)) => view.length,
+        Some(Value::Uint16Array(view)) => view.length * 2,
+        Some(Value::Uint8ClampedArray(view)) => view.length,
+        Some(Value::Int8Array(view)) => view.length,
+        Some(Value::Int16Array(view)) => view.length * 2,
+        Some(Value::Int32Array(view)) => view.length * 4,
+        Some(Value::Uint32Array(view)) => view.length * 4,
+        Some(Value::Float32Array(view)) => view.length * 4,
+        Some(Value::Float64Array(view)) => view.length * 8,
+        _ => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "value must be a string or Buffer"))),
+    };
+    Ok(Value::Number(length as f64))
 }
 
 fn child_error(code: &str, message: &str) -> Value {
@@ -3912,6 +3926,8 @@ fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
             .take_while(|index| *index + 1 < text.len())
             .filter_map(|index| u8::from_str_radix(&text[index..index + 2], 16).ok())
             .collect::<Vec<_>>()
+    } else if encoding == "utf16le" || encoding == "ucs2" || encoding == "ucs-2" {
+        text.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>()
     } else {
         text.as_bytes().to_vec()
     };
