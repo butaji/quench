@@ -459,6 +459,14 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
         return (left.is_nan() && right.is_nan())
             || (left == right && left.is_sign_negative() == right.is_sign_negative());
     }
+    if matches!(left, Value::String(_) | Value::StringUnits(_))
+        && matches!(right, Value::String(_) | Value::StringUnits(_))
+    {
+        return crate::conversion::to_string(left)
+            .ok()
+            .zip(crate::conversion::to_string(right).ok())
+            .is_some_and(|(left, right)| left == right);
+    }
     same_value_objects(left, right)
 }
 
