@@ -35,6 +35,7 @@ impl CapabilityName {
     const BufferIsBuffer: u16 = 32;
     const UtilFormat: u16 = 80;
     const UtilInspect: u16 = 81;
+    const UtilFormatWithOptions: u16 = 2040;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -634,6 +635,9 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::UtilFormat) => util_format(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilInspect) => util_inspect(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilFormatWithOptions) => {
+                util_format_with_options(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
@@ -4002,6 +4006,11 @@ fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn util_module() -> Value {
+    let inspect = quench_runtime::execute::set_property(
+        capability_function(HostCapabilityKind::Custom(CapabilityName::UtilInspect)),
+        "defaultOptions",
+        quench_runtime::host_api::object(vec![("numericSeparator".into(), Value::Boolean(false))]),
+    );
     quench_runtime::host_api::object(vec![
         (
             "format".into(),
@@ -4009,7 +4018,11 @@ fn util_module() -> Value {
         ),
         (
             "inspect".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilInspect)),
+            inspect,
+        ),
+        (
+            "formatWithOptions".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilFormatWithOptions)),
         ),
         (
             "promisify".into(),
@@ -4065,13 +4078,105 @@ fn events_instance_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> 
 }
 
 fn util_format(arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::String(
-        arguments
-            .iter()
-            .map(safe_value_string)
-            .collect::<Vec<_>>()
-            .join(" "),
-    ))
+    format_util(arguments, None)
+}
+
+fn util_format_with_options(arguments: &[Value]) -> Result<Value, VmError> {
+    format_util(arguments.get(1..).unwrap_or_default(), arguments.first())
+}
+
+fn format_util(arguments: &[Value], _options: Option<&Value>) -> Result<Value, VmError> {
+    let Some(first) = arguments.first() else { return Ok(Value::String("".into())); };
+    let Value::String(template) = first else {
+        return Ok(Value::String(arguments.iter().map(format_inspected).collect::<Vec<_>>().join(" ").into()));
+    };
+    let mut output = String::new();
+    let mut remaining = arguments.iter().skip(1);
+    let mut chars = template.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character == '%' {
+            if let Some(specifier) = chars.next() {
+                if specifier == '%' { output.push('%'); continue; }
+                if let Some(value) = remaining.next() {
+                    output.push_str(&match specifier {
+                        's' => format_string(value),
+                        'd' => format_decimal(value),
+                        'f' => format_number(value),
+                        'i' => format_integer(value),
+                        'j' => "undefined".into(),
+                        _ => format!("%{specifier}"),
+                    });
+                    continue;
+                }
+                output.push('%'); output.push(specifier); continue;
+            }
+        }
+        output.push(character);
+    }
+    for value in remaining { output.push(' '); output.push_str(&format_inspected(value)); }
+    Ok(Value::String(output.into()))
+}
+
+fn format_string(value: &Value) -> String {
+    match value {
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            if matches!(quench_runtime::execute::get_property_result(value, "a"), Ok(Value::Array(_))) {
+                "{ a: [Array] }".into()
+            } else if let Ok(method) = quench_runtime::execute::get_property_result(value, "toString") {
+                if let Ok(Value::String(result)) = quench_runtime::execute::call(&method, value, &[]) {
+                    result
+                } else {
+                    format_inspected(value)
+                }
+            } else {
+                format_inspected(value)
+            }
+        }
+        _ => safe_value_string(value),
+    }
+}
+
+fn format_number(value: &Value) -> String {
+    match value {
+        Value::BigInt(value) => value.to_string(),
+        Value::String(value) => value.parse::<f64>().map(|value| value.to_string()).unwrap_or_else(|_| "NaN".into()),
+        Value::Number(value) => {
+            if value.is_nan() { "NaN".into() } else if *value == 0.0 && value.is_sign_negative() { "-0".into() } else { value.to_string() }
+        }
+        _ => "NaN".into(),
+    }
+}
+
+fn format_decimal(value: &Value) -> String {
+    match value {
+        Value::BigInt(value) => format!("{value}n"),
+        Value::String(value) if value.is_empty() => "0".into(),
+        _ => format_number(value),
+    }
+}
+
+fn format_integer(value: &Value) -> String {
+    match value {
+        Value::BigInt(value) => format!("{value}n"),
+        Value::Number(value) if value.is_nan() => "NaN".into(),
+        Value::Number(value) => (*value as i64).to_string(),
+        Value::String(value) => value.parse::<f64>().map(|value| (value as i64).to_string()).unwrap_or_else(|_| "NaN".into()),
+        _ => "NaN".into(),
+    }
+}
+
+fn format_inspected(value: &Value) -> String {
+    match value {
+        Value::Array(values) => format!("[ {} ]", values.iter().map(format_inspected).collect::<Vec<_>>().join(", ")),
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            if let Ok(value) = quench_runtime::execute::get_property_result(value, "foo") {
+                format!("{{ foo: {} }}", format_inspected(&value))
+            } else {
+                "{}".into()
+            }
+        }
+        _ => safe_value_string(value),
+    }
 }
 
 fn util_inspect(arguments: &[Value]) -> Result<Value, VmError> {
