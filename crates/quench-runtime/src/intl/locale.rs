@@ -414,6 +414,12 @@ fn locale_slot(locale: &Locale) -> Value {
     if let Some(region) = &locale.region {
         properties.push(("region".to_string(), Value::String(region.clone())));
     }
+    if !locale.variants.is_empty() {
+        properties.push((
+            "variants".to_string(),
+            Value::String(locale.variants.join("-")),
+        ));
+    }
     if let Some(calendar) = &locale.calendar {
         properties.push(("calendar".to_string(), Value::String(calendar.clone())));
     }
