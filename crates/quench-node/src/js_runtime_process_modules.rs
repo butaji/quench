@@ -129,6 +129,15 @@ fn process_module() -> Value {
                 ("openssl_is_boringssl".into(), Value::Boolean(false)),
             ]),
         ),
+        (
+            "permission".into(),
+            quench_runtime::host_api::object(vec![(
+                "has".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::ProcessPermissionHas,
+                )),
+            )]),
+        ),
     ]);
     NODE_PROCESS_MODULE.with(|current| current.replace(Some(module.clone())));
     module

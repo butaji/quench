@@ -135,6 +135,9 @@ impl QuenchNodeHost {
                 }
                 Ok(group)
             }
+            HostCapabilityKind::Custom(CapabilityName::ProcessPermissionHas) => {
+                Ok(Value::Boolean(false))
+            }
                 _ => Err(VmError::EvalError(DISPATCH_UNHANDLED.into())),
             }
         })();
