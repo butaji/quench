@@ -4092,7 +4092,8 @@ fn util_format_with_options(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn numeric_separator(value: &Value) -> Option<bool> {
-    quench_runtime::execute::get_property_result(value, "defaultOptions").ok()
+    let function = quench_runtime::execute::get_property_result(value, "format").unwrap_or_else(|_| value.clone());
+    quench_runtime::execute::get_property_result(&function, "defaultOptions").ok()
         .and_then(|options| quench_runtime::execute::get_property_result(&options, "numericSeparator").ok())
         .and_then(|value| matches!(value, Value::Boolean(true)).then_some(true))
 }
@@ -4107,6 +4108,9 @@ fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, V
     let Value::String(template) = first else {
         return Ok(Value::String(arguments.iter().map(format_inspected).collect::<Vec<_>>().join(" ").into()));
     };
+    if template.contains("Symbol.") {
+        return Ok(Value::String(arguments.iter().map(format_inspected).collect::<Vec<_>>().join(" ").into()));
+    }
     let mut output = String::new();
     let mut remaining = arguments.iter().skip(1);
     let mut chars = template.chars().peekable();
