@@ -148,6 +148,11 @@ fn annex_b_function_names_in(statement: &oxc::ast::ast::Statement<'_>) -> Vec<St
             }
             names
         }
+        oxc::ast::ast::Statement::SwitchStatement(statement) => statement
+            .cases
+            .iter()
+            .flat_map(|case| annex_b_function_names(&case.consequent))
+            .collect(),
         _ => Vec::new(),
     }
 }
