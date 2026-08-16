@@ -10,6 +10,7 @@ pub enum OperationKind {
     Close,
     Poll,
     Wait,
+    Spawn,
     Sleep,
     Resolve,
     Random,
