@@ -108,6 +108,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(7) => read_file_sync(arguments),
             HostCapabilityKind::Custom(8) => self.create_hash(arguments),
             HostCapabilityKind::Custom(9) => buffer_byte_length(arguments),
+            HostCapabilityKind::Custom(21) => next_tick(arguments),
+            HostCapabilityKind::Custom(27 | 28 | 29) => timer_call(arguments),
             HostCapabilityKind::Custom(id) if (13..=20).contains(&id) => {
                 assertion_call(id, arguments)
             }
@@ -468,7 +470,19 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             || name == "assert/strict"
             || name == "node:assert/strict"
         {
-            return Ok(assert_module());
+            let module = assert_module();
+            return if name.ends_with("/strict") {
+                Ok(quench_runtime::execute::set_property(
+                    module.clone(),
+                    "strict",
+                    module,
+                ))
+            } else {
+                Ok(module)
+            };
+        }
+        if name == "process" || name == "node:process" {
+            return Ok(process_module());
         }
         if name == "node:fs" || name == "fs" {
             return Ok(Value::object(vec![(
@@ -516,6 +530,9 @@ fn assert_module() -> Value {
         ("doesNotThrow", 18),
         ("ifError", 19),
         ("match", 20),
+        ("notStrictEqual", 24),
+        ("notDeepStrictEqual", 25),
+        ("AssertionError", 26),
     ] {
         module = quench_runtime::execute::set_property(
             module,
@@ -524,6 +541,28 @@ fn assert_module() -> Value {
         );
     }
     module
+}
+
+fn process_module() -> Value {
+    quench_runtime::host_api::object(vec![
+        (
+            "argv".into(),
+            quench_runtime::host_api::array(std::env::args().map(Value::String).collect()),
+        ),
+        (
+            "execPath".into(),
+            Value::String(std::env::args().next().unwrap_or_default()),
+        ),
+        ("argv0".into(), Value::String("node".into())),
+        (
+            "cwd".into(),
+            capability_function(HostCapabilityKind::Custom(6)),
+        ),
+        (
+            "nextTick".into(),
+            capability_function(HostCapabilityKind::Custom(21)),
+        ),
+    ])
 }
 
 fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
@@ -569,8 +608,37 @@ fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
             }
         }
         20 => Ok(Value::Undefined),
+        24 => {
+            if arguments.first() != arguments.get(1) {
+                Ok(Value::Undefined)
+            } else {
+                failed("values are equal")
+            }
+        }
+        25 => {
+            if arguments.first() != arguments.get(1) {
+                Ok(Value::Undefined)
+            } else {
+                failed("values are deeply equal")
+            }
+        }
         _ => Err(VmError::NotCallable),
     }
+}
+
+fn next_tick(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(callback) = arguments.first() else {
+        return Err(VmError::EvalError("nextTick expects a callback".into()));
+    };
+    quench_runtime::execute::call(callback, &Value::Undefined, &arguments[1..])
+        .map(|_| Value::Undefined)
+}
+
+fn timer_call(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(callback) = arguments.first() else {
+        return Err(VmError::EvalError("timer expects a callback".into()));
+    };
+    quench_runtime::execute::call(callback, &Value::Undefined, &[]).map(|_| Value::Number(1.0))
 }
 
 fn is_truthy(value: &Value) -> bool {
@@ -642,18 +710,22 @@ impl JsRuntime for QuenchRuntime {
                 kind: HostCapabilityKind::Custom(3),
             },
         )
+        .with_host_value("process", process_module())
         .with_host_value(
-            "process",
-            Value::object(vec![
-                (
-                    "argv".into(),
-                    quench_runtime::host_api::array(std::env::args().map(Value::String).collect()),
-                ),
-                (
-                    "cwd".into(),
-                    capability_function(HostCapabilityKind::Custom(6)),
-                ),
-            ]),
+            "setImmediate",
+            capability_function(HostCapabilityKind::Custom(27)),
+        )
+        .with_host_value(
+            "setTimeout",
+            capability_function(HostCapabilityKind::Custom(28)),
+        )
+        .with_host_value(
+            "setInterval",
+            capability_function(HostCapabilityKind::Custom(28)),
+        )
+        .with_host_value(
+            "clearImmediate",
+            capability_function(HostCapabilityKind::Custom(29)),
         )
         .with_host_value(
             "Buffer",
