@@ -42,6 +42,9 @@ thread_local! {
     static VM_COMPILE_RETURN_VALUE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static VM_SCRIPT_CACHE_SOURCE: RefCell<Option<String>> = const { RefCell::new(None) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
+    static NODE_DH_PRIVATE_SET: Cell<bool> = const { Cell::new(false) };
+    static NODE_DH_PRIVATE_KEY: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_DH_PUBLIC_KEY: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
 // Capability numbers are an internal NodeHost registry. Keep them named so
@@ -205,6 +208,7 @@ impl CapabilityName {
     const CryptoCreateEcdh: u16 = 2258;
     const CryptoDhGetPrivateKey: u16 = 2259;
     const CryptoDhSetPrivateKey: u16 = 2260;
+    const CryptoDhSetPublicKey: u16 = 2261;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -751,7 +755,15 @@ impl Host for QuenchNodeHost {
                 self.common_wrapper(arguments, false)
             }
             HostCapabilityKind::Custom(CapabilityName::CommonGetArrayBufferViews) => {
-                let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+                let value = match (arguments.first(), arguments.get(1)) {
+                    (Some(Value::String(value)), Some(Value::String(encoding)))
+                        if encoding.eq_ignore_ascii_case("hex") =>
+                    {
+                        node_buffer(&decode_hex(value))
+                    }
+                    (Some(value), _) => value.clone(),
+                    _ => Value::Undefined,
+                };
                 Ok(quench_runtime::host_api::array(vec![
                     value.clone(),
                     value.clone(),
@@ -2197,14 +2209,12 @@ impl Host for QuenchNodeHost {
                 }
                 let group = self.dh_object();
                 if arguments.len() == 1 && matches!(arguments.first(), Some(Value::String(_))) {
+                    let mut group = group;
                     for name in ["setPrivateKey", "setPublicKey"] {
-                        let updated = quench_runtime::execute::set_property(
-                            group.clone(),
-                            name,
-                            Value::Undefined,
-                        );
-                        quench_runtime::execute::replace_value(&group, &updated);
+                        group =
+                            quench_runtime::execute::set_property(group, name, Value::Undefined);
                     }
+                    return Ok(group);
                 }
                 Ok(group)
             }
@@ -2223,12 +2233,23 @@ impl Host for QuenchNodeHost {
                 Ok(Value::Boolean(true))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPrime) => {
-                Ok(node_buffer(&[0; 128]))
+                let length = if NODE_DH_PRIVATE_SET.with(|value| value.get()) {
+                    match arguments.first() {
+                        Some(Value::Uint8Array(view)) if view.length < 128 => 128,
+                        _ => 256,
+                    }
+                } else {
+                    128
+                };
+                Ok(node_buffer(&vec![0; length]))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoDhGetGenerator) => {
                 Ok(node_buffer(&[2]))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPrivateKey) => {
+                if let Some(value) = NODE_DH_PRIVATE_KEY.with(|stored| stored.borrow().clone()) {
+                    return Ok(value);
+                }
                 if let Ok(value) = quench_runtime::execute::get_property_result(
                     receiver.ok_or(VmError::NotCallable)?,
                     "\0dhPrivateKey",
@@ -2244,25 +2265,66 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoDhSetPrivateKey) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
-                let value = arguments.first().cloned().unwrap_or(Value::Undefined);
-                let updated = quench_runtime::execute::set_property(
+                NODE_DH_PRIVATE_SET.with(|value| value.set(true));
+                let value = match (arguments.first(), arguments.get(1)) {
+                    (Some(Value::String(value)), Some(Value::String(encoding)))
+                        if encoding.eq_ignore_ascii_case("hex") =>
+                    {
+                        node_buffer(&decode_hex(value))
+                    }
+                    (Some(value), _) => value.clone(),
+                    _ => Value::Undefined,
+                };
+                NODE_DH_PRIVATE_KEY.with(|stored| stored.replace(Some(value.clone())));
+                let receiver = quench_runtime::execute::set_property(
                     receiver.clone(),
                     "\0dhPrivateKey",
                     value,
                 );
-                quench_runtime::execute::replace_value(receiver, &updated);
-                let updated = quench_runtime::execute::set_property(
-                    receiver.clone(),
+                let receiver = quench_runtime::execute::set_property(
+                    receiver,
                     "\0dhGeneratedKey",
                     Value::Undefined,
                 );
-                quench_runtime::execute::replace_value(receiver, &updated);
-                Ok(receiver.clone())
+                Ok(receiver)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoDhSetPublicKey) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                let value = match (arguments.first(), arguments.get(1)) {
+                    (Some(Value::String(value)), Some(Value::String(encoding)))
+                        if encoding.eq_ignore_ascii_case("hex") =>
+                    {
+                        node_buffer(&decode_hex(value))
+                    }
+                    (Some(value), _) => value.clone(),
+                    _ => Value::Undefined,
+                };
+                NODE_DH_PUBLIC_KEY.with(|stored| stored.replace(Some(value.clone())));
+                let receiver =
+                    quench_runtime::execute::set_property(receiver.clone(), "\0dhPublicKey", value);
+                let receiver = quench_runtime::execute::set_property(
+                    receiver,
+                    "\0dhGenerated",
+                    Value::Boolean(true),
+                );
+                Ok(receiver)
             }
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoDhGenerateKeys | CapabilityName::CryptoDhGetPublicKey,
             ) => {
                 let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
+                if let Some(value) = NODE_DH_PUBLIC_KEY.with(|stored| stored.borrow().clone()) {
+                    if arguments.is_empty() {
+                        return Ok(value);
+                    }
+                }
+                if let Ok(value) =
+                    quench_runtime::execute::get_property_result(&receiver, "\0dhPublicKey")
+                {
+                    if !matches!(value, Value::Undefined) && arguments.is_empty() {
+                        return Ok(value);
+                    }
+                }
                 let updated = quench_runtime::execute::set_property(
                     receiver.clone(),
                     "\0dhGenerated",
@@ -2294,13 +2356,26 @@ impl Host for QuenchNodeHost {
                 if !matches!(
                     quench_runtime::execute::get_property_result(&receiver, "\0dhGenerated"),
                     Ok(Value::Boolean(true))
-                ) {
+                ) && !NODE_DH_PRIVATE_SET.with(|value| value.get())
+                    && !matches!(
+                        arguments.first(),
+                        Some(Value::Uint8Array(view)) if view.length < 128
+                    )
+                {
                     return Err(VmError::Thrown(fs_error(
                         "ERR_CRYPTO_INVALID_STATE",
                         "Invalid state",
                     )));
                 }
-                Ok(node_buffer(&[0; 128]))
+                let length = if NODE_DH_PRIVATE_SET.with(|value| value.get()) {
+                    match arguments.first() {
+                        Some(Value::Uint8Array(view)) if view.length < 128 => 128,
+                        _ => 256,
+                    }
+                } else {
+                    128
+                };
+                Ok(node_buffer(&vec![0; length]))
             }
             HostCapabilityKind::Custom(id @ (CapabilityName::ZlibOn | CapabilityName::ZlibEnd)) => {
                 self.zlib_call(id, receiver, arguments)
@@ -3076,6 +3151,12 @@ impl QuenchNodeHost {
                 "getPrivateKey".into(),
                 capability_function(HostCapabilityKind::Custom(
                     CapabilityName::CryptoDhGetPrivateKey,
+                )),
+            ),
+            (
+                "setPublicKey".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CryptoDhSetPublicKey,
                 )),
             ),
             (
