@@ -326,7 +326,7 @@ impl Value {
         Self::Object(Rc::new(ObjectData::new(properties)))
     }
 
-    pub fn array(values: Vec<Value>) -> Self {
+    pub(crate) fn array(values: Vec<Value>) -> Self {
         Self::Array(Rc::new(ArrayData::new(values)))
     }
 }
