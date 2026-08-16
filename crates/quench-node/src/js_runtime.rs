@@ -137,6 +137,7 @@ impl Host for QuenchNodeHost {
     ) -> Result<Value, VmError> {
         match capability.kind {
             HostCapabilityKind::Custom(1) => require_module(arguments),
+            HostCapabilityKind::Custom(70) => self.construct(capability, arguments),
             HostCapabilityKind::Custom(2) => basename(arguments),
             HostCapabilityKind::Custom(4) => console_log(arguments),
             HostCapabilityKind::Custom(6) => current_directory(arguments),
