@@ -79,6 +79,7 @@ fn prototype_property_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
             Builtin::IntlDateTimeFormatResolvedOptions
         }
         (Builtin::IntlPluralRulesPrototype, "select") => Builtin::IntlPluralRulesSelect,
+        (Builtin::IntlPluralRulesPrototype, "selectRange") => Builtin::IntlPluralRulesSelectRange,
         (Builtin::IntlPluralRulesPrototype, "constructor") => Builtin::IntlPluralRules,
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
