@@ -31,6 +31,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringTrim => Some("String.prototype.trim"),
         Builtin::StringToLowerCase => Some("String.prototype.toLowerCase"),
         Builtin::StringToUpperCase => Some("String.prototype.toUpperCase"),
+        Builtin::StringNormalize => Some("String.prototype.normalize"),
         Builtin::StringCharAt => Some("String.prototype.charAt"),
         Builtin::StringCharCodeAt => Some("String.prototype.charCodeAt"),
         Builtin::StringIndexOf => Some("String.prototype.indexOf"),
@@ -86,6 +87,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringTrim
         | Builtin::StringToLowerCase
         | Builtin::StringToUpperCase
+        | Builtin::StringNormalize
         | Builtin::StringTrimStart
         | Builtin::StringTrimEnd
         | Builtin::StringToString
@@ -176,6 +178,7 @@ const fn short_name_tail(builtin: Builtin) -> Option<&'static str> {
         Builtin::StringMatchAll => Some("matchAll"),
         Builtin::StringToLocaleLowerCase => Some("toLocaleLowerCase"),
         Builtin::StringToLocaleUpperCase => Some("toLocaleUpperCase"),
+        Builtin::StringNormalize => Some("normalize"),
         _ => None,
     }
 }
