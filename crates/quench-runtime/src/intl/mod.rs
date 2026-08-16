@@ -338,6 +338,7 @@ fn dedupe(locales: Vec<String>) -> Vec<String> {
 pub(crate) fn to_string_value(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
+        Value::StringUnits(value) => String::from_utf16_lossy(value),
         Value::Number(value) => value.to_string(),
         Value::Boolean(value) => value.to_string(),
         Value::Null => "null".to_string(),
