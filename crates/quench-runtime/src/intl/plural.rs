@@ -2,7 +2,9 @@
 
 use crate::{execute::VmError, value::Value};
 
-use super::{default_locale, make_object, resolve_locales, runtime_error, slot_string, SLOT};
+use super::{
+    default_locale, make_object, resolve_locales, runtime_error, slot_number, slot_string, SLOT,
+};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
@@ -30,6 +32,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                     "compactDisplay".to_string(),
                     Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
                 ),
+                ("minimumIntegerDigits".to_string(), Value::Number(1.0)),
+                ("minimumFractionDigits".to_string(), Value::Number(0.0)),
+                ("maximumFractionDigits".to_string(), Value::Number(3.0)),
             ]),
         ),
     ]))
@@ -118,11 +123,27 @@ fn plural_resolved_options(receiver: Option<&Value>) -> Result<Value, VmError> {
         ("locale".to_string(), Value::String(locale)),
         ("type".to_string(), Value::String(plural_type)),
         ("notation".to_string(), Value::String(notation.clone())),
+        (
+            "minimumIntegerDigits".to_string(),
+            number_slot_value(&slots, "minimumIntegerDigits", 1.0),
+        ),
+        (
+            "minimumFractionDigits".to_string(),
+            number_slot_value(&slots, "minimumFractionDigits", 0.0),
+        ),
+        (
+            "maximumFractionDigits".to_string(),
+            number_slot_value(&slots, "maximumFractionDigits", 3.0),
+        ),
     ];
     if notation == "compact" {
         properties.push(("compactDisplay".to_string(), Value::String(compact_display)));
     }
     Ok(make_object(properties))
+}
+
+fn number_slot_value(slots: &[(String, Value)], key: &str, default: f64) -> Value {
+    Value::Number(slot_number(slots, key).unwrap_or(default))
 }
 
 fn select(number: f64, plural_type: &str, locale: &str) -> String {
