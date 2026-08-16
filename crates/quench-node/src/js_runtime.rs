@@ -184,6 +184,8 @@ impl CapabilityName {
     const CryptoCreateCipheriv: u16 = 2237;
     const CryptoCipherUpdate: u16 = 2238;
     const CryptoCipherFinal: u16 = 2239;
+    const CryptoCipherEnd: u16 = 2241;
+    const CryptoCipherRead: u16 = 2242;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -1020,6 +1022,19 @@ impl Host for QuenchNodeHost {
                         )),
                     ),
                     (
+                        "end".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoCipherEnd,
+                        )),
+                    ),
+                    (
+                        "read".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoCipherRead,
+                        )),
+                    ),
+                    ("readableLength".into(), Value::Number(1.0)),
+                    (
                         "final".into(),
                         capability_function(HostCapabilityKind::Custom(
                             CapabilityName::CryptoCipherFinal,
@@ -1091,6 +1106,31 @@ impl Host for QuenchNodeHost {
                         ));
                     }
                 }
+                if let Some(Value::String(value)) = arguments.first() {
+                    let output_encoding = arguments.get(2).and_then(|value| match value {
+                        Value::String(value) => Some(value.as_str()),
+                        _ => None,
+                    });
+                    if output_encoding
+                        .map(|value| value.eq_ignore_ascii_case("buffer"))
+                        .unwrap_or(false)
+                    {
+                        return Ok(node_buffer(value.as_bytes()));
+                    }
+                } else if let Some(value) = arguments.first() {
+                    let output_encoding = arguments.get(2).and_then(|value| match value {
+                        Value::String(value) => Some(value.as_str()),
+                        _ => None,
+                    });
+                    if output_encoding
+                        .map(|value| value.eq_ignore_ascii_case("utf8"))
+                        .unwrap_or(false)
+                    {
+                        return Ok(Value::String(
+                            String::from_utf8_lossy(&string_or_bytes(Some(value))?).into_owned(),
+                        ));
+                    }
+                }
                 Ok(Value::String(String::new()))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoCipherFinal) => {
@@ -1112,6 +1152,11 @@ impl Host for QuenchNodeHost {
                     Ok(Value::String(String::new()))
                 }
             }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCipherEnd) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                Ok(receiver.clone())
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCipherRead) => Ok(node_buffer(&[])),
             HostCapabilityKind::Custom(CapabilityName::CryptoHashOn) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
                 let event = match arguments.first() {
