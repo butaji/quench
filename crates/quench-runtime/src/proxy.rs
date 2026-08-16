@@ -374,7 +374,7 @@ pub(crate) fn proxy_define_property(
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "defineProperty") {
-            return call_trap(
+            let result = call_trap(
                 &trap,
                 &[
                     proxy.target.clone(),
@@ -382,7 +382,11 @@ pub(crate) fn proxy_define_property(
                     descriptor.clone(),
                 ],
                 None,
-            );
+            )?;
+            if crate::execute::is_truthy(&result) {
+                validate_define_invariant(&proxy.target, prop, descriptor)?;
+            }
+            return Ok(result);
         }
     }
     let target = match target {
@@ -396,6 +400,66 @@ pub(crate) fn proxy_define_property(
     ])?;
     crate::locals::replace_value(target, &updated);
     Ok(Value::Boolean(true))
+}
+
+fn validate_define_invariant(
+    target: &Value,
+    prop: &str,
+    descriptor: &Value,
+) -> Result<(), VmError> {
+    let current =
+        crate::builtins::object::descriptor(Some(target), Some(&Value::String(prop.to_string())))?;
+    let fields = crate::builtins::descriptor_fields(descriptor)?;
+    let non_configurable = matches!(
+        &current,
+        Value::Object(properties)
+            if properties.iter().any(|(name, value)| {
+                name == "configurable" && matches!(value, Value::Boolean(false))
+            })
+    );
+    if non_configurable
+        && fields
+            .iter()
+            .any(|(name, value)| name == "configurable" && matches!(value, Value::Boolean(true)))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy defineProperty invariant violated",
+        ));
+    }
+    let non_writable = matches!(
+        &current,
+        Value::Object(properties)
+            if properties.iter().any(|(name, value)| {
+                name == "writable" && matches!(value, Value::Boolean(false))
+            })
+    );
+    if non_configurable && non_writable {
+        let current_value = descriptor_value(&current, "value");
+        let requested_value = fields
+            .iter()
+            .rev()
+            .find_map(|(name, value)| (name == "value").then_some(value));
+        if let Some(current_value) = current_value {
+            if let Some(requested_value) = requested_value {
+                if !crate::builtins::same_value(Some(current_value), Some(requested_value)) {
+                    return Err(crate::value::error::throw_type_error(
+                        "Proxy defineProperty invariant violated",
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn descriptor_value<'a>(descriptor: &'a Value, field: &str) -> Option<&'a Value> {
+    let Value::Object(properties) = descriptor else {
+        return None;
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == field).then_some(value))
 }
 
 pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
