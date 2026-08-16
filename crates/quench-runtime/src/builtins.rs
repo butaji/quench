@@ -93,7 +93,7 @@ pub(crate) fn generator_prototype() -> Value {
             ),
             (
                 "\0prototype".to_string(),
-                Value::Builtin(Builtin::ObjectPrototype),
+                Value::Builtin(Builtin::IteratorPrototype),
             ),
         ])));
         store_descriptor_metadata(
