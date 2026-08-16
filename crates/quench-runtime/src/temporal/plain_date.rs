@@ -76,6 +76,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateWeekOfYearGetter => Some(week_of_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateYearOfWeekGetter => Some(year_of_week(receiver)),
         crate::ops::Builtin::TemporalPlainDateDayGetter => Some(day(receiver)),
+        crate::ops::Builtin::TemporalPlainDateYearGetter => Some(year(receiver)),
         _ => None,
     }
 }
@@ -218,6 +219,16 @@ fn day(receiver: Option<&Value>) -> Result<Value, VmError> {
         return Err(invalid_receiver());
     }
     Ok(field(object, "day"))
+}
+
+fn year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(field(object, "year"))
 }
 fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
     let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
