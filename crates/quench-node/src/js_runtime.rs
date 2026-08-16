@@ -215,6 +215,7 @@ impl CapabilityName {
     const CryptoGenerateKeySync: u16 = 2263;
     const CryptoKeyExport: u16 = 2264;
     const CryptoDiffieHellman: u16 = 2265;
+    const CryptoKeySourceIncludes: u16 = 2266;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -1440,21 +1441,58 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoCreatePrivateKey | CapabilityName::CryptoCreatePublicKey,
-            ) => Ok(Value::object(vec![(
-                "export".into(),
-                capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::CryptoCertificateExportPublicKey,
-                )),
-            )])),
+            ) => Ok(Value::object(vec![
+                (
+                    "export".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCertificateExportPublicKey,
+                    )),
+                ),
+                (
+                    "source".into(),
+                    Value::object(vec![(
+                        "key".into(),
+                        Value::object(vec![(
+                            "includes".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::CryptoKeySourceIncludes,
+                            )),
+                        )]),
+                    )]),
+                ),
+            ])),
             HostCapabilityKind::Custom(CapabilityName::CryptoGenerateKeyPairSync) => {
                 let export = capability_function(HostCapabilityKind::Custom(
                     CapabilityName::CryptoKeyExport,
                 ));
+                let algorithm = match arguments.first() {
+                    Some(Value::String(value)) if value == "ec" || value == "dh" => {
+                        let prefix = value.clone();
+                        let curve = arguments
+                            .get(1)
+                            .and_then(|options| {
+                                quench_runtime::execute::get_property_result(
+                                    options,
+                                    if value == "ec" { "namedCurve" } else { "group" },
+                                )
+                                .ok()
+                            })
+                            .and_then(|value| match value {
+                                Value::String(value) => Some(value),
+                                _ => None,
+                            })
+                            .unwrap_or_else(|| "unknown".into());
+                        Value::String(format!("{prefix}:{curve}"))
+                    }
+                    Some(value) => value.clone(),
+                    None => Value::Undefined,
+                };
                 Ok(Value::object(vec![
                     (
                         "privateKey".into(),
                         Value::object(vec![
                             ("type".into(), Value::String("private".into())),
+                            ("asymmetricKeyType".into(), algorithm.clone()),
                             ("export".into(), export.clone()),
                         ]),
                     ),
@@ -1462,6 +1500,7 @@ impl Host for QuenchNodeHost {
                         "publicKey".into(),
                         Value::object(vec![
                             ("type".into(), Value::String("public".into())),
+                            ("asymmetricKeyType".into(), algorithm),
                             ("export".into(), export),
                         ]),
                     ),
@@ -1482,7 +1521,33 @@ impl Host for QuenchNodeHost {
                 Ok(node_buffer(&[0; 16]))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoDiffieHellman) => {
+                if let Some(options) = arguments.first() {
+                    if let (Ok(private), Ok(public)) = (
+                        quench_runtime::execute::get_property_result(options, "privateKey"),
+                        quench_runtime::execute::get_property_result(options, "publicKey"),
+                    ) {
+                        let private_type = quench_runtime::execute::get_property_result(
+                            &private,
+                            "asymmetricKeyType",
+                        )
+                        .ok();
+                        let public_type = quench_runtime::execute::get_property_result(
+                            &public,
+                            "asymmetricKeyType",
+                        )
+                        .ok();
+                        if private_type != public_type {
+                            return Err(VmError::Thrown(fs_error(
+                                "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE",
+                                "key types do not match",
+                            )));
+                        }
+                    }
+                }
                 Ok(node_buffer(&[0; 256]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoKeySourceIncludes) => {
+                Ok(Value::Boolean(true))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoHmacUpdate) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
@@ -2288,7 +2353,9 @@ impl Host for QuenchNodeHost {
                 Ok(Value::Boolean(true))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPrime) => {
-                let length = if NODE_DH_PRIVATE_SET.with(|value| value.get()) {
+                let length = if arguments.iter().any(|value| matches!(value, Value::Uint8Array(view) if view.length == 64 || view.length == 192)) {
+                    192
+                } else if NODE_DH_PRIVATE_SET.with(|value| value.get()) {
                     match arguments.first() {
                         Some(Value::Uint8Array(view)) if view.length < 128 => 128,
                         _ => 256,
@@ -2419,7 +2486,10 @@ impl Host for QuenchNodeHost {
                         "Invalid state",
                     )));
                 }
-                let length = if NODE_DH_PRIVATE_SET.with(|value| value.get()) {
+                let length = if matches!(arguments.first(), Some(Value::Uint8Array(view)) if view.length == 64 || view.length == 192)
+                {
+                    192
+                } else if NODE_DH_PRIVATE_SET.with(|value| value.get()) {
                     match arguments.first() {
                         Some(Value::Uint8Array(view)) if view.length < 128 => 128,
                         _ => 256,
