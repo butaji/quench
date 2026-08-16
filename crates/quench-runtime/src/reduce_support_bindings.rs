@@ -7,7 +7,13 @@ pub(crate) fn eval_bindings(
 ) -> EvalBindings {
     let mut locals = bindings.iter().cloned().collect::<HashMap<String, u16>>();
     let mut next_slot = register_base(&locals);
-    let names = crate::semantic_early::var_declared_names(program);
+    let collisions = crate::semantic_early::annex_b_lexical_collisions(program);
+    let names = crate::semantic_early::var_declared_names(program)
+        .into_iter()
+        .filter(|name| {
+            !collisions.contains(name) || bindings.iter().any(|(bound, _)| bound == name)
+        })
+        .collect::<Vec<_>>();
     let declared = if strict {
         shadow_names(&names, &mut locals, &mut next_slot);
         Vec::new()
@@ -31,7 +37,11 @@ pub(crate) fn eval_bindings(
     let mut prefix = eval_binding_prefix(&deletable);
     let lexical_names = crate::semantic_early::lexically_declared_names(program);
     let lexical = shadow_names(&lexical_names, &mut locals, &mut next_slot);
-    prefix.extend(lexical.into_iter().map(|(_, slot)| Op::MarkUninitialized { slot }));
+    prefix.extend(
+        lexical
+            .into_iter()
+            .map(|(_, slot)| Op::MarkUninitialized { slot }),
+    );
     (locals, next_slot, prefix, behavior, deletable)
 }
 
@@ -210,7 +220,9 @@ fn collect_declaration_names(
     names: &mut Vec<String>,
 ) {
     for declarator in &declaration.declarations {
-        if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind {
+        if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+            &declarator.id.kind
+        {
             names.push(identifier.name.to_string());
         }
     }
