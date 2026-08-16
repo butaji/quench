@@ -148,6 +148,9 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CommonMustNotCall) => {
                 self.common_wrapper(arguments, false)
             }
+            HostCapabilityKind::Custom(CapabilityName::CommonSkip) => {
+                Ok(Value::Undefined)
+            }
             HostCapabilityKind::Custom(CapabilityName::CommonGetArrayBufferViews) => {
                 let value = match (arguments.first(), arguments.get(1)) {
                     (Some(Value::String(value)), Some(Value::String(encoding)))

@@ -156,6 +156,7 @@ let __quench_import_meta_alias = __quench_import_meta;
                 HostCapabilityKind::Custom(CapabilityName::CommonMustCall),
                 HostCapabilityKind::Custom(CapabilityName::CommonMustSucceed),
                 HostCapabilityKind::Custom(CapabilityName::CommonMustNotCall),
+                HostCapabilityKind::Custom(CapabilityName::CommonSkip),
                 HostCapabilityKind::Custom(CapabilityName::FsWriteAsync),
                 HostCapabilityKind::Custom(CapabilityName::FsReadAsync),
                 HostCapabilityKind::Custom(CapabilityName::FsWritePromise),

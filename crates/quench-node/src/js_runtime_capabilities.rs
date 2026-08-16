@@ -338,6 +338,7 @@ impl CapabilityName {
     const ChildSend: u16 = 1603;
     const CommonMustCall: u16 = 1700;
     const CommonMustCallAtLeast: u16 = 1705;
+    const CommonSkip: u16 = 1706;
     const FsWriteAsync: u16 = 1520;
     const FsReadAsync: u16 = 1521;
     const FsWritePromise: u16 = 1522;
