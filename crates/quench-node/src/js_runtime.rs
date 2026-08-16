@@ -42,6 +42,9 @@ impl CapabilityName {
     const BufferOf: u16 = 2044;
     const BufferAllocUnsafeSlow: u16 = 2045;
     const BufferIsEncoding: u16 = 2046;
+    const BufferSwap16: u16 = 2047;
+    const BufferSwap32: u16 = 2048;
+    const BufferSwap64: u16 = 2049;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -572,6 +575,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferOf) => buffer_of(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow) => buffer_alloc(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding) => buffer_is_encoding(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferSwap16) => buffer_swap(receiver, 2),
+            HostCapabilityKind::Custom(CapabilityName::BufferSwap32) => buffer_swap(receiver, 4),
+            HostCapabilityKind::Custom(CapabilityName::BufferSwap64) => buffer_swap(receiver, 8),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -3521,6 +3527,9 @@ fn node_buffer(bytes: &[u8]) -> Value {
         ("indexOf", CapabilityName::BufferIndexOf),
         ("lastIndexOf", CapabilityName::BufferLastIndexOf),
         ("toJSON", CapabilityName::BufferToJson),
+        ("swap16", CapabilityName::BufferSwap16),
+        ("swap32", CapabilityName::BufferSwap32),
+        ("swap64", CapabilityName::BufferSwap64),
     ] {
         value = quench_runtime::execute::set_property(
             value,
@@ -3786,6 +3795,17 @@ fn buffer_to_json(receiver: Option<&Value>) -> Result<Value, VmError> {
         ("type".into(), Value::String("Buffer".into())),
         ("data".into(), quench_runtime::host_api::array(bytes.into_iter().map(|byte| Value::Number(byte as f64)).collect())),
     ]))
+}
+
+fn buffer_swap(receiver: Option<&Value>, width: usize) -> Result<Value, VmError> {
+    let Value::Uint8Array(view) = receiver.ok_or(VmError::NotCallable)? else { return Err(VmError::NotCallable); };
+    if view.length % width != 0 {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_BUFFER_SIZE", "Buffer size must be a multiple of the element size")));
+    }
+    let mut bytes = view.buffer.bytes.borrow_mut();
+    let range = &mut bytes[view.byte_offset..view.byte_offset + view.length];
+    for chunk in range.chunks_exact_mut(width) { chunk.reverse(); }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 fn buffer_numeric(
