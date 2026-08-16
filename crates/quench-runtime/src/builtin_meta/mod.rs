@@ -344,12 +344,14 @@ fn constructor_length_tail(builtin: Builtin) -> Option<f64> {
 
 fn intl_constructor_length(builtin: Builtin) -> Option<f64> {
     Some(match builtin {
-        Builtin::Intl | Builtin::IntlCollator | Builtin::IntlPluralRules => 0.0,
+        Builtin::Intl
+        | Builtin::IntlCollator
+        | Builtin::IntlPluralRules
+        | Builtin::IntlRelativeTimeFormat => 0.0,
         Builtin::IntlDateTimeFormat
         | Builtin::IntlDisplayNames
         | Builtin::IntlListFormat
         | Builtin::IntlNumberFormat
-        | Builtin::IntlRelativeTimeFormat
         | Builtin::IntlSegmenter => 2.0,
         Builtin::IntlLocale => 1.0,
         _ => return None,
