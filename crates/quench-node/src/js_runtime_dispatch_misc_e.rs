@@ -427,6 +427,13 @@ impl QuenchNodeHost {
                 | CapabilityName::CryptoHashUpdate
                 | CapabilityName::CryptoHashDigest,
             ) => Err(VmError::EvalError(DISPATCH_UNHANDLED.into())),
+            HostCapabilityKind::Custom(
+                CapabilityName::ProcessOn
+                | CapabilityName::ProcessEmit
+                | CapabilityName::ProcessCpuUsage
+                | CapabilityName::ProcessHrtime
+                | CapabilityName::ProcessActiveResourcesInfo,
+            ) => Err(VmError::EvalError(DISPATCH_UNHANDLED.into())),
             HostCapabilityKind::Custom(id) if id >= CapabilityName::UtilResolverFirst => {
                 self.resolve_promisified(id, arguments)
             }
