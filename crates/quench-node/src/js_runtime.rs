@@ -4876,6 +4876,9 @@ fn fixture_common_path(path: &str) -> std::borrow::Cow<'_, str> {
         }
     }
     let normalized = normalized.to_string_lossy();
+    if normalized.starts_with("test/") {
+        return std::borrow::Cow::Owned(format!("tests/node/{normalized}"));
+    }
     if normalized.contains("tests/node-compat/common") {
         return std::borrow::Cow::Owned(
             normalized.replace("tests/node-compat/common", "tests/node/test/common"),
