@@ -68,6 +68,7 @@ impl CapabilityName {
     const VmCompileFunction: u16 = 2119;
     const VmCompiledFunction: u16 = 2120;
     const VmCompiledToString: u16 = 2121;
+    const CommonInvalidArgTypeHelper: u16 = 2122;
     const UtilDeprecatedFirst: u16 = 2092;
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
@@ -838,6 +839,7 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction) => Ok(Value::String(format!("{}{}", safe_value_string(arguments.first().unwrap_or(&Value::Undefined)), safe_value_string(arguments.get(1).unwrap_or(&Value::Undefined))).into())),
             HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String("function () {\nconsole.log(\"Hello, World!\")\n}".into())),
+            HostCapabilityKind::Custom(CapabilityName::CommonInvalidArgTypeHelper) => common_invalid_arg_type_helper(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
@@ -3118,6 +3120,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                         CapabilityName::CommonCanSymlink,
                     )),
                 ),
+                ("invalidArgTypeHelper".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CommonInvalidArgTypeHelper))),
             ]));
         }
         if name == "assert"
@@ -5647,6 +5650,11 @@ fn vm_script_run_new_context(arguments: &[Value]) -> Result<Value, VmError> {
         quench_runtime::execute::replace_value(context, &updated);
     }
     Ok(Value::Number(value))
+}
+
+fn common_invalid_arg_type_helper(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = arguments.first().map(safe_value_string).unwrap_or_else(|| "undefined".into());
+    Ok(Value::String(format!(" Received type string ('{value}')").into()))
 }
 
 fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
