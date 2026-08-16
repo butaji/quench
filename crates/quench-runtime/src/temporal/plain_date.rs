@@ -512,7 +512,9 @@ fn from_property_bag(value: &Value) -> Result<Value, VmError> {
     };
     validate_calendar(Some(&calendar))?;
     let era = crate::execute::get_property_result(value, "era")?;
-    validate_gregory_era(&calendar, &era)?;
+    let era_year = crate::execute::get_property_result(value, "eraYear")?;
+    validate_gregory_era(&calendar, &era, &era_year)?;
+    let year = resolve_gregory_year(year, &calendar, &era, &era_year)?;
     validate_required_fields(&year, &month, &month_code, &day)?;
     let month = if matches!(month, Value::Undefined) {
         month_from_code(month_code)?
@@ -520,6 +522,28 @@ fn from_property_bag(value: &Value) -> Result<Value, VmError> {
         month
     };
     construct(&[year, month, day, calendar])
+}
+
+fn resolve_gregory_year(
+    year: Value,
+    calendar: &Value,
+    era: &Value,
+    era_year: &Value,
+) -> Result<Value, VmError> {
+    if !matches!(year, Value::Undefined)
+        || !matches!(calendar, Value::String(value) if value.eq_ignore_ascii_case("gregory"))
+    {
+        return Ok(year);
+    }
+    let Value::String(era) = era else {
+        return Ok(year);
+    };
+    let era_year = crate::conversion::to_number(era_year)?;
+    Ok(Value::Number(if matches!(era.as_str(), "bce" | "bc") {
+        1.0 - era_year
+    } else {
+        era_year
+    }))
 }
 
 fn validate_calendar(calendar: Option<&Value>) -> Result<(), VmError> {
@@ -539,9 +563,18 @@ fn validate_calendar(calendar: Option<&Value>) -> Result<(), VmError> {
     Ok(())
 }
 
-fn validate_gregory_era(calendar: &Value, era: &Value) -> Result<(), VmError> {
+fn validate_gregory_era(calendar: &Value, era: &Value, era_year: &Value) -> Result<(), VmError> {
+    let era_missing = matches!(era, Value::Undefined);
+    let era_year_missing = matches!(era_year, Value::Undefined);
+    if matches!(calendar, Value::String(value) if value.eq_ignore_ascii_case("gregory"))
+        && era_missing != era_year_missing
+    {
+        return Err(crate::value::error::throw_type_error(
+            "era and eraYear must be provided together",
+        ));
+    }
     let valid = matches!(era, Value::Undefined)
-        || matches!(era, Value::String(value) if matches!(value.as_str(), "ce" | "bce"));
+        || matches!(era, Value::String(value) if matches!(value.as_str(), "ce" | "bce" | "ad" | "bc"));
     if matches!(calendar, Value::String(value) if value.eq_ignore_ascii_case("gregory")) && !valid {
         return Err(crate::value::error::throw_range_error("Invalid era"));
     }
