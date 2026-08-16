@@ -205,16 +205,17 @@ impl DateTimeOptions {
                 return Err(runtime_error("RangeError: invalid formatMatcher"));
             }
             "timeZone" => {
+                let named_time_zone = canonical_named_time_zone(&text);
                 if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
                 if !text.eq_ignore_ascii_case("utc")
                     && normalize_offset(&text).is_none()
-                    && text.parse::<chrono_tz::Tz>().is_err()
+                    && named_time_zone.is_none()
                 {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
-                self.time_zone = canonicalize_time_zone(&text);
+                self.time_zone = named_time_zone.unwrap_or_else(|| canonicalize_time_zone(&text));
             }
             "calendar" => {
                 let value = super::locale::calendar_option(&text)?;
@@ -388,6 +389,13 @@ fn canonicalize_time_zone(time_zone: &str) -> String {
     } else {
         time_zone.to_string()
     }
+}
+
+fn canonical_named_time_zone(time_zone: &str) -> Option<String> {
+    chrono_tz::TZ_VARIANTS
+        .iter()
+        .find(|zone| zone.name().eq_ignore_ascii_case(time_zone))
+        .map(|zone| zone.name().to_string())
 }
 
 fn normalize_offset(time_zone: &str) -> Option<String> {
