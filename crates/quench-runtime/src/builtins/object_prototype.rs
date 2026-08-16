@@ -7,6 +7,26 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
 }
 
 fn prototype_for_value(value: &Value) -> Value {
+    if let Value::Function(function) = value {
+        if let Some((_, prototype)) = function
+            .properties
+            .borrow()
+            .iter()
+            .find(|(key, _)| key == "\0function_prototype")
+        {
+            return prototype.clone();
+        }
+    }
+    if let Value::BoundFunction(function) = value {
+        if let Some((_, prototype)) = function
+            .properties
+            .borrow()
+            .iter()
+            .find(|(key, _)| key == "\0function_prototype")
+        {
+            return prototype.clone();
+        }
+    }
     if let Some(prototype) = slot_prototype(value) {
         return prototype;
     }
