@@ -66,7 +66,6 @@ impl CapabilityName {
     const AssertThrows: u16 = 17;
     const AssertDoesNotThrow: u16 = 18;
     const AssertIfError: u16 = 19;
-    const AssertMatch: u16 = 20;
     const AssertNotStrictEqual: u16 = 24;
     const AssertNotDeepStrictEqual: u16 = 25;
     const AssertError: u16 = 26;
@@ -109,6 +108,10 @@ impl CapabilityName {
     const ChildEmit: u16 = 1602;
     const ChildSend: u16 = 1603;
     const CommonMustCall: u16 = 1700;
+    const FsWriteAsync: u16 = 1520;
+    const FsReadAsync: u16 = 1521;
+    const FsWritePromise: u16 = 1522;
+    const FsReadPromise: u16 = 1523;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -309,6 +312,12 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CommonMustCall) => {
                 arguments.first().cloned().ok_or(VmError::NotCallable)
             }
+            HostCapabilityKind::Custom(CapabilityName::FsWriteAsync) => fs_write_async(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsReadAsync) => fs_read_async(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsWritePromise) => {
+                fs_write_promise(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsReadPromise) => fs_read_promise(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -984,6 +993,54 @@ fn fs_access_async(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Undefined)
 }
 
+fn fs_write_async(arguments: &[Value]) -> Result<Value, VmError> {
+    let callback = arguments.last().ok_or(VmError::NotCallable)?;
+    fs_write_bytes(&arguments[..arguments.len().saturating_sub(1)], false)?;
+    quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
+    Ok(Value::Undefined)
+}
+
+fn fs_read_async(arguments: &[Value]) -> Result<Value, VmError> {
+    let callback = arguments.last().ok_or(VmError::NotCallable)?;
+    let path = path_arg(arguments, 0)?;
+    let bytes = std::fs::read(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    let data = if arguments
+        .iter()
+        .any(|value| matches!(value, Value::String(encoding) if encoding == "utf8"))
+    {
+        Value::String(String::from_utf8_lossy(&bytes).into_owned())
+    } else {
+        quench_runtime::host_api::bytes(&bytes)
+    };
+    quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null, data])?;
+    Ok(Value::Undefined)
+}
+
+fn fulfilled(value: Value) -> Value {
+    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Fulfilled(value),
+    )))
+}
+
+fn fs_write_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_write_bytes(arguments, false)?;
+    Ok(fulfilled(Value::Undefined))
+}
+
+fn fs_read_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    let bytes = std::fs::read(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    let value = if arguments
+        .iter()
+        .any(|value| matches!(value, Value::String(encoding) if encoding == "utf8"))
+    {
+        Value::String(String::from_utf8_lossy(&bytes).into_owned())
+    } else {
+        quench_runtime::host_api::bytes(&bytes)
+    };
+    Ok(fulfilled(value))
+}
+
 fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
     let bytes = match arguments.get(1) {
@@ -1303,7 +1360,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(Value::object(vec![("Buffer".into(), buffer_module())]));
         }
         if name == "node:fs" || name == "fs" {
-            return Ok(Value::object(vec![
+            let module = Value::object(vec![
                 (
                     "readFileSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::ReadFileSync)),
@@ -1382,7 +1439,33 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "existsSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsExistsSync)),
                 ),
-            ]));
+                (
+                    "writeFile".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsWriteAsync)),
+                ),
+                (
+                    "readFile".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadAsync)),
+                ),
+                (
+                    "promises".into(),
+                    Value::object(vec![
+                        (
+                            "writeFile".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::FsWritePromise,
+                            )),
+                        ),
+                        (
+                            "readFile".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::FsReadPromise,
+                            )),
+                        ),
+                    ]),
+                ),
+            ]);
+            return Ok(module);
         }
         if name == "node:crypto" || name == "crypto" {
             return Ok(Value::object(vec![(
@@ -2287,6 +2370,10 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::ChildEmit),
                 HostCapabilityKind::Custom(CapabilityName::ChildSend),
                 HostCapabilityKind::Custom(CapabilityName::CommonMustCall),
+                HostCapabilityKind::Custom(CapabilityName::FsWriteAsync),
+                HostCapabilityKind::Custom(CapabilityName::FsReadAsync),
+                HostCapabilityKind::Custom(CapabilityName::FsWritePromise),
+                HostCapabilityKind::Custom(CapabilityName::FsReadPromise),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
