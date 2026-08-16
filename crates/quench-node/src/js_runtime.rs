@@ -96,6 +96,8 @@ impl CapabilityName {
     const UtilSystemErrorName: u16 = 2097;
     const UtilSystemErrorMessage: u16 = 2096;
     const UtilExceptionWithHostPort: u16 = 2095;
+    const UtilSystemErrorMap: u16 = 2094;
+    const UtilSystemErrorMapGet: u16 = 2093;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
     const OsPlatform: u16 = 82;
@@ -814,6 +816,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorName) => util_system_error_name(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMessage) => util_system_error_message(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilExceptionWithHostPort) => util_exception_with_host_port(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMap) => Ok(quench_runtime::host_api::object(vec![("get".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMapGet)))])),
+            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMapGet) => util_system_error_map_get(arguments),
             HostCapabilityKind::Custom(id) if (CapabilityName::UtilDeprecatedFirst..CapabilityName::UtilPromisifiedFirst).contains(&id) => self.call_deprecated(id, arguments),
             HostCapabilityKind::Custom(id)
                 if (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilResolverFirst)
@@ -5416,6 +5420,14 @@ fn util_module() -> Value {
             "_exceptionWithHostPort".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::UtilExceptionWithHostPort)),
         ),
+        (
+            "_errnoException".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilExceptionWithHostPort)),
+        ),
+        (
+            "getSystemErrorMap".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMap)),
+        ),
         ("types".into(), types),
         ("TextEncoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor))),
         ("TextDecoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor))),
@@ -5489,6 +5501,12 @@ fn util_exception_with_host_port(arguments: &[Value]) -> Result<Value, VmError> 
     error = quench_runtime::execute::set_property(error, "address", Value::String(address.into()));
     if let Some(port) = port { error = quench_runtime::execute::set_property(error, "port", Value::Number(port as f64)); }
     Ok(error)
+}
+
+fn util_system_error_map_get(arguments: &[Value]) -> Result<Value, VmError> {
+    let errno = match arguments.first() { Some(Value::Number(value)) => *value as i32, _ => 0 };
+    let name = match errno { -2 => "ENOENT", -17 => "EEXIST", _ => return Ok(Value::Undefined) };
+    Ok(quench_runtime::host_api::array(vec![Value::String(name.into()), Value::String(name.into())]))
 }
 
 fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
