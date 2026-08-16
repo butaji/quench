@@ -92,18 +92,6 @@ impl RelativeOptions {
                 "\0prototype".to_string(),
                 Value::Builtin(crate::ops::Builtin::IntlRelativeTimeFormatPrototype),
             ),
-            (
-                "format".to_string(),
-                Value::Builtin(crate::ops::Builtin::IntlRelativeTimeFormatFormat),
-            ),
-            (
-                "formatToParts".to_string(),
-                Value::Builtin(crate::ops::Builtin::IntlRelativeTimeFormatFormatToParts),
-            ),
-            (
-                "resolvedOptions".to_string(),
-                Value::Builtin(crate::ops::Builtin::IntlRelativeTimeFormatResolvedOptions),
-            ),
             (SLOT.to_string(), self.slot()),
         ];
         make_object(properties)
