@@ -6508,7 +6508,8 @@ fn string_decoder_end(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         .ok()
         .and_then(|value| array_values(&value).ok())
         .unwrap_or_default();
-    let tail = if pending.is_empty() {
+    let encoding = quench_runtime::execute::get_property_result(receiver, "encoding").ok().and_then(|value| match value { Value::String(value) => Some(value), _ => None }).unwrap_or_default();
+    let tail = if pending.is_empty() || encoding == "utf16le" || encoding == "ucs2" {
         String::new()
     } else {
         "�".into()
