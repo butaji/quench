@@ -81,6 +81,7 @@ impl CapabilityName {
     const StreamWritable: u16 = 1311;
     const StreamReadableFrom: u16 = 1312;
     const StreamDuplex: u16 = 1313;
+    const StreamFinished: u16 = 1320;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -213,9 +214,20 @@ impl Host for QuenchNodeHost {
     ) -> Result<Value, VmError> {
         match capability.kind {
             HostCapabilityKind::Custom(CapabilityName::Require) => require_module(arguments),
-            HostCapabilityKind::Custom(CapabilityName::EventEmitter) => self.construct(capability, arguments),
-            HostCapabilityKind::Custom(CapabilityName::StreamReadable | CapabilityName::StreamWritable | CapabilityName::StreamReadableFrom) => self.construct(capability, arguments),
-            HostCapabilityKind::Custom(CapabilityName::StreamDuplex) => self.construct(capability, arguments),
+            HostCapabilityKind::Custom(CapabilityName::EventEmitter) => {
+                self.construct(capability, arguments)
+            }
+            HostCapabilityKind::Custom(
+                CapabilityName::StreamReadable
+                | CapabilityName::StreamWritable
+                | CapabilityName::StreamReadableFrom,
+            ) => self.construct(capability, arguments),
+            HostCapabilityKind::Custom(CapabilityName::StreamDuplex) => {
+                self.construct(capability, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::StreamFinished) => {
+                stream_finished(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -224,38 +236,64 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::QueueMicrotask) => next_tick(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathRelative) => path_relative(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathDirname) => path_dirname(arguments),
-            HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute) => path_is_absolute(arguments),
-            HostCapabilityKind::Custom(CapabilityName::PathToNamespaced) => path_arg(arguments, 0).map(|value| Value::String(value.into())),
-            HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced) => path_win_to_namespaced(arguments),
-            HostCapabilityKind::Custom(CapabilityName::BufferByteLength) => buffer_byte_length(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute) => {
+                path_is_absolute(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::PathToNamespaced) => {
+                path_arg(arguments, 0).map(|value| Value::String(value.into()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced) => {
+                path_win_to_namespaced(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferByteLength) => {
+                buffer_byte_length(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferFrom) => buffer_from(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferAlloc) => buffer_alloc(arguments),
-            HostCapabilityKind::Custom(CapabilityName::BufferIsBuffer) => buffer_is_buffer(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferIsBuffer) => {
+                buffer_is_buffer(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::UtilFormat) => util_format(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilInspect) => util_inspect(arguments),
-            HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin) => module_is_builtin(arguments),
-            HostCapabilityKind::Custom(CapabilityName::ModuleCreateRequire..=CapabilityName::ModuleSyncBuiltinExports) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin) => {
+                module_is_builtin(arguments)
+            }
+            HostCapabilityKind::Custom(
+                CapabilityName::ModuleCreateRequire..=CapabilityName::ModuleSyncBuiltinExports,
+            ) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::OsPlatform) => os_platform(),
             HostCapabilityKind::Custom(CapabilityName::OsArch) => os_arch(),
             HostCapabilityKind::Custom(CapabilityName::OsTmpdir) => os_tmpdir(),
             HostCapabilityKind::Custom(CapabilityName::OsHomedir) => os_homedir(),
             HostCapabilityKind::Custom(CapabilityName::OsCpus..=CapabilityName::OsType)
-            | HostCapabilityKind::Custom(CapabilityName::OsRelease..=CapabilityName::OsNetworkInterfaces)
+            | HostCapabilityKind::Custom(
+                CapabilityName::OsRelease..=CapabilityName::OsNetworkInterfaces,
+            )
             | HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => os_extra(capability.kind),
             HostCapabilityKind::Custom(CapabilityName::EventsGetMax) => events_get_max(arguments),
             HostCapabilityKind::Custom(CapabilityName::EventsSetMax) => events_set_max(arguments),
             HostCapabilityKind::Custom(id) if (900..1000).contains(&id) => {
                 events_instance_call(id, arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::QuerystringParse) => querystring_parse(arguments),
-            HostCapabilityKind::Custom(CapabilityName::QuerystringEscape) => querystring_escape(arguments),
+            HostCapabilityKind::Custom(CapabilityName::QuerystringParse) => {
+                querystring_parse(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::QuerystringEscape) => {
+                querystring_escape(arguments)
+            }
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
             HostCapabilityKind::Custom(CapabilityName::ProcessNextTick) => next_tick(arguments),
-            HostCapabilityKind::Custom(CapabilityName::TimerImmediate | CapabilityName::Timer | CapabilityName::TimerClearImmediate) => timer_call(arguments),
+            HostCapabilityKind::Custom(
+                CapabilityName::TimerImmediate
+                | CapabilityName::Timer
+                | CapabilityName::TimerClearImmediate,
+            ) => timer_call(arguments),
             HostCapabilityKind::Custom(id) if (13..=20).contains(&id) => {
                 assertion_call(id, arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::HttpServer | CapabilityName::HttpGet) => self.http_call(capability.kind, arguments),
+            HostCapabilityKind::Custom(CapabilityName::HttpServer | CapabilityName::HttpGet) => {
+                self.http_call(capability.kind, arguments)
+            }
             HostCapabilityKind::Custom(id) if (400..600).contains(&id) => {
                 self.http_call(capability.kind, arguments)
             }
@@ -319,7 +357,16 @@ impl Host for QuenchNodeHost {
             );
             return Ok(emitter);
         }
-        if !matches!(capability.kind, HostCapabilityKind::Custom(CapabilityName::Stream | CapabilityName::StreamReadable | CapabilityName::StreamWritable | CapabilityName::StreamReadableFrom | CapabilityName::StreamDuplex)) {
+        if !matches!(
+            capability.kind,
+            HostCapabilityKind::Custom(
+                CapabilityName::Stream
+                    | CapabilityName::StreamReadable
+                    | CapabilityName::StreamWritable
+                    | CapabilityName::StreamReadableFrom
+                    | CapabilityName::StreamDuplex
+            )
+        ) {
             return Err(VmError::NotCallable);
         }
         let id = self.next_stream.get();
@@ -336,9 +383,16 @@ impl Host for QuenchNodeHost {
                 transform,
                 data: None,
                 end: None,
-                source: if capability.kind == HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom) {
-                    arguments.first().and_then(|value| array_values(value).ok()).unwrap_or_default()
-                } else { Vec::new() },
+                source: if capability.kind
+                    == HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom)
+                {
+                    arguments
+                        .first()
+                        .and_then(|value| array_values(value).ok())
+                        .unwrap_or_default()
+                } else {
+                    Vec::new()
+                },
             },
         );
         let mut stream = Value::object(vec![
@@ -351,13 +405,42 @@ impl Host for QuenchNodeHost {
                 capability_function(HostCapabilityKind::Custom(id + 2)),
             ),
         ]);
-        stream = quench_runtime::execute::set_property(stream, "pipe", capability_function(HostCapabilityKind::Custom(id + 5)));
-        stream = quench_runtime::execute::set_property(stream, "write", capability_function(HostCapabilityKind::Custom(id + 2)));
+        stream = quench_runtime::execute::set_property(
+            stream,
+            "pipe",
+            capability_function(HostCapabilityKind::Custom(id + 5)),
+        );
+        stream = quench_runtime::execute::set_property(
+            stream,
+            "write",
+            capability_function(HostCapabilityKind::Custom(id + 2)),
+        );
+        stream = quench_runtime::execute::set_property(
+            stream,
+            "resume",
+            capability_function(HostCapabilityKind::Custom(id + 7)),
+        );
+        stream = quench_runtime::execute::set_property(
+            stream,
+            "pause",
+            capability_function(HostCapabilityKind::Custom(id + 8)),
+        );
+        stream = quench_runtime::execute::set_property(
+            stream,
+            "destroy",
+            capability_function(HostCapabilityKind::Custom(id + 9)),
+        );
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::StreamDuplex) {
-            stream = quench_runtime::execute::set_property(stream, "push", capability_function(HostCapabilityKind::Custom(id + 6)));
-            stream = quench_runtime::execute::set_property(stream, "setEncoding", capability_function(HostCapabilityKind::Custom(id + 7)));
-            stream = quench_runtime::execute::set_property(stream, "resume", capability_function(HostCapabilityKind::Custom(id + 8)));
-            stream = quench_runtime::execute::set_property(stream, "pause", capability_function(HostCapabilityKind::Custom(id + 9)));
+            stream = quench_runtime::execute::set_property(
+                stream,
+                "push",
+                capability_function(HostCapabilityKind::Custom(id + 6)),
+            );
+            stream = quench_runtime::execute::set_property(
+                stream,
+                "setEncoding",
+                capability_function(HostCapabilityKind::Custom(id + 10)),
+            );
         }
         Ok(stream)
     }
@@ -374,10 +457,16 @@ impl QuenchNodeHost {
         Ok(Value::String(value))
     }
 
-    fn stream_call(&self, id: u16, receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    fn stream_call(
+        &self,
+        id: u16,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
         let stream_id = id / 10 * 10;
         let operation = id % 10;
         match operation {
+            0 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
             1 => {
                 let Some(Value::String(event)) = arguments.first() else {
                     return Err(VmError::EvalError("stream.on expects an event".into()));
@@ -392,13 +481,29 @@ impl QuenchNodeHost {
                     "end" => state.end = Some(callback.clone()),
                     _ => {}
                 }
-                Ok(receiver.cloned().unwrap_or_else(|| capability_function(HostCapabilityKind::Custom(stream_id))))
+                Ok(receiver
+                    .cloned()
+                    .unwrap_or_else(|| capability_function(HostCapabilityKind::Custom(stream_id))))
             }
             2 => {
-                if self.streams.borrow().get(&stream_id).is_some_and(|state| state.transform.is_none()) {
-                    if let Some(callback) = self.streams.borrow().get(&stream_id).and_then(|state| state.data.clone()) {
+                if self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .is_some_and(|state| state.transform.is_none())
+                {
+                    if let Some(callback) = self
+                        .streams
+                        .borrow()
+                        .get(&stream_id)
+                        .and_then(|state| state.data.clone())
+                    {
                         if let Some(value) = arguments.first() {
-                            quench_runtime::execute::call(&callback, &Value::Undefined, std::slice::from_ref(value))?;
+                            quench_runtime::execute::call(
+                                &callback,
+                                &Value::Undefined,
+                                std::slice::from_ref(value),
+                            )?;
                         }
                     }
                     return Ok(Value::Boolean(true));
@@ -457,7 +562,12 @@ impl QuenchNodeHost {
             }
             5 => {
                 let target = arguments.first().ok_or(VmError::NotCallable)?;
-                let chunks = self.streams.borrow().get(&stream_id).map(|state| state.source.clone()).unwrap_or_default();
+                let chunks = self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .map(|state| state.source.clone())
+                    .unwrap_or_default();
                 let write = quench_runtime::execute::get_property_result(target, "write")?;
                 for chunk in chunks {
                     quench_runtime::execute::call(&write, target, std::slice::from_ref(&chunk))?;
@@ -477,15 +587,21 @@ impl QuenchNodeHost {
                 Ok(Value::object(vec![
                     (
                         "listen".into(),
-                        capability_function(HostCapabilityKind::Custom(CapabilityName::HttpRequestOn)),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::HttpRequestOn,
+                        )),
                     ),
                     (
                         "address".into(),
-                        capability_function(HostCapabilityKind::Custom(CapabilityName::HttpRequestEnd)),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::HttpRequestEnd,
+                        )),
                     ),
                     (
                         "close".into(),
-                        capability_function(HostCapabilityKind::Custom(CapabilityName::HttpRequestWrite)),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::HttpRequestWrite,
+                        )),
                     ),
                 ]))
             }
@@ -573,6 +689,16 @@ fn array_values(value: &Value) -> Result<Vec<Value>, VmError> {
     (0..length)
         .map(|index| quench_runtime::execute::get_property_result(value, &index.to_string()))
         .collect()
+}
+
+fn stream_finished(arguments: &[Value]) -> Result<Value, VmError> {
+    let callback = arguments.get(1).ok_or(VmError::NotCallable)?;
+    let error = Value::object(vec![(
+        "code".into(),
+        Value::String("ERR_STREAM_PREMATURE_CLOSE".into()),
+    )]);
+    quench_runtime::execute::call(callback, &Value::Undefined, &[error])?;
+    Ok(Value::Undefined)
 }
 
 fn response_object(base: u16) -> Value {
@@ -743,13 +869,32 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             let readable = quench_runtime::execute::set_property(
                 capability_function(HostCapabilityKind::Custom(CapabilityName::StreamReadable)),
                 "from",
-                capability_function(HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom)),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::StreamReadableFrom,
+                )),
             );
             return Ok(Value::object(vec![
-                ("Transform".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::Stream))),
+                (
+                    "Transform".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::Stream)),
+                ),
                 ("Readable".into(), readable),
-                ("Writable".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamWritable))),
-                ("Duplex".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamDuplex))),
+                (
+                    "Writable".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamWritable)),
+                ),
+                (
+                    "Duplex".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamDuplex)),
+                ),
+                (
+                    "PassThrough".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::Stream)),
+                ),
+                (
+                    "finished".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamFinished)),
+                ),
             ]));
         }
         if name == "node:http" || name == "http" {
@@ -786,19 +931,27 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(quench_runtime::host_api::object(vec![
                 (
                     "parse".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::QuerystringParse)),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::QuerystringParse,
+                    )),
                 ),
                 (
                     "decode".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::QuerystringParse)),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::QuerystringParse,
+                    )),
                 ),
                 (
                     "escape".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::QuerystringEscape)),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::QuerystringEscape,
+                    )),
                 ),
                 (
                     "unescape".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::QuerystringEscape)),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::QuerystringEscape,
+                    )),
                 ),
             ]));
         }
@@ -813,14 +966,46 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         ("relative".into(), relative.clone()),
         ("dirname".into(), dirname.clone()),
         ("isAbsolute".into(), absolute.clone()),
-        ("toNamespacedPath".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathToNamespaced))),
-        ("posix".into(), Value::object(vec![("relative".into(), relative.clone()), ("dirname".into(), dirname.clone()), ("isAbsolute".into(), absolute.clone()), ("toNamespacedPath".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathToNamespaced)))])),
-        ("win32".into(), Value::object(vec![("relative".into(), relative), ("dirname".into(), dirname), ("isAbsolute".into(), absolute), ("toNamespacedPath".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced)))])),
+        (
+            "toNamespacedPath".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::PathToNamespaced)),
+        ),
+        (
+            "posix".into(),
+            Value::object(vec![
+                ("relative".into(), relative.clone()),
+                ("dirname".into(), dirname.clone()),
+                ("isAbsolute".into(), absolute.clone()),
+                (
+                    "toNamespacedPath".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::PathToNamespaced,
+                    )),
+                ),
+            ]),
+        ),
+        (
+            "win32".into(),
+            Value::object(vec![
+                ("relative".into(), relative),
+                ("dirname".into(), dirname),
+                ("isAbsolute".into(), absolute),
+                (
+                    "toNamespacedPath".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::PathWinToNamespaced,
+                    )),
+                ),
+            ]),
+        ),
     ]))
 }
 
 fn path_arg(arguments: &[Value], index: usize) -> Result<&str, VmError> {
-    match arguments.get(index) { Some(Value::String(value)) => Ok(value), _ => Err(VmError::EvalError("path argument must be a string".into())) }
+    match arguments.get(index) {
+        Some(Value::String(value)) => Ok(value),
+        _ => Err(VmError::EvalError("path argument must be a string".into())),
+    }
 }
 
 fn path_relative(arguments: &[Value]) -> Result<Value, VmError> {
@@ -829,15 +1014,31 @@ fn path_relative(arguments: &[Value]) -> Result<Value, VmError> {
     if from.contains('\\') || to.contains('\\') {
         let from = from.replace('/', "\\");
         let to = to.replace('/', "\\");
-        let from = from.split('\\').filter(|part| !part.is_empty()).collect::<Vec<_>>();
-        let to = to.split('\\').filter(|part| !part.is_empty()).collect::<Vec<_>>();
-        let common = from.iter().zip(&to).take_while(|(a, b)| a.eq_ignore_ascii_case(b)).count();
+        let from = from
+            .split('\\')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        let to = to
+            .split('\\')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        let common = from
+            .iter()
+            .zip(&to)
+            .take_while(|(a, b)| a.eq_ignore_ascii_case(b))
+            .count();
         let mut result = vec![".."; from.len().saturating_sub(common)];
         result.extend(to[common..].iter().copied());
         return Ok(Value::String(result.join("\\")));
     }
-    let from = from.split('/').filter(|part| !part.is_empty() && *part != ".").collect::<Vec<_>>();
-    let to = to.split('/').filter(|part| !part.is_empty() && *part != ".").collect::<Vec<_>>();
+    let from = from
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>();
+    let to = to
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>();
     let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
     let mut result = vec![".."; from.len().saturating_sub(common)];
     result.extend(to[common..].iter().copied());
@@ -857,16 +1058,29 @@ fn path_dirname(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn path_is_absolute(arguments: &[Value]) -> Result<Value, VmError> {
     let value = path_arg(arguments, 0)?;
-    Ok(Value::Boolean(value.starts_with('/') || (value.len() > 2 && value.as_bytes()[1] == b':')))
+    Ok(Value::Boolean(
+        value.starts_with('/') || (value.len() > 2 && value.as_bytes()[1] == b':'),
+    ))
 }
 
 fn path_win_to_namespaced(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(value) = arguments.first() else { return Ok(Value::Undefined) };
-    let Value::String(value) = value else { return Ok(value.clone()) };
+    let Some(value) = arguments.first() else {
+        return Ok(Value::Undefined);
+    };
+    let Value::String(value) = value else {
+        return Ok(value.clone());
+    };
     let value = value.replace('/', "\\");
-    if value.starts_with("\\\\") { Ok(Value::String(format!("\\\\?\\UNC\\{}\\", value.trim_start_matches("\\\\")))) }
-    else if value.len() > 2 && value.as_bytes()[1] == b':' { Ok(Value::String(format!("\\\\?\\{}", value))) }
-    else { Ok(Value::String(value)) }
+    if value.starts_with("\\\\") {
+        Ok(Value::String(format!(
+            "\\\\?\\UNC\\{}\\",
+            value.trim_start_matches("\\\\")
+        )))
+    } else if value.len() > 2 && value.as_bytes()[1] == b':' {
+        Ok(Value::String(format!("\\\\?\\{}", value)))
+    } else {
+        Ok(Value::String(value))
+    }
 }
 
 fn assert_module() -> Value {
@@ -880,7 +1094,10 @@ fn assert_module() -> Value {
         ("ifError", CapabilityName::AssertIfError),
         ("match", CapabilityName::AssertMatch),
         ("notStrictEqual", CapabilityName::AssertNotStrictEqual),
-        ("notDeepStrictEqual", CapabilityName::AssertNotDeepStrictEqual),
+        (
+            "notDeepStrictEqual",
+            CapabilityName::AssertNotDeepStrictEqual,
+        ),
         ("AssertionError", CapabilityName::AssertError),
     ] {
         module = quench_runtime::execute::set_property(
@@ -985,10 +1202,22 @@ fn url_object(url: &url::Url, id: u16) -> Value {
 fn buffer_module() -> Value {
     let mut buffer = capability_function(HostCapabilityKind::Custom(CapabilityName::BufferFrom));
     for (name, kind) in [
-        ("from", HostCapabilityKind::Custom(CapabilityName::BufferFrom)),
-        ("alloc", HostCapabilityKind::Custom(CapabilityName::BufferAlloc)),
-        ("isBuffer", HostCapabilityKind::Custom(CapabilityName::BufferIsBuffer)),
-        ("byteLength", HostCapabilityKind::Custom(CapabilityName::BufferByteLength)),
+        (
+            "from",
+            HostCapabilityKind::Custom(CapabilityName::BufferFrom),
+        ),
+        (
+            "alloc",
+            HostCapabilityKind::Custom(CapabilityName::BufferAlloc),
+        ),
+        (
+            "isBuffer",
+            HostCapabilityKind::Custom(CapabilityName::BufferIsBuffer),
+        ),
+        (
+            "byteLength",
+            HostCapabilityKind::Custom(CapabilityName::BufferByteLength),
+        ),
     ] {
         buffer = quench_runtime::execute::set_property(buffer, name, capability_function(kind));
     }
@@ -1153,7 +1382,9 @@ fn os_module() -> Value {
         ),
         (
             "networkInterfaces".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::OsNetworkInterfaces)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::OsNetworkInterfaces,
+            )),
         ),
         (
             "userInfo".into(),
@@ -1198,15 +1429,21 @@ fn module_api() -> Value {
         ),
         (
             "createRequire".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleCreateRequire)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::ModuleCreateRequire,
+            )),
         ),
         (
             "findSourceMap".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleFindSourceMap)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::ModuleFindSourceMap,
+            )),
         ),
         (
             "syncBuiltinESMExports".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleSyncBuiltinExports)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::ModuleSyncBuiltinExports,
+            )),
         ),
     ])
 }
@@ -1235,18 +1472,29 @@ fn module_is_builtin(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn os_extra(kind: HostCapabilityKind) -> Result<Value, VmError> {
     match kind {
-        HostCapabilityKind::Custom(CapabilityName::OsCpus) => Ok(quench_runtime::host_api::array(vec![])),
-        HostCapabilityKind::Custom(CapabilityName::OsFreemem) | HostCapabilityKind::Custom(CapabilityName::OsTotalmem) => Ok(Value::Number(0.0)),
+        HostCapabilityKind::Custom(CapabilityName::OsCpus) => {
+            Ok(quench_runtime::host_api::array(vec![]))
+        }
+        HostCapabilityKind::Custom(CapabilityName::OsFreemem)
+        | HostCapabilityKind::Custom(CapabilityName::OsTotalmem) => Ok(Value::Number(0.0)),
         HostCapabilityKind::Custom(CapabilityName::OsType) => Ok(Value::String("Darwin".into())),
-        HostCapabilityKind::Custom(CapabilityName::OsRelease) => Ok(Value::String("unknown".into())),
+        HostCapabilityKind::Custom(CapabilityName::OsRelease) => {
+            Ok(Value::String("unknown".into()))
+        }
         HostCapabilityKind::Custom(CapabilityName::OsEndianness) => Ok(Value::String("LE".into())),
-        HostCapabilityKind::Custom(CapabilityName::OsLoadavg) => Ok(quench_runtime::host_api::array(vec![
-            Value::Number(0.0),
-            Value::Number(0.0),
-            Value::Number(0.0),
-        ])),
-        HostCapabilityKind::Custom(CapabilityName::OsNetworkInterfaces) => Ok(quench_runtime::host_api::object(vec![])),
-        HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => Ok(quench_runtime::host_api::object(vec![])),
+        HostCapabilityKind::Custom(CapabilityName::OsLoadavg) => {
+            Ok(quench_runtime::host_api::array(vec![
+                Value::Number(0.0),
+                Value::Number(0.0),
+                Value::Number(0.0),
+            ]))
+        }
+        HostCapabilityKind::Custom(CapabilityName::OsNetworkInterfaces) => {
+            Ok(quench_runtime::host_api::object(vec![]))
+        }
+        HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => {
+            Ok(quench_runtime::host_api::object(vec![]))
+        }
         _ => Err(VmError::NotCallable),
     }
 }
@@ -1459,7 +1707,10 @@ impl JsRuntime for QuenchRuntime {
                     .into_owned(),
             ),
         )
-        .with_host_value("URL", capability_function(HostCapabilityKind::Custom(CapabilityName::Url)))
+        .with_host_value(
+            "URL",
+            capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+        )
         .with_host_value(
             "setImmediate",
             capability_function(HostCapabilityKind::Custom(CapabilityName::TimerImmediate)),
@@ -1474,7 +1725,9 @@ impl JsRuntime for QuenchRuntime {
         )
         .with_host_value(
             "clearImmediate",
-            capability_function(HostCapabilityKind::Custom(CapabilityName::TimerClearImmediate)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::TimerClearImmediate,
+            )),
         )
         .with_host_value(
             "queueMicrotask",
