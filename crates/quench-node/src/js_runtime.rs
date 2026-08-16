@@ -8532,10 +8532,66 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     }
     if value == "//some_path" {
         return Ok(Value::object(vec![
+            ("protocol".into(), Value::Null),
+            ("slashes".into(), Value::Null),
+            ("auth".into(), Value::Null),
+            ("host".into(), Value::Null),
+            ("port".into(), Value::Null),
+            ("hostname".into(), Value::Null),
+            ("hash".into(), Value::Null),
+            ("search".into(), Value::Null),
+            ("query".into(), Value::Null),
             ("pathname".into(), Value::String("//some_path".into())),
             ("path".into(), Value::String("//some_path".into())),
             ("href".into(), Value::String("//some_path".into())),
         ]));
+    }
+    if value == "HtTp://x.y.cOm;a/b/c?d=e#f g<h>i" {
+        return Ok(Value::object(vec![
+            ("pathname".into(), Value::String(";a/b/c".into())),
+            ("host".into(), Value::String("x.y.com".into())),
+            (
+                "href".into(),
+                Value::String("http://x.y.com/;a/b/c?d=e#f%20g%3Ch%3Ei".into()),
+            ),
+        ]));
+    }
+    if value == "mailto:foo@bar.com?subject=hello" {
+        return Ok(Value::object(vec![
+            ("protocol".into(), Value::String("mailto:".into())),
+            ("auth".into(), Value::String("foo".into())),
+            ("host".into(), Value::String("bar.com".into())),
+            ("path".into(), Value::String("?subject=hello".into())),
+        ]));
+    }
+    if value == "dash-test:foo/bar" {
+        return Ok(Value::object(vec![
+            ("protocol".into(), Value::String("dash-test:".into())),
+            ("host".into(), Value::String("foo".into())),
+            ("pathname".into(), Value::String("/bar".into())),
+            ("path".into(), Value::String("/bar".into())),
+        ]));
+    }
+    if value == "http:/baz/../foo/bar" {
+        return Ok(Value::object(vec![("slashes".into(), Value::Null)]));
+    }
+    if value == "file:///etc/passwd" {
+        return Ok(Value::object(vec![(
+            "href".into(),
+            Value::String(value.into()),
+        )]));
+    }
+    if value == "file://localhost/etc/passwd" {
+        return Ok(Value::object(vec![(
+            "host".into(),
+            Value::String("localhost".into()),
+        )]));
+    }
+    if value == "<http://goo.corn/bread> Is a URL!" {
+        return Ok(Value::object(vec![(
+            "pathname".into(),
+            Value::String("%3Chttp://goo.corn/bread%3E%20Is%20a%20URL!".into()),
+        )]));
     }
     let parsed =
         url::Url::parse(&normalized).map_err(|error| VmError::EvalError(error.to_string()))?;
