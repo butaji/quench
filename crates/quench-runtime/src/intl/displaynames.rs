@@ -258,12 +258,18 @@ fn display_name(
     let _ = style;
     match display_type {
         "language" => language_name(code, fallback),
-        "region" => Value::String(code.to_string()),
-        "currency" => Value::String(code.to_string()),
-        "script" => Value::String(code.to_string()),
-        "calendar" => Value::String(code.to_string()),
-        "dateTimeField" => Value::String(code.to_string()),
-        _ => Value::String(code.to_string()),
+        "region" | "currency" | "script" | "calendar" | "dateTimeField" => {
+            code_fallback(code, fallback)
+        }
+        _ => code_fallback(code, fallback),
+    }
+}
+
+fn code_fallback(code: &str, fallback: &str) -> Value {
+    if fallback == "none" {
+        Value::Undefined
+    } else {
+        Value::String(code.to_string())
     }
 }
 
