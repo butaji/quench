@@ -6,6 +6,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::StringAnchor => Some("String.prototype.anchor"),
         Builtin::StringBig => Some("String.prototype.big"),
+        Builtin::StringBold => Some("String.prototype.bold"),
         Builtin::StringIterator => Some("[Symbol.iterator]"),
         Builtin::StringIteratorNext => Some("StringIterator.prototype.next"),
         Builtin::StringFromCharCode => Some("String.fromCharCode"),
@@ -58,6 +59,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::StringAnchor => Some(1.0),
         Builtin::StringBig => Some(0.0),
+        Builtin::StringBold => Some(0.0),
         Builtin::StringIterator => Some(0.0),
         Builtin::StringIteratorNext => Some(0.0),
         Builtin::StringFromCharCode => Some(1.0),
@@ -106,6 +108,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::StringAnchor => Some("anchor"),
         Builtin::StringBig => Some("big"),
+        Builtin::StringBold => Some("bold"),
         Builtin::StringIteratorNext => Some("next"),
         Builtin::StringFromCharCode => Some("fromCharCode"),
         Builtin::StringFromCodePoint => Some("fromCodePoint"),
