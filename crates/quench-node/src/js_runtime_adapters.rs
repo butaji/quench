@@ -76,6 +76,9 @@ for (const name of ["URL", "URLSearchParams"]) {
 const __quench_import_meta = { url: __quench_module_url, dirname: __filename.replace(/[^/\\]*$/, ""), filename: __filename, resolve(specifier, parent) { return new URL(specifier, parent || __quench_module_url).href; } };
 Object.defineProperty(globalThis, "import_meta", { configurable: true, value: __quench_import_meta });
 let __quench_import_meta_alias = __quench_import_meta;
+const __quench_crypto_subtle_stub = { digest: function() { return Promise.resolve(new Uint8Array()); }, encrypt: function() { return Promise.resolve(new Uint8Array()); }, decrypt: function() { return Promise.resolve(new Uint8Array()); }, generateKey: function() { return Promise.resolve({ type: "secret" }); }, importKey: function() { return Promise.resolve({ type: "secret" }); }, exportKey: function() { return Promise.resolve(new Uint8Array()); }, sign: function() { return Promise.resolve(new Uint8Array()); }, verify: function() { return Promise.resolve(true); } };
+globalThis.crypto = globalThis.crypto || { subtle: __quench_crypto_subtle_stub };
+globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_stub;
 "#;
         let source = source
             .replace("require(\"events\")", "__quench_events_module()")
