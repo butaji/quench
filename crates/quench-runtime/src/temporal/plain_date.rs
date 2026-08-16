@@ -67,6 +67,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateDaysInMonthGetter => {
             Some(days_in_month_getter(receiver))
         }
+        crate::ops::Builtin::TemporalPlainDateDaysInYearGetter => Some(days_in_year(receiver)),
         _ => None,
     }
 }
@@ -113,6 +114,21 @@ fn days_in_month_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
     let year = number_field(field(object, "year"));
     let month = number_field(field(object, "month"));
     Ok(Value::Number(days_in_month(year, month)))
+}
+
+fn days_in_year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    Ok(Value::Number(if is_leap_year(year) {
+        366.0
+    } else {
+        365.0
+    }))
 }
 
 fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
