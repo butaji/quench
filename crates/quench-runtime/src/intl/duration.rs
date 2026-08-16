@@ -7,6 +7,10 @@ use super::{
     supported_numbering_systems, SLOT,
 };
 
+#[path = "duration_parts.rs"]
+mod duration_parts;
+use duration_parts::append_subsecond_parts;
+
 pub(crate) fn dispatch(
     builtin: Builtin,
     arguments: &[Value],
@@ -484,36 +488,6 @@ fn format_standard_duration(
     }
     append_subsecond_parts(&mut parts, slots, milliseconds, microseconds, nanoseconds);
     parts.join(", ")
-}
-
-fn append_subsecond_parts(
-    parts: &mut Vec<String>,
-    slots: &[(String, Value)],
-    milliseconds: i64,
-    microseconds: i64,
-    nanoseconds: i64,
-) {
-    if slot_value(slots, "microseconds") == Some("numeric")
-        && (milliseconds != 0 || microseconds != 0 || nanoseconds != 0)
-    {
-        parts.push(format!(
-            "{:03}.{:03}{:03} ms",
-            milliseconds.abs(),
-            microseconds.abs(),
-            nanoseconds.abs()
-        ));
-    } else if slot_value(slots, "nanoseconds") == Some("numeric") {
-        if milliseconds != 0 {
-            parts.push(format!("{milliseconds} ms"));
-        }
-        if microseconds != 0 || nanoseconds != 0 {
-            parts.push(format!(
-                "{:02}.{:03} μs",
-                microseconds.abs(),
-                nanoseconds.abs()
-            ));
-        }
-    }
 }
 
 include!("duration_tail.rs");
