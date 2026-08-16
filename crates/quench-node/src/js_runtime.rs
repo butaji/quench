@@ -587,7 +587,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferLastIndexOf) => buffer_search(receiver, arguments, true),
             HostCapabilityKind::Custom(CapabilityName::BufferToJson) => buffer_to_json(receiver),
             HostCapabilityKind::Custom(CapabilityName::BufferOf) => buffer_of(arguments),
-            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow) => buffer_alloc(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow) => buffer_alloc_unsafe(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding) => buffer_is_encoding(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferSwap16) => buffer_swap(receiver, 2),
             HostCapabilityKind::Custom(CapabilityName::BufferSwap32) => buffer_swap(receiver, 4),
@@ -3603,6 +3603,16 @@ fn buffer_of(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(node_buffer(&arguments.iter().map(|value| match value { Value::Number(value) => (*value as i64).rem_euclid(256) as u8, _ => 0 }).collect::<Vec<_>>()))
 }
 
+fn buffer_alloc_unsafe(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Number(length)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "size must be a number")));
+    };
+    if !length.is_finite() || *length < 0.0 || length.fract() != 0.0 {
+        return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "size out of range")));
+    }
+    Ok(node_buffer(&vec![0; *length as usize]))
+}
+
 fn buffer_is_encoding(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(value)) = arguments.first() else { return Ok(Value::Boolean(false)); };
     Ok(Value::Boolean(matches!(value.to_ascii_lowercase().as_str(), "utf8" | "utf-8" | "utf16le" | "ucs2" | "ucs-2" | "latin1" | "binary" | "ascii" | "base64" | "base64url" | "hex")))
@@ -4238,6 +4248,7 @@ fn buffer_fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
         return Err(VmError::NotCallable);
     };
     let mut fill = string_or_bytes(arguments.first()).or_else(|_| match arguments.first() {
+        Some(Value::Null) | Some(Value::Undefined) => Ok(vec![0]),
         Some(Value::Number(value)) => Ok(vec![*value as u8]),
         _ => Err(VmError::NotCallable),
     })?;
