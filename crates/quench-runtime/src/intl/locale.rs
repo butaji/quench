@@ -205,7 +205,7 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
                 let value = option_value(&text, "calendar")?;
                 locale.calendar = Some(calendar_alias(&calendar_option(&value)?));
             }
-            "collation" => locale.collation = Some(option_value(&text, "collation")?),
+            "collation" => locale.collation = Some(keyword_option(&text, "collation")?),
             "caseFirst" => locale.case_first = Some(normalize_case_first(&text)?),
             "hourCycle" => locale.hour_cycle = Some(normalize_hour_cycle(&text)?),
             "numberingSystem" => {
@@ -332,12 +332,16 @@ fn option_value(value: &str, name: &str) -> Result<String, VmError> {
 }
 
 pub(crate) fn calendar_option(value: &str) -> Result<String, VmError> {
+    keyword_option(value, "calendar")
+}
+
+fn keyword_option(value: &str, name: &str) -> Result<String, VmError> {
     if value.split('-').all(|part| {
         (3..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
     }) {
         Ok(value.to_string())
     } else {
-        Err(runtime_error("RangeError: invalid calendar"))
+        Err(runtime_error(&format!("RangeError: invalid {name}")))
     }
 }
 
