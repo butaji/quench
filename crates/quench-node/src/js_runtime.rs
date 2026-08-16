@@ -166,6 +166,11 @@ impl CapabilityName {
     const BufferFill: u16 = 1585;
     const BufferCompare: u16 = 1586;
     const BufferNumericFirst: u16 = 2000;
+    const PathParse: u16 = 2035;
+    const PathFormat: u16 = 2036;
+    const PathWinParse: u16 = 2037;
+    const PathWinFormat: u16 = 2038;
+    const PathWinBasename: u16 = 2039;
     const FsFsyncSync: u16 = 1546;
     const FsFdatasyncSync: u16 = 1547;
     const FsFsyncAsync: u16 = 1548;
@@ -549,6 +554,11 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferIncludes) => {
                 buffer_includes(receiver, arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::PathParse) => path_parse(arguments, false),
+            HostCapabilityKind::Custom(CapabilityName::PathFormat) => path_format(arguments, false),
+            HostCapabilityKind::Custom(CapabilityName::PathWinParse) => path_parse(arguments, true),
+            HostCapabilityKind::Custom(CapabilityName::PathWinFormat) => path_format(arguments, true),
+            HostCapabilityKind::Custom(CapabilityName::PathWinBasename) => path_win_basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -3025,10 +3035,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
     }
     let basename = capability_function(HostCapabilityKind::Custom(CapabilityName::PathBasename));
+    let parse = capability_function(HostCapabilityKind::Custom(CapabilityName::PathParse));
+    let format = capability_function(HostCapabilityKind::Custom(CapabilityName::PathFormat));
     let relative = capability_function(HostCapabilityKind::Custom(CapabilityName::PathRelative));
     let dirname = capability_function(HostCapabilityKind::Custom(CapabilityName::PathDirname));
     let absolute = capability_function(HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute));
-    Ok(Value::object(vec![
+    let mut path = Value::object(vec![
         (
             "join".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::PathJoin)),
@@ -3038,6 +3050,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             capability_function(HostCapabilityKind::Custom(CapabilityName::PathExtname)),
         ),
         ("basename".into(), basename),
+        ("parse".into(), parse.clone()),
+        ("format".into(), format.clone()),
         ("relative".into(), relative.clone()),
         ("dirname".into(), dirname.clone()),
         ("isAbsolute".into(), absolute.clone()),
@@ -3048,6 +3062,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         (
             "posix".into(),
             Value::object(vec![
+                ("parse".into(), parse),
+                ("format".into(), format),
                 ("relative".into(), relative.clone()),
                 ("dirname".into(), dirname.clone()),
                 ("isAbsolute".into(), absolute.clone()),
@@ -3062,6 +3078,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         (
             "win32".into(),
             Value::object(vec![
+                ("basename".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinBasename))),
+                ("parse".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinParse))),
+                ("format".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinFormat))),
                 ("relative".into(), relative),
                 ("dirname".into(), dirname),
                 ("isAbsolute".into(), absolute),
@@ -3073,14 +3092,63 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
             ]),
         ),
-    ]))
+    ]);
+    path = quench_runtime::execute::set_property(path.clone(), "posix", path);
+    Ok(path)
 }
 
 fn path_arg(arguments: &[Value], index: usize) -> Result<&str, VmError> {
     match arguments.get(index) {
         Some(Value::String(value)) => Ok(value),
-        _ => Err(VmError::EvalError("path argument must be a string".into())),
+        _ => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "path must be a string"))),
     }
+}
+
+fn path_win_basename(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = path_arg(arguments, 0)?.trim_end_matches(['\\', '/']);
+    Ok(Value::String(value.rsplit(['\\', '/']).next().unwrap_or(value).into()))
+}
+
+fn path_parse(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
+    let value = path_arg(arguments, 0)?;
+    let separator = if win32 { '\\' } else { '/' };
+    let root = if win32 && value.len() >= 3 && value.as_bytes()[1] == b':' && value.as_bytes()[2] == b'\\' {
+        &value[..3]
+    } else if !win32 && value.starts_with('/') {
+        "/"
+    } else {
+        ""
+    };
+    let trimmed = value.trim_end_matches(separator);
+    let (dir, base) = trimmed.rsplit_once(separator).map_or((root, trimmed), |(dir, base)| (dir, base));
+    let (name, ext) = base.rfind('.').filter(|index| *index > 0).map_or((base, ""), |index| (&base[..index], &base[index..]));
+    Ok(Value::object(vec![
+        ("root".into(), Value::String(root.to_string().into())),
+        ("dir".into(), Value::String(dir.to_string().into())),
+        ("base".into(), Value::String(base.to_string().into())),
+        ("ext".into(), Value::String(ext.to_string().into())),
+        ("name".into(), Value::String(name.to_string().into())),
+    ]))
+}
+
+fn path_format(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
+    let Some(Value::Object(object)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "path object must be an object")));
+    };
+    let get = |name| quench_runtime::execute::get_property_result(&Value::Object(object.clone()), name).ok();
+    let string_prop = |name| get(name).and_then(|value| match value { Value::String(value) => Some(value.to_string()), _ => None }).unwrap_or_default();
+    let dir = {
+        let value = string_prop("dir");
+        if value.is_empty() { string_prop("root") } else { value }
+    };
+    let base = get("base").and_then(|value| match value { Value::String(value) => Some(value.clone()), _ => None }).unwrap_or_else(|| {
+        let name = string_prop("name");
+        let ext = string_prop("ext");
+        let ext = if ext.is_empty() || ext.starts_with('.') { ext } else { format!(".{ext}") };
+        format!("{name}{ext}")
+    });
+    let separator = if win32 { '\\' } else { '/' };
+    Ok(Value::String(if dir.is_empty() { base } else { format!("{}{}{}", dir.trim_end_matches(separator), separator, base) }.into()))
 }
 
 fn path_relative(arguments: &[Value]) -> Result<Value, VmError> {
