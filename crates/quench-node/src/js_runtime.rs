@@ -4002,6 +4002,7 @@ fn process_module() -> Value {
         ),
         ("on".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessOn))),
         ("emit".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessEmit))),
+        ("binding".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding))),
         ("cpuUsage".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage))),
         ("hrtime".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime))),
         ("getActiveResourcesInfo".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo))),
@@ -5374,9 +5375,19 @@ fn buffer_inspect(receiver: Option<&Value>) -> Result<Value, VmError> {
 
 fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
     if matches!(arguments.first(), Some(Value::String(value)) if value == "util") {
-        return Ok(quench_runtime::host_api::object(vec![("arrayBufferViewHasBuffer".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer)))]));
+        return Ok(util_types_module());
     }
     Ok(quench_runtime::host_api::object(vec![]))
+}
+
+fn util_types_module() -> Value {
+    NODE_UTIL_TYPES.with(|module| {
+        module.borrow_mut().get_or_insert_with(|| {
+            let predicate = capability_function(HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer));
+            let names = ["isAnyArrayBuffer", "isArrayBuffer", "isArrayBufferView", "isAsyncFunction", "isDataView", "isDate", "isExternal", "isMap", "isMapIterator", "isNativeError", "isPromise", "isRegExp", "isSet", "isSetIterator", "isTypedArray", "isUint8Array"];
+            quench_runtime::host_api::object(names.into_iter().map(|name| (name.into(), predicate.clone())).collect())
+        }).clone()
+    })
 }
 
 fn internal_util_sleep(arguments: &[Value]) -> Result<Value, VmError> {
@@ -5423,12 +5434,7 @@ fn util_module() -> Value {
         "defaultOptions",
         default_options,
     );
-    let types = NODE_UTIL_TYPES.with(|module| {
-        module
-            .borrow_mut()
-            .get_or_insert_with(|| quench_runtime::host_api::object(vec![]))
-            .clone()
-    });
+    let types = util_types_module();
     quench_runtime::host_api::object(vec![
         (
             "format".into(),
