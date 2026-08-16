@@ -134,7 +134,7 @@ fn execute_simple_conversion(
         Builtin::BooleanValueOf => boolean_value_of(receiver),
         Builtin::BooleanToString => boolean_to_string(receiver),
         Builtin::Eval => crate::reflect::builtin(builtin, arguments, receiver),
-        Builtin::Escape => Ok(crate::builtins::escape(arguments.first())),
+        Builtin::Escape => crate::builtins::escape(arguments.first()),
         Builtin::EncodeURI => crate::builtins::encode_uri(arguments.first(), true),
         Builtin::EncodeURIComponent => crate::builtins::encode_uri(arguments.first(), false),
         Builtin::DecodeURI => crate::builtins::decode_uri(arguments.first(), true),
