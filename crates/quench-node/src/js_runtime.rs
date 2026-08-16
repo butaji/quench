@@ -1042,7 +1042,17 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CryptoCipherUpdate) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
                 if let Some(Value::String(encoding)) = arguments.get(1) {
-                    if encoding.eq_ignore_ascii_case("hex") {
+                    let previous_encoding =
+                        quench_runtime::execute::get_property_result(receiver, "\0cipherEncoding");
+                    if encoding.eq_ignore_ascii_case("hex")
+                        && matches!(previous_encoding, Ok(Value::String(_)))
+                    {
+                        let marked = quench_runtime::execute::set_property(
+                            receiver.clone(),
+                            "\0cipherInvalidEncoding",
+                            Value::Boolean(true),
+                        );
+                        quench_runtime::execute::replace_value(receiver, &marked);
                         return Err(VmError::Thrown(fs_error(
                             "ERR_INVALID_ARG_VALUE",
                             "encoding cannot be changed from 'utf8'",
@@ -1055,11 +1065,53 @@ impl Host for QuenchNodeHost {
                     );
                     quench_runtime::execute::replace_value(receiver, &updated);
                 }
+                if let Some(Value::String(value)) = arguments.first() {
+                    let input_encoding = arguments
+                        .get(1)
+                        .and_then(|value| match value {
+                            Value::String(value) => Some(value.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or("utf8");
+                    let output_encoding = arguments
+                        .get(2)
+                        .and_then(|value| match value {
+                            Value::String(value) => Some(value.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or("buffer");
+                    if input_encoding.eq_ignore_ascii_case("hex") {
+                        let bytes = decode_hex(value);
+                        if output_encoding.eq_ignore_ascii_case("utf8") {
+                            return Ok(Value::String(String::from_utf8_lossy(&bytes).into_owned()));
+                        }
+                    } else if output_encoding.eq_ignore_ascii_case("hex") {
+                        return Ok(Value::String(
+                            value.bytes().map(|byte| format!("{byte:02x}")).collect(),
+                        ));
+                    }
+                }
                 Ok(Value::String(String::new()))
             }
-            HostCapabilityKind::Custom(CapabilityName::CryptoCipherFinal) => Err(VmError::Thrown(
-                fs_error("ERR_INVALID_ARG_VALUE", "encoding is invalid"),
-            )),
+            HostCapabilityKind::Custom(CapabilityName::CryptoCipherFinal) => {
+                let invalid = receiver.is_some_and(|value| {
+                    matches!(
+                        quench_runtime::execute::get_property_result(
+                            value,
+                            "\0cipherInvalidEncoding"
+                        ),
+                        Ok(Value::Boolean(true))
+                    )
+                });
+                if invalid {
+                    Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_VALUE",
+                        "encoding is invalid",
+                    )))
+                } else {
+                    Ok(Value::String(String::new()))
+                }
+            }
             HostCapabilityKind::Custom(CapabilityName::CryptoHashOn) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
                 let event = match arguments.first() {
@@ -5947,6 +5999,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
                 (
                     "createCipheriv".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCreateCipheriv,
+                    )),
+                ),
+                (
+                    "createDecipheriv".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CryptoCreateCipheriv,
                     )),
