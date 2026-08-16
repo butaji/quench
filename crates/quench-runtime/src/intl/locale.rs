@@ -21,6 +21,7 @@ pub(crate) struct Locale {
     pub numeric: bool,
     pub numeric_explicit: bool,
     pub unicode_extensions: Vec<UnicodeExtension>,
+    pub other_extensions: Vec<OtherExtension>,
 }
 
 #[derive(Clone)]
@@ -28,6 +29,12 @@ pub(crate) struct UnicodeExtension {
     pub attributes: Vec<String>,
     pub key: String,
     pub types: Vec<String>,
+}
+
+#[derive(Clone)]
+pub(crate) struct OtherExtension {
+    pub singleton: String,
+    pub subtags: Vec<String>,
 }
 
 impl Locale {
@@ -85,6 +92,7 @@ fn parse_canonical(tag: &str) -> Locale {
         numeric: false,
         numeric_explicit: false,
         unicode_extensions: Vec::new(),
+        other_extensions: Vec::new(),
     };
     let mut index = 1;
     if parts
@@ -108,13 +116,67 @@ fn parse_canonical(tag: &str) -> Locale {
         locale.variants.push((*part).to_string());
         index += 1;
     }
+    locale.variants.sort_by(|left, right| {
+        let left_numeric = left.chars().next().is_some_and(|c| c.is_ascii_digit());
+        let right_numeric = right.chars().next().is_some_and(|c| c.is_ascii_digit());
+        right_numeric
+            .cmp(&left_numeric)
+            .then_with(|| left.cmp(right))
+    });
     locale.unicode_extensions = parse_unicode_extensions(&parts[index..]);
+    locale.other_extensions = parse_other_extensions(&parts[index..]);
     parse_extensions(&mut locale, &parts[index..]);
     locale
 }
 
+fn parse_other_extensions(parts: &[&str]) -> Vec<OtherExtension> {
+    let mut extensions = Vec::new();
+    let mut index = 0;
+    while index < parts.len() {
+        if parts[index] == "u" {
+            index += 1;
+            while index < parts.len() && parts[index].len() != 1 {
+                index += 1;
+            }
+            continue;
+        }
+        if parts[index].len() != 1 {
+            index += 1;
+            continue;
+        }
+        let singleton = parts[index].to_string();
+        index += 1;
+        let start = index;
+        if singleton == "x" {
+            extensions.push(OtherExtension {
+                singleton,
+                subtags: parts[start..]
+                    .iter()
+                    .map(|part| (*part).to_string())
+                    .collect(),
+            });
+            break;
+        }
+        while index < parts.len() && parts[index].len() != 1 {
+            index += 1;
+        }
+        extensions.push(OtherExtension {
+            singleton,
+            subtags: parts[start..index]
+                .iter()
+                .map(|part| (*part).to_string())
+                .collect(),
+        });
+    }
+    extensions
+}
+
 fn parse_unicode_extensions(parts: &[&str]) -> Vec<UnicodeExtension> {
-    let Some(start) = parts.iter().position(|part| *part == "u") else {
+    let Some(start) = parts
+        .iter()
+        .position(|part| *part == "u")
+        .filter(|start| !parts[..*start].contains(&"x"))
+    else {
         return Vec::new();
     };
     let mut extensions = Vec::new();
@@ -123,6 +185,13 @@ fn parse_unicode_extensions(parts: &[&str]) -> Vec<UnicodeExtension> {
     while index < parts.len() && parts[index].len() != 2 && parts[index].len() != 1 {
         attributes.push(parts[index].to_string());
         index += 1;
+    }
+    if !attributes.is_empty() {
+        extensions.push(UnicodeExtension {
+            attributes: attributes.clone(),
+            key: String::new(),
+            types: Vec::new(),
+        });
     }
     attributes.sort();
     while index < parts.len() && parts[index].len() != 1 {
@@ -598,37 +667,53 @@ fn locale_slot(locale: &Locale) -> Value {
 
 fn slot_full(locale: &Locale) -> String {
     let mut full = locale.base_name();
+    let mut extensions = locale.other_extensions.clone();
     if !locale.unicode_extensions.is_empty() {
-        full.push_str("-u");
-        if let Some(first) = locale.unicode_extensions.first() {
-            for attribute in &first.attributes {
-                full.push('-');
-                full.push_str(attribute);
-            }
-        }
-        for extension in &locale.unicode_extensions {
-            full.push('-');
-            full.push_str(&extension.key);
-            for value in &extension.types {
-                full.push('-');
-                full.push_str(value);
-            }
-        }
-        return full;
+        extensions.push(OtherExtension {
+            singleton: "u".to_string(),
+            subtags: unicode_subtags(locale),
+        });
+    } else if !slot_keys(locale).is_empty() {
+        extensions.push(OtherExtension {
+            singleton: "u".to_string(),
+            subtags: slot_keys(locale)
+                .into_iter()
+                .flat_map(|(key, value)| {
+                    let mut subtags = vec![key.to_string()];
+                    if value != "true" {
+                        subtags.push(value);
+                    }
+                    subtags
+                })
+                .collect(),
+        });
     }
-    let keys = slot_keys(locale);
-    if !keys.is_empty() {
-        full.push_str("-u");
-        for (key, item) in keys {
+    extensions.sort_by(|left, right| {
+        (left.singleton == "x")
+            .cmp(&(right.singleton == "x"))
+            .then_with(|| left.singleton.cmp(&right.singleton))
+    });
+    for extension in extensions {
+        full.push('-');
+        full.push_str(&extension.singleton);
+        for subtag in &extension.subtags {
             full.push('-');
-            full.push_str(key);
-            if item != "true" {
-                full.push('-');
-                full.push_str(&item);
-            }
+            full.push_str(subtag);
         }
     }
     full
+}
+
+fn unicode_subtags(locale: &Locale) -> Vec<String> {
+    let mut subtags = Vec::new();
+    for extension in &locale.unicode_extensions {
+        subtags.extend(extension.attributes.iter().cloned());
+        if !extension.key.is_empty() {
+            subtags.push(extension.key.clone());
+        }
+        subtags.extend(extension.types.iter().cloned());
+    }
+    subtags
 }
 
 fn slot_keys(locale: &Locale) -> Vec<(&'static str, String)> {
