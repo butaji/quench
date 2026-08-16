@@ -285,6 +285,7 @@ impl CapabilityName {
     const FsReadAsync: u16 = 1521;
     const FsWritePromise: u16 = 1522;
     const FsReadPromise: u16 = 1523;
+    const FsAppendPromise: u16 = 2201;
     const FsOpenAsync: u16 = 1524;
     const FsCloseAsync: u16 = 1525;
     const CommonMustSucceed: u16 = 1701;
@@ -700,6 +701,10 @@ impl Host for QuenchNodeHost {
                 fs_write_promise(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::FsReadPromise) => fs_read_promise(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsAppendPromise) => {
+                fs_write_bytes(arguments, true)?;
+                Ok(fulfilled(Value::Undefined))
+            }
             HostCapabilityKind::Custom(CapabilityName::FsOpenAsync) => {
                 self.fs_open_async(arguments)
             }
@@ -5003,6 +5008,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                             "readFile".into(),
                             capability_function(HostCapabilityKind::Custom(
                                 CapabilityName::FsReadPromise,
+                            )),
+                        ),
+                        (
+                            "appendFile".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::FsAppendPromise,
                             )),
                         ),
                         (
@@ -10335,6 +10346,7 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::FsReadAsync),
                 HostCapabilityKind::Custom(CapabilityName::FsWritePromise),
                 HostCapabilityKind::Custom(CapabilityName::FsReadPromise),
+                HostCapabilityKind::Custom(CapabilityName::FsAppendPromise),
                 HostCapabilityKind::Custom(CapabilityName::FsOpenAsync),
                 HostCapabilityKind::Custom(CapabilityName::FsCloseAsync),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
