@@ -37,7 +37,7 @@ pub(crate) fn japanese_speed_parts(formatted: &str) -> Vec<Value> {
 }
 
 pub(crate) fn pad_locale_fraction(text: &str, minimum: u32, locale: &str) -> String {
-    if !plain_decimal_locale(locale) {
+    if !locale.starts_with("de") && !locale.starts_with("pt") {
         return pad_fraction(text, minimum);
     }
     let (sign, rest) = text
