@@ -4195,6 +4195,10 @@ fn format_integer(value: &Value) -> String {
 
 fn format_inspected(value: &Value) -> String {
     match value {
+        Value::String(value) if value.contains("Symbol.") => {
+            let name = value.split("Symbol.").nth(1).unwrap_or("").split('\0').next().unwrap_or("");
+            format!("Symbol({name})")
+        }
         Value::Array(values) => format!("[ {} ]", values.iter().map(format_inspected).collect::<Vec<_>>().join(", ")),
         Value::Object(_) | Value::ObjectAlias(_) => {
             if let Ok(value) = quench_runtime::execute::get_property_result(value, "foo") {
