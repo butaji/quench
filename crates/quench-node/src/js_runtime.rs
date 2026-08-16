@@ -107,6 +107,12 @@ impl CapabilityName {
     const WorkerOnce: u16 = 2161;
     const WorkerPostMessage: u16 = 2162;
     const WorkerTerminate: u16 = 2163;
+    const ZlibCreateGzip: u16 = 2164;
+    const ZlibCreateGunzip: u16 = 2165;
+    const ZlibCreateUnzip: u16 = 2166;
+    const ZlibOn: u16 = 2167;
+    const ZlibEnd: u16 = 2168;
+    const ZlibGzip: u16 = 2169;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -1015,6 +1021,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::HttpIncomingEmit) => { let receiver = receiver.cloned().ok_or(VmError::NotCallable)?; if matches!(arguments.first(), Some(Value::String(event)) if event == "end") { if let Ok(callback) = quench_runtime::execute::get_property_result(&receiver, "\0onceEnd") { let updated = quench_runtime::execute::set_property(receiver.clone(), "\0onceEnd", Value::Undefined); quench_runtime::execute::replace_value(&receiver, &updated); if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) { quench_runtime::execute::call(&callback, &receiver, &[])?; } } } Ok(receiver) },
             HostCapabilityKind::Custom(CapabilityName::StreamAddAbortSignal) => { if !matches!(arguments.first(), Some(Value::Object(_))) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "signal must be an AbortSignal"))); } Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined)) },
             HostCapabilityKind::Custom(CapabilityName::WorkerOn | CapabilityName::WorkerOnce | CapabilityName::WorkerPostMessage | CapabilityName::WorkerTerminate) => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
+            HostCapabilityKind::Custom(id @ (CapabilityName::ZlibCreateGzip | CapabilityName::ZlibCreateGunzip | CapabilityName::ZlibCreateUnzip)) => self.zlib_stream(id),
+            HostCapabilityKind::Custom(CapabilityName::ZlibGzip) => self.zlib_stream(CapabilityName::ZlibCreateGzip),
+            HostCapabilityKind::Custom(id @ (CapabilityName::ZlibOn | CapabilityName::ZlibEnd)) => self.zlib_call(id, receiver, arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
@@ -1287,6 +1296,9 @@ impl Host for QuenchNodeHost {
                 ("postMessage".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerPostMessage))),
                 ("terminate".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerTerminate))),
             ]));
+        }
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::ZlibGzip) {
+            return self.zlib_stream(CapabilityName::ZlibCreateGzip);
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::VmScript) {
             let source = arguments.first().map(safe_value_string).unwrap_or_default();
@@ -1612,6 +1624,22 @@ impl Host for QuenchNodeHost {
 }
 
 impl QuenchNodeHost {
+    fn zlib_stream(&self, _kind: u16) -> Result<Value, VmError> {
+        Ok(quench_runtime::host_api::object(vec![
+            ("on".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibOn))),
+            ("end".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibEnd))),
+        ]))
+    }
+
+    fn zlib_call(&self, kind: u16, receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+        let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
+        match kind {
+            CapabilityName::ZlibOn => { let event = arguments.first().and_then(|value| match value { Value::String(value) => Some(value.as_str()), _ => None }); let callback = arguments.get(1).cloned().unwrap_or(Value::Undefined); let key = match event { Some("data") => "\0zlibData", Some("end") => "\0zlibEnd", _ => "\0zlibOther" }; let updated = quench_runtime::execute::set_property(receiver.clone(), key, callback); quench_runtime::execute::replace_value(&receiver, &updated); Ok(receiver) }
+            CapabilityName::ZlibEnd => { let data = match arguments.first().cloned().unwrap_or(Value::Undefined) { Value::String(value) => quench_runtime::host_api::bytes(value.as_bytes()), value => value }; if let Ok(callback) = quench_runtime::execute::get_property_result(&receiver, "\0zlibData") { if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) { quench_runtime::execute::call(&callback, &receiver, std::slice::from_ref(&data))?; } } if let Ok(callback) = quench_runtime::execute::get_property_result(&receiver, "\0zlibEnd") { if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) { quench_runtime::execute::call(&callback, &receiver, &[])?; } } Ok(receiver) }
+            _ => Err(VmError::NotCallable),
+        }
+    }
+
     fn dgram_socket(&self, _arguments: &[Value]) -> Result<Value, VmError> {
         let valid = match _arguments.first() { Some(Value::String(value)) => value == "udp4" || value == "udp6", Some(Value::Object(options)) => matches!(quench_runtime::execute::get_property_result(&Value::Object(options.clone()), "type"), Ok(Value::String(value)) if value == "udp4" || value == "udp6"), _ => false };
         if !valid { return Err(VmError::Thrown(fs_error("ERR_SOCKET_BAD_TYPE", "Bad socket type"))); }
@@ -3576,6 +3604,15 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     }
     if name == "worker_threads" || name == "node:worker_threads" {
         return Ok(quench_runtime::host_api::object(vec![("Worker".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerConstructor)))]));
+    }
+    if name == "zlib" || name == "node:zlib" {
+        let gzip = Value::Builtin(quench_runtime::ops::Builtin::Object);
+        return Ok(quench_runtime::host_api::object(vec![
+            ("createGzip".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateGzip))),
+            ("createGunzip".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateGunzip))),
+            ("createUnzip".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateUnzip))),
+            ("Gzip".into(), gzip),
+        ]));
     }
     if name == "timers" || name == "node:timers" {
         return Ok(quench_runtime::host_api::object(vec![("promises".into(), timers_promises_module())]));
