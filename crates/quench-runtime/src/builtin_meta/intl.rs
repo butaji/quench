@@ -57,7 +57,7 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
 
 const fn intl_name_group_a_tail(b: Builtin) -> Option<&'static str> {
     match b {
-        Builtin::IntlNumberFormatFormat => Some(""),
+        Builtin::IntlNumberFormatFormat => Some("get format"),
         Builtin::IntlNumberFormatFormatToParts => Some("Intl.NumberFormat.prototype.formatToParts"),
         Builtin::IntlNumberFormatFormatRange => Some("Intl.NumberFormat.prototype.formatRange"),
         Builtin::IntlNumberFormatFormatRangeToParts => {
@@ -129,7 +129,7 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         Builtin::IntlSegmenterSupportedLocalesOf => Some(1.0),
         Builtin::IntlListFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlRelativeTimeFormatSupportedLocalesOf => Some(1.0),
-        Builtin::IntlNumberFormatFormat => Some(1.0),
+        Builtin::IntlNumberFormatFormat => Some(0.0),
         Builtin::IntlDurationFormatFormat | Builtin::IntlDurationFormatFormatToParts => Some(1.0),
         _ => intl_fn_len_tail(b),
     }
@@ -211,7 +211,7 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
 
 const fn intl_short_name_formats(b: Builtin) -> Option<&'static str> {
     match b {
-        Builtin::IntlNumberFormatFormat => Some(""),
+        Builtin::IntlNumberFormatFormat => Some("get format"),
         Builtin::IntlNumberFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlNumberFormatFormatRange => Some("formatRange"),
         Builtin::IntlNumberFormatFormatRangeToParts => Some("formatRangeToParts"),
