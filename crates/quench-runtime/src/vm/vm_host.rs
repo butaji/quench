@@ -103,8 +103,13 @@ fn create_realm_value() -> Value {
         }
         _ => global,
     };
+    let eval_script = crate::vm::bind_receiver_property(
+        Value::Builtin(Builtin::HostCapability(HostCapabilityKind::EvalScript)),
+        &Value::HostCapability(Rc::clone(&token)),
+    );
     Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("global".to_string(), global),
+        ("evalScript".to_string(), eval_script),
         ("\0realm".to_string(), Value::HostCapability(token)),
         ("\0creation_realm".to_string(), creation_realm),
     ])))

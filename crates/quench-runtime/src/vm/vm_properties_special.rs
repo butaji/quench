@@ -162,6 +162,11 @@ fn bound_function_fallback(
         }
     }
     let result = get_property(&bound.target, key);
+    if let Value::Builtin(constructor) = &result {
+        if crate::builtin_meta::constructor_name(*constructor).is_some() {
+            return realm::intrinsic(bound.realm, *constructor).unwrap_or_else(|| result.clone());
+        }
+    }
     if matches!(result, Value::Undefined) {
         function_prototype_property_for_builtin(Builtin::FunctionPrototype, key)
     } else {

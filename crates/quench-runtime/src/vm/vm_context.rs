@@ -50,6 +50,32 @@ pub(crate) fn is_intrinsic_bound(bound: &crate::value::BoundFunctionValue) -> bo
     realm::is_intrinsic(bound)
 }
 
+pub(crate) fn intrinsic_realm(value: &Value, builtin: Builtin) -> Option<RealmId> {
+    if matches!(value, Value::Builtin(candidate) if *candidate == builtin) {
+        return Some(RealmId::ROOT);
+    }
+    let Value::BoundFunction(bound) = value else {
+        return None;
+    };
+    if bound.target != Value::Builtin(builtin) {
+        return None;
+    }
+    let Value::HostCapability(token) = &bound.receiver else {
+        return None;
+    };
+    if token.realm() != bound.realm {
+        return None;
+    }
+    if token.realm() == RealmId::ROOT {
+        return Some(RealmId::ROOT);
+    }
+    Some(bound.realm)
+}
+
+pub(crate) fn intl_fallback_symbol(realm: RealmId) -> Option<Value> {
+    realm::intl_fallback_symbol(realm)
+}
+
 type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
