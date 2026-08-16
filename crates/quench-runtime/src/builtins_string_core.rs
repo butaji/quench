@@ -1,4 +1,4 @@
-fn boxed_string_immutable_key(properties: &ObjectData, key: &str) -> bool {
+pub(crate) fn boxed_string_immutable_key(properties: &ObjectData, key: &str) -> bool {
     let is_string = properties
         .iter()
         .any(|(name, value)| name == "_value" && matches!(value, Value::String(_)));
