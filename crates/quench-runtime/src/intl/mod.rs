@@ -559,6 +559,7 @@ fn canonicalize_subtags(
     mut out: Vec<String>,
     mut script_done: bool,
 ) -> Result<Vec<String>, VmError> {
+    validate_unicode_extension_keys(&parts)?;
     let aliased = canonicalize_unicode_aliases(&parts);
     let variant_aliased = canonicalize_variant_aliases(&aliased);
     let parts: Vec<&str> = variant_aliased.iter().map(String::as_str).collect();
@@ -595,6 +596,28 @@ fn canonicalize_subtags(
         }
     }
     Ok(out)
+}
+
+fn validate_unicode_extension_keys(parts: &[&str]) -> Result<(), VmError> {
+    for (index, part) in parts.iter().enumerate() {
+        if !part.eq_ignore_ascii_case("u") {
+            continue;
+        }
+        for value in &parts[index + 1..] {
+            if value.len() == 1 {
+                break;
+            }
+            if value.len() == 2
+                && !value
+                    .chars()
+                    .nth(1)
+                    .is_some_and(|character| character.is_ascii_alphabetic())
+            {
+                return Err(runtime_error("RangeError: invalid language tag"));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn canonicalize_variant_aliases(parts: &[String]) -> Vec<String> {
