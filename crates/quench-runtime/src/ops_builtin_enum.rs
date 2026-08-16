@@ -46,7 +46,7 @@ pub enum Builtin {
     ArraySlice, ArrayConcat,
     ArrayFlat, ArrayFlatMap,
     ArrayAt, ArraySort,
-    ArrayToReversed, StringAnchor, StringBig, StringBlink, StringBold, StringFixed, StringFontcolor, StringFontsize, StringItalics, StringIncludes, StringLink, StringSmall, StringStrike,
+    ArrayToReversed, StringAnchor, StringBig, StringBlink, StringBold, StringFixed, StringFontcolor, StringFontsize, StringItalics, StringIncludes, StringLink, StringSmall, StringStrike, StringSub,
     StringIsWellFormed, StringToWellFormed,
     StringStartsWith, StringEndsWith,
     StringAt, StringRepeat,
