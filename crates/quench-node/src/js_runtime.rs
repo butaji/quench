@@ -5374,10 +5374,14 @@ fn buffer_inspect(receiver: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
-    if matches!(arguments.first(), Some(Value::String(value)) if value == "util") {
-        return Ok(util_types_module());
+    let Some(Value::String(name)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "binding name must be a string")));
+    };
+    if name == "util" { return Ok(util_types_module()); }
+    if ["buffer", "cares_wrap", "constants", "contextify", "fs", "fs_event_wrap", "icu", "inspector", "js_stream", "natives", "os", "pipe_wrap", "spawn_sync", "stream_wrap", "tcp_wrap", "tls_wrap", "tty_wrap", "udp_wrap", "uv", "zlib"].contains(&name.as_str()) {
+        return Ok(quench_runtime::host_api::object(vec![]));
     }
-    Ok(quench_runtime::host_api::object(vec![]))
+    Err(VmError::Thrown(fs_error("ERR_UNKNOWN_BUILTIN_MODULE", "Unknown internal builtin module")))
 }
 
 fn util_types_module() -> Value {
