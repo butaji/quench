@@ -116,6 +116,7 @@ let __quench_import_meta_alias = __quench_import_meta;
                 HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage),
                 HostCapabilityKind::Custom(CapabilityName::ProcessHrtime),
                 HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo),
+                HostCapabilityKind::Custom(CapabilityName::ProcessPermissionHas),
                 HostCapabilityKind::Custom(CapabilityName::AssertNotStrictEqual),
                 HostCapabilityKind::Custom(CapabilityName::AssertNotDeepStrictEqual),
                 HostCapabilityKind::Custom(CapabilityName::AssertError),
