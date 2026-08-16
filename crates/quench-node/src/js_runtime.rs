@@ -6307,11 +6307,13 @@ fn querystring_parse(receiver: Option<&Value>, arguments: &[Value]) -> Result<Va
     };
     let separator = querystring_option_string(arguments.get(1), "&");
     let equals = querystring_option_string(arguments.get(2), "=");
-    let max_keys = arguments
-        .get(3)
+    let max_keys = arguments.get(3)
         .and_then(|options| quench_runtime::execute::get_property_result(options, "maxKeys").ok())
-        .and_then(|value| match value { Value::Number(value) => Some(value as usize), _ => None })
-        .filter(|value| *value > 0);
+        .map_or(1000, |value| match value {
+            Value::Number(value) if value.is_nan() || value.is_infinite() => usize::MAX,
+            Value::Number(value) if value > 0.0 => value as usize,
+            _ => 1000,
+        });
     let decoder = arguments.get(3).and_then(|options| {
         quench_runtime::execute::get_property_result(options, "decodeURIComponent")
             .ok()
@@ -6322,11 +6324,13 @@ fn querystring_parse(receiver: Option<&Value>, arguments: &[Value]) -> Result<Va
             .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)))
     }));
     let mut properties: Vec<(String, Value)> = Vec::new();
-    for pair in input.split(&separator).take(max_keys.unwrap_or(usize::MAX)).filter(|pair| !pair.is_empty()) {
+    let mut property_indices: HashMap<String, usize> = HashMap::new();
+    for pair in input.split(&separator).take(max_keys).filter(|pair| !pair.is_empty()) {
         let (key, value) = pair.split_once(&equals).unwrap_or((pair, ""));
         let key = querystring_apply_decoder(&querystring_decode(key), decoder.as_ref());
         let value = Value::String(querystring_apply_decoder(&querystring_decode(value), decoder.as_ref()).into());
-        if let Some((_, existing)) = properties.iter_mut().find(|(name, _)| *name == key) {
+        if let Some(index) = property_indices.get(&key).copied() {
+            let existing = &mut properties[index].1;
             *existing = match existing.clone() {
                 Value::Array(array) => {
                     let mut values = Vec::new();
@@ -6344,18 +6348,12 @@ fn querystring_parse(receiver: Option<&Value>, arguments: &[Value]) -> Result<Va
                 other => Value::Array(Rc::new(quench_runtime::value::ArrayData::new(vec![other, value]))),
             };
         } else {
+            property_indices.insert(key.clone(), properties.len());
             properties.push((key, value));
         }
     }
-    let mut result = quench_runtime::execute::call(
-        &Value::Builtin(quench_runtime::ops::Builtin::ObjectCreate),
-        &Value::Undefined,
-        &[Value::Null],
-    )?;
-    for (key, value) in properties {
-        result = quench_runtime::execute::set_property(result, &key, value);
-    }
-    Ok(result)
+    properties.insert(0, ("\0prototype".into(), Value::Null));
+    Ok(Value::object(properties))
 }
 
 fn querystring_option_string(value: Option<&Value>, default: &str) -> String {
