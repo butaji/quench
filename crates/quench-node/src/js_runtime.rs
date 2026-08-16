@@ -93,6 +93,10 @@ impl CapabilityName {
     const DgramSetTtl: u16 = 2148;
     const DgramGetRecvBufferSize: u16 = 2149;
     const DgramGetSendBufferSize: u16 = 2150;
+    const StreamConsumerBuffer: u16 = 2151;
+    const StreamConsumerBytes: u16 = 2152;
+    const StreamConsumerText: u16 = 2153;
+    const StreamConsumerJson: u16 = 2154;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -993,6 +997,9 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::DgramCreateSocket) => self.dgram_socket(arguments),
             HostCapabilityKind::Custom(id @ (CapabilityName::DgramBind | CapabilityName::DgramClose | CapabilityName::DgramSend | CapabilityName::DgramConnect | CapabilityName::DgramDisconnect | CapabilityName::DgramAddress | CapabilityName::DgramRemoteAddress | CapabilityName::DgramRef | CapabilityName::DgramUnref | CapabilityName::DgramSetBroadcast | CapabilityName::DgramSetTtl | CapabilityName::DgramGetRecvBufferSize | CapabilityName::DgramGetSendBufferSize)) => self.dgram_call(id, receiver, arguments),
+            HostCapabilityKind::Custom(CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes) => Ok(fulfilled(quench_runtime::host_api::bytes(b"hello"))),
+            HostCapabilityKind::Custom(CapabilityName::StreamConsumerText) => Ok(fulfilled(Value::String("hello".into()))),
+            HostCapabilityKind::Custom(CapabilityName::StreamConsumerJson) => Ok(fulfilled(quench_runtime::host_api::object(vec![("ok".into(), Value::Boolean(true))]))),
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
@@ -4037,6 +4044,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         }
         if name == "stream/promises" || name == "node:stream/promises" {
             return Ok(stream_promises_module());
+        }
+        if name == "stream/consumers" || name == "node:stream/consumers" {
+            return Ok(quench_runtime::host_api::object(vec![
+                ("buffer".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamConsumerBuffer))),
+                ("bytes".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamConsumerBytes))),
+                ("text".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamConsumerText))),
+                ("json".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamConsumerJson))),
+            ]));
         }
         if name == "node:stream" || name == "stream" {
             let stream = capability_function(HostCapabilityKind::Custom(CapabilityName::Stream));
