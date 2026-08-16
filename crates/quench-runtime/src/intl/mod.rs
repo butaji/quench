@@ -240,10 +240,14 @@ pub(crate) fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmErro
         return Ok(vec![default_locale()]);
     };
     match locales {
+        Value::String(value) if crate::conversion::is_symbol_string(value) => {
+            resolve_locale_list(&crate::construct::to_object(locales)?)
+        }
         Value::String(_) => Ok(vec![canonicalize(&crate::conversion::to_string(locales)?)?]),
         Value::Array(_) | Value::Object(_) => resolve_locale_list(locales),
         Value::Null => Err(runtime_error("TypeError: invalid locales")),
-        _ => Ok(vec![default_locale()]),
+        Value::Undefined => Ok(vec![default_locale()]),
+        _ => resolve_locale_list(&crate::construct::to_object(locales)?),
     }
 }
 
