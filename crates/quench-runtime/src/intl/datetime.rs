@@ -616,11 +616,7 @@ fn civil_year(number: f64) -> i64 {
 }
 
 fn grouped_year(year: i64) -> String {
-    let text = year.to_string();
-    if text.len() <= 3 {
-        return text;
-    }
-    format!("{},{}", &text[..text.len() - 3], &text[text.len() - 3..])
+    year.to_string()
 }
 
 fn range_number(value: &Value) -> Result<f64, VmError> {
