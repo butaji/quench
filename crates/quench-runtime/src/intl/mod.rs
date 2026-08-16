@@ -309,6 +309,16 @@ pub(crate) fn number_locale(locale: &str) -> String {
     base.to_string()
 }
 
+pub(crate) fn numbering_system(locale: &str) -> Option<&str> {
+    let (_, extension) = locale.split_once("-u-")?;
+    let parts: Vec<&str> = extension.split('-').collect();
+    let index = parts.iter().position(|part| *part == "nu")? + 1;
+    let value = parts.get(index).copied()?;
+    supported_values::NUMBERING_SYSTEMS
+        .contains(&value)
+        .then_some(value)
+}
+
 fn dedupe(locales: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     locales
