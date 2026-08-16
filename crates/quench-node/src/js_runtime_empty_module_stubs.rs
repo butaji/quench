@@ -22,6 +22,9 @@ pub(crate) fn empty_module_stub(name: &str) -> Option<Value> {
             ("spec".into(), Value::Undefined),
             ("tap".into(), Value::Undefined),
         ])),
+        "internal/watch_mode/files_watcher" => Some(quench_runtime::host_api::object(vec![])),
+        "../fixtures/encoding/encodings.json" => Some(quench_runtime::host_api::object(vec![])),
+        "encoding/encodings.json" => Some(quench_runtime::host_api::object(vec![])),
         _ => None,
     }
 }
