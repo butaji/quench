@@ -10851,7 +10851,7 @@ impl JsRuntime for QuenchRuntime {
         }) {
             NODE_PROCESS_TITLE.with(|current| current.replace(title.to_owned()));
         }
-        let source_with_globals = format!("var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; globalThis.global = globalThis;\n{source}\nglobalThis.__quench_drain_dgram_callbacks();");
+        let source_with_globals = format!("var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var structuredClone = function(value) {{ return {{ ...value }}; }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; globalThis.global = globalThis;\n{source}\nglobalThis.__quench_drain_dgram_callbacks();");
         let program =
             match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
                 true => quench_runtime::reduce::reduce_module_source(&source_with_globals),
