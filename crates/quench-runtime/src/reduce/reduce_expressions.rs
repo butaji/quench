@@ -40,15 +40,37 @@ pub fn reduce_if_statement(
         test => reduce_expression(test, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported branch condition".to_string()])?,
     };
-    let then_ops = crate::branch::reduce(&statement.consequent, facts, locals)?;
+    let then_ops = reduce_if_branch(&statement.consequent, facts, locals)?;
     let else_ops = statement
         .alternate
         .as_ref()
-        .map(|alternate| crate::branch::reduce(alternate, facts, locals))
+        .map(|alternate| reduce_if_branch(alternate, facts, locals))
         .transpose()?
         .unwrap_or_default();
     push_branch(ops, condition, then_ops, else_ops)?;
     Ok(None)
+}
+
+fn reduce_if_branch(
+    statement: &Statement<'_>,
+    facts: &mut ProgramDb,
+    locals: &HashMap<String, u16>,
+) -> Result<Vec<Op>, Vec<String>> {
+    if should_skip_if_function(statement, facts) {
+        return Ok(Vec::new());
+    }
+    crate::branch::reduce(statement, facts, locals)
+}
+
+fn should_skip_if_function(statement: &Statement<'_>, facts: &ProgramDb) -> bool {
+    let Statement::FunctionDeclaration(function) = statement else {
+        return false;
+    };
+    function.id.as_ref().is_some_and(|identifier| {
+        facts
+            .eval_var_barrier
+            .contains(&identifier.name.to_string())
+    })
 }
 
 fn push_branch(
@@ -85,6 +107,9 @@ fn reduce_static_if(
     let Some(selected) = selected else {
         return Ok(None);
     };
+    if should_skip_if_function(selected, facts) {
+        return Ok(None);
+    }
     match selected {
         Statement::EmptyStatement(_) => Ok(None),
         Statement::BlockStatement(_) => {
