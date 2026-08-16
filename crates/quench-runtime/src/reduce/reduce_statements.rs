@@ -286,7 +286,23 @@ fn initialize_statement_reduction(
 ) -> Result<(Vec<Op>, u16, Option<u16>), Vec<String>> {
     let mut ops = Vec::new();
     let mut next_register = 0;
-    crate::reduce_support::predeclare_functions(statements, locals, next_slot);
+    if eval_behavior == crate::reduce_support::EvalBehavior::Normal {
+        crate::reduce_support::predeclare_functions(statements, locals, next_slot);
+    } else {
+        for statement in statements {
+            let excluded = crate::semantic_early::annex_b_lexical_collisions_in(
+                std::slice::from_ref(statement),
+            )
+            .into_iter()
+            .collect::<Vec<_>>();
+            crate::reduce_support::predeclare_functions_excluding(
+                std::slice::from_ref(statement),
+                locals,
+                next_slot,
+                &excluded,
+            );
+        }
+    }
     next_register = next_register.max(crate::reduce_support::register_base(locals));
     let eval = eval_behavior != crate::reduce_support::EvalBehavior::Normal;
     let initial_value =

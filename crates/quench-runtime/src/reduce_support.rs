@@ -148,6 +148,15 @@ pub(crate) fn predeclare_functions(
     locals: &mut HashMap<String, u16>,
     next_slot: &mut u16,
 ) {
+    predeclare_functions_excluding(statements, locals, next_slot, &[]);
+}
+
+pub(crate) fn predeclare_functions_excluding(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+    excluded: &[String],
+) {
     for statement in statements {
         let names = if matches!(statement, oxc::ast::ast::Statement::FunctionDeclaration(_)) {
             declared_names(statement)
@@ -155,7 +164,11 @@ pub(crate) fn predeclare_functions(
             nested_var_names(statement)
         };
         for name in names {
-            reserve(&name, locals, next_slot);
+            if !excluded.contains(&name)
+                || matches!(statement, oxc::ast::ast::Statement::FunctionDeclaration(_))
+            {
+                reserve(&name, locals, next_slot);
+            }
         }
     }
 }
