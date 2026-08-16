@@ -379,9 +379,61 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     } else {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
-    let parts: Vec<&str> = parts.collect();
-    validate_transformed_extensions(&parts)?;
-    Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
+    let parts: Vec<String> = canonicalize_unicode_aliases(&parts.collect::<Vec<_>>());
+    validate_transformed_extensions(&parts.iter().map(String::as_str).collect::<Vec<_>>())?;
+    Ok(
+        canonicalize_subtags(parts.iter().map(String::as_str).collect(), out, script_done)?
+            .join("-"),
+    )
+}
+
+fn canonicalize_unicode_aliases(parts: &[&str]) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut index = 0;
+    while index < parts.len() {
+        result.push(parts[index].to_ascii_lowercase());
+        if parts[index] == "u" {
+            index += 1;
+            append_unicode_aliases(parts, &mut index, &mut result);
+            continue;
+        }
+        index += 1;
+    }
+    result
+}
+
+fn append_unicode_aliases(parts: &[&str], index: &mut usize, result: &mut Vec<String>) {
+    while *index < parts.len() && parts[*index].len() != 1 {
+        let key = parts[*index];
+        result.push(key.to_ascii_lowercase());
+        *index += 1;
+        if key.len() != 2 {
+            continue;
+        }
+        let start = *index;
+        while *index < parts.len() && parts[*index].len() != 2 && parts[*index].len() != 1 {
+            *index += 1;
+        }
+        let values = &parts[start..*index];
+        if let Some(alias) = unicode_alias(key, values) {
+            result.push(alias.to_string());
+        } else {
+            result.extend(values.iter().map(|value| value.to_ascii_lowercase()));
+        }
+    }
+}
+
+fn unicode_alias(key: &str, values: &[&str]) -> Option<&'static str> {
+    match (key, values) {
+        ("ca", ["ethiopic", "amete", "alem"]) => Some("ethioaa"),
+        ("ca", ["islamicc"]) => Some("islamic-civil"),
+        ("tz", ["cnckg"]) => Some("cnsha"),
+        ("tz", ["eire"]) => Some("iedub"),
+        ("tz", ["est"]) => Some("papty"),
+        ("tz", ["gmt0"]) => Some("gmt"),
+        ("tz", ["uct" | "zulu"]) => Some("utc"),
+        _ => None,
+    }
 }
 
 fn validate_transformed_extensions(parts: &[&str]) -> Result<(), VmError> {
