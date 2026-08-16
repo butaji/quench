@@ -356,6 +356,7 @@ struct StreamState {
     drain: Option<Value>,
     error: Option<Value>,
     source: Vec<Value>,
+    need_drain: bool,
 }
 
 struct HttpState {
@@ -937,8 +938,23 @@ impl Host for QuenchNodeHost {
                 } else {
                     Vec::new()
                 },
+                need_drain: false,
             },
         );
+        let writable_state = Value::object(vec![]);
+        let writable_state = quench_runtime::execute::call(
+            &Value::Builtin(quench_runtime::ops::Builtin::ObjectDefineProperty),
+            &Value::Undefined,
+            &[
+                writable_state,
+                Value::String("needDrain".into()),
+                Value::object(vec![
+                    ("get".into(), capability_function(HostCapabilityKind::Custom(id))),
+                    ("enumerable".into(), Value::Boolean(true)),
+                    ("configurable".into(), Value::Boolean(true)),
+                ]),
+            ],
+        ).unwrap_or_else(|_| Value::object(vec![("needDrain".into(), Value::Boolean(false))]));
         let mut stream = Value::object(vec![
             ("readableEnded".into(), Value::Boolean(false)),
             ("readableDefaultEncoding".into(), arguments.first()
@@ -949,7 +965,7 @@ impl Host for QuenchNodeHost {
                 ("reading".into(), Value::Boolean(false)),
                 ("ended".into(), Value::Boolean(false)),
             ])),
-            ("_writableState".into(), Value::object(vec![("needDrain".into(), Value::Boolean(false))])),
+            ("_writableState".into(), writable_state),
             (
                 "on".into(),
                 capability_function(HostCapabilityKind::Custom(id + 1)),
@@ -1633,7 +1649,7 @@ impl QuenchNodeHost {
         let stream_id = id / 10 * 10;
         let operation = id % 10;
         match operation {
-            0 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
+            0 => Ok(Value::Boolean(self.streams.borrow().get(&stream_id).is_some_and(|state| state.need_drain))),
             1 => {
                 let Some(Value::String(event)) = arguments.first() else {
                     return Err(VmError::EvalError("stream.on expects an event".into()));
@@ -1660,6 +1676,9 @@ impl QuenchNodeHost {
                     .unwrap_or_else(|| capability_function(HostCapabilityKind::Custom(stream_id))))
             }
             2 => {
+                if let Some(state) = self.streams.borrow_mut().get_mut(&stream_id) {
+                    state.need_drain = true;
+                }
                 if self
                     .streams
                     .borrow()
