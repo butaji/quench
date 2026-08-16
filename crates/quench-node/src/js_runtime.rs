@@ -161,6 +161,7 @@ impl CapabilityName {
     const FsLinkPromise: u16 = 1560;
     const FsReadSyncFd: u16 = 1561;
     const FsReadFdAsync: u16 = 1562;
+    const BufferToString: u16 = 1563;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -451,6 +452,9 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsReadFdAsync) => {
                 self.fs_read_fd(arguments, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferToString) => {
+                buffer_to_string(receiver)
             }
             HostCapabilityKind::Custom(CapabilityName::FsDirentFile) => Ok(Value::Boolean(true)),
             HostCapabilityKind::Custom(CapabilityName::FsDirentDirectory) => {
@@ -923,7 +927,9 @@ impl QuenchNodeHost {
                 (
                     view.clone(),
                     property_number(options, "offset").unwrap_or(0),
-                    property_number(options, "length").unwrap_or(view.length as u64),
+                    property_number(options, "length")
+                        .map(|length| length.max(view.length as u64))
+                        .unwrap_or(view.length as u64),
                     property_number(options, "position"),
                     arguments.iter().rev().find(|value| {
                         matches!(
@@ -2663,7 +2669,18 @@ fn buffer_alloc(arguments: &[Value]) -> Result<Value, VmError> {
     if !length.is_finite() || *length < 0.0 {
         return Err(VmError::EvalError("invalid buffer length".into()));
     }
-    Ok(quench_runtime::host_api::bytes(&vec![0; *length as usize]))
+    Ok(quench_runtime::execute::set_property(
+        quench_runtime::host_api::bytes(&vec![0; *length as usize]),
+        "toString",
+        capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString)),
+    ))
+}
+
+fn buffer_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let bytes = string_or_bytes(receiver)?;
+    Ok(Value::String(
+        String::from_utf8_lossy(&bytes).into_owned().into(),
+    ))
 }
 
 fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {
