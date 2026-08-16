@@ -144,6 +144,13 @@ impl RawOptions {
                             "invalid trailingZeroDisplay",
                         ));
                     }
+                    if *key == "numberingSystem"
+                        && !super::supported_values::NUMBERING_SYSTEMS.contains(&text.as_str())
+                    {
+                        return Err(crate::value::error::throw_range_error(
+                            "invalid numbering system",
+                        ));
+                    }
                     apply_option(&mut raw, key, &text);
                 }
             }
