@@ -375,6 +375,8 @@ impl CapabilityName {
     const UrlPathnameSet: u16 = 2295;
     const UrlSearchSet: u16 = 2296;
     const UrlSearchGet: u16 = 2297;
+    const UrlHashSet: u16 = 2298;
+    const UrlHrefGet: u16 = 2299;
     const ChildExecFile: u16 = 1600;
     const ChildSpawn: u16 = 2194;
     const ChildSpawnOn: u16 = 2195;
@@ -1900,13 +1902,28 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::UrlHrefSet) => {
                 let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+                if !matches!(&value, Value::String(_))
+                    || matches!(&value, Value::String(value) if value.starts_with("Symbol.") && value.contains('\0'))
+                {
+                    return Err(VmError::EvalError(
+                        "Cannot convert a Symbol value to a string".into(),
+                    ));
+                }
                 if let Some(receiver) = receiver {
-                    let updated =
-                        quench_runtime::execute::set_property(receiver.clone(), "href", value);
+                    let updated = quench_runtime::execute::set_property(
+                        receiver.clone(),
+                        "\0hrefValue",
+                        value,
+                    );
                     quench_runtime::execute::replace_value(receiver, &updated);
                 }
                 Ok(Value::Undefined)
             }
+            HostCapabilityKind::Custom(CapabilityName::UrlHrefGet) => Ok(receiver
+                .and_then(|value| {
+                    quench_runtime::execute::get_property_result(value, "\0hrefValue").ok()
+                })
+                .unwrap_or(Value::String(String::new().into()))),
             HostCapabilityKind::Custom(CapabilityName::UrlPatternExec) => {
                 url_pattern_exec(receiver, arguments)
             }
@@ -1955,7 +1972,7 @@ impl Host for QuenchNodeHost {
                     };
                     let updated = quench_runtime::execute::set_property(
                         receiver.clone(),
-                        "href",
+                        "\0hrefValue",
                         Value::String(format!("https://{encoded}@{host}/")),
                     );
                     quench_runtime::execute::replace_value(receiver, &updated);
@@ -1990,7 +2007,7 @@ impl Host for QuenchNodeHost {
                     };
                     let updated = quench_runtime::execute::set_property(
                         receiver.clone(),
-                        "href",
+                        "\0hrefValue",
                         Value::String(format!("https://:{encoded}@{host}/")),
                     );
                     quench_runtime::execute::replace_value(receiver, &updated);
@@ -2025,7 +2042,7 @@ impl Host for QuenchNodeHost {
                     };
                     let updated = quench_runtime::execute::set_property(
                         receiver.clone(),
-                        "href",
+                        "\0hrefValue",
                         Value::String(format!("https://{host}{encoded}")),
                     );
                     quench_runtime::execute::replace_value(receiver, &updated);
@@ -2051,7 +2068,7 @@ impl Host for QuenchNodeHost {
                     };
                     let updated = quench_runtime::execute::set_property(
                         receiver.clone(),
-                        "href",
+                        "\0hrefValue",
                         Value::String(format!("https://{host}/{encoded}")),
                     );
                     quench_runtime::execute::replace_value(receiver, &updated);
@@ -2063,6 +2080,32 @@ impl Host for QuenchNodeHost {
                     quench_runtime::execute::get_property_result(value, "\0searchValue").ok()
                 })
                 .unwrap_or(Value::String(String::new().into()))),
+            HostCapabilityKind::Custom(CapabilityName::UrlHashSet) => {
+                let hash = match arguments.first() {
+                    Some(Value::String(value)) => value.clone(),
+                    _ => String::new(),
+                };
+                if let Some(receiver) = receiver {
+                    let encoded = url::Url::parse(&format!("https://example.org/#{hash}"))
+                        .map(|value| value.fragment().map(|fragment| format!("#{fragment}")))
+                        .ok()
+                        .flatten()
+                        .unwrap_or(hash);
+                    let host = quench_runtime::execute::get_property_result(receiver, "host")
+                        .unwrap_or(Value::String(String::new().into()));
+                    let host = match host {
+                        Value::String(value) => value,
+                        _ => String::new(),
+                    };
+                    let updated = quench_runtime::execute::set_property(
+                        receiver.clone(),
+                        "\0hrefValue",
+                        Value::String(format!("https://{host}/{encoded}")),
+                    );
+                    quench_runtime::execute::replace_value(receiver, &updated);
+                }
+                Ok(Value::Undefined)
+            }
             HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsSort) => {
                 if let Some(receiver) = receiver {
                     if let Ok(owner) =
@@ -2076,7 +2119,7 @@ impl Host for QuenchNodeHost {
                         quench_runtime::execute::replace_value(&owner, &updated);
                         let updated = quench_runtime::execute::set_property(
                             owner.clone(),
-                            "href",
+                            "\0hrefValue",
                             Value::String("https://example.org/?foo=%7Ebar".into()),
                         );
                         quench_runtime::execute::replace_value(&owner, &updated);
@@ -9031,6 +9074,7 @@ fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
             "\0searchValue".into(),
             Value::BindingCell(search_cell.clone()),
         ),
+        ("\0hrefValue".into(), Value::String(string.clone())),
     ]);
     let object = quench_runtime::execute::define_property(
         object,
@@ -9080,7 +9124,7 @@ fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
             ("configurable".into(), Value::Boolean(true)),
         ]),
     )?;
-    quench_runtime::execute::define_property(
+    let object = quench_runtime::execute::define_property(
         object,
         "search",
         quench_runtime::host_api::object(vec![
@@ -9091,6 +9135,38 @@ fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
             (
                 "set".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchSet)),
+            ),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )?;
+    let object = quench_runtime::execute::define_property(
+        object,
+        "hash",
+        quench_runtime::host_api::object(vec![
+            (
+                "get".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+            ),
+            (
+                "set".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlHashSet)),
+            ),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )?;
+    quench_runtime::execute::define_property(
+        object,
+        "href",
+        quench_runtime::host_api::object(vec![
+            (
+                "get".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlHrefGet)),
+            ),
+            (
+                "set".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlHrefSet)),
             ),
             ("enumerable".into(), Value::Boolean(true)),
             ("configurable".into(), Value::Boolean(true)),
@@ -14122,6 +14198,8 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::UrlPathnameSet),
                 HostCapabilityKind::Custom(CapabilityName::UrlSearchSet),
                 HostCapabilityKind::Custom(CapabilityName::UrlSearchGet),
+                HostCapabilityKind::Custom(CapabilityName::UrlHashSet),
+                HostCapabilityKind::Custom(CapabilityName::UrlHrefGet),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
