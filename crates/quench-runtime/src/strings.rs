@@ -85,6 +85,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
     match key {
         "anchor" => Some(crate::ops::Builtin::StringAnchor),
         "big" => Some(crate::ops::Builtin::StringBig),
+        "blink" => Some(crate::ops::Builtin::StringBlink),
         "bold" => Some(crate::ops::Builtin::StringBold),
         "fixed" => Some(crate::ops::Builtin::StringFixed),
         "fontcolor" => Some(crate::ops::Builtin::StringFontcolor),
@@ -167,6 +168,7 @@ fn execute_builtin_tail(
     let result = match builtin {
         crate::ops::Builtin::StringAnchor => anchor(receiver, arguments),
         crate::ops::Builtin::StringBig => html_wrapper(receiver, "big"),
+        crate::ops::Builtin::StringBlink => html_wrapper(receiver, "blink"),
         crate::ops::Builtin::StringBold => html_wrapper(receiver, "b"),
         crate::ops::Builtin::StringFixed => html_wrapper(receiver, "tt"),
         crate::ops::Builtin::StringFontcolor => {
