@@ -31,12 +31,28 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
 fn property_descriptor(properties: &Value, key: &str) -> Result<Value, crate::execute::VmError> {
     if matches!(properties, Value::Proxy(_)) {
         let property = crate::proxy::proxy_get_own_property_descriptor(properties, key)?;
+        if !property_is_enumerable(&property) {
+            return Ok(Value::Undefined);
+        }
         if matches!(property, Value::Undefined) {
             return Ok(Value::Undefined);
         }
         return crate::execute::get_property_result(&property, "value");
     }
+    if crate::builtins::descriptor_flag(properties, key, "enumerable") == Some(false) {
+        return Ok(Value::Undefined);
+    }
     crate::execute::get_property_result(properties, key)
+}
+
+fn property_is_enumerable(property: &Value) -> bool {
+    let Value::Object(properties) = property else {
+        return true;
+    };
+    !properties
+        .iter()
+        .rev()
+        .any(|(name, value)| name == "enumerable" && matches!(value, Value::Boolean(false)))
 }
 
 fn descriptor_object(value: Value) -> Option<Value> {
