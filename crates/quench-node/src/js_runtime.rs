@@ -175,6 +175,7 @@ impl CapabilityName {
     const CryptoPbkdf2: u16 = 2204;
     const CryptoDigestBytes: u16 = 2205;
     const CryptoShakeBytes: u16 = 2206;
+    const CryptoHashDigest: u16 = 2209;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
     const TextEncoderConstructor: u16 = 2060;
@@ -953,6 +954,19 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoShakeBytes) => {
                 crypto_shake_bytes(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoHashDigest) => {
+                let id = quench_runtime::execute::get_property_result(
+                    receiver.ok_or(VmError::NotCallable)?,
+                    "\0hashId",
+                )
+                .ok()
+                .and_then(|value| match value {
+                    Value::Number(value) => Some(value as u16),
+                    _ => None,
+                })
+                .ok_or(VmError::NotCallable)?;
+                self.hash_call(id + 1, receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferIsAscii) => buffer_is_ascii(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8) => buffer_is_utf8(arguments),
@@ -4384,8 +4398,9 @@ impl QuenchNodeHost {
             ),
             (
                 "digest".into(),
-                capability_function(HostCapabilityKind::Custom(id + 1)),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoHashDigest)),
             ),
+            ("\0hashId".into(), Value::Number(id as f64)),
         ]);
         self.hash_objects.borrow_mut().insert(id, hash.clone());
         Ok(hash)
