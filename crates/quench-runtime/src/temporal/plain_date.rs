@@ -501,12 +501,30 @@ fn from_property_bag(value: &Value) -> Result<Value, VmError> {
         }
         _ => return Err(crate::value::error::throw_type_error("Invalid calendar")),
     };
+    validate_required_fields(&year, &month, &month_code, &day)?;
     let month = if matches!(month, Value::Undefined) {
         month_from_code(month_code)?
     } else {
         month
     };
     construct(&[year, month, day, calendar])
+}
+
+fn validate_required_fields(
+    year: &Value,
+    month: &Value,
+    month_code: &Value,
+    day: &Value,
+) -> Result<(), VmError> {
+    if matches!(year, Value::Undefined)
+        || matches!(day, Value::Undefined)
+        || (matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined))
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Missing PlainDate field",
+        ));
+    }
+    Ok(())
 }
 
 fn month_from_code(value: Value) -> Result<Value, VmError> {
