@@ -348,20 +348,29 @@ fn parse_duration_section(
             .next()
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid duration string"))?;
         validate_duration_number(number, tail, time, unit)?;
-        let magnitude = number
-            .replace(',', ".")
-            .parse::<f64>()
-            .map_err(|_| crate::value::error::throw_range_error("Invalid duration string"))?;
-        if !magnitude.is_finite() {
-            return Err(crate::value::error::throw_range_error(
-                "Invalid duration string",
-            ));
-        }
-        add_duration_component(values, time, unit, magnitude)?;
+        let (whole, fraction) = parse_duration_number(number)?;
+        add_duration_component(values, time, unit, whole, fraction)?;
         seen = true;
         rest = &tail[unit.len_utf8()..];
     }
     Ok(seen)
+}
+
+fn parse_duration_number(number: &str) -> Result<(f64, f64), VmError> {
+    let (whole, fraction) = number.split_once(['.', ',']).unwrap_or((number, ""));
+    let whole = whole
+        .parse::<f64>()
+        .map_err(|_| crate::value::error::throw_range_error("Invalid duration string"))?;
+    let fraction = if fraction.is_empty() {
+        0.0
+    } else {
+        let scale = 10_f64.powi(fraction.len() as i32);
+        fraction
+            .parse::<f64>()
+            .map(|value| value / scale)
+            .map_err(|_| crate::value::error::throw_range_error("Invalid duration string"))?
+    };
+    Ok((whole, fraction))
 }
 
 fn validate_duration_number(
@@ -394,7 +403,8 @@ fn add_duration_component(
     values: &mut [f64; 10],
     time: bool,
     unit: char,
-    magnitude: f64,
+    whole: f64,
+    fraction: f64,
 ) -> Result<(), VmError> {
     let index = match (time, unit.to_ascii_uppercase()) {
         (false, 'Y') => 0,
@@ -410,10 +420,9 @@ fn add_duration_component(
             ))
         }
     };
-    let whole = magnitude.trunc();
     values[index] += whole;
-    if time && magnitude.fract() != 0.0 {
-        add_fractional_time(values, index, magnitude.fract());
+    if time && fraction != 0.0 {
+        add_fractional_time(values, index, fraction);
     }
     Ok(())
 }
