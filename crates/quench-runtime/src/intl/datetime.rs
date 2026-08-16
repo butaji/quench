@@ -119,10 +119,14 @@ impl DateTimeOptions {
             "numberingSystem" => self.numbering_system = text.to_ascii_lowercase(),
             "fractionalSecondDigits" => {
                 let digits = conversion::to_number(value)?;
-                if !digits.is_finite() || digits.fract() != 0.0 || !(1.0..=9.0).contains(&digits) {
+                if !digits.is_finite()
+                    || digits < 1.0
+                    || digits > 3.0
+                    || !(1.0..=3.0).contains(&digits.trunc())
+                {
                     return Err(runtime_error("RangeError: invalid fractionalSecondDigits"));
                 }
-                self.fractional_second_digits = Some(digits as u32);
+                self.fractional_second_digits = Some(digits.trunc() as u32);
             }
             _ => {}
         }
