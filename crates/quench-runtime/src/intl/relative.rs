@@ -41,10 +41,7 @@ fn read_options(options: Option<&Value>, formatter: &mut RelativeOptions) -> Res
     let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok(());
     };
-    let source = match options {
-        Value::Object(properties) => Value::Object(properties.clone()),
-        _ => Value::Builtin(crate::ops::Builtin::ObjectPrototype),
-    };
+    let source = crate::construct::to_object(options)?;
     for key in ["localeMatcher", "numberingSystem", "style", "numeric"] {
         let value = crate::execute::get_property_result(&source, key)?;
         if !matches!(value, Value::Undefined) {
