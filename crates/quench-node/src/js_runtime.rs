@@ -4914,9 +4914,16 @@ fn querystring_parse(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(input)) = arguments.first() else {
         return Ok(quench_runtime::host_api::object(vec![]));
     };
+    let separator = querystring_option_string(arguments.get(1), "&");
+    let equals = querystring_option_string(arguments.get(2), "=");
+    let max_keys = arguments
+        .get(3)
+        .and_then(|options| quench_runtime::execute::get_property_result(options, "maxKeys").ok())
+        .and_then(|value| match value { Value::Number(value) => Some(value as usize), _ => None })
+        .filter(|value| *value > 0);
     let mut properties: Vec<(String, Value)> = Vec::new();
-    for pair in input.split('&').filter(|pair| !pair.is_empty()) {
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+    for pair in input.split(&separator).filter(|pair| !pair.is_empty()).take(max_keys.unwrap_or(usize::MAX)) {
+        let (key, value) = pair.split_once(&equals).unwrap_or((pair, ""));
         let key = querystring_decode(key);
         let value = Value::String(querystring_decode(value).into());
         if let Some((_, existing)) = properties.iter_mut().find(|(name, _)| *name == key) {
@@ -4949,6 +4956,15 @@ fn querystring_parse(arguments: &[Value]) -> Result<Value, VmError> {
         result = quench_runtime::execute::set_property(result, &key, value);
     }
     Ok(result)
+}
+
+fn querystring_option_string(value: Option<&Value>, default: &str) -> String {
+    match value {
+        None | Some(Value::Null) | Some(Value::Undefined) => default.into(),
+        Some(Value::String(value)) => value.clone(),
+        Some(Value::Array(array)) if array_length(&Value::Array(array.clone())) == 0 => String::new(),
+        Some(value) => safe_value_string(value),
+    }
 }
 
 fn array_length(value: &Value) -> usize {
@@ -5016,6 +5032,11 @@ fn querystring_stringify(arguments: &[Value]) -> Result<Value, VmError> {
         Some(Value::String(value)) => value.as_str(),
         _ => "=",
     };
+    let encoder = arguments.get(3).and_then(|options| {
+        quench_runtime::execute::get_property_result(options, "encodeURIComponent")
+            .ok()
+            .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)))
+    });
     let mut pairs = Vec::new();
     let keys = quench_runtime::execute::call(
         &Value::Builtin(quench_runtime::ops::Builtin::ObjectKeys),
@@ -5048,16 +5069,40 @@ fn querystring_stringify(arguments: &[Value]) -> Result<Value, VmError> {
         };
         for value in values {
             let rendered = match value {
+                Value::StringUnits(_) => {
+                    return Err(VmError::Thrown(quench_runtime::host_api::object(vec![
+                        ("name".into(), Value::String("URIError".into())),
+                        ("code".into(), Value::String("ERR_INVALID_URI".into())),
+                        ("message".into(), Value::String("URI malformed".into())),
+                        ("constructor".into(), Value::Builtin(quench_runtime::ops::Builtin::URIError)),
+                    ])));
+                }
                 Value::Null | Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
                 | Value::Function(_) | Value::BoundFunction(_) => String::new(),
                 Value::Number(number) if !number.is_finite() => String::new(),
-                Value::BigInt(value) => querystring_encode(value.trim_end_matches('n')),
+                Value::BigInt(value) => querystring_apply_encoder(
+                    &Value::String(value.trim_end_matches('n').to_owned()),
+                    encoder.as_ref(),
+                    &querystring_encode(value.trim_end_matches('n')),
+                ),
                 other => querystring_encode(&safe_value_string(&other)),
             };
-            pairs.push(format!("{}{}{}", querystring_encode(&key), equals, rendered));
+            let encoded_key = querystring_apply_encoder(
+                &Value::String(key.clone()),
+                encoder.as_ref(),
+                &querystring_encode(&key),
+            );
+            pairs.push(format!("{}{}{}", encoded_key, equals, rendered));
         }
     }
     Ok(Value::String(pairs.join(separator).into()))
+}
+
+fn querystring_apply_encoder(value: &Value, encoder: Option<&Value>, fallback: &str) -> String {
+    encoder
+        .and_then(|encoder| quench_runtime::execute::call(encoder, &Value::Undefined, &[value.clone()]).ok())
+        .map(|value| safe_value_string(&value))
+        .unwrap_or_else(|| fallback.to_owned())
 }
 
 fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
