@@ -162,6 +162,13 @@ impl CapabilityName {
     const FsReadSyncFd: u16 = 1561;
     const FsReadFdAsync: u16 = 1562;
     const BufferToString: u16 = 1563;
+    const BufferConcat: u16 = 1569;
+    const BufferEquals: u16 = 1570;
+    const FsWriteSyncFd: u16 = 1564;
+    const FsReadvSync: u16 = 1565;
+    const FsReadvAsync: u16 = 1566;
+    const FsReadvPromise: u16 = 1567;
+    const FsWritevSync: u16 = 1568;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -456,6 +463,23 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferToString) => {
                 buffer_to_string(receiver)
             }
+            HostCapabilityKind::Custom(CapabilityName::BufferConcat) => buffer_concat(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferEquals) => {
+                buffer_equals(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsWriteSyncFd) => {
+                self.fs_write_fd(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsReadvSync) => {
+                self.fs_readv(arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsReadvAsync) => {
+                self.fs_readv(arguments, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsReadvPromise) => {
+                self.fs_readv_promise(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsWritevSync) => self.fs_writev(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsDirentFile) => Ok(Value::Boolean(true)),
             HostCapabilityKind::Custom(CapabilityName::FsDirentDirectory) => {
                 Ok(Value::Boolean(true))
@@ -990,6 +1014,108 @@ impl QuenchNodeHost {
         } else {
             Ok(result)
         }
+    }
+
+    fn fs_write_fd(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let fd = match arguments.first() {
+            Some(Value::Number(value)) => *value as i32,
+            _ => return Err(VmError::NotCallable),
+        };
+        let path = self
+            .fd_paths
+            .borrow()
+            .get(&fd)
+            .cloned()
+            .ok_or(VmError::NotCallable)?;
+        let bytes = string_or_bytes(arguments.get(1))?;
+        let position = arguments
+            .get(3)
+            .and_then(|value| match value {
+                Value::Number(value) => Some(*value as u64),
+                _ => None,
+            })
+            .unwrap_or(0) as usize;
+        let mut existing = std::fs::read(&path).unwrap_or_default();
+        if existing.len() < position + bytes.len() {
+            existing.resize(position + bytes.len(), 0);
+        }
+        existing[position..position + bytes.len()].copy_from_slice(&bytes);
+        std::fs::write(path, existing).map_err(|error| VmError::EvalError(error.to_string()))?;
+        Ok(Value::Number(bytes.len() as f64))
+    }
+
+    fn fs_readv(&self, arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
+        let fd = arguments.first().cloned().ok_or(VmError::NotCallable)?;
+        let buffers = array_values(arguments.get(1).ok_or(VmError::NotCallable)?)?;
+        let position = arguments
+            .get(2)
+            .and_then(|value| match value {
+                Value::Number(value) => Some(*value),
+                _ => None,
+            })
+            .unwrap_or(0.0);
+        let mut read = 0.0;
+        for buffer in &buffers {
+            let length = match buffer {
+                Value::Uint8Array(view) => view.length as f64,
+                _ => 0.0,
+            };
+            read += match self.fs_read_fd(
+                &[
+                    fd.clone(),
+                    buffer.clone(),
+                    Value::Number(0.0),
+                    Value::Number(length),
+                    Value::Number(position + read),
+                ],
+                false,
+            )? {
+                Value::Number(value) => value,
+                _ => 0.0,
+            };
+        }
+        if asynchronous {
+            if let Some(callback) = arguments.last() {
+                quench_runtime::execute::call(
+                    callback,
+                    &Value::Undefined,
+                    &[
+                        Value::Null,
+                        Value::Number(read),
+                        quench_runtime::host_api::array(buffers),
+                    ],
+                )?;
+            }
+            Ok(Value::Undefined)
+        } else {
+            Ok(Value::Number(read))
+        }
+    }
+
+    fn fs_readv_promise(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let read = self.fs_readv(arguments, false)?;
+        let buffers = arguments
+            .get(1)
+            .cloned()
+            .unwrap_or_else(|| quench_runtime::host_api::array(Vec::new()));
+        Ok(fulfilled(Value::object(vec![
+            ("bytesRead".into(), read),
+            ("buffers".into(), buffers),
+        ])))
+    }
+
+    fn fs_writev(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let fd = arguments.first().cloned().ok_or(VmError::NotCallable)?;
+        let buffers = array_values(arguments.get(1).ok_or(VmError::NotCallable)?)?;
+        let mut total = 0.0;
+        for buffer in buffers {
+            let position = Value::Number(total);
+            total += match self.fs_write_fd(&[fd.clone(), buffer, Value::Undefined, position])? {
+                Value::Number(value) => value,
+                _ => 0.0,
+            };
+        }
+        Ok(Value::Number(total))
     }
 
     fn fs_open_async(&self, arguments: &[Value]) -> Result<Value, VmError> {
@@ -1864,7 +1990,7 @@ fn read_file_sync(arguments: &[Value]) -> Result<Value, VmError> {
             .map(Value::String)
             .map_err(|error| VmError::EvalError(error.to_string()));
     }
-    Ok(quench_runtime::host_api::bytes(&bytes))
+    Ok(node_buffer(&bytes))
 }
 
 fn fixture_common_path(path: &str) -> std::borrow::Cow<'_, str> {
@@ -2059,6 +2185,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadSyncFd)),
                 ),
                 (
+                    "readvSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadvSync)),
+                ),
+                (
                     "writeFileSync".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::FsWriteFileSync,
@@ -2207,6 +2337,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadFdAsync)),
                 ),
                 (
+                    "readv".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadvAsync)),
+                ),
+                (
+                    "writeSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsWriteSyncFd)),
+                ),
+                (
+                    "writevSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsWritevSync)),
+                ),
+                (
                     "readdir".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsReaddirAsync)),
                 ),
@@ -2263,6 +2405,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                             "opendir".into(),
                             capability_function(HostCapabilityKind::Custom(
                                 CapabilityName::FsOpendirPromise,
+                            )),
+                        ),
+                        (
+                            "readv".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::FsReadvPromise,
                             )),
                         ),
                         (
@@ -2677,6 +2825,10 @@ fn buffer_module() -> Value {
             "byteLength",
             HostCapabilityKind::Custom(CapabilityName::BufferByteLength),
         ),
+        (
+            "concat",
+            HostCapabilityKind::Custom(CapabilityName::BufferConcat),
+        ),
     ] {
         buffer = quench_runtime::execute::set_property(buffer, name, capability_function(kind));
     }
@@ -2685,8 +2837,10 @@ fn buffer_module() -> Value {
 
 fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
     match arguments.first() {
-        Some(Value::String(value)) => Ok(quench_runtime::host_api::bytes(value.as_bytes())),
-        Some(Value::Uint8Array(view)) => Ok(Value::Uint8Array(view.clone())),
+        Some(Value::String(value)) => Ok(node_buffer(value.as_bytes())),
+        Some(Value::Uint8Array(view)) => Ok(node_buffer(
+            &view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length],
+        )),
         _ => Err(VmError::EvalError(
             "Buffer.from expects bytes or a string".into(),
         )),
@@ -2700,17 +2854,41 @@ fn buffer_alloc(arguments: &[Value]) -> Result<Value, VmError> {
     if !length.is_finite() || *length < 0.0 {
         return Err(VmError::EvalError("invalid buffer length".into()));
     }
-    Ok(quench_runtime::execute::set_property(
-        quench_runtime::host_api::bytes(&vec![0; *length as usize]),
+    Ok(node_buffer(&vec![0; *length as usize]))
+}
+
+fn node_buffer(bytes: &[u8]) -> Value {
+    let value = quench_runtime::execute::set_property(
+        quench_runtime::host_api::bytes(bytes),
         "toString",
         capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString)),
-    ))
+    );
+    quench_runtime::execute::set_property(
+        value,
+        "equals",
+        capability_function(HostCapabilityKind::Custom(CapabilityName::BufferEquals)),
+    )
 }
 
 fn buffer_to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
     let bytes = string_or_bytes(receiver)?;
     Ok(Value::String(
         String::from_utf8_lossy(&bytes).into_owned().into(),
+    ))
+}
+
+fn buffer_concat(arguments: &[Value]) -> Result<Value, VmError> {
+    let values = array_values(arguments.first().ok_or(VmError::NotCallable)?)?;
+    let mut bytes = Vec::new();
+    for value in values {
+        bytes.extend(string_or_bytes(Some(&value))?);
+    }
+    Ok(node_buffer(&bytes))
+}
+
+fn buffer_equals(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::Boolean(
+        string_or_bytes(receiver)? == string_or_bytes(arguments.first())?,
     ))
 }
 
