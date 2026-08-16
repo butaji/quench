@@ -254,6 +254,11 @@ fn reserve_annex_b_statement(
         Statement::IfStatement(statement) => {
             reserve_annex_b_if(statement, locals, next_slot, collisions)
         }
+        Statement::SwitchStatement(statement) => {
+            for case in &statement.cases {
+                reserve_annex_b_bindings(&case.consequent, locals, next_slot, collisions);
+            }
+        }
         Statement::TryStatement(statement) => {
             reserve_annex_b_try(statement, locals, next_slot, collisions)
         }
