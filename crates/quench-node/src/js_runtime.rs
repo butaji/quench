@@ -3592,7 +3592,7 @@ fn buffer_numeric(
     let index = id - CapabilityName::BufferNumericFirst;
     let is_write = matches!(
         index,
-        2 | 3 | 6 | 7 | 10 | 11 | 12 | 13 | 18 | 19 | 22 | 23 | 26 | 27 | 28
+        2 | 3 | 6 | 7 | 10 | 11 | 14 | 15 | 18 | 19 | 22 | 23 | 26 | 27 | 28
     );
     let variable = matches!(index, 16 | 17 | 18 | 19 | 24 | 25 | 26 | 27);
     let offset_arg = if is_write { 1 } else { 0 };
