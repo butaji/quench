@@ -71,6 +71,9 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateDaysInYearGetter => Some(days_in_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateDaysInWeekGetter => Some(days_in_week(receiver)),
         crate::ops::Builtin::TemporalPlainDateMonthsInYearGetter => Some(months_in_year(receiver)),
+        crate::ops::Builtin::TemporalPlainDateToString => {
+            Some(to_string(receiver, arguments.first()))
+        }
         crate::ops::Builtin::TemporalPlainDateToJSON => Some(to_json(receiver)),
         crate::ops::Builtin::TemporalPlainDateInLeapYearGetter => Some(in_leap_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraGetter => Some(era(receiver)),
@@ -214,6 +217,45 @@ fn to_json(receiver: Option<&Value>) -> Result<Value, VmError> {
         "{}-{month:02}-{day:02}",
         format_year(year)
     )))
+}
+
+fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let day = number_field(field(object, "day")) as u32;
+    let calendar_name = calendar_name_option(options)?;
+    let mut result = format!("{}-{month:02}-{day:02}", format_year(year));
+    if calendar_name == "always" {
+        result.push_str("[u-ca=iso8601]");
+    } else if calendar_name == "critical" {
+        result.push_str("[!u-ca=iso8601]");
+    }
+    Ok(Value::String(result))
+}
+
+fn calendar_name_option(options: Option<&Value>) -> Result<String, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok("auto".into());
+    };
+    let object = crate::construct::to_object(options)?;
+    let value = crate::execute::get_property_result(&object, "calendarName")?;
+    if matches!(value, Value::Undefined) {
+        return Ok("auto".into());
+    }
+    let value = crate::conversion::to_string(&value)?;
+    if matches!(value.as_str(), "auto" | "always" | "never" | "critical") {
+        Ok(value)
+    } else {
+        Err(crate::value::error::throw_range_error(
+            "Invalid calendarName",
+        ))
+    }
 }
 
 fn format_year(year: i32) -> String {
