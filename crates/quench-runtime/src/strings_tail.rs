@@ -1,19 +1,24 @@
-pub(crate) fn search(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(value) = receiver.and_then(crate::strings::lossy) else {
-        return Value::Number(-1.0);
-    };
+pub(crate) fn search(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = string_receiver(receiver)?;
     if let Some(Value::Object(pattern)) = arguments.first() {
         let pattern = Value::Object(pattern.clone());
         if let Ok(Value::Array(result)) =
             crate::regexp::exec(Some(&pattern), &[Value::String(value.clone())])
         {
-            return crate::execute::get_property_result(&Value::Array(result), "index")
-                .unwrap_or_else(|_| Value::Number(-1.0));
+            return Ok(
+                crate::execute::get_property_result(&Value::Array(result), "index")
+                    .unwrap_or_else(|_| Value::Number(-1.0)),
+            );
         }
-        return Value::Number(-1.0);
+        return Ok(Value::Number(-1.0));
     }
     let pattern = arguments.first().map_or_else(String::new, to_string);
-    Value::Number(value.find(&pattern).map_or(-1.0, |index| index as f64))
+    Ok(Value::Number(
+        value.find(&pattern).map_or(-1.0, |index| index as f64),
+    ))
 }
 
 fn string_match(
