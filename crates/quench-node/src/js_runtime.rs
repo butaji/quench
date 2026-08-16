@@ -65,6 +65,8 @@ impl CapabilityName {
     const InternalArrayBufferViewHasBuffer: u16 = 2067;
     const UrlParse: u16 = 2068;
     const UrlFormat: u16 = 2069;
+    const PathNormalize: u16 = 2070;
+    const PathWinNormalize: u16 = 2071;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -618,6 +620,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer) => internal_view_has_buffer(arguments),
             HostCapabilityKind::Custom(CapabilityName::UrlParse) => url_parse_legacy(arguments),
             HostCapabilityKind::Custom(CapabilityName::UrlFormat) => url_format_legacy(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathNormalize) => path_normalize(arguments, false),
+            HostCapabilityKind::Custom(CapabilityName::PathWinNormalize) => path_normalize(arguments, true),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -3159,7 +3163,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             "extname".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::PathExtname)),
         ),
-        ("basename".into(), basename),
+        ("normalize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathNormalize))),
+        ("basename".into(), basename.clone()),
         ("parse".into(), parse.clone()),
         ("format".into(), format.clone()),
         ("relative".into(), relative.clone()),
@@ -3172,6 +3177,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         (
             "posix".into(),
             Value::object(vec![
+                ("normalize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathNormalize))),
+                ("basename".into(), basename),
+                ("join".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathJoin))),
                 ("parse".into(), parse),
                 ("format".into(), format),
                 ("relative".into(), relative.clone()),
@@ -3189,6 +3197,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             "win32".into(),
             Value::object(vec![
                 ("basename".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinBasename))),
+                ("normalize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinNormalize))),
                 ("parse".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinParse))),
                 ("format".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinFormat))),
                 ("relative".into(), relative),
@@ -3216,7 +3225,27 @@ fn path_arg(arguments: &[Value], index: usize) -> Result<&str, VmError> {
 
 fn path_win_basename(arguments: &[Value]) -> Result<Value, VmError> {
     let value = path_arg(arguments, 0)?.trim_end_matches(['\\', '/']);
-    Ok(Value::String(value.rsplit(['\\', '/']).next().unwrap_or(value).into()))
+    let mut value = value.rsplit(['\\', '/']).next().unwrap_or(value).to_string();
+    if let Some(suffix) = arguments.get(1) {
+        let Value::String(suffix) = suffix else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "suffix must be a string"))); };
+        if value.ends_with(suffix) { value.truncate(value.len() - suffix.len()); }
+    }
+    Ok(Value::String(value.into()))
+}
+
+fn path_normalize(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
+    let value = path_arg(arguments, 0)?;
+    let separator = if win32 { '\\' } else { '/' };
+    let value = if win32 { value.replace('/', "\\") } else { value.replace('\\', "/") };
+    let absolute = value.starts_with(separator) || (win32 && value.len() > 2 && value.as_bytes()[1] == b':');
+    let mut parts = Vec::new();
+    for part in value.split(separator) {
+        match part { "" | "." => {}, ".." => { parts.pop(); }, value => parts.push(value) }
+    }
+    let mut result = parts.join(&separator.to_string());
+    if absolute && !(win32 && result.len() > 1 && result.as_bytes()[1] == b':') { result = format!("{separator}{result}"); }
+    if result.is_empty() { result = ".".into(); }
+    Ok(Value::String(result.into()))
 }
 
 fn path_parse(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
@@ -4982,13 +5011,15 @@ fn basename(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(path)) = arguments.first() else {
         return Err(VmError::EvalError("path.basename expects a string".into()));
     };
-    Ok(Value::String(
-        Path::new(path)
+    let mut value = Path::new(path)
             .file_name()
             .and_then(|name| name.to_str())
-            .unwrap_or(path)
-            .into(),
-    ))
+            .unwrap_or(path).to_string();
+    if let Some(suffix) = arguments.get(1) {
+        let Value::String(suffix) = suffix else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "suffix must be a string"))); };
+        if value.ends_with(suffix) { value.truncate(value.len() - suffix.len()); }
+    }
+    Ok(Value::String(value.into()))
 }
 
 impl JsRuntime for QuenchRuntime {
