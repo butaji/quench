@@ -237,11 +237,13 @@ impl NumberOptions {
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),
+            raw.notation.as_str(),
             raw.minimum_fraction_digits,
         );
         let maximum_fraction_digits = maximum_fraction(
             &raw.style,
             &raw.currency,
+            &raw.notation,
             raw.maximum_fraction_digits,
             minimum_fraction_digits,
         );
@@ -527,12 +529,13 @@ fn grouping_enabled(value: &str) -> bool {
     matches!(value, "true" | "always" | "auto" | "min2")
 }
 
-fn fraction_digits(style: &str, currency: Option<&str>, requested: f64) -> u32 {
+fn fraction_digits(style: &str, currency: Option<&str>, notation: &str, requested: f64) -> u32 {
     if requested >= 0.0 {
         return requested as u32;
     }
     match style {
         "percent" => 0,
+        "currency" if notation != "standard" => 0,
         "currency" if currency == Some("JPY") => 0,
         "currency" => 2,
         _ => requested as u32,
@@ -543,8 +546,16 @@ fn significant_digits(value: f64) -> Option<u32> {
     (value >= 1.0).then_some(value as u32)
 }
 
-fn maximum_fraction(style: &str, currency: &Option<String>, requested: f64, minimum: u32) -> u32 {
+fn maximum_fraction(
+    style: &str,
+    currency: &Option<String>,
+    notation: &str,
+    requested: f64,
+    minimum: u32,
+) -> u32 {
     let default = match style {
+        "currency" if notation == "compact" => 0,
+        "currency" if notation != "standard" => 3,
         "currency" if currency.as_deref() == Some("JPY") => 0,
         "currency" => 2,
         _ => 3,
