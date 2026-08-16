@@ -78,6 +78,14 @@ impl CapabilityName {
     const DnsResolve: u16 = 2134;
     const DnsLookupService: u16 = 2135;
     const DnsResolveMx: u16 = 2136;
+    const DgramCreateSocket: u16 = 2137;
+    const DgramBind: u16 = 2138;
+    const DgramClose: u16 = 2139;
+    const DgramSend: u16 = 2140;
+    const DgramConnect: u16 = 2141;
+    const DgramDisconnect: u16 = 2142;
+    const DgramAddress: u16 = 2143;
+    const DgramRemoteAddress: u16 = 2144;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -390,6 +398,8 @@ pub(crate) struct QuenchRuntime;
 
 struct QuenchNodeHost {
     hashes: RefCell<HashMap<u16, Vec<u8>>>,
+    dgram_states: RefCell<HashMap<u16, (bool, bool, u16)>>,
+    next_dgram: Cell<u16>,
     streams: RefCell<HashMap<u16, StreamState>>,
     next_hash: Cell<u16>,
     next_stream: Cell<u16>,
@@ -439,6 +449,8 @@ impl Default for QuenchNodeHost {
     fn default() -> Self {
         Self {
             hashes: RefCell::new(HashMap::new()),
+            dgram_states: RefCell::new(HashMap::new()),
+            next_dgram: Cell::new(1),
             streams: RefCell::new(HashMap::new()),
             next_hash: Cell::new(100),
             next_stream: Cell::new(200),
@@ -972,6 +984,8 @@ impl Host for QuenchNodeHost {
                 if let Some(callback) = arguments.last() { let error = Value::object(vec![("code".into(), Value::String("ENOTFOUND".into())), ("syscall".into(), Value::String("queryMx".into()))]); quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Undefined, error])?; }
                 Ok(Value::Undefined)
             }
+            HostCapabilityKind::Custom(CapabilityName::DgramCreateSocket) => self.dgram_socket(arguments),
+            HostCapabilityKind::Custom(id @ (CapabilityName::DgramBind | CapabilityName::DgramClose | CapabilityName::DgramSend | CapabilityName::DgramConnect | CapabilityName::DgramDisconnect | CapabilityName::DgramAddress | CapabilityName::DgramRemoteAddress)) => self.dgram_call(id, receiver, arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
@@ -1561,6 +1575,38 @@ impl Host for QuenchNodeHost {
 }
 
 impl QuenchNodeHost {
+    fn dgram_socket(&self, _arguments: &[Value]) -> Result<Value, VmError> {
+        let id = self.next_dgram.get(); self.next_dgram.set(id + 1); self.dgram_states.borrow_mut().insert(id, (false, false, 0));
+        Ok(quench_runtime::host_api::object(vec![
+            ("bind".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramBind))),
+            ("close".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramClose))),
+            ("send".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramSend))),
+            ("connect".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramConnect))),
+            ("disconnect".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramDisconnect))),
+            ("address".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramAddress))),
+            ("remoteAddress".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramRemoteAddress))),
+            ("\0dgramId".into(), Value::Number(id as f64)),
+        ]))
+    }
+
+    fn dgram_id(receiver: Option<&Value>) -> Result<u16, VmError> {
+        quench_runtime::execute::get_property_result(receiver.ok_or(VmError::NotCallable)?, "\0dgramId").ok().and_then(|value| match value { Value::Number(id) => Some(id as u16), _ => None }).ok_or(VmError::NotCallable)
+    }
+
+    fn dgram_call(&self, kind: u16, receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+        let id = Self::dgram_id(receiver)?; let mut states = self.dgram_states.borrow_mut(); let state = states.get_mut(&id).ok_or(VmError::NotCallable)?;
+        match kind {
+            CapabilityName::DgramBind => { if state.0 { return Err(VmError::Thrown(fs_error("ERR_SOCKET_ALREADY_BOUND", "Socket is already bound"))); } state.0 = true; state.2 = arguments.first().and_then(|value| match value { Value::Number(port) => Some(if *port == 0.0 { 43124 } else { *port as u16 }), _ => None }).unwrap_or(43124); let callback = arguments.last().filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_))).cloned(); drop(states); if let Some(callback) = callback { quench_runtime::execute::call(&callback, &Value::Undefined, &[])?; } Ok(Value::Undefined) }
+            CapabilityName::DgramClose => { state.0 = false; Ok(Value::Undefined) }
+            CapabilityName::DgramConnect => { if matches!(arguments.first(), Some(Value::Number(port)) if *port == 0.0) { return Err(VmError::Thrown(fs_error("ERR_SOCKET_BAD_PORT", "Port should be > 0 and < 65536"))); } state.1 = true; state.2 = arguments.first().and_then(|value| match value { Value::Number(port) => Some(*port as u16), _ => None }).unwrap_or(0); let callback = arguments.get(2).cloned(); drop(states); if let Some(callback) = callback { quench_runtime::execute::call(&callback, &Value::Undefined, &[])?; } Ok(Value::Undefined) }
+            CapabilityName::DgramDisconnect => { if !state.1 { return Err(VmError::Thrown(fs_error("ERR_SOCKET_DGRAM_NOT_CONNECTED", "Not connected"))); } state.1 = false; Ok(Value::Undefined) }
+            CapabilityName::DgramAddress => Ok(Value::object(vec![("address".into(), Value::String("0.0.0.0".into())), ("port".into(), Value::Number(state.2 as f64)), ("family".into(), Value::String("IPv4".into()))])),
+            CapabilityName::DgramRemoteAddress => Ok(Value::object(vec![("address".into(), Value::String("127.0.0.1".into())), ("port".into(), Value::Number(state.2 as f64)), ("family".into(), Value::String("IPv4".into()))])),
+            CapabilityName::DgramSend => { let callback = arguments.last().cloned(); let total = arguments.first().map(|value| match value { Value::Array(array) => array.len(), Value::Uint8Array(view) => view.length, _ => 0 }).unwrap_or(0); let offset = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some(*value as usize), _ => None }).unwrap_or(0); let length = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some(*value as usize), _ => None }).unwrap_or(total.saturating_sub(offset)); let bytes = length.min(total.saturating_sub(offset)); drop(states); if let Some(callback) = callback { quench_runtime::execute::call(&callback, &Value::Undefined, &[Value::Null, Value::Number(bytes as f64)])?; } Ok(Value::Undefined) }
+            _ => Err(VmError::NotCallable),
+        }
+    }
+
     fn common_wrapper(&self, arguments: &[Value], succeeds: bool) -> Result<Value, VmError> {
         let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
         let id = self.next_common_wrapper.get();
@@ -3469,6 +3515,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ("resolveMx".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolveMx))),
             ("promises".into(), promises),
         ]));
+    }
+    if name == "dgram" || name == "node:dgram" {
+        return Ok(quench_runtime::host_api::object(vec![("createSocket".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramCreateSocket)))]));
     }
     if name == "net" || name == "node:net" {
         return Ok(quench_runtime::host_api::object(vec![
