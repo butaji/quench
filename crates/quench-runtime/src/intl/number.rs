@@ -241,7 +241,14 @@ impl NumberOptions {
             minimum_fraction_digits,
         );
         let minimum_fraction_digits = minimum_fraction_digits.min(maximum_fraction_digits);
-        if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
+        if raw.style == "unit" {
+            if raw.unit.is_none() {
+                return Err(crate::value::error::throw_type_error("unit is required"));
+            }
+            if !valid_unit(raw.unit.as_deref()) {
+                return Err(crate::value::error::throw_range_error("invalid unit"));
+            }
+        } else if raw.unit.is_some() && !valid_unit(raw.unit.as_deref()) {
             return Err(crate::value::error::throw_range_error("invalid unit"));
         }
         Ok(number_options(
@@ -465,10 +472,15 @@ fn slot_primary(number: &NumberOptions) -> Vec<(String, Value)> {
 }
 
 fn valid_unit(unit: Option<&str>) -> bool {
-    matches!(
-        unit,
-        Some("percent" | "meter" | "kilometer" | "kilometer-per-hour")
-    )
+    let Some(unit) = unit else { return false };
+    if super::supported_values::UNITS.contains(&unit) {
+        return true;
+    }
+    let Some((left, right)) = unit.split_once("-per-") else {
+        return false;
+    };
+    super::supported_values::UNITS.contains(&left)
+        && super::supported_values::UNITS.contains(&right)
 }
 
 fn grouping_enabled(value: &str) -> bool {
