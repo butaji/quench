@@ -130,7 +130,7 @@ pub enum Builtin {
     DateToJSON, DateToPrimitive,
     DateToTemporalInstant, Temporal,
     TemporalDuration, TemporalDurationPrototype,
-    TemporalDurationFrom, TemporalDurationCompare, TemporalDurationAbs,
+    TemporalDurationFrom, TemporalDurationCompare, TemporalDurationAdd, TemporalDurationAbs,
     TemporalDurationYearsGetter, TemporalDurationMonthsGetter, TemporalDurationWeeksGetter,
     TemporalDurationDaysGetter, TemporalDurationHoursGetter, TemporalDurationMinutesGetter,
     TemporalDurationSecondsGetter, TemporalDurationMillisecondsGetter,
