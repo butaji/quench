@@ -192,6 +192,8 @@ impl CapabilityName {
     const PathWinIsAbsolute: u16 = 2082;
     const PathMatchesGlob: u16 = 2083;
     const PathWinMatchesGlob: u16 = 2084;
+    const PathResolve: u16 = 2085;
+    const PathWinResolve: u16 = 2086;
     const FsStatAsync: u16 = 1526;
     const FsLstatAsync: u16 = 1527;
     const FsStatsIsDirectory: u16 = 1528;
@@ -645,6 +647,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::PathWinIsAbsolute) => path_is_absolute_win(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathMatchesGlob) => path_matches_glob(arguments, false),
             HostCapabilityKind::Custom(CapabilityName::PathWinMatchesGlob) => path_matches_glob(arguments, true),
+            HostCapabilityKind::Custom(CapabilityName::PathResolve) => path_resolve(arguments, false),
+            HostCapabilityKind::Custom(CapabilityName::PathWinResolve) => path_resolve(arguments, true),
             HostCapabilityKind::Custom(CapabilityName::BufferIndexOf) => buffer_search(receiver, arguments, false),
             HostCapabilityKind::Custom(CapabilityName::BufferLastIndexOf) => buffer_search(receiver, arguments, true),
             HostCapabilityKind::Custom(CapabilityName::BufferToJson) => buffer_to_json(receiver),
@@ -3519,6 +3523,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         ("relative".into(), relative.clone()),
         ("dirname".into(), dirname.clone()),
         ("isAbsolute".into(), absolute.clone()),
+        ("resolve".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathResolve))),
         ("matchesGlob".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathMatchesGlob))),
         (
             "toNamespacedPath".into(),
@@ -3538,6 +3543,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("relative".into(), relative.clone()),
                 ("dirname".into(), dirname.clone()),
                 ("isAbsolute".into(), absolute.clone()),
+                ("resolve".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathResolve))),
                 ("matchesGlob".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathMatchesGlob))),
                 (
                     "toNamespacedPath".into(),
@@ -3560,6 +3566,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("relative".into(), relative),
                 ("dirname".into(), dirname),
                 ("isAbsolute".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinIsAbsolute))),
+                ("resolve".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinResolve))),
                 ("matchesGlob".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinMatchesGlob))),
                 (
                     "toNamespacedPath".into(),
@@ -3609,16 +3616,42 @@ fn path_normalize(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
 
 fn path_parse(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     let value = path_arg(arguments, 0)?;
-    let separator = if win32 { '\\' } else { '/' };
-    let root = if win32 && value.len() >= 3 && value.as_bytes()[1] == b':' && value.as_bytes()[2] == b'\\' {
-        &value[..3]
+    let separator = if win32 && value.starts_with('/') { '/' } else if win32 { '\\' } else { '/' };
+    let normalized = if win32 && separator == '\\' { value.replace('/', "\\") } else { value.to_owned() };
+    let root = if win32 && normalized.len() >= 3 && normalized.as_bytes()[1] == b':' && normalized.as_bytes()[2] == b'\\' {
+        &normalized[..3]
+    } else if win32 && normalized.len() == 2 && normalized.as_bytes()[1] == b':' {
+        &normalized[..2]
+    } else if win32 && normalized.starts_with("\\\\") {
+        let mut parts = normalized.split('\\').filter(|part| !part.is_empty());
+        let server = parts.next().unwrap_or("");
+        let share = parts.next().unwrap_or("");
+        return path_parse_windows_with_root(&normalized, &format!("\\\\{server}\\{share}\\"));
+    } else if win32 && (normalized.starts_with('\\') || normalized.starts_with('/')) {
+        if separator == '/' { "/" } else { "\\" }
     } else if !win32 && value.starts_with('/') {
         "/"
     } else {
         ""
     };
-    let trimmed = value.trim_end_matches(separator);
-    let (dir, base) = trimmed.rsplit_once(separator).map_or((root, trimmed), |(dir, base)| (dir, base));
+    let trimmed = normalized.trim_end_matches(separator);
+    let (dir, base) = if win32 && normalized.len() == 2 && normalized.as_bytes()[1] == b':' {
+        (root, "")
+    } else if win32 && normalized.len() == 3 && normalized.as_bytes()[1] == b':' && normalized.as_bytes()[2] == b'\\' {
+        (root, "")
+    } else if trimmed.is_empty() && !root.is_empty() {
+        (root, "")
+    } else {
+        trimmed.rsplit_once(separator).map_or((root, trimmed), |(dir, base)| (dir, base))
+    };
+    let dir_with_extra_separator = if win32 {
+        normalized.rsplit_once(separator).and_then(|(prefix, _)| {
+            prefix.ends_with(separator).then(|| format!("{dir}{separator}"))
+        })
+    } else {
+        None
+    };
+    let dir = dir_with_extra_separator.as_deref().unwrap_or(dir);
     let (name, ext) = base.rfind('.').filter(|index| *index > 0).map_or((base, ""), |index| (&base[..index], &base[index..]));
     Ok(Value::object(vec![
         ("root".into(), Value::String(root.to_string().into())),
@@ -3626,6 +3659,19 @@ fn path_parse(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
         ("base".into(), Value::String(base.to_string().into())),
         ("ext".into(), Value::String(ext.to_string().into())),
         ("name".into(), Value::String(name.to_string().into())),
+    ]))
+}
+
+fn path_parse_windows_with_root(value: &str, root: &str) -> Result<Value, VmError> {
+    let trimmed = value.trim_end_matches('\\');
+    let (dir, base) = trimmed.rsplit_once('\\').map_or((root, trimmed), |(dir, base)| (dir, base));
+    let (name, ext) = base.rfind('.').filter(|index| *index > 0).map_or((base, ""), |index| (&base[..index], &base[index..]));
+    Ok(Value::object(vec![
+        ("root".into(), Value::String(root.to_owned().into())),
+        ("dir".into(), Value::String(dir.to_owned().into())),
+        ("base".into(), Value::String(base.to_owned().into())),
+        ("ext".into(), Value::String(ext.to_owned().into())),
+        ("name".into(), Value::String(name.to_owned().into())),
     ]))
 }
 
@@ -3646,7 +3692,14 @@ fn path_format(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
         format!("{name}{ext}")
     });
     let separator = if win32 { '\\' } else { '/' };
-    Ok(Value::String(if dir.is_empty() { base } else { format!("{}{}{}", dir.trim_end_matches(separator), separator, base) }.into()))
+    let output = if dir.is_empty() {
+        base
+    } else if win32 && dir.ends_with(':') {
+        format!("{dir}{base}")
+    } else {
+        format!("{}{}{}", dir.strip_suffix(separator).unwrap_or(dir.as_str()), separator, base)
+    };
+    Ok(Value::String(output.into()))
 }
 
 fn path_relative(arguments: &[Value]) -> Result<Value, VmError> {
@@ -3711,11 +3764,16 @@ fn path_extname(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn path_dirname(arguments: &[Value]) -> Result<Value, VmError> {
     let value = path_arg(arguments, 0)?;
-    let value = value.trim_end_matches('/');
-    let dirname = match value.rfind('/') {
-        Some(0) => "/",
+    let win32 = value.contains('\\') || (value.len() >= 2 && value.as_bytes()[1] == b':');
+    let separator = if win32 { '\\' } else { '/' };
+    if win32 && value.len() == 3 && value.as_bytes()[1] == b':' && value.as_bytes()[2] == b'\\' {
+        return Ok(Value::String(value.into()));
+    }
+    let value = value.trim_end_matches(['/', '\\']);
+    let dirname = match value.rfind(separator) {
+        Some(0) => if win32 { "\\" } else { "/" },
         Some(index) => &value[..index],
-        None => ".",
+        None => if win32 && value.len() == 2 && value.as_bytes()[1] == b':' { value } else { "." },
     };
     Ok(Value::String(dirname.into()))
 }
@@ -3748,6 +3806,23 @@ fn path_matches_glob(arguments: &[Value], win32: bool) -> Result<Value, VmError>
         value == pattern
     };
     Ok(Value::Boolean(matched))
+}
+
+fn path_resolve(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
+    let mut result = String::new();
+    for argument in arguments {
+        let value = path_arg(std::slice::from_ref(argument), 0)?;
+        if win32 {
+            result = format!("{}\\{}", value.trim_end_matches(['/', '\\']), result.trim_start_matches(['/', '\\']));
+        } else {
+            result = format!("{}/{}", value.trim_end_matches('/'), result.trim_start_matches('/'));
+        }
+    }
+    if result.is_empty() {
+        result = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            .to_string_lossy().into_owned();
+    }
+    Ok(Value::String(result.into()))
 }
 
 fn path_win_to_namespaced(arguments: &[Value]) -> Result<Value, VmError> {
