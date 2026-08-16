@@ -116,6 +116,9 @@ impl RawOptions {
                     } else {
                         to_string_value(&value)
                     };
+                    if *key == "numberingSystem" {
+                        let _ = super::locale::calendar_option(&text)?;
+                    }
                     apply_option(&mut raw, key, &text);
                 }
             }
