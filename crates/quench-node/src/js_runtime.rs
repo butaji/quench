@@ -2412,6 +2412,13 @@ impl QuenchNodeHost {
             ),
             ("type".into(), Value::String("udp4".into())),
             ("\0dgramId".into(), Value::Number(id as f64)),
+            (
+                "__dgramState".into(),
+                quench_runtime::host_api::object(vec![(
+                    "handle".into(),
+                    quench_runtime::host_api::object(vec![("fd".into(), Value::Number(id as f64))]),
+                )]),
+            ),
         ]))
     }
 
@@ -4819,6 +4826,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibDeflateSync)),
             ),
         ]));
+    }
+    if name == "internal/dgram" || name == "node:internal/dgram" {
+        return Ok(quench_runtime::host_api::object(vec![(
+            "kStateSymbol".into(),
+            Value::String("__dgramState".into()),
+        )]));
     }
     if name == "tls" || name == "node:tls" {
         return Ok(quench_runtime::host_api::object(vec![
