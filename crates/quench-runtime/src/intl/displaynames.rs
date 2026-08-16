@@ -51,6 +51,8 @@ struct DisplayNamesOptions {
 }
 
 fn parse_options(options: &Value) -> Result<DisplayNamesOptions, VmError> {
+    let locale_matcher = option_string(options, "localeMatcher", "")?;
+    validate_value(&locale_matcher, &["lookup", "best fit"], "localeMatcher")?;
     let style = option_string(options, "style", "")?;
     validate_value(&style, &["long", "short", "narrow"], "style")?;
     let display_type = option_string(options, "type", "TypeError: options.type is required")?;
@@ -232,6 +234,7 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 fn option_string(options: &Value, name: &str, missing: &str) -> Result<String, VmError> {
     let value = crate::execute::get_property_result(options, name)?;
     match value {
+        Value::Undefined if name == "localeMatcher" => Ok("best fit".to_string()),
         Value::Undefined if name == "style" => Ok("long".to_string()),
         Value::Undefined if name == "fallback" => Ok("code".to_string()),
         Value::Undefined if name == "languageDisplay" => Ok("dialect".to_string()),
