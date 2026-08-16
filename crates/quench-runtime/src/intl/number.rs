@@ -17,6 +17,7 @@ use super::{
 
 pub(crate) struct NumberOptions {
     pub locale: String,
+    pub numbering_system: String,
     pub style: String,
     pub currency: Option<String>,
     pub currency_display: String,
@@ -41,6 +42,7 @@ pub(crate) struct NumberOptions {
 
 pub(crate) struct RawOptions {
     style: String,
+    numbering_system: Option<String>,
     currency: Option<String>,
     currency_display: String,
     currency_sign: String,
@@ -90,6 +92,7 @@ impl RawOptions {
     fn from_value(options: Option<&Value>) -> Result<Self, VmError> {
         let mut raw = RawOptions {
             style: "decimal".to_string(),
+            numbering_system: None,
             currency: None,
             currency_display: "symbol".to_string(),
             currency_sign: "standard".to_string(),
@@ -134,9 +137,6 @@ impl RawOptions {
                             ));
                         }
                     }
-                    if *key == "numberingSystem" {
-                        let _ = super::locale::calendar_option(&text)?;
-                    }
                     if *key == "trailingZeroDisplay"
                         && !matches!(text.as_str(), "auto" | "stripIfInteger")
                     {
@@ -155,6 +155,9 @@ impl RawOptions {
 fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
     match key {
         "style" => raw.style = value.to_string(),
+        "numberingSystem" if super::supported_values::NUMBERING_SYSTEMS.contains(&value) => {
+            raw.numbering_system = Some(value.to_string())
+        }
         "currency" => raw.currency = Some(value.to_ascii_uppercase()),
         "currencyDisplay" => raw.currency_display = value.to_string(),
         "currencySign" => raw.currency_sign = value.to_string(),
@@ -186,9 +189,7 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = locales
-        .first()
-        .map_or_else(default_locale, |locale| super::number_locale(locale));
+    let locale = locales.first().cloned().unwrap_or_else(default_locale);
     if matches!(arguments.get(1), Some(Value::Null)) {
         return Err(crate::value::error::throw_type_error(
             "options must not be null",
@@ -394,8 +395,22 @@ fn number_options(
     minimum_fraction_digits: f64,
     maximum_fraction_digits: f64,
 ) -> NumberOptions {
+    let locale_numbering = super::numbering_system(&locale);
+    let numbering_system = raw
+        .numbering_system
+        .as_deref()
+        .or(locale_numbering)
+        .unwrap_or("latn")
+        .to_string();
+    let locale = match raw.numbering_system.as_deref() {
+        Some(option) if locale_numbering != Some(option) => locale
+            .split_once("-u-")
+            .map_or(locale.clone(), |(base, _)| base.to_string()),
+        _ => super::number_locale(&locale),
+    };
     NumberOptions {
         locale,
+        numbering_system,
         style: raw.style,
         currency: raw.currency,
         currency_display: raw.currency_display,
@@ -424,6 +439,10 @@ fn number_options(
 fn slot_base(number: &NumberOptions) -> Vec<(String, Value)> {
     let mut properties = slot_primary(number);
     properties.extend([
+        (
+            "numberingSystem".to_string(),
+            Value::String(number.numbering_system.clone()),
+        ),
         (
             "notation".to_string(),
             Value::String(number.notation.clone()),

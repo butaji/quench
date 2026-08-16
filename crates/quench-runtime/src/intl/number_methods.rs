@@ -48,6 +48,8 @@ impl NumberOptions {
     fn from_slots(slots: &[(String, Value)]) -> Result<Self, VmError> {
         Ok(NumberOptions {
             locale: slot_string(slots, "locale").unwrap_or_else(default_locale),
+            numbering_system: slot_string(slots, "numberingSystem")
+                .unwrap_or_else(|| "latn".to_string()),
             style: slot_string(slots, "style").unwrap_or_else(|| "decimal".to_string()),
             currency: slot_string(slots, "currency"),
             currency_display: slot_string(slots, "currencyDisplay")
@@ -248,7 +250,7 @@ impl NumberOptions {
             ("locale".to_string(), Value::String(self.locale.clone())),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(self.numbering_system.clone()),
             ),
             ("style".to_string(), Value::String(self.style.clone())),
             ("useGrouping".to_string(), Value::Boolean(self.use_grouping)),
