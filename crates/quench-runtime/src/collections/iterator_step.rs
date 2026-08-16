@@ -129,6 +129,12 @@ fn step_target_state(
             index,
             done,
         } => StepTarget::Value(mapped_step(iterator, mapper, index, done)?),
+        IteratorState::Filtered {
+            iterator,
+            predicate,
+            index,
+            done,
+        } => StepTarget::Value(filtered_step(iterator, predicate, index, done)?),
         IteratorState::Zip {
             iterators,
             mode,
@@ -264,6 +270,36 @@ fn mapped_step(
     };
     *index += 1;
     Ok(Some(result))
+}
+
+fn filtered_step(
+    iterator: &Value,
+    predicate: &Value,
+    index: &mut usize,
+    done: &mut bool,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    loop {
+        let Some(value) =
+            super::step_value(iterator).map_err(|e| close_mapped_error(iterator, e))?
+        else {
+            *done = true;
+            return Ok(None);
+        };
+        let result = crate::functions::execute_target(
+            predicate,
+            &Value::Undefined,
+            &[
+                value.clone(),
+                Value::Number(*index as f64),
+                iterator.clone(),
+            ],
+        )
+        .map_err(|e| close_mapped_error(iterator, e))?;
+        *index += 1;
+        if crate::execute::is_truthy(&result) {
+            return Ok(Some(value));
+        }
+    }
 }
 
 fn close_mapped_error(iterator: &Value, error: crate::execute::VmError) -> crate::execute::VmError {

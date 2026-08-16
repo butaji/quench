@@ -13,6 +13,13 @@ pub(crate) fn assign_set_property(
         }
         return Ok(target.clone());
     }
+    if let crate::value::Value::Object(properties) = target {
+        if crate::builtins::boxed_string_immutable_key(properties, key) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot assign to read-only property",
+            ));
+        }
+    }
     if rejects_new_property(target, key) || inherited_write_blocked(target, key) {
         return Err(crate::value::error::throw_type_error(
             "Cannot assign to read-only property",

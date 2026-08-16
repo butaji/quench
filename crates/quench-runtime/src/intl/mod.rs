@@ -23,7 +23,8 @@ mod supported_values;
 pub(crate) mod tolocale;
 
 pub(crate) use support::{
-    intl_slots, make_array, make_object, runtime_error, slot_bool, slot_number, slot_string,
+    construct_with_legacy_receiver, intl_slots, make_array, make_object, runtime_error, slot_bool,
+    slot_number, slot_string,
 };
 pub(crate) use supported_values::{
     supported_calendars, supported_collations, supported_currencies, supported_numbering_systems,
@@ -223,6 +224,9 @@ fn dispatch_all(
 
 /// Implement `Intl.getCanonicalLocales`.
 fn get_canonical_locales(arguments: &[Value]) -> Result<Value, VmError> {
+    if arguments.is_empty() {
+        return Ok(make_array(Vec::new()));
+    }
     let locales = resolve_locales(arguments)?;
     Ok(make_array(locales.into_iter().map(Value::String).collect()))
 }
@@ -253,7 +257,13 @@ pub(crate) fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmErro
             resolve_locale_list(&crate::construct::to_object(locales)?)
         }
         Value::String(_) => Ok(vec![canonicalize(&crate::conversion::to_string(locales)?)?]),
-        locales if crate::value::is_object(locales) => resolve_locale_list(locales),
+        locales if crate::value::is_object(locales) => {
+            if let Some(tag) = locale_object_tag(locales) {
+                Ok(vec![canonicalize(&tag)?])
+            } else {
+                resolve_locale_list(locales)
+            }
+        }
         Value::Null => Err(runtime_error("TypeError: invalid locales")),
         Value::Undefined => Ok(vec![default_locale()]),
         _ => resolve_locale_list(&crate::construct::to_object(locales)?),
@@ -271,12 +281,28 @@ fn resolve_locale_list(locales: &Value) -> Result<Vec<String>, VmError> {
         let value = crate::execute::get_property_result(locales, &index.to_string())?;
         let value = match value {
             Value::String(_) | Value::StringUnits(_) => crate::conversion::to_string(&value)?,
-            value if crate::value::is_object(&value) => crate::conversion::to_string(&value)?,
+            value if crate::value::is_object(&value) => locale_list_object_tag(&value)?,
             _ => return Err(crate::value::error::throw_type_error("invalid locale")),
         };
         out.push(canonicalize(&value)?);
     }
     Ok(dedupe(out))
+}
+
+fn locale_list_object_tag(value: &Value) -> Result<String, VmError> {
+    if let Some(tag) = locale_object_tag(value) {
+        return Ok(tag);
+    }
+    crate::conversion::to_string(value)
+}
+
+fn locale_object_tag(value: &Value) -> Option<String> {
+    if matches!(value, Value::Proxy(_)) {
+        return None;
+    }
+    intl_slots(Some(value))
+        .ok()
+        .and_then(|slots| slot_string(&slots, "full"))
 }
 
 fn locale_list_length(value: &Value) -> Result<usize, VmError> {

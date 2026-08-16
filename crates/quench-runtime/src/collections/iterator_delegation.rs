@@ -37,6 +37,7 @@ pub fn delegate_next(
             IteratorState::Protocol { iterator, done, .. } if !*done => Some(iterator.clone()),
             IteratorState::Protocol { .. } => None,
             IteratorState::Mapped { .. } => None,
+            IteratorState::Filtered { .. } => None,
             IteratorState::Concat { .. } => None,
             IteratorState::Zip { .. } => None,
         }
@@ -122,6 +123,7 @@ fn delegation_target(
         | IteratorState::String { .. }
         | IteratorState::RegExpString { .. } => None,
         IteratorState::Mapped { .. } => None,
+        IteratorState::Filtered { .. } => None,
         IteratorState::Concat { .. } => None,
         IteratorState::Zip { .. } => None,
     };

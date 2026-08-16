@@ -149,6 +149,8 @@ fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 fn static_accessor_builtin(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
         (Builtin::TemporalDurationPrototype, "years") => Builtin::TemporalDurationYearsGetter,
+        (Builtin::TemporalDurationPrototype, "sign") => Builtin::TemporalDurationSignGetter,
+        (Builtin::TemporalDurationPrototype, "blank") => Builtin::TemporalDurationBlankGetter,
         (Builtin::TemporalDurationPrototype, "months") => Builtin::TemporalDurationMonthsGetter,
         (Builtin::TemporalDurationPrototype, "weeks") => Builtin::TemporalDurationWeeksGetter,
         (Builtin::TemporalDurationPrototype, "days") => Builtin::TemporalDurationDaysGetter,

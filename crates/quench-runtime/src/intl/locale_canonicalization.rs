@@ -9,6 +9,7 @@ fn dedupe(locales: Vec<String>) -> Vec<String> {
 pub(crate) fn to_string_value(value: &Value) -> String {
     match value {
         Value::String(value) => value.clone(),
+        Value::StringUnits(value) => String::from_utf16_lossy(value),
         Value::Number(value) => value.to_string(),
         Value::Boolean(value) => value.to_string(),
         Value::Null => "null".to_string(),
@@ -24,7 +25,6 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 
 /// Canonicalize a single BCP-47 language tag.
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
-    let tag = tag.trim();
     match tag.to_ascii_lowercase().as_str() {
         "art-lojban" => return Ok("jbo".to_string()),
         "cel-gaulish" => return Ok("xtg".to_string()),
@@ -127,6 +127,7 @@ fn validate_transformed_fields(parts: &[&str]) -> Result<(), VmError> {
     } else {
         0
     };
+    validate_transformed_variants(&parts[..index])?;
     while index < parts.len() {
         let key = parts[index];
         if key.len() != 2 || !key.chars().all(|c| c.is_ascii_alphanumeric()) {
@@ -143,6 +144,18 @@ fn validate_transformed_fields(parts: &[&str]) -> Result<(), VmError> {
             index += 1;
         }
         if start == index {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_transformed_variants(parts: &[&str]) -> Result<(), VmError> {
+    let mut seen = std::collections::HashSet::new();
+    for part in parts {
+        let variant = (5..=8).contains(&part.len())
+            || (part.len() == 4 && part.as_bytes()[0].is_ascii_digit());
+        if variant && !seen.insert(part.to_ascii_lowercase()) {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
     }
@@ -256,11 +269,22 @@ fn canonicalize_subtags(
     let aliased = canonicalize_unicode_aliases(&parts);
     let variant_aliased = canonicalize_variant_aliases(&aliased);
     let parts: Vec<&str> = variant_aliased.iter().map(String::as_str).collect();
+    validate_extension_boundaries(&parts)?;
     let mut region_done = false;
-    let mut variant_done = false;
     let mut extension = false;
-    for part in parts {
+    let four_letter_language = out.first().is_some_and(|language| language.len() == 4);
+    let mut variants = std::collections::HashSet::new();
+    for (index, part) in parts.into_iter().enumerate() {
         if part.is_empty() {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        if index == 0
+            && four_letter_language
+            && part.len() == 3
+            && part
+                .chars()
+                .all(|character| character.is_ascii_alphabetic())
+        {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
         if extension {
@@ -275,7 +299,10 @@ fn canonicalize_subtags(
         if region_done && is_region_shape(part) {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
-        match classify_subtag(part, script_done, region_done, variant_done) {
+        if is_variant_shape(part) && !variants.insert(part.to_ascii_lowercase()) {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        match classify_subtag(part, script_done, region_done) {
             Subtag::Script => {
                 out.push(titlecase_script(part));
                 script_done = true;
@@ -286,12 +313,94 @@ fn canonicalize_subtags(
             }
             Subtag::Variant => {
                 out.push(part.to_ascii_lowercase());
-                variant_done = true;
             }
-            Subtag::Extension => out.push(part.to_ascii_lowercase()),
+            Subtag::Extension if extension => out.push(part.to_ascii_lowercase()),
+            Subtag::Extension => return Err(runtime_error("RangeError: invalid language tag")),
         }
     }
-    Ok(out)
+    Ok(canonicalize_grandfathered(out))
+}
+
+fn canonicalize_grandfathered(mut parts: Vec<String>) -> Vec<String> {
+    let Some((language, variant)) = (match parts.first().map(String::as_str) {
+        Some("art") => Some(("jbo", "lojban")),
+        Some("cel") => Some(("xtg", "gaulish")),
+        Some("zh") => None,
+        _ => return parts,
+    }) else {
+        return canonicalize_zh_grandfathered(parts);
+    };
+    let Some(index) = parts.iter().position(|part| part == variant) else {
+        return parts;
+    };
+    parts[0] = language.to_string();
+    parts.remove(index);
+    parts
+}
+
+fn canonicalize_zh_grandfathered(mut parts: Vec<String>) -> Vec<String> {
+    let Some(index) = parts
+        .iter()
+        .position(|part| matches!(part.as_str(), "guoyu" | "hakka" | "xiang"))
+    else {
+        return parts;
+    };
+    let language = match parts[index].as_str() {
+        "guoyu" => "zh",
+        "hakka" => "hak",
+        _ => "hsn",
+    };
+    parts[0] = language.to_string();
+    parts.remove(index);
+    parts
+}
+
+fn is_variant_shape(part: &str) -> bool {
+    let valid_length = (4..=8).contains(&part.len());
+    let alphanumeric = part
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric());
+    let first = part.chars().next();
+    let alpha_variant = part.len() == 4
+        && part
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
+        || (5..=8).contains(&part.len())
+            && first.is_some_and(|character| character.is_ascii_alphabetic());
+    let numeric_variant = first.is_some_and(|character| character.is_ascii_digit());
+    valid_length && alphanumeric && (alpha_variant || numeric_variant)
+}
+
+fn validate_extension_boundaries(parts: &[&str]) -> Result<(), VmError> {
+    let mut index = 0;
+    let mut seen: Vec<&str> = Vec::new();
+    while index < parts.len() {
+        if parts[index].len() != 1 {
+            index += 1;
+            continue;
+        }
+        if parts[index].eq_ignore_ascii_case("x") {
+            if index + 1 == parts.len() {
+                return Err(runtime_error("RangeError: invalid language tag"));
+            }
+            return Ok(());
+        }
+        if seen
+            .iter()
+            .any(|key| key.eq_ignore_ascii_case(parts[index]))
+        {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        seen.push(parts[index]);
+        index += 1;
+        if index == parts.len() || parts[index].len() == 1 {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        while index < parts.len() && parts[index].len() != 1 {
+            index += 1;
+        }
+    }
+    Ok(())
 }
 
 fn is_region_shape(part: &str) -> bool {
@@ -378,19 +487,17 @@ enum Subtag {
     Extension,
 }
 
-fn classify_subtag(part: &str, script_done: bool, region_done: bool, variant_done: bool) -> Subtag {
+fn classify_subtag(part: &str, script_done: bool, region_done: bool) -> Subtag {
     let all_alpha = part.chars().all(|c| c.is_ascii_alphabetic());
     let all_digit = part.chars().all(|c| c.is_ascii_digit());
-    if !script_done && part.len() == 4 && all_alpha {
+    if region_done && part.len() == 4 && all_alpha {
+        return Subtag::Extension;
+    }
+    if !script_done && !region_done && part.len() == 4 && all_alpha {
         Subtag::Script
     } else if !region_done && ((part.len() == 2 && all_alpha) || (part.len() == 3 && all_digit)) {
         Subtag::Region
-    } else if !variant_done
-        && ((part.len() >= 4 && all_alpha)
-            || (part.len() >= 5
-                && part.chars().next().is_some_and(|c| c.is_ascii_digit())
-                && part[1..].chars().all(|c| c.is_ascii_alphanumeric())))
-    {
+    } else if is_variant_shape(part) {
         Subtag::Variant
     } else {
         Subtag::Extension
@@ -410,4 +517,3 @@ fn language_alias(language: String) -> String {
         other => other.to_string(),
     }
 }
-

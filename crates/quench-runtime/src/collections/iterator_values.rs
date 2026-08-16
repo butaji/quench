@@ -103,6 +103,7 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
             crate::ops::Builtin::ArrayIteratorPrototype
         }
         IteratorState::Mapped { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::Filtered { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
         IteratorState::Concat { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
         IteratorState::Zip { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
     };
@@ -114,6 +115,8 @@ pub(crate) fn property(key: &str) -> Value {
         "next" => Value::Builtin(crate::ops::Builtin::IteratorNext),
         "toArray" => Value::Builtin(crate::ops::Builtin::IteratorToArray),
         "map" => Value::Builtin(crate::ops::Builtin::IteratorMap),
+        "filter" => Value::Builtin(crate::ops::Builtin::IteratorFilter),
+        "every" => Value::Builtin(crate::ops::Builtin::IteratorEvery),
         "Symbol.iterator" => Value::Builtin(crate::ops::Builtin::IteratorSelf),
         _ => Value::Undefined,
     }
@@ -131,6 +134,8 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
                     &*data.state.borrow(),
                     IteratorState::Protocol { .. }
                         | IteratorState::Mapped { .. }
+                        | IteratorState::Filtered { .. }
+                        | IteratorState::Concat { .. }
                         | IteratorState::Zip { .. }
                 )
         )
@@ -151,6 +156,7 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
         IteratorState::Map { .. } => "Map Iterator",
         IteratorState::Protocol { .. } => "Iterator",
         IteratorState::Mapped { .. } => "Iterator",
+        IteratorState::Filtered { .. } => "Iterator",
         IteratorState::Concat { .. } => "Iterator",
         IteratorState::Zip { .. } => "Iterator",
     };
@@ -169,6 +175,7 @@ fn next_for(value: &Value) -> Value {
         IteratorState::Map { .. } => Builtin::MapIteratorNext,
         IteratorState::Native { .. } | IteratorState::Protocol { .. } => Builtin::IteratorNext,
         IteratorState::Mapped { .. } => Builtin::IteratorNext,
+        IteratorState::Filtered { .. } => Builtin::IteratorNext,
         IteratorState::Concat { .. } => Builtin::IteratorNext,
         IteratorState::Zip { .. } => Builtin::IteratorNext,
     };
