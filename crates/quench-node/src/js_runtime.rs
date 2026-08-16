@@ -159,6 +159,8 @@ impl CapabilityName {
     const FsLinkSync: u16 = 1558;
     const FsLinkAsync: u16 = 1559;
     const FsLinkPromise: u16 = 1560;
+    const FsReadSyncFd: u16 = 1561;
+    const FsReadFdAsync: u16 = 1562;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -443,6 +445,12 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsLinkAsync) => fs_link_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsLinkPromise) => {
                 fs_link(arguments).map(fulfilled)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsReadSyncFd) => {
+                self.fs_read_fd(arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsReadFdAsync) => {
+                self.fs_read_fd(arguments, true)
             }
             HostCapabilityKind::Custom(CapabilityName::FsDirentFile) => Ok(Value::Boolean(true)),
             HostCapabilityKind::Custom(CapabilityName::FsDirentDirectory) => {
@@ -879,6 +887,72 @@ impl QuenchNodeHost {
         self.fd_paths.borrow_mut().remove(&fd);
         self.fd_modes.borrow_mut().remove(&fd);
         Ok(Value::Undefined)
+    }
+
+    fn fs_read_fd(&self, arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
+        let fd = match arguments.first() {
+            Some(Value::Number(value)) => *value as i32,
+            _ => return Err(VmError::NotCallable),
+        };
+        let path = self
+            .fd_paths
+            .borrow()
+            .get(&fd)
+            .cloned()
+            .ok_or(VmError::NotCallable)?;
+        let (buffer, offset, length, position, callback) =
+            if let Some(Value::Uint8Array(view)) = arguments.get(1) {
+                (
+                    view.clone(),
+                    number_arg(arguments.get(2)),
+                    number_arg(arguments.get(3)),
+                    Some(number_arg(arguments.get(4))),
+                    arguments.iter().rev().find(|value| {
+                        matches!(
+                            value,
+                            Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+                        )
+                    }),
+                )
+            } else {
+                let options = arguments.get(1).ok_or(VmError::NotCallable)?;
+                let value = quench_runtime::execute::get_property_result(options, "buffer")?;
+                let Value::Uint8Array(view) = value else {
+                    return Err(VmError::NotCallable);
+                };
+                (
+                    view.clone(),
+                    property_number(options, "offset").unwrap_or(0),
+                    property_number(options, "length").unwrap_or(view.length as u64),
+                    property_number(options, "position"),
+                    arguments.iter().rev().find(|value| {
+                        matches!(
+                            value,
+                            Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+                        )
+                    }),
+                )
+            };
+        let bytes = std::fs::read(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+        let start = position.unwrap_or(0) as usize;
+        let count = length as usize;
+        let available = bytes.len().saturating_sub(start).min(count);
+        buffer.buffer.bytes.borrow_mut()[buffer.byte_offset + offset as usize
+            ..buffer.byte_offset + offset as usize + available]
+            .copy_from_slice(&bytes[start..start + available]);
+        let result = Value::Number(available as f64);
+        if asynchronous {
+            if let Some(callback) = callback {
+                quench_runtime::execute::call(
+                    callback,
+                    &Value::Undefined,
+                    &[Value::Null, result.clone(), Value::Uint8Array(buffer)],
+                )?;
+            }
+            Ok(Value::Undefined)
+        } else {
+            Ok(result)
+        }
     }
 
     fn fs_open_async(&self, arguments: &[Value]) -> Result<Value, VmError> {
@@ -1400,6 +1474,21 @@ fn file_mode(value: &Value) -> Option<u32> {
     match value {
         Value::Number(number) => Some(*number as u32),
         Value::String(string) => u32::from_str_radix(string.trim_start_matches('0'), 8).ok(),
+        _ => None,
+    }
+}
+
+fn number_arg(value: Option<&Value>) -> u64 {
+    match value {
+        Some(Value::Number(number)) => *number as u64,
+        _ => 0,
+    }
+}
+
+fn property_number(value: &Value, key: &str) -> Option<u64> {
+    match quench_runtime::execute::get_property_result(value, key).ok()? {
+        Value::Number(number) => Some(number as u64),
+        Value::Null | Value::Undefined => None,
         _ => None,
     }
 }
@@ -1929,6 +2018,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::ReadFileSync)),
                 ),
                 (
+                    "readSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadSyncFd)),
+                ),
+                (
                     "writeFileSync".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::FsWriteFileSync,
@@ -2071,6 +2164,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "readFile".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadAsync)),
+                ),
+                (
+                    "read".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadFdAsync)),
                 ),
                 (
                     "readdir".into(),
