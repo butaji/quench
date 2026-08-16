@@ -113,6 +113,9 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 }
 
 fn iterable_items(value: Option<&Value>) -> Result<Vec<String>, VmError> {
+    if matches!(value, None | Some(Value::Undefined)) {
+        return Ok(Vec::new());
+    }
     let value = value.unwrap_or(&Value::Undefined);
     let iterator = crate::collections::iterator::open(value.clone())?;
     let mut items = Vec::new();
