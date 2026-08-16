@@ -82,6 +82,7 @@ impl CapabilityName {
     const StreamReadableFrom: u16 = 1312;
     const StreamDuplex: u16 = 1313;
     const StreamFinished: u16 = 1320;
+    const StreamIsPaused: u16 = 1321;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -174,6 +175,7 @@ struct StreamState {
     transform: Option<Value>,
     data: Option<Value>,
     end: Option<Value>,
+    drain: Option<Value>,
     source: Vec<Value>,
 }
 
@@ -228,6 +230,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::StreamFinished) => {
                 stream_finished(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::StreamIsPaused) => Ok(Value::Boolean(false)),
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -383,6 +386,7 @@ impl Host for QuenchNodeHost {
                 transform,
                 data: None,
                 end: None,
+                drain: None,
                 source: if capability.kind
                     == HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom)
                 {
@@ -429,6 +433,11 @@ impl Host for QuenchNodeHost {
             stream,
             "destroy",
             capability_function(HostCapabilityKind::Custom(id + 9)),
+        );
+        stream = quench_runtime::execute::set_property(
+            stream,
+            "isPaused",
+            capability_function(HostCapabilityKind::Custom(CapabilityName::StreamIsPaused)),
         );
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::StreamDuplex) {
             stream = quench_runtime::execute::set_property(
@@ -479,6 +488,7 @@ impl QuenchNodeHost {
                 match event.as_str() {
                     "data" => state.data = Some(callback.clone()),
                     "end" => state.end = Some(callback.clone()),
+                    "drain" => state.drain = Some(callback.clone()),
                     _ => {}
                 }
                 Ok(receiver
@@ -572,10 +582,33 @@ impl QuenchNodeHost {
                 for chunk in chunks {
                     quench_runtime::execute::call(&write, target, std::slice::from_ref(&chunk))?;
                 }
+                if let Some(drain) = self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .and_then(|state| state.drain.clone())
+                {
+                    quench_runtime::execute::call(&drain, target, &[])?;
+                }
                 Ok(target.clone())
             }
             6 => Ok(Value::Boolean(true)),
-            7..=9 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
+            7..=8 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
+            9 => {
+                if let Some(callback) = arguments.get(1).or_else(|| arguments.first()) {
+                    if matches!(
+                        callback,
+                        Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+                    ) {
+                        quench_runtime::execute::call(
+                            callback,
+                            receiver.unwrap_or(&Value::Undefined),
+                            &[],
+                        )?;
+                    }
+                }
+                Ok(receiver.cloned().unwrap_or(Value::Undefined))
+            }
             _ => Err(VmError::NotCallable),
         }
     }
@@ -1674,6 +1707,8 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::StreamWritable),
                 HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom),
                 HostCapabilityKind::Custom(CapabilityName::StreamDuplex),
+                HostCapabilityKind::Custom(CapabilityName::StreamFinished),
+                HostCapabilityKind::Custom(CapabilityName::StreamIsPaused),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
