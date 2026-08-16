@@ -112,6 +112,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "lastIndexOf" => Some(crate::ops::Builtin::StringLastIndexOf),
         "slice" => Some(crate::ops::Builtin::StringSlice),
         "substring" => Some(crate::ops::Builtin::StringSubstring),
+        "substr" => Some(crate::ops::Builtin::StringSubstr),
         "concat" => Some(crate::ops::Builtin::StringConcat),
         "split" => Some(crate::ops::Builtin::StringSplit),
         "padStart" => Some(crate::ops::Builtin::StringPadStart),
@@ -187,6 +188,7 @@ fn execute_builtin_tail(
         crate::ops::Builtin::StringSub => html_wrapper(receiver, "sub"),
         crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
         crate::ops::Builtin::StringSubstring => Ok(substring(receiver, arguments)),
+        crate::ops::Builtin::StringSubstr => substr(receiver, arguments),
         crate::ops::Builtin::StringConcat => concat(receiver, arguments),
         crate::ops::Builtin::StringSplit => split(receiver, arguments),
         crate::ops::Builtin::StringPadStart => Ok(pad_start(receiver, arguments)),
@@ -438,6 +440,39 @@ fn substring_index(value: Option<&Value>, length: isize) -> isize {
         .max(0.0)
         .trunc()
         .min(length as f64) as isize
+}
+
+fn substr(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let text = string_receiver(receiver)?;
+    let units = text.encode_utf16().collect::<Vec<_>>();
+    let length = units.len() as isize;
+    let start = substr_start(arguments.first(), length)?;
+    let count = arguments.get(1).map_or(Ok(length - start), substr_length)?;
+    let end = (start + count).min(length);
+    Ok(from_units(
+        units[start as usize..end.max(start) as usize].to_vec(),
+    ))
+}
+
+fn substr_start(value: Option<&Value>, length: isize) -> Result<isize, crate::execute::VmError> {
+    let number = value.map_or(Ok(0.0), crate::conversion::to_number)?;
+    if number.is_nan() {
+        return Ok(0);
+    }
+    let number = number.trunc() as isize;
+    Ok(if number < 0 {
+        (length + number).max(0)
+    } else {
+        number.min(length)
+    })
+}
+
+fn substr_length(value: &Value) -> Result<isize, crate::execute::VmError> {
+    let number = crate::conversion::to_number(value)?;
+    if number.is_nan() || number <= 0.0 {
+        return Ok(0);
+    }
+    Ok(number.trunc() as isize)
 }
 
 pub(crate) fn concat(
