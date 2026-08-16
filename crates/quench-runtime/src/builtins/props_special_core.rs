@@ -121,6 +121,9 @@ fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "some" {
         return Some(Value::Builtin(IteratorSome));
     }
+    if builtin == IteratorPrototype && key == "every" {
+        return Some(Value::Builtin(IteratorEvery));
+    }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);
     }

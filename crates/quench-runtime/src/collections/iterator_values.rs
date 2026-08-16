@@ -116,6 +116,7 @@ pub(crate) fn property(key: &str) -> Value {
         "toArray" => Value::Builtin(crate::ops::Builtin::IteratorToArray),
         "map" => Value::Builtin(crate::ops::Builtin::IteratorMap),
         "filter" => Value::Builtin(crate::ops::Builtin::IteratorFilter),
+        "every" => Value::Builtin(crate::ops::Builtin::IteratorEvery),
         "Symbol.iterator" => Value::Builtin(crate::ops::Builtin::IteratorSelf),
         _ => Value::Undefined,
     }
