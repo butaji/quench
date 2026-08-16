@@ -720,7 +720,13 @@ fn unicode_subtags(locale: &Locale) -> Vec<String> {
         if !extension.key.is_empty() {
             subtags.push(extension.key.clone());
         }
-        subtags.extend(extension.types.iter().cloned());
+        subtags.extend(
+            extension
+                .types
+                .iter()
+                .filter(|value| value.as_str() != "true")
+                .cloned(),
+        );
     }
     subtags
 }
