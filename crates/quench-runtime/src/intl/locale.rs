@@ -266,7 +266,10 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
                 }
                 locale.script = Some(super::titlecase_script(&script));
             }
-            "region" => validate_region(&text)?,
+            "region" => {
+                validate_region(&text)?;
+                locale.region = Some(super::canonical_region(&text, &[locale.language.clone()]));
+            }
             "variants" => {
                 let value = option_value(&text, key)?;
                 locale.variants = variants_option(&value)?;
