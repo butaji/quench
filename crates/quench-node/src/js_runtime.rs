@@ -3475,7 +3475,13 @@ fn assert_module() -> Value {
 }
 
 fn process_module() -> Value {
+    let env = quench_runtime::host_api::object(
+        std::env::vars()
+            .map(|(key, value)| (key, Value::String(value.into())))
+            .collect(),
+    );
     quench_runtime::host_api::object(vec![
+        ("env".into(), env),
         (
             "argv".into(),
             quench_runtime::host_api::array(std::env::args().map(Value::String).collect()),
