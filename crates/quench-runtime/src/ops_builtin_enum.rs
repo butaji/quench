@@ -137,7 +137,7 @@ pub enum Builtin {
     TemporalDurationMicrosecondsGetter, TemporalDurationNanosecondsGetter,
     TemporalDurationToLocaleString,
     TemporalPlainDate, TemporalPlainDatePrototype,
-    TemporalPlainDateFrom, AbstractModuleSource,
+    TemporalPlainDateFrom, TemporalPlainDateWithCalendar, AbstractModuleSource,
     AbstractModuleSourcePrototype, AbstractModuleSourceToStringTagGetter, ShadowRealm,
     ShadowRealmPrototype, ShadowRealmEvaluate,
     ShadowRealmImportValue, DateValueOf,
