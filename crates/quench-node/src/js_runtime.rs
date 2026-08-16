@@ -4696,6 +4696,17 @@ fn format_string(value: &Value, separators: bool) -> String {
         Value::Number(_) => format_number(value, separators),
         Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
         Value::Object(_) | Value::ObjectAlias(_) => {
+            if let Ok(method) = quench_runtime::execute::get_property_result(value, "Symbol.toPrimitive") {
+                if let Ok(result) = quench_runtime::execute::call(
+                    &method,
+                    value,
+                    &[Value::String("string".into())],
+                ) {
+                    if let Value::String(result) = result {
+                        return result;
+                    }
+                }
+            }
             if let Ok(method) = quench_runtime::execute::get_property_result(value, "toISOString") {
                 if let Ok(Value::String(result)) = quench_runtime::execute::call(&method, value, &[]) {
                     return result;
