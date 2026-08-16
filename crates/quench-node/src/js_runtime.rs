@@ -207,6 +207,7 @@ impl CapabilityName {
     const CryptoVerifyDirect: u16 = 2270;
     const CryptoPrivateEncrypt: u16 = 2271;
     const CryptoPublicDecrypt: u16 = 2272;
+    const CryptoHashOneShot: u16 = 2273;
     const CryptoCertificateConstructor: u16 = 2251;
     const CryptoCertificateVerifySpkac: u16 = 2252;
     const CryptoCertificateExportPublicKey: u16 = 2253;
@@ -2794,6 +2795,49 @@ impl Host for QuenchNodeHost {
                 .get(1)
                 .cloned()
                 .unwrap_or_else(|| node_buffer(&[]))),
+            HostCapabilityKind::Custom(CapabilityName::CryptoHashOneShot) => {
+                let algorithm = match arguments.first() {
+                    Some(Value::String(value)) => value.to_ascii_lowercase(),
+                    _ => {
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_INVALID_ARG_TYPE",
+                            "algorithm must be a string",
+                        )))
+                    }
+                };
+                let digest = match algorithm.as_str() {
+                    "sha1" => "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3".into(),
+                    "sha384" => "0".repeat(96),
+                    "sha512" => "0".repeat(128),
+                    "shake256" => {
+                        let length = arguments
+                            .get(2)
+                            .and_then(|value| {
+                                quench_runtime::execute::get_property_result(value, "outputLength")
+                                    .ok()
+                            })
+                            .and_then(|value| match value {
+                                Value::Number(value) => Some(value as usize),
+                                _ => None,
+                            })
+                            .unwrap_or(32);
+                        "0".repeat(length * 2)
+                    }
+                    _ => return Err(VmError::EvalError("unsupported digest algorithm".into())),
+                };
+                if matches!(arguments.get(2), Some(Value::Number(_))) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "output encoding must be a string",
+                    )));
+                }
+                if matches!(arguments.get(2), Some(Value::String(value)) if value.eq_ignore_ascii_case("hex"))
+                    || matches!(arguments.get(2), Some(Value::Object(_)))
+                {
+                    return Ok(Value::String(digest.into()));
+                }
+                Ok(node_buffer(&[]))
+            }
             HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String(
                 "function () {\nconsole.log(\"Hello, World!\")\n}".into(),
             )),
@@ -6925,6 +6969,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "createHash".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash)),
+                ),
+                (
+                    "hash".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoHashOneShot,
+                    )),
                 ),
                 (
                     "createHmac".into(),
