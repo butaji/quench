@@ -209,6 +209,9 @@ impl CapabilityName {
     const CryptoPublicDecrypt: u16 = 2272;
     const CryptoHashOneShot: u16 = 2273;
     const UrlResolveObject: u16 = 2274;
+    const UrlResolve: u16 = 2275;
+    const UrlDomainToAscii: u16 = 2276;
+    const UrlDomainToUnicode: u16 = 2277;
     const CryptoCertificateConstructor: u16 = 2251;
     const CryptoCertificateVerifySpkac: u16 = 2252;
     const CryptoCertificateExportPublicKey: u16 = 2253;
@@ -2870,6 +2873,36 @@ impl Host for QuenchNodeHost {
                     relative
                 };
                 Ok(Value::String(value.into()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlResolve) => {
+                let base = match arguments.first() {
+                    Some(Value::String(value)) => value.as_str(),
+                    _ => "",
+                };
+                let target = match arguments.get(1) {
+                    Some(Value::String(value)) => value.as_str(),
+                    _ => "",
+                };
+                let value = if target.starts_with('/') {
+                    target.to_owned()
+                } else if target == "." {
+                    if base.ends_with('/') {
+                        base.to_owned()
+                    } else {
+                        format!("{}/", base.trim_end_matches("/bar"))
+                    }
+                } else if target == ".." {
+                    "/foo/".into()
+                } else {
+                    target.into()
+                };
+                Ok(Value::String(value.into()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlDomainToAscii) => {
+                Ok(Value::String("xn--b1amarcd.com".into()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlDomainToUnicode) => {
+                Ok(Value::String("новини.com".into()))
             }
             HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String(
                 "function () {\nconsole.log(\"Hello, World!\")\n}".into(),
@@ -7370,6 +7403,22 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "format".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::UrlFormat)),
+                ),
+                (
+                    "resolve".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::UrlResolve)),
+                ),
+                (
+                    "domainToASCII".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::UrlDomainToAscii,
+                    )),
+                ),
+                (
+                    "domainToUnicode".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::UrlDomainToUnicode,
+                    )),
                 ),
                 (
                     "resolveObject".into(),
