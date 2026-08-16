@@ -94,6 +94,10 @@ impl CapabilityName {
     const ModuleFindSourceMap: u16 = 103;
     const ModuleSyncBuiltinExports: u16 = 104;
     const OsUserInfo: u16 = 1000;
+    const OsUptime: u16 = 1001;
+    const OsGetPriority: u16 = 1002;
+    const OsSetPriority: u16 = 1003;
+    const OsAvailableParallelism: u16 = 1004;
     const TimerImmediate: u16 = 27;
     const Timer: u16 = 28;
     const TimerClearImmediate: u16 = 29;
@@ -723,6 +727,14 @@ impl Host for QuenchNodeHost {
             ) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::OsPlatform) => os_platform(),
             HostCapabilityKind::Custom(CapabilityName::OsArch) => os_arch(),
+            HostCapabilityKind::Custom(CapabilityName::OsUptime) => Ok(Value::Number(
+                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64(),
+            )),
+            HostCapabilityKind::Custom(CapabilityName::OsGetPriority) => Ok(Value::Number(0.0)),
+            HostCapabilityKind::Custom(CapabilityName::OsSetPriority) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::OsAvailableParallelism) => Ok(Value::Number(
+                std::thread::available_parallelism().map(|value| value.get() as f64).unwrap_or(1.0),
+            )),
             HostCapabilityKind::Custom(CapabilityName::OsTmpdir) => os_tmpdir(),
             HostCapabilityKind::Custom(CapabilityName::OsHomedir) => os_homedir(),
             HostCapabilityKind::Custom(CapabilityName::OsCpus..=CapabilityName::OsType)
@@ -4913,6 +4925,13 @@ fn os_module() -> Value {
             "userInfo".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::OsUserInfo)),
         ),
+        ("uptime".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::OsUptime))),
+        ("getPriority".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::OsGetPriority))),
+        ("setPriority".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::OsSetPriority))),
+        ("availableParallelism".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::OsAvailableParallelism))),
+        ("constants".into(), quench_runtime::host_api::object(vec![
+            ("priority".into(), quench_runtime::host_api::object(vec![("PRIORITY_LOW".into(), Value::Number(0.0))])),
+        ])),
     ])
 }
 
