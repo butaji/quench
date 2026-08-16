@@ -1,4 +1,15 @@
 fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &str) -> Value {
+    if let Value::HostCapability(token) = value {
+        if let Some((_, property)) = token
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+        {
+            return property.clone();
+        }
+    }
     let builtin = Builtin::HostCapability(capability.kind);
     let property = crate::builtins::property(builtin, key);
     if let Value::Builtin(Builtin::AbstractModuleSource) = property {
