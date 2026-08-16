@@ -18,6 +18,10 @@ impl CapabilityName {
     const BufferInspectMaxBytesSet: u16 = 1328;
     const FsCpSync: u16 = 1329;
     const FsCp: u16 = 1330;
+    const TmpdirResolve: u16 = 1331;
+    const CommonFsNextdir: u16 = 1332;
+    const CommonFsAssertDirEquivalent: u16 = 1333;
+    const CommonMustNotMutateObjectDeep: u16 = 1334;
     const BufferAlloc: u16 = 31;
     const BufferIsBuffer: u16 = 32;
     const UtilFormat: u16 = 80;
