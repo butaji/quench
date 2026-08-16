@@ -83,6 +83,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         return Some(crate::ops::Builtin::StringIterator);
     }
     match key {
+        "anchor" => Some(crate::ops::Builtin::StringAnchor),
         "includes" => Some(crate::ops::Builtin::StringIncludes),
         "isWellFormed" => Some(crate::ops::Builtin::StringIsWellFormed),
         "toWellFormed" => Some(crate::ops::Builtin::StringToWellFormed),
@@ -153,6 +154,7 @@ fn execute_builtin_tail(
     arguments: &[Value],
 ) -> Option<Result<Value, crate::execute::VmError>> {
     let result = match builtin {
+        crate::ops::Builtin::StringAnchor => anchor(receiver, arguments),
         crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
         crate::ops::Builtin::StringSubstring => Ok(substring(receiver, arguments)),
         crate::ops::Builtin::StringConcat => concat(receiver, arguments),
@@ -172,6 +174,18 @@ fn execute_builtin_tail(
         _ => return None,
     };
     Some(result)
+}
+
+fn anchor(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    let text = string_receiver(receiver)?;
+    let name = arguments
+        .first()
+        .map(crate::conversion::to_string)
+        .transpose()?;
+    let attribute = name.map_or_else(String::new, |value| {
+        format!(" name=\"{}\"", value.replace('"', "&quot;"))
+    });
+    Ok(Value::String(format!("<a{attribute}>{text}</a>")))
 }
 
 fn at(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
