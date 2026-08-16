@@ -99,7 +99,7 @@ fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::IntlCollator => "Intl.Collator",
         Builtin::IntlDateTimeFormat => "DateTimeFormat",
         Builtin::IntlDisplayNames => "Intl.DisplayNames",
-        Builtin::IntlListFormat => "Intl.ListFormat",
+        Builtin::IntlListFormat => "ListFormat",
         Builtin::IntlLocale => "Intl.Locale",
         Builtin::IntlNumberFormat => "Intl.NumberFormat",
         Builtin::IntlPluralRules => "Intl.PluralRules",
