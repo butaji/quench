@@ -21,6 +21,7 @@ thread_local! {
     static NODE_PROCESS_WARNING_LISTENERS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static NODE_EXPERIMENTAL_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static NODE_TIMER_COUNTS: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
+    static NODE_PRIORITY: Cell<i32> = const { Cell::new(0) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
 }
 
@@ -846,8 +847,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::OsUptime) => Ok(Value::Number(
                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64(),
             )),
-            HostCapabilityKind::Custom(CapabilityName::OsGetPriority) => Ok(Value::Number(0.0)),
-            HostCapabilityKind::Custom(CapabilityName::OsSetPriority) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::OsGetPriority) => os_get_priority(arguments),
+            HostCapabilityKind::Custom(CapabilityName::OsSetPriority) => os_set_priority(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsAvailableParallelism) => Ok(Value::Number(
                 std::thread::available_parallelism().map(|value| value.get() as f64).unwrap_or(1.0),
             )),
@@ -6113,7 +6114,11 @@ fn os_module() -> Value {
         ("version".into(), os_string_function(CapabilityName::OsVersion)),
         ("machine".into(), os_string_function(CapabilityName::OsMachine)),
         ("constants".into(), quench_runtime::host_api::object(vec![
-            ("priority".into(), quench_runtime::host_api::object(vec![("PRIORITY_LOW".into(), Value::Number(0.0))])),
+            ("priority".into(), quench_runtime::host_api::object(vec![
+                ("PRIORITY_LOW".into(), Value::Number(19.0)),
+                ("PRIORITY_NORMAL".into(), Value::Number(0.0)),
+                ("PRIORITY_HIGHEST".into(), Value::Number(-20.0)),
+            ])),
             ("errno".into(), quench_runtime::host_api::object(vec![("ENOENT".into(), Value::Number(2.0))])),
         ])),
     ]);
@@ -6125,6 +6130,21 @@ fn os_module() -> Value {
 fn os_numeric_function(kind: u16) -> Value {
     let function = capability_function(HostCapabilityKind::Custom(kind));
     quench_runtime::execute::set_property(function.clone(), "valueOf", function)
+}
+
+fn os_get_priority(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(value) = arguments.first() {
+        if !matches!(value, Value::Number(_)) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "pid must be a number"))); }
+    }
+    Ok(Value::Number(NODE_PRIORITY.with(Cell::get) as f64))
+}
+
+fn os_set_priority(arguments: &[Value]) -> Result<Value, VmError> {
+    if arguments.first().is_some_and(|value| !matches!(value, Value::Number(_))) || arguments.get(1).is_some_and(|value| !matches!(value, Value::Number(_))) {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "pid and priority must be numbers")));
+    }
+    if let Some(Value::Number(value)) = arguments.get(1) { NODE_PRIORITY.with(|priority| priority.set(*value as i32)); }
+    Ok(Value::Undefined)
 }
 
 fn os_string_function(kind: u16) -> Value {
