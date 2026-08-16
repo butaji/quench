@@ -183,7 +183,8 @@ fn validate_supported_options(options: Option<&Value>) -> Result<(), VmError> {
             "Cannot convert null to object",
         ));
     }
-    let value = crate::execute::get_property_result(options, "localeMatcher")?;
+    let options = crate::construct::to_object(options)?;
+    let value = crate::execute::get_property_result(&options, "localeMatcher")?;
     if !matches!(value, Value::Undefined) {
         let matcher = crate::conversion::to_string(&value)?;
         if matcher != "lookup" && matcher != "best fit" {
