@@ -457,6 +457,7 @@ fn validate_transformed_fields(parts: &[&str]) -> Result<(), VmError> {
     } else {
         0
     };
+    validate_transformed_variants(&parts[..index])?;
     while index < parts.len() {
         let key = parts[index];
         if key.len() != 2 || !key.chars().all(|c| c.is_ascii_alphanumeric()) {
@@ -473,6 +474,18 @@ fn validate_transformed_fields(parts: &[&str]) -> Result<(), VmError> {
             index += 1;
         }
         if start == index {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_transformed_variants(parts: &[&str]) -> Result<(), VmError> {
+    let mut seen = std::collections::HashSet::new();
+    for part in parts {
+        let variant = (5..=8).contains(&part.len())
+            || (part.len() == 4 && part.as_bytes()[0].is_ascii_digit());
+        if variant && !seen.insert(part.to_ascii_lowercase()) {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
     }
