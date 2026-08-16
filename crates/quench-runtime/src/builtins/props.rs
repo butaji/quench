@@ -36,6 +36,7 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
         "Symbol.iterator" => Some(Value::Builtin(Builtin::IteratorSelf)),
         "Symbol.toStringTag" => Some(Value::String("Iterator".into())),
         "constructor" => Some(Value::Builtin(Builtin::Iterator)),
+        "filter" => Some(Value::Builtin(Builtin::IteratorFilter)),
         _ => None,
     }
 }
