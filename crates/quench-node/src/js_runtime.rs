@@ -3523,6 +3523,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("sep".into(), Value::String("/".into())),
                 ("delimiter".into(), Value::String(":".into())),
                 ("normalize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathNormalize))),
+                ("extname".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathExtname))),
                 ("basename".into(), basename),
                 ("join".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathJoin))),
                 ("parse".into(), parse),
@@ -3544,6 +3545,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("sep".into(), Value::String("\\".into())),
                 ("delimiter".into(), Value::String(";".into())),
                 ("basename".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinBasename))),
+                ("extname".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathExtname))),
                 ("normalize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinNormalize))),
                 ("parse".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinParse))),
                 ("format".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinFormat))),
@@ -3686,13 +3688,16 @@ fn path_join(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn path_extname(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
-    Ok(Value::String(
-        Path::new(path)
-            .extension()
-            .map(|extension| format!(".{}", extension.to_string_lossy()))
-            .unwrap_or_default()
-            .into(),
-    ))
+    let path = path.trim_end_matches(['/', '\\']);
+    let base = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    if base == "." || base == ".." {
+        return Ok(Value::String("".into()));
+    }
+    let Some(dot) = base.rfind('.') else { return Ok(Value::String("".into())); };
+    if dot == 0 && !base[1..].contains('.') {
+        return Ok(Value::String("".into()));
+    }
+    Ok(Value::String(base[dot..].to_owned().into()))
 }
 
 fn path_dirname(arguments: &[Value]) -> Result<Value, VmError> {
