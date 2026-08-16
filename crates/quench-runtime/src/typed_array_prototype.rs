@@ -74,6 +74,37 @@ pub(crate) fn index_exists(value: &Value, index: usize) -> bool {
     )
 }
 
+pub(crate) fn is_out_of_bounds(value: &Value) -> bool {
+    macro_rules! check {
+        ($($variant:ident),+) => {
+            match value {
+                $(Value::$variant(data) => {
+                    let required = if data.length == usize::MAX {
+                        data.byte_offset
+                    } else {
+                        data.byte_offset.saturating_add(data.byte_length())
+                    };
+                    data.buffer.byte_length() < required
+                },)+
+                _ => false,
+            }
+        };
+    }
+    check!(
+        Float64Array,
+        Float32Array,
+        Int8Array,
+        Int16Array,
+        Uint16Array,
+        Int32Array,
+        Uint32Array,
+        BigInt64Array,
+        BigUint64Array,
+        Uint8Array,
+        Uint8ClampedArray
+    )
+}
+
 /// An own named property stored on a typed-array instance, if present.
 pub(crate) fn own_property(value: &Value, key: &str) -> Option<Value> {
     macro_rules! lookup {
