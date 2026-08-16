@@ -47,7 +47,7 @@ fn parse_options(value: Option<&Value>) -> Result<(String, String), VmError> {
     let Some(options) = value else {
         return Ok((style, list_type));
     };
-    if matches!(options, Value::Null) {
+    if !crate::value::is_object(options) {
         return Err(crate::value::error::throw_type_error(
             "Cannot convert null or undefined to object",
         ));
