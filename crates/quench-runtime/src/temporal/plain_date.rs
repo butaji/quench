@@ -70,6 +70,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateDaysInYearGetter => Some(days_in_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateDaysInWeekGetter => Some(days_in_week(receiver)),
         crate::ops::Builtin::TemporalPlainDateMonthsInYearGetter => Some(months_in_year(receiver)),
+        crate::ops::Builtin::TemporalPlainDateToJSON => Some(to_json(receiver)),
         crate::ops::Builtin::TemporalPlainDateInLeapYearGetter => Some(in_leap_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraGetter => Some(era(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era(receiver)),
@@ -161,6 +162,30 @@ fn months_in_year(receiver: Option<&Value>) -> Result<Value, VmError> {
         return Err(invalid_receiver());
     }
     Ok(Value::Number(12.0))
+}
+
+fn to_json(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let day = number_field(field(object, "day")) as u32;
+    Ok(Value::String(format!(
+        "{}-{month:02}-{day:02}",
+        format_year(year)
+    )))
+}
+
+fn format_year(year: i32) -> String {
+    match year {
+        year if year < 0 => format!("-{0:06}", year.unsigned_abs()),
+        0..=9999 => format!("{year:04}"),
+        _ => format!("+{year:06}"),
+    }
 }
 
 fn in_leap_year(receiver: Option<&Value>) -> Result<Value, VmError> {
