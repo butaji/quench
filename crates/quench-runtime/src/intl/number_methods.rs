@@ -273,10 +273,6 @@ impl NumberOptions {
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
             ),
-            (
-                "roundingIncrement".to_string(),
-                Value::Number(self.rounding_increment as f64),
-            ),
         ];
         if self.notation == "compact" {
             properties.push((
