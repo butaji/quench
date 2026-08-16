@@ -18,6 +18,10 @@ pub(crate) fn empty_module_stub(name: &str) -> Option<Value> {
         "node:readline" => Some(quench_runtime::host_api::object(vec![
             ("createInterface".into(), Value::Undefined),
         ])),
+        "node:test/reporters" => Some(quench_runtime::host_api::object(vec![
+            ("spec".into(), Value::Undefined),
+            ("tap".into(), Value::Undefined),
+        ])),
         _ => None,
     }
 }
