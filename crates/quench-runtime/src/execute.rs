@@ -21,6 +21,21 @@ pub fn set_property(
     crate::builtins::set_property(target, key, value)
 }
 
+/// Define an own property with an explicit JavaScript property descriptor.
+/// Hosts use this to expose non-enumerable compatibility methods without
+/// changing the engine's object model.
+pub fn define_property(
+    target: crate::value::Value,
+    key: &str,
+    descriptor: crate::value::Value,
+) -> Result<crate::value::Value, VmError> {
+    crate::builtins::define_property(&[
+        target,
+        crate::value::Value::String(key.to_owned()),
+        descriptor,
+    ])
+}
+
 /// Set an object's prototype through the runtime's ordinary object semantics.
 pub fn set_prototype_of(
     target: &crate::value::Value,
