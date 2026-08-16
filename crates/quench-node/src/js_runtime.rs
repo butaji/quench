@@ -3125,7 +3125,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             let stream = quench_runtime::execute::set_property(
                 stream,
                 "call",
-                capability_function(HostCapabilityKind::Custom(CapabilityName::StreamIsPaused)),
+                Value::Builtin(quench_runtime::ops::Builtin::Object),
             );
             let readable = quench_runtime::execute::set_property(
                 capability_function(HostCapabilityKind::Custom(CapabilityName::StreamReadable)),
