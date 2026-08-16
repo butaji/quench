@@ -128,6 +128,10 @@ fn duration_receiver(receiver: Option<&Value>) -> Result<&crate::value::ObjectDa
     })
 }
 
+pub(crate) fn validate_receiver(receiver: &Value) -> Result<(), VmError> {
+    duration_receiver(Some(receiver)).map(|_| ())
+}
+
 fn has_duration_slots(object: &crate::value::ObjectData) -> bool {
     let fields = [
         "years",

@@ -30,6 +30,7 @@ pub(crate) fn format_temporal_duration(
             "Temporal.Duration.prototype.toLocaleString called on incompatible receiver",
         )
     })?;
+    crate::temporal::duration::validate_receiver(duration)?;
     let formatter = construct(&[
         arguments.first().cloned().unwrap_or(Value::Undefined),
         arguments.get(1).cloned().unwrap_or(Value::Undefined),
