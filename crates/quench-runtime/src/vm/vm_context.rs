@@ -4,6 +4,7 @@ pub trait Host: 'static {
     fn call(
         &self,
         capability: HostCapabilityRef,
+        receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Result<Value, VmError>;
 
