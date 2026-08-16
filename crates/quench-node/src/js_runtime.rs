@@ -1293,6 +1293,7 @@ fn child_fork(arguments: &[Value]) -> Result<Value, VmError> {
 include!("js_runtime_require_early.rs");
 
 include!("js_runtime_require_module.rs");
+include!("js_runtime_require_crypto.rs");
 include!("js_runtime_path.rs");
 include!("js_runtime_process_modules.rs");
 include!("js_runtime_url_object.rs");
