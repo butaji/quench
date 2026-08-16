@@ -51,10 +51,10 @@ struct DisplayNamesOptions {
 }
 
 fn parse_options(options: &Value) -> Result<DisplayNamesOptions, VmError> {
-    let display_type = option_string(options, "type", "TypeError: options.type is required")?;
-    validate_type(&display_type)?;
     let style = option_string(options, "style", "")?;
     validate_value(&style, &["long", "short", "narrow"], "style")?;
+    let display_type = option_string(options, "type", "TypeError: options.type is required")?;
+    validate_type(&display_type)?;
     let fallback = option_string(options, "fallback", "")?;
     validate_value(&fallback, &["code", "none"], "fallback")?;
     let language_display = option_string(options, "languageDisplay", "")?;
