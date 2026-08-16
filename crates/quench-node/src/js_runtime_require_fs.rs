@@ -263,6 +263,12 @@ fn require_fs_module(name: &str) -> Option<Value> {
                     "promises".into(),
                     Value::object(vec![
                         (
+                            "cp".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::FsCp,
+                            )),
+                        ),
+                        (
                             "writeFile".into(),
                             capability_function(HostCapabilityKind::Custom(
                                 CapabilityName::FsWritePromise,
