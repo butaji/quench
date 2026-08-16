@@ -163,23 +163,23 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase03 {
     __nodeValidateVariableValue(value, min, max);
   }
 };
-for (const [name, write, byteLength, littleEndian, signed] of [
-  ["writeUInt16BE", true, 2, false, false],
-  ["writeUInt32LE", true, 4, true, false],
-  ["writeUInt32BE", true, 4, false, false],
-  ["readInt8", false, 1, false, true],
-  ["readInt16LE", false, 2, true, true],
-  ["readInt16BE", false, 2, false, true],
-  ["readInt32LE", false, 4, true, true],
-  ["readInt32BE", false, 4, false, true],
-  ["writeInt8", true, 1, false, true],
-  ["writeInt16LE", true, 2, true, true],
-  ["writeInt16BE", true, 2, false, true],
-  ["writeInt32LE", true, 4, true, true],
-  ["writeInt32BE", true, 4, false, true]
+for (const [name, write, byteLength, littleEndian, signed, hostName] of [
+  ["writeUInt16BE", true, 2, false, false, "_quenchWriteUInt16BE"],
+  ["writeUInt32LE", true, 4, true, false, null],
+  ["writeUInt32BE", true, 4, false, false, null],
+  ["readInt8", false, 1, false, true, null],
+  ["readInt16LE", false, 2, true, true, "_quenchReadInt16LE"],
+  ["readInt16BE", false, 2, false, true, "_quenchReadInt16BE"],
+  ["readInt32LE", false, 4, true, true, null],
+  ["readInt32BE", false, 4, false, true, null],
+  ["writeInt8", true, 1, false, true, null],
+  ["writeInt16LE", true, 2, true, true, "_quenchWriteInt16LE"],
+  ["writeInt16BE", true, 2, false, true, "_quenchWriteInt16BE"],
+  ["writeInt32LE", true, 4, true, true, null],
+  ["writeInt32BE", true, 4, false, true, null]
 ]) {
   const method = function (value, offset = 0) {
-    const hostMethod = this[`_quench${name[0].toUpperCase()}${name.slice(1)}`];
+    const hostMethod = hostName && this[hostName];
     if (typeof hostMethod === "function") {
       return write ? hostMethod(value, offset) : hostMethod(value ?? 0);
     }

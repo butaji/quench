@@ -165,7 +165,7 @@ impl CapabilityName {
     const BufferCopy: u16 = 1584;
     const BufferFill: u16 = 1585;
     const BufferCompare: u16 = 1586;
-    const BufferNumericFirst: u16 = 1590;
+    const BufferNumericFirst: u16 = 2000;
     const FsFsyncSync: u16 = 1546;
     const FsFdatasyncSync: u16 = 1547;
     const FsFsyncAsync: u16 = 1548;
@@ -3714,7 +3714,11 @@ fn buffer_numeric(
                 slice.copy_from_slice(&data);
             }
         } else {
-            let mut raw = value as u64;
+            let mut raw = if index >= 20 && index <= 27 {
+                (value as i64) as u64
+            } else {
+                value as u64
+            };
             for byte in slice.iter_mut().rev() {
                 *byte = (raw & 0xff) as u8;
                 raw >>= 8;
