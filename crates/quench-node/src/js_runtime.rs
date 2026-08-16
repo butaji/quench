@@ -45,6 +45,7 @@ impl CapabilityName {
     const UtilFormat: u16 = 80;
     const UtilInspect: u16 = 81;
     const UtilFormatWithOptions: u16 = 2040;
+    const InternalUtilSleep: u16 = 2088;
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
     const BufferToJson: u16 = 2043;
@@ -784,6 +785,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::UtilFormatWithOptions) => {
                 util_format_with_options(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::InternalUtilSleep) => internal_util_sleep(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
@@ -2982,6 +2984,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(Value::object(vec![(
                 "stringToFlags".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::FsStringToFlags)),
+            )]));
+        }
+        if name == "internal/util" || name == "node:internal/util" {
+            return Ok(Value::object(vec![(
+                "sleep".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::InternalUtilSleep)),
             )]));
         }
         if name == "../common" || name.ends_with("/common") {
@@ -5236,6 +5244,16 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
         return Ok(quench_runtime::host_api::object(vec![("arrayBufferViewHasBuffer".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer)))]));
     }
     Ok(quench_runtime::host_api::object(vec![]))
+}
+
+fn internal_util_sleep(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Number(value)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "delay must be of type number")));
+    };
+    if !value.is_finite() || value.fract() != 0.0 || *value < 0.0 || *value > u32::MAX as f64 {
+        return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "delay out of range")));
+    }
+    Ok(Value::Undefined)
 }
 
 fn internal_view_has_buffer(arguments: &[Value]) -> Result<Value, VmError> {
