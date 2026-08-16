@@ -394,7 +394,6 @@ pub(crate) fn array_to_locale_string(
             ))
         }
     };
-    let _ = resolve_locales(arguments)?;
     let mut parts = Vec::new();
     for value in values.iter() {
         parts.push(element_to_locale_string(value, arguments)?);
