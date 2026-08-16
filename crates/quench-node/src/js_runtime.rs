@@ -2122,6 +2122,25 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoGetDiffieHellman | CapabilityName::CryptoCreateDiffieHellman,
             ) => {
+                if let Some(Value::String(group)) = arguments.first() {
+                    if arguments.len() == 1 && !matches!(group.as_str(), "modp5" | "modp14") {
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_CRYPTO_UNKNOWN_DH_GROUP",
+                            "Unknown DH group",
+                        )));
+                    }
+                    if group.is_empty()
+                        && arguments
+                            .iter()
+                            .skip(1)
+                            .any(|value| matches!(value, Value::Boolean(_) | Value::Array(_)))
+                    {
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_INVALID_ARG_TYPE",
+                            "invalid argument type",
+                        )));
+                    }
+                }
                 if let Some(Value::Number(value)) = arguments.first() {
                     if *value <= 1.0 {
                         return Err(VmError::Thrown(fs_error(
