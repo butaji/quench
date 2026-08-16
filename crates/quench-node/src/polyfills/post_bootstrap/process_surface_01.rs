@@ -228,6 +228,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     const features = (globalThis.process.features ||= {});
     features.cached_builtins ??= true;
     features.debug ??= false;
+    features.dtls ??= false;
     features.ipv6 ??= true;
     features.openssl_is_boringssl ??= false;
     features.quic ??= false;
