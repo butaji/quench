@@ -229,21 +229,23 @@ impl NumberOptions {
 
     fn range_parts(&self, arguments: &[Value]) -> Result<Vec<Value>, VmError> {
         let (start, end) = self.range_values(arguments)?;
-        let mut parts = self.parts(start);
-        if start != end {
-            let separator = if self.locale.starts_with("pt") && self.style == "currency" {
-                " - "
-            } else if self.style == "currency" {
-                "–"
-            } else {
-                " – "
-            };
-            parts.push(make_object(vec![
-                ("type".to_string(), Value::String("literal".to_string())),
-                ("value".to_string(), Value::String(separator.to_string())),
-            ]));
-            parts.extend(self.parts(end));
+        let first = self.parts(start);
+        let second = self.parts(end);
+        if self.format_number(start) == self.format_number(end) {
+            let mut parts = tagged_parts(first, "shared");
+            parts.insert(0, range_part("approximatelySign", "~", "shared"));
+            return Ok(parts);
         }
+        let separator = if self.locale.starts_with("pt") && self.style == "currency" {
+            " - "
+        } else if self.style == "currency" {
+            "–"
+        } else {
+            " – "
+        };
+        let mut parts = tagged_parts(first, "startRange");
+        parts.push(range_part("literal", separator, "shared"));
+        parts.extend(tagged_parts(second, "endRange"));
         Ok(parts)
     }
 
@@ -337,6 +339,23 @@ impl NumberOptions {
         ));
         make_object(properties)
     }
+}
+
+fn range_part(kind: &str, value: &str, source: &str) -> Value {
+    make_object(vec![
+        ("type".to_string(), Value::String(kind.to_string())),
+        ("value".to_string(), Value::String(value.to_string())),
+        ("source".to_string(), Value::String(source.to_string())),
+    ])
+}
+
+fn tagged_parts(parts: Vec<Value>, source: &str) -> Vec<Value> {
+    parts
+        .into_iter()
+        .map(|part| {
+            crate::builtins::set_property(part, "source", Value::String(source.to_string()))
+        })
+        .collect()
 }
 
 const DIGIT_BASES: &[(&str, u32)] = &[
