@@ -157,7 +157,10 @@ fn invoke_with_receiver(
     match callee_value {
         Value::Function(body) => crate::functions::execute(body, receiver, arguments),
         Value::BoundFunction(bound)
-            if matches!(bound.target, Value::Builtin(crate::ops::Builtin::HostCapability(_))) =>
+            if matches!(
+                bound.target,
+                Value::Builtin(crate::ops::Builtin::HostCapability(_))
+            ) =>
         {
             let Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
                 unreachable!()
