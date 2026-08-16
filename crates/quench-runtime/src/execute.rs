@@ -21,6 +21,10 @@ pub fn set_property(
     crate::builtins::set_property(target, key, value)
 }
 
+pub fn delete_property(target: crate::value::Value, key: &str) -> (crate::value::Value, bool) {
+    crate::builtins::delete_property(target, key)
+}
+
 /// Define an own property with an explicit JavaScript property descriptor.
 /// Hosts use this to expose non-enumerable compatibility methods without
 /// changing the engine's object model.
