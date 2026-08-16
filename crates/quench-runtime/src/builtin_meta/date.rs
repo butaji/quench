@@ -11,6 +11,7 @@ pub fn date_prop(key: &str) -> Option<Builtin> {
         "toDateString" => Some(DateToDateString),
         "toTimeString" => Some(DateToTimeString),
         "toUTCString" => Some(DateToUTCString),
+        "toGMTString" => Some(DateToUTCString),
         "toISOString" => Some(DateToISOString),
         "toJSON" => Some(DateToJSON),
         "Symbol.toPrimitive" => Some(DateToPrimitive),
