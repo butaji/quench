@@ -116,18 +116,44 @@ fn compile_arguments(arguments: &[Value]) -> Result<(String, String), VmError> {
         ));
     }
     let pattern = if pattern_is_regexp {
-        crate::execute::get_property_result(pattern_value, "source")
-            .and_then(|value| crate::conversion::to_string(&value))?
+        internal_regexp_string(pattern_value, "source")?
     } else {
         crate::conversion::to_string(pattern_value)?
     };
     let flags = if pattern_is_regexp {
-        crate::execute::get_property_result(pattern_value, "flags")
-            .and_then(|value| crate::conversion::to_string(&value))?
+        internal_regexp_string(pattern_value, "flags")?
     } else {
         explicit_flags.map_or_else(|| Ok(String::new()), crate::conversion::to_string)?
     };
     Ok((pattern, flags))
+}
+
+fn internal_regexp_string(value: &Value, key: &str) -> Result<String, VmError> {
+    let Value::Object(properties) = value else {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp internal slot is unavailable",
+        ));
+    };
+    let internal_key = match key {
+        "source" => "\0regexp_source",
+        "flags" => "\0regexp_flags",
+        _ => key,
+    };
+    properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| {
+            (name == internal_key).then(|| match value {
+                Value::BindingCell(cell) => match &*cell.borrow() {
+                    Value::String(text) => Some(text.clone()),
+                    _ => None,
+                },
+                Value::String(text) => Some(text.clone()),
+                _ => None,
+            })
+        })
+        .flatten()
+        .ok_or_else(|| crate::value::error::throw_type_error("RegExp internal slot is unavailable"))
 }
 
 fn update_compiled_receiver(
@@ -144,6 +170,8 @@ fn update_compiled_receiver(
         let next = match key.as_str() {
             "source" => Some(Value::String(pattern.to_string())),
             "flags" => Some(Value::String(flags.to_string())),
+            "\0regexp_source" => Some(Value::String(pattern.to_string())),
+            "\0regexp_flags" => Some(Value::String(flags.to_string())),
             _ => None,
         };
         if let (Some(next), Value::BindingCell(cell)) = (next, value) {

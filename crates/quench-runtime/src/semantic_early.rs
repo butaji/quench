@@ -16,6 +16,109 @@ pub(crate) fn lexically_declared_names(program: &oxc::ast::ast::Program<'_>) -> 
     lexically_declared_names_in(&program.body)
 }
 
+pub(crate) fn annex_b_lexical_collisions(program: &oxc::ast::ast::Program<'_>) -> HashSet<String> {
+    let mut collisions = HashSet::new();
+    collect_annex_b_collisions(&program.body, &[], &mut collisions);
+    collisions
+}
+
+fn collect_annex_b_collisions(
+    statements: &[Statement<'_>],
+    visible: &[String],
+    collisions: &mut HashSet<String>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::BlockStatement(block) => {
+                let mut nested = visible.to_vec();
+                nested.extend(lexically_declared_names_in(&block.body));
+                collect_annex_b_collisions(&block.body, &nested, collisions);
+            }
+            Statement::FunctionDeclaration(function) => {
+                if let Some(identifier) = &function.id {
+                    if visible.iter().any(|name| name == identifier.name.as_str()) {
+                        collisions.insert(identifier.name.to_string());
+                    }
+                }
+            }
+            Statement::IfStatement(statement) => {
+                collect_annex_b_collisions(
+                    std::slice::from_ref(&statement.consequent),
+                    visible,
+                    collisions,
+                );
+                if let Some(alternate) = &statement.alternate {
+                    collect_annex_b_collisions(
+                        std::slice::from_ref(alternate),
+                        visible,
+                        collisions,
+                    );
+                }
+            }
+            Statement::ForInStatement(statement) => {
+                let mut nested = visible.to_vec();
+                extend_loop_lexicals(&statement.left, &mut nested);
+                collect_annex_b_collisions(
+                    std::slice::from_ref(&statement.body),
+                    &nested,
+                    collisions,
+                );
+            }
+            Statement::ForOfStatement(statement) => {
+                let mut nested = visible.to_vec();
+                extend_loop_lexicals(&statement.left, &mut nested);
+                collect_annex_b_collisions(
+                    std::slice::from_ref(&statement.body),
+                    &nested,
+                    collisions,
+                );
+            }
+            Statement::SwitchStatement(statement) => {
+                let mut nested = visible.to_vec();
+                for case in &statement.cases {
+                    nested.extend(lexically_declared_names_in(&case.consequent));
+                }
+                for case in &statement.cases {
+                    collect_annex_b_collisions(&case.consequent, &nested, collisions);
+                }
+            }
+            Statement::TryStatement(statement) => {
+                collect_annex_b_collisions(&statement.block.body, visible, collisions);
+                if let Some(handler) = &statement.handler {
+                    let mut nested = visible.to_vec();
+                    if let Some(parameter) = &handler.param {
+                        if !matches!(
+                            parameter.pattern.kind,
+                            BindingPatternKind::BindingIdentifier(_)
+                        ) {
+                            nested.extend(crate::binding_patterns::names(&parameter.pattern));
+                        }
+                    }
+                    collect_annex_b_collisions(&handler.body.body, &nested, collisions);
+                }
+                if let Some(finalizer) = &statement.finalizer {
+                    collect_annex_b_collisions(&finalizer.body, visible, collisions);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extend_loop_lexicals(left: &oxc::ast::ast::ForStatementLeft<'_>, names: &mut Vec<String>) {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        return;
+    };
+    if declaration.kind != VariableDeclarationKind::Var {
+        names.extend(
+            declaration
+                .declarations
+                .iter()
+                .flat_map(|declarator| crate::binding_patterns::names(&declarator.id)),
+        );
+    }
+}
+
 pub(crate) fn lexically_declared_names_in(statements: &[Statement<'_>]) -> Vec<String> {
     let mut names = BTreeSet::new();
     for statement in statements {

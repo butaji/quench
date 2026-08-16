@@ -44,7 +44,7 @@ fn is_leap_year(year: i32) -> bool {
 
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
@@ -52,11 +52,62 @@ pub(crate) fn execute(
             "Temporal.PlainDate requires new",
         ))),
         crate::ops::Builtin::TemporalPlainDateFrom => Some(from(arguments.first())),
+        crate::ops::Builtin::TemporalPlainDateWithCalendar => {
+            Some(with_calendar(receiver, arguments.first()))
+        }
+        crate::ops::Builtin::TemporalPlainDateValueOf => {
+            Some(Err(crate::value::error::throw_type_error(
+                "Temporal.PlainDate.prototype.valueOf is not allowed",
+            )))
+        }
         _ => None,
     }
 }
 
+fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let calendar = calendar.unwrap_or(&Value::Undefined);
+    if !matches!(calendar, Value::Undefined | Value::String(_)) {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
+    construct(&[
+        field(object, "year"),
+        field(object, "month"),
+        field(object, "day"),
+        calendar.clone(),
+    ])
+}
+
+fn invalid_receiver() -> VmError {
+    crate::value::error::throw_type_error(
+        "Temporal.PlainDate.prototype.withCalendar called on incompatible receiver",
+    )
+}
+
+fn has_date_fields(object: &crate::value::ObjectData) -> bool {
+    ["year", "month", "day"].iter().all(|name| {
+        object
+            .iter()
+            .any(|(key, value)| key == *name && matches!(value, Value::Number(_)))
+    })
+}
+
+fn field(object: &crate::value::ObjectData, name: &str) -> Value {
+    object
+        .iter()
+        .find(|(key, _)| key == name)
+        .map_or(Value::Undefined, |(_, value)| value.clone())
+}
+
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
+    if let Some(value) = value.filter(|value| crate::value::is_object(value)) {
+        return from_property_bag(value);
+    }
     let Some(Value::String(text)) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
@@ -121,6 +172,41 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     }
     let (year, month, day) = parse_date_parts(&parts)?;
     checked_date_object(year, month, day)
+}
+
+fn from_property_bag(value: &Value) -> Result<Value, VmError> {
+    let year = crate::execute::get_property_result(value, "year")?;
+    let month = crate::execute::get_property_result(value, "month")?;
+    let month_code = crate::execute::get_property_result(value, "monthCode")?;
+    let day = crate::execute::get_property_result(value, "day")?;
+    let calendar = crate::execute::get_property_result(value, "calendar")?;
+    let calendar = match calendar {
+        Value::Undefined => calendar,
+        Value::String(_) | Value::StringUnits(_) => {
+            Value::String(crate::conversion::to_string(&calendar)?)
+        }
+        _ => return Err(crate::value::error::throw_type_error("Invalid calendar")),
+    };
+    let month = if matches!(month, Value::Undefined) {
+        month_from_code(month_code)?
+    } else {
+        month
+    };
+    construct(&[year, month, day, calendar])
+}
+
+fn month_from_code(value: Value) -> Result<Value, VmError> {
+    if !matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+    }
+    let text = crate::conversion::to_string(&value)?;
+    let month = text
+        .strip_prefix('M')
+        .filter(|value| value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|value| value.parse::<u8>().ok())
+        .filter(|month| (1..=12).contains(month))
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
+    Ok(Value::Number(f64::from(month)))
 }
 
 fn has_uppercase_annotation_key(text: &str) -> bool {

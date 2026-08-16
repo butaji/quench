@@ -228,7 +228,11 @@ fn language_code_valid(code: &str) -> bool {
 }
 
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
-    super::intl_slots(receiver)
+    let slots = super::intl_slots(receiver)?;
+    if slot_string(&slots, "type").is_none() {
+        return Err(runtime_error("TypeError: not a DisplayNames object"));
+    }
+    Ok(slots)
 }
 
 fn option_string(options: &Value, name: &str, missing: &str) -> Result<String, VmError> {
@@ -254,12 +258,18 @@ fn display_name(
     let _ = style;
     match display_type {
         "language" => language_name(code, fallback),
-        "region" => Value::String(code.to_string()),
-        "currency" => Value::String(code.to_string()),
-        "script" => Value::String(code.to_string()),
-        "calendar" => Value::String(code.to_string()),
-        "dateTimeField" => Value::String(code.to_string()),
-        _ => Value::String(code.to_string()),
+        "region" | "currency" | "script" | "calendar" | "dateTimeField" => {
+            code_fallback(code, fallback)
+        }
+        _ => code_fallback(code, fallback),
+    }
+}
+
+fn code_fallback(code: &str, fallback: &str) -> Value {
+    if fallback == "none" {
+        Value::Undefined
+    } else {
+        Value::String(code.to_string())
     }
 }
 

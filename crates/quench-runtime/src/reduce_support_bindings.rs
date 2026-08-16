@@ -7,7 +7,13 @@ pub(crate) fn eval_bindings(
 ) -> EvalBindings {
     let mut locals = bindings.iter().cloned().collect::<HashMap<String, u16>>();
     let mut next_slot = register_base(&locals);
-    let names = crate::semantic_early::var_declared_names(program);
+    let collisions = crate::semantic_early::annex_b_lexical_collisions(program);
+    let names = crate::semantic_early::var_declared_names(program)
+        .into_iter()
+        .filter(|name| {
+            !collisions.contains(name) || bindings.iter().any(|(bound, _)| bound == name)
+        })
+        .collect::<Vec<_>>();
     let declared = if strict {
         shadow_names(&names, &mut locals, &mut next_slot);
         Vec::new()
@@ -31,7 +37,11 @@ pub(crate) fn eval_bindings(
     let mut prefix = eval_binding_prefix(&deletable);
     let lexical_names = crate::semantic_early::lexically_declared_names(program);
     let lexical = shadow_names(&lexical_names, &mut locals, &mut next_slot);
-    prefix.extend(lexical.into_iter().map(|(_, slot)| Op::MarkUninitialized { slot }));
+    prefix.extend(
+        lexical
+            .into_iter()
+            .map(|(_, slot)| Op::MarkUninitialized { slot }),
+    );
     (locals, next_slot, prefix, behavior, deletable)
 }
 
@@ -141,9 +151,6 @@ pub(crate) fn predeclare_lexicals(
             .iter()
             .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
         {
-            if locals.contains_key(&name) {
-                continue;
-            }
             let slot = *next_slot;
             *next_slot = next_slot.saturating_add(1);
             locals.insert(name.clone(), slot);
@@ -176,9 +183,9 @@ fn collect_declared_names(statement: &oxc::ast::ast::Statement<'_>, names: &mut 
             collect_declared_names(&statement.body, names);
         }
         oxc::ast::ast::Statement::IfStatement(statement) => {
-            collect_declared_names(&statement.consequent, names);
+            collect_nested_declared_names(&statement.consequent, names);
             if let Some(alternate) = &statement.alternate {
-                collect_declared_names(alternate, names);
+                collect_nested_declared_names(alternate, names);
             }
         }
         oxc::ast::ast::Statement::WhileStatement(statement) => {
@@ -188,6 +195,25 @@ fn collect_declared_names(statement: &oxc::ast::ast::Statement<'_>, names: &mut 
             collect_declared_names(&statement.body, names);
         }
         _ => {}
+    }
+}
+
+fn collect_nested_declared_names(
+    statement: &oxc::ast::ast::Statement<'_>,
+    names: &mut Vec<String>,
+) {
+    match statement {
+        oxc::ast::ast::Statement::FunctionDeclaration(_) => {}
+        oxc::ast::ast::Statement::BlockStatement(block) => {
+            collect_block_var_names(&block.body, names)
+        }
+        oxc::ast::ast::Statement::IfStatement(statement) => {
+            collect_nested_declared_names(&statement.consequent, names);
+            if let Some(alternate) = &statement.alternate {
+                collect_nested_declared_names(alternate, names);
+            }
+        }
+        _ => collect_declared_names(statement, names),
     }
 }
 
@@ -210,7 +236,9 @@ fn collect_declaration_names(
     names: &mut Vec<String>,
 ) {
     for declarator in &declaration.declarations {
-        if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind {
+        if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
+            &declarator.id.kind
+        {
             names.push(identifier.name.to_string());
         }
     }

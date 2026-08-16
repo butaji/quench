@@ -2,16 +2,25 @@
 
 use std::{cell::RefCell, rc::Rc};
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::{
     execute::VmError,
     value::{IteratorData, IteratorState, Value},
 };
 
-use super::{default_locale, make_object, resolve_locales, runtime_error, slot_string, SLOT};
+use super::{
+    default_locale, make_object, resolve_locales, runtime_error, slot_string,
+    supported_segmenter_locale, SLOT,
+};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let locale = locales
+        .iter()
+        .find(|locale| supported_segmenter_locale(locale))
+        .cloned()
+        .unwrap_or_else(default_locale);
     let granularity = segmenter_granularity(arguments.get(1))?;
     Ok(make_object(vec![
         (
@@ -38,26 +47,30 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn segmenter_granularity(option: Option<&Value>) -> Result<String, VmError> {
     let mut granularity = "grapheme".to_string();
-    if matches!(option, Some(Value::Null)) {
+    let Some(option) = option else {
+        return Ok(granularity);
+    };
+    if matches!(option, Value::Undefined) {
+        return Ok(granularity);
+    }
+    if !crate::value::is_object(option) {
         return Err(crate::value::error::throw_type_error(
-            "Cannot convert null to object",
+            "Cannot convert options to object",
         ));
     }
-    if let Some(Value::Object(properties)) = option {
-        let options = Value::Object(properties.clone());
-        let matcher = crate::execute::get_property_result(&options, "localeMatcher")?;
-        if !matches!(matcher, Value::Undefined) {
-            let matcher = crate::conversion::to_string(&matcher)?;
-            if matcher != "lookup" && matcher != "best fit" {
-                return Err(runtime_error("RangeError: invalid localeMatcher"));
-            }
+    let options = crate::construct::to_object(option)?;
+    let matcher = crate::execute::get_property_result(&options, "localeMatcher")?;
+    if !matches!(matcher, Value::Undefined) {
+        let matcher = crate::conversion::to_string(&matcher)?;
+        if matcher != "lookup" && matcher != "best fit" {
+            return Err(runtime_error("RangeError: invalid localeMatcher"));
         }
-        let value = crate::execute::get_property_result(&options, "granularity")?;
-        if !matches!(value, Value::Undefined) {
-            granularity = crate::conversion::to_string(&value)?;
-            if !matches!(granularity.as_str(), "grapheme" | "word" | "sentence") {
-                return Err(runtime_error("RangeError: invalid granularity"));
-            }
+    }
+    let value = crate::execute::get_property_result(&options, "granularity")?;
+    if !matches!(value, Value::Undefined) {
+        granularity = crate::conversion::to_string(&value)?;
+        if !matches!(granularity.as_str(), "grapheme" | "word" | "sentence") {
+            return Err(runtime_error("RangeError: invalid granularity"));
         }
     }
     Ok(granularity)
@@ -74,9 +87,13 @@ pub(crate) fn prototype_method(
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
             let granularity =
                 slot_string(&slots, "granularity").unwrap_or_else(|| "grapheme".to_string());
-            let text =
-                crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
-            Ok(segment(&text, &granularity, &locale))
+            let primitive = crate::conversion::to_primitive(
+                arguments.first().unwrap_or(&Value::Undefined),
+                "string",
+            )?;
+            let text = crate::conversion::to_string(&primitive)?;
+            let units = crate::strings::units_of(&primitive);
+            Ok(segment(&text, &granularity, &locale, units.as_deref()))
         }
         crate::ops::Builtin::IntlSegmenterSegmentsIterator => segments_iterator(receiver),
         crate::ops::Builtin::IntlSegmenterSegmentsContaining => {
@@ -100,13 +117,14 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
     super::intl_slots(receiver)
 }
 
-fn segment(text: &str, granularity: &str, locale: &str) -> Value {
+fn segment(text: &str, granularity: &str, locale: &str, units: Option<&[u16]>) -> Value {
     let _ = locale;
     let segments = match granularity {
         "word" => word_segments(text),
         "sentence" => sentence_segments(text),
         _ => grapheme_segments(text),
     };
+    let segments = restore_raw_units(segments, units);
     make_object(vec![
         ("__segments".to_string(), Value::array(segments)),
         (
@@ -120,37 +138,55 @@ fn segment(text: &str, granularity: &str, locale: &str) -> Value {
     ])
 }
 
-fn grapheme_segments(text: &str) -> Vec<Value> {
-    let mut result = Vec::new();
-    let mut start = None;
-    let mut utf16_index = 0;
-    let mut start_utf16 = 0;
-    for (byte_index, character) in text.char_indices() {
-        if start.is_none() {
-            start = Some(byte_index);
-            start_utf16 = utf16_index;
-        } else if !is_combining_mark(character) {
-            if let Some(cluster_start) = start {
-                result.push(segment_entry(
-                    &text[cluster_start..byte_index],
-                    start_utf16,
-                    text,
-                    false,
-                ));
-            }
-            start = Some(byte_index);
-            start_utf16 = utf16_index;
-        }
-        utf16_index += character.len_utf16();
-    }
-    if let Some(start) = start {
-        result.push(segment_entry(&text[start..], start_utf16, text, false));
-    }
-    result
+fn restore_raw_units(segments: Vec<Value>, units: Option<&[u16]>) -> Vec<Value> {
+    let Some(units) = units.filter(|units| !crate::strings::units_well_formed(units)) else {
+        return segments;
+    };
+    let input = crate::strings::from_units(units.to_vec());
+    let source = segments.clone();
+    segments
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| restore_segment(value, index, &source, &input, units))
+        .collect()
 }
 
-fn is_combining_mark(character: char) -> bool {
-    matches!(character as u32, 0x0300..=0x036f | 0x1ab0..=0x1aff | 0x1dc0..=0x1dff | 0x20d0..=0x20ff)
+fn restore_segment(
+    value: Value,
+    index: usize,
+    source: &[Value],
+    input: &Value,
+    units: &[u16],
+) -> Value {
+    let Value::Object(object) = value else {
+        return value;
+    };
+    let start = segment_index(&Value::Object(object.clone()));
+    let end = source
+        .get(index + 1)
+        .map_or(units.len(), |value| segment_index(value));
+    let segment = crate::strings::from_units(units[start..end].to_vec());
+    let properties = object
+        .properties
+        .iter()
+        .map(|(name, value)| match name.as_str() {
+            "segment" => (name.clone(), segment.clone()),
+            "input" => (name.clone(), input.clone()),
+            _ => (name.clone(), value.clone()),
+        })
+        .collect();
+    make_object(properties)
+}
+
+fn grapheme_segments(text: &str) -> Vec<Value> {
+    let mut utf16_index = 0;
+    text.grapheme_indices(true)
+        .map(|(_, cluster)| {
+            let entry = segment_entry(cluster, utf16_index, text, false);
+            utf16_index += cluster.encode_utf16().count();
+            entry
+        })
+        .collect()
 }
 
 fn sentence_segments(text: &str) -> Vec<Value> {
@@ -188,7 +224,10 @@ fn word_segments(text: &str) -> Vec<Value> {
     let mut start_utf16 = 0;
     let mut utf16_index = 0;
     let mut kind: Option<u8> = None;
-    for (index, character) in text.char_indices() {
+    for (index, cluster) in text.grapheme_indices(true) {
+        let Some(character) = cluster.chars().next() else {
+            continue;
+        };
         let next_kind = if decimal_point(text, index, character) {
             1
         } else {
@@ -199,7 +238,7 @@ fn word_segments(text: &str) -> Vec<Value> {
             start = index;
             start_utf16 = utf16_index;
         }
-        utf16_index += character.len_utf16();
+        utf16_index += cluster.encode_utf16().count();
         kind = Some(next_kind);
     }
     if start < text.len() {
@@ -298,10 +337,7 @@ fn segments_containing(receiver: Option<&Value>, arguments: &[Value]) -> Result<
 fn segment_input_length(value: Option<&Value>) -> usize {
     value
         .and_then(|value| crate::execute::get_property_result(value, "input").ok())
-        .and_then(|value| match value {
-            Value::String(text) => Some(text.encode_utf16().count()),
-            _ => None,
-        })
+        .and_then(|value| crate::strings::units_of(&value).map(|units| units.len()))
         .unwrap_or(0)
 }
 

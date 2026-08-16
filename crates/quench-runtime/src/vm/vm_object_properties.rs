@@ -72,7 +72,10 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
         if key == "format"
             && matches!(
                 value,
-                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormat)
+                Value::Builtin(
+                    crate::ops::Builtin::IntlDateTimeFormatFormat
+                        | crate::ops::Builtin::IntlNumberFormatFormat,
+                )
             )
         {
             return Some(crate::vm::bind_receiver_property(

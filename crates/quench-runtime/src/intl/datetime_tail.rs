@@ -8,7 +8,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlDateTimeFormat => Some(construct(arguments)),
+        crate::ops::Builtin::IntlDateTimeFormat => Some(construct_call(arguments, receiver)),
         crate::ops::Builtin::IntlDateTimeFormatFormatGetter => Some(format_getter(receiver)),
         crate::ops::Builtin::IntlDateTimeFormatFormat
         | crate::ops::Builtin::IntlDateTimeFormatFormatToParts
@@ -18,6 +18,38 @@ pub(crate) fn dispatch(
             Some(prototype_method(builtin, arguments, receiver))
         }
         _ => None,
+    }
+}
+
+fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return construct(arguments);
+    };
+    let is_legacy = legacy_receiver(receiver)?;
+    if is_legacy && receiver_slots(Some(receiver)).is_ok() {
+        return Ok(receiver.clone());
+    }
+    if !is_legacy {
+        return construct(arguments);
+    }
+    let initialized = construct(arguments)?;
+    let slots = crate::execute::get_property(&initialized, super::datetime::SLOT);
+    let symbol = crate::intl::tolocale::symbol::legacy_symbol()?;
+    let receiver = crate::builtins::set_property(receiver.clone(), super::datetime::SLOT, slots);
+    let key = symbol_key(&symbol)?;
+    Ok(crate::builtins::set_property(receiver, &key, symbol))
+}
+
+fn legacy_receiver(receiver: &Value) -> Result<bool, VmError> {
+    let prototype = crate::vm::realm_intrinsic(crate::ops::Builtin::IntlDateTimeFormatPrototype);
+    crate::builtins::object::is_prototype_of(Some(&prototype), &[receiver.clone()])
+        .map(|value| matches!(value, Value::Boolean(true)))
+}
+
+fn symbol_key(symbol: &Value) -> Result<String, VmError> {
+    match symbol {
+        Value::String(value) => Ok(value.clone()),
+        _ => Err(runtime_error("TypeError: invalid fallback symbol")),
     }
 }
 
