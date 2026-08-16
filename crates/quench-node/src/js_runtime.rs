@@ -4880,7 +4880,10 @@ fn format_detailed_value(value: &Value) -> String {
             let name = quench_runtime::execute::get_property_result(value, "name").ok()
                 .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
                 .unwrap_or_default();
-            if name.is_empty() { "<ref *1> [Function]".into() } else { format!("<ref *1> [Function: {name}]") }
+            let header = if name.is_empty() { "<ref *1> [Function]".into() } else { format!("<ref *1> [Function: {name}]") };
+            let length = quench_runtime::execute::get_property_result(value, "length")
+                .ok().and_then(|value| match value { Value::Number(value) => Some(value as usize), _ => None }).unwrap_or(0);
+            format!("{header} {{\n  [length]: {length},\n  [name]: '{name}',\n  [prototype]: {{ [constructor]: [Circular *1] }}\n}}")
         }
         Value::Array(array) => {
             let value = Value::Array(array.clone());
@@ -4900,10 +4903,11 @@ fn format_detailed_value(value: &Value) -> String {
             for index in 0..length {
                 let Some(key) = keys.as_ref().and_then(|keys| quench_runtime::execute::get_property_result(keys, &index.to_string()).ok()).and_then(|value| match value { Value::String(value) => Some(value), _ => None }) else { continue };
                 if let Ok(property) = quench_runtime::execute::get_property_result(value, &key) {
-                    properties.push(format!("{}: {}", key, format_detailed_value(&property)));
+                    let formatted = format_detailed_value(&property).replace('\n', "\n  ");
+                    properties.push(format!("{}: {}", key, formatted));
                 }
             }
-            format!("{{ {} }}", properties.join(", "))
+            if properties.is_empty() { "{}".into() } else { format!("{{\n  {}\n}}", properties.join(",\n  ")) }
         }
         _ => format_compact_value(value),
     }
