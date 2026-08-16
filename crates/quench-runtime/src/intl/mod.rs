@@ -602,7 +602,6 @@ fn canonicalize_subtags(
     let parts: Vec<&str> = variant_aliased.iter().map(String::as_str).collect();
     validate_extension_boundaries(&parts)?;
     let mut region_done = false;
-    let mut variant_done = false;
     let mut extension = false;
     let four_letter_language = out.first().is_some_and(|language| language.len() == 4);
     let mut variants = std::collections::HashSet::new();
@@ -634,7 +633,7 @@ fn canonicalize_subtags(
         if is_variant_shape(part) && !variants.insert(part.to_ascii_lowercase()) {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
-        match classify_subtag(part, script_done, region_done, variant_done) {
+        match classify_subtag(part, script_done, region_done) {
             Subtag::Script => {
                 out.push(titlecase_script(part));
                 script_done = true;
@@ -645,27 +644,28 @@ fn canonicalize_subtags(
             }
             Subtag::Variant => {
                 out.push(part.to_ascii_lowercase());
-                variant_done = true;
             }
-            Subtag::Extension => out.push(part.to_ascii_lowercase()),
+            Subtag::Extension if extension => out.push(part.to_ascii_lowercase()),
+            Subtag::Extension => return Err(runtime_error("RangeError: invalid language tag")),
         }
     }
     Ok(out)
 }
 
 fn is_variant_shape(part: &str) -> bool {
-    let all_alpha = part
+    let valid_length = (4..=8).contains(&part.len());
+    let alphanumeric = part
         .chars()
-        .all(|character| character.is_ascii_alphabetic());
-    let numeric_variant = (4..=8).contains(&part.len())
+        .all(|character| character.is_ascii_alphanumeric());
+    let first = part.chars().next();
+    let alpha_variant = part.len() == 4
         && part
             .chars()
-            .next()
-            .is_some_and(|character| character.is_ascii_digit())
-        && part[1..]
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric());
-    (part.len() >= 4 && all_alpha) || numeric_variant
+            .all(|character| character.is_ascii_alphabetic())
+        || (5..=8).contains(&part.len())
+            && first.is_some_and(|character| character.is_ascii_alphabetic());
+    let numeric_variant = first.is_some_and(|character| character.is_ascii_digit());
+    valid_length && alphanumeric && (alpha_variant || numeric_variant)
 }
 
 fn validate_extension_boundaries(parts: &[&str]) -> Result<(), VmError> {
@@ -784,14 +784,14 @@ enum Subtag {
     Extension,
 }
 
-fn classify_subtag(part: &str, script_done: bool, region_done: bool, variant_done: bool) -> Subtag {
+fn classify_subtag(part: &str, script_done: bool, region_done: bool) -> Subtag {
     let all_alpha = part.chars().all(|c| c.is_ascii_alphabetic());
     let all_digit = part.chars().all(|c| c.is_ascii_digit());
     if !script_done && part.len() == 4 && all_alpha {
         Subtag::Script
     } else if !region_done && ((part.len() == 2 && all_alpha) || (part.len() == 3 && all_digit)) {
         Subtag::Region
-    } else if !variant_done && is_variant_shape(part) {
+    } else if is_variant_shape(part) {
         Subtag::Variant
     } else {
         Subtag::Extension
