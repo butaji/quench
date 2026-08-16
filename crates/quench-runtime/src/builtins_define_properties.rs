@@ -17,9 +17,7 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
     };
     keys.iter().try_fold(target, |target, key| {
         let key = crate::conversion::to_property_key(key)?;
-        let property_descriptor =
-            crate::proxy::proxy_get_own_property_descriptor(&properties, &key)?;
-        let descriptor = crate::execute::get_property_result(&property_descriptor, "value")?;
+        let descriptor = property_descriptor(&properties, &key)?;
         let Some(descriptor) = descriptor_object(descriptor) else {
             return Ok(target);
         };
@@ -28,6 +26,17 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
         crate::locals::replace_value(&target, &result);
         Ok(result)
     })
+}
+
+fn property_descriptor(properties: &Value, key: &str) -> Result<Value, crate::execute::VmError> {
+    if matches!(properties, Value::Proxy(_)) {
+        let property = crate::proxy::proxy_get_own_property_descriptor(properties, key)?;
+        if matches!(property, Value::Undefined) {
+            return Ok(Value::Undefined);
+        }
+        return crate::execute::get_property_result(&property, "value");
+    }
+    crate::execute::get_property_result(properties, key)
 }
 
 fn descriptor_object(value: Value) -> Option<Value> {
