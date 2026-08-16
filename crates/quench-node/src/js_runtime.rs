@@ -3332,7 +3332,8 @@ fn path_join(arguments: &[Value]) -> Result<Value, VmError> {
     for argument in arguments {
         path.push(path_arg(std::slice::from_ref(argument), 0)?);
     }
-    Ok(Value::String(path.to_string_lossy().into_owned().into()))
+    let joined = Value::String(path.to_string_lossy().into_owned().into());
+    path_normalize(&[joined], false)
 }
 
 fn path_extname(arguments: &[Value]) -> Result<Value, VmError> {
