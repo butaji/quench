@@ -28,6 +28,7 @@ thread_local! {
     static NODE_EXPERIMENTAL_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static NODE_DNS_SERVERS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static NODE_STREAM_PROMISES: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_PENDING_DGRAM_CALLBACKS: RefCell<Vec<(Value, Value)>> = const { RefCell::new(Vec::new()) };
     static NODE_TIMERS_PROMISES: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_TIMER_COUNTS: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
     static NODE_ASSERT_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
@@ -188,6 +189,7 @@ impl CapabilityName {
     const DgramDropMembership: u16 = 2219;
     const DgramGetSendQueueSize: u16 = 2220;
     const DgramGetSendQueueCount: u16 = 2221;
+    const DgramDrainCallbacks: u16 = 2222;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
     const TextEncoderConstructor: u16 = 2060;
@@ -1366,6 +1368,9 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::DgramGetSendQueueCount) => {
                 self.dgram_call(CapabilityName::DgramGetSendQueueCount, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::DgramDrainCallbacks) => {
+                drain_dgram_callbacks()
             }
             HostCapabilityKind::Custom(
                 CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes,
@@ -2698,11 +2703,11 @@ impl QuenchNodeHost {
                     .cloned();
                 drop(states);
                 if let Some(callback) = callback {
-                    quench_runtime::execute::call(
-                        &callback,
-                        receiver.unwrap_or(&Value::Undefined),
-                        &[],
-                    )?;
+                    NODE_PENDING_DGRAM_CALLBACKS.with(|pending| {
+                        pending
+                            .borrow_mut()
+                            .push((callback, receiver.cloned().unwrap_or(Value::Undefined)));
+                    });
                 }
                 Ok(Value::Undefined)
             }
@@ -4647,6 +4652,14 @@ fn crypto_shake_bytes(arguments: &[Value]) -> Result<Value, VmError> {
         _ => return Err(VmError::EvalError("unsupported shake algorithm".into())),
     }
     Ok(quench_runtime::host_api::bytes(&output))
+}
+
+fn drain_dgram_callbacks() -> Result<Value, VmError> {
+    let callbacks = NODE_PENDING_DGRAM_CALLBACKS.with(|pending| pending.take());
+    for (callback, receiver) in callbacks {
+        quench_runtime::execute::call(&callback, &receiver, &[])?;
+    }
+    Ok(Value::Undefined)
 }
 
 impl QuenchNodeHost {
@@ -10838,7 +10851,7 @@ impl JsRuntime for QuenchRuntime {
         }) {
             NODE_PROCESS_TITLE.with(|current| current.replace(title.to_owned()));
         }
-        let source_with_globals = format!("var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; globalThis.global = globalThis;\n{source}");
+        let source_with_globals = format!("var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; globalThis.global = globalThis;\n{source}\nglobalThis.__quench_drain_dgram_callbacks();");
         let program =
             match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
                 true => quench_runtime::reduce::reduce_module_source(&source_with_globals),
@@ -10915,6 +10928,7 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced),
                 HostCapabilityKind::Custom(CapabilityName::PathJoin),
                 HostCapabilityKind::Custom(CapabilityName::PathExtname),
+                HostCapabilityKind::Custom(CapabilityName::DgramDrainCallbacks),
                 HostCapabilityKind::Custom(CapabilityName::CryptoDigestBytes),
                 HostCapabilityKind::Custom(CapabilityName::CryptoShakeBytes),
             ],
@@ -11012,6 +11026,12 @@ impl JsRuntime for QuenchRuntime {
             .with_host_value(
                 "__quench_shake_bytes",
                 capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoShakeBytes)),
+            )
+            .with_host_value(
+                "__quench_drain_dgram_callbacks",
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramDrainCallbacks,
+                )),
             );
         quench_runtime::execute::execute_with_context(program.ops(), &context)
             .map(|_| ())
