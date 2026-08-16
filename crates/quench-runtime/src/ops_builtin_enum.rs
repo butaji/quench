@@ -135,6 +135,8 @@ pub enum Builtin {
     TemporalDurationDaysGetter, TemporalDurationHoursGetter, TemporalDurationMinutesGetter,
     TemporalDurationSecondsGetter, TemporalDurationMillisecondsGetter,
     TemporalDurationMicrosecondsGetter, TemporalDurationNanosecondsGetter,
+    TemporalDurationSignGetter, TemporalDurationBlankGetter,
+    TemporalDurationValueOf,
     TemporalDurationToLocaleString,
     TemporalPlainDate, TemporalPlainDatePrototype,
     TemporalPlainDateFrom, TemporalPlainDateWithCalendar, TemporalPlainDateValueOf,

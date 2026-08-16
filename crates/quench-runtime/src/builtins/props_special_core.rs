@@ -52,6 +52,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
         (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
         (TemporalDurationPrototype, "abs") => Some(Value::Builtin(TemporalDurationAbs)),
+        (TemporalDurationPrototype, "sign") => Some(Value::Builtin(TemporalDurationSignGetter)),
+        (TemporalDurationPrototype, "blank") => Some(Value::Builtin(TemporalDurationBlankGetter)),
+        (TemporalDurationPrototype, "valueOf") => Some(Value::Builtin(TemporalDurationValueOf)),
         (TemporalDurationPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Temporal.Duration".into()))
         }
