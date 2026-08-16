@@ -105,12 +105,14 @@ impl CapabilityName {
     const ChildFork: u16 = 1601;
     const ChildEmit: u16 = 1602;
     const ChildSend: u16 = 1603;
+    const CommonMustCall: u16 = 1700;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
     const PathToNamespaced: u16 = 1303;
     const PathWinToNamespaced: u16 = 1304;
     const PathJoin: u16 = 1305;
+    const PathExtname: u16 = 1306;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -301,6 +303,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ChildSend) => Err(VmError::EvalError(
                 "message argument must be specified".into(),
             )),
+            HostCapabilityKind::Custom(CapabilityName::CommonMustCall) => {
+                arguments.first().cloned().ok_or(VmError::NotCallable)
+            }
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -319,6 +324,7 @@ impl Host for QuenchNodeHost {
                 path_win_to_namespaced(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::PathJoin) => path_join(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathExtname) => path_extname(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferByteLength) => {
                 buffer_byte_length(arguments)
             }
@@ -1263,6 +1269,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::EvalError("require expects a module name".into()));
     };
     if name != "node:path" && name != "path" {
+        if name == "../common" || name.ends_with("/common") {
+            return Ok(Value::object(vec![(
+                "mustCall".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::CommonMustCall)),
+            )]));
+        }
         if name == "assert"
             || name == "node:assert"
             || name == "assert/strict"
@@ -1486,6 +1498,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             "join".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::PathJoin)),
         ),
+        (
+            "extname".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::PathExtname)),
+        ),
         ("basename".into(), basename),
         ("relative".into(), relative.clone()),
         ("dirname".into(), dirname.clone()),
@@ -1575,6 +1591,17 @@ fn path_join(arguments: &[Value]) -> Result<Value, VmError> {
         path.push(path_arg(std::slice::from_ref(argument), 0)?);
     }
     Ok(Value::String(path.to_string_lossy().into_owned().into()))
+}
+
+fn path_extname(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    Ok(Value::String(
+        Path::new(path)
+            .extension()
+            .map(|extension| format!(".{}", extension.to_string_lossy()))
+            .unwrap_or_default()
+            .into(),
+    ))
 }
 
 fn path_dirname(arguments: &[Value]) -> Result<Value, VmError> {
@@ -2234,12 +2261,14 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::ChildFork),
                 HostCapabilityKind::Custom(CapabilityName::ChildEmit),
                 HostCapabilityKind::Custom(CapabilityName::ChildSend),
+                HostCapabilityKind::Custom(CapabilityName::CommonMustCall),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
                 HostCapabilityKind::Custom(CapabilityName::PathToNamespaced),
                 HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced),
                 HostCapabilityKind::Custom(CapabilityName::PathJoin),
+                HostCapabilityKind::Custom(CapabilityName::PathExtname),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
