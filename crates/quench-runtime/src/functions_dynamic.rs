@@ -265,11 +265,11 @@ fn function_source(
         .map(to_string)
         .collect::<Result<Vec<_>, _>>()?
         .join(",");
-    let parameters = normalize_annex_b_comments(&parameters);
+    let parameters = normalize_annex_b_comments(&parameters, false);
     let body = arguments
         .last()
         .map_or_else(|| Ok(String::new()), to_string)?;
-    let body = normalize_annex_b_comments(&body);
+    let body = normalize_annex_b_comments(&body, true);
     let prefix = match (kind, is_async) {
         (FunctionKind::Generator, true) => "async function*",
         (FunctionKind::Generator, false) => "function*",
@@ -279,14 +279,14 @@ fn function_source(
     Ok(format!("{prefix} anonymous({parameters}\n) {{\n{body}\n}}"))
 }
 
-fn normalize_annex_b_comments(source: &str) -> String {
+fn normalize_annex_b_comments(source: &str, allow_leading_close: bool) -> String {
     let source = source.strip_prefix("<!--").unwrap_or(source);
     source
         .lines()
         .enumerate()
         .map(|(line_number, line)| {
             let trimmed = line.trim_start();
-            if line_number > 0 && trimmed.starts_with("-->") {
+            if (allow_leading_close || line_number > 0) && trimmed.starts_with("-->") {
                 &line[..line.len() - trimmed.len()]
             } else {
                 line
