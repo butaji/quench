@@ -253,10 +253,35 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                         CapabilityName::CommonInvalidArgTypeHelper,
                     )),
                 ),
+                ("hasCrypto".into(), Value::Boolean(false)),
+                ("hasQuic".into(), Value::Boolean(false)),
+                ("hasIntl".into(), Value::Boolean(false)),
+                ("hasInspector".into(), Value::Boolean(false)),
+                ("hasSQLite".into(), Value::Boolean(false)),
+                ("PORT".into(), Value::Number(0.0)),
+                (
+                    "skip".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::CommonSkip)),
+                ),
             ]));
         }
         if name.starts_with("../common/") {
-            return Ok(quench_runtime::host_api::object(Vec::new()));
+            return Ok(quench_runtime::host_api::object(vec![
+                ("hasCrypto".into(), Value::Boolean(false)),
+                ("hasQuic".into(), Value::Boolean(false)),
+                ("hasIntl".into(), Value::Boolean(false)),
+                ("hasInspector".into(), Value::Boolean(false)),
+                ("hasSQLite".into(), Value::Boolean(false)),
+                ("PORT".into(), Value::Number(0.0)),
+                ("skip".into(), quench_runtime::host_api::object(Vec::new())),
+                ("mustCall".into(), Value::Undefined),
+                ("mustNotCall".into(), Value::Undefined),
+                ("mustSucceed".into(), Value::Undefined),
+                ("mustCallAtLeast".into(), Value::Undefined),
+                ("fixturesDir".into(), Value::Undefined),
+                ("path".into(), Value::Undefined),
+                ("refresh".into(), Value::Undefined),
+            ]));
         }
         if name == "assert"
             || name == "node:assert"
