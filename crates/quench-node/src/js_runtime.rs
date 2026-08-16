@@ -119,6 +119,8 @@ impl CapabilityName {
     const CryptoGetCiphers: u16 = 2177;
     const CryptoGetCipherInfo: u16 = 2178;
     const CryptoGetCurves: u16 = 2179;
+    const TlsGetCiphers: u16 = 2182;
+    const TlsCreateSecureContext: u16 = 2183;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -1038,6 +1040,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CryptoGetCiphers) => Ok(quench_runtime::host_api::array(vec![Value::String("aes-128-cbc".into())])),
             HostCapabilityKind::Custom(CapabilityName::CryptoGetCipherInfo) => Ok(quench_runtime::host_api::object(vec![("name".into(), Value::String("aes-128-cbc".into())), ("nid".into(), Value::Number(419.0)), ("blockSize".into(), Value::Number(16.0)), ("ivLength".into(), Value::Number(16.0)), ("keyLength".into(), Value::Number(16.0)), ("mode".into(), Value::String("cbc".into()))])),
             HostCapabilityKind::Custom(CapabilityName::CryptoGetCurves) => Ok(quench_runtime::host_api::array(vec![Value::String("secp384r1".into())])),
+            HostCapabilityKind::Custom(CapabilityName::TlsGetCiphers) => Ok(quench_runtime::host_api::array(vec![Value::String("aes256-sha".into()), Value::String("tls_aes_128_ccm_8_sha256".into())])),
+            HostCapabilityKind::Custom(CapabilityName::TlsCreateSecureContext) => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "Failed to parse CRL"))),
             HostCapabilityKind::Custom(id @ (CapabilityName::ZlibOn | CapabilityName::ZlibEnd)) => self.zlib_call(id, receiver, arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
@@ -3643,6 +3647,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ("gzipSync".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibGzipSync))),
             ("deflateSync".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibDeflateSync))),
         ]));
+    }
+    if name == "tls" || name == "node:tls" {
+        return Ok(quench_runtime::host_api::object(vec![("getCiphers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TlsGetCiphers))), ("createSecureContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TlsCreateSecureContext)))]));
     }
     if name == "timers" || name == "node:timers" {
         return Ok(quench_runtime::host_api::object(vec![("promises".into(), timers_promises_module())]));
