@@ -149,9 +149,21 @@ pub(crate) fn predeclare_functions(
     next_slot: &mut u16,
 ) {
     for statement in statements {
-        for name in declared_names(statement) {
+        let names = if matches!(statement, oxc::ast::ast::Statement::FunctionDeclaration(_)) {
+            declared_names(statement)
+        } else {
+            nested_var_names(statement)
+        };
+        for name in names {
             reserve(&name, locals, next_slot);
         }
+    }
+}
+
+fn nested_var_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
+    match statement {
+        oxc::ast::ast::Statement::FunctionDeclaration(_) => Vec::new(),
+        _ => declared_names(statement),
     }
 }
 
