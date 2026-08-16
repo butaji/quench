@@ -15,6 +15,7 @@ use quench_runtime::{
 
 thread_local! {
     static NODE_PROCESS_ENV: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
 }
 
 // Capability numbers are an internal NodeHost registry. Keep them named so
@@ -36,6 +37,8 @@ impl CapabilityName {
     const BufferByteLength: u16 = 9;
     const BufferFrom: u16 = 30;
     const BufferHasInstance: u16 = 1326;
+    const BufferInspectMaxBytesGet: u16 = 1327;
+    const BufferInspectMaxBytesSet: u16 = 1328;
     const BufferAlloc: u16 = 31;
     const BufferIsBuffer: u16 = 32;
     const UtilFormat: u16 = 80;
@@ -725,6 +728,15 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::BufferFrom) => buffer_from(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferHasInstance) => Ok(Value::Boolean(matches!(arguments.first(), Some(Value::Uint8Array(_))))),
+            HostCapabilityKind::Custom(CapabilityName::BufferInspectMaxBytesGet) => Ok(Value::Number(BUFFER_INSPECT_MAX_BYTES.with(Cell::get))),
+            HostCapabilityKind::Custom(CapabilityName::BufferInspectMaxBytesSet) => {
+                let value = arguments.first().and_then(|value| match value { Value::Number(value) => Some(*value), _ => None }).unwrap_or(f64::NAN);
+                if value.is_nan() || value < 0.0 {
+                    return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "INSPECT_MAX_BYTES is out of range")));
+                }
+                BUFFER_INSPECT_MAX_BYTES.with(|current| current.set(value));
+                Ok(Value::Undefined)
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferAlloc) => buffer_alloc(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsBuffer) => {
                 buffer_is_buffer(arguments)
@@ -2971,14 +2983,28 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "buffer" || name == "node:buffer" {
             let buffer = buffer_module();
             let constants = quench_runtime::execute::get_property_result(&buffer, "constants").unwrap_or(Value::Undefined);
-            return Ok(Value::object(vec![
+            let module = Value::object(vec![
                 ("Buffer".into(), buffer),
                 ("constants".into(), constants),
                 ("kMaxLength".into(), Value::Number(4_294_967_296.0)),
                 ("kStringMaxLength".into(), Value::Number(536_870_888.0)),
                 ("isAscii".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::BufferIsAscii))),
                 ("isUtf8".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8))),
-            ]));
+            ]);
+            return Ok(quench_runtime::execute::call(
+                &Value::Builtin(quench_runtime::ops::Builtin::ObjectDefineProperty),
+                &Value::Undefined,
+                &[
+                    module,
+                    Value::String("INSPECT_MAX_BYTES".into()),
+                    Value::object(vec![
+                        ("get".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::BufferInspectMaxBytesGet))),
+                        ("set".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::BufferInspectMaxBytesSet))),
+                        ("enumerable".into(), Value::Boolean(true)),
+                        ("configurable".into(), Value::Boolean(true)),
+                    ]),
+                ],
+            ).unwrap_or_else(|_| Value::Undefined));
         }
         if name == "node:fs" || name == "fs" {
             let realpath_sync = quench_runtime::execute::set_property(
