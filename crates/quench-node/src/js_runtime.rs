@@ -60,6 +60,8 @@ impl CapabilityName {
     const ProcessActiveResourcesInfo: u16 = 2112;
     const VmCreateContext: u16 = 2113;
     const VmRunInContext: u16 = 2114;
+    const VmScript: u16 = 2115;
+    const VmScriptRunInContext: u16 = 2116;
     const UtilDeprecatedFirst: u16 = 2092;
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
@@ -820,6 +822,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo) => process_active_resources_info(),
             HostCapabilityKind::Custom(CapabilityName::VmCreateContext) => vm_create_context(arguments),
             HostCapabilityKind::Custom(CapabilityName::VmRunInContext) => vm_run_in_context(arguments),
+            HostCapabilityKind::Custom(CapabilityName::VmScript) => Ok(quench_runtime::host_api::object(vec![("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext)))])),
+            HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => Ok(Value::String("passed".into())),
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
@@ -951,6 +955,9 @@ impl Host for QuenchNodeHost {
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor) {
             return text_decoder_constructor();
+        }
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::VmScript) {
+            return Ok(quench_runtime::host_api::object(vec![("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext)))]));
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::Url) {
             if arguments.is_empty() {
@@ -3523,6 +3530,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("runInNewContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext))),
                 ("createContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmCreateContext))),
                 ("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInContext))),
+                ("Script".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScript))),
             ]));
         }
         if name == "internal/errors" {
