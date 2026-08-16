@@ -341,6 +341,10 @@ pub(crate) mod symbol {
         Ok(Value::String(format!("Symbol.{description}\0{counter}")))
     }
 
+    pub(crate) fn legacy_symbol() -> Result<Value, VmError> {
+        make_symbol(&[Value::String("IntlLegacyConstructedSymbol".to_string())])
+    }
+
     fn symbol_for(arguments: &[Value]) -> Result<Value, VmError> {
         let key = crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
         Ok(Value::String(format!("Symbol.for.{key}\0")))
