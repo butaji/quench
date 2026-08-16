@@ -3797,7 +3797,10 @@ fn buffer_includes(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
     let haystack = string_or_bytes(receiver)?;
     let needle = string_or_bytes(arguments.first()).or_else(|_| match arguments.first() {
         Some(Value::Number(value)) => Ok(vec![*value as u8]),
-        _ => Err(VmError::NotCallable),
+        _ => Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "value must be a string, Buffer, or number",
+        ))),
     })?;
     if needle.is_empty() {
         return Ok(Value::Boolean(true));
