@@ -4937,7 +4937,12 @@ fn buffer_byte_length(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn child_error(code: &str, message: &str) -> Value {
     quench_runtime::host_api::object(vec![
-        ("code".into(), Value::String(code.into())),
+        (
+            "code".into(),
+            code.parse::<f64>()
+                .map(Value::Number)
+                .unwrap_or_else(|_| Value::String(code.into())),
+        ),
         ("message".into(), Value::String(message.into())),
         ("killed".into(), Value::Boolean(true)),
         ("signal".into(), Value::Null),
