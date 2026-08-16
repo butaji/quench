@@ -586,8 +586,19 @@ fn canonicalize_subtags(
     let mut region_done = false;
     let mut variant_done = false;
     let mut extension = false;
-    for part in parts {
+    let four_letter_language = out.first().is_some_and(|language| language.len() == 4);
+    let mut variants = std::collections::HashSet::new();
+    for (index, part) in parts.into_iter().enumerate() {
         if part.is_empty() {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        if index == 0
+            && four_letter_language
+            && part.len() == 3
+            && part
+                .chars()
+                .all(|character| character.is_ascii_alphabetic())
+        {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
         if extension {
@@ -600,6 +611,9 @@ fn canonicalize_subtags(
             continue;
         }
         if region_done && is_region_shape(part) {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        if is_variant_shape(part) && !variants.insert(part.to_ascii_lowercase()) {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
         match classify_subtag(part, script_done, region_done, variant_done) {
@@ -619,6 +633,21 @@ fn canonicalize_subtags(
         }
     }
     Ok(out)
+}
+
+fn is_variant_shape(part: &str) -> bool {
+    let all_alpha = part
+        .chars()
+        .all(|character| character.is_ascii_alphabetic());
+    let numeric_variant = part.len() >= 5
+        && part
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_digit())
+        && part[1..]
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric());
+    (part.len() >= 4 && all_alpha) || numeric_variant
 }
 
 fn validate_extension_boundaries(parts: &[&str]) -> Result<(), VmError> {
@@ -744,12 +773,7 @@ fn classify_subtag(part: &str, script_done: bool, region_done: bool, variant_don
         Subtag::Script
     } else if !region_done && ((part.len() == 2 && all_alpha) || (part.len() == 3 && all_digit)) {
         Subtag::Region
-    } else if !variant_done
-        && ((part.len() >= 4 && all_alpha)
-            || (part.len() >= 5
-                && part.chars().next().is_some_and(|c| c.is_ascii_digit())
-                && part[1..].chars().all(|c| c.is_ascii_alphanumeric())))
-    {
+    } else if !variant_done && is_variant_shape(part) {
         Subtag::Variant
     } else {
         Subtag::Extension
