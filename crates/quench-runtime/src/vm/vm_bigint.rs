@@ -43,6 +43,25 @@ fn bigint_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     Ok(Value::String(value.to_str_radix(radix as u32)))
 }
 
+fn bigint_to_locale_string(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let value = bigint_value_of(receiver)?;
+    let Value::BigInt(value) = value else {
+        return Err(crate::value::error::throw_type_error("Invalid BigInt receiver"));
+    };
+    let locales = crate::intl::resolve_locales(arguments)?;
+    let locale = locales.first().map(String::as_str).unwrap_or("en");
+    let text = value
+        .parse::<num_bigint::BigInt>()
+        .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt value"))?
+        .to_str_radix(10);
+    Ok(Value::String(crate::intl::number_format::group_integer_locale(
+        &text, locale,
+    )))
+}
+
 fn bigint_as_n(arguments: &[Value], signed: bool) -> Result<Value, VmError> {
     let bits = arguments
         .first()

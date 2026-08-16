@@ -246,7 +246,7 @@ pub enum Builtin {
     ReflectGetOwnPropertyDescriptor, ReflectDefineProperty,
     ReflectOwnKeys, ReflectApply,
     BigInt, BigIntAsIntN,
-    BigIntAsUintN, BigIntToString,
+    BigIntAsUintN, BigIntToString, BigIntToLocaleString,
     BigIntValueOf, BoxedValueOf,
     Map, MapPrototype,
     MapSet, MapSizeGetter,
