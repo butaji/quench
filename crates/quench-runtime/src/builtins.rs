@@ -594,6 +594,11 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     let Some(descriptor) = arguments.get(2) else {
         return Ok(target.clone());
     };
+    if !crate::value::is_object(descriptor) {
+        return Err(crate::value::error::throw_type_error(
+            "Property descriptor must be an object",
+        ));
+    }
     let descriptor = descriptor_fields(descriptor)?;
     let result = define_own_property(target, &key, &descriptor)?;
     crate::locals::replace_value(target, &result);
