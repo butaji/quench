@@ -137,7 +137,7 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringRepeat => Ok(repeat(receiver, arguments)),
         crate::ops::Builtin::StringTrim => trim(receiver),
         crate::ops::Builtin::StringToLowerCase => to_lower_case(receiver),
-        crate::ops::Builtin::StringToUpperCase => Ok(to_upper_case(receiver)),
+        crate::ops::Builtin::StringToUpperCase => to_upper_case(receiver),
         crate::ops::Builtin::StringCharAt => char_at(receiver, arguments),
         crate::ops::Builtin::StringCharCodeAt => char_code_at(receiver, arguments),
         crate::ops::Builtin::StringIndexOf => index_of(receiver, arguments),
@@ -272,11 +272,8 @@ pub(crate) fn to_lower_case(receiver: Option<&Value>) -> Result<Value, crate::ex
     Ok(Value::String(string_receiver(receiver)?.to_lowercase()))
 }
 
-pub(crate) fn to_upper_case(receiver: Option<&Value>) -> Value {
-    let Some(Value::String(value)) = receiver else {
-        return Value::String(String::new());
-    };
-    Value::String(value.to_uppercase())
+pub(crate) fn to_upper_case(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    Ok(Value::String(string_receiver(receiver)?.to_uppercase()))
 }
 
 pub(crate) fn char_at(
