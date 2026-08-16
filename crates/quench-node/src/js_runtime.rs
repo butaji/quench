@@ -181,6 +181,9 @@ impl CapabilityName {
     const CryptoHashOn: u16 = 2233;
     const CryptoHashWrite: u16 = 2234;
     const CryptoHashEnd: u16 = 2235;
+    const CryptoCreateCipheriv: u16 = 2237;
+    const CryptoCipherUpdate: u16 = 2238;
+    const CryptoCipherFinal: u16 = 2239;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -1008,6 +1011,53 @@ impl Host for QuenchNodeHost {
                 .ok_or(VmError::NotCallable)?;
                 self.hash_call(id, receiver, arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCreateCipheriv) => {
+                let mut cipher = Value::object(vec![
+                    (
+                        "update".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoCipherUpdate,
+                        )),
+                    ),
+                    (
+                        "final".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoCipherFinal,
+                        )),
+                    ),
+                    ("\0cipherEncoding".into(), Value::Undefined),
+                ]);
+                if let Some(constructor) = receiver {
+                    if let Ok(prototype) =
+                        quench_runtime::execute::get_property_result(constructor, "prototype")
+                    {
+                        cipher =
+                            quench_runtime::execute::set_property(cipher, "__proto__", prototype);
+                    }
+                }
+                Ok(cipher)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCipherUpdate) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                if let Some(Value::String(encoding)) = arguments.get(1) {
+                    if encoding.eq_ignore_ascii_case("hex") {
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_INVALID_ARG_VALUE",
+                            "encoding cannot be changed from 'utf8'",
+                        )));
+                    }
+                    let updated = quench_runtime::execute::set_property(
+                        receiver.clone(),
+                        "\0cipherEncoding",
+                        Value::String(encoding.to_ascii_lowercase()),
+                    );
+                    quench_runtime::execute::replace_value(receiver, &updated);
+                }
+                Ok(Value::String(String::new()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCipherFinal) => Err(VmError::Thrown(
+                fs_error("ERR_INVALID_ARG_VALUE", "encoding is invalid"),
+            )),
             HostCapabilityKind::Custom(CapabilityName::CryptoHashOn) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
                 let event = match arguments.first() {
@@ -4976,6 +5026,13 @@ fn hash_id(value: &Value) -> Result<u16, VmError> {
         .ok_or(VmError::NotCallable)
 }
 
+fn cipher_constructor() -> Value {
+    let function = capability_function(HostCapabilityKind::Custom(
+        CapabilityName::CryptoCreateCipheriv,
+    ));
+    quench_runtime::execute::set_property(function, "prototype", Value::object(vec![]))
+}
+
 fn console_log(arguments: &[Value]) -> Result<Value, VmError> {
     let line = arguments
         .iter()
@@ -5893,6 +5950,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "createHash".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash)),
                 ),
+                ("createCipheriv".into(), cipher_constructor()),
+                ("Cipheriv".into(), cipher_constructor()),
+                ("Decipheriv".into(), cipher_constructor()),
                 (
                     "getHashes".into(),
                     capability_function(HostCapabilityKind::Custom(
