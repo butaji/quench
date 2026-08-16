@@ -6,7 +6,7 @@ use crate::{conversion, execute::VmError, value::Value};
 
 use super::{
     default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
-    slot_string, SLOT,
+    slot_string, supported_values::NUMBERING_SYSTEMS, SLOT,
 };
 
 /// Allowed values for each string-valued date/time component option.
@@ -62,9 +62,31 @@ pub(crate) struct DateTimeOptions {
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let locale = sanitize_locale(&locales.first().cloned().unwrap_or_else(default_locale));
     let options = DateTimeOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
+}
+
+fn sanitize_locale(locale: &str) -> String {
+    let Some((base, extension)) = locale.split_once("-u-") else {
+        return locale.to_string();
+    };
+    let parts: Vec<&str> = extension.split('-').collect();
+    let mut kept = Vec::new();
+    let mut index = 0;
+    while index + 1 < parts.len() {
+        let key = parts[index];
+        let value = parts[index + 1];
+        if matches!(key, "ca" | "hc") || (key == "nu" && NUMBERING_SYSTEMS.contains(&value)) {
+            kept.extend([key, value]);
+        }
+        index += 2;
+    }
+    if kept.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}-u-{}", kept.join("-"))
+    }
 }
 
 impl DateTimeOptions {
