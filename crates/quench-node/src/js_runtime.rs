@@ -363,6 +363,7 @@ impl CapabilityName {
     const FsAccessAsync: u16 = 1516;
     const FsExistsSync: u16 = 1517;
     const FsExists: u16 = 2285;
+    const UrlHrefSet: u16 = 2286;
     const ChildExecFile: u16 = 1600;
     const ChildSpawn: u16 = 2194;
     const ChildSpawnOn: u16 = 2195;
@@ -1883,6 +1884,15 @@ impl Host for QuenchNodeHost {
                     )));
                 }
                 Ok(Value::Boolean(true))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlHrefSet) => {
+                let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+                if let Some(receiver) = receiver {
+                    let updated =
+                        quench_runtime::execute::set_property(receiver.clone(), "href", value);
+                    quench_runtime::execute::replace_value(receiver, &updated);
+                }
+                Ok(Value::Undefined)
             }
             HostCapabilityKind::Custom(CapabilityName::UrlPatternExec) => {
                 url_pattern_exec(receiver, arguments)
@@ -7614,8 +7624,83 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             )]));
         }
         if name == "url" || name == "node:url" {
+            let to_json = capability_function(HostCapabilityKind::Custom(CapabilityName::Url));
+            let _ = quench_runtime::execute::set_callable_property(
+                &to_json,
+                "name",
+                Value::String("toJSON".into()),
+            );
+            let inspect = capability_function(HostCapabilityKind::Custom(CapabilityName::Url));
+            let _ = quench_runtime::execute::set_callable_property(
+                &inspect,
+                "name",
+                Value::String("[nodejs.util.inspect.custom]".into()),
+            );
+            let mut url_prototype = quench_runtime::execute::define_property(
+                quench_runtime::host_api::object(vec![
+                    (
+                        "toString".into(),
+                        capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+                    ),
+                    ("toJSON".into(), to_json),
+                ]),
+                "Symbol.for.nodejs.util.inspect.custom\0",
+                quench_runtime::host_api::object(vec![
+                    ("value".into(), inspect),
+                    ("enumerable".into(), Value::Boolean(false)),
+                    ("writable".into(), Value::Boolean(true)),
+                    ("configurable".into(), Value::Boolean(true)),
+                ]),
+            )?;
+            for name in [
+                "protocol",
+                "username",
+                "password",
+                "host",
+                "hostname",
+                "port",
+                "pathname",
+                "search",
+                "hash",
+                "origin",
+                "searchParams",
+            ] {
+                url_prototype = quench_runtime::execute::define_property(
+                    url_prototype,
+                    name,
+                    quench_runtime::host_api::object(vec![
+                        (
+                            "get".into(),
+                            capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+                        ),
+                        ("enumerable".into(), Value::Boolean(true)),
+                        ("configurable".into(), Value::Boolean(true)),
+                    ]),
+                )?;
+            }
+            let url_prototype = quench_runtime::execute::define_property(
+                url_prototype,
+                "href",
+                quench_runtime::host_api::object(vec![
+                    (
+                        "get".into(),
+                        capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+                    ),
+                    (
+                        "set".into(),
+                        capability_function(HostCapabilityKind::Custom(CapabilityName::UrlHrefSet)),
+                    ),
+                    ("enumerable".into(), Value::Boolean(true)),
+                    ("configurable".into(), Value::Boolean(true)),
+                ]),
+            )?;
             let url_constructor = quench_runtime::execute::set_property(
                 capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+                "prototype",
+                url_prototype,
+            );
+            let url_constructor = quench_runtime::execute::set_property(
+                url_constructor,
                 "canParse",
                 capability_function(HostCapabilityKind::Custom(CapabilityName::UrlCanParse)),
             );
@@ -13527,7 +13612,17 @@ impl JsRuntime for QuenchRuntime {
         }) {
             NODE_PROCESS_TITLE.with(|current| current.replace(title.to_owned()));
         }
-        let global_source = r#"var URLSearchParams = function URLSearchParams() { this._pairs = []; };
+        let global_source = r#"var URLSearchParams = function URLSearchParams(init) {
+  this._pairs = [];
+  if (typeof init === "string") {
+    const query = init.replace(/^\?/, "");
+    for (const pair of query.split("&")) {
+      if (!pair) continue;
+      const separator = pair.indexOf("=");
+      this._pairs.push(separator < 0 ? [pair, ""] : [pair.slice(0, separator), pair.slice(separator + 1)]);
+    }
+  }
+};
 {
   const formEncode = (value) => {
     const text = String(value);
@@ -13547,6 +13642,17 @@ impl JsRuntime for QuenchRuntime {
       output += formEncode(this._pairs[index][0]) + "=" + formEncode(this._pairs[index][1]);
     }
     return output;
+  };
+  URLSearchParams.prototype.sort = function() {
+    for (let left = 0; left < this._pairs.length; left++) {
+      for (let right = left + 1; right < this._pairs.length; right++) {
+        if (this._pairs[right][0] < this._pairs[left][0]) {
+          const pair = this._pairs[left];
+          this._pairs[left] = this._pairs[right];
+          this._pairs[right] = pair;
+        }
+      }
+    }
   };
 }
 "#;
@@ -13632,6 +13738,7 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::CryptoShakeBytes),
                 HostCapabilityKind::Custom(CapabilityName::UrlPattern),
                 HostCapabilityKind::Custom(CapabilityName::UrlCanParse),
+                HostCapabilityKind::Custom(CapabilityName::UrlHrefSet),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
