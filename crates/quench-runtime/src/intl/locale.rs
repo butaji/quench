@@ -19,6 +19,7 @@ pub(crate) struct Locale {
     pub first_day_of_week: Option<String>,
     pub numbering_system: Option<String>,
     pub numeric: bool,
+    pub numeric_explicit: bool,
 }
 
 impl Locale {
@@ -74,6 +75,7 @@ fn parse_canonical(tag: &str) -> Locale {
         first_day_of_week: None,
         numbering_system: None,
         numeric: false,
+        numeric_explicit: false,
     };
     let mut index = 1;
     if parts
@@ -113,6 +115,16 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
             while j + 1 < parts.len() {
                 let key = parts[j];
                 let item = parts[j + 1];
+                if key == "kn" {
+                    locale.numeric = item != "false";
+                    locale.numeric_explicit = true;
+                    j += if matches!(item, "true" | "false") {
+                        2
+                    } else {
+                        1
+                    };
+                    continue;
+                }
                 match key {
                     "ca" => {
                         if locale.calendar.is_none() {
@@ -199,7 +211,10 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
                 }
                 locale.numbering_system = Some(value);
             }
-            "numeric" => locale.numeric = normalize_numeric(&value, &text)?,
+            "numeric" => {
+                locale.numeric = normalize_numeric(&value, &text)?;
+                locale.numeric_explicit = true;
+            }
             "firstDayOfWeek" => {
                 let value = option_value(&text, "firstDayOfWeek")?;
                 if value.len() < 3
@@ -499,8 +514,15 @@ fn slot_keys(locale: &Locale) -> Vec<(&'static str, String)> {
     if let Some(first_day) = &locale.first_day_of_week {
         keys.push(("fw", first_day.clone()));
     }
-    if locale.numeric {
-        keys.push(("kn", "true".to_string()));
+    if locale.numeric_explicit {
+        keys.push((
+            "kn",
+            if locale.numeric {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            },
+        ));
     }
     keys
 }
