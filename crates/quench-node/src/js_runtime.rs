@@ -59,6 +59,9 @@ impl CapabilityName {
     const BufferReadBigUInt64BE: u16 = 2052;
     const BufferWriteBigInt64LE: u16 = 2053;
     const BufferWriteBigUInt64BE: u16 = 2054;
+    const StringDecoderConstructor: u16 = 2076;
+    const StringDecoderWrite: u16 = 2077;
+    const StringDecoderEnd: u16 = 2078;
     const VmRunInNewContext: u16 = 2055;
     const CryptoRandomBytes: u16 = 2056;
     const CryptoRandomFillSync: u16 = 2057;
@@ -414,7 +417,13 @@ impl Host for QuenchNodeHost {
         arguments: &[Value],
     ) -> Result<Value, VmError> {
         match capability.kind {
-            HostCapabilityKind::Custom(CapabilityName::Require) => require_module(arguments),
+            HostCapabilityKind::Custom(CapabilityName::Require) => {
+                if matches!(arguments.first(), Some(Value::String(name)) if name.trim_start_matches("node:") == "string_decoder") {
+                    Ok(string_decoder_module())
+                } else {
+                    require_module(arguments)
+                }
+            }
             HostCapabilityKind::Custom(CapabilityName::EventEmitter) => {
                 self.construct(capability, arguments)
             }
@@ -642,6 +651,15 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferReadBigUInt64BE) => buffer_bigint(receiver, arguments, true, false),
             HostCapabilityKind::Custom(CapabilityName::BufferWriteBigInt64LE) => buffer_bigint(receiver, arguments, false, true),
             HostCapabilityKind::Custom(CapabilityName::BufferWriteBigUInt64BE) => buffer_bigint(receiver, arguments, true, false),
+            HostCapabilityKind::Custom(CapabilityName::StringDecoderConstructor) => {
+                string_decoder_constructor(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::StringDecoderWrite) => {
+                string_decoder_write(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::StringDecoderEnd) => {
+                string_decoder_end(receiver, arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext) => vm_run_in_new_context(arguments),
             HostCapabilityKind::Custom(CapabilityName::CryptoRandomBytes) => crypto_random_bytes(arguments),
             HostCapabilityKind::Custom(CapabilityName::CryptoRandomFillSync) => crypto_random_fill(arguments),
@@ -852,6 +870,9 @@ impl Host for QuenchNodeHost {
                 return buffer_alloc(arguments);
             }
             return buffer_from(arguments);
+        }
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::StringDecoderConstructor) {
+            return string_decoder_constructor(None, arguments);
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor) {
             return text_encoder_constructor();
@@ -4532,6 +4553,129 @@ fn buffer_bigint(receiver: Option<&Value>, arguments: &[Value], unsigned: bool, 
         let value = if unsigned { value as i128 } else { value as i64 as i128 };
         Ok(Value::BigInt(value.to_string()))
     }
+}
+
+fn string_decoder_module() -> Value {
+    quench_runtime::host_api::object(vec![
+        (
+            "StringDecoder".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderConstructor)),
+        ),
+    ])
+}
+
+fn string_decoder_object(encoding: &str) -> Value {
+    let encoding = encoding.to_ascii_lowercase().replace('-', "");
+    let encoding = if encoding.is_empty() { "utf8".to_owned() } else { encoding };
+    quench_runtime::host_api::object(vec![
+        ("encoding".into(), Value::String(encoding.into())),
+        ("_pending".into(), Value::BindingCell(Rc::new(RefCell::new(quench_runtime::host_api::array(Vec::new()))))),
+        ("lastNeed".into(), Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))))),
+        ("lastTotal".into(), Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))))),
+        ("lastChar".into(), Value::BindingCell(Rc::new(RefCell::new(node_buffer(&[0, 0, 0, 0]))))),
+        (
+            "write".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderWrite)),
+        ),
+        (
+            "end".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderEnd)),
+        ),
+    ])
+}
+
+fn string_decoder_constructor(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let encoding = arguments
+        .first()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.as_str()),
+            Value::Undefined => None,
+            _ => None,
+        })
+        .unwrap_or("utf8");
+    let normalized = encoding.to_ascii_lowercase().replace('-', "");
+    if !matches!(normalized.as_str(), "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii") {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_UNKNOWN_ENCODING",
+            &format!("Unknown encoding: {encoding}"),
+        )));
+    }
+    let object = string_decoder_object(&normalized);
+    if let Some(receiver) = receiver {
+        for key in ["encoding", "_pending", "lastNeed", "lastTotal", "lastChar", "write", "end"] {
+            if let Ok(value) = quench_runtime::execute::get_property_result(&object, key) {
+                let _ = quench_runtime::execute::set_property(receiver.clone(), key, value);
+            }
+        }
+        return Ok(receiver.clone());
+    }
+    Ok(object)
+}
+
+fn string_decoder_bytes(value: &Value) -> Result<Vec<u8>, VmError> {
+    string_or_bytes(Some(value)).map_err(|_| VmError::Thrown(fs_error(
+        "ERR_INVALID_ARG_TYPE",
+        "The \"buf\" argument must be an instance of Buffer, TypedArray, or DataView.",
+    )))
+}
+
+fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let input = arguments.first().ok_or(VmError::NotCallable)?;
+    let mut bytes = quench_runtime::execute::get_property_result(receiver, "_pending")
+        .ok()
+        .and_then(|value| array_values(&value).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|value| match value { Value::Number(value) => Some(value as u8), _ => None })
+        .collect::<Vec<_>>();
+    bytes.extend(string_decoder_bytes(input)?);
+    let encoding = quench_runtime::execute::get_property_result(receiver, "encoding")
+        .ok()
+        .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
+        .unwrap_or_else(|| "utf8".into());
+    let (text, pending) = if encoding == "utf16le" || encoding == "ucs2" {
+        let complete = bytes.len() / 2 * 2;
+        let text = String::from_utf16_lossy(&bytes[..complete].chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>());
+        (text, bytes[complete..].to_vec())
+    } else if encoding == "latin1" || encoding == "ascii" {
+        (bytes.iter().map(|byte| char::from(if encoding == "ascii" { byte & 0x7f } else { *byte })).collect(), Vec::new())
+    } else {
+        match String::from_utf8(bytes.clone()) {
+            Ok(text) => (text, Vec::new()),
+            Err(error) if error.utf8_error().error_len().is_some() => {
+                (String::from_utf8_lossy(&bytes).into_owned(), Vec::new())
+            }
+            Err(error) => {
+                let valid = error.utf8_error().valid_up_to();
+                let pending = bytes.split_off(valid);
+                (String::from_utf8_lossy(&bytes).into_owned(), pending)
+            }
+        }
+    };
+    let pending = quench_runtime::host_api::array(pending.into_iter().map(|byte| Value::Number(byte as f64)).collect());
+    let pending_values = array_values(&pending).unwrap_or_default();
+    let _ = quench_runtime::execute::set_property(receiver.clone(), "lastNeed", Value::Number(if pending_values.is_empty() { 0.0 } else { (3 - pending_values.len()) as f64 }));
+    let _ = quench_runtime::execute::set_property(receiver.clone(), "lastTotal", Value::Number(if pending_values.is_empty() { 0.0 } else { 3.0 }));
+    let _ = quench_runtime::execute::set_property(receiver.clone(), "lastChar", node_buffer(&pending_values.iter().filter_map(|value| match value { Value::Number(value) => Some(*value as u8), _ => None }).chain(std::iter::repeat(0)).take(4).collect::<Vec<_>>()));
+    let _ = quench_runtime::execute::set_property(receiver.clone(), "_pending", pending);
+    Ok(Value::String(text.into()))
+}
+
+fn string_decoder_end(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let receiver = receiver.ok_or(VmError::NotCallable)?;
+    let prefix = if arguments.is_empty() { Value::String("".into()) } else { string_decoder_write(Some(receiver), arguments)? };
+    let pending = quench_runtime::execute::get_property_result(receiver, "_pending")
+        .ok()
+        .and_then(|value| array_values(&value).ok())
+        .unwrap_or_default();
+    let tail = if pending.is_empty() { String::new() } else { "�".into() };
+    let _ = quench_runtime::execute::set_property(receiver.clone(), "_pending", quench_runtime::host_api::array(Vec::new()));
+    let prefix = match prefix { Value::String(value) => value, _ => String::new() };
+    Ok(Value::String(format!("{prefix}{tail}").into()))
 }
 
 fn buffer_numeric(
