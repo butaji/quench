@@ -79,6 +79,7 @@ for (const name of ["URL", "URLSearchParams"]) {
             .replace("require('events')", "__quench_events_module()")
             .replace("require(\"node:events\")", "__quench_events_module()")
             .replace("require('node:events')", "__quench_events_module()");
+        let source = transform_esm_imports(&source);
         let support_source = crate::polyfills::bootstrap::lookup("support").unwrap_or("");
         let source_with_globals = format!("var global = globalThis; var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var structuredClone = function(value) {{ return {{ ...value }}; }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }};\n{support_source}\n{global_source}\nvar __quench_events_module = function() {{ return {{ EventEmitter: globalThis.__nodeEventEmitter, EventEmitterAsyncResource: globalThis.__nodeEventEmitter, default: globalThis.__nodeEventEmitter }}; }};\n{source}\nglobalThis.__quench_drain_dgram_callbacks();");
         let program =
@@ -329,7 +330,8 @@ impl JsRuntime for QuickJsRuntime {
         path: Option<&Path>,
         _host: &dyn NodeHost,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        crate::quickjs_backend::execute_source(source, &self.runtime, path)?;
+        let transformed = transform_esm_imports(source);
+        crate::quickjs_backend::execute_source(&transformed, &self.runtime, path)?;
         while self.has_pending_jobs() {
             self.poll_jobs()?;
         }
