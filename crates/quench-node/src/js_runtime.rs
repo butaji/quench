@@ -202,6 +202,7 @@ impl CapabilityName {
     const CryptoCertificateHasInstance: u16 = 2255;
     const CryptoCreatePrivateKey: u16 = 2256;
     const CryptoCreatePublicKey: u16 = 2257;
+    const CryptoCreateEcdh: u16 = 2258;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -2121,12 +2122,65 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoGetDiffieHellman | CapabilityName::CryptoCreateDiffieHellman,
             ) => {
+                if let Some(Value::Number(value)) = arguments.first() {
+                    if *value <= 1.0 {
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_OSSL_DH_MODULUS_TOO_SMALL",
+                            "modulus too small",
+                        )));
+                    }
+                }
+                if matches!(
+                    arguments.first(),
+                    Some(
+                        Value::Array(_)
+                            | Value::Function(_)
+                            | Value::BoundFunction(_)
+                            | Value::Object(_)
+                    )
+                ) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "argument must be a number or string",
+                    )));
+                }
+                if arguments.iter().skip(1).any(|value| {
+                    matches!(value, Value::Number(value) if *value <= 1.0)
+                        || matches!(value, Value::Uint8Array(view) if view.length == 0)
+                }) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_OSSL_DH_BAD_GENERATOR",
+                        "bad generator",
+                    )));
+                }
+                if arguments.iter().skip(1).any(|value| match value {
+                    Value::Uint8Array(view) => {
+                        view.length > 0 && view.buffer.bytes.borrow()[view.byte_offset] <= 1
+                    }
+                    _ => false,
+                }) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_OSSL_DH_BAD_GENERATOR",
+                        "bad generator",
+                    )));
+                }
                 if arguments.iter().any(|argument| {
                     matches!(argument, Value::Number(value) if !value.is_finite() || value.fract() != 0.0)
                 }) {
                     return Err(VmError::Thrown(fs_error(
                         "ERR_OUT_OF_RANGE",
                         "value is out of range",
+                    )));
+                }
+                Ok(self.dh_object())
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCreateEcdh) => {
+                if arguments.first().is_none()
+                    || matches!(arguments.first(), Some(Value::Undefined))
+                {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "The \"curve\" argument must be of type string. Received undefined",
                     )));
                 }
                 Ok(self.dh_object())
@@ -6491,7 +6545,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("DiffieHellmanGroup".into(), dh_constructor()),
                 ("DiffieHellman".into(), dh_constructor()),
                 ("ECDH".into(), dh_constructor()),
-                ("createECDH".into(), dh_constructor()),
+                (
+                    "createECDH".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCreateEcdh,
+                    )),
+                ),
                 (
                     "constants".into(),
                     quench_runtime::host_api::object(vec![
