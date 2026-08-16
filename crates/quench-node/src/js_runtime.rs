@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use quench_runtime::{
     ops::{HostCapabilityKind, HostCapabilityRef, RealmId},
-    value::{HostCapabilityValue, ObjectData, Value},
+    value::{HostCapabilityValue, Value},
     vm::{Host, VmContext, VmError},
 };
 
@@ -62,9 +62,38 @@ impl Host for QuenchNodeHost {
         match capability.kind {
             HostCapabilityKind::Custom(1) => require_module(arguments),
             HostCapabilityKind::Custom(2) => basename(arguments),
+            HostCapabilityKind::Custom(4) => console_log(arguments),
+            HostCapabilityKind::Custom(6) => current_directory(arguments),
             _ => Err(VmError::NotCallable),
         }
     }
+}
+
+fn console_log(arguments: &[Value]) -> Result<Value, VmError> {
+    let line = arguments
+        .iter()
+        .map(|value| match value {
+            Value::String(value) => value.clone(),
+            other => format!("{other:?}"),
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    println!("{line}");
+    Ok(Value::Undefined)
+}
+
+fn current_directory(arguments: &[Value]) -> Result<Value, VmError> {
+    if !arguments.is_empty() {
+        return Err(VmError::EvalError(
+            "process.cwd expects no arguments".into(),
+        ));
+    }
+    Ok(Value::String(
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .to_string_lossy()
+            .into_owned(),
+    ))
 }
 
 fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
@@ -75,10 +104,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
     }
     let basename = capability_function(HostCapabilityKind::Custom(2));
-    Ok(Value::Object(Rc::new(ObjectData::from_properties(vec![(
-        "basename".into(),
-        basename,
-    )]))))
+    Ok(Value::object(vec![("basename".into(), basename)]))
 }
 
 fn capability_function(kind: HostCapabilityKind) -> Value {
@@ -125,10 +151,37 @@ impl JsRuntime for QuenchRuntime {
         };
         let context = VmContext::for_realm(
             RealmId::ROOT,
-            vec![HostCapabilityKind::Custom(1), HostCapabilityKind::Custom(2)],
+            vec![
+                HostCapabilityKind::Custom(1),
+                HostCapabilityKind::Custom(2),
+                HostCapabilityKind::Custom(3),
+                HostCapabilityKind::Custom(4),
+                HostCapabilityKind::Custom(5),
+                HostCapabilityKind::Custom(6),
+            ],
         )
         .with_host(Rc::new(QuenchNodeHost))
-        .with_host_capability("require", capability);
+        .with_host_capability("require", capability)
+        .with_host_capability(
+            "console",
+            HostCapabilityRef {
+                realm: RealmId::ROOT,
+                kind: HostCapabilityKind::Custom(3),
+            },
+        )
+        .with_host_value(
+            "process",
+            Value::object(vec![
+                (
+                    "argv".into(),
+                    Value::array(std::env::args().map(Value::String).collect()),
+                ),
+                (
+                    "cwd".into(),
+                    capability_function(HostCapabilityKind::Custom(6)),
+                ),
+            ]),
+        );
         quench_runtime::execute::execute_with_context(program.ops(), &context)
             .map(|_| ())
             .map_err(|error| error.render().into())
