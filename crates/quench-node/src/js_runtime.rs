@@ -973,6 +973,11 @@ impl Host for QuenchNodeHost {
         );
         stream = quench_runtime::execute::set_property(
             stream,
+            "unshift",
+            capability_function(HostCapabilityKind::Custom(id + 11)),
+        );
+        stream = quench_runtime::execute::set_property(
+            stream,
             "pause",
             capability_function(HostCapabilityKind::Custom(id + 8)),
         );
@@ -1734,7 +1739,7 @@ impl QuenchNodeHost {
                 Ok(target.clone())
             }
             6 => {
-                let chunk = match string_or_bytes(arguments.first()) {
+                let mut chunk = match string_or_bytes(arguments.first()) {
                     Ok(chunk) => chunk,
                     Err(VmError::Thrown(error)) => {
                         if let Some(callback) = self.streams.borrow().get(&stream_id).and_then(|state| state.error.clone()) {
@@ -1745,6 +1750,12 @@ impl QuenchNodeHost {
                     }
                     Err(error) => return Err(error),
                 };
+                let encoding = arguments.get(1)
+                    .and_then(|value| match value { Value::String(value) => Some(value.to_ascii_lowercase()), _ => None })
+                    .or_else(|| receiver.and_then(|value| quench_runtime::execute::get_property_result(value, "readableDefaultEncoding").ok()).and_then(|value| match value { Value::String(value) => Some(value.to_ascii_lowercase()), _ => None }));
+                if encoding.as_deref() == Some("hex") {
+                    if let Some(Value::String(value)) = arguments.first() { chunk = decode_hex(value); }
+                }
                 if let Some(data) = self
                     .streams
                     .borrow()
@@ -1759,6 +1770,13 @@ impl QuenchNodeHost {
                 }
                 Ok(Value::Boolean(true))
             },
+            11 => {
+                let chunk = string_or_bytes(arguments.first())?;
+                if let Some(data) = self.streams.borrow().get(&stream_id).and_then(|state| state.data.clone()) {
+                    quench_runtime::execute::call(&data, &Value::Undefined, &[node_buffer(&chunk)])?;
+                }
+                Ok(receiver.cloned().unwrap_or(Value::Undefined))
+            }
             7..=8 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
             9 => {
                 if let Some(callback) = arguments.get(1).or_else(|| arguments.first()) {
