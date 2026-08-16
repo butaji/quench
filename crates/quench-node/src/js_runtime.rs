@@ -60,6 +60,7 @@ impl CapabilityName {
     const TextEncoderEncode: u16 = 2061;
     const TextDecoderConstructor: u16 = 2062;
     const TextDecoderDecode: u16 = 2063;
+    const BufferInspect: u16 = 2065;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -608,6 +609,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::TextEncoderEncode) => text_encoder_encode(receiver, arguments),
             HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor) => text_decoder_constructor(),
             HostCapabilityKind::Custom(CapabilityName::TextDecoderDecode) => text_decoder_decode(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferInspect) => buffer_inspect(receiver),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -3633,6 +3635,9 @@ fn node_buffer(bytes: &[u8]) -> Value {
         capability_function(HostCapabilityKind::Custom(CapabilityName::BufferEquals)),
     );
     let mut value = value;
+    let inspect = capability_function(HostCapabilityKind::Custom(CapabilityName::BufferInspect));
+    value = quench_runtime::execute::set_property(value, "inspect", inspect.clone());
+    value = quench_runtime::execute::set_property(value, "Symbol.for.nodejs.util.inspect.custom\0", inspect);
     for (name, capability) in [
         ("readBigInt64LE", CapabilityName::BufferReadBigInt64LE),
         ("readBigUInt64BE", CapabilityName::BufferReadBigUInt64BE),
@@ -4336,6 +4341,12 @@ fn text_decoder_decode(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::String(String::from_utf8_lossy(&string_or_bytes(arguments.first())?).into()))
 }
 
+fn buffer_inspect(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let bytes = string_or_bytes(receiver)?;
+    let shown = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<Vec<_>>().join(" ");
+    Ok(Value::String(format!("<Buffer {shown}>").into()))
+}
+
 fn util_module() -> Value {
     let default_options = quench_runtime::host_api::object(vec![("numericSeparator".into(), Value::Boolean(false))]);
     let format = quench_runtime::execute::set_property(
@@ -4577,6 +4588,9 @@ fn format_inspected(value: &Value) -> String {
 }
 
 fn util_inspect(_receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    if matches!(arguments.first(), Some(Value::Uint8Array(_))) {
+        return buffer_inspect(arguments.first());
+    }
     Ok(Value::String(
         arguments
             .first()
