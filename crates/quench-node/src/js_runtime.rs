@@ -153,6 +153,12 @@ impl CapabilityName {
     const FsFtruncateSync: u16 = 1571;
     const FsTruncateAsync: u16 = 1572;
     const FsTruncateSync: u16 = 1573;
+    const StreamIterText: u16 = 1575;
+    const StreamIterBytes: u16 = 1576;
+    const StreamIterPull: u16 = 1577;
+    const StreamIterIdentity: u16 = 1578;
+    const ZlibIterCompress: u16 = 1579;
+    const ZlibIterDecompress: u16 = 1580;
     const FsFsyncSync: u16 = 1546;
     const FsFdatasyncSync: u16 = 1547;
     const FsFsyncAsync: u16 = 1548;
@@ -462,6 +468,22 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsTruncateSync) => {
                 fs_truncate_sync(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::StreamIterText) => {
+                stream_iter_text(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::StreamIterBytes) => {
+                stream_iter_bytes(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::StreamIterPull)
+            | HostCapabilityKind::Custom(CapabilityName::StreamIterIdentity) => {
+                Ok(arguments.first().cloned().unwrap_or(Value::Undefined))
+            }
+            HostCapabilityKind::Custom(CapabilityName::ZlibIterCompress)
+            | HostCapabilityKind::Custom(CapabilityName::ZlibIterDecompress) => {
+                Ok(capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::StreamIterIdentity,
+                )))
             }
             HostCapabilityKind::Custom(CapabilityName::FsFsyncSync)
             | HostCapabilityKind::Custom(CapabilityName::FsFdatasyncSync) => Ok(Value::Undefined),
@@ -2481,6 +2503,40 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::EvalError("require expects a module name".into()));
     };
     if name != "node:path" && name != "path" {
+        if name == "stream/iter" || name == "node:stream/iter" {
+            return Ok(Value::object(vec![
+                (
+                    "text".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamIterText)),
+                ),
+                (
+                    "bytes".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::StreamIterBytes,
+                    )),
+                ),
+                (
+                    "pull".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamIterPull)),
+                ),
+            ]));
+        }
+        if name == "zlib/iter" || name == "node:zlib/iter" {
+            return Ok(Value::object(vec![
+                (
+                    "compressGzip".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::ZlibIterCompress,
+                    )),
+                ),
+                (
+                    "decompressGzip".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::ZlibIterDecompress,
+                    )),
+                ),
+            ]));
+        }
         if name == "../common/fixtures" || name.ends_with("/common/fixtures") {
             return Ok(Value::object(vec![(
                 "fixturesDir".into(),
@@ -3323,6 +3379,33 @@ fn base64_encode(bytes: &[u8]) -> String {
         });
     }
     output
+}
+
+fn stream_iter_value(value: Option<&Value>) -> Result<Value, VmError> {
+    match value.ok_or(VmError::NotCallable)? {
+        Value::Promise(promise) => match &*promise.state.borrow() {
+            quench_runtime::value::PromiseState::Fulfilled(value) => Ok(value.clone()),
+            _ => Err(VmError::NotCallable),
+        },
+        value => Ok(value.clone()),
+    }
+}
+
+fn stream_iter_text(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = stream_iter_value(arguments.first())?;
+    let bytes = string_or_bytes(Some(&value))?;
+    Ok(fulfilled(Value::String(
+        String::from_utf8_lossy(&bytes).into_owned().into(),
+    )))
+}
+
+fn stream_iter_bytes(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = stream_iter_value(arguments.first())?;
+    Ok(fulfilled(match value {
+        Value::Uint8Array(_) => value,
+        Value::String(text) => node_buffer(text.as_bytes()),
+        _ => quench_runtime::host_api::bytes(&[]),
+    }))
 }
 
 fn buffer_concat(arguments: &[Value]) -> Result<Value, VmError> {
