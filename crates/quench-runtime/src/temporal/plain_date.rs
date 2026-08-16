@@ -143,9 +143,14 @@ fn day_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
-    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
-    Ok(Value::Number(f64::from(date.ordinal())))
+    Ok(Value::Number(f64::from(ordinal_day(year, month, day))))
+}
+
+fn ordinal_day(year: i32, month: u32, day: u32) -> u32 {
+    (1..month)
+        .map(|value| days_in_month(f64::from(year), f64::from(value)) as u32)
+        .sum::<u32>()
+        + day
 }
 
 fn days_in_month_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
