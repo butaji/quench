@@ -115,9 +115,6 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(30) => buffer_from(arguments),
             HostCapabilityKind::Custom(31) => buffer_alloc(arguments),
             HostCapabilityKind::Custom(32) => buffer_is_buffer(arguments),
-            HostCapabilityKind::Custom(80) => util_format(arguments),
-            HostCapabilityKind::Custom(81) => util_inspect(arguments),
-            HostCapabilityKind::Custom(82..=85) => os_value(capability.kind),
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
             HostCapabilityKind::Custom(21) => next_tick(arguments),
             HostCapabilityKind::Custom(27 | 28 | 29) => timer_call(arguments),
@@ -561,12 +558,6 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 capability_function(HostCapabilityKind::Custom(40)),
             )]));
         }
-        if name == "util" || name == "node:util" {
-            return Ok(util_module());
-        }
-        if name == "os" || name == "node:os" {
-            return Ok(os_module());
-        }
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
     }
     let basename = capability_function(HostCapabilityKind::Custom(2));
@@ -713,74 +704,6 @@ fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {
         arguments.first(),
         Some(Value::Uint8Array(_))
     )))
-}
-
-fn util_module() -> Value {
-    quench_runtime::host_api::object(vec![
-        (
-            "format".into(),
-            capability_function(HostCapabilityKind::Custom(80)),
-        ),
-        (
-            "inspect".into(),
-            capability_function(HostCapabilityKind::Custom(81)),
-        ),
-        ("types".into(), quench_runtime::host_api::object(vec![])),
-    ])
-}
-
-fn util_format(arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::String(
-        arguments
-            .iter()
-            .map(value_to_string)
-            .collect::<Vec<_>>()
-            .join(" "),
-    ))
-}
-
-fn util_inspect(arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::String(
-        arguments
-            .first()
-            .map(value_to_string)
-            .unwrap_or_else(|| "undefined".into()),
-    ))
-}
-
-fn os_module() -> Value {
-    quench_runtime::host_api::object(vec![
-        (
-            "platform".into(),
-            capability_function(HostCapabilityKind::Custom(82)),
-        ),
-        (
-            "arch".into(),
-            capability_function(HostCapabilityKind::Custom(83)),
-        ),
-        (
-            "tmpdir".into(),
-            capability_function(HostCapabilityKind::Custom(84)),
-        ),
-        (
-            "homedir".into(),
-            capability_function(HostCapabilityKind::Custom(85)),
-        ),
-        ("EOL".into(), Value::String("\n".into())),
-    ])
-}
-
-fn os_value(kind: HostCapabilityKind) -> Result<Value, VmError> {
-    match kind {
-        HostCapabilityKind::Custom(82) => Ok(Value::String(std::env::consts::OS.into())),
-        HostCapabilityKind::Custom(83) => Ok(Value::String(std::env::consts::ARCH.into())),
-        HostCapabilityKind::Custom(85) => Ok(Value::String(
-            std::env::var("HOME").unwrap_or_else(|_| "/".into()),
-        )),
-        _ => Ok(Value::String(
-            std::env::temp_dir().to_string_lossy().into_owned(),
-        )),
-    }
 }
 
 fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
