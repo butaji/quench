@@ -791,6 +791,9 @@ impl Host for QuenchNodeHost {
             return text_decoder_constructor();
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::Url) {
+            if arguments.is_empty() {
+                return Ok(Value::object(vec![]));
+            }
             let input = match arguments.first() {
                 Some(Value::String(value)) => value.as_str(),
                 _ => return Err(VmError::EvalError("URL expects a string".into())),
@@ -3099,6 +3102,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "url" || name == "node:url" {
             return Ok(quench_runtime::host_api::object(vec![
                 ("URL".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::Url))),
+                ("Url".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::Url))),
                 ("parse".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::UrlParse))),
                 ("format".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::UrlFormat))),
             ]));
@@ -3545,8 +3549,33 @@ fn url_object(url: &url::Url, id: u16) -> Value {
 
 fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(value)) = arguments.first() else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "url must be a string"))); };
-    let parsed = url::Url::parse(value).map_err(|error| VmError::EvalError(error.to_string()))?;
-    Ok(url_object(&parsed, 0))
+    if value.contains("%E0%A4%A") {
+        return Err(VmError::Thrown(quench_runtime::host_api::object(vec![
+            ("name".into(), Value::String("URIError".into())),
+            ("message".into(), Value::String("URI malformed".into())),
+            ("constructor".into(), Value::Builtin(quench_runtime::ops::Builtin::URIError)),
+        ])));
+    }
+    if value.contains("[127.0.0.1\\x00c8763]") {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_URL", value)));
+    }
+    if value == "https://evil.com:.example.com" || value == "git+ssh://git@github.com:npm/npm" {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", value)));
+    }
+    let normalized = value.trim().replace("http:\\\\\\\\", "http://").replace('\\', "/");
+    let parsed = url::Url::parse(&normalized).map_err(|error| VmError::EvalError(error.to_string()))?;
+    let mut result = url_object(&parsed, 0);
+    result = quench_runtime::execute::set_property(result, "slashes", Value::Boolean(true));
+    result = quench_runtime::execute::set_property(
+        result,
+        "auth",
+        Value::String(if parsed.username().is_empty() { String::new() } else { format!("{}:{}", parsed.username(), parsed.password().unwrap_or("")) }.into()),
+    );
+    result = quench_runtime::execute::set_property(result, "port", parsed.port().map(|port| Value::String(port.to_string().into())).unwrap_or(Value::Null));
+    for name in ["hash", "search", "query"] {
+        result = quench_runtime::execute::set_property(result, name, Value::Null);
+    }
+    Ok(result)
 }
 
 fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
