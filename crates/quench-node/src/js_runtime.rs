@@ -4682,6 +4682,12 @@ fn util_format(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
 }
 
 fn util_format_with_options(arguments: &[Value]) -> Result<Value, VmError> {
+    if !matches!(arguments.first(), Some(Value::Object(_) | Value::ObjectAlias(_))) {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "options must be an object",
+        )));
+    }
     format_util(arguments.get(1..).unwrap_or_default(), arguments.first().and_then(separator_option))
 }
 
