@@ -4212,12 +4212,22 @@ fn buffer_fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
     let Value::Uint8Array(view) = receiver.ok_or(VmError::NotCallable)? else {
         return Err(VmError::NotCallable);
     };
-    let fill = string_or_bytes(arguments.first()).or_else(|_| match arguments.first() {
+    let mut fill = string_or_bytes(arguments.first()).or_else(|_| match arguments.first() {
         Some(Value::Number(value)) => Ok(vec![*value as u8]),
         _ => Err(VmError::NotCallable),
     })?;
+    let encoding_index = if matches!(arguments.get(1), Some(Value::String(_))) { 1 } else { 3 };
+    if matches!(arguments.get(encoding_index), Some(Value::String(encoding)) if encoding.eq_ignore_ascii_case("hex")) {
+        let Some(Value::String(value)) = arguments.first() else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "invalid hex fill"))); };
+        let decoded = decode_hex(value);
+        if decoded.len() * 2 != value.len() { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "invalid hex fill"))); }
+        fill = decoded;
+    }
     if fill.is_empty() {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
+    if arguments.get(1).is_some_and(|value| !matches!(value, Value::Number(_))) || arguments.get(2).is_some_and(|value| !matches!(value, Value::Number(_) | Value::String(_))) {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "range must be numeric")));
     }
     let start = arguments
         .get(1)
