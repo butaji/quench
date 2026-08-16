@@ -211,6 +211,9 @@ impl CapabilityName {
     const CryptoDhGetPrivateKey: u16 = 2259;
     const CryptoDhSetPrivateKey: u16 = 2260;
     const CryptoDhSetPublicKey: u16 = 2261;
+    const CryptoGenerateKeyPairSync: u16 = 2262;
+    const CryptoGenerateKeySync: u16 = 2263;
+    const CryptoKeyExport: u16 = 2264;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -1442,6 +1445,41 @@ impl Host for QuenchNodeHost {
                     CapabilityName::CryptoCertificateExportPublicKey,
                 )),
             )])),
+            HostCapabilityKind::Custom(CapabilityName::CryptoGenerateKeyPairSync) => {
+                let export = capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CryptoKeyExport,
+                ));
+                Ok(Value::object(vec![
+                    (
+                        "privateKey".into(),
+                        Value::object(vec![
+                            ("type".into(), Value::String("private".into())),
+                            ("export".into(), export.clone()),
+                        ]),
+                    ),
+                    (
+                        "publicKey".into(),
+                        Value::object(vec![
+                            ("type".into(), Value::String("public".into())),
+                            ("export".into(), export),
+                        ]),
+                    ),
+                ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoGenerateKeySync) => {
+                Ok(Value::object(vec![
+                    ("type".into(), Value::String("secret".into())),
+                    (
+                        "export".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoKeyExport,
+                        )),
+                    ),
+                ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoKeyExport) => {
+                Ok(node_buffer(&[0; 16]))
+            }
             HostCapabilityKind::Custom(CapabilityName::CryptoHmacUpdate) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
                 if let Some(Value::String(value)) = arguments.first() {
@@ -6666,6 +6704,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "createPublicKey".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CryptoCreatePublicKey,
+                    )),
+                ),
+                (
+                    "generateKeyPairSync".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoGenerateKeyPairSync,
+                    )),
+                ),
+                (
+                    "generateKeySync".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoGenerateKeySync,
                     )),
                 ),
                 (
