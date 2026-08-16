@@ -23,12 +23,18 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (IntlSegmenterPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.Segmenter".into()))
         }
+        (IntlCollatorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.Collator".into()))
+        }
         (Intl, "Symbol.toStringTag") => Some(Value::String("Intl".into())),
         (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.DisplayNames".into()))
         }
         (IntlListFormatPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.ListFormat".into()))
+        }
+        (IntlNumberFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.NumberFormat".into()))
         }
         (IntlLocalePrototype, "Symbol.toStringTag") => Some(Value::String("Intl.Locale".into())),
         (IntlPluralRulesPrototype, "Symbol.toStringTag") => {
@@ -43,9 +49,16 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
         (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
         (TemporalDurationPrototype, "abs") => Some(Value::Builtin(TemporalDurationAbs)),
+        (TemporalDurationPrototype, "toLocaleString") => {
+            Some(Value::Builtin(TemporalDurationToLocaleString))
+        }
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
         (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
+        (TemporalPlainDatePrototype, "withCalendar") => {
+            Some(Value::Builtin(TemporalPlainDateWithCalendar))
+        }
+        (TemporalPlainDatePrototype, "valueOf") => Some(Value::Builtin(TemporalPlainDateValueOf)),
         (AbstractModuleSource, "prototype") => Some(Value::Builtin(AbstractModuleSourcePrototype)),
         (AbstractModuleSourcePrototype, "constructor") => {
             Some(Value::Builtin(AbstractModuleSource))

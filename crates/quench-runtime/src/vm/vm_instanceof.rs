@@ -209,6 +209,13 @@ fn prototype_chain_contains(value: &Value, expected: &Value) -> bool {
 }
 
 fn internal_prototype(value: &Value) -> Option<Value> {
+    if matches!(value, Value::ObjectAlias(_)) {
+        let object = crate::builtins::object::resolve_object_alias(value.clone());
+        if matches!(object, Value::Null) {
+            return None;
+        }
+        return internal_prototype(&object);
+    }
     if let Some(prototype) = crate::typed_array_prototype::get(value) {
         return Some(prototype);
     }

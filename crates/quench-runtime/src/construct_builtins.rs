@@ -121,6 +121,7 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
             | Builtin::IntlRelativeTimeFormat
             | Builtin::IntlSegmenter
             | Builtin::IntlDisplayNames
+            | Builtin::IntlDurationFormat
             | Builtin::IntlLocale
     )
 }
@@ -132,6 +133,8 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     let last_index = Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))));
     let mut entries = vec![
         ("\0regexp".to_string(), Value::Boolean(true)),
+        ("\0regexp_source".to_string(), Value::String(source.clone())),
+        ("\0regexp_flags".to_string(), Value::String(flags.clone())),
         (
             "\0prototype".to_string(),
             Value::Builtin(crate::ops::Builtin::RegExpPrototype),
@@ -516,6 +519,10 @@ pub(crate) fn to_object(value: &Value) -> Result<Value, crate::execute::VmError>
         Value::Boolean(value) => Ok(boxed_primitive(
             Value::Boolean(*value),
             crate::ops::Builtin::Boolean,
+        )),
+        Value::String(value) if crate::conversion::is_symbol_string(value) => Ok(boxed_primitive(
+            Value::String(value.clone()),
+            crate::ops::Builtin::Symbol,
         )),
         Value::String(value) => Ok(boxed_primitive(
             Value::String(value.clone()),

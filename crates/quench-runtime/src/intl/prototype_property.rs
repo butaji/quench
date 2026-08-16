@@ -40,6 +40,7 @@ fn prototype_locale_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 
 fn prototype_number_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
+        (Builtin::IntlNumberFormatPrototype, "constructor") => Builtin::IntlNumberFormat,
         (Builtin::IntlNumberFormatPrototype, "format") => Builtin::IntlNumberFormatFormat,
         (Builtin::IntlNumberFormatPrototype, "formatToParts") => {
             Builtin::IntlNumberFormatFormatToParts
@@ -79,6 +80,7 @@ fn prototype_property_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
             Builtin::IntlDateTimeFormatResolvedOptions
         }
         (Builtin::IntlPluralRulesPrototype, "select") => Builtin::IntlPluralRulesSelect,
+        (Builtin::IntlPluralRulesPrototype, "selectRange") => Builtin::IntlPluralRulesSelectRange,
         (Builtin::IntlPluralRulesPrototype, "constructor") => Builtin::IntlPluralRules,
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
@@ -97,6 +99,14 @@ fn prototype_property_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlListFormatPrototype, "formatToParts") => Builtin::IntlListFormatFormatToParts,
         (Builtin::IntlListFormatPrototype, "resolvedOptions") => {
             Builtin::IntlListFormatResolvedOptions
+        }
+        (Builtin::IntlDurationFormatPrototype, "constructor") => Builtin::IntlDurationFormat,
+        (Builtin::IntlDurationFormatPrototype, "format") => Builtin::IntlDurationFormatFormat,
+        (Builtin::IntlDurationFormatPrototype, "formatToParts") => {
+            Builtin::IntlDurationFormatFormatToParts
+        }
+        (Builtin::IntlDurationFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlDurationFormatResolvedOptions
         }
         (Builtin::IntlDisplayNamesPrototype, "of") => Builtin::IntlDisplayNamesOf,
         (Builtin::IntlDisplayNamesPrototype, "resolvedOptions") => {

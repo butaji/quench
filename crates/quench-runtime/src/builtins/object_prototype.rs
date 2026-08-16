@@ -279,7 +279,7 @@ fn prototype_chain_contains(
     Ok(false)
 }
 
-fn resolve_object_alias(value: Value) -> Value {
+pub(crate) fn resolve_object_alias(value: Value) -> Value {
     let Value::ObjectAlias(alias) = value else {
         return value;
     };
@@ -458,7 +458,9 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::ShadowRealmPrototype
             | Builtin::IntlCollatorPrototype
             | Builtin::IntlDateTimeFormatPrototype
+            | Builtin::IntlNumberFormatPrototype
             | Builtin::IntlPluralRulesPrototype
+            | Builtin::IntlListFormatPrototype
             | Builtin::IntlSegmenterPrototype
     )
 }

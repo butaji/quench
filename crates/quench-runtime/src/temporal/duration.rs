@@ -48,8 +48,39 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalDurationCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalDurationAbs => Some(abs(receiver)),
+        crate::ops::Builtin::TemporalDurationToLocaleString => Some(
+            crate::intl::duration::format_temporal_duration(receiver, arguments),
+        ),
+        crate::ops::Builtin::TemporalDurationYearsGetter => Some(field_getter(receiver, "years")),
+        crate::ops::Builtin::TemporalDurationMonthsGetter => Some(field_getter(receiver, "months")),
+        crate::ops::Builtin::TemporalDurationWeeksGetter => Some(field_getter(receiver, "weeks")),
+        crate::ops::Builtin::TemporalDurationDaysGetter => Some(field_getter(receiver, "days")),
+        crate::ops::Builtin::TemporalDurationHoursGetter => Some(field_getter(receiver, "hours")),
+        crate::ops::Builtin::TemporalDurationMinutesGetter => {
+            Some(field_getter(receiver, "minutes"))
+        }
+        crate::ops::Builtin::TemporalDurationSecondsGetter => {
+            Some(field_getter(receiver, "seconds"))
+        }
+        crate::ops::Builtin::TemporalDurationMillisecondsGetter => {
+            Some(field_getter(receiver, "milliseconds"))
+        }
+        crate::ops::Builtin::TemporalDurationMicrosecondsGetter => {
+            Some(field_getter(receiver, "microseconds"))
+        }
+        crate::ops::Builtin::TemporalDurationNanosecondsGetter => {
+            Some(field_getter(receiver, "nanoseconds"))
+        }
         _ => None,
     }
+}
+
+fn field_getter(receiver: Option<&Value>, field: &str) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    Ok(object
+        .iter()
+        .find(|(key, _)| key == field)
+        .map_or(Value::Number(0.0), |(_, value)| value.clone()))
 }
 
 fn abs(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -298,6 +329,7 @@ fn add_fractional_time(values: &mut [f64; 10], index: usize, fraction: f64) {
 }
 
 fn compare(arguments: &[Value]) -> Result<Value, VmError> {
+    validate_compare_options(arguments.get(2))?;
     if same_fields(arguments.first(), arguments.get(1)) {
         return Ok(Value::Number(0.0));
     }
@@ -311,11 +343,26 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
             "relativeTo is required for date units",
         ));
     }
-    let difference = duration_value(&left) - duration_value(&right);
+    let difference = if date_units(&left) || date_units(&right) {
+        duration_value(&left) - duration_value(&right)
+    } else {
+        exact_time_difference(&left, &right)
+    };
     if difference == 0.0 {
         return Ok(Value::Number(0.0));
     }
     Ok(Value::Number(difference.signum()))
+}
+
+fn validate_compare_options(options: Option<&Value>) -> Result<(), VmError> {
+    if let Some(options) = options {
+        if !matches!(options, Value::Undefined) && !crate::value::is_object(options) {
+            return Err(crate::value::error::throw_type_error(
+                "Duration.compare options must be an object",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn date_units(value: &Value) -> bool {
@@ -369,6 +416,31 @@ fn duration_value(value: &Value) -> f64 {
     ]
     .iter()
     .map(|(name, scale)| number_property(value, name) * scale)
+    .sum()
+}
+
+fn exact_time_difference(left: &Value, right: &Value) -> f64 {
+    let left = time_nanoseconds(left);
+    let right = time_nanoseconds(right);
+    match left.cmp(&right) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    }
+}
+
+fn time_nanoseconds(value: &Value) -> i128 {
+    [
+        ("days", 86_400_000_000_000_i128),
+        ("hours", 3_600_000_000_000),
+        ("minutes", 60_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
+    ]
+    .iter()
+    .map(|(name, scale)| i128::from(number_property(value, name) as i64) * scale)
     .sum()
 }
 

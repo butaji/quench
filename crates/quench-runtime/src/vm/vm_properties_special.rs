@@ -10,6 +10,12 @@ fn host_capability_property(value: &Value, capability: HostCapabilityRef, key: &
     property
 }
 fn bind_callable_property(value: &Value, builtin: Builtin, key: &str) -> Value {
+    if key == "Symbol.toStringTag"
+        && crate::builtin_meta::constructor_name(builtin).is_some()
+        && !crate::builtin_meta::is_prototype(builtin)
+    {
+        return crate::builtins::property(Builtin::FunctionPrototype, key);
+    }
     let property = builtin_property(builtin, key);
     if let Some(result) = constructor_property(builtin, key, property.clone()) {
         return result;

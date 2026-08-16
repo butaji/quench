@@ -10,6 +10,14 @@ pub(crate) fn prototype_method(
     let options = NumberOptions::from_slots(&slots)?;
     match builtin {
         crate::ops::Builtin::IntlNumberFormatFormat => {
+            if let Some(Value::BigInt(value)) = arguments.first() {
+                let format_options = crate::intl::make_object(slots.clone());
+                return Ok(Value::String(crate::intl::tolocale::format_bigint(
+                    value,
+                    &[options.locale.clone()],
+                    Some(&format_options),
+                )));
+            }
             if let Some(Value::String(value)) = arguments.first() {
                 if options.maximum_fraction_digits >= 20 && is_decimal_literal(value) {
                     return Ok(Value::String(format_decimal_literal(
@@ -40,6 +48,8 @@ impl NumberOptions {
     fn from_slots(slots: &[(String, Value)]) -> Result<Self, VmError> {
         Ok(NumberOptions {
             locale: slot_string(slots, "locale").unwrap_or_else(default_locale),
+            numbering_system: slot_string(slots, "numberingSystem")
+                .unwrap_or_else(|| "latn".to_string()),
             style: slot_string(slots, "style").unwrap_or_else(|| "decimal".to_string()),
             currency: slot_string(slots, "currency"),
             currency_display: slot_string(slots, "currencyDisplay")
@@ -48,13 +58,15 @@ impl NumberOptions {
                 .unwrap_or_else(|| "standard".to_string()),
             unit: slot_string(slots, "unit"),
             unit_display: slot_string(slots, "unitDisplay").unwrap_or_else(|| "short".to_string()),
+            grouping: slot_string(slots, "useGrouping").unwrap_or_else(|| "auto".to_string()),
             minimum_integer_digits: slot_number(slots, "minimumIntegerDigits").unwrap_or(1.0)
                 as u32,
             minimum_fraction_digits: slot_number(slots, "minimumFractionDigits").unwrap_or(0.0)
                 as u32,
             maximum_fraction_digits: slot_number(slots, "maximumFractionDigits").unwrap_or(3.0)
                 as u32,
-            use_grouping: slot_bool(slots, "useGrouping").unwrap_or(true),
+            use_grouping: slot_bool(slots, "useGrouping")
+                .unwrap_or_else(|| slot_string(slots, "useGrouping").as_deref() != Some("false")),
             grouping_min2: slot_bool(slots, "groupingMin2").unwrap_or(false),
             notation: slot_string(slots, "notation").unwrap_or_else(|| "standard".to_string()),
             compact_display: slot_string(slots, "compactDisplay")
@@ -93,7 +105,7 @@ impl NumberOptions {
         text = apply_sign(self, text, number);
         text = apply_style(self, text);
         append_compact_suffix(&mut text, magnitude, self);
-        text
+        localize_digits(text, &self.numbering_system)
     }
 
     fn parts(&self, number: f64) -> Vec<Value> {
@@ -240,10 +252,29 @@ impl NumberOptions {
             ("locale".to_string(), Value::String(self.locale.clone())),
             (
                 "numberingSystem".to_string(),
-                Value::String("latn".to_string()),
+                Value::String(self.numbering_system.clone()),
             ),
             ("style".to_string(), Value::String(self.style.clone())),
-            ("useGrouping".to_string(), Value::Boolean(self.use_grouping)),
+        ];
+        if let Some(currency) = &self.currency {
+            properties.push(("currency".to_string(), Value::String(currency.clone())));
+            properties.push((
+                "currencyDisplay".to_string(),
+                Value::String(self.currency_display.clone()),
+            ));
+            properties.push((
+                "currencySign".to_string(),
+                Value::String(self.currency_sign.clone()),
+            ));
+        }
+        if let Some(unit) = &self.unit {
+            properties.push(("unit".to_string(), Value::String(unit.clone())));
+            properties.push((
+                "unitDisplay".to_string(),
+                Value::String(self.unit_display.clone()),
+            ));
+        }
+        properties.extend([
             (
                 "minimumIntegerDigits".to_string(),
                 Value::Number(self.minimum_integer_digits as f64),
@@ -256,41 +287,165 @@ impl NumberOptions {
                 "maximumFractionDigits".to_string(),
                 Value::Number(self.maximum_fraction_digits as f64),
             ),
-            ("notation".to_string(), Value::String(self.notation.clone())),
-            (
-                "signDisplay".to_string(),
-                Value::String(self.sign_display.clone()),
-            ),
-            (
-                "roundingMode".to_string(),
-                Value::String(self.rounding_mode.clone()),
-            ),
-            (
-                "roundingIncrement".to_string(),
-                Value::Number(self.rounding_increment as f64),
-            ),
-            (
-                "trailingZeroDisplay".to_string(),
-                Value::String(self.trailing_zero_display.clone()),
-            ),
-        ];
+        ]);
+        if let Some(value) = self.minimum_significant_digits {
+            properties.push((
+                "minimumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
+        if let Some(value) = self.maximum_significant_digits {
+            properties.push((
+                "maximumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
+        properties.push((
+            "useGrouping".to_string(),
+            Value::String(self.grouping.clone()),
+        ));
+        properties.push(("notation".to_string(), Value::String(self.notation.clone())));
         if self.notation == "compact" {
             properties.push((
                 "compactDisplay".to_string(),
                 Value::String(self.compact_display.clone()),
             ));
         }
-        if let Some(currency) = &self.currency {
-            properties.push(("currency".to_string(), Value::String(currency.clone())));
-            properties.push((
-                "currencyDisplay".to_string(),
-                Value::String(self.currency_display.clone()),
-            ));
-            properties.push((
-                "currencySign".to_string(),
-                Value::String(self.currency_sign.clone()),
-            ));
-        }
+        properties.push((
+            "signDisplay".to_string(),
+            Value::String(self.sign_display.clone()),
+        ));
+        properties.push((
+            "roundingIncrement".to_string(),
+            Value::Number(self.rounding_increment as f64),
+        ));
+        properties.push((
+            "roundingMode".to_string(),
+            Value::String(self.rounding_mode.clone()),
+        ));
+        properties.push((
+            "roundingPriority".to_string(),
+            Value::String(self.rounding_priority.clone()),
+        ));
+        properties.push((
+            "trailingZeroDisplay".to_string(),
+            Value::String(self.trailing_zero_display.clone()),
+        ));
         make_object(properties)
     }
+}
+
+const DIGIT_BASES: &[(&str, u32)] = &[
+    ("adlm", 0x1e950),
+    ("ahom", 0x11730),
+    ("arab", 0x660),
+    ("arabext", 0x6f0),
+    ("bali", 0x1b50),
+    ("beng", 0x9e6),
+    ("bhks", 0x11c50),
+    ("brah", 0x11066),
+    ("cakm", 0x11136),
+    ("cham", 0xaa50),
+    ("deva", 0x966),
+    ("diak", 0x11950),
+    ("fullwide", 0xff10),
+    ("gara", 0x10d40),
+    ("gong", 0x11da0),
+    ("gonm", 0x11d50),
+    ("gujr", 0xae6),
+    ("gukh", 0x16130),
+    ("guru", 0xa66),
+    ("hmng", 0x16b50),
+    ("hmnp", 0x1e140),
+    ("java", 0xa9d0),
+    ("kali", 0xa900),
+    ("kawi", 0x11f50),
+    ("khmr", 0x17e0),
+    ("knda", 0xce6),
+    ("krai", 0x16d70),
+    ("lana", 0x1a80),
+    ("lanatham", 0x1a90),
+    ("laoo", 0xed0),
+    ("latn", 0x30),
+    ("lepc", 0x1c40),
+    ("limb", 0x1946),
+    ("mathbold", 0x1d7ce),
+    ("mathdbl", 0x1d7d8),
+    ("mathmono", 0x1d7f6),
+    ("mathsanb", 0x1d7ec),
+    ("mathsans", 0x1d7e2),
+    ("mlym", 0xd66),
+    ("modi", 0x11650),
+    ("mong", 0x1810),
+    ("mroo", 0x16a60),
+    ("mymr", 0x1040),
+    ("mtei", 0xabf0),
+    ("mymrepka", 0x116da),
+    ("mymrpao", 0x116d0),
+    ("mymrshan", 0x1090),
+    ("mymrtlng", 0xa9f0),
+    ("nagm", 0x1e4f0),
+    ("onao", 0x1e5f1),
+    ("outlined", 0x1ccf0),
+    ("shrd", 0x111d0),
+    ("sind", 0x112f0),
+    ("newa", 0x11450),
+    ("nkoo", 0x7c0),
+    ("olck", 0x1c50),
+    ("orya", 0xb66),
+    ("osma", 0x104a0),
+    ("rohg", 0x10d30),
+    ("saur", 0xa8d0),
+    ("segment", 0x1fbf0),
+    ("sinh", 0xde6),
+    ("sora", 0x110f0),
+    ("sund", 0x1bb0),
+    ("sunu", 0x11bf0),
+    ("takr", 0x116c0),
+    ("talu", 0x19d0),
+    ("tamldec", 0xbe6),
+    ("telu", 0xc66),
+    ("thai", 0xe50),
+    ("tibt", 0xf20),
+    ("tirh", 0x114d0),
+    ("tnsa", 0x16ac0),
+    ("tols", 0x11de0),
+    ("vaii", 0xa620),
+    ("wara", 0x118e0),
+    ("wcho", 0x1e2f0),
+];
+
+pub(crate) fn localize_digits(text: String, numbering_system: &str) -> String {
+    if numbering_system == "hanidec" {
+        return text
+            .chars()
+            .map(|character| {
+                "〇一二三四五六七八九"
+                    .chars()
+                    .nth(character.to_digit(10).unwrap_or(10) as usize)
+                    .unwrap_or(character)
+            })
+            .collect();
+    }
+    let Some((_, base)) = DIGIT_BASES
+        .iter()
+        .find(|(name, _)| *name == numbering_system)
+    else {
+        return text;
+    };
+    text.chars()
+        .map(|character| {
+            character
+                .to_digit(10)
+                .and_then(|digit| char::from_u32(base + digit))
+                .unwrap_or(character)
+        })
+        .collect()
+}
+
+pub(crate) fn supports_digit_system(numbering_system: &str) -> bool {
+    numbering_system == "hanidec"
+        || DIGIT_BASES
+            .iter()
+            .any(|(name, _)| *name == numbering_system)
 }

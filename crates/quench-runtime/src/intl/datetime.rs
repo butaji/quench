@@ -84,9 +84,16 @@ pub(crate) struct DateTimeOptions {
 }
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
+    construct_with_defaults(arguments, None)
+}
+
+pub(crate) fn construct_with_defaults(
+    arguments: &[Value],
+    defaults: Option<&[&str]>,
+) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = sanitize_locale(&locales.first().cloned().unwrap_or_else(default_locale));
-    let options = DateTimeOptions::from_options(locale, arguments.get(1))?;
+    let options = DateTimeOptions::from_options(locale, arguments.get(1), defaults)?;
     Ok(options.build_object())
 }
 
@@ -122,7 +129,11 @@ fn available_calendar(calendar: &str) -> bool {
 }
 
 impl DateTimeOptions {
-    fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
+    fn from_options(
+        locale: String,
+        options: Option<&Value>,
+        defaults: Option<&[&str]>,
+    ) -> Result<Self, VmError> {
         if matches!(options, Some(Value::Null)) {
             return Err(runtime_error("TypeError: Cannot convert null to object"));
         }
@@ -141,7 +152,7 @@ impl DateTimeOptions {
                 formatter.apply(key, &value)?;
             }
         }
-        formatter.apply_defaults();
+        formatter.apply_defaults(defaults);
         formatter.validate_styles()?;
         formatter.resolve_hour();
         Ok(formatter)
@@ -194,16 +205,17 @@ impl DateTimeOptions {
                 return Err(runtime_error("RangeError: invalid formatMatcher"));
             }
             "timeZone" => {
+                let named_time_zone = canonical_named_time_zone(&text);
                 if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
                 if !text.eq_ignore_ascii_case("utc")
                     && normalize_offset(&text).is_none()
-                    && text.parse::<chrono_tz::Tz>().is_err()
+                    && named_time_zone.is_none()
                 {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
-                self.time_zone = canonicalize_time_zone(&text);
+                self.time_zone = named_time_zone.unwrap_or_else(|| canonicalize_time_zone(&text));
             }
             "calendar" => {
                 let value = super::locale::calendar_option(&text)?;
@@ -242,14 +254,15 @@ impl DateTimeOptions {
         self.components.iter().any(|(name, _)| name == key)
     }
 
-    fn apply_defaults(&mut self) {
+    fn apply_defaults(&mut self, defaults: Option<&[&str]>) {
         if self.contains("dateStyle") || self.contains("timeStyle") {
             return;
         }
-        if self.contains("year") || self.contains("month") || self.contains("day") {
+        let keys = defaults.unwrap_or(&["year", "month", "day"]);
+        if keys.iter().any(|key| self.contains(key)) {
             return;
         }
-        for key in ["year", "month", "day"] {
+        for key in keys {
             self.set_component(key, "numeric".to_string());
         }
     }
@@ -335,7 +348,13 @@ impl DateTimeOptions {
             props.push((key.clone(), Value::String(value.clone())));
         }
         if has_hour {
-            if let Some(hour12) = self.hour12 {
+            let hour12 = self.hour12.or_else(|| {
+                self.components
+                    .iter()
+                    .find(|(key, _)| key == "hourCycle")
+                    .map(|(_, value)| matches!(value.as_str(), "h11" | "h12"))
+            });
+            if let Some(hour12) = hour12 {
                 props.push(("hour12".to_string(), Value::Boolean(hour12)));
             }
         }
@@ -372,22 +391,43 @@ fn canonicalize_time_zone(time_zone: &str) -> String {
     }
 }
 
+fn canonical_named_time_zone(time_zone: &str) -> Option<String> {
+    chrono_tz::TZ_VARIANTS
+        .iter()
+        .find(|zone| zone.name().eq_ignore_ascii_case(time_zone))
+        .map(|zone| zone.name().to_string())
+}
+
 fn normalize_offset(time_zone: &str) -> Option<String> {
     let (sign, rest) = match time_zone.chars().next()? {
         '+' => ('+', &time_zone[1..]),
         '-' => ('-', &time_zone[1..]),
         _ => return None,
     };
-    let (hours, minutes) = rest.split_once(':')?;
-    if hours.len() != 2 || minutes.len() != 2 {
-        return None;
-    }
+    let (hours, minutes) = offset_parts(rest)?;
     let hour: u32 = hours.parse().ok()?;
     let minute: u32 = minutes.parse().ok()?;
     if hour > 23 || minute > 59 {
         return None;
     }
+    if hour == 0 && minute == 0 {
+        return Some("+00:00".to_string());
+    }
     Some(format!("{sign}{hour:02}:{minute:02}"))
+}
+
+fn offset_parts(rest: &str) -> Option<(&str, &str)> {
+    if let Some((hours, minutes)) = rest.split_once(':') {
+        return (hours.len() == 2 && minutes.len() == 2).then_some((hours, minutes));
+    }
+    if !rest.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    match rest.len() {
+        2 => Some((rest, "00")),
+        4 => Some((&rest[..2], &rest[2..])),
+        _ => None,
+    }
 }
 
 fn literal_part(value: &str) -> Value {
@@ -604,11 +644,7 @@ fn civil_year(number: f64) -> i64 {
 }
 
 fn grouped_year(year: i64) -> String {
-    let text = year.to_string();
-    if text.len() <= 3 {
-        return text;
-    }
-    format!("{},{}", &text[..text.len() - 3], &text[text.len() - 3..])
+    year.to_string()
 }
 
 fn range_number(value: &Value) -> Result<f64, VmError> {

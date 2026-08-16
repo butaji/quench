@@ -348,6 +348,12 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = array_property_result(value, key, receiver) {
         return result;
     }
+    if let Some(result) = function_inherited_property_result(value, key, receiver) {
+        return result;
+    }
+    if let Some(result) = object_inherited_property_result(value, key, receiver) {
+        return result;
+    }
     if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
         return result;
     }
@@ -358,6 +364,49 @@ pub(crate) fn get_property_with_receiver(
         return result;
     }
     finish_property_access(value, key, receiver)
+}
+
+fn function_inherited_property_result(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
+    let Value::Function(function) = value else {
+        return None;
+    };
+    let properties = function.properties.borrow();
+    if properties.iter().any(|(name, _)| name == key) {
+        return None;
+    }
+    let prototype = properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))?;
+    Some(get_property_with_receiver(&prototype, key, receiver))
+}
+
+fn object_inherited_property_result(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
+    let Value::Object(properties) = value else {
+        return None;
+    };
+    if properties.iter().any(|(name, _)| name == key) {
+        return None;
+    }
+    let prototype = properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
+    if matches!(prototype, Value::Null) {
+        return Some(Ok(Value::Undefined));
+    }
+    match get_property_with_receiver(prototype, key, receiver) {
+        Ok(Value::Undefined) => None,
+        result => Some(result),
+    }
 }
 
 fn finish_property_access(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
@@ -510,6 +559,9 @@ fn should_preserve_receiver_property(
     if object_has_property(value, key) {
         return true;
     }
+    if plural_rules_instance(receiver) {
+        return true;
+    }
     matches!(value, Value::Builtin(_))
         || matches!(value, Value::Object(_)) && crate::vm::is_global_object(value)
         || is_intl_number_format_property(property)
@@ -517,6 +569,21 @@ fn should_preserve_receiver_property(
         || matches!(key, "constructor" | "prototype")
 }
 
+fn plural_rules_instance(value: &Value) -> bool {
+    let Value::Object(properties) = value else {
+        return false;
+    };
+    properties.iter().any(|(name, prototype)| {
+        name == "\0prototype"
+            && match prototype {
+                Value::Builtin(Builtin::IntlPluralRulesPrototype) => true,
+                Value::BoundFunction(bound) => {
+                    bound.target == Value::Builtin(Builtin::IntlPluralRulesPrototype)
+                }
+                _ => false,
+            }
+    })
+}
 fn is_boxed_primitive(value: &Value) -> bool {
     matches!(
         value,
@@ -573,6 +640,9 @@ fn is_iterator_next_builtin(builtin: Builtin) -> bool {
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
 fn is_accessor_builtin(builtin: Builtin) -> bool {
+    if builtin == Builtin::IntlNumberFormatFormat {
+        return false;
+    }
     let name = crate::builtins::builtin_name(builtin);
     name.starts_with("get ") || name.starts_with("set ")
 }

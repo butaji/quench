@@ -236,6 +236,7 @@ pub(super) fn global_builtin(key: &str) -> Option<Builtin> {
         "AsyncDisposableStack" => AsyncDisposableStack,
         "FinalizationRegistry" => FinalizationRegistry,
         "ShadowRealm" => ShadowRealm,
+        "Intl" => Intl,
         _ => return global_builtin_error(key),
     })
 }
