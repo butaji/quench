@@ -77,6 +77,9 @@ impl CapabilityName {
     const HttpRequestWrite: u16 = 403;
     const Console: u16 = 3;
     const TimerValidation: u16 = 5;
+    const StreamReadable: u16 = 1310;
+    const StreamWritable: u16 = 1311;
+    const StreamReadableFrom: u16 = 1312;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -169,6 +172,7 @@ struct StreamState {
     transform: Option<Value>,
     data: Option<Value>,
     end: Option<Value>,
+    source: Vec<Value>,
 }
 
 struct HttpState {
@@ -209,6 +213,7 @@ impl Host for QuenchNodeHost {
         match capability.kind {
             HostCapabilityKind::Custom(CapabilityName::Require) => require_module(arguments),
             HostCapabilityKind::Custom(CapabilityName::EventEmitter) => self.construct(capability, arguments),
+            HostCapabilityKind::Custom(CapabilityName::StreamReadable | CapabilityName::StreamWritable | CapabilityName::StreamReadableFrom) => self.construct(capability, arguments),
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -312,7 +317,7 @@ impl Host for QuenchNodeHost {
             );
             return Ok(emitter);
         }
-        if capability.kind != HostCapabilityKind::Custom(CapabilityName::Stream) {
+        if !matches!(capability.kind, HostCapabilityKind::Custom(CapabilityName::Stream | CapabilityName::StreamReadable | CapabilityName::StreamWritable | CapabilityName::StreamReadableFrom)) {
             return Err(VmError::NotCallable);
         }
         let id = self.next_stream.get();
@@ -329,9 +334,12 @@ impl Host for QuenchNodeHost {
                 transform,
                 data: None,
                 end: None,
+                source: if capability.kind == HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom) {
+                    arguments.first().and_then(|value| array_values(value).ok()).unwrap_or_default()
+                } else { Vec::new() },
             },
         );
-        Ok(Value::object(vec![
+        let mut stream = Value::object(vec![
             (
                 "on".into(),
                 capability_function(HostCapabilityKind::Custom(id + 1)),
@@ -340,7 +348,10 @@ impl Host for QuenchNodeHost {
                 "end".into(),
                 capability_function(HostCapabilityKind::Custom(id + 2)),
             ),
-        ]))
+        ]);
+        stream = quench_runtime::execute::set_property(stream, "pipe", capability_function(HostCapabilityKind::Custom(id + 5)));
+        stream = quench_runtime::execute::set_property(stream, "write", capability_function(HostCapabilityKind::Custom(id + 2)));
+        Ok(stream)
     }
 }
 
@@ -376,6 +387,14 @@ impl QuenchNodeHost {
                 Ok(capability_function(HostCapabilityKind::Custom(stream_id)))
             }
             2 => {
+                if self.streams.borrow().get(&stream_id).is_some_and(|state| state.transform.is_none()) {
+                    if let Some(callback) = self.streams.borrow().get(&stream_id).and_then(|state| state.data.clone()) {
+                        if let Some(value) = arguments.first() {
+                            quench_runtime::execute::call(&callback, &Value::Undefined, std::slice::from_ref(value))?;
+                        }
+                    }
+                    return Ok(Value::Boolean(true));
+                }
                 let chunk = string_or_bytes(arguments.first())?;
                 let transform = self
                     .streams
@@ -427,6 +446,15 @@ impl QuenchNodeHost {
                     quench_runtime::execute::call(&end, &Value::Undefined, &[])?;
                 }
                 Ok(Value::Undefined)
+            }
+            5 => {
+                let target = arguments.first().ok_or(VmError::NotCallable)?;
+                let chunks = self.streams.borrow().get(&stream_id).map(|state| state.source.clone()).unwrap_or_default();
+                let write = quench_runtime::execute::get_property_result(target, "write")?;
+                for chunk in chunks {
+                    quench_runtime::execute::call(&write, target, std::slice::from_ref(&chunk))?;
+                }
+                Ok(target.clone())
             }
             _ => Err(VmError::NotCallable),
         }
@@ -525,6 +553,16 @@ impl QuenchNodeHost {
             _ => Err(VmError::NotCallable),
         }
     }
+}
+
+fn array_values(value: &Value) -> Result<Vec<Value>, VmError> {
+    let length = match quench_runtime::execute::get_property_result(value, "length")? {
+        Value::Number(length) => length.max(0.0) as usize,
+        _ => return Err(VmError::NotCallable),
+    };
+    (0..length)
+        .map(|index| quench_runtime::execute::get_property_result(value, &index.to_string()))
+        .collect()
 }
 
 fn response_object(base: u16) -> Value {
@@ -692,10 +730,16 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             )]));
         }
         if name == "node:stream" || name == "stream" {
-            return Ok(Value::object(vec![(
-                "Transform".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::Stream)),
-            )]));
+            let readable = quench_runtime::execute::set_property(
+                capability_function(HostCapabilityKind::Custom(CapabilityName::StreamReadable)),
+                "from",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom)),
+            );
+            return Ok(Value::object(vec![
+                ("Transform".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::Stream))),
+                ("Readable".into(), readable),
+                ("Writable".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamWritable))),
+            ]));
         }
         if name == "node:http" || name == "http" {
             return Ok(Value::object(vec![
@@ -1367,6 +1411,9 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::QueueMicrotask),
                 HostCapabilityKind::Custom(CapabilityName::BufferByteLength),
                 HostCapabilityKind::Custom(CapabilityName::Stream),
+                HostCapabilityKind::Custom(CapabilityName::StreamReadable),
+                HostCapabilityKind::Custom(CapabilityName::StreamWritable),
+                HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
