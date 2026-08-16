@@ -538,6 +538,7 @@ fn builtin_length(builtin: Builtin) -> f64 {
         | AsyncGeneratorReturn | AsyncGeneratorThrow => 1.0,
         ArrayBuffer => 1.0,
         Object => 1.0,
+        ObjectCreate => 2.0,
         Float64Array => 3.0,
         Float32Array => 3.0,
         Int8Array => 3.0,
