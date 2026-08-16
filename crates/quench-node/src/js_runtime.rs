@@ -5477,7 +5477,14 @@ fn util_system_error_name(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::Number(errno)) = arguments.first() else {
         return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "code must be a number")));
     };
-    Ok(Value::String(format!("Unknown system error {errno}").into()))
+    let name = match *errno as i32 {
+        -2 => "ENOENT".to_owned(),
+        -17 => "EEXIST".to_owned(),
+        -32 => "EPIPE".to_owned(),
+        -105 => "ENOBUFS".to_owned(),
+        _ => format!("Unknown system error {errno}"),
+    };
+    Ok(Value::String(name.into()))
 }
 
 fn util_system_error_message(arguments: &[Value]) -> Result<Value, VmError> {
@@ -5505,7 +5512,7 @@ fn util_exception_with_host_port(arguments: &[Value]) -> Result<Value, VmError> 
 
 fn util_system_error_map_get(arguments: &[Value]) -> Result<Value, VmError> {
     let errno = match arguments.first() { Some(Value::Number(value)) => *value as i32, _ => 0 };
-    let name = match errno { -2 => "ENOENT", -17 => "EEXIST", _ => return Ok(Value::Undefined) };
+    let name = match errno { -2 => "ENOENT", -17 => "EEXIST", -32 => "EPIPE", -105 => "ENOBUFS", _ => return Ok(Value::Undefined) };
     Ok(quench_runtime::host_api::array(vec![Value::String(name.into()), Value::String(name.into())]))
 }
 
