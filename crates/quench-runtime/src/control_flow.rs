@@ -311,17 +311,25 @@ fn handler_locals(
     if let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) =
         &parameter.pattern.kind
     {
+        preserve_annex_b_outer(&mut result, identifier.name.as_str());
         result.insert(identifier.name.to_string(), slot);
         return (result, Some(slot), slot.saturating_add(1));
     }
     next_slot = next_slot.saturating_add(1);
     for name in crate::binding_patterns::names(&parameter.pattern) {
+        preserve_annex_b_outer(&mut result, &name);
         if let std::collections::hash_map::Entry::Vacant(entry) = result.entry(name) {
             entry.insert(next_slot);
             next_slot = next_slot.saturating_add(1);
         }
     }
     (result, Some(slot), next_slot)
+}
+
+fn preserve_annex_b_outer(locals: &mut HashMap<String, u16>, name: &str) {
+    if let Some(slot) = locals.get(name).copied() {
+        locals.insert(format!("\0annex-b-outer:{name}"), slot);
+    }
 }
 
 pub(crate) fn reduce_try_statement(
