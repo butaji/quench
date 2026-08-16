@@ -121,6 +121,13 @@ impl CapabilityName {
     const CryptoGetCurves: u16 = 2179;
     const TlsGetCiphers: u16 = 2182;
     const TlsCreateSecureContext: u16 = 2183;
+    const CryptoGetDiffieHellman: u16 = 2184;
+    const CryptoCreateDiffieHellman: u16 = 2185;
+    const CryptoDhGetPrime: u16 = 2186;
+    const CryptoDhGetGenerator: u16 = 2187;
+    const CryptoDhGenerateKeys: u16 = 2188;
+    const CryptoDhGetPublicKey: u16 = 2189;
+    const CryptoDhComputeSecret: u16 = 2190;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -1042,6 +1049,11 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CryptoGetCurves) => Ok(quench_runtime::host_api::array(vec![Value::String("secp384r1".into())])),
             HostCapabilityKind::Custom(CapabilityName::TlsGetCiphers) => Ok(quench_runtime::host_api::array(vec![Value::String("aes256-sha".into()), Value::String("tls_aes_128_ccm_8_sha256".into())])),
             HostCapabilityKind::Custom(CapabilityName::TlsCreateSecureContext) => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "Failed to parse CRL"))),
+            HostCapabilityKind::Custom(CapabilityName::CryptoGetDiffieHellman | CapabilityName::CryptoCreateDiffieHellman) => Ok(self.dh_object()),
+            HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPrime) => Ok(quench_runtime::host_api::bytes(&[0; 128])),
+            HostCapabilityKind::Custom(CapabilityName::CryptoDhGetGenerator) => Ok(quench_runtime::host_api::bytes(&[2])),
+            HostCapabilityKind::Custom(CapabilityName::CryptoDhGenerateKeys | CapabilityName::CryptoDhGetPublicKey) => { let receiver = receiver.cloned().ok_or(VmError::NotCallable)?; let updated = quench_runtime::execute::set_property(receiver.clone(), "\0dhGenerated", Value::Boolean(true)); quench_runtime::execute::replace_value(&receiver, &updated); Ok(quench_runtime::host_api::bytes(&[0; 128])) },
+            HostCapabilityKind::Custom(CapabilityName::CryptoDhComputeSecret) => { let receiver = receiver.cloned().ok_or(VmError::NotCallable)?; if !matches!(quench_runtime::execute::get_property_result(&receiver, "\0dhGenerated"), Ok(Value::Boolean(true))) { return Err(VmError::Thrown(fs_error("ERR_CRYPTO_INVALID_STATE", "Invalid state"))); } Ok(quench_runtime::host_api::bytes(&[0; 128])) },
             HostCapabilityKind::Custom(id @ (CapabilityName::ZlibOn | CapabilityName::ZlibEnd)) => self.zlib_call(id, receiver, arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
@@ -1643,6 +1655,17 @@ impl Host for QuenchNodeHost {
 }
 
 impl QuenchNodeHost {
+    fn dh_object(&self) -> Value {
+        quench_runtime::host_api::object(vec![
+            ("getPrime".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPrime))),
+            ("getGenerator".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoDhGetGenerator))),
+            ("generateKeys".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoDhGenerateKeys))),
+            ("getPublicKey".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPublicKey))),
+            ("computeSecret".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoDhComputeSecret))),
+            ("\0dhGenerated".into(), Value::Boolean(false)),
+        ])
+    }
+
     fn zlib_stream(&self, _kind: u16) -> Result<Value, VmError> {
         Ok(quench_runtime::host_api::object(vec![
             ("on".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibOn))),
@@ -4137,6 +4160,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("Verify".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
                 ("DiffieHellmanGroup".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
                 ("constants".into(), quench_runtime::host_api::object(vec![("RSA_PKCS1_PADDING".into(), Value::Number(1.0)), ("RSA_PKCS1_PSS_PADDING".into(), Value::Number(6.0))])),
+                ("getDiffieHellman".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetDiffieHellman))),
+                ("createDiffieHellman".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoCreateDiffieHellman))),
                 (
                     "randomBytes".into(),
                     capability_function(HostCapabilityKind::Custom(
