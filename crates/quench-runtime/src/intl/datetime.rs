@@ -396,6 +396,9 @@ fn normalize_offset(time_zone: &str) -> Option<String> {
     if hour > 23 || minute > 59 {
         return None;
     }
+    if hour == 0 && minute == 0 {
+        return Some("+00:00".to_string());
+    }
     Some(format!("{sign}{hour:02}:{minute:02}"))
 }
 
