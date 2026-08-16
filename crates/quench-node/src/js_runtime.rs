@@ -5619,6 +5619,10 @@ fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn vm_create_context(arguments: &[Value]) -> Result<Value, VmError> {
     if arguments.is_empty() { return Ok(Value::object(vec![])); }
+    if let Some(options) = arguments.get(1) {
+        if !matches!(options, Value::Object(_)) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "options must be an object"))); }
+        if matches!(quench_runtime::execute::get_property_result(options, "name"), Ok(Value::Null)) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "name must be a string"))); }
+    }
     match arguments.first() {
         Some(Value::Object(_)) | Some(Value::Array(_)) => Ok(arguments.first().cloned().unwrap()),
         _ => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "context must be an object"))),
