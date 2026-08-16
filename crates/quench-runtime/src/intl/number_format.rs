@@ -39,7 +39,7 @@ pub(crate) fn group_integer_locale(text: &str, locale: &str) -> String {
         .split_once('.')
         .map_or((body, None), |value| (value.0, Some(value.1)));
     let grouped = group_integer(integer);
-    let (grouping, decimal) = if locale.starts_with("de") {
+    let (grouping, decimal) = if locale.starts_with("de") && !locale.contains("-u-") {
         ('.', ',')
     } else if locale.starts_with("pt") {
         ('\u{a0}', ',')
@@ -467,13 +467,15 @@ pub(crate) fn format_currency(
         },
         |rest| ("-", rest),
     );
-    let text = if locale.starts_with("de") || locale.starts_with("pt") {
+    let plain_decimal_locale =
+        !locale.contains("-u-") && (locale.starts_with("de") || locale.starts_with("pt"));
+    let text = if plain_decimal_locale {
         text.replace('.', ",")
     } else {
         text.to_string()
     };
     let symbol = currency_symbol(currency, display, locale);
-    let formatted = if locale.starts_with("de") || locale.starts_with("pt") {
+    let formatted = if plain_decimal_locale {
         format!("{text}\u{a0}{symbol}")
     } else {
         format!("{symbol}{text}")

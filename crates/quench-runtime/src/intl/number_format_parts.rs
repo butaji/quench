@@ -80,7 +80,11 @@ pub(crate) fn numeric_parts(text: &str, locale: &str) -> Vec<Value> {
 }
 
 fn decimal_numeric_parts(text: &str, locale: &str) -> Vec<Value> {
-    let decimal = if locale.starts_with("de") { ',' } else { '.' };
+    let decimal = if locale.starts_with("de") && !locale.contains("-u-") {
+        ','
+    } else {
+        '.'
+    };
     let grouping = if decimal == ',' { '.' } else { ',' };
     let split = text.find(|character: char| {
         !character.is_numeric() && character != decimal && character != grouping
