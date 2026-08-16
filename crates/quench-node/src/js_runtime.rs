@@ -355,8 +355,12 @@ struct StreamState {
     end: Option<Value>,
     drain: Option<Value>,
     error: Option<Value>,
+    close: Option<Value>,
+    destroy: Option<Value>,
     source: Vec<Value>,
     need_drain: bool,
+    destroyed: bool,
+    errored: Option<Value>,
 }
 
 struct HttpState {
@@ -928,6 +932,8 @@ impl Host for QuenchNodeHost {
                 end: None,
                 drain: None,
                 error: None,
+                close: None,
+                destroy: arguments.first().and_then(|options| quench_runtime::execute::get_property_result(options, "destroy").ok()),
                 source: if capability.kind
                     == HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom)
                 {
@@ -939,6 +945,8 @@ impl Host for QuenchNodeHost {
                     Vec::new()
                 },
                 need_drain: false,
+                destroyed: false,
+                errored: None,
             },
         );
         let writable_state = Value::object(vec![]);
@@ -955,6 +963,19 @@ impl Host for QuenchNodeHost {
                 ]),
             ],
         ).unwrap_or_else(|_| Value::object(vec![("needDrain".into(), Value::Boolean(false))]));
+        let writable_state = quench_runtime::execute::call(
+            &Value::Builtin(quench_runtime::ops::Builtin::ObjectDefineProperty),
+            &Value::Undefined,
+            &[
+                writable_state,
+                Value::String("errored".into()),
+                Value::object(vec![
+                    ("get".into(), capability_function(HostCapabilityKind::Custom(id + 1))),
+                    ("enumerable".into(), Value::Boolean(true)),
+                    ("configurable".into(), Value::Boolean(true)),
+                ]),
+            ],
+        ).unwrap_or_else(|_| Value::object(vec![("errored".into(), Value::Null)]));
         let mut stream = Value::object(vec![
             ("readableEnded".into(), Value::Boolean(false)),
             ("readableDefaultEncoding".into(), arguments.first()
@@ -975,6 +996,19 @@ impl Host for QuenchNodeHost {
                 capability_function(HostCapabilityKind::Custom(id + 2)),
             ),
         ]);
+        stream = quench_runtime::execute::call(
+            &Value::Builtin(quench_runtime::ops::Builtin::ObjectDefineProperty),
+            &Value::Undefined,
+            &[
+                stream,
+                Value::String("destroyed".into()),
+                Value::object(vec![
+                    ("get".into(), capability_function(HostCapabilityKind::Custom(id + 1))),
+                    ("enumerable".into(), Value::Boolean(true)),
+                    ("configurable".into(), Value::Boolean(true)),
+                ]),
+            ],
+        ).unwrap_or_else(|_| Value::object(vec![("destroyed".into(), Value::Boolean(false))]));
         stream = quench_runtime::execute::set_property(
             stream,
             "pipe",
@@ -1651,6 +1685,12 @@ impl QuenchNodeHost {
         match operation {
             0 => Ok(Value::Boolean(self.streams.borrow().get(&stream_id).is_some_and(|state| state.need_drain))),
             1 => {
+                if arguments.is_empty() {
+                    return Ok(match self.streams.borrow().get(&stream_id) {
+                        Some(state) => state.errored.clone().unwrap_or(Value::Boolean(state.destroyed)),
+                        None => Value::Boolean(false),
+                    });
+                }
                 let Some(Value::String(event)) = arguments.first() else {
                     return Err(VmError::EvalError("stream.on expects an event".into()));
                 };
@@ -1664,6 +1704,7 @@ impl QuenchNodeHost {
                     "end" => state.end = Some(callback.clone()),
                     "drain" => state.drain = Some(callback.clone()),
                     "error" => state.error = Some(callback.clone()),
+                    "close" => state.close = Some(callback.clone()),
                     _ => {}
                 }
                 if event == "readable" {
@@ -1825,17 +1866,16 @@ impl QuenchNodeHost {
             }
             7 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
             9 => {
-                if let Some(callback) = arguments.get(1).or_else(|| arguments.first()) {
-                    if matches!(
-                        callback,
-                        Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
-                    ) {
-                        quench_runtime::execute::call(
-                            callback,
-                            receiver.unwrap_or(&Value::Undefined),
-                            &[],
-                        )?;
-                    }
+                if let Some(state) = self.streams.borrow_mut().get_mut(&stream_id) {
+                    state.destroyed = true;
+                    state.errored = arguments.first().cloned();
+                }
+                if let Some(destroy) = self.streams.borrow().get(&stream_id).and_then(|state| state.destroy.clone()) {
+                    let callback = capability_function(HostCapabilityKind::Custom(stream_id + 3));
+                    quench_runtime::execute::call(&destroy, &Value::Undefined, &[arguments.first().cloned().unwrap_or(Value::Null), callback])?;
+                }
+                if let Some(close) = self.streams.borrow().get(&stream_id).and_then(|state| state.close.clone()) {
+                    quench_runtime::execute::call(&close, &Value::Undefined, &[])?;
                 }
                 Ok(receiver.cloned().unwrap_or(Value::Undefined))
             }
