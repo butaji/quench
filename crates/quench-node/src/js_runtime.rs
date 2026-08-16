@@ -25,6 +25,8 @@ thread_local! {
     static NODE_TIMERS_PROMISES: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_TIMER_COUNTS: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
     static NODE_ASSERT_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_OS_HOME_ERROR: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_OS_BINDING: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_PRIORITY: Cell<i32> = const { Cell::new(0) };
     static VM_SCRIPT_RUNS: Cell<u32> = const { Cell::new(0) };
     static VM_COMPILE_CONTEXT_EXTENSION: Cell<bool> = const { Cell::new(false) };
@@ -219,6 +221,7 @@ impl CapabilityName {
     const Timer: u16 = 28;
     const TimerClearImmediate: u16 = 29;
     const NodeTest: u16 = 2193;
+    const InternalOsGetHomeDirectory: u16 = 2198;
     const ProcessNextTick: u16 = 21;
     const Assert: u16 = 13;
     const AssertStrictEqual: u16 = 14;
@@ -937,6 +940,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferInspect) => buffer_inspect(receiver),
             HostCapabilityKind::Custom(CapabilityName::InternalBinding) => {
                 internal_binding(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::InternalOsGetHomeDirectory) => {
+                Ok(Value::Undefined)
             }
             HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer) => {
                 internal_view_has_buffer(arguments)
@@ -8007,6 +8013,16 @@ fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
     if name == "util" {
         return Ok(util_types_module());
     }
+    if name == "os" {
+        let binding = quench_runtime::host_api::object(vec![(
+            "getHomeDirectory".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::InternalOsGetHomeDirectory,
+            )),
+        )]);
+        NODE_OS_BINDING.with(|stored| stored.replace(Some(binding.clone())));
+        return Ok(binding);
+    }
     if [
         "buffer",
         "cares_wrap",
@@ -9391,6 +9407,44 @@ fn os_tmpdir(receiver: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn os_homedir() -> Result<Value, VmError> {
+    if let Some(binding) = NODE_OS_BINDING.with(|stored| stored.borrow().clone()) {
+        let context = quench_runtime::host_api::object(vec![]);
+        if let Ok(get_home) =
+            quench_runtime::execute::get_property_result(&binding, "getHomeDirectory")
+        {
+            let _ = quench_runtime::execute::call(
+                &get_home,
+                &Value::Undefined,
+                std::slice::from_ref(&context),
+            );
+            if matches!(
+                quench_runtime::execute::get_property_result(&context, "syscall"),
+                Ok(Value::String(_))
+            ) {
+                NODE_OS_HOME_ERROR.with(|stored| stored.replace(Some(context)));
+            }
+        }
+    }
+    if let Some(context) = NODE_OS_HOME_ERROR.with(|stored| stored.borrow_mut().take()) {
+        let syscall = quench_runtime::execute::get_property_result(&context, "syscall")
+            .unwrap_or(Value::Undefined);
+        let code = quench_runtime::execute::get_property_result(&context, "code")
+            .unwrap_or(Value::Undefined);
+        let message = quench_runtime::execute::get_property_result(&context, "message")
+            .unwrap_or(Value::Undefined);
+        return Err(VmError::Thrown(quench_runtime::host_api::object(vec![(
+            "message".into(),
+            Value::String(
+                format!(
+                    "A system error occurred: {} returned {} ({})",
+                    safe_value_string(&syscall),
+                    safe_value_string(&code),
+                    safe_value_string(&message)
+                )
+                .into(),
+            ),
+        )])));
+    }
     Ok(Value::String(
         std::env::var("HOME").unwrap_or_else(|_| "/".into()),
     ))
