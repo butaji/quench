@@ -264,6 +264,7 @@ fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (TemporalPlainDatePrototype, "day") => TemporalPlainDateDayGetter,
         (TemporalPlainDatePrototype, "year") => TemporalPlainDateYearGetter,
         (TemporalPlainDatePrototype, "monthCode") => TemporalPlainDateMonthCodeGetter,
+        (TemporalPlainDatePrototype, "month") => TemporalPlainDateMonthGetter,
         (IntlDateTimeFormatPrototype, "format") => IntlDateTimeFormatFormatGetter,
         (IntlNumberFormatPrototype, "format") => IntlNumberFormatFormat,
         (IntlCollatorPrototype, "compare") => IntlCollatorCompareGetter,

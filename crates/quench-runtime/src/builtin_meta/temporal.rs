@@ -26,6 +26,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateDayGetter => Some("get day"),
         Builtin::TemporalPlainDateYearGetter => Some("get year"),
         Builtin::TemporalPlainDateMonthCodeGetter => Some("get monthCode"),
+        Builtin::TemporalPlainDateMonthGetter => Some("get month"),
         Builtin::TemporalPlainDateValueOf => Some("Temporal.PlainDate.prototype.valueOf"),
         _ => None,
     }
@@ -55,6 +56,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateDayGetter => Some("day"),
         Builtin::TemporalPlainDateYearGetter => Some("year"),
         Builtin::TemporalPlainDateMonthCodeGetter => Some("monthCode"),
+        Builtin::TemporalPlainDateMonthGetter => Some("month"),
         Builtin::TemporalPlainDateValueOf => Some("valueOf"),
         _ => None,
     }
@@ -83,6 +85,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalPlainDateDayGetter => Some(0.0),
         Builtin::TemporalPlainDateYearGetter => Some(0.0),
         Builtin::TemporalPlainDateMonthCodeGetter => Some(0.0),
+        Builtin::TemporalPlainDateMonthGetter => Some(0.0),
         Builtin::TemporalPlainDateValueOf => Some(0.0),
         _ => None,
     }
