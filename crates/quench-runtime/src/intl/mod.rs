@@ -594,6 +594,9 @@ fn canonicalize_subtags(
             extension = true;
             continue;
         }
+        if region_done && is_region_shape(part) {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
         match classify_subtag(part, script_done, region_done, variant_done) {
             Subtag::Script => {
                 out.push(titlecase_script(part));
@@ -611,6 +614,12 @@ fn canonicalize_subtags(
         }
     }
     Ok(out)
+}
+
+fn is_region_shape(part: &str) -> bool {
+    let alphabetic = part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic());
+    let numeric = part.len() == 3 && part.chars().all(|c| c.is_ascii_digit());
+    alphabetic || numeric
 }
 
 fn canonical_region(part: &str, emitted: &[String]) -> String {
