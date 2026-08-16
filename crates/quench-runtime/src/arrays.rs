@@ -37,6 +37,7 @@ fn execute_builtin_match(
         Array => return Some(Ok(crate::builtins::array(arguments))),
         ArrayIsArray => return Some(Ok(crate::builtins::is_array(arguments.first()))),
         ArrayFrom => return Some(from(receiver, arguments)),
+        ArrayOf => return Some(Ok(crate::builtins::array(arguments))),
         ArrayMap => return Some(crate::builtins::array_map(receiver, arguments)),
         ArrayFilter => return Some(crate::builtins::array_filter(receiver, arguments)),
         ArraySome => return Some(some(receiver, arguments)),
