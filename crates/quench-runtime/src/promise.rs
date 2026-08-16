@@ -453,53 +453,7 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     Ok(result)
 }
 
-fn then_species_constructor(promise: &Value) -> Result<Value, VmError> {
-    let constructor = crate::execute::get_property_result(promise, "constructor")?;
-    if matches!(constructor, Value::Undefined | Value::Null) {
-        return Ok(Value::Builtin(Builtin::Promise));
-    }
-    let species = crate::execute::get_property_result(&constructor, "Symbol.species")?;
-    Ok(if matches!(species, Value::Undefined | Value::Null) {
-        Value::Builtin(Builtin::Promise)
-    } else {
-        species
-    })
-}
-
-fn construct_then_result(constructor: &Value) -> Result<Value, VmError> {
-    if matches!(constructor, Value::Builtin(Builtin::Promise)) {
-        return Ok(new_promise());
-    }
-    let target = Rc::new(PromiseData::default());
-    let executor = bound_settler(Builtin::PromiseResolve, &target);
-    if let Value::BoundFunction(executor) = &executor {
-        executor
-            .properties
-            .borrow_mut()
-            .push(("length".to_string(), Value::Number(2.0)));
-    }
-    crate::construct::construct_value(constructor, &[executor])
-}
-
-/// Execute Promise.prototype.catch.
-pub fn promise_catch(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(receiver) = receiver else {
-        return Err(VmError::NotCallable);
-    };
-    let then = crate::execute::get_property_result(receiver, "then")?;
-    if !crate::conversion::is_callable(&then) {
-        return Err(crate::vm::not_callable());
-    }
-    crate::functions::execute_target(
-        &then,
-        receiver,
-        &[
-            Value::Undefined,
-            arguments.first().cloned().unwrap_or(Value::Undefined),
-        ],
-    )
-}
-
+include!("promise_methods.rs");
 /// Dispatch Promise builtins.
 pub fn execute_builtin(
     builtin: Builtin,
@@ -542,6 +496,5 @@ pub fn execute_builtin(
     };
     Some(result)
 }
-
 include!("promise_exports.rs");
 include!("promise_tests.rs");
