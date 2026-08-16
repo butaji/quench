@@ -324,6 +324,10 @@ impl NumberOptions {
             Value::String(self.rounding_mode.clone()),
         ));
         properties.push((
+            "roundingPriority".to_string(),
+            Value::String(self.rounding_priority.clone()),
+        ));
+        properties.push((
             "trailingZeroDisplay".to_string(),
             Value::String(self.trailing_zero_display.clone()),
         ));
