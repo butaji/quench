@@ -11,6 +11,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
     let mut options = parse_options(arguments.get(1), locale.starts_with("th"))?;
+    if options.case_first == "false" && case_first_option_absent(arguments.get(1)) {
+        options.case_first =
+            super::locale::case_first_extension(&locale).unwrap_or_else(|| "false".to_string());
+    }
     if locale_has_true_kn(&locale) && numeric_option_absent(arguments.get(1)) {
         options.numeric = true;
     }
@@ -36,6 +40,16 @@ fn locale_has_true_kn(locale: &str) -> bool {
                 .get(index + 1)
                 .is_none_or(|value| value.len() == 2 || value.eq_ignore_ascii_case("true"))
         })
+}
+
+fn case_first_option_absent(value: Option<&Value>) -> bool {
+    let Some(Value::Object(properties)) = value else {
+        return true;
+    };
+    properties
+        .iter()
+        .find(|(name, _)| name == "caseFirst")
+        .is_none_or(|(_, value)| matches!(value, Value::Undefined))
 }
 
 fn numeric_option_absent(value: Option<&Value>) -> bool {
