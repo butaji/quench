@@ -208,12 +208,14 @@ fn minimize(tag: &str) -> String {
 
 fn likely_subtags(language: &str) -> (&'static str, &'static str) {
     match language {
+        "aa" => ("Latn", "ET"),
         "aae" => ("Latn", "IT"),
         "ar" => ("Arab", "EG"),
         "de" => ("Latn", "DE"),
         "en" => ("Latn", "US"),
         "es" => ("Latn", "ES"),
         "fr" => ("Latn", "FR"),
+        "he" => ("Hebr", "IL"),
         "hi" => ("Deva", "IN"),
         "ja" => ("Jpan", "JP"),
         "ko" => ("Kore", "KR"),
