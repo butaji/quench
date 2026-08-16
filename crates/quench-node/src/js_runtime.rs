@@ -904,26 +904,10 @@ impl QuenchNodeHost {
             .get(&fd)
             .cloned()
             .ok_or(VmError::NotCallable)?;
-        let (buffer, offset, length, position, callback) =
-            if let Some(Value::Uint8Array(view)) = arguments.get(1) {
-                (
-                    view.clone(),
-                    number_arg(arguments.get(2)),
-                    number_arg(arguments.get(3)),
-                    Some(number_arg(arguments.get(4))),
-                    arguments.iter().rev().find(|value| {
-                        matches!(
-                            value,
-                            Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
-                        )
-                    }),
-                )
-            } else {
-                let options = arguments.get(1).ok_or(VmError::NotCallable)?;
-                let value = quench_runtime::execute::get_property_result(options, "buffer")?;
-                let Value::Uint8Array(view) = value else {
-                    return Err(VmError::NotCallable);
-                };
+        let (buffer, offset, length, position, callback) = if let Some(Value::Uint8Array(view)) =
+            arguments.get(1)
+        {
+            if let Some(options @ Value::Object(_)) = arguments.get(2) {
                 (
                     view.clone(),
                     property_number(options, "offset").unwrap_or(0),
@@ -938,7 +922,54 @@ impl QuenchNodeHost {
                         )
                     }),
                 )
+            } else {
+                (
+                    view.clone(),
+                    number_arg(arguments.get(2)),
+                    number_arg(arguments.get(3)),
+                    Some(number_arg(arguments.get(4))),
+                    arguments.iter().rev().find(|value| {
+                        matches!(
+                            value,
+                            Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+                        )
+                    }),
+                )
+            }
+        } else {
+            let options = arguments.get(1).ok_or(VmError::NotCallable)?;
+            let value = quench_runtime::execute::get_property_result(options, "buffer")?;
+            let value = if matches!(value, Value::Uint8Array(_)) {
+                value
+            } else {
+                quench_runtime::execute::set_property(
+                    quench_runtime::host_api::bytes(&vec![
+                        0;
+                        property_number(options, "length").unwrap_or(0)
+                            as usize
+                    ]),
+                    "toString",
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString)),
+                )
             };
+            let Value::Uint8Array(view) = value else {
+                return Err(VmError::NotCallable);
+            };
+            (
+                view.clone(),
+                property_number(options, "offset").unwrap_or(0),
+                property_number(options, "length")
+                    .map(|length| length.max(view.length as u64))
+                    .unwrap_or(view.length as u64),
+                property_number(options, "position"),
+                arguments.iter().rev().find(|value| {
+                    matches!(
+                        value,
+                        Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+                    )
+                }),
+            )
+        };
         let bytes = std::fs::read(path).map_err(|error| VmError::EvalError(error.to_string()))?;
         let start = position.unwrap_or(0) as usize;
         let count = length as usize;
