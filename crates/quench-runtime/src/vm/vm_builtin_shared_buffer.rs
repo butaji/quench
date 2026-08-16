@@ -25,6 +25,7 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
             | Builtin::DataViewSetBigUint64
             | Builtin::DataViewBufferGetter
             | Builtin::DataViewByteLengthGetter
+            | Builtin::TypedArrayByteLengthGetter
             | Builtin::DataViewByteOffsetGetter
     )
 }
