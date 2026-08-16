@@ -65,6 +65,10 @@ fn numeric_option_absent(value: Option<&Value>) -> bool {
 fn collator_object(locale: String, options: CollatorOptions) -> Value {
     make_object(vec![
         (
+            "\0prototype".to_string(),
+            crate::vm::realm_intrinsic(crate::ops::Builtin::IntlCollatorPrototype),
+        ),
+        (
             "compare".to_string(),
             Value::Builtin(crate::ops::Builtin::IntlCollatorCompare),
         ),
