@@ -68,8 +68,6 @@ struct QuenchNodeHost {
     http: RefCell<HttpState>,
     urls: RefCell<HashMap<u16, String>>,
     next_url: Cell<u16>,
-    events: RefCell<HashMap<u16, HashMap<String, Vec<Value>>>>,
-    next_event: Cell<u16>,
 }
 
 struct StreamState {
@@ -100,8 +98,6 @@ impl Default for QuenchNodeHost {
             }),
             urls: RefCell::new(HashMap::new()),
             next_url: Cell::new(600),
-            events: RefCell::new(HashMap::new()),
-            next_event: Cell::new(700),
         }
     }
 }
@@ -120,9 +116,6 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(31) => buffer_alloc(arguments),
             HostCapabilityKind::Custom(32) => buffer_is_buffer(arguments),
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
-            HostCapabilityKind::Custom(id) if (700..800).contains(&id) => {
-                self.event_call(id, arguments)
-            }
             HostCapabilityKind::Custom(21) => next_tick(arguments),
             HostCapabilityKind::Custom(27 | 28 | 29) => timer_call(arguments),
             HostCapabilityKind::Custom(id) if (13..=20).contains(&id) => {
@@ -161,29 +154,6 @@ impl Host for QuenchNodeHost {
             self.next_url.set(id.saturating_add(1));
             self.urls.borrow_mut().insert(id, parsed.to_string());
             return Ok(url_object(&parsed, id));
-        }
-        if capability.kind == HostCapabilityKind::Custom(70) {
-            let id = self.next_event.get();
-            self.next_event.set(id.saturating_add(10));
-            self.events.borrow_mut().insert(id, HashMap::new());
-            return Ok(quench_runtime::host_api::object(vec![
-                (
-                    "on".into(),
-                    capability_function(HostCapabilityKind::Custom(id + 1)),
-                ),
-                (
-                    "once".into(),
-                    capability_function(HostCapabilityKind::Custom(id + 2)),
-                ),
-                (
-                    "emit".into(),
-                    capability_function(HostCapabilityKind::Custom(id + 3)),
-                ),
-                (
-                    "removeListener".into(),
-                    capability_function(HostCapabilityKind::Custom(id + 4)),
-                ),
-            ]));
         }
         if capability.kind != HostCapabilityKind::Custom(10) {
             return Err(VmError::NotCallable);
@@ -226,47 +196,6 @@ impl QuenchNodeHost {
             .cloned()
             .ok_or(VmError::NotCallable)?;
         Ok(Value::String(value))
-    }
-
-    fn event_call(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
-        let base = id / 10 * 10;
-        match id % 10 {
-            1 | 2 => {
-                let Some(Value::String(event)) = arguments.first() else {
-                    return Err(VmError::NotCallable);
-                };
-                let Some(callback) = arguments.get(1) else {
-                    return Err(VmError::NotCallable);
-                };
-                self.events
-                    .borrow_mut()
-                    .entry(base)
-                    .or_default()
-                    .entry(event.clone())
-                    .or_default()
-                    .push(callback.clone());
-                Ok(capability_function(HostCapabilityKind::Custom(base)))
-            }
-            3 => {
-                let Some(Value::String(event)) = arguments.first() else {
-                    return Err(VmError::NotCallable);
-                };
-                let callbacks = self
-                    .events
-                    .borrow()
-                    .get(&base)
-                    .and_then(|events| events.get(event))
-                    .cloned()
-                    .unwrap_or_default();
-                let had_callbacks = !callbacks.is_empty();
-                for callback in callbacks {
-                    quench_runtime::execute::call(&callback, &Value::Undefined, &arguments[1..])?;
-                }
-                Ok(Value::Boolean(had_callbacks))
-            }
-            4 => Ok(capability_function(HostCapabilityKind::Custom(base))),
-            _ => Err(VmError::NotCallable),
-        }
     }
 
     fn stream_call(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
@@ -627,12 +556,6 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(quench_runtime::host_api::object(vec![(
                 "URL".into(),
                 capability_function(HostCapabilityKind::Custom(40)),
-            )]));
-        }
-        if name == "events" || name == "node:events" {
-            return Ok(quench_runtime::host_api::object(vec![(
-                "EventEmitter".into(),
-                capability_function(HostCapabilityKind::Custom(70)),
             )]));
         }
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
