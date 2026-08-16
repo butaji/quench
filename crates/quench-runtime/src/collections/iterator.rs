@@ -530,8 +530,18 @@ where
 {
     let iterator = open(value)?;
     loop {
-        let Some(item) = step_value(&iterator)? else {
-            return Ok(());
+        let item = match step_value(&iterator) {
+            Ok(Some(item)) => item,
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                if let crate::execute::VmError::Thrown(reason) = &error {
+                    let _ = close(
+                        iterator.clone(),
+                        crate::completion::Completion::Throw(reason.clone()),
+                    );
+                }
+                return Err(error);
+            }
         };
         if let Err(error) = callback(item) {
             if let crate::execute::VmError::Thrown(reason) = &error {
