@@ -948,6 +948,22 @@ impl JsRuntime for QuenchRuntime {
             },
         )
         .with_host_value("process", process_module())
+        .with_host_value(
+            "__filename",
+            Value::String(
+                path.map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            ),
+        )
+        .with_host_value(
+            "__dirname",
+            Value::String(
+                path.and_then(Path::parent)
+                    .unwrap_or_else(|| Path::new("."))
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        )
         .with_host_value("URL", capability_function(HostCapabilityKind::Custom(40)))
         .with_host_value(
             "setImmediate",
