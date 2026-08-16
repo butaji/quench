@@ -179,6 +179,8 @@ impl CapabilityName {
     const CryptoHashUpdate: u16 = 2210;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
+    const DgramOnce: u16 = 2213;
+    const DgramOn: u16 = 2214;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
     const TextEncoderConstructor: u16 = 2060;
@@ -473,6 +475,7 @@ struct QuenchNodeHost {
     hashes: RefCell<HashMap<u16, (String, Vec<u8>)>>,
     hash_objects: RefCell<HashMap<u16, Value>>,
     dgram_states: RefCell<HashMap<u16, (bool, bool, u16)>>,
+    dgram_listeners: RefCell<HashMap<u16, Value>>,
     next_dgram: Cell<u16>,
     streams: RefCell<HashMap<u16, StreamState>>,
     next_hash: Cell<u16>,
@@ -525,6 +528,7 @@ impl Default for QuenchNodeHost {
             hashes: RefCell::new(HashMap::new()),
             hash_objects: RefCell::new(HashMap::new()),
             dgram_states: RefCell::new(HashMap::new()),
+            dgram_listeners: RefCell::new(HashMap::new()),
             next_dgram: Cell::new(1),
             streams: RefCell::new(HashMap::new()),
             next_hash: Cell::new(100),
@@ -1322,6 +1326,12 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::DgramSetSendBufferSize) => {
                 self.dgram_call(CapabilityName::DgramSetSendBufferSize, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::DgramOnce) => {
+                self.dgram_call(CapabilityName::DgramOnce, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::DgramOn) => {
+                self.dgram_call(CapabilityName::DgramOn, receiver, arguments)
             }
             HostCapabilityKind::Custom(
                 CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes,
@@ -2430,6 +2440,14 @@ impl QuenchNodeHost {
                     CapabilityName::DgramSetSendBufferSize,
                 )),
             ),
+            (
+                "once".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramOnce)),
+            ),
+            (
+                "on".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramOn)),
+            ),
             ("type".into(), Value::String("udp4".into())),
             ("\0dgramId".into(), Value::Number(id as f64)),
             (
@@ -2465,6 +2483,12 @@ impl QuenchNodeHost {
         let mut states = self.dgram_states.borrow_mut();
         let state = states.get_mut(&id).ok_or(VmError::NotCallable)?;
         match kind {
+            CapabilityName::DgramOnce | CapabilityName::DgramOn => {
+                if let Some(callback) = arguments.get(1).cloned() {
+                    self.dgram_listeners.borrow_mut().insert(id, callback);
+                }
+                Ok(receiver.cloned().unwrap_or(Value::Undefined))
+            }
             CapabilityName::DgramBindSync => {
                 state.0 = true;
                 state.1 = true;
@@ -2555,7 +2579,10 @@ impl QuenchNodeHost {
                         _ => None,
                     })
                     .unwrap_or(0);
-                let callback = arguments.get(2).cloned();
+                let callback = arguments
+                    .get(2)
+                    .cloned()
+                    .or_else(|| self.dgram_listeners.borrow_mut().remove(&id));
                 drop(states);
                 if let Some(callback) = callback {
                     quench_runtime::execute::call(&callback, &Value::Undefined, &[])?;
