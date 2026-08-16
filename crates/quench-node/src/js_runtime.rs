@@ -6359,7 +6359,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     Value::Builtin(quench_runtime::ops::Builtin::Object),
                 ),
                 ("DiffieHellmanGroup".into(), dh_constructor()),
+                ("DiffieHellman".into(), dh_constructor()),
                 ("ECDH".into(), dh_constructor()),
+                ("createECDH".into(), dh_constructor()),
                 (
                     "constants".into(),
                     quench_runtime::host_api::object(vec![
