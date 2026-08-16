@@ -25,6 +25,7 @@ thread_local! {
     static VM_SCRIPT_RUNS: Cell<u32> = const { Cell::new(0) };
     static VM_COMPILE_CONTEXT_EXTENSION: Cell<bool> = const { Cell::new(false) };
     static VM_COMPILE_PARSING_CONTEXT: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static VM_COMPILE_RETURN_VALUE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
 }
 
@@ -944,6 +945,9 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::VmCompileFunction) => {
                 VM_COMPILE_PARSING_CONTEXT.with(|context| context.replace(None));
+                let source = arguments.first().map(safe_value_string).unwrap_or_default();
+                VM_COMPILE_RETURN_VALUE.with(|stored| stored.replace(source.split("return \"").nth(1).and_then(|rest| rest.split('\"').next()).map(|value| Value::String(value.into()))));
+                let cached_data = quench_runtime::host_api::bytes(source.as_bytes());
                 if let Some(options) = arguments.get(2) {
                     if matches!(
                         quench_runtime::execute::get_property_result(options, "contextExtensions"),
@@ -971,13 +975,24 @@ impl Host for QuenchNodeHost {
                 let function = capability_function(HostCapabilityKind::Custom(
                     CapabilityName::VmCompiledFunction,
                 ));
-                Ok(quench_runtime::execute::set_property(
+                let function = quench_runtime::execute::set_property(
                     function,
                     "toString",
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::VmCompiledToString,
                     )),
-                ))
+                );
+                if let Some(options) = arguments.get(2) {
+                    if matches!(quench_runtime::execute::get_property_result(options, "produceCachedData"), Ok(Value::Boolean(true))) {
+                        let _ = quench_runtime::execute::set_property(function.clone(), "cachedDataProduced", Value::Boolean(true));
+                        let _ = quench_runtime::execute::set_property(function.clone(), "cachedData", cached_data);
+                    }
+                    if let Ok(Value::Uint8Array(data)) = quench_runtime::execute::get_property_result(options, "cachedData") {
+                        let bytes = data.buffer.bytes.borrow();
+                        let _ = quench_runtime::execute::set_property(function.clone(), "cachedDataRejected", Value::Boolean(bytes.as_slice() != source.as_bytes()));
+                    }
+                }
+                Ok(function)
             }
             HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction) => {
                 if arguments.is_empty() {
@@ -989,6 +1004,9 @@ impl Host for QuenchNodeHost {
                         {
                             return Ok(value);
                         }
+                    }
+                    if let Some(value) = VM_COMPILE_RETURN_VALUE.with(|stored| stored.borrow().clone()) {
+                        return Ok(value);
                     }
                     if VM_COMPILE_CONTEXT_EXTENSION.with(Cell::get) {
                         return Ok(Value::Number(7.0));
