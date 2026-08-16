@@ -135,6 +135,7 @@ impl CapabilityName {
     const StreamDuplex: u16 = 1313;
     const StreamFinished: u16 = 1320;
     const StreamIsPaused: u16 = 1321;
+    const StreamBaseWrite: u16 = 1322;
     const FsAccess: u16 = 1500;
     const FsWriteBytes: u16 = 1501;
     const FsAppendBytes: u16 = 1502;
@@ -410,6 +411,9 @@ impl Host for QuenchNodeHost {
                 | CapabilityName::StreamWritable
                 | CapabilityName::StreamReadableFrom,
             ) => self.construct(capability, arguments),
+            HostCapabilityKind::Custom(CapabilityName::Stream) => {
+                self.construct(capability, arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::StreamDuplex) => {
                 self.construct(capability, arguments)
             }
@@ -417,6 +421,7 @@ impl Host for QuenchNodeHost {
                 stream_finished(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::StreamIsPaused) => Ok(Value::Boolean(false)),
+            HostCapabilityKind::Custom(CapabilityName::StreamBaseWrite) => Ok(Value::Boolean(true)),
             HostCapabilityKind::Custom(CapabilityName::FsAccess) => {
                 fs_access(arguments).map_err(invalid_path_error)
             }
@@ -919,6 +924,8 @@ impl Host for QuenchNodeHost {
             },
         );
         let mut stream = Value::object(vec![
+            ("readableEnded".into(), Value::Boolean(false)),
+            ("readableDefaultEncoding".into(), Value::String("utf8".into())),
             (
                 "on".into(),
                 capability_function(HostCapabilityKind::Custom(id + 1)),
@@ -3106,6 +3113,20 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ]));
         }
         if name == "node:stream" || name == "stream" {
+            let stream = capability_function(HostCapabilityKind::Custom(CapabilityName::Stream));
+            let stream = quench_runtime::execute::set_property(
+                stream,
+                "prototype",
+                Value::object(vec![(
+                    "write".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamBaseWrite)),
+                )]),
+            );
+            let stream = quench_runtime::execute::set_property(
+                stream,
+                "call",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::StreamIsPaused)),
+            );
             let readable = quench_runtime::execute::set_property(
                 capability_function(HostCapabilityKind::Custom(CapabilityName::StreamReadable)),
                 "from",
@@ -3113,7 +3134,13 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     CapabilityName::StreamReadableFrom,
                 )),
             );
+            let readable = quench_runtime::execute::set_property(
+                readable,
+                "prototype",
+                Value::object(vec![("readableEnded".into(), Value::Boolean(false))]),
+            );
             return Ok(Value::object(vec![
+                ("Stream".into(), stream),
                 (
                     "Transform".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::Stream)),
