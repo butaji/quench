@@ -195,7 +195,12 @@ fn minimize(tag: &str) -> String {
     } else {
         format!("{language}-{script}-{region}")
     };
-    short + &extension
+    let variants = parts.get(3..).unwrap_or(&[]).join("-");
+    if variants.is_empty() {
+        short + &extension
+    } else {
+        format!("{short}-{variants}{extension}")
+    }
 }
 
 fn likely_subtags(language: &str) -> (&'static str, &'static str) {
@@ -212,6 +217,7 @@ fn likely_subtags(language: &str) -> (&'static str, &'static str) {
         "ro" => ("Latn", "RO"),
         "sr" => ("Cyrl", "RS"),
         "th" => ("Thai", "TH"),
+        "uz" => ("Latn", "UZ"),
         "pap" => ("Latn", "CW"),
         "zh" => ("Hans", "CN"),
         "und" => ("Latn", "US"),
