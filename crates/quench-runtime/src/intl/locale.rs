@@ -128,7 +128,15 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
                 match key {
                     "ca" => {
                         if locale.calendar.is_none() {
-                            locale.calendar = Some(calendar_alias(item));
+                            let calendar = if item == "ethiopic"
+                                && parts.get(j + 2) == Some(&"amete")
+                                && parts.get(j + 3) == Some(&"alem")
+                            {
+                                "ethiopic-amete-alem"
+                            } else {
+                                item
+                            };
+                            locale.calendar = Some(calendar_alias(calendar));
                         }
                     }
                     "co" if locale.collation.is_none() => locale.collation = Some(item.to_string()),
@@ -159,6 +167,7 @@ pub(crate) fn calendar_alias(value: &str) -> String {
     match value.as_str() {
         "islamicc" => "islamic-civil".to_string(),
         "islamic" | "islamic-rgsa" => "islamic-civil".to_string(),
+        "ethiopic-amete-alem" => "ethioaa".to_string(),
         other => other.to_string(),
     }
 }
