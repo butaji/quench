@@ -36,7 +36,11 @@ fn from_live_array(
     mapper: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let mut result = construct_result(receiver, 0, true)?;
+    let source_length = match &source {
+        Value::Array(array) => array.logical_len(),
+        _ => 0,
+    };
+    let mut result = construct_result(receiver, source_length, false)?;
     let this_arg = arguments.get(2).cloned().unwrap_or(Value::Undefined);
     let mut index = 0;
     loop {
