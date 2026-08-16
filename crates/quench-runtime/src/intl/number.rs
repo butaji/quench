@@ -205,6 +205,7 @@ impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         let raw = RawOptions::from_value(options)?;
         validate_rounding_mode(&raw.rounding_mode)?;
+        validate_unit_display(&raw.unit_display)?;
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),
@@ -217,7 +218,17 @@ impl NumberOptions {
             minimum_fraction_digits,
         );
         let minimum_fraction_digits = minimum_fraction_digits.min(maximum_fraction_digits);
-        if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
+        if raw.style == "unit" && raw.unit.is_none() {
+            return Err(crate::value::error::throw_type_error(
+                "unit is required for unit style",
+            ));
+        }
+        if raw.style == "currency" && raw.unit.is_some() && raw.currency.is_none() {
+            return Err(crate::value::error::throw_type_error(
+                "currency is required for currency style",
+            ));
+        }
+        if raw.unit.is_some() && !valid_unit(raw.unit.as_deref()) {
             return Err(crate::value::error::throw_range_error("invalid unit"));
         }
         Ok(number_options(
@@ -307,6 +318,12 @@ fn validate_rounding_mode(value: &str) -> Result<(), VmError> {
     valid
         .then_some(())
         .ok_or_else(|| crate::value::error::throw_range_error("invalid roundingMode"))
+}
+
+fn validate_unit_display(value: &str) -> Result<(), VmError> {
+    matches!(value, "short" | "narrow" | "long")
+        .then_some(())
+        .ok_or_else(|| crate::value::error::throw_range_error("invalid unitDisplay"))
 }
 
 fn number_options(
@@ -403,7 +420,7 @@ fn slot_primary(number: &NumberOptions) -> Vec<(String, Value)> {
 fn valid_unit(unit: Option<&str>) -> bool {
     matches!(
         unit,
-        Some("percent" | "meter" | "kilometer" | "kilometer-per-hour")
+        Some("percent" | "hour" | "meter" | "kilometer" | "kilometer-per-hour")
     )
 }
 
