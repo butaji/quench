@@ -260,6 +260,7 @@ impl NumberOptions {
         validate_significant_digits(&raw)?;
         validate_rounding_mode(&raw.rounding_mode)?;
         validate_rounding_increment(&raw)?;
+        validate_trailing_zero_display(&raw.trailing_zero_display)?;
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),
@@ -582,6 +583,12 @@ fn validate_significant_digits(raw: &RawOptions) -> Result<(), VmError> {
         ));
     }
     Ok(())
+}
+
+fn validate_trailing_zero_display(value: &str) -> Result<(), VmError> {
+    matches!(value, "auto" | "stripIfInteger")
+        .then_some(())
+        .ok_or_else(|| crate::value::error::throw_range_error("invalid trailingZeroDisplay"))
 }
 
 fn normalize_grouping(value: &Value) -> Result<(String, bool, bool), VmError> {
