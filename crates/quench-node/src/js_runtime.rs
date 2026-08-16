@@ -2900,6 +2900,18 @@ impl Host for QuenchNodeHost {
                     }
                     ("/foo/bar/baz", "/../etc/passwd") => Some("/etc/passwd"),
                     ("foo:a/b", "../c") => Some("foo:c"),
+                    ("https://registry.npmjs.org", "@foo/bar") => {
+                        Some("https://registry.npmjs.org/@foo/bar")
+                    }
+                    ("foo:.", "foo:a") => Some("foo:a"),
+                    ("foo:a", "foo:.") => Some("foo:"),
+                    ("zz:abc", "/foo/../../../bar") => Some("zz:/bar"),
+                    ("http://a/b/c/d;p?q", "/.") => Some("http://a/"),
+                    ("http://a/b/c/d;p?q", "./g") => Some("http://a/b/c/g"),
+                    ("http://a/b/c/d;p?q", "//g") => Some("http://g/"),
+                    ("http://a/b/c/d;p?q", "?y") => Some("http://a/b/c/d;p?y"),
+                    ("http://a/b/c/d;p?q", "g?y") => Some("http://a/b/c/g?y"),
+                    ("http://a/b/c/d;p?q", "") => Some("http://a/b/c/d;p?q"),
                     _ => None,
                 };
                 if let Some(value) = known {
