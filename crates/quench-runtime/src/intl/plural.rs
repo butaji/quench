@@ -133,6 +133,36 @@ pub(crate) fn prototype_method(
                 &locale,
             )))
         }
+        crate::ops::Builtin::IntlPluralRulesSelectRange => {
+            if arguments
+                .first()
+                .is_none_or(|value| matches!(value, Value::Undefined))
+                || arguments
+                    .get(1)
+                    .is_none_or(|value| matches!(value, Value::Undefined))
+            {
+                return Err(runtime_error(
+                    "TypeError: selectRange argument is undefined",
+                ));
+            }
+            let start = super::number::to_number_result(arguments.first())?;
+            let end = super::number::to_number_result(arguments.get(1))?;
+            if start.is_nan() || end.is_nan() {
+                return Err(runtime_error("RangeError: selectRange argument is NaN"));
+            }
+            let slots = super::intl_slots(receiver)?;
+            let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
+            let notation =
+                slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
+            let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
+            let first = select(start, &plural_type, &notation, &locale);
+            let last = select(end, &plural_type, &notation, &locale);
+            Ok(Value::String(if first == last {
+                first
+            } else {
+                "other".to_string()
+            }))
+        }
         crate::ops::Builtin::IntlPluralRulesResolvedOptions => plural_resolved_options(receiver),
         _ => Err(runtime_error("TypeError: method not found")),
     }
@@ -314,6 +344,7 @@ pub(crate) fn dispatch(
     match builtin {
         crate::ops::Builtin::IntlPluralRules => Some(construct_if_new(arguments, receiver)),
         crate::ops::Builtin::IntlPluralRulesSelect
+        | crate::ops::Builtin::IntlPluralRulesSelectRange
         | crate::ops::Builtin::IntlPluralRulesResolvedOptions => {
             Some(prototype_method(builtin, arguments, receiver))
         }

@@ -67,6 +67,7 @@ const fn intl_name_group_a_tail(b: Builtin) -> Option<&'static str> {
             Some("Intl.NumberFormat.prototype.resolvedOptions")
         }
         Builtin::IntlPluralRulesSelect => Some("Intl.PluralRules.prototype.select"),
+        Builtin::IntlPluralRulesSelectRange => Some("Intl.PluralRules.prototype.selectRange"),
         Builtin::IntlPluralRulesResolvedOptions => {
             Some("Intl.PluralRules.prototype.resolvedOptions")
         }
@@ -143,6 +144,7 @@ const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
         Builtin::IntlNumberFormatFormatToParts => Some(1.0),
         Builtin::IntlDateTimeFormatFormatToParts => Some(1.0),
         Builtin::IntlPluralRulesSelect => Some(1.0),
+        Builtin::IntlPluralRulesSelectRange => Some(2.0),
         Builtin::IntlNumberFormatFormatRange
         | Builtin::IntlNumberFormatFormatRangeToParts
         | Builtin::IntlDateTimeFormatFormatRange
@@ -207,6 +209,7 @@ const fn intl_short_name_formats(b: Builtin) -> Option<&'static str> {
         Builtin::IntlNumberFormatFormatRangeToParts => Some("formatRangeToParts"),
         Builtin::IntlNumberFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlPluralRulesSelect => Some("select"),
+        Builtin::IntlPluralRulesSelectRange => Some("selectRange"),
         Builtin::IntlPluralRulesResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlDateTimeFormatFormat => Some("format"),
         Builtin::IntlDateTimeFormatFormatGetter => Some("get format"),
