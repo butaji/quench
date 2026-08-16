@@ -21,6 +21,7 @@ thread_local! {
     static NODE_PROCESS_WARNING_LISTENERS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static NODE_EXPERIMENTAL_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static NODE_DNS_SERVERS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static NODE_STREAM_PROMISES: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_TIMER_COUNTS: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
     static NODE_PRIORITY: Cell<i32> = const { Cell::new(0) };
     static VM_SCRIPT_RUNS: Cell<u32> = const { Cell::new(0) };
@@ -4034,6 +4035,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
             ]));
         }
+        if name == "stream/promises" || name == "node:stream/promises" {
+            return Ok(stream_promises_module());
+        }
         if name == "node:stream" || name == "stream" {
             let stream = capability_function(HostCapabilityKind::Custom(CapabilityName::Stream));
             let stream = quench_runtime::execute::set_property(
@@ -4063,6 +4067,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 "prototype",
                 Value::object(vec![("readableEnded".into(), Value::Boolean(false))]),
             );
+            let promises = stream_promises_module();
             return Ok(Value::object(vec![
                 ("Stream".into(), stream),
                 (
@@ -4084,8 +4089,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
                 (
                     "finished".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamFinished)),
+                    quench_runtime::execute::get_property_result(&promises, "finished").unwrap_or(Value::Undefined),
                 ),
+                ("promises".into(), promises),
             ]));
         }
         if name == "node:http" || name == "http" {
@@ -7011,6 +7017,17 @@ fn internal_view_has_buffer(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Boolean(
         matches!(length, Some(Value::Number(value)) if value >= 64.0),
     ))
+}
+
+fn stream_promises_module() -> Value {
+    NODE_STREAM_PROMISES.with(|module| {
+        let mut module = module.borrow_mut();
+        if module.is_none() { *module = Some(quench_runtime::host_api::object(vec![
+            ("pipeline".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamFinished))),
+            ("finished".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamFinished))),
+        ])); }
+        module.as_ref().unwrap().clone()
+    })
 }
 
 fn util_module() -> Value {
