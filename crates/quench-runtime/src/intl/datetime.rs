@@ -287,6 +287,10 @@ impl DateTimeOptions {
                 "resolvedOptions".to_string(),
                 Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatResolvedOptions),
             ),
+            (
+                "\0prototype".to_string(),
+                crate::vm::realm_intrinsic(crate::ops::Builtin::IntlDateTimeFormatPrototype),
+            ),
             (SLOT.to_string(), self.slot()),
         ];
         make_object(properties)
