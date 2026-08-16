@@ -139,7 +139,7 @@ fn validate_code(code: &str, display_type: &str) -> Result<(), VmError> {
         "script" => fixed_alpha_code_valid(code, 4),
         "currency" => fixed_alpha_code_valid(code, 3),
         "calendar" => calendar_code_valid(code),
-        "dateTimeField" => alpha_numeric_code_valid(code),
+        "dateTimeField" => date_time_field_valid(code),
         _ => false,
     };
     if valid {
@@ -164,8 +164,22 @@ fn calendar_code_valid(code: &str) -> bool {
     })
 }
 
-fn alpha_numeric_code_valid(code: &str) -> bool {
-    !code.is_empty() && code.chars().all(|c| c.is_ascii_alphanumeric())
+fn date_time_field_valid(code: &str) -> bool {
+    matches!(
+        code,
+        "era"
+            | "year"
+            | "quarter"
+            | "month"
+            | "weekOfYear"
+            | "weekday"
+            | "day"
+            | "dayPeriod"
+            | "hour"
+            | "minute"
+            | "second"
+            | "timeZoneName"
+    )
 }
 
 fn language_code_valid(code: &str) -> bool {
