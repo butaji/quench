@@ -3437,6 +3437,20 @@ fn base64_encode(bytes: &[u8]) -> String {
     output
 }
 
+fn decode_hex(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for index in (0..text.len()).step_by(2) {
+        if index + 1 >= text.len() {
+            break;
+        }
+        let Ok(value) = u8::from_str_radix(&text[index..index + 2], 16) else {
+            break;
+        };
+        bytes.push(value);
+    }
+    bytes
+}
+
 fn stream_iter_value(value: Option<&Value>) -> Result<Value, VmError> {
     match value.ok_or(VmError::NotCallable)? {
         Value::Promise(promise) => match &*promise.state.borrow() {
@@ -3470,6 +3484,15 @@ fn buffer_concat(arguments: &[Value]) -> Result<Value, VmError> {
     for value in values {
         bytes.extend(string_or_bytes(Some(&value))?);
     }
+    let length = arguments.get(1).and_then(|value| match value {
+        Value::Number(value) => Some(*value as usize),
+        _ => None,
+    });
+    if let Some(length) = length {
+        let mut output = vec![0; length];
+        output[..bytes.len().min(length)].copy_from_slice(&bytes[..bytes.len().min(length)]);
+        return Ok(node_buffer(&output));
+    }
     Ok(node_buffer(&bytes))
 }
 
@@ -3477,6 +3500,18 @@ fn buffer_equals(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
     Ok(Value::Boolean(
         string_or_bytes(receiver)? == string_or_bytes(arguments.first())?,
     ))
+}
+
+fn buffer_compare(arguments: &[Value]) -> Result<Value, VmError> {
+    let left = string_or_bytes(arguments.first())?;
+    let right = string_or_bytes(arguments.get(1))?;
+    Ok(Value::Number(if left < right {
+        -1.0
+    } else if left > right {
+        1.0
+    } else {
+        0.0
+    }))
 }
 
 fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -3522,10 +3557,21 @@ fn buffer_includes(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
         Some(Value::Number(value)) => Ok(vec![*value as u8]),
         _ => Err(VmError::NotCallable),
     })?;
+    if needle.is_empty() {
+        return Ok(Value::Boolean(true));
+    }
+    let offset = arguments
+        .get(1)
+        .and_then(|value| match value {
+            Value::Number(value) => Some((*value as isize).max(0) as usize),
+            _ => None,
+        })
+        .unwrap_or(0);
     Ok(Value::Boolean(
-        haystack
-            .windows(needle.len())
-            .any(|window| window == needle),
+        offset <= haystack.len()
+            && haystack[offset..]
+                .windows(needle.len())
+                .any(|window| window == needle),
     ))
 }
 
@@ -3534,7 +3580,11 @@ fn buffer_slice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     let start = arguments
         .first()
         .and_then(|value| match value {
-            Value::Number(value) => Some((*value as isize).max(0) as usize),
+            Value::Number(value) => Some(if *value < 0.0 {
+                bytes.len().saturating_sub((-*value) as usize)
+            } else {
+                *value as usize
+            }),
             _ => None,
         })
         .unwrap_or(0)
@@ -3542,7 +3592,11 @@ fn buffer_slice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
     let end = arguments
         .get(1)
         .and_then(|value| match value {
-            Value::Number(value) => Some((*value as isize).max(0) as usize),
+            Value::Number(value) => Some(if *value < 0.0 {
+                bytes.len().saturating_sub((-*value) as usize)
+            } else {
+                *value as usize
+            }),
             _ => None,
         })
         .unwrap_or(bytes.len())
@@ -3555,9 +3609,34 @@ fn buffer_copy(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
     let Value::Uint8Array(target) = arguments.first().ok_or(VmError::NotCallable)? else {
         return Err(VmError::NotCallable);
     };
-    let count = source.len().min(target.length);
-    target.buffer.bytes.borrow_mut()[target.byte_offset..target.byte_offset + count]
-        .copy_from_slice(&source[..count]);
+    let target_start = arguments
+        .get(1)
+        .and_then(|value| match value {
+            Value::Number(value) => Some(*value as usize),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let source_start = arguments
+        .get(2)
+        .and_then(|value| match value {
+            Value::Number(value) => Some(*value as usize),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let source_end = arguments
+        .get(3)
+        .and_then(|value| match value {
+            Value::Number(value) => Some(*value as usize),
+            _ => None,
+        })
+        .unwrap_or(source.len())
+        .min(source.len());
+    let count = source_end
+        .saturating_sub(source_start)
+        .min(target.length.saturating_sub(target_start));
+    target.buffer.bytes.borrow_mut()
+        [target.byte_offset + target_start..target.byte_offset + target_start + count]
+        .copy_from_slice(&source[source_start..source_start + count]);
     Ok(Value::Number(count as f64))
 }
 
@@ -3569,8 +3648,32 @@ fn buffer_fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
         Some(Value::Number(value)) => Ok(vec![*value as u8]),
         _ => Err(VmError::NotCallable),
     })?;
-    let value = fill.first().copied().unwrap_or(0);
-    view.buffer.bytes.borrow_mut()[view.byte_offset..view.byte_offset + view.length].fill(value);
+    if fill.is_empty() {
+        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+    }
+    let start = arguments
+        .get(1)
+        .and_then(|value| match value {
+            Value::Number(value) => Some(*value as usize),
+            _ => None,
+        })
+        .unwrap_or(0)
+        .min(view.length);
+    let end = arguments
+        .get(2)
+        .and_then(|value| match value {
+            Value::Number(value) => Some(*value as usize),
+            _ => None,
+        })
+        .unwrap_or(view.length)
+        .min(view.length);
+    let mut bytes = view.buffer.bytes.borrow_mut();
+    for (index, byte) in bytes[view.byte_offset + start..view.byte_offset + end]
+        .iter_mut()
+        .enumerate()
+    {
+        *byte = fill[index % fill.len()];
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
