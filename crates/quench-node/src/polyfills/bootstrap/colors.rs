@@ -292,5 +292,6 @@ class NodeURLSearchParams {
   }
 }
 globalThis.__nodeURLSearchParams = NodeURLSearchParams;
+globalThis.URLSearchParams = NodeURLSearchParams;
 // eslint-disable-next-line complexity
 "#);
