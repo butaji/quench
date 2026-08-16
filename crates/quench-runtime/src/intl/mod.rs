@@ -541,7 +541,8 @@ fn canonicalize_subtags(
     mut script_done: bool,
 ) -> Result<Vec<String>, VmError> {
     let aliased = canonicalize_unicode_aliases(&parts);
-    let parts: Vec<&str> = aliased.iter().map(String::as_str).collect();
+    let variant_aliased = canonicalize_variant_aliases(&aliased);
+    let parts: Vec<&str> = variant_aliased.iter().map(String::as_str).collect();
     let mut region_done = false;
     let mut variant_done = false;
     let mut extension = false;
@@ -575,6 +576,30 @@ fn canonicalize_subtags(
         }
     }
     Ok(out)
+}
+
+fn canonicalize_variant_aliases(parts: &[String]) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut index = 0;
+    let mut extension = false;
+    while index < parts.len() {
+        if parts[index].len() == 1 {
+            extension = true;
+        }
+        if !extension
+            && parts[index].eq_ignore_ascii_case("hepburn")
+            && parts
+                .get(index + 1)
+                .is_some_and(|part| part.eq_ignore_ascii_case("heploc"))
+        {
+            result.push("alalc97".to_string());
+            index += 2;
+        } else {
+            result.push(parts[index].to_ascii_lowercase());
+            index += 1;
+        }
+    }
+    result
 }
 
 fn titlecase_script(part: &str) -> String {
