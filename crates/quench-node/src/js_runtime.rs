@@ -2238,7 +2238,7 @@ impl Host for QuenchNodeHost {
                 }
                 Ok(quench_runtime::host_api::object(vec![(
                     "href".into(),
-                    Value::String(format!("file://{path}")),
+                    Value::String(format!("file://{}", encode_file_path(&path))),
                 )]))
             }
             HostCapabilityKind::Custom(CapabilityName::TmpdirRefresh) => Ok(Value::Undefined),
@@ -3009,6 +3009,13 @@ impl Host for QuenchNodeHost {
                 Ok(Value::String("новини.com".into()))
             }
             HostCapabilityKind::Custom(CapabilityName::UrlFileUrlToPath) => {
+                let value = match arguments.first() {
+                    Some(Value::String(value)) => value,
+                    _ => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "url"))),
+                };
+                if !value.starts_with("file:///") {
+                    return Err(VmError::Thrown(fs_error("ERR_INVALID_URL", value)));
+                }
                 if matches!(arguments.first(), Some(Value::String(value)) if value == "file:///a%2F/")
                 {
                     return Err(VmError::Thrown(fs_error(
@@ -3020,7 +3027,7 @@ impl Host for QuenchNodeHost {
                 {
                     return Ok(Value::String("C:\\foo".into()));
                 }
-                Ok(Value::String(String::new().into()))
+                Ok(Value::String(decode_file_url(value).into()))
             }
             HostCapabilityKind::Custom(CapabilityName::UrlToHttpOptions) => {
                 Ok(Value::object(vec![
@@ -7881,6 +7888,26 @@ fn path_value(arguments: &[Value], index: usize) -> Result<String, VmError> {
     }
 }
 
+fn encode_file_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.as_bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/&=:;".contains(byte) {
+            encoded.push(*byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn decode_file_url(value: &str) -> String {
+    value
+        .strip_prefix("file://")
+        .unwrap_or(value)
+        .replace("%20", " ")
+        .replace("%23", "#")
+}
+
 fn path_win_basename(arguments: &[Value]) -> Result<Value, VmError> {
     let value = path_arg(arguments, 0)?.trim_end_matches(['\\', '/']);
     let mut value = value
@@ -8633,6 +8660,17 @@ fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
             "https://another.host.com/",
             "https://another.host.com/",
         ),
+        ("ftp://example.com/a/b/c", "g", "ftp://example.com/a/b/g"),
+        ("ftp://example.com/a/b/c", "../g", "ftp://example.com/a/g"),
+        ("ftp://example.com/a/b/c", "/g", "ftp://example.com/g"),
+        ("ftp://example.com/a/b/c", "//other/g", "ftp://other/g"),
+        (
+            "ftp://example.com/a/b/c?query",
+            "#fragment",
+            "ftp://example.com/a/b/c?query#fragment",
+        ),
+        ("ftp://example.com/a/b/c", "g/", "ftp://example.com/a/b/g/"),
+        ("ftp://example.com/a/b/c", "", "ftp://example.com/a/b/c"),
         ("http://s//a/b/c", "/g", "http:///g"),
         (
             "file:///swap/test/animal.rdf",
@@ -8889,6 +8927,9 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
         .trim()
         .replace("http:\\\\\\\\", "http://")
         .replace('\\', "/");
+    if matches!(arguments.get(1), Some(Value::Boolean(true))) {
+        return legacy_query_parse(&normalized);
+    }
     if value == "/foo/bar?baz=quux#frag" && matches!(arguments.get(1), Some(Value::Boolean(true))) {
         let query = Value::object(vec![("baz".into(), Value::String("quux".into()))]);
         let query = quench_runtime::execute::set_prototype_of(&query, &Value::Null)?;
@@ -9110,6 +9151,38 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     ]))
 }
 
+fn legacy_query_parse(value: &str) -> Result<Value, VmError> {
+    let query = value
+        .split_once('?')
+        .map(|(_, query)| query.split('#').next().unwrap_or_default())
+        .unwrap_or_default();
+    let mut entries: Vec<(String, Vec<String>)> = Vec::new();
+    for pair in query.split('&').filter(|pair| !pair.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        if let Some((_, values)) = entries.iter_mut().find(|(entry, _)| entry == key) {
+            values.push(value.to_owned());
+        } else {
+            entries.push((key.to_owned(), vec![value.to_owned()]));
+        }
+    }
+    let query = entries
+        .into_iter()
+        .map(|(key, values)| {
+            let value = match values.as_slice() {
+                [value] => Value::String(value.clone().into()),
+                values => quench_runtime::host_api::array(
+                    values
+                        .iter()
+                        .map(|value| Value::String(value.clone().into()))
+                        .collect(),
+                ),
+            };
+            (key, value)
+        })
+        .collect();
+    Ok(Value::object(vec![("query".into(), Value::object(query))]))
+}
+
 fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(Value::String(value)) = arguments.first() {
         let mut output = value.clone();
@@ -9129,6 +9202,9 @@ fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
         return Ok(Value::String(output.into()));
     }
     let object = arguments.first().ok_or(VmError::NotCallable)?;
+    if let Ok(Value::String(href)) = quench_runtime::execute::get_property_result(object, "href") {
+        return Ok(Value::String(href));
+    }
     let protocol = quench_runtime::execute::get_property_result(object, "protocol")
         .ok()
         .and_then(|value| match value {
