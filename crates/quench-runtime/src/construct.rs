@@ -252,6 +252,13 @@ fn construct_bound(
     };
     let value = construct_bound_target(bound, &bound.target, &new_target, &combined)?;
     if let Value::HostCapability(capability) = &bound.receiver {
+        // Host-created objects are owned by the host implementation. Adding
+        // ordinary properties here goes through the aliasing setter, which
+        // clones object data when the host retains an Rc and breaks JS object
+        // identity. Host dispatch already carries the capability realm.
+        if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+            return Ok(value);
+        }
         let value = crate::builtins::set_property(
             value,
             "\0realm",
