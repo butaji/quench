@@ -190,6 +190,10 @@ impl CapabilityName {
     const DgramGetSendQueueSize: u16 = 2220;
     const DgramGetSendQueueCount: u16 = 2221;
     const DgramDrainCallbacks: u16 = 2222;
+    const FsUtimesSync: u16 = 2223;
+    const FsLutimesSync: u16 = 2224;
+    const FsUtimesAsync: u16 = 2225;
+    const FsLutimesAsync: u16 = 2226;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
     const TextEncoderConstructor: u16 = 2060;
@@ -1372,6 +1376,12 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::DgramDrainCallbacks) => {
                 drain_dgram_callbacks()
             }
+            HostCapabilityKind::Custom(
+                CapabilityName::FsUtimesSync
+                | CapabilityName::FsLutimesSync
+                | CapabilityName::FsUtimesAsync
+                | CapabilityName::FsLutimesAsync,
+            ) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(
                 CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes,
             ) => Ok(fulfilled(quench_runtime::host_api::bytes(b"hello"))),
@@ -5459,6 +5469,22 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "rmSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsRmSync)),
+                ),
+                (
+                    "utimesSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsUtimesSync)),
+                ),
+                (
+                    "lutimesSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsLutimesSync)),
+                ),
+                (
+                    "utimes".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsUtimesAsync)),
+                ),
+                (
+                    "lutimes".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsLutimesAsync)),
                 ),
                 (
                     "readdirSync".into(),
