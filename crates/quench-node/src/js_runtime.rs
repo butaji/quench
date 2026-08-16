@@ -103,6 +103,8 @@ impl CapabilityName {
     const DgramSetTtl: u16 = 2148;
     const DgramGetRecvBufferSize: u16 = 2149;
     const DgramGetSendBufferSize: u16 = 2150;
+    const DgramBindSync: u16 = 2207;
+    const DgramConnectSync: u16 = 2208;
     const StreamConsumerBuffer: u16 = 2151;
     const StreamConsumerBytes: u16 = 2152;
     const StreamConsumerText: u16 = 2153;
@@ -171,6 +173,8 @@ impl CapabilityName {
     const CryptoRandomFillSync: u16 = 2057;
     const CryptoPbkdf2Sync: u16 = 2203;
     const CryptoPbkdf2: u16 = 2204;
+    const CryptoDigestBytes: u16 = 2205;
+    const CryptoShakeBytes: u16 = 2206;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
     const TextEncoderConstructor: u16 = 2060;
@@ -463,6 +467,7 @@ pub(crate) struct QuenchRuntime;
 
 struct QuenchNodeHost {
     hashes: RefCell<HashMap<u16, (String, Vec<u8>)>>,
+    hash_objects: RefCell<HashMap<u16, Value>>,
     dgram_states: RefCell<HashMap<u16, (bool, bool, u16)>>,
     next_dgram: Cell<u16>,
     streams: RefCell<HashMap<u16, StreamState>>,
@@ -514,6 +519,7 @@ impl Default for QuenchNodeHost {
     fn default() -> Self {
         Self {
             hashes: RefCell::new(HashMap::new()),
+            hash_objects: RefCell::new(HashMap::new()),
             dgram_states: RefCell::new(HashMap::new()),
             next_dgram: Cell::new(1),
             streams: RefCell::new(HashMap::new()),
@@ -942,6 +948,12 @@ impl Host for QuenchNodeHost {
                 crypto_pbkdf2_sync(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoPbkdf2) => crypto_pbkdf2(arguments),
+            HostCapabilityKind::Custom(CapabilityName::CryptoDigestBytes) => {
+                crypto_digest_bytes(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoShakeBytes) => {
+                crypto_shake_bytes(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferIsAscii) => buffer_is_ascii(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8) => buffer_is_utf8(arguments),
             HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor) => {
@@ -1269,6 +1281,12 @@ impl Host for QuenchNodeHost {
                 | CapabilityName::DgramGetRecvBufferSize
                 | CapabilityName::DgramGetSendBufferSize),
             ) => self.dgram_call(id, receiver, arguments),
+            HostCapabilityKind::Custom(CapabilityName::DgramBindSync) => {
+                self.dgram_call(CapabilityName::DgramBindSync, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::DgramConnectSync) => {
+                self.dgram_call(CapabilityName::DgramConnectSync, receiver, arguments)
+            }
             HostCapabilityKind::Custom(
                 CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes,
             ) => Ok(fulfilled(quench_runtime::host_api::bytes(b"hello"))),
@@ -1700,7 +1718,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(id) if (200..300).contains(&id) => {
                 self.stream_call(id, receiver, arguments)
             }
-            HostCapabilityKind::Custom(id) if id >= 100 => self.hash_call(id, arguments),
+            HostCapabilityKind::Custom(id) if id >= 100 => self.hash_call(id, receiver, arguments),
             _ => Err(VmError::NotCallable),
         }
     }
@@ -2301,6 +2319,10 @@ impl QuenchNodeHost {
                 capability_function(HostCapabilityKind::Custom(CapabilityName::DgramBind)),
             ),
             (
+                "bindSync".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramBindSync)),
+            ),
+            (
                 "close".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::DgramClose)),
             ),
@@ -2311,6 +2333,10 @@ impl QuenchNodeHost {
             (
                 "connect".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::DgramConnect)),
+            ),
+            (
+                "connectSync".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramConnectSync)),
             ),
             (
                 "disconnect".into(),
@@ -2384,6 +2410,50 @@ impl QuenchNodeHost {
         let mut states = self.dgram_states.borrow_mut();
         let state = states.get_mut(&id).ok_or(VmError::NotCallable)?;
         match kind {
+            CapabilityName::DgramBindSync => {
+                state.0 = true;
+                state.1 = true;
+                state.2 = arguments
+                    .first()
+                    .and_then(|value| match value {
+                        Value::Object(_) => {
+                            quench_runtime::execute::get_property_result(value, "port")
+                                .ok()
+                                .and_then(|value| match value {
+                                    Value::Number(port) => Some(port as u16),
+                                    _ => None,
+                                })
+                        }
+                        Value::Number(port) => Some(*port as u16),
+                        _ => None,
+                    })
+                    .filter(|port| *port != 0)
+                    .unwrap_or(43124);
+                Ok(Value::object(vec![
+                    ("address".into(), Value::String("127.0.0.1".into())),
+                    ("family".into(), Value::String("IPv4".into())),
+                    ("port".into(), Value::Number(state.2 as f64)),
+                ]))
+            }
+            CapabilityName::DgramConnectSync => {
+                let port = arguments
+                    .first()
+                    .and_then(|value| match value {
+                        Value::Number(port) => Some(*port),
+                        _ => None,
+                    })
+                    .unwrap_or(0.0);
+                if !(1.0..65536.0).contains(&port) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_SOCKET_BAD_PORT",
+                        "Port should be > 0 and < 65536",
+                    )));
+                }
+                state.0 = true;
+                state.1 = true;
+                state.2 = port as u16;
+                Ok(Value::Undefined)
+            }
             CapabilityName::DgramBind => {
                 if state.0 {
                     return Err(VmError::Thrown(fs_error(
@@ -2448,7 +2518,10 @@ impl QuenchNodeHost {
                 Ok(Value::Undefined)
             }
             CapabilityName::DgramAddress => Ok(Value::object(vec![
-                ("address".into(), Value::String("0.0.0.0".into())),
+                (
+                    "address".into(),
+                    Value::String(if state.1 { "127.0.0.1" } else { "0.0.0.0" }.into()),
+                ),
                 ("port".into(), Value::Number(state.2 as f64)),
                 ("family".into(), Value::String("IPv4".into())),
             ])),
@@ -4235,6 +4308,60 @@ fn crypto_pbkdf2(arguments: &[Value]) -> Result<Value, VmError> {
     crypto_pbkdf2_sync(arguments)
 }
 
+fn crypto_input(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
+    if let Some(Value::Array(_)) = value {
+        return Ok(array_values(value.unwrap())?
+            .into_iter()
+            .filter_map(|value| match value {
+                Value::Number(value) => Some(value as u8),
+                _ => None,
+            })
+            .collect());
+    }
+    string_or_bytes(value)
+}
+
+fn crypto_digest_bytes(arguments: &[Value]) -> Result<Value, VmError> {
+    let algorithm = match arguments.first() {
+        Some(Value::String(value)) => value.as_str(),
+        _ => return Err(VmError::NotCallable),
+    };
+    let data = crypto_input(arguments.get(1))?;
+    let digest = match algorithm {
+        "sha1" => Sha1::digest(data).to_vec(),
+        "sha256" => Sha256::digest(data).to_vec(),
+        _ => return Err(VmError::EvalError("unsupported digest algorithm".into())),
+    };
+    Ok(quench_runtime::host_api::bytes(&digest))
+}
+
+fn crypto_shake_bytes(arguments: &[Value]) -> Result<Value, VmError> {
+    let algorithm = match arguments.first() {
+        Some(Value::String(value)) => value.as_str(),
+        _ => return Err(VmError::NotCallable),
+    };
+    let data = crypto_input(arguments.get(1))?;
+    let length = match arguments.get(2) {
+        Some(Value::Number(value)) => *value as usize,
+        _ => return Err(VmError::NotCallable),
+    };
+    let mut output = vec![0; length];
+    match algorithm {
+        "shake128" => {
+            let mut hasher = Shake128::default();
+            XofUpdate::update(&mut hasher, &data);
+            hasher.finalize_xof().read(&mut output);
+        }
+        "shake256" => {
+            let mut hasher = Shake256::default();
+            XofUpdate::update(&mut hasher, &data);
+            hasher.finalize_xof().read(&mut output);
+        }
+        _ => return Err(VmError::EvalError("unsupported shake algorithm".into())),
+    }
+    Ok(quench_runtime::host_api::bytes(&output))
+}
+
 impl QuenchNodeHost {
     fn create_hash(&self, arguments: &[Value]) -> Result<Value, VmError> {
         let Some(Value::String(name)) = arguments.first() else {
@@ -4250,7 +4377,7 @@ impl QuenchNodeHost {
         let id = self.next_hash.get();
         self.next_hash.set(id.saturating_add(2));
         self.hashes.borrow_mut().insert(id, (algorithm, Vec::new()));
-        Ok(Value::object(vec![
+        let hash = Value::object(vec![
             (
                 "update".into(),
                 capability_function(HostCapabilityKind::Custom(id)),
@@ -4259,10 +4386,17 @@ impl QuenchNodeHost {
                 "digest".into(),
                 capability_function(HostCapabilityKind::Custom(id + 1)),
             ),
-        ]))
+        ]);
+        self.hash_objects.borrow_mut().insert(id, hash.clone());
+        Ok(hash)
     }
 
-    fn hash_call(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
+    fn hash_call(
+        &self,
+        id: u16,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
         let base = id - (id % 2);
         if id % 2 == 0 {
             let value = string_or_bytes(arguments.first())?;
@@ -4272,10 +4406,13 @@ impl QuenchNodeHost {
                 .or_default()
                 .1
                 .extend(value);
-            return Ok(Value::object(vec![(
-                "digest".into(),
-                capability_function(HostCapabilityKind::Custom(id + 1)),
-            )]));
+            return Ok(self
+                .hash_objects
+                .borrow()
+                .get(&base)
+                .cloned()
+                .or_else(|| receiver.cloned())
+                .unwrap_or(Value::Undefined));
         }
         let (algorithm, data) = self
             .hashes
@@ -10484,6 +10621,8 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced),
                 HostCapabilityKind::Custom(CapabilityName::PathJoin),
                 HostCapabilityKind::Custom(CapabilityName::PathExtname),
+                HostCapabilityKind::Custom(CapabilityName::CryptoDigestBytes),
+                HostCapabilityKind::Custom(CapabilityName::CryptoShakeBytes),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
@@ -10569,6 +10708,16 @@ impl JsRuntime for QuenchRuntime {
             .with_host_value(
                 "__quench_fs_mkdtemp",
                 capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdtemp)),
+            )
+            .with_host_value(
+                "__quench_digest_bytes",
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CryptoDigestBytes,
+                )),
+            )
+            .with_host_value(
+                "__quench_shake_bytes",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoShakeBytes)),
             );
         quench_runtime::execute::execute_with_context(program.ops(), &context)
             .map(|_| ())

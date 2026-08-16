@@ -328,7 +328,9 @@ const __nodeCryptoApi = {
         ) {
           return bytes;
         }
-        if (encoding === "hex") return bytes.toString("hex");
+        if (encoding === "hex") {
+          return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+        }
         if (encoding === "base64") return bytes.toString("base64");
         if (encoding === "latin1") return bytes.toString("latin1");
         if (
