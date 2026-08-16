@@ -48,6 +48,9 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalDurationCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalDurationAbs => Some(abs(receiver)),
+        crate::ops::Builtin::TemporalDurationToLocaleString => Some(
+            crate::intl::duration::format_temporal_duration(receiver, arguments),
+        ),
         crate::ops::Builtin::TemporalDurationYearsGetter => Some(field_getter(receiver, "years")),
         crate::ops::Builtin::TemporalDurationMonthsGetter => Some(field_getter(receiver, "months")),
         crate::ops::Builtin::TemporalDurationWeeksGetter => Some(field_getter(receiver, "weeks")),
