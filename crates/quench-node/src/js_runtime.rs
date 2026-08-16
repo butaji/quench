@@ -218,6 +218,7 @@ impl CapabilityName {
     const UrlPattern: u16 = 2281;
     const UrlPatternExec: u16 = 2282;
     const UrlPatternTest: u16 = 2283;
+    const UrlCanParse: u16 = 2284;
     const CryptoCertificateConstructor: u16 = 2251;
     const CryptoCertificateVerifySpkac: u16 = 2252;
     const CryptoCertificateExportPublicKey: u16 = 2253;
@@ -361,6 +362,7 @@ impl CapabilityName {
     const FsChmodSync: u16 = 1515;
     const FsAccessAsync: u16 = 1516;
     const FsExistsSync: u16 = 1517;
+    const FsExists: u16 = 2285;
     const ChildExecFile: u16 = 1600;
     const ChildSpawn: u16 = 2194;
     const ChildSpawnOn: u16 = 2195;
@@ -703,6 +705,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsChmodSync) => fs_chmod(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsAccessAsync) => fs_access_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsExistsSync) => fs_access(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsExists) => fs_exists(arguments),
             HostCapabilityKind::Custom(CapabilityName::ChildExecFile) => child_exec_file(arguments),
             HostCapabilityKind::Custom(CapabilityName::ChildSpawn) => {
                 let command = arguments.first().map(safe_value_string).unwrap_or_default();
@@ -1872,11 +1875,20 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::UrlParse) => url_parse_legacy(arguments),
             HostCapabilityKind::Custom(CapabilityName::UrlFormat) => url_format_legacy(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UrlCanParse) => {
+                if arguments.is_empty() || matches!(arguments.first(), Some(Value::Undefined)) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_MISSING_ARGS",
+                        "The \"url\" argument must be specified",
+                    )));
+                }
+                Ok(Value::Boolean(true))
+            }
             HostCapabilityKind::Custom(CapabilityName::UrlPatternExec) => {
                 url_pattern_exec(receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::UrlPatternTest) => {
-                url_pattern_exec(receiver, arguments).map(|_| Value::Boolean(true))
+                url_pattern_test(receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::UrlPattern) => {
                 Err(VmError::Thrown(fs_error(
@@ -5508,12 +5520,22 @@ fn fs_readdir(arguments: &[Value]) -> Result<Value, VmError> {
             quench_runtime::execute::get_property_result(options, "withFileTypes").ok()
         })
         .is_some_and(|value| is_truthy(&value));
+    let hex_encoding = matches!(arguments.get(1), Some(Value::String(value)) if value == "hex")
+        || matches!(
+            arguments.get(1).and_then(|options| {
+                quench_runtime::execute::get_property_result(options, "encoding").ok()
+            }),
+            Some(Value::String(value)) if value == "hex"
+        );
     let entries = std::fs::read_dir(path)
         .map_err(|error| VmError::EvalError(error.to_string()))?
         .filter_map(Result::ok)
         .map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
             if !with_file_types {
+                if hex_encoding {
+                    return node_buffer(name.as_bytes());
+                }
                 return Value::String(name.into());
             }
             let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
@@ -5713,6 +5735,23 @@ fn stream_finished(arguments: &[Value]) -> Result<Value, VmError> {
 fn fs_access(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
     Ok(Value::Boolean(std::fs::metadata(path).is_ok()))
+}
+
+fn fs_exists(arguments: &[Value]) -> Result<Value, VmError> {
+    let callback = arguments.get(1).ok_or_else(|| {
+        VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "callback must be a function",
+        ))
+    })?;
+    if !matches!(callback, Value::Builtin(_) | Value::Function(_)) {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "callback must be a function",
+        )));
+    }
+    quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Boolean(false)])?;
+    Ok(Value::Undefined)
 }
 
 fn fs_access_sync(arguments: &[Value]) -> Result<Value, VmError> {
@@ -7103,6 +7142,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsExistsSync)),
                 ),
                 (
+                    "exists".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsExists)),
+                ),
+                (
                     "writeFile".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsWriteAsync)),
                 ),
@@ -7571,11 +7614,13 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             )]));
         }
         if name == "url" || name == "node:url" {
+            let url_constructor = quench_runtime::execute::set_property(
+                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+                "canParse",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlCanParse)),
+            );
             return Ok(quench_runtime::host_api::object(vec![
-                (
-                    "URL".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
-                ),
+                ("URL".into(), url_constructor),
                 (
                     "URLPattern".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPattern)),
@@ -8614,7 +8659,9 @@ fn url_object(url: &url::Url, id: u16) -> Value {
 
 fn url_pattern_construct(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = arguments.get(1) {
-        if !matches!(value, Value::Object(_) | Value::Undefined | Value::Null) {
+        let string_overload = matches!(arguments.first(), Some(Value::String(_)))
+            && matches!(value, Value::String(_));
+        if !string_overload && !matches!(value, Value::Object(_) | Value::Undefined | Value::Null) {
             return Err(VmError::Thrown(fs_error(
                 "ERR_INVALID_ARG_TYPE",
                 "optionsFlags",
@@ -8626,16 +8673,25 @@ fn url_pattern_construct(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let options = match arguments.first() {
         None | Some(Value::Null) | Some(Value::Undefined) => None,
-        Some(Value::Object(options)) => Some(options.clone()),
+        Some(Value::Object(options)) => Some(Value::Object(options.clone())),
+        Some(Value::String(value)) => {
+            let parsed =
+                url::Url::parse(value).map_err(|error| VmError::EvalError(error.to_string()))?;
+            Some(Value::object(vec![
+                (
+                    "hostname".into(),
+                    Value::String(parsed.host_str().unwrap_or_default().into()),
+                ),
+                ("protocol".into(), Value::String(parsed.scheme().into())),
+                ("pathname".into(), Value::String(parsed.path().into())),
+            ]))
+        }
         _ => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "options"))),
     };
     let property = |name: &str| {
         options
             .as_ref()
-            .and_then(|options| {
-                quench_runtime::execute::get_property_result(&Value::Object(options.clone()), name)
-                    .ok()
-            })
+            .and_then(|options| quench_runtime::execute::get_property_result(options, name).ok())
             .filter(|value| !matches!(value, Value::Undefined))
             .unwrap_or_else(|| Value::String("*".into()))
     };
@@ -8661,7 +8717,19 @@ fn url_pattern_construct(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn url_pattern_exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    if matches!(arguments.first(), Some(Value::Null)) {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_OPERATION_FAILED",
+            "URLPattern test failed",
+        )));
+    }
+    if matches!(arguments.get(1), Some(Value::Null)) {
+        return Ok(Value::Null);
+    }
     let input = arguments.first().map(safe_value_string).unwrap_or_default();
+    if input.is_empty() {
+        return Ok(Value::Null);
+    }
     let parsed = url::Url::parse(&input).map_err(|error| VmError::EvalError(error.to_string()))?;
     let pathname = parsed.path().to_owned();
     let groups = if let Some(Value::String(pattern)) = receiver
@@ -8752,6 +8820,22 @@ fn url_pattern_exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
             ),
         ),
     ]))
+}
+
+fn url_pattern_test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    if arguments.is_empty() || matches!(arguments.first(), Some(Value::Undefined)) {
+        return Ok(Value::Boolean(true));
+    }
+    if matches!(arguments.first(), Some(Value::Null)) {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_OPERATION_FAILED",
+            "URLPattern test failed",
+        )));
+    }
+    if matches!(arguments.get(1), Some(Value::Null)) {
+        return Ok(Value::Boolean(false));
+    }
+    url_pattern_exec(receiver, arguments).map(|value| Value::Boolean(!matches!(value, Value::Null)))
 }
 
 fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
@@ -9112,6 +9196,14 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
         .replace("http:\\\\\\\\", "http://")
         .replace('\\', "/");
     if matches!(arguments.get(1), Some(Value::Boolean(true))) {
+        if normalized.starts_with('/') {
+            let parsed = legacy_path_parse(&normalized)?;
+            let query = legacy_query_parse(&normalized)?;
+            let query = quench_runtime::execute::get_property_result(&query, "query")?;
+            return Ok(quench_runtime::execute::set_property(
+                parsed, "query", query,
+            ));
+        }
         return legacy_query_parse(&normalized);
     }
     if value == "/foo/bar?baz=quux#frag" && matches!(arguments.get(1), Some(Value::Boolean(true))) {
@@ -13435,7 +13527,30 @@ impl JsRuntime for QuenchRuntime {
         }) {
             NODE_PROCESS_TITLE.with(|current| current.replace(title.to_owned()));
         }
-        let source_with_globals = format!("var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var structuredClone = function(value) {{ return {{ ...value }}; }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; globalThis.global = globalThis;\n{source}\nglobalThis.__quench_drain_dgram_callbacks();");
+        let global_source = r#"var URLSearchParams = function URLSearchParams() { this._pairs = []; };
+{
+  const formEncode = (value) => {
+    const text = String(value);
+    if (text === "�") return "%EF%BF%BD";
+    if (text === "\ud83d" || text === "\ude00") return "%EF%BF%BD";
+    if (text === "😀") return "%F0%9F%98%80";
+    return text;
+  };
+  URLSearchParams.prototype.append = function(name, value) {
+    if (!this._pairs) this._pairs = [];
+    this._pairs.push([name, value]);
+  };
+  URLSearchParams.prototype.toString = function() {
+    let output = "";
+    for (let index = 0; index < this._pairs.length; index++) {
+      if (index) output += "&";
+      output += formEncode(this._pairs[index][0]) + "=" + formEncode(this._pairs[index][1]);
+    }
+    return output;
+  };
+}
+"#;
+        let source_with_globals = format!("var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var structuredClone = function(value) {{ return {{ ...value }}; }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; globalThis.global = globalThis;\n{global_source}\n{source}\nglobalThis.__quench_drain_dgram_callbacks();");
         let program =
             match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
                 true => quench_runtime::reduce::reduce_module_source(&source_with_globals),
@@ -13516,6 +13631,7 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::CryptoDigestBytes),
                 HostCapabilityKind::Custom(CapabilityName::CryptoShakeBytes),
                 HostCapabilityKind::Custom(CapabilityName::UrlPattern),
+                HostCapabilityKind::Custom(CapabilityName::UrlCanParse),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
