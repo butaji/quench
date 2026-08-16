@@ -6,6 +6,10 @@ pub(super) fn to_json(receiver: Option<&Value>) -> Result<Value, VmError> {
     Ok(Value::String(format_iso_duration(object)))
 }
 
+pub(super) fn to_string(receiver: Option<&Value>) -> Result<Value, VmError> {
+    to_json(receiver)
+}
+
 fn format_iso_duration(object: &crate::value::ObjectData) -> String {
     let names = [
         "years",
