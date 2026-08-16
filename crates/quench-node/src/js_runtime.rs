@@ -83,6 +83,16 @@ impl CapabilityName {
     const StreamDuplex: u16 = 1313;
     const StreamFinished: u16 = 1320;
     const StreamIsPaused: u16 = 1321;
+    const FsAccess: u16 = 1500;
+    const FsWriteBytes: u16 = 1501;
+    const FsAppendBytes: u16 = 1502;
+    const FsUnlink: u16 = 1503;
+    const FsMkdtemp: u16 = 1504;
+    const FsAccessSync: u16 = 1505;
+    const FsWriteFileSync: u16 = 1506;
+    const FsAppendFileSync: u16 = 1507;
+    const FsUnlinkSync: u16 = 1508;
+    const FsRmdirSync: u16 = 1509;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -231,6 +241,24 @@ impl Host for QuenchNodeHost {
                 stream_finished(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::StreamIsPaused) => Ok(Value::Boolean(false)),
+            HostCapabilityKind::Custom(CapabilityName::FsAccess) => fs_access(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsWriteBytes) => {
+                fs_write_bytes(arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsAppendBytes) => {
+                fs_write_bytes(arguments, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsUnlink) => fs_unlink(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsMkdtemp) => fs_mkdtemp(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsAccessSync) => fs_access_sync(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsWriteFileSync) => {
+                fs_write_bytes(arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsAppendFileSync) => {
+                fs_write_bytes(arguments, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsUnlinkSync) => fs_unlink(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsRmdirSync) => fs_rmdir(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -734,6 +762,70 @@ fn stream_finished(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Undefined)
 }
 
+fn fs_access(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    Ok(Value::Boolean(std::fs::metadata(path).is_ok()))
+}
+
+fn fs_access_sync(arguments: &[Value]) -> Result<Value, VmError> {
+    if !matches!(fs_access(arguments)?, Value::Boolean(true)) {
+        return Err(VmError::EvalError(
+            "ENOENT: no such file or directory".into(),
+        ));
+    }
+    Ok(Value::Undefined)
+}
+
+fn fs_rmdir(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    std::fs::remove_dir(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    Ok(Value::Undefined)
+}
+
+fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    let bytes = match arguments.get(1) {
+        Some(Value::Array(_)) => array_values(arguments.get(1).unwrap())?
+            .into_iter()
+            .map(|value| match value {
+                Value::Number(number) => Ok(number as u8),
+                _ => Err(VmError::EvalError(
+                    "filesystem bytes must be numeric".into(),
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(value) => string_or_bytes(Some(value))?,
+        None => return Err(VmError::NotCallable),
+    };
+    if append {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|error| VmError::EvalError(error.to_string()))?;
+        file.write_all(&bytes)
+            .map_err(|error| VmError::EvalError(error.to_string()))?;
+    } else {
+        std::fs::write(path, bytes).map_err(|error| VmError::EvalError(error.to_string()))?;
+    }
+    Ok(Value::Undefined)
+}
+
+fn fs_unlink(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    std::fs::remove_file(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    Ok(Value::Undefined)
+}
+
+fn fs_mkdtemp(arguments: &[Value]) -> Result<Value, VmError> {
+    let prefix = path_arg(arguments, 0)?;
+    let mut path = std::path::PathBuf::from(prefix);
+    path.push(format!("quench-{}", std::process::id()));
+    std::fs::create_dir_all(&path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    Ok(Value::String(path.to_string_lossy().into_owned().into()))
+}
+
 fn response_object(base: u16) -> Value {
     Value::object(vec![
         (
@@ -887,10 +979,40 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(Value::object(vec![("Buffer".into(), buffer_module())]));
         }
         if name == "node:fs" || name == "fs" {
-            return Ok(Value::object(vec![(
-                "readFileSync".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::ReadFileSync)),
-            )]));
+            return Ok(Value::object(vec![
+                (
+                    "readFileSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::ReadFileSync)),
+                ),
+                (
+                    "writeFileSync".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::FsWriteFileSync,
+                    )),
+                ),
+                (
+                    "appendFileSync".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::FsAppendFileSync,
+                    )),
+                ),
+                (
+                    "accessSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsAccessSync)),
+                ),
+                (
+                    "unlinkSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsUnlinkSync)),
+                ),
+                (
+                    "rmdirSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsRmdirSync)),
+                ),
+                (
+                    "mkdtempSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdtemp)),
+                ),
+            ]));
         }
         if name == "node:crypto" || name == "crypto" {
             return Ok(Value::object(vec![(
@@ -1709,6 +1831,11 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::StreamDuplex),
                 HostCapabilityKind::Custom(CapabilityName::StreamFinished),
                 HostCapabilityKind::Custom(CapabilityName::StreamIsPaused),
+                HostCapabilityKind::Custom(CapabilityName::FsAccess),
+                HostCapabilityKind::Custom(CapabilityName::FsWriteBytes),
+                HostCapabilityKind::Custom(CapabilityName::FsAppendBytes),
+                HostCapabilityKind::Custom(CapabilityName::FsUnlink),
+                HostCapabilityKind::Custom(CapabilityName::FsMkdtemp),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
@@ -1769,6 +1896,27 @@ impl JsRuntime for QuenchRuntime {
             capability_function(HostCapabilityKind::Custom(CapabilityName::QueueMicrotask)),
         )
         .with_host_value("Buffer", buffer_module());
+        let context = context
+            .with_host_value(
+                "__quench_fs_access",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsAccess)),
+            )
+            .with_host_value(
+                "__quench_fs_write_bytes",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsWriteBytes)),
+            )
+            .with_host_value(
+                "__quench_fs_append_bytes",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsAppendBytes)),
+            )
+            .with_host_value(
+                "__quench_fs_unlink",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsUnlink)),
+            )
+            .with_host_value(
+                "__quench_fs_mkdtemp",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdtemp)),
+            );
         quench_runtime::execute::execute_with_context(program.ops(), &context)
             .map(|_| ())
             .map_err(|error| error.render().into())
