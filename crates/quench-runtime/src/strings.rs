@@ -88,6 +88,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "bold" => Some(crate::ops::Builtin::StringBold),
         "fixed" => Some(crate::ops::Builtin::StringFixed),
         "fontcolor" => Some(crate::ops::Builtin::StringFontcolor),
+        "fontsize" => Some(crate::ops::Builtin::StringFontsize),
         "italics" => Some(crate::ops::Builtin::StringItalics),
         "link" => Some(crate::ops::Builtin::StringLink),
         "strike" => Some(crate::ops::Builtin::StringStrike),
@@ -168,6 +169,9 @@ fn execute_builtin_tail(
         crate::ops::Builtin::StringFixed => html_wrapper(receiver, "tt"),
         crate::ops::Builtin::StringFontcolor => {
             html_attribute_wrapper(receiver, arguments, "font", "color")
+        }
+        crate::ops::Builtin::StringFontsize => {
+            html_attribute_wrapper(receiver, arguments, "font", "size")
         }
         crate::ops::Builtin::StringItalics => html_wrapper(receiver, "i"),
         crate::ops::Builtin::StringLink => html_attribute_wrapper(receiver, arguments, "a", "href"),
