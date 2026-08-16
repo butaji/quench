@@ -37,7 +37,7 @@ pub(crate) fn japanese_speed_parts(formatted: &str) -> Vec<Value> {
 }
 
 pub(crate) fn pad_locale_fraction(text: &str, minimum: u32, locale: &str) -> String {
-    if !locale.starts_with("de") && !locale.starts_with("pt") {
+    if !plain_decimal_locale(locale) {
         return pad_fraction(text, minimum);
     }
     let (sign, rest) = text
@@ -176,11 +176,11 @@ pub(crate) fn decorate_numeric_text(
         && (options.notation != "compact" || (compact_unscaled_de && scaled.abs() >= 10_000.0))
     {
         text = group_integer_locale(&text, &options.locale);
-    } else if options.notation == "compact" && options.locale.starts_with("de") {
+    } else if options.notation == "compact" && plain_decimal_locale(&options.locale) {
         text = text.replace('.', ",");
     }
     if let Some((_, exponent)) = scientific.filter(|(value, _)| value.is_finite()) {
-        if options.locale.starts_with("de") {
+        if plain_decimal_locale(&options.locale) {
             text = text.replace('.', ",");
         }
         text.push_str(&format!("E{exponent}"));
@@ -328,13 +328,17 @@ pub(crate) fn format_decimal_literal(value: &str, locale: &str) -> String {
     if fraction.is_empty() {
         format!("{sign}{integer}")
     } else {
-        let decimal = if locale.starts_with("de") || locale.starts_with("pt") {
+        let decimal = if plain_decimal_locale(locale) {
             ","
         } else {
             "."
         };
         format!("{sign}{integer}{decimal}{fraction}")
     }
+}
+
+fn plain_decimal_locale(locale: &str) -> bool {
+    !locale.contains("-u-") && (locale.starts_with("de") || locale.starts_with("pt"))
 }
 
 pub(crate) fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
