@@ -17,6 +17,9 @@ thread_local! {
     static NODE_PROCESS_ENV: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_PATH_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_UTIL_TYPES: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_PROCESS_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_PROCESS_WARNING_LISTENERS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+    static NODE_EXPERIMENTAL_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
 }
 
@@ -47,6 +50,9 @@ impl CapabilityName {
     const UtilInspect: u16 = 81;
     const UtilFormatWithOptions: u16 = 2040;
     const InternalUtilSleep: u16 = 2088;
+    const InternalUtilEmitExperimentalWarning: u16 = 2089;
+    const ProcessOn: u16 = 2090;
+    const ProcessEmit: u16 = 2091;
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
     const BufferToJson: u16 = 2043;
@@ -787,6 +793,9 @@ impl Host for QuenchNodeHost {
                 util_format_with_options(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::InternalUtilSleep) => internal_util_sleep(arguments),
+            HostCapabilityKind::Custom(CapabilityName::InternalUtilEmitExperimentalWarning) => internal_util_emit_experimental_warning(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessOn) => process_on(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessEmit) => process_emit(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
@@ -2991,7 +3000,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(Value::object(vec![(
                 "sleep".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::InternalUtilSleep)),
-            )]));
+                ), (
+                    "emitExperimentalWarning".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::InternalUtilEmitExperimentalWarning)),
+                )]));
         }
         if name == "../common" || name.ends_with("/common") {
             return Ok(Value::object(vec![
@@ -3891,13 +3903,16 @@ fn assert_module() -> Value {
 }
 
 fn process_module() -> Value {
+    if let Some(module) = NODE_PROCESS_MODULE.with(|current| current.borrow().clone()) {
+        return module;
+    }
     let env = quench_runtime::host_api::object(
         std::env::vars()
             .map(|(key, value)| (key, Value::String(value.into())))
             .collect(),
     );
     NODE_PROCESS_ENV.with(|current| *current.borrow_mut() = Some(env.clone()));
-    quench_runtime::host_api::object(vec![
+    let module = quench_runtime::host_api::object(vec![
         ("env".into(), env),
         (
             "argv".into(),
@@ -3932,7 +3947,32 @@ fn process_module() -> Value {
             "umask".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessUmask)),
         ),
-    ])
+        ("on".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessOn))),
+        ("emit".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessEmit))),
+    ]);
+    NODE_PROCESS_MODULE.with(|current| current.replace(Some(module.clone())));
+    module
+}
+
+fn process_on(arguments: &[Value]) -> Result<Value, VmError> {
+    if matches!(arguments.first(), Some(Value::String(event)) if event == "warning") {
+        if let Some(listener) = arguments.get(1) {
+            NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow_mut().push(listener.clone()));
+        }
+    }
+    Ok(NODE_PROCESS_MODULE.with(|module| module.borrow().clone()).unwrap_or(Value::Undefined))
+}
+
+fn process_emit(arguments: &[Value]) -> Result<Value, VmError> {
+    if matches!(arguments.first(), Some(Value::String(event)) if event == "warning") {
+        if let Some(warning) = arguments.get(1) {
+            let listeners = NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow().clone());
+            for listener in listeners {
+                quench_runtime::execute::call(&listener, &Value::Undefined, std::slice::from_ref(warning))?;
+            }
+        }
+    }
+    Ok(Value::Boolean(false))
 }
 
 fn url_object(url: &url::Url, id: u16) -> Value {
@@ -5262,6 +5302,23 @@ fn internal_util_sleep(arguments: &[Value]) -> Result<Value, VmError> {
     if !value.is_finite() || value.fract() != 0.0 || *value < 0.0 || *value > u32::MAX as f64 {
         return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "delay out of range")));
     }
+    Ok(Value::Undefined)
+}
+
+fn internal_util_emit_experimental_warning(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(feature)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "feature must be a string")));
+    };
+    let is_new = NODE_EXPERIMENTAL_WARNINGS.with(|warnings| {
+        let mut warnings = warnings.borrow_mut();
+        if warnings.iter().any(|value| value == feature) { false } else { warnings.push(feature.to_string()); true }
+    });
+    if !is_new { return Ok(Value::Undefined); }
+    let warning = Value::object(vec![
+        ("name".into(), Value::String("ExperimentalWarning".into())),
+        ("message".into(), Value::String(format!("{feature} is an experimental feature").into())),
+    ]);
+    process_emit(&[Value::String("warning".into()), warning])?;
     Ok(Value::Undefined)
 }
 
