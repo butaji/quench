@@ -83,6 +83,13 @@ const fn intl_name_group_a_tail(b: Builtin) -> Option<&'static str> {
             Some("Intl.DateTimeFormat.prototype.resolvedOptions")
         }
         Builtin::IntlDateTimeFormatFormatGetter => Some("get format"),
+        Builtin::IntlDurationFormatFormat => Some("Intl.DurationFormat.prototype.format"),
+        Builtin::IntlDurationFormatFormatToParts => {
+            Some("Intl.DurationFormat.prototype.formatToParts")
+        }
+        Builtin::IntlDurationFormatResolvedOptions => {
+            Some("Intl.DurationFormat.prototype.resolvedOptions")
+        }
         Builtin::IntlCollatorResolvedOptions => Some("Intl.Collator.prototype.resolvedOptions"),
         Builtin::IntlCollatorCompareGetter => Some("get compare"),
         _ => None,
@@ -123,6 +130,7 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         Builtin::IntlListFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlRelativeTimeFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlNumberFormatFormat => Some(1.0),
+        Builtin::IntlDurationFormatFormat | Builtin::IntlDurationFormatFormatToParts => Some(1.0),
         _ => intl_fn_len_tail(b),
     }
 }
