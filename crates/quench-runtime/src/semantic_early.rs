@@ -82,6 +82,24 @@ fn collect_annex_b_collisions(
                     collect_annex_b_collisions(&case.consequent, &nested, collisions);
                 }
             }
+            Statement::TryStatement(statement) => {
+                collect_annex_b_collisions(&statement.block.body, visible, collisions);
+                if let Some(handler) = &statement.handler {
+                    let mut nested = visible.to_vec();
+                    if let Some(parameter) = &handler.param {
+                        if !matches!(
+                            parameter.pattern.kind,
+                            BindingPatternKind::BindingIdentifier(_)
+                        ) {
+                            nested.extend(crate::binding_patterns::names(&parameter.pattern));
+                        }
+                    }
+                    collect_annex_b_collisions(&handler.body.body, &nested, collisions);
+                }
+                if let Some(finalizer) = &statement.finalizer {
+                    collect_annex_b_collisions(&finalizer.body, visible, collisions);
+                }
+            }
             _ => {}
         }
     }
