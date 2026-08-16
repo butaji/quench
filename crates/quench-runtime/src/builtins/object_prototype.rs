@@ -436,6 +436,7 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::ShadowRealmPrototype
             | Builtin::IntlCollatorPrototype
             | Builtin::IntlDateTimeFormatPrototype
+            | Builtin::IntlNumberFormatPrototype
             | Builtin::IntlPluralRulesPrototype
             | Builtin::IntlListFormatPrototype
             | Builtin::IntlSegmenterPrototype
