@@ -136,6 +136,7 @@ impl CapabilityName {
     const StreamFinished: u16 = 1320;
     const StreamIsPaused: u16 = 1321;
     const StreamBaseWrite: u16 = 1322;
+    const StreamRead: u16 = 1324;
     const FsAccess: u16 = 1500;
     const FsWriteBytes: u16 = 1501;
     const FsAppendBytes: u16 = 1502;
@@ -349,6 +350,7 @@ struct QuenchNodeHost {
 
 struct StreamState {
     transform: Option<Value>,
+    read: Option<Value>,
     data: Option<Value>,
     end: Option<Value>,
     drain: Option<Value>,
@@ -423,6 +425,7 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::StreamIsPaused) => Ok(Value::Boolean(false)),
             HostCapabilityKind::Custom(CapabilityName::StreamBaseWrite) => Ok(Value::Boolean(true)),
+            HostCapabilityKind::Custom(CapabilityName::StreamRead) => Ok(Value::Null),
             HostCapabilityKind::Custom(CapabilityName::FsAccess) => {
                 fs_access(arguments).map_err(invalid_path_error)
             }
@@ -919,6 +922,7 @@ impl Host for QuenchNodeHost {
             id,
             StreamState {
                 transform,
+                read: arguments.first().and_then(|options| quench_runtime::execute::get_property_result(options, "read").ok()),
                 data: None,
                 end: None,
                 drain: None,
@@ -941,6 +945,10 @@ impl Host for QuenchNodeHost {
                 .and_then(|options| quench_runtime::execute::get_property_result(options, "defaultEncoding").ok())
                 .filter(|value| matches!(value, Value::String(_)))
                 .unwrap_or_else(|| Value::String("utf8".into()))),
+            ("_readableState".into(), Value::object(vec![
+                ("reading".into(), Value::Boolean(false)),
+                ("ended".into(), Value::Boolean(false)),
+            ])),
             ("_writableState".into(), Value::object(vec![("needDrain".into(), Value::Boolean(false))])),
             (
                 "on".into(),
@@ -975,6 +983,11 @@ impl Host for QuenchNodeHost {
             stream,
             "unshift",
             capability_function(HostCapabilityKind::Custom(id + 8)),
+        );
+        stream = quench_runtime::execute::set_property(
+            stream,
+            "read",
+            capability_function(HostCapabilityKind::Custom(CapabilityName::StreamRead)),
         );
         stream = quench_runtime::execute::set_property(
             stream,
@@ -1637,6 +1650,11 @@ impl QuenchNodeHost {
                     "error" => state.error = Some(callback.clone()),
                     _ => {}
                 }
+                if event == "readable" {
+                    if let Some(read) = state.read.clone() {
+                        quench_runtime::execute::call(&read, &Value::Undefined, &[])?;
+                    }
+                }
                 Ok(receiver
                     .cloned()
                     .unwrap_or_else(|| capability_function(HostCapabilityKind::Custom(stream_id))))
@@ -1739,6 +1757,12 @@ impl QuenchNodeHost {
                 Ok(target.clone())
             }
             6 => {
+                if matches!(arguments.first(), Some(Value::Null)) {
+                    if let Some(end) = self.streams.borrow().get(&stream_id).and_then(|state| state.end.clone()) {
+                        quench_runtime::execute::call(&end, &Value::Undefined, &[])?;
+                    }
+                    return Ok(Value::Boolean(false));
+                }
                 let mut chunk = match string_or_bytes(arguments.first()) {
                     Ok(chunk) => chunk,
                     Err(VmError::Thrown(error)) => {
