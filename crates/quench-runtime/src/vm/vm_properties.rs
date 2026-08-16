@@ -351,6 +351,9 @@ pub(crate) fn get_property_with_receiver(
     if let Some(result) = function_inherited_property_result(value, key, receiver) {
         return result;
     }
+    if let Some(result) = object_inherited_property_result(value, key, receiver) {
+        return result;
+    }
     if let Some(result) = crate::disposable_stack::accessor(value, key, receiver) {
         return result;
     }
@@ -380,6 +383,27 @@ fn function_inherited_property_result(
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))?;
     Some(get_property_with_receiver(&prototype, key, receiver))
+}
+
+fn object_inherited_property_result(
+    value: &Value,
+    key: &str,
+    receiver: &Value,
+) -> Option<Result<Value, VmError>> {
+    let Value::Object(properties) = value else {
+        return None;
+    };
+    if properties.iter().any(|(name, _)| name == key) {
+        return None;
+    }
+    let prototype = properties
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
+    match get_property_with_receiver(prototype, key, receiver) {
+        Ok(Value::Undefined) => None,
+        result => Some(result),
+    }
 }
 
 fn finish_property_access(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
