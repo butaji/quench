@@ -45,6 +45,7 @@ const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
     match builtin {
         Builtin::StringSlice => Some("String.prototype.slice"),
         Builtin::StringSubstring => Some("String.prototype.substring"),
+        Builtin::StringSubstr => Some("String.prototype.substr"),
         Builtin::StringConcat => Some("String.prototype.concat"),
         Builtin::StringSplit => Some("String.prototype.split"),
         Builtin::StringPadStart => Some("String.prototype.padStart"),
@@ -116,7 +117,7 @@ const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
         | Builtin::StringMatch
         | Builtin::StringMatchAll => Some(1.0),
         Builtin::StringConcat => Some(1.0),
-        Builtin::StringSlice | Builtin::StringSubstring => Some(2.0),
+        Builtin::StringSlice | Builtin::StringSubstring | Builtin::StringSubstr => Some(2.0),
         Builtin::StringSplit => Some(2.0),
         Builtin::StringPadStart | Builtin::StringPadEnd => Some(1.0),
         Builtin::StringReplace | Builtin::StringReplaceAll => Some(2.0),
@@ -159,6 +160,7 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringLastIndexOf => Some("lastIndexOf"),
         Builtin::StringSlice => Some("slice"),
         Builtin::StringSubstring => Some("substring"),
+        Builtin::StringSubstr => Some("substr"),
         Builtin::StringConcat => Some("concat"),
         Builtin::StringSplit => Some("split"),
         Builtin::StringPadStart => Some("padStart"),
