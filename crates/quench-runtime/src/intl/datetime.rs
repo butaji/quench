@@ -137,9 +137,11 @@ impl DateTimeOptions {
         if matches!(options, Some(Value::Null)) {
             return Err(runtime_error("TypeError: Cannot convert null to object"));
         }
+        let calendar =
+            super::locale::calendar_from_tag(&locale).unwrap_or_else(|| "gregory".to_string());
         let mut formatter = DateTimeOptions {
             locale,
-            calendar: "gregory".to_string(),
+            calendar,
             numbering_system: "latn".to_string(),
             time_zone: "UTC".to_string(),
             components: Vec::new(),
@@ -220,11 +222,12 @@ impl DateTimeOptions {
             "calendar" => {
                 let value = super::locale::calendar_option(&text)?;
                 let value = super::locale::calendar_alias(&value);
-                self.calendar = if available_calendar(&value) {
-                    value
-                } else {
-                    "gregory".to_string()
-                };
+                if available_calendar(&value) {
+                    if super::locale::calendar_from_tag(&self.locale).as_deref() != Some(&value) {
+                        self.locale = super::locale::remove_unicode_extension(&self.locale, "ca");
+                    }
+                    self.calendar = value;
+                }
             }
             "numberingSystem" => {
                 let value = text.to_ascii_lowercase();
