@@ -1,23 +1,21 @@
 use crate::{execute::VmError, value::Value};
 
-use super::{number, resolve_locales, runtime_error, to_string_value};
-use crate::intl::number::validate_options;
+use super::{number, runtime_error, to_string_value};
 
 pub(super) fn to_locale_string(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let number = match crate::vm::number_value_of(receiver)? {
-        Value::Number(number) => number,
+    let value = match crate::vm::number_value_of(receiver)? {
+        Value::Number(number) => Value::Number(number),
         _ => return Err(runtime_error("TypeError: Number.prototype.toLocaleString")),
     };
-    let locales = resolve_locales(arguments)?;
-    validate_options(arguments.get(1))?;
-    Ok(Value::String(format_number(
-        number,
-        &locales,
-        arguments.get(1),
-    )))
+    let formatter = crate::intl::number::construct(arguments)?;
+    crate::intl::number::prototype_method(
+        crate::ops::Builtin::IntlNumberFormatFormat,
+        &[value],
+        Some(&formatter),
+    )
 }
 
 pub(super) fn format_number(number: f64, locales: &[String], options: Option<&Value>) -> String {
