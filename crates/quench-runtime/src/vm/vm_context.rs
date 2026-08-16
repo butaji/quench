@@ -6,6 +6,15 @@ pub trait Host: 'static {
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Result<Value, VmError>;
+
+    fn construct(
+        &self,
+        capability: HostCapabilityRef,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        let _ = (capability, arguments);
+        Err(VmError::NotCallable)
+    }
 }
 pub(crate) fn with_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> Option<T> {
     realm::with_realm(realm, callback)
@@ -111,14 +120,18 @@ impl VmContext {
         self
     }
 
-    pub(crate) fn call_host(
+    pub(crate) fn host_handle(&self) -> Option<Rc<dyn Host>> {
+        self.host.clone()
+    }
+
+    pub(crate) fn construct_host(
         &self,
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Option<Result<Value, VmError>> {
         self.host
             .as_ref()
-            .map(|host| host.call(capability, arguments))
+            .map(|host| host.construct(capability, arguments))
     }
 
     pub fn with_host_capability(
