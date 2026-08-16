@@ -3313,7 +3313,7 @@ fn value_to_string(value: &Value) -> String {
 
 impl QuenchNodeHost {
     fn create_hash(&self, arguments: &[Value]) -> Result<Value, VmError> {
-        if !matches!(arguments.first(), Some(Value::String(name)) if name == "sha256") { return Err(VmError::EvalError("only sha256 is supported".into())); }
+        if !matches!(arguments.first(), Some(Value::String(name)) if name == "sha256" || name == "sha1") { return Err(VmError::EvalError("unsupported hash algorithm".into())); }
         let id = self.next_hash.get();
         self.next_hash.set(id.saturating_add(2));
         self.hashes.borrow_mut().insert(id, Vec::new());
@@ -4131,6 +4131,11 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("getCiphers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetCiphers))),
                 ("getCipherInfo".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetCipherInfo))),
                 ("getCurves".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetCurves))),
+                ("Hash".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+                ("Hmac".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+                ("Sign".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+                ("Verify".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+                ("DiffieHellmanGroup".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
                 (
                     "randomBytes".into(),
                     capability_function(HostCapabilityKind::Custom(
