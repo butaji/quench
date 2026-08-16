@@ -4136,6 +4136,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("Sign".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
                 ("Verify".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
                 ("DiffieHellmanGroup".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
+                ("constants".into(), quench_runtime::host_api::object(vec![("RSA_PKCS1_PADDING".into(), Value::Number(1.0)), ("RSA_PKCS1_PSS_PADDING".into(), Value::Number(6.0))])),
                 (
                     "randomBytes".into(),
                     capability_function(HostCapabilityKind::Custom(
