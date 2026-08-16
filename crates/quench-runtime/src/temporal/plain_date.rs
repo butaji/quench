@@ -73,6 +73,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateEraGetter => Some(era(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era(receiver)),
         crate::ops::Builtin::TemporalPlainDateCalendarIdGetter => Some(calendar_id(receiver)),
+        crate::ops::Builtin::TemporalPlainDateWeekOfYearGetter => Some(week_of_year(receiver)),
         _ => None,
     }
 }
@@ -175,6 +176,21 @@ fn calendar_id(receiver: Option<&Value>) -> Result<Value, VmError> {
         return Err(invalid_receiver());
     }
     Ok(Value::String("iso8601".to_owned()))
+}
+
+fn week_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let day = number_field(field(object, "day")) as u32;
+    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    Ok(Value::Number(f64::from(date.iso_week().week())))
 }
 fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
     let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
