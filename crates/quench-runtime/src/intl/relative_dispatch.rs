@@ -9,6 +9,9 @@ pub(crate) fn dispatch(
 ) -> Option<Result<Value, VmError>> {
     match builtin {
         crate::ops::Builtin::IntlRelativeTimeFormat => Some(construct(arguments)),
+        crate::ops::Builtin::IntlRelativeTimeFormatSupportedLocalesOf => {
+            Some(super::supported_locales_of(arguments))
+        }
         crate::ops::Builtin::IntlRelativeTimeFormatFormat
         | crate::ops::Builtin::IntlRelativeTimeFormatFormatToParts
         | crate::ops::Builtin::IntlRelativeTimeFormatResolvedOptions => {
