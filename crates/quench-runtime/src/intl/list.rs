@@ -38,6 +38,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 ("type".to_string(), Value::String(list_type)),
             ]),
         ),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(crate::ops::Builtin::IntlListFormatPrototype),
+        ),
     ]))
 }
 
