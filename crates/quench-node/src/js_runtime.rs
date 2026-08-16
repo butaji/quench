@@ -62,14 +62,24 @@ pub(crate) struct QuenchRuntime;
 
 struct QuenchNodeHost {
     hashes: RefCell<HashMap<u16, Vec<u8>>>,
+    streams: RefCell<HashMap<u16, StreamState>>,
     next_hash: Cell<u16>,
+    next_stream: Cell<u16>,
+}
+
+struct StreamState {
+    transform: Option<Value>,
+    data: Option<Value>,
+    end: Option<Value>,
 }
 
 impl Default for QuenchNodeHost {
     fn default() -> Self {
         Self {
             hashes: RefCell::new(HashMap::new()),
+            streams: RefCell::new(HashMap::new()),
             next_hash: Cell::new(100),
+            next_stream: Cell::new(200),
         }
     }
 }
@@ -84,7 +94,130 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(7) => read_file_sync(arguments),
             HostCapabilityKind::Custom(8) => self.create_hash(arguments),
             HostCapabilityKind::Custom(9) => buffer_byte_length(arguments),
+            HostCapabilityKind::Custom(id) if (200..300).contains(&id) => {
+                self.stream_call(id, arguments)
+            }
             HostCapabilityKind::Custom(id) if id >= 100 => self.hash_call(id, arguments),
+            _ => Err(VmError::NotCallable),
+        }
+    }
+
+    fn construct(
+        &self,
+        capability: HostCapabilityRef,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        if capability.kind != HostCapabilityKind::Custom(10) {
+            return Err(VmError::NotCallable);
+        }
+        let id = self.next_stream.get();
+        self.next_stream.set(id.saturating_add(10));
+        let transform = arguments
+            .first()
+            .and_then(|options| {
+                quench_runtime::execute::get_property_result(options, "transform").ok()
+            })
+            .filter(|value| !matches!(value, Value::Undefined));
+        self.streams.borrow_mut().insert(
+            id,
+            StreamState {
+                transform,
+                data: None,
+                end: None,
+            },
+        );
+        Ok(Value::object(vec![
+            (
+                "on".into(),
+                capability_function(HostCapabilityKind::Custom(id + 1)),
+            ),
+            (
+                "end".into(),
+                capability_function(HostCapabilityKind::Custom(id + 2)),
+            ),
+        ]))
+    }
+}
+
+impl QuenchNodeHost {
+    fn stream_call(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
+        let stream_id = id / 10 * 10;
+        let operation = id % 10;
+        match operation {
+            1 => {
+                let Some(Value::String(event)) = arguments.first() else {
+                    return Err(VmError::EvalError("stream.on expects an event".into()));
+                };
+                let Some(callback) = arguments.get(1) else {
+                    return Err(VmError::EvalError("stream.on expects a callback".into()));
+                };
+                let mut streams = self.streams.borrow_mut();
+                let state = streams.get_mut(&stream_id).ok_or(VmError::NotCallable)?;
+                match event.as_str() {
+                    "data" => state.data = Some(callback.clone()),
+                    "end" => state.end = Some(callback.clone()),
+                    _ => {}
+                }
+                Ok(Value::HostCapability(Rc::new(HostCapabilityValue::new(
+                    HostCapabilityRef {
+                        realm: RealmId::ROOT,
+                        kind: HostCapabilityKind::Custom(stream_id),
+                    },
+                ))))
+            }
+            2 => {
+                let chunk = string_or_bytes(arguments.first())?;
+                let transform = self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .and_then(|state| state.transform.clone())
+                    .ok_or(VmError::NotCallable)?;
+                let callback = capability_function(HostCapabilityKind::Custom(stream_id + 3));
+                quench_runtime::execute::call(
+                    &transform,
+                    &Value::Undefined,
+                    &[
+                        Value::String(String::from_utf8_lossy(&chunk).into_owned()),
+                        Value::String("buffer".into()),
+                        callback,
+                    ],
+                )?;
+                Ok(Value::Undefined)
+            }
+            3 => {
+                let output = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+                if !matches!(output, Value::Null | Value::Undefined) {
+                    if let Some(data) = self
+                        .streams
+                        .borrow()
+                        .get(&stream_id)
+                        .and_then(|s| s.data.clone())
+                    {
+                        quench_runtime::execute::call(&data, &Value::Undefined, &[output])?;
+                    }
+                }
+                if let Some(end) = self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .and_then(|s| s.end.clone())
+                {
+                    quench_runtime::execute::call(&end, &Value::Undefined, &[])?;
+                }
+                Ok(Value::Undefined)
+            }
+            4 => {
+                if let Some(end) = self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .and_then(|s| s.end.clone())
+                {
+                    quench_runtime::execute::call(&end, &Value::Undefined, &[])?;
+                }
+                Ok(Value::Undefined)
+            }
             _ => Err(VmError::NotCallable),
         }
     }
@@ -212,6 +345,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 capability_function(HostCapabilityKind::Custom(8)),
             )]));
         }
+        if name == "node:stream" || name == "stream" {
+            return Ok(Value::object(vec![(
+                "Transform".into(),
+                capability_function(HostCapabilityKind::Custom(10)),
+            )]));
+        }
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
     }
     let basename = capability_function(HostCapabilityKind::Custom(2));
@@ -272,6 +411,7 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(7),
                 HostCapabilityKind::Custom(8),
                 HostCapabilityKind::Custom(9),
+                HostCapabilityKind::Custom(10),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
