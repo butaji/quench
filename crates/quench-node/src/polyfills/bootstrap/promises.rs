@@ -150,51 +150,6 @@ globalThis.__nodeTimersPromises = {
   },
   scheduler: Object.create(NodeTimerPromiseScheduler.prototype)
 };
-const processListeners = {};
 process.stdout ||= { isTTY: false };
 process.stderr ||= { isTTY: false };
-process.on = (event, listener) => {
-  (processListeners[event] ||= []).push(listener);
-  if (event === "uncaughtException" && globalThis.__quench_pending_uncaught) {
-    const error = globalThis.__quench_pending_uncaught;
-    globalThis.__quench_pending_uncaught = undefined;
-    queueMicrotask(() => listener(error));
-  }
-  return process;
-};
-process.once = (event, listener) => {
-  const once = (...args) => {
-    process.removeListener(event, once);
-    listener(...args);
-  };
-  return process.on(event, once);
-};
-process.removeListener = (event, listener) => {
-  processListeners[event] = (processListeners[event] || []).filter(
-    (item) => item !== listener
-  );
-  return process;
-};
-process.removeAllListeners = (event) => {
-  if (event) delete processListeners[event];
-  else {
-    Object.keys(processListeners).forEach(
-      (key) => delete processListeners[key]
-    );
-  }
-};
-process.emit = (event, ...args) => {
-  const listeners = processListeners[event] || [];
-  listeners.forEach((listener) => listener(...args));
-  return listeners.length > 0;
-};
-process.emitWarning = (warning, options = {}) => {
-  const message = warning instanceof Error ? warning.message : String(warning);
-  process.emit("warning", {
-    name: options.name || "Warning",
-    message,
-    code: options.code
-  });
-  return undefined;
-};
 "#);
