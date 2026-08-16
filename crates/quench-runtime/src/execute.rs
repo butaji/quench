@@ -29,6 +29,28 @@ pub fn set_prototype_of(
     crate::builtins::object::set_prototype_of(&[target.clone(), prototype.clone()])
 }
 
+/// Set an own property on a callable value without invoking inherited
+/// setters. Hosts use this for compatibility metadata such as `super_`.
+pub fn set_callable_property(
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<(), VmError> {
+    match target {
+        crate::value::Value::Function(function) => {
+            function.properties.borrow_mut().retain(|(name, _)| name != key);
+            function.properties.borrow_mut().push((key.to_owned(), value));
+            Ok(())
+        }
+        crate::value::Value::BoundFunction(function) => {
+            function.properties.borrow_mut().retain(|(name, _)| name != key);
+            function.properties.borrow_mut().push((key.to_owned(), value));
+            Ok(())
+        }
+        _ => Err(VmError::NotCallable),
+    }
+}
+
 /// Publish a host-side replacement for an identity-bearing JavaScript value.
 /// Hosts use this when a callback mutates an object through a receiver but
 /// the value representation requires replacement rather than interior
