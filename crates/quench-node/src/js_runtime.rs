@@ -2698,7 +2698,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(process_module());
         }
         if name == "buffer" || name == "node:buffer" {
-            return Ok(Value::object(vec![("Buffer".into(), buffer_module())]));
+            let buffer = buffer_module();
+            let constants = quench_runtime::execute::get_property_result(&buffer, "constants").unwrap_or(Value::Undefined);
+            return Ok(Value::object(vec![
+                ("Buffer".into(), buffer),
+                ("constants".into(), constants),
+                ("kMaxLength".into(), Value::Number(4_294_967_296.0)),
+                ("kStringMaxLength".into(), Value::Number(536_870_888.0)),
+            ]));
         }
         if name == "node:fs" || name == "fs" {
             let realpath_sync = quench_runtime::execute::set_property(
@@ -3475,6 +3482,14 @@ fn buffer_module() -> Value {
     prototype = quench_runtime::execute::set_property(prototype, "writeUIntLE", write_uint_le.clone());
     prototype = quench_runtime::execute::set_property(prototype, "writeUintLE", write_uint_le);
     buffer = quench_runtime::execute::set_property(buffer, "prototype", prototype);
+    let constants = quench_runtime::host_api::object(vec![
+        ("MAX_LENGTH".into(), Value::Number(4_294_967_296.0)),
+        ("MAX_STRING_LENGTH".into(), Value::Number(536_870_888.0)),
+    ]);
+    buffer = quench_runtime::execute::set_property(buffer, "constants", constants.clone());
+    buffer = quench_runtime::execute::set_property(buffer, "kMaxLength", Value::Number(4_294_967_296.0));
+    buffer = quench_runtime::execute::set_property(buffer, "kStringMaxLength", Value::Number(536_870_888.0));
+    buffer = quench_runtime::execute::set_property(buffer, "poolSize", Value::Number(8192.0));
     buffer
 }
 
@@ -3491,7 +3506,9 @@ fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
             let length = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or_else(|| buffer.bytes.borrow().len().saturating_sub(offset));
             if offset + length > buffer.bytes.borrow().len() { return Err(VmError::Thrown(fs_error("ERR_BUFFER_OUT_OF_BOUNDS", "offset out of bounds"))); }
             let view = Value::Uint8Array(Rc::new(quench_runtime::value::Uint8ArrayData::new(Rc::clone(buffer), offset, length)));
-            Ok(quench_runtime::execute::set_property(view, "toString", capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString))))
+            let view = quench_runtime::execute::set_property(view, "toString", capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString)));
+            let view = quench_runtime::execute::set_property(view, "parent", Value::ArrayBuffer(buffer.clone()));
+            Ok(quench_runtime::execute::set_property(view, "offset", Value::Number(offset as f64)))
         }
         Some(Value::Uint8Array(view)) => Ok(node_buffer(
             &view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length],
