@@ -103,6 +103,7 @@ fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
             | Builtin::URIErrorPrototype
             | Builtin::AggregateErrorPrototype
             | Builtin::SuppressedErrorPrototype
+            | Builtin::IntlCollatorPrototype
             | Builtin::IntlPluralRulesPrototype,
         )) => "Object",
         Some(Value::Builtin(_)) => "Function",
