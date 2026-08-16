@@ -227,7 +227,8 @@ pub(crate) mod value {
             | crate::ops::Builtin::SymbolMatchAll => "symbol",
             crate::ops::Builtin::Math
             | crate::ops::Builtin::Reflect
-            | crate::ops::Builtin::Json => "object",
+            | crate::ops::Builtin::Json
+            | crate::ops::Builtin::Temporal => "object",
             builtin if crate::builtin_meta::is_prototype(builtin) => "object",
             _ => "function",
         }
