@@ -66,6 +66,8 @@ struct QuenchNodeHost {
     next_hash: Cell<u16>,
     next_stream: Cell<u16>,
     http: RefCell<HttpState>,
+    urls: RefCell<HashMap<u16, String>>,
+    next_url: Cell<u16>,
 }
 
 struct StreamState {
@@ -94,6 +96,8 @@ impl Default for QuenchNodeHost {
                 data_callback: None,
                 end_callback: None,
             }),
+            urls: RefCell::new(HashMap::new()),
+            next_url: Cell::new(600),
         }
     }
 }
@@ -111,6 +115,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(30) => buffer_from(arguments),
             HostCapabilityKind::Custom(31) => buffer_alloc(arguments),
             HostCapabilityKind::Custom(32) => buffer_is_buffer(arguments),
+            HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
             HostCapabilityKind::Custom(21) => next_tick(arguments),
             HostCapabilityKind::Custom(27 | 28 | 29) => timer_call(arguments),
             HostCapabilityKind::Custom(id) if (13..=20).contains(&id) => {
@@ -133,6 +138,23 @@ impl Host for QuenchNodeHost {
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        if capability.kind == HostCapabilityKind::Custom(40) {
+            let input = match arguments.first() {
+                Some(Value::String(value)) => value.as_str(),
+                _ => return Err(VmError::EvalError("URL expects a string".into())),
+            };
+            let parsed = match arguments.get(1) {
+                Some(Value::String(base)) => {
+                    url::Url::parse(base).and_then(|base| base.join(input))
+                }
+                _ => url::Url::parse(input),
+            }
+            .map_err(|error| VmError::EvalError(error.to_string()))?;
+            let id = self.next_url.get();
+            self.next_url.set(id.saturating_add(1));
+            self.urls.borrow_mut().insert(id, parsed.to_string());
+            return Ok(url_object(&parsed, id));
+        }
         if capability.kind != HostCapabilityKind::Custom(10) {
             return Err(VmError::NotCallable);
         }
@@ -166,6 +188,16 @@ impl Host for QuenchNodeHost {
 }
 
 impl QuenchNodeHost {
+    fn url_call(&self, id: u16) -> Result<Value, VmError> {
+        let value = self
+            .urls
+            .borrow()
+            .get(&id)
+            .cloned()
+            .ok_or(VmError::NotCallable)?;
+        Ok(Value::String(value))
+    }
+
     fn stream_call(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
         let stream_id = id / 10 * 10;
         let operation = id % 10;
@@ -520,6 +552,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
             ]));
         }
+        if name == "url" || name == "node:url" {
+            return Ok(quench_runtime::host_api::object(vec![(
+                "URL".into(),
+                capability_function(HostCapabilityKind::Custom(40)),
+            )]));
+        }
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
     }
     let basename = capability_function(HostCapabilityKind::Custom(2));
@@ -567,6 +605,63 @@ fn process_module() -> Value {
         (
             "nextTick".into(),
             capability_function(HostCapabilityKind::Custom(21)),
+        ),
+    ])
+}
+
+fn url_object(url: &url::Url, id: u16) -> Value {
+    let string = url.to_string();
+    quench_runtime::host_api::object(vec![
+        ("href".into(), Value::String(string.clone())),
+        (
+            "origin".into(),
+            Value::String(url.origin().ascii_serialization()),
+        ),
+        (
+            "protocol".into(),
+            Value::String(url.scheme().to_string() + ":"),
+        ),
+        ("username".into(), Value::String(url.username().into())),
+        (
+            "password".into(),
+            Value::String(url.password().unwrap_or("").into()),
+        ),
+        (
+            "hostname".into(),
+            Value::String(url.host_str().unwrap_or("").into()),
+        ),
+        (
+            "host".into(),
+            Value::String(url.host_str().unwrap_or("").into()),
+        ),
+        (
+            "port".into(),
+            Value::String(url.port().map(|port| port.to_string()).unwrap_or_default()),
+        ),
+        ("pathname".into(), Value::String(url.path().into())),
+        (
+            "search".into(),
+            Value::String(
+                url.query()
+                    .map(|query| format!("?{query}"))
+                    .unwrap_or_default(),
+            ),
+        ),
+        (
+            "hash".into(),
+            Value::String(
+                url.fragment()
+                    .map(|fragment| format!("#{fragment}"))
+                    .unwrap_or_default(),
+            ),
+        ),
+        (
+            "toString".into(),
+            capability_function(HostCapabilityKind::Custom(id)),
+        ),
+        (
+            "toJSON".into(),
+            capability_function(HostCapabilityKind::Custom(id)),
         ),
     ])
 }
@@ -756,6 +851,7 @@ impl JsRuntime for QuenchRuntime {
             },
         )
         .with_host_value("process", process_module())
+        .with_host_value("URL", capability_function(HostCapabilityKind::Custom(40)))
         .with_host_value(
             "setImmediate",
             capability_function(HostCapabilityKind::Custom(27)),
