@@ -510,6 +510,9 @@ fn should_preserve_receiver_property(
     if object_has_property(value, key) {
         return true;
     }
+    if plural_rules_instance(receiver) {
+        return true;
+    }
     matches!(value, Value::Builtin(_))
         || matches!(value, Value::Object(_)) && crate::vm::is_global_object(value)
         || is_intl_number_format_property(property)
@@ -517,6 +520,21 @@ fn should_preserve_receiver_property(
         || matches!(key, "constructor" | "prototype")
 }
 
+fn plural_rules_instance(value: &Value) -> bool {
+    let Value::Object(properties) = value else {
+        return false;
+    };
+    properties.iter().any(|(name, prototype)| {
+        name == "\0prototype"
+            && match prototype {
+                Value::Builtin(Builtin::IntlPluralRulesPrototype) => true,
+                Value::BoundFunction(bound) => {
+                    bound.target == Value::Builtin(Builtin::IntlPluralRulesPrototype)
+                }
+                _ => false,
+            }
+    })
+}
 fn is_boxed_primitive(value: &Value) -> bool {
     matches!(
         value,
