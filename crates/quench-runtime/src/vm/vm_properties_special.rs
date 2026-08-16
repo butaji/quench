@@ -166,10 +166,11 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {
         return property;
     };
-    let properties = if builtin == Builtin::IntlNumberFormatFormat {
-        RefCell::new(number_format_bound_properties())
-    } else {
-        RefCell::new(Vec::new())
+    let properties = match builtin {
+        Builtin::IntlNumberFormatFormat => RefCell::new(number_format_bound_properties()),
+        Builtin::IntlDateTimeFormatFormat => RefCell::new(datetime_format_bound_properties()),
+        Builtin::IntlCollatorCompare => RefCell::new(collator_bound_properties()),
+        _ => RefCell::new(Vec::new()),
     };
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         realm: crate::vm::current_context_or_default().realm(),
@@ -179,6 +180,50 @@ fn bind_method(receiver: &Value, property: Value) -> Value {
         properties,
     }))
 }
+
+fn datetime_format_bound_properties() -> Vec<(String, Value)> {
+    [
+        ("length", Value::Number(1.0)),
+        ("name", Value::String(String::new())),
+    ]
+    .into_iter()
+    .flat_map(|(key, value)| {
+        let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ])));
+        [
+            (key.to_string(), value),
+            (crate::builtins::descriptor_key(key), descriptor),
+        ]
+    })
+    .collect()
+}
+
+fn collator_bound_properties() -> Vec<(String, Value)> {
+    [
+        ("length", Value::Number(2.0)),
+        ("name", Value::String(String::new())),
+    ]
+    .into_iter()
+    .map(|(key, value)| {
+        let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+            ("value".to_string(), value.clone()),
+            ("writable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(false)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ])));
+        vec![
+            (key.to_string(), value),
+            (crate::builtins::descriptor_key(key), descriptor),
+        ]
+    })
+    .flatten()
+    .collect()
+}
+
 fn number_format_bound_properties() -> Vec<(String, Value)> {
     [
         ("length", Value::Number(1.0)),

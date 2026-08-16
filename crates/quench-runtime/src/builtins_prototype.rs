@@ -32,6 +32,9 @@ fn box_primitive(value: &Value, constructor: crate::ops::Builtin) -> Value {
 
 /// Implement `Object.prototype.toString` using the receiver's [[Class]].
 pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
+    if receiver.is_some_and(crate::conversion::is_callable) {
+        return Value::String("[object Function]".into());
+    }
     if let Some(tag) = receiver.and_then(string_tag) {
         return Value::String(format!("[object {tag}]"));
     }

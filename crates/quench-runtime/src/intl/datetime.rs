@@ -449,8 +449,40 @@ fn parts_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value,
     if let Some(value) = day_period_parts(slots, number) {
         return Ok(make_array(value));
     }
+    if let Some(value) = fractional_parts(slots, number) {
+        return Ok(make_array(value));
+    }
     let value = range_text(number);
     Ok(make_array(vec![literal_part(&value)]))
+}
+
+fn fractional_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    let digits = slot_number(slots, "fractionalSecondDigits").unwrap_or(0.0) as u32;
+    slot_string(slots, "minute")?;
+    slot_string(slots, "second")?;
+    let date = DateTime::<Utc>::from_timestamp((number / 1_000.0).trunc() as i64, 0)?;
+    let millis = number.rem_euclid(1_000.0) as u32;
+    let fraction = millis / 10_u32.pow(3 - digits);
+    let mut parts = vec![
+        typed_part("minute", format!("{:02}", date.minute())),
+        literal_part(":"),
+        typed_part("second", format!("{:02}", date.second())),
+    ];
+    if digits > 0 {
+        parts.push(literal_part("."));
+        parts.push(typed_part(
+            "fractionalSecond",
+            format!("{fraction:0width$}", width = digits as usize),
+        ));
+    }
+    Some(parts)
+}
+
+fn typed_part(kind: &str, value: String) -> Value {
+    make_object(vec![
+        ("type".to_string(), Value::String(kind.to_string())),
+        ("value".to_string(), Value::String(value)),
+    ])
 }
 
 fn range_parts(start: &str, end: &str) -> Vec<Value> {
