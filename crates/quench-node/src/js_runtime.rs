@@ -736,7 +736,7 @@ impl Host for QuenchNodeHost {
                 events_instance_call(id, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::QuerystringParse) => {
-                querystring_parse(arguments)
+                querystring_parse(receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::QuerystringEscape) => {
                 querystring_escape(arguments)
@@ -4926,7 +4926,7 @@ fn safe_value_string(value: &Value) -> String {
     }
 }
 
-fn querystring_parse(arguments: &[Value]) -> Result<Value, VmError> {
+fn querystring_parse(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(input)) = arguments.first() else {
         return Ok(quench_runtime::host_api::object(vec![]));
     };
@@ -4941,7 +4941,11 @@ fn querystring_parse(arguments: &[Value]) -> Result<Value, VmError> {
         quench_runtime::execute::get_property_result(options, "decodeURIComponent")
             .ok()
             .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)))
-    });
+    }).or_else(|| receiver.and_then(|receiver| {
+        quench_runtime::execute::get_property_result(receiver, "unescape")
+            .ok()
+            .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)))
+    }));
     let mut properties: Vec<(String, Value)> = Vec::new();
     for pair in input.split(&separator).take(max_keys.unwrap_or(usize::MAX)).filter(|pair| !pair.is_empty()) {
         let (key, value) = pair.split_once(&equals).unwrap_or((pair, ""));
