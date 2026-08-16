@@ -104,6 +104,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "trim" => Some(crate::ops::Builtin::StringTrim),
         "toLowerCase" => Some(crate::ops::Builtin::StringToLowerCase),
         "toUpperCase" => Some(crate::ops::Builtin::StringToUpperCase),
+        "normalize" => Some(crate::ops::Builtin::StringNormalize),
         "charAt" => Some(crate::ops::Builtin::StringCharAt),
         "charCodeAt" => Some(crate::ops::Builtin::StringCharCodeAt),
         "indexOf" => Some(crate::ops::Builtin::StringIndexOf),
@@ -151,6 +152,7 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringTrim => trim(receiver),
         crate::ops::Builtin::StringToLowerCase => to_lower_case(receiver),
         crate::ops::Builtin::StringToUpperCase => to_upper_case(receiver),
+        crate::ops::Builtin::StringNormalize => normalize(receiver, arguments),
         crate::ops::Builtin::StringCharAt => char_at(receiver, arguments),
         crate::ops::Builtin::StringCharCodeAt => char_code_at(receiver, arguments),
         crate::ops::Builtin::StringIndexOf => index_of(receiver, arguments),
@@ -314,6 +316,29 @@ fn string_receiver(receiver: Option<&Value>) -> Result<String, crate::execute::V
         return Ok(value.clone());
     }
     crate::conversion::to_string(value)
+}
+
+fn normalize(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = string_receiver(receiver)?;
+    let form = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map_or_else(|| Ok("NFC".to_string()), crate::conversion::to_string)?;
+    let normalized = match form.as_str() {
+        "NFC" => unicode_normalization::UnicodeNormalization::nfc(value.chars()).collect(),
+        "NFD" => unicode_normalization::UnicodeNormalization::nfd(value.chars()).collect(),
+        "NFKC" => unicode_normalization::UnicodeNormalization::nfkc(value.chars()).collect(),
+        "NFKD" => unicode_normalization::UnicodeNormalization::nfkd(value.chars()).collect(),
+        _ => {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid normalization form",
+            ))
+        }
+    };
+    Ok(Value::String(normalized))
 }
 
 pub(crate) fn repeat(
