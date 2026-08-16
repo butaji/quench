@@ -4688,7 +4688,16 @@ fn util_format_with_options(arguments: &[Value]) -> Result<Value, VmError> {
             "options must be an object",
         )));
     }
-    format_util(arguments.get(1..).unwrap_or_default(), arguments.first().and_then(separator_option))
+    let result = format_util(arguments.get(1..).unwrap_or_default(), arguments.first().and_then(separator_option))?;
+    let colors = arguments.first()
+        .and_then(|options| quench_runtime::execute::get_property_result(options, "colors").ok())
+        .is_some_and(|value| matches!(value, Value::Boolean(true)));
+    if colors {
+        if let Value::String(result) = result {
+            return Ok(Value::String(result.replacen("true", "\u{1b}[33mtrue\u{1b}[39m", 1).into()));
+        }
+    }
+    Ok(result)
 }
 
 fn numeric_separator(value: &Value) -> Option<bool> {
