@@ -197,6 +197,9 @@ pub(crate) fn unit_parts(
     display: &str,
     locale: &str,
 ) -> Vec<Value> {
+    if unit == Some("kilometer-per-hour") {
+        return speed_unit_parts(text, display, locale);
+    }
     let suffix = unit_suffix(unit, display, locale);
     let narrow = display == "narrow" || unit == Some("percent");
     let localized_text = if locale.starts_with("de") {
@@ -227,6 +230,34 @@ pub(crate) fn unit_parts(
         parts.push(part("literal", " "));
     }
     parts.push(part("unit", &suffix));
+    parts
+}
+
+fn speed_unit_parts(text: &str, display: &str, locale: &str) -> Vec<Value> {
+    let (prefix, suffix) = crate::intl::number::localized_unit_parts(display, locale);
+    let rendered_suffix = if display == "narrow" && !locale.starts_with("de") {
+        suffix.trim_start()
+    } else {
+        suffix
+    };
+    let number = text
+        .strip_prefix(prefix)
+        .and_then(|value| value.strip_suffix(rendered_suffix))
+        .unwrap_or(text);
+    let mut parts = Vec::new();
+    if !prefix.is_empty() {
+        parts.push(part("unit", prefix.trim_end()));
+        parts.push(part("literal", &prefix[prefix.trim_end().len()..]));
+    }
+    parts.extend(numeric_parts(number, locale));
+    let trimmed_suffix = rendered_suffix.trim_start();
+    if !trimmed_suffix.is_empty() {
+        let leading = &rendered_suffix[..rendered_suffix.len() - trimmed_suffix.len()];
+        if !leading.is_empty() {
+            parts.push(part("literal", leading));
+        }
+        parts.push(part("unit", trimmed_suffix));
+    }
     parts
 }
 
