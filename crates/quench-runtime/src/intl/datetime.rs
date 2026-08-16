@@ -84,9 +84,16 @@ pub(crate) struct DateTimeOptions {
 }
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
+    construct_with_defaults(arguments, None)
+}
+
+pub(crate) fn construct_with_defaults(
+    arguments: &[Value],
+    defaults: Option<&[&str]>,
+) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = sanitize_locale(&locales.first().cloned().unwrap_or_else(default_locale));
-    let options = DateTimeOptions::from_options(locale, arguments.get(1))?;
+    let options = DateTimeOptions::from_options(locale, arguments.get(1), defaults)?;
     Ok(options.build_object())
 }
 
@@ -122,7 +129,11 @@ fn available_calendar(calendar: &str) -> bool {
 }
 
 impl DateTimeOptions {
-    fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
+    fn from_options(
+        locale: String,
+        options: Option<&Value>,
+        defaults: Option<&[&str]>,
+    ) -> Result<Self, VmError> {
         if matches!(options, Some(Value::Null)) {
             return Err(runtime_error("TypeError: Cannot convert null to object"));
         }
@@ -141,7 +152,7 @@ impl DateTimeOptions {
                 formatter.apply(key, &value)?;
             }
         }
-        formatter.apply_defaults();
+        formatter.apply_defaults(defaults);
         formatter.validate_styles()?;
         formatter.resolve_hour();
         Ok(formatter)
@@ -242,14 +253,15 @@ impl DateTimeOptions {
         self.components.iter().any(|(name, _)| name == key)
     }
 
-    fn apply_defaults(&mut self) {
+    fn apply_defaults(&mut self, defaults: Option<&[&str]>) {
         if self.contains("dateStyle") || self.contains("timeStyle") {
             return;
         }
-        if self.contains("year") || self.contains("month") || self.contains("day") {
+        let keys = defaults.unwrap_or(&["year", "month", "day"]);
+        if keys.iter().any(|key| self.contains(key)) {
             return;
         }
-        for key in ["year", "month", "day"] {
+        for key in keys {
             self.set_component(key, "numeric".to_string());
         }
     }
