@@ -4717,7 +4717,8 @@ fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, V
                 if let Some(value) = remaining.next() {
                     output.push_str(&match specifier {
                         's' => format_string(value, separators.unwrap_or(false)),
-                        'o' | 'O' => format_object_string(value),
+                        'o' => format_detailed_value(value),
+                        'O' => format_object_string(value),
                         'd' => format_decimal(value, separators.unwrap_or(false)),
                         'f' => format_number(value, separators.unwrap_or(false)),
                         'i' => format_integer(value, separators.unwrap_or(false)),
@@ -4784,6 +4785,41 @@ fn format_string(value: &Value, separators: bool) -> String {
 fn format_object_string(value: &Value) -> String {
     match value {
         Value::String(value) => format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'")),
+        _ => format_compact_value(value),
+    }
+}
+
+fn format_detailed_value(value: &Value) -> String {
+    match value {
+        Value::Function(_) | Value::BoundFunction(_) => {
+            let name = quench_runtime::execute::get_property_result(value, "name").ok()
+                .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
+                .unwrap_or_default();
+            if name.is_empty() { "<ref *1> [Function]".into() } else { format!("<ref *1> [Function: {name}]") }
+        }
+        Value::Array(array) => {
+            let value = Value::Array(array.clone());
+            let length = array_length(&value);
+            let mut items = Vec::new();
+            for index in 0..length {
+                if let Ok(item) = quench_runtime::execute::get_property_result(&value, &index.to_string()) {
+                    items.push(format_detailed_value(&item));
+                }
+            }
+            format!("[ {}, [length]: {} ]", items.join(", "), length)
+        }
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            let keys = quench_runtime::execute::call(&Value::Builtin(quench_runtime::ops::Builtin::ObjectKeys), &Value::Undefined, &[value.clone()]).ok();
+            let length = keys.as_ref().and_then(|keys| quench_runtime::execute::get_property_result(keys, "length").ok()).and_then(|value| match value { Value::Number(value) => Some(value as usize), _ => None }).unwrap_or(0);
+            let mut properties = Vec::new();
+            for index in 0..length {
+                let Some(key) = keys.as_ref().and_then(|keys| quench_runtime::execute::get_property_result(keys, &index.to_string()).ok()).and_then(|value| match value { Value::String(value) => Some(value), _ => None }) else { continue };
+                if let Ok(property) = quench_runtime::execute::get_property_result(value, &key) {
+                    properties.push(format!("{}: {}", key, format_detailed_value(&property)));
+                }
+            }
+            format!("{{ {} }}", properties.join(", "))
+        }
         _ => format_compact_value(value),
     }
 }
