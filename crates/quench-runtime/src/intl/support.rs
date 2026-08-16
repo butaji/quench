@@ -17,10 +17,19 @@ pub(crate) fn intl_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)
     let Some(Value::Object(properties)) = receiver else {
         return Err(runtime_error("TypeError: not an Intl object"));
     };
-    let Some((_, Value::Object(slots))) = properties.iter().find(|(name, _)| name == SLOT) else {
+    let Some((_, slots)) = properties.iter().find(|(name, _)| name == SLOT) else {
         return Err(runtime_error("TypeError: not an Intl object"));
     };
-    Ok(slots.properties.clone())
+    match slots {
+        Value::Object(slots) => Ok(slots.properties.clone()),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(|slots| slots.properties.clone())
+            .ok_or_else(|| runtime_error("TypeError: not an Intl object")),
+        _ => Err(runtime_error("TypeError: not an Intl object")),
+    }
 }
 
 pub(crate) fn slot_string(slots: &[(String, Value)], key: &str) -> Option<String> {
