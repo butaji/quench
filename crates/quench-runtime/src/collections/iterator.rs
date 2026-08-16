@@ -206,6 +206,28 @@ pub(crate) fn map(
     })))
 }
 
+pub(crate) fn filter(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let receiver = receiver.ok_or_else(not_iterable)?;
+    let predicate = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if !crate::conversion::is_callable(&predicate) {
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.prototype.filter predicate is not callable",
+        ));
+    }
+    let iterator = from(std::slice::from_ref(receiver))?;
+    Ok(Value::Iterator(Rc::new(IteratorData {
+        state: RefCell::new(IteratorState::Filtered {
+            iterator,
+            predicate,
+            index: 0,
+            done: false,
+        }),
+    })))
+}
+
 pub(crate) fn some(
     receiver: Option<&Value>,
     arguments: &[Value],
@@ -374,6 +396,7 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
         IteratorState::RegExpString { .. } => Ok(None),
         IteratorState::Protocol { iterator, .. } => Ok(Some(iterator.clone())),
         IteratorState::Mapped { iterator, .. } => Ok(Some(iterator.clone())),
+        IteratorState::Filtered { iterator, .. } => Ok(Some(iterator.clone())),
         IteratorState::Concat { current, done, .. } if !*done => Ok(current.clone()),
         IteratorState::Concat { .. } => Ok(None),
         IteratorState::Zip { .. } => Ok(None),
@@ -597,6 +620,7 @@ pub fn delegate_next(
             IteratorState::Protocol { iterator, done, .. } if !*done => Some(iterator.clone()),
             IteratorState::Protocol { .. } => None,
             IteratorState::Mapped { .. } => None,
+            IteratorState::Filtered { .. } => None,
             IteratorState::Concat { .. } => None,
             IteratorState::Zip { .. } => None,
         }
@@ -682,6 +706,7 @@ fn delegation_target(
         | IteratorState::String { .. }
         | IteratorState::RegExpString { .. } => None,
         IteratorState::Mapped { .. } => None,
+        IteratorState::Filtered { .. } => None,
         IteratorState::Concat { .. } => None,
         IteratorState::Zip { .. } => None,
     };
@@ -766,6 +791,7 @@ pub(super) fn mark_done(data: &IteratorData) {
         | IteratorState::Protocol { done, .. }
         | IteratorState::RegExpString { done, .. } => *done = true,
         IteratorState::Mapped { done, .. } => *done = true,
+        IteratorState::Filtered { done, .. } => *done = true,
         IteratorState::Concat { done, .. } => *done = true,
         IteratorState::Zip { done, .. } => *done = true,
     }
