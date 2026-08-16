@@ -206,6 +206,28 @@ fn reduce_dynamic_for(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
+    let lexical_names = statement
+        .init
+        .as_ref()
+        .and_then(|init| match init {
+            ForStatementInit::VariableDeclaration(declaration)
+                if declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var =>
+            {
+                Some(
+                    declaration
+                        .declarations
+                        .iter()
+                        .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
+                        .collect::<Vec<_>>(),
+                )
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+    let saved_names = lexical_names
+        .iter()
+        .map(|name| (name, locals.get(name).copied()))
+        .collect::<Vec<_>>();
     let init = reduce_for_init(statement, facts, next_register, next_slot, locals)?;
     let test = super::reduce_fragment(statement.test.as_ref(), ops, facts, next_register, locals)?;
     let var_names = body_var_names(&statement.body);
@@ -225,6 +247,16 @@ fn reduce_dynamic_for(
         update,
         post_test: false,
     });
+    for (name, slot) in saved_names {
+        match slot {
+            Some(slot) => {
+                locals.insert(name.clone(), slot);
+            }
+            None => {
+                locals.remove(name.as_str());
+            }
+        }
+    }
     Ok(())
 }
 
@@ -325,15 +357,32 @@ fn reduce_body_fragment(
     locals: &mut HashMap<String, u16>,
 ) -> Result<Vec<Op>, Vec<String>> {
     let mut fragment = Vec::new();
-    super::reduce_body(
+    let barrier_len = facts.eval_var_barrier.len();
+    extend_for_barrier(statement, facts);
+    let result = super::reduce_body(
         &statement.body,
         &mut fragment,
         facts,
         next_register,
         next_slot,
         locals,
-    )?;
-    Ok(fragment)
+    );
+    facts.eval_var_barrier.truncate(barrier_len);
+    result.map(|()| fragment)
+}
+
+fn extend_for_barrier(statement: &ForStatement<'_>, facts: &mut ProgramDb) {
+    let Some(ForStatementInit::VariableDeclaration(declaration)) = &statement.init else {
+        return;
+    };
+    if declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var {
+        facts.eval_var_barrier.extend(
+            declaration
+                .declarations
+                .iter()
+                .flat_map(|declarator| crate::binding_patterns::names(&declarator.id)),
+        );
+    }
 }
 
 struct LoopContext<'a> {
@@ -360,14 +409,18 @@ fn emit_iteration(
         slot,
         src: register,
     });
-    super::reduce_body(
+    let barrier_len = context.facts.eval_var_barrier.len();
+    extend_for_barrier(statement, context.facts);
+    let result = super::reduce_body(
         &statement.body,
         context.ops,
         context.facts,
         context.next_register,
         context.next_slot,
         context.locals,
-    )
+    );
+    context.facts.eval_var_barrier.truncate(barrier_len);
+    result
 }
 
 fn numeric_init(init: Option<&ForStatementInit<'_>>) -> Result<(String, f64), Vec<String>> {
