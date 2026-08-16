@@ -427,7 +427,7 @@ fn builtin_special_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     ))
 }
 
-fn builtin_property_is_writable(builtin: Builtin, key: &str) -> bool {
+pub(crate) fn builtin_property_is_writable(builtin: Builtin, key: &str) -> bool {
     if matches!(
         builtin,
         Builtin::ErrorPrototype

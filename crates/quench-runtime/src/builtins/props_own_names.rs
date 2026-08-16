@@ -139,6 +139,7 @@ fn own_property_names_standard(builtin: Builtin) -> &'static [&'static str] {
         | Builtin::ShadowRealmPrototype
         | Builtin::BigInt
         | Builtin::BigIntPrototype
+        | Builtin::FunctionPrototype
         | Builtin::Error
         | Builtin::ThrowTypeError => own_property_names_standard_core(builtin),
         _ => own_property_names_standard_tail(builtin),
@@ -158,6 +159,18 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
         ],
         Builtin::BigInt => &["length", "name", "prototype", "asIntN", "asUintN"],
         Builtin::BigIntPrototype => &["constructor", "toString", "valueOf", "Symbol.toStringTag"],
+        Builtin::FunctionPrototype => &[
+            "length",
+            "name",
+            "arguments",
+            "caller",
+            "constructor",
+            "apply",
+            "bind",
+            "call",
+            "toString",
+            "Symbol.hasInstance",
+        ],
         Builtin::AsyncFunctionPrototype => &["constructor", "Symbol.toStringTag"],
         Builtin::GeneratorFunctionPrototype => &["constructor", "prototype", "Symbol.toStringTag"],
         Builtin::AsyncGeneratorFunctionPrototype => {
