@@ -3480,7 +3480,7 @@ fn buffer_module() -> Value {
 
 fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
     match arguments.first() {
-        Some(Value::String(value)) if matches!(arguments.get(1), Some(Value::String(encoding)) if encoding == "hex") =>
+        Some(Value::String(value)) if matches!(arguments.get(1), Some(Value::String(encoding)) if encoding.eq_ignore_ascii_case("hex")) =>
         {
             let bytes = decode_hex(value);
             Ok(node_buffer(&bytes))
@@ -3691,7 +3691,7 @@ fn node_buffer(bytes: &[u8]) -> Value {
 
 fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let bytes = string_or_bytes(receiver)?;
-    if matches!(arguments.first(), Some(Value::String(value)) if value == "hex") {
+    if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("hex")) {
         return Ok(Value::String(
             bytes
                 .iter()
@@ -3700,8 +3700,11 @@ fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
                 .into(),
         ));
     }
-    if matches!(arguments.first(), Some(Value::String(value)) if value == "base64") {
+    if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("base64")) {
         return Ok(Value::String(base64_encode(&bytes).into()));
+    }
+    if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("base64url")) {
+        return Ok(Value::String(base64_encode(&bytes).trim_end_matches('=').replace('+', "-").replace('/', "_").into()));
     }
     Ok(Value::String(
         String::from_utf8_lossy(&bytes).into_owned().into(),
