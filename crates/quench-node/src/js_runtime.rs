@@ -652,6 +652,7 @@ impl Default for QuenchNodeHost {
     }
 }
 
+include!("js_runtime_dispatch_crypto_b.rs");
 include!("js_runtime_dispatch_crypto_a.rs");
 include!("js_runtime_dispatch_buffer.rs");
 include!("js_runtime_dispatch_core.rs");
@@ -663,6 +664,9 @@ impl Host for QuenchNodeHost {
         receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        if let Some(result) = self.dispatch_crypto_b(capability, receiver, arguments) {
+            return result;
+        }
         if let Some(result) = self.dispatch_crypto_a(capability, receiver, arguments) {
             return result;
         }
@@ -673,61 +677,6 @@ impl Host for QuenchNodeHost {
             return result;
         }
         match capability.kind {
-            HostCapabilityKind::Custom(CapabilityName::CryptoCreateHmac) => {
-                let algorithm = match arguments.first() {
-                    Some(Value::String(value)) => value.to_ascii_lowercase(),
-                    _ => "sha256".into(),
-                };
-                let key = match arguments.get(1) {
-                    Some(Value::String(value)) => value.clone(),
-                    _ => String::new(),
-                };
-                Ok(Value::object(vec![
-                    (
-                        "update".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::CryptoHmacUpdate,
-                        )),
-                    ),
-                    (
-                        "digest".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::CryptoHmacDigest,
-                        )),
-                    ),
-                    ("\0hmacAlgorithm".into(), Value::String(algorithm)),
-                    ("\0hmacKey".into(), Value::String(key)),
-                    ("\0hmacData".into(), Value::String(String::new())),
-                ]))
-            }
-            HostCapabilityKind::Custom(
-                CapabilityName::CryptoCreateSign | CapabilityName::CryptoCreateVerify,
-            ) => {
-                let value = Value::object(vec![
-                    (
-                        "update".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::CryptoSignUpdate,
-                        )),
-                    ),
-                    (
-                        "sign".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::CryptoSignFinal,
-                        )),
-                    ),
-                    (
-                        "verify".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::CryptoSignFinal,
-                        )),
-                    ),
-                ]);
-                Ok(quench_runtime::execute::set_prototype_of(
-                    &value,
-                    &Value::Builtin(quench_runtime::ops::Builtin::ObjectPrototype),
-                )?)
-            }
             HostCapabilityKind::Custom(CapabilityName::CryptoCertificateConstructor) => {
                 let value = Value::object(vec![
                     (
