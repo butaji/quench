@@ -582,6 +582,7 @@ fn canonicalize_subtags(
     let aliased = canonicalize_unicode_aliases(&parts);
     let variant_aliased = canonicalize_variant_aliases(&aliased);
     let parts: Vec<&str> = variant_aliased.iter().map(String::as_str).collect();
+    validate_extension_boundaries(&parts)?;
     let mut region_done = false;
     let mut variant_done = false;
     let mut extension = false;
@@ -618,6 +619,38 @@ fn canonicalize_subtags(
         }
     }
     Ok(out)
+}
+
+fn validate_extension_boundaries(parts: &[&str]) -> Result<(), VmError> {
+    let mut index = 0;
+    let mut seen: Vec<&str> = Vec::new();
+    while index < parts.len() {
+        if parts[index].len() != 1 {
+            index += 1;
+            continue;
+        }
+        if parts[index].eq_ignore_ascii_case("x") {
+            if index + 1 == parts.len() {
+                return Err(runtime_error("RangeError: invalid language tag"));
+            }
+            return Ok(());
+        }
+        if seen
+            .iter()
+            .any(|key| key.eq_ignore_ascii_case(parts[index]))
+        {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        seen.push(parts[index]);
+        index += 1;
+        if index == parts.len() || parts[index].len() == 1 {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        while index < parts.len() && parts[index].len() != 1 {
+            index += 1;
+        }
+    }
+    Ok(())
 }
 
 fn is_region_shape(part: &str) -> bool {
