@@ -23,6 +23,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (IntlSegmenterPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.Segmenter".into()))
         }
+        (IntlCollatorPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.Collator".into()))
+        }
         (Intl, "Symbol.toStringTag") => Some(Value::String("Intl".into())),
         (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.DisplayNames".into()))
