@@ -77,6 +77,15 @@ fn collect_annex_b_collisions(
                     collisions,
                 );
             }
+            Statement::ForStatement(statement) => {
+                let mut nested = visible.to_vec();
+                extend_for_lexicals(&statement.init, &mut nested);
+                collect_annex_b_collisions(
+                    std::slice::from_ref(&statement.body),
+                    &nested,
+                    collisions,
+                );
+            }
             Statement::SwitchStatement(statement) => {
                 let mut nested = visible.to_vec();
                 for case in &statement.cases {
@@ -111,6 +120,23 @@ fn collect_annex_b_collisions(
 
 fn extend_loop_lexicals(left: &oxc::ast::ast::ForStatementLeft<'_>, names: &mut Vec<String>) {
     let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        return;
+    };
+    if declaration.kind != VariableDeclarationKind::Var {
+        names.extend(
+            declaration
+                .declarations
+                .iter()
+                .flat_map(|declarator| crate::binding_patterns::names(&declarator.id)),
+        );
+    }
+}
+
+fn extend_for_lexicals(
+    init: &Option<oxc::ast::ast::ForStatementInit<'_>>,
+    names: &mut Vec<String>,
+) {
+    let Some(oxc::ast::ast::ForStatementInit::VariableDeclaration(declaration)) = init else {
         return;
     };
     if declaration.kind != VariableDeclarationKind::Var {
