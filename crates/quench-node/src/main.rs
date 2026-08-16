@@ -13,7 +13,7 @@ static BOOTSTRAP_SOURCE: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| polyfills::node_compat().bootstrap_source());
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let host = FilesystemNodeHost;
+    let host = FilesystemNodeHost::default();
     if !env::args().skip(1).any(|arg| arg == "--quickjs") {
         return run_quench_cli();
     }
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
-    let host = FilesystemNodeHost;
+    let host = FilesystemNodeHost::default();
     let args: Vec<String> = env::args()
         .skip(1)
         .filter(|arg| arg != "--quickjs")
@@ -93,7 +93,7 @@ fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
 fn run_quench_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     if dir.is_file() {
         let source = fs::read_to_string(dir)?;
-        return QuenchRuntime.execute(&source, Some(dir), &FilesystemNodeHost);
+        return QuenchRuntime.execute(&source, Some(dir), &FilesystemNodeHost::default());
     }
     let mut failed = 0;
     let mut total = 0;
@@ -106,7 +106,8 @@ fn run_quench_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>>
         {
             total += 1;
             let source = fs::read_to_string(entry.path())?;
-            match QuenchRuntime.execute(&source, Some(entry.path()), &FilesystemNodeHost) {
+            match QuenchRuntime.execute(&source, Some(entry.path()), &FilesystemNodeHost::default())
+            {
                 Ok(()) => println!("ok {}", entry.path().display()),
                 Err(error) => {
                     failed += 1;
@@ -138,7 +139,7 @@ fn print_help() {
 fn run_single_file(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(dir)?;
     let runtime = QuickJsRuntime::new()?;
-    match runtime.execute(&source, Some(dir), &FilesystemNodeHost) {
+    match runtime.execute(&source, Some(dir), &FilesystemNodeHost::default()) {
         Ok(()) => {
             println!("ok {}", dir.display());
             Ok(())
@@ -187,10 +188,14 @@ fn run_directory_with_runtime(
             total += 1;
             let source = fs::read_to_string(entry.path())?;
             let result = match shared_runtime.as_ref() {
-                Some(runtime) => runtime.execute(&source, Some(entry.path()), &FilesystemNodeHost),
-                None => {
-                    QuickJsRuntime::new()?.execute(&source, Some(entry.path()), &FilesystemNodeHost)
+                Some(runtime) => {
+                    runtime.execute(&source, Some(entry.path()), &FilesystemNodeHost::default())
                 }
+                None => QuickJsRuntime::new()?.execute(
+                    &source,
+                    Some(entry.path()),
+                    &FilesystemNodeHost::default(),
+                ),
             };
             match result {
                 Ok(()) => println!("ok {}", entry.path().display()),
@@ -223,7 +228,7 @@ mod tests {
             .execute(
                 "if (1 + 1 !== 2) throw new Error('bad arithmetic');",
                 None,
-                &FilesystemNodeHost,
+                &FilesystemNodeHost::default(),
             )
             .unwrap();
     }
@@ -234,7 +239,7 @@ mod tests {
             .execute(
                 "if (typeof Buffer !== 'function') throw new Error('Buffer missing');",
                 None,
-                &FilesystemNodeHost,
+                &FilesystemNodeHost::default(),
             )
             .unwrap();
     }

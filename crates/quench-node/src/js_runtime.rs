@@ -1,3 +1,4 @@
+use oxc_resolver::{ResolveOptions, Resolver};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::{
@@ -12,7 +13,19 @@ use quench_runtime::{
     vm::{Host, VmContext, VmError},
 };
 
-pub(crate) struct FilesystemNodeHost;
+pub(crate) struct FilesystemNodeHost {
+    resolver: Resolver,
+    source_cache: RefCell<HashMap<PathBuf, String>>,
+}
+
+impl Default for FilesystemNodeHost {
+    fn default() -> Self {
+        Self {
+            resolver: Resolver::new(ResolveOptions::default()),
+            source_cache: RefCell::new(HashMap::new()),
+        }
+    }
+}
 
 impl NodeHost for FilesystemNodeHost {
     fn resolve_module(
@@ -23,15 +36,21 @@ impl NodeHost for FilesystemNodeHost {
         let base = parent
             .and_then(Path::parent)
             .unwrap_or_else(|| Path::new("."));
-        Ok(if request.starts_with('.') {
-            base.join(request)
-        } else {
-            PathBuf::from(request)
-        })
+        self.resolver
+            .resolve(base, request)
+            .map(|resolution| resolution.full_path().to_path_buf())
+            .map_err(|error| error.to_string().into())
     }
 
     fn load_module(&self, path: &Path) -> Result<String, Box<dyn std::error::Error>> {
-        Ok(std::fs::read_to_string(path)?)
+        if let Some(source) = self.source_cache.borrow().get(path).cloned() {
+            return Ok(source);
+        }
+        let source = std::fs::read_to_string(path)?;
+        self.source_cache
+            .borrow_mut()
+            .insert(path.to_path_buf(), source.clone());
+        Ok(source)
     }
 }
 
@@ -68,6 +87,8 @@ struct QuenchNodeHost {
     http: RefCell<HttpState>,
     urls: RefCell<HashMap<u16, String>>,
     next_url: Cell<u16>,
+    event_max: RefCell<HashMap<u16, f64>>,
+    next_event: Cell<u16>,
 }
 
 struct StreamState {
@@ -98,6 +119,8 @@ impl Default for QuenchNodeHost {
             }),
             urls: RefCell::new(HashMap::new()),
             next_url: Cell::new(600),
+            event_max: RefCell::new(HashMap::new()),
+            next_event: Cell::new(900),
         }
     }
 }
@@ -117,6 +140,11 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(32) => buffer_is_buffer(arguments),
             HostCapabilityKind::Custom(80) => util_format(arguments),
             HostCapabilityKind::Custom(81) => util_inspect(arguments),
+            HostCapabilityKind::Custom(94) => events_get_max(arguments),
+            HostCapabilityKind::Custom(95) => events_set_max(arguments),
+            HostCapabilityKind::Custom(id) if (900..1000).contains(&id) => {
+                events_instance_call(id, arguments)
+            }
             HostCapabilityKind::Custom(90) => querystring_parse(arguments),
             HostCapabilityKind::Custom(91) => querystring_escape(arguments),
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
@@ -158,6 +186,36 @@ impl Host for QuenchNodeHost {
             self.next_url.set(id.saturating_add(1));
             self.urls.borrow_mut().insert(id, parsed.to_string());
             return Ok(url_object(&parsed, id));
+        }
+        if capability.kind == HostCapabilityKind::Custom(70) {
+            let id = self.next_event.get();
+            self.next_event.set(id.saturating_add(10));
+            self.event_max.borrow_mut().insert(id, 10.0);
+            let mut emitter = quench_runtime::host_api::object(vec![
+                ("_events".into(), quench_runtime::host_api::object(vec![])),
+                (
+                    "setMaxListeners".into(),
+                    capability_function(HostCapabilityKind::Custom(id + 5)),
+                ),
+                (
+                    "getMaxListeners".into(),
+                    capability_function(HostCapabilityKind::Custom(id + 6)),
+                ),
+            ]);
+            emitter = quench_runtime::execute::set_property(
+                emitter,
+                "captureRejections",
+                Value::Boolean(false),
+            );
+            emitter = quench_runtime::execute::set_property(
+                emitter,
+                "asyncResource",
+                quench_runtime::host_api::object(vec![(
+                    "triggerAsyncId".into(),
+                    capability_function(HostCapabilityKind::Custom(id + 7)),
+                )]),
+            );
+            return Ok(emitter);
         }
         if capability.kind != HostCapabilityKind::Custom(10) {
             return Err(VmError::NotCallable);
@@ -565,6 +623,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "util" || name == "node:util" {
             return Ok(util_module());
         }
+        if name == "events" || name == "node:events" {
+            return Ok(events_module());
+        }
         if name == "querystring" || name == "node:querystring" {
             return Ok(quench_runtime::host_api::object(vec![
                 (
@@ -745,6 +806,51 @@ fn util_module() -> Value {
         ),
         ("types".into(), quench_runtime::host_api::object(vec![])),
     ])
+}
+
+fn events_module() -> Value {
+    let mut emitter = capability_function(HostCapabilityKind::Custom(70));
+    emitter =
+        quench_runtime::execute::set_property(emitter, "captureRejections", Value::Boolean(false));
+    quench_runtime::host_api::object(vec![
+        ("EventEmitter".into(), emitter),
+        (
+            "EventEmitterAsyncResource".into(),
+            capability_function(HostCapabilityKind::Custom(70)),
+        ),
+        ("defaultMaxListeners".into(), Value::Number(10.0)),
+        (
+            "getMaxListeners".into(),
+            capability_function(HostCapabilityKind::Custom(94)),
+        ),
+        (
+            "setMaxListeners".into(),
+            capability_function(HostCapabilityKind::Custom(95)),
+        ),
+    ])
+}
+
+fn events_get_max(_arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::Number(10.0))
+}
+
+fn events_set_max(arguments: &[Value]) -> Result<Value, VmError> {
+    arguments
+        .first()
+        .cloned()
+        .ok_or(VmError::NotCallable)
+        .map(|_| Value::Undefined)
+}
+
+fn events_instance_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
+    match id % 10 {
+        5 | 6 => Ok(Value::Undefined),
+        7 => Ok(Value::Number(37.0)),
+        _ => {
+            let _ = arguments;
+            Err(VmError::NotCallable)
+        }
+    }
 }
 
 fn util_format(arguments: &[Value]) -> Result<Value, VmError> {
