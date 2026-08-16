@@ -141,6 +141,7 @@ pub(crate) fn calendar_alias(value: &str) -> String {
     let value = value.to_ascii_lowercase();
     match value.as_str() {
         "islamicc" => "islamic-civil".to_string(),
+        "islamic" | "islamic-rgsa" => "islamic-civil".to_string(),
         other => other.to_string(),
     }
 }
