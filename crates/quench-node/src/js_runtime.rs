@@ -969,7 +969,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::DnsResolve) => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "rrtype must be a string"))),
             HostCapabilityKind::Custom(CapabilityName::DnsLookupService) => Err(VmError::Thrown(fs_error("ERR_MISSING_ARGS", "address and port are required"))),
             HostCapabilityKind::Custom(CapabilityName::DnsResolveMx) => {
-                if let Some(callback) = arguments.last() { let error = Value::object(vec![("code".into(), Value::String("ENOTFOUND".into())), ("syscall".into(), Value::String("queryMx".into()))]); quench_runtime::execute::call(callback, &Value::Undefined, &[error, Value::Undefined])?; }
+                if let Some(callback) = arguments.last() { let error = Value::object(vec![("code".into(), Value::String("ENOTFOUND".into())), ("syscall".into(), Value::String("queryMx".into()))]); quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Undefined, error])?; }
                 Ok(Value::Undefined)
             }
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
