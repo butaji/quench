@@ -36,6 +36,21 @@ pub fn define_property(
     ])
 }
 
+/// Attach a host-defined property to a capability value.
+pub fn set_host_capability_property(
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<(), VmError> {
+    let crate::value::Value::HostCapability(capability) = target else {
+        return Err(VmError::NotCallable);
+    };
+    let mut properties = capability.properties.borrow_mut();
+    properties.retain(|(name, _)| name != key);
+    properties.push((key.to_owned(), value));
+    Ok(())
+}
+
 /// Set an object's prototype through the runtime's ordinary object semantics.
 pub fn set_prototype_of(
     target: &crate::value::Value,

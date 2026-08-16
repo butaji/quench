@@ -50,12 +50,14 @@ pub(crate) mod error {
 pub struct HostCapabilityValue {
     pub descriptor: HostCapabilityRef,
     identity: Rc<()>,
+    pub properties: RefCell<Vec<(String, Value)>>,
 }
 impl HostCapabilityValue {
     pub fn new(descriptor: HostCapabilityRef) -> Self {
         Self {
             descriptor,
             identity: Rc::new(()),
+            properties: RefCell::new(Vec::new()),
         }
     }
 
