@@ -7,11 +7,18 @@ use crate::{
     value::{IteratorData, IteratorState, Value},
 };
 
-use super::{default_locale, make_object, resolve_locales, runtime_error, slot_string, SLOT};
+use super::{
+    default_locale, make_object, resolve_locales, runtime_error, slot_string,
+    supported_segmenter_locale, SLOT,
+};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let locale = locales
+        .iter()
+        .find(|locale| supported_segmenter_locale(locale))
+        .cloned()
+        .unwrap_or_else(default_locale);
     let granularity = segmenter_granularity(arguments.get(1))?;
     Ok(make_object(vec![
         (
