@@ -298,6 +298,9 @@ pub(crate) fn format_number_rounded(
             text.pop();
         }
     }
+    if rounded == 0.0 && value.is_sign_negative() {
+        text.insert(0, '-');
+    }
     text
 }
 
