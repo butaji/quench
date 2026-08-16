@@ -78,7 +78,21 @@ pub(crate) fn parse_float(value: Option<&Value>) -> Result<f64, VmError> {
     if end == 0 {
         return Ok(f64::NAN);
     }
-    Ok(text[..end].parse().unwrap_or(f64::NAN))
+    Ok(parse_decimal_prefix(&text[..end]))
+}
+
+fn parse_decimal_prefix(prefix: &str) -> f64 {
+    let Some(dot) = prefix.find('.') else {
+        return prefix.parse().unwrap_or(f64::NAN);
+    };
+    if dot + 1 == prefix.len() {
+        return prefix[..dot].parse().unwrap_or(f64::NAN);
+    }
+    if matches!(prefix.as_bytes().get(dot + 1), Some(b'e') | Some(b'E')) {
+        let normalized = format!("{}{}", &prefix[..dot], &prefix[dot + 1..]);
+        return normalized.parse().unwrap_or(f64::NAN);
+    }
+    prefix.parse().unwrap_or(f64::NAN)
 }
 
 fn decimal_prefix_len(text: &str) -> usize {
