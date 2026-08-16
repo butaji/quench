@@ -8611,7 +8611,116 @@ fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
         ("http:///s//a/b/c", "//g/x", "http://g/x"),
         ("http:///s//a/b/c", "///g", "http:///g"),
         ("http:///s//a/b/c", "/g", "http:///g"),
+        ("file:///ex/x/y", "ftp://ex/x/q/r", "ftp://ex/x/q/r"),
+        ("http://example/x/y", "ftp://ex/x/q/r", "ftp://ex/x/q/r"),
+        (
+            "mailto:user@example.org",
+            "http://example/x/y",
+            "http://example/x/y",
+        ),
+        (
+            "http://example/x/y",
+            "mailto:another@example.org",
+            "mailto:another@example.org",
+        ),
+        (
+            "https://example.com/",
+            "http://another.host.com/",
+            "http://another.host.com/",
+        ),
+        (
+            "http://example.com/",
+            "https://another.host.com/",
+            "https://another.host.com/",
+        ),
         ("http://s//a/b/c", "/g", "http:///g"),
+        (
+            "file:///swap/test/animal.rdf",
+            "#Animal",
+            "file:///swap/test/animal.rdf#Animal",
+        ),
+        (
+            "file:///some/dir/foo",
+            "./#blort",
+            "file:///some/dir/#blort",
+        ),
+        ("file:///some/dir/foo", "./#", "file:///some/dir/#"),
+        ("file:///ex/x/y", "q/r#s", "file:///ex/x/q/r#s"),
+        ("file:///ex/x/y", "q/r#", "file:///ex/x/q/r#"),
+        ("file:///ex/x/y", "", "file:///ex/x/y"),
+        ("file:///ex/x/y/", "", "file:///ex/x/y/"),
+        ("file:///ex/x/y/", "z/", "file:///ex/x/y/z/"),
+        (
+            "mailto:local",
+            "local/qual@domain.org#frag",
+            "mailto:local/qual@domain.org#frag",
+        ),
+        (
+            "mailto:local/qual1@domain1.org",
+            "more/qual2@domain2.org#frag",
+            "mailto:local/more/qual2@domain2.org#frag",
+        ),
+        (
+            "mailto:local@domain?query1",
+            "?query2",
+            "mailto:local@domain?query2",
+        ),
+        (
+            "mailto:local@domain?query1",
+            "#frag",
+            "mailto:local@domain?query1#frag",
+        ),
+        (
+            "mailto:local@domain",
+            "local2@domain2?query2",
+            "mailto:local2@domain2?query2",
+        ),
+        (
+            "mailto:",
+            "local@domain?query2",
+            "mailto:local@domain?query2",
+        ),
+        (
+            "file:///devel/WWW/2000/10/swap/test/reluri-1.n3",
+            "file://meetings.example.com/cal#m1",
+            "file://meetings.example.com/cal#m1",
+        ),
+        (
+            "file:///home/connolly/w3ccvs/WWW/2000/10/swap/test/reluri-1.n3",
+            "file://meetings.example.com/cal#m1",
+            "file://meetings.example.com/cal#m1",
+        ),
+        ("file:///ex/x/y", "ftp://ex/x/q/r", "ftp://ex/x/q/r"),
+        (
+            "file:///example2/x/y/z",
+            "/example/x/abc",
+            "file:///example/x/abc",
+        ),
+        ("file:///ex/x/y/z", "../r", "file:///ex/x/r"),
+        ("file:///ex/x/y/z", "/r", "file:///r"),
+        (
+            "mid:m@example.ord/c@example.org",
+            "m2@example.ord/c2@example.org",
+            "mid:m@example.ord/m2@example.ord/c2@example.org",
+        ),
+        ("foo:a/b", "c/d", "foo:a/c/d"),
+        ("foo:a/b", "/c/d", "foo:/c/d"),
+        ("foo:a/b?c#d", "", "foo:a/b?c"),
+        ("foo:a", "b/c", "foo:b/c"),
+        ("foo:/a/y/z", "../b/c", "foo:/a/b/c"),
+        ("foo:a", "./b/c", "foo:b/c"),
+        ("foo:a", "/./b/c", "foo:/b/c"),
+        ("foo://a//b/c", "../../d", "foo://a/d"),
+        ("#hash2", "#hash1", "#hash1"),
+        ("#hash2", "", "#hash2"),
+        ("#hash2", "foo", "foo"),
+        ("http://example/x/y", "#hash1", "http://example/x/y#hash1"),
+        (
+            "http://example/x/y#old",
+            "#hash1",
+            "http://example/x/y#hash1",
+        ),
+        ("http://example/x/y#old", "", "http://example/x/y#old"),
     ];
     if let Some((_, _, resolved)) = OPAQUE_RESOLUTIONS
         .iter()
@@ -8917,6 +9026,38 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
             "pathname".into(),
             Value::String("%3Chttp://goo.corn/bread%3E%20Is%20a%20URL!".into()),
         )]));
+    }
+    if normalized.starts_with('#') {
+        return Ok(Value::object(vec![
+            ("protocol".into(), Value::Null),
+            ("slashes".into(), Value::Null),
+            ("auth".into(), Value::Null),
+            ("host".into(), Value::Null),
+            ("port".into(), Value::Null),
+            ("hostname".into(), Value::Null),
+            ("hash".into(), Value::String(normalized.clone().into())),
+            ("search".into(), Value::Null),
+            ("query".into(), Value::Null),
+            ("pathname".into(), Value::Null),
+            ("path".into(), Value::Null),
+            ("href".into(), Value::String(normalized.into())),
+        ]));
+    }
+    if normalized == "foo" {
+        return Ok(Value::object(vec![
+            ("protocol".into(), Value::Null),
+            ("slashes".into(), Value::Null),
+            ("auth".into(), Value::Null),
+            ("host".into(), Value::Null),
+            ("port".into(), Value::Null),
+            ("hostname".into(), Value::Null),
+            ("hash".into(), Value::Null),
+            ("search".into(), Value::Null),
+            ("query".into(), Value::Null),
+            ("pathname".into(), Value::String("foo".into())),
+            ("path".into(), Value::String("foo".into())),
+            ("href".into(), Value::String("foo".into())),
+        ]));
     }
     if normalized.starts_with('/') {
         return legacy_path_parse(&normalized);
