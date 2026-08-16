@@ -58,13 +58,15 @@ impl NumberOptions {
                 .unwrap_or_else(|| "standard".to_string()),
             unit: slot_string(slots, "unit"),
             unit_display: slot_string(slots, "unitDisplay").unwrap_or_else(|| "short".to_string()),
+            grouping: slot_string(slots, "useGrouping").unwrap_or_else(|| "auto".to_string()),
             minimum_integer_digits: slot_number(slots, "minimumIntegerDigits").unwrap_or(1.0)
                 as u32,
             minimum_fraction_digits: slot_number(slots, "minimumFractionDigits").unwrap_or(0.0)
                 as u32,
             maximum_fraction_digits: slot_number(slots, "maximumFractionDigits").unwrap_or(3.0)
                 as u32,
-            use_grouping: slot_bool(slots, "useGrouping").unwrap_or(true),
+            use_grouping: slot_bool(slots, "useGrouping")
+                .unwrap_or_else(|| slot_string(slots, "useGrouping").as_deref() != Some("false")),
             grouping_min2: slot_bool(slots, "groupingMin2").unwrap_or(false),
             notation: slot_string(slots, "notation").unwrap_or_else(|| "standard".to_string()),
             compact_display: slot_string(slots, "compactDisplay")
@@ -298,7 +300,10 @@ impl NumberOptions {
                 Value::Number(value as f64),
             ));
         }
-        properties.push(("useGrouping".to_string(), Value::Boolean(self.use_grouping)));
+        properties.push((
+            "useGrouping".to_string(),
+            Value::String(self.grouping.clone()),
+        ));
         properties.push(("notation".to_string(), Value::String(self.notation.clone())));
         if self.notation == "compact" {
             properties.push((
