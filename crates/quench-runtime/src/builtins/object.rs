@@ -122,7 +122,10 @@ fn create(arguments: &[Value]) -> Result<Value, VmError> {
         "\0prototype".to_string(),
         prototype,
     )])));
-    if let Some(descriptors) = arguments.get(1) {
+    if let Some(descriptors) = arguments
+        .get(1)
+        .filter(|value| !matches!(value, Value::Undefined))
+    {
         return crate::builtins::define_properties(&[object, descriptors.clone()]);
     }
     Ok(object)
