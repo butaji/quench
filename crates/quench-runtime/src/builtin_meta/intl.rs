@@ -57,6 +57,7 @@ const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
 
 const fn intl_name_group_a_tail(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::IntlNumberFormatSupportedLocalesOf => Some("Intl.NumberFormat.supportedLocalesOf"),
         Builtin::IntlNumberFormatFormat => Some("get format"),
         Builtin::IntlNumberFormatFormatToParts => Some("Intl.NumberFormat.prototype.formatToParts"),
         Builtin::IntlNumberFormatFormatRange => Some("Intl.NumberFormat.prototype.formatRange"),
@@ -123,7 +124,8 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
         | Builtin::IntlLocaleScriptGetter
         | Builtin::IntlLocaleTextInfoGetter
         | Builtin::IntlLocaleVariantsGetter => Some(0.0),
-        Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(1.0),
+        Builtin::IntlNumberFormatSupportedLocalesOf
+        | Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlCollatorSupportedLocalesOf => Some(1.0),
         Builtin::IntlPluralRulesSupportedLocalesOf => Some(1.0),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(1.0),
@@ -199,7 +201,8 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleScriptGetter => Some("script"),
         Builtin::IntlLocaleTextInfoGetter => Some("textInfo"),
         Builtin::IntlLocaleVariantsGetter => Some("variants"),
-        Builtin::IntlDateTimeFormatSupportedLocalesOf => Some("supportedLocalesOf"),
+        Builtin::IntlNumberFormatSupportedLocalesOf
+        | Builtin::IntlDateTimeFormatSupportedLocalesOf => Some("supportedLocalesOf"),
         Builtin::IntlCollatorSupportedLocalesOf => Some("supportedLocalesOf"),
         Builtin::IntlPluralRulesSupportedLocalesOf => Some("supportedLocalesOf"),
         Builtin::IntlSegmenterSupportedLocalesOf => Some("supportedLocalesOf"),

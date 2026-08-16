@@ -65,6 +65,7 @@ fn global_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     if key == "supportedLocalesOf" {
         return match builtin {
+            Builtin::IntlNumberFormat => Some(Builtin::IntlNumberFormatSupportedLocalesOf),
             Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatSupportedLocalesOf),
             Builtin::IntlCollator => Some(Builtin::IntlCollatorSupportedLocalesOf),
             Builtin::IntlPluralRules => Some(Builtin::IntlPluralRulesSupportedLocalesOf),
@@ -102,6 +103,7 @@ pub(crate) fn execute(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
+        Builtin::IntlNumberFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlCollatorSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlPluralRulesSupportedLocalesOf => Some(supported_locales_of(arguments)),

@@ -218,7 +218,7 @@ pub enum Builtin {
     IntlLocaleLanguageGetter, IntlLocaleNumberingSystemGetter,
     IntlLocaleNumericGetter, IntlLocaleRegionGetter,
     IntlLocaleScriptGetter, IntlLocaleTextInfoGetter,
-    IntlLocaleVariantsGetter, IntlNumberFormat,
+    IntlLocaleVariantsGetter, IntlNumberFormat, IntlNumberFormatSupportedLocalesOf,
     IntlNumberFormatFormat, IntlNumberFormatFormatToParts,
     IntlNumberFormatFormatRange, IntlNumberFormatFormatRangeToParts,
     IntlNumberFormatResolvedOptions, IntlPluralRules,
