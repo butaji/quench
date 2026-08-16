@@ -633,8 +633,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferIsBuffer) => {
                 buffer_is_buffer(arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::UtilFormat) => util_format(arguments),
-            HostCapabilityKind::Custom(CapabilityName::UtilInspect) => util_inspect(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilFormat) => util_format(receiver, arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilInspect) => util_inspect(receiver, arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilFormatWithOptions) => {
                 util_format_with_options(arguments)
             }
@@ -4006,15 +4006,21 @@ fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn util_module() -> Value {
+    let default_options = quench_runtime::host_api::object(vec![("numericSeparator".into(), Value::Boolean(false))]);
+    let format = quench_runtime::execute::set_property(
+        capability_function(HostCapabilityKind::Custom(CapabilityName::UtilFormat)),
+        "defaultOptions",
+        default_options.clone(),
+    );
     let inspect = quench_runtime::execute::set_property(
         capability_function(HostCapabilityKind::Custom(CapabilityName::UtilInspect)),
         "defaultOptions",
-        quench_runtime::host_api::object(vec![("numericSeparator".into(), Value::Boolean(false))]),
+        default_options,
     );
     quench_runtime::host_api::object(vec![
         (
             "format".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilFormat)),
+            format,
         ),
         (
             "inspect".into(),
@@ -4077,15 +4083,26 @@ fn events_instance_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> 
     }
 }
 
-fn util_format(arguments: &[Value]) -> Result<Value, VmError> {
-    format_util(arguments, None)
+fn util_format(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    format_util(arguments, receiver.and_then(numeric_separator))
 }
 
 fn util_format_with_options(arguments: &[Value]) -> Result<Value, VmError> {
-    format_util(arguments.get(1..).unwrap_or_default(), arguments.first())
+    format_util(arguments.get(1..).unwrap_or_default(), arguments.first().and_then(separator_option))
 }
 
-fn format_util(arguments: &[Value], _options: Option<&Value>) -> Result<Value, VmError> {
+fn numeric_separator(value: &Value) -> Option<bool> {
+    quench_runtime::execute::get_property_result(value, "defaultOptions").ok()
+        .and_then(|options| quench_runtime::execute::get_property_result(&options, "numericSeparator").ok())
+        .and_then(|value| matches!(value, Value::Boolean(true)).then_some(true))
+}
+
+fn separator_option(value: &Value) -> Option<bool> {
+    quench_runtime::execute::get_property_result(value, "numericSeparator").ok()
+        .and_then(|value| matches!(value, Value::Boolean(true)).then_some(true))
+}
+
+fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, VmError> {
     let Some(first) = arguments.first() else { return Ok(Value::String("".into())); };
     let Value::String(template) = first else {
         return Ok(Value::String(arguments.iter().map(format_inspected).collect::<Vec<_>>().join(" ").into()));
@@ -4100,8 +4117,8 @@ fn format_util(arguments: &[Value], _options: Option<&Value>) -> Result<Value, V
                 if let Some(value) = remaining.next() {
                     output.push_str(&match specifier {
                         's' => format_string(value),
-                        'd' => format_decimal(value),
-                        'f' => format_number(value),
+                        'd' => format_decimal(value, separators.unwrap_or(false)),
+                        'f' => format_number(value, separators.unwrap_or(false)),
                         'i' => format_integer(value),
                         'j' => "undefined".into(),
                         _ => format!("%{specifier}"),
@@ -4136,23 +4153,34 @@ fn format_string(value: &Value) -> String {
     }
 }
 
-fn format_number(value: &Value) -> String {
+fn format_number(value: &Value, separators: bool) -> String {
     match value {
-        Value::BigInt(value) => value.to_string(),
-        Value::String(value) => value.parse::<f64>().map(|value| value.to_string()).unwrap_or_else(|_| "NaN".into()),
+        Value::BigInt(value) => separator_string(&value.to_string(), separators),
+        Value::String(value) => value.parse::<f64>().map(|value| separator_string(&value.to_string(), separators)).unwrap_or_else(|_| "NaN".into()),
         Value::Number(value) => {
-            if value.is_nan() { "NaN".into() } else if *value == 0.0 && value.is_sign_negative() { "-0".into() } else { value.to_string() }
+            if value.is_nan() { "NaN".into() } else if *value == 0.0 && value.is_sign_negative() { "-0".into() } else { separator_string(&value.to_string(), separators) }
         }
         _ => "NaN".into(),
     }
 }
 
-fn format_decimal(value: &Value) -> String {
+fn format_decimal(value: &Value, separators: bool) -> String {
     match value {
-        Value::BigInt(value) => format!("{value}n"),
+        Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
         Value::String(value) if value.is_empty() => "0".into(),
-        _ => format_number(value),
+        _ => format_number(value, separators),
     }
+}
+
+fn separator_string(value: &str, enabled: bool) -> String {
+    if !enabled { return value.into(); }
+    let (sign, digits) = if let Some(rest) = value.strip_prefix('-') { ("-", rest) } else { ("", value) };
+    let mut output = String::new();
+    for (index, character) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 3 == 0 { output.push('_'); }
+        output.push(character);
+    }
+    format!("{sign}{output}")
 }
 
 fn format_integer(value: &Value) -> String {
@@ -4179,7 +4207,7 @@ fn format_inspected(value: &Value) -> String {
     }
 }
 
-fn util_inspect(arguments: &[Value]) -> Result<Value, VmError> {
+fn util_inspect(_receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::String(
         arguments
             .first()
@@ -4364,6 +4392,10 @@ fn safe_value_string(value: &Value) -> String {
         Value::Null => "null".into(),
         Value::Boolean(value) => value.to_string(),
         Value::Number(value) => value.to_string(),
+        Value::String(value) if value.starts_with("Symbol.") => {
+            let name = value.split('\0').next().unwrap_or("Symbol").strip_prefix("Symbol.").unwrap_or("");
+            format!("Symbol({name})")
+        }
         Value::String(value) => value.clone(),
         Value::BigInt(value) => format!("{value}n"),
         Value::Array(_) => "[Array]".into(),
