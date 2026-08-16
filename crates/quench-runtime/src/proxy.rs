@@ -258,7 +258,7 @@ pub(crate) fn proxy_get_prototype_of(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "getPrototypeOf") {
-            let result = call_trap(&trap, slice::from_ref(target), None)?;
+            let result = call_trap(&trap, slice::from_ref(&proxy.target), Some(&proxy.handler))?;
             if !matches!(result, Value::Null) && !crate::value::is_object(&result) {
                 return Err(crate::value::error::throw_type_error(
                     "Proxy getPrototypeOf trap must return an object or null",
