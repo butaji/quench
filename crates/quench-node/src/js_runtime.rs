@@ -139,6 +139,16 @@ impl CapabilityName {
     const FsReaddirPromise: u16 = 1538;
     const FsStatSync: u16 = 1539;
     const FsStringToFlags: u16 = 1540;
+    const FsLstatSync: u16 = 1541;
+    const FsSymlinkSync: u16 = 1542;
+    const FsStatsIsDirectoryFile: u16 = 1543;
+    const FsStatsIsSymbolicLink: u16 = 1544;
+    const FsStatsIsNotSymbolicLink: u16 = 1545;
+    const FsFsyncSync: u16 = 1546;
+    const FsFdatasyncSync: u16 = 1547;
+    const FsFsyncAsync: u16 = 1548;
+    const FsFdatasyncAsync: u16 = 1549;
+    const FsUnlinkPromise: u16 = 1550;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -308,7 +318,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsAppendBytes) => {
                 fs_write_bytes(arguments, true)
             }
-            HostCapabilityKind::Custom(CapabilityName::FsUnlink) => fs_unlink(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsUnlink) => fs_unlink_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsMkdtemp) => fs_mkdtemp(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsAccessSync) => fs_access_sync(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsWriteFileSync) => {
@@ -354,8 +364,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsCloseAsync) => {
                 self.fs_close_async(arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::FsStatAsync)
-            | HostCapabilityKind::Custom(CapabilityName::FsLstatAsync) => fs_stat_async(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsStatAsync) => fs_stat_async(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsLstatAsync) => fs_lstat_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsStatsIsDirectory) => {
                 Ok(Value::Boolean(true))
             }
@@ -370,8 +380,31 @@ impl Host for QuenchNodeHost {
                 Ok(fulfilled(fs_readdir(arguments)?))
             }
             HostCapabilityKind::Custom(CapabilityName::FsStatSync) => fs_stat_sync(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsLstatSync) => fs_lstat_sync(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsSymlinkSync) => fs_symlink(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsStringToFlags) => {
                 string_to_flags(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsStatsIsDirectoryFile) => {
+                Ok(Value::Boolean(true))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsStatsIsSymbolicLink) => {
+                Ok(Value::Boolean(true))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsStatsIsNotSymbolicLink) => {
+                Ok(Value::Boolean(false))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsFsyncSync)
+            | HostCapabilityKind::Custom(CapabilityName::FsFdatasyncSync) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::FsFsyncAsync)
+            | HostCapabilityKind::Custom(CapabilityName::FsFdatasyncAsync) => {
+                if let Some(callback) = arguments.last() {
+                    quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
+                }
+                Ok(Value::Undefined)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsUnlinkPromise) => {
+                fs_unlink(arguments).map(|value| fulfilled(value))
             }
             HostCapabilityKind::Custom(CapabilityName::FsDirentFile) => Ok(Value::Boolean(true)),
             HostCapabilityKind::Custom(CapabilityName::FsDirentDirectory) => {
@@ -1027,18 +1060,33 @@ impl QuenchNodeHost {
 }
 
 fn fs_stats(mode: u32) -> Value {
+    let is_directory = mode & 0o170000 == 0o40000;
+    let directory_method = if is_directory {
+        CapabilityName::FsStatsIsDirectory
+    } else {
+        CapabilityName::FsStatsIsDirectoryFile
+    };
+    let file_method = if mode & 0o170000 == 0o100000 {
+        CapabilityName::FsDirentFile
+    } else {
+        CapabilityName::FsStatsIsFile
+    };
     Value::object(vec![
         ("mode".into(), Value::Number(mode as f64)),
         ("mtime".into(), quench_runtime::date::instance(0.0)),
         (
             "isDirectory".into(),
-            capability_function(HostCapabilityKind::Custom(
-                CapabilityName::FsStatsIsDirectory,
-            )),
+            capability_function(HostCapabilityKind::Custom(directory_method)),
         ),
         (
             "isFile".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::FsStatsIsFile)),
+            capability_function(HostCapabilityKind::Custom(file_method)),
+        ),
+        (
+            "isSymbolicLink".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::FsStatsIsNotSymbolicLink,
+            )),
         ),
     ])
 }
@@ -1138,6 +1186,46 @@ fn fs_stat_sync(arguments: &[Value]) -> Result<Value, VmError> {
     #[cfg(not(unix))]
     let mode = if metadata.is_dir() { 0o40777 } else { 0o100666 };
     Ok(fs_stats(mode))
+}
+
+fn fs_lstat_sync(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    let mode = if metadata.file_type().is_symlink() {
+        0o120000
+    } else if metadata.is_dir() {
+        0o40000
+    } else {
+        0o100000
+    };
+    let stats = fs_stats(mode);
+    if metadata.file_type().is_symlink() {
+        return Ok(quench_runtime::execute::set_property(
+            stats,
+            "isSymbolicLink",
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::FsStatsIsSymbolicLink,
+            )),
+        ));
+    }
+    Ok(stats)
+}
+
+fn fs_lstat_async(arguments: &[Value]) -> Result<Value, VmError> {
+    let stats = fs_lstat_sync(&arguments[..arguments.len().saturating_sub(1)])?;
+    if let Some(callback) = arguments.last() {
+        quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null, stats])?;
+    }
+    Ok(Value::Undefined)
+}
+
+fn fs_symlink(arguments: &[Value]) -> Result<Value, VmError> {
+    let target = path_arg(arguments, 0)?;
+    let link = path_arg(arguments, 1)?;
+    std::os::unix::fs::symlink(target, link)
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    Ok(Value::Undefined)
 }
 
 fn string_to_flags(arguments: &[Value]) -> Result<Value, VmError> {
@@ -1364,6 +1452,19 @@ fn fs_unlink(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
     std::fs::remove_file(path).map_err(|error| VmError::EvalError(error.to_string()))?;
     Ok(Value::Undefined)
+}
+
+fn fs_unlink_async(arguments: &[Value]) -> Result<Value, VmError> {
+    let result = fs_unlink(&arguments[..arguments.len().saturating_sub(1)])?;
+    if let Some(callback) = arguments.last() {
+        if matches!(
+            callback,
+            Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+        ) {
+            quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
+        }
+    }
+    Ok(result)
 }
 
 fn fs_mkdtemp(arguments: &[Value]) -> Result<Value, VmError> {
@@ -1695,6 +1796,20 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsUnlinkSync)),
                 ),
                 (
+                    "unlink".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsUnlink)),
+                ),
+                (
+                    "fsyncSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsFsyncSync)),
+                ),
+                (
+                    "fdatasyncSync".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::FsFdatasyncSync,
+                    )),
+                ),
+                (
                     "rmdirSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsRmdirSync)),
                 ),
@@ -1729,6 +1844,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "statSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsStatSync)),
+                ),
+                (
+                    "lstatSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsLstatSync)),
+                ),
+                (
+                    "symlinkSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsSymlinkSync)),
                 ),
                 (
                     "stat".into(),
@@ -1793,6 +1916,16 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpenAsync)),
                 ),
                 (
+                    "fsync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsFsyncAsync)),
+                ),
+                (
+                    "fdatasync".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::FsFdatasyncAsync,
+                    )),
+                ),
+                (
                     "close".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsCloseAsync)),
                 ),
@@ -1815,6 +1948,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                             "readdir".into(),
                             capability_function(HostCapabilityKind::Custom(
                                 CapabilityName::FsReaddirPromise,
+                            )),
+                        ),
+                        (
+                            "unlink".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::FsUnlinkPromise,
                             )),
                         ),
                     ]),
@@ -2124,6 +2263,7 @@ fn process_module() -> Value {
             Value::String(std::env::args().next().unwrap_or_default()),
         ),
         ("argv0".into(), Value::String("node".into())),
+        ("pid".into(), Value::Number(std::process::id() as f64)),
         (
             "platform".into(),
             Value::String(
