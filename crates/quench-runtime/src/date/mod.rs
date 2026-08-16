@@ -70,6 +70,10 @@ pub fn local_tz_offset_minutes() -> i32 {
     chrono_utils::local_tz_offset_minutes()
 }
 
+pub fn local_components(ms: f64) -> Option<(i32, u32, u32, u32, u32, u32, u32)> {
+    chrono_utils::local_components(ms)
+}
+
 /// Store time value in a Date Object.
 pub fn store_time(receiver: &Value, ms: f64) -> Value {
     crate::builtins::set_property(
