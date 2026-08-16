@@ -16,6 +16,50 @@ pub(crate) fn lexically_declared_names(program: &oxc::ast::ast::Program<'_>) -> 
     lexically_declared_names_in(&program.body)
 }
 
+pub(crate) fn annex_b_lexical_collisions(program: &oxc::ast::ast::Program<'_>) -> HashSet<String> {
+    let mut collisions = HashSet::new();
+    collect_annex_b_collisions(&program.body, &[], &mut collisions);
+    collisions
+}
+
+fn collect_annex_b_collisions(
+    statements: &[Statement<'_>],
+    visible: &[String],
+    collisions: &mut HashSet<String>,
+) {
+    for statement in statements {
+        match statement {
+            Statement::BlockStatement(block) => {
+                let mut nested = visible.to_vec();
+                nested.extend(lexically_declared_names_in(&block.body));
+                collect_annex_b_collisions(&block.body, &nested, collisions);
+            }
+            Statement::FunctionDeclaration(function) => {
+                if let Some(identifier) = &function.id {
+                    if visible.iter().any(|name| name == identifier.name.as_str()) {
+                        collisions.insert(identifier.name.to_string());
+                    }
+                }
+            }
+            Statement::IfStatement(statement) => {
+                collect_annex_b_collisions(
+                    std::slice::from_ref(&statement.consequent),
+                    visible,
+                    collisions,
+                );
+                if let Some(alternate) = &statement.alternate {
+                    collect_annex_b_collisions(
+                        std::slice::from_ref(alternate),
+                        visible,
+                        collisions,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 pub(crate) fn lexically_declared_names_in(statements: &[Statement<'_>]) -> Vec<String> {
     let mut names = BTreeSet::new();
     for statement in statements {
