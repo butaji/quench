@@ -124,6 +124,14 @@ fn require_fs_module(name: &str) -> Option<Value> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsChmodSync)),
                 ),
                 (
+                    "cpSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsCpSync)),
+                ),
+                (
+                    "cp".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsCp)),
+                ),
+                (
                     "mkdirSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdirSync)),
                 ),
