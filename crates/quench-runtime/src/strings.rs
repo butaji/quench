@@ -84,6 +84,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
     }
     match key {
         "anchor" => Some(crate::ops::Builtin::StringAnchor),
+        "big" => Some(crate::ops::Builtin::StringBig),
         "includes" => Some(crate::ops::Builtin::StringIncludes),
         "isWellFormed" => Some(crate::ops::Builtin::StringIsWellFormed),
         "toWellFormed" => Some(crate::ops::Builtin::StringToWellFormed),
@@ -155,6 +156,7 @@ fn execute_builtin_tail(
 ) -> Option<Result<Value, crate::execute::VmError>> {
     let result = match builtin {
         crate::ops::Builtin::StringAnchor => anchor(receiver, arguments),
+        crate::ops::Builtin::StringBig => html_wrapper(receiver, "big"),
         crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
         crate::ops::Builtin::StringSubstring => Ok(substring(receiver, arguments)),
         crate::ops::Builtin::StringConcat => concat(receiver, arguments),
@@ -174,6 +176,11 @@ fn execute_builtin_tail(
         _ => return None,
     };
     Some(result)
+}
+
+fn html_wrapper(receiver: Option<&Value>, tag: &str) -> Result<Value, crate::execute::VmError> {
+    let text = string_receiver(receiver)?;
+    Ok(Value::String(format!("<{tag}>{text}</{tag}>")))
 }
 
 fn anchor(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
