@@ -2,6 +2,8 @@
 
 use std::{cell::RefCell, rc::Rc};
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::{
     execute::VmError,
     value::{IteratorData, IteratorState, Value},
@@ -173,36 +175,14 @@ fn restore_segment(
 }
 
 fn grapheme_segments(text: &str) -> Vec<Value> {
-    let mut result = Vec::new();
-    let mut start = None;
     let mut utf16_index = 0;
-    let mut start_utf16 = 0;
-    for (byte_index, character) in text.char_indices() {
-        if start.is_none() {
-            start = Some(byte_index);
-            start_utf16 = utf16_index;
-        } else if !is_combining_mark(character) {
-            if let Some(cluster_start) = start {
-                result.push(segment_entry(
-                    &text[cluster_start..byte_index],
-                    start_utf16,
-                    text,
-                    false,
-                ));
-            }
-            start = Some(byte_index);
-            start_utf16 = utf16_index;
-        }
-        utf16_index += character.len_utf16();
-    }
-    if let Some(start) = start {
-        result.push(segment_entry(&text[start..], start_utf16, text, false));
-    }
-    result
-}
-
-fn is_combining_mark(character: char) -> bool {
-    matches!(character as u32, 0x0300..=0x036f | 0x1ab0..=0x1aff | 0x1dc0..=0x1dff | 0x20d0..=0x20ff)
+    text.grapheme_indices(true)
+        .map(|(_, cluster)| {
+            let entry = segment_entry(cluster, utf16_index, text, false);
+            utf16_index += cluster.encode_utf16().count();
+            entry
+        })
+        .collect()
 }
 
 fn sentence_segments(text: &str) -> Vec<Value> {
@@ -240,7 +220,10 @@ fn word_segments(text: &str) -> Vec<Value> {
     let mut start_utf16 = 0;
     let mut utf16_index = 0;
     let mut kind: Option<u8> = None;
-    for (index, character) in text.char_indices() {
+    for (index, cluster) in text.grapheme_indices(true) {
+        let Some(character) = cluster.chars().next() else {
+            continue;
+        };
         let next_kind = if decimal_point(text, index, character) {
             1
         } else {
@@ -251,7 +234,7 @@ fn word_segments(text: &str) -> Vec<Value> {
             start = index;
             start_utf16 = utf16_index;
         }
-        utf16_index += character.len_utf16();
+        utf16_index += cluster.encode_utf16().count();
         kind = Some(next_kind);
     }
     if start < text.len() {
