@@ -93,6 +93,8 @@ impl CapabilityName {
     const UtilPromisify: u16 = 1950;
     const UtilDeprecate: u16 = 2099;
     const UtilParseEnv: u16 = 2098;
+    const UtilSystemErrorName: u16 = 2097;
+    const UtilSystemErrorMessage: u16 = 2096;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
     const OsPlatform: u16 = 82;
@@ -808,6 +810,8 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::UtilDeprecate) => self.util_deprecate(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilParseEnv) => util_parse_env(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorName) => util_system_error_name(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMessage) => util_system_error_message(arguments),
             HostCapabilityKind::Custom(id) if (CapabilityName::UtilDeprecatedFirst..CapabilityName::UtilPromisifiedFirst).contains(&id) => self.call_deprecated(id, arguments),
             HostCapabilityKind::Custom(id)
                 if (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilResolverFirst)
@@ -5398,6 +5402,14 @@ fn util_module() -> Value {
             "parseEnv".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::UtilParseEnv)),
         ),
+        (
+            "getSystemErrorName".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorName)),
+        ),
+        (
+            "getSystemErrorMessage".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMessage)),
+        ),
         ("types".into(), types),
         ("TextEncoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor))),
         ("TextDecoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor))),
@@ -5441,6 +5453,17 @@ fn util_parse_env(arguments: &[Value]) -> Result<Value, VmError> {
     let mut properties = vec![("\0prototype".into(), Value::Null)];
     properties.extend(unique);
     Ok(Value::object(properties))
+}
+
+fn util_system_error_name(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Number(errno)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "code must be a number")));
+    };
+    Ok(Value::String(format!("Unknown system error {errno}").into()))
+}
+
+fn util_system_error_message(arguments: &[Value]) -> Result<Value, VmError> {
+    util_system_error_name(arguments)
 }
 
 fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
