@@ -124,7 +124,7 @@ impl RawOptions {
                         crate::conversion::to_string(&value)?
                     } else if *key == "roundingIncrement" {
                         crate::conversion::to_number(&value)?.to_string()
-                    } else if matches!(*key, "currencyDisplay" | "unitDisplay") {
+                    } else if matches!(*key, "currency" | "currencyDisplay" | "unitDisplay") {
                         crate::conversion::to_string(&value)?
                     } else {
                         to_string_value(&value)
@@ -237,11 +237,12 @@ pub(crate) fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
         return Err(runtime_error("TypeError: localeMatcher"));
     }
     let currency = property("currency")?;
+    let currency_is_undefined = matches!(currency, Value::Undefined);
     let currency = crate::conversion::to_string(&currency)?;
-    if style == "currency" && currency == "undefined" {
+    if style == "currency" && currency_is_undefined {
         return Err(runtime_error("TypeError: currency"));
     }
-    if currency != "undefined"
+    if !currency_is_undefined
         && (currency.len() != 3 || !currency.chars().all(|c| c.is_ascii_alphabetic()))
     {
         return Err(runtime_error("RangeError: currency"));
@@ -427,11 +428,16 @@ fn number_options(
             .map_or(locale.clone(), |(base, _)| base.to_string()),
         _ => super::number_locale(&locale),
     };
+    let currency = raw
+        .currency
+        .as_ref()
+        .filter(|_| raw.style == "currency")
+        .cloned();
     NumberOptions {
         locale,
         numbering_system,
         style: raw.style,
-        currency: raw.currency,
+        currency,
         currency_display: raw.currency_display,
         currency_sign: raw.currency_sign,
         unit: raw.unit,
