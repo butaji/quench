@@ -2362,8 +2362,8 @@ impl QuenchNodeHost {
         }
     }
 
-    fn dgram_socket(&self, _arguments: &[Value]) -> Result<Value, VmError> {
-        let valid = match _arguments.first() {
+    fn dgram_socket(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let valid = match arguments.first() {
             Some(Value::String(value)) => value == "udp4" || value == "udp6",
             Some(Value::Object(options)) => {
                 matches!(quench_runtime::execute::get_property_result(&Value::Object(options.clone()), "type"), Ok(Value::String(value)) if value == "udp4" || value == "udp6")
@@ -2376,7 +2376,7 @@ impl QuenchNodeHost {
                 "Bad socket type",
             )));
         }
-        if let Some(Value::Object(options)) = _arguments.first() {
+        if let Some(Value::Object(options)) = arguments.first() {
             if matches!(
                 quench_runtime::execute::get_property_result(
                     &Value::Object(options.clone()),
@@ -2524,7 +2524,24 @@ impl QuenchNodeHost {
                     CapabilityName::DgramGetSendQueueCount,
                 )),
             ),
-            ("type".into(), Value::String("udp4".into())),
+            (
+                "type".into(),
+                Value::String(
+                    arguments
+                        .first()
+                        .and_then(|value| match value {
+                            Value::String(value) => Some(value.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| "udp4".into()),
+                ),
+            ),
+            (
+                "\0dgramIpv6".into(),
+                Value::Boolean(
+                    matches!(arguments.first(), Some(Value::String(value)) if value == "udp6"),
+                ),
+            ),
             ("\0dgramId".into(), Value::Number(id as f64)),
             (
                 "__dgramState".into(),
@@ -2681,7 +2698,11 @@ impl QuenchNodeHost {
                     .cloned();
                 drop(states);
                 if let Some(callback) = callback {
-                    quench_runtime::execute::call(&callback, &Value::Undefined, &[])?;
+                    quench_runtime::execute::call(
+                        &callback,
+                        receiver.unwrap_or(&Value::Undefined),
+                        &[],
+                    )?;
                 }
                 Ok(Value::Undefined)
             }
@@ -2727,14 +2748,33 @@ impl QuenchNodeHost {
                 state.1 = false;
                 Ok(Value::Undefined)
             }
-            CapabilityName::DgramAddress => Ok(Value::object(vec![
-                (
-                    "address".into(),
-                    Value::String(if state.1 { "127.0.0.1" } else { "0.0.0.0" }.into()),
-                ),
-                ("port".into(), Value::Number(state.2 as f64)),
-                ("family".into(), Value::String("IPv4".into())),
-            ])),
+            CapabilityName::DgramAddress => {
+                let ipv6 = receiver
+                    .and_then(|value| {
+                        quench_runtime::execute::get_property_result(value, "\0dgramIpv6").ok()
+                    })
+                    .is_some_and(|value| matches!(value, Value::Boolean(true)));
+                Ok(Value::object(vec![
+                    (
+                        "address".into(),
+                        Value::String(
+                            if ipv6 {
+                                "::"
+                            } else if state.1 {
+                                "127.0.0.1"
+                            } else {
+                                "0.0.0.0"
+                            }
+                            .into(),
+                        ),
+                    ),
+                    ("port".into(), Value::Number(state.2 as f64)),
+                    (
+                        "family".into(),
+                        Value::String(if ipv6 { "IPv6" } else { "IPv4" }.into()),
+                    ),
+                ]))
+            }
             CapabilityName::DgramRemoteAddress => Ok(Value::object(vec![
                 ("address".into(), Value::String("127.0.0.1".into())),
                 ("port".into(), Value::Number(state.2 as f64)),
