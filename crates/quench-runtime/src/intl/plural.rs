@@ -312,11 +312,18 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlPluralRules => Some(construct(arguments)),
+        crate::ops::Builtin::IntlPluralRules => Some(construct_if_new(arguments, receiver)),
         crate::ops::Builtin::IntlPluralRulesSelect
         | crate::ops::Builtin::IntlPluralRulesResolvedOptions => {
             Some(prototype_method(builtin, arguments, receiver))
         }
         _ => None,
     }
+}
+
+fn construct_if_new(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    if receiver.is_some() {
+        return Err(runtime_error("TypeError: Intl.PluralRules requires 'new'"));
+    }
+    construct(arguments)
 }
