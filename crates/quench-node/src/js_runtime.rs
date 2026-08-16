@@ -4528,14 +4528,9 @@ fn buffer_numeric(
     );
     let variable = matches!(index, 16 | 17 | 18 | 19 | 24 | 25 | 26 | 27);
     let offset_arg = if is_write { 1 } else { 0 };
-    let offset = match arguments.get(offset_arg) {
-        Some(Value::Number(value)) if *value >= 0.0 => *value as usize,
-        _ => {
-            return Err(VmError::Thrown(fs_error(
-                "ERR_INVALID_ARG_TYPE",
-                "offset must be a number",
-            )))
-        }
+    let offset_value = match arguments.get(offset_arg) {
+        Some(Value::Number(value)) => *value,
+        _ => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "offset must be a number"))),
     };
     let size = if variable {
         match arguments.get(offset_arg + 1) {
@@ -4560,6 +4555,23 @@ fn buffer_numeric(
     } else {
         4
     };
+    let maximum_offset = view.length.saturating_sub(size);
+    let offset_display = if offset_value.is_infinite() {
+        if offset_value.is_sign_negative() { "-Infinity".into() } else { "Infinity".into() }
+    } else { offset_value.to_string() };
+    if !offset_value.is_finite() || offset_value.fract() != 0.0 {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_OUT_OF_RANGE",
+            &format!("The value of \"offset\" is out of range. It must be an integer. Received {offset_display}"),
+        )));
+    }
+    if offset_value < 0.0 || offset_value as usize > maximum_offset {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_OUT_OF_RANGE",
+            &format!("The value of \"offset\" is out of range. It must be >= 0 and <= {maximum_offset}. Received {offset_display}"),
+        )));
+    }
+    let offset = offset_value as usize;
     if offset + size > view.length {
         return Err(VmError::Thrown(fs_error(
             "ERR_BUFFER_OUT_OF_BOUNDS",
@@ -4577,6 +4589,20 @@ fn buffer_numeric(
             Some(Value::Number(value)) => *value,
             _ => return Err(VmError::NotCallable),
         };
+        let range = match index {
+            10 | 11 => Some((0.0, 65535.0)),
+            14 | 15 => Some((0.0, 4_294_967_295.0)),
+            22 | 23 => Some((-32_768.0, 32_767.0)),
+            _ => None,
+        };
+        if let Some((minimum, maximum)) = range {
+            if !value.is_finite() || value.fract() != 0.0 || value < minimum || value > maximum {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_OUT_OF_RANGE",
+                    &format!("The value of \"value\" is out of range. It must be >= {minimum} and <= {maximum}. Received {}", value),
+                )));
+            }
+        }
         if index <= 3 || (index >= 6 && index <= 7) {
             if index <= 3 {
                 let data = if little {
