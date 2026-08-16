@@ -66,6 +66,9 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatSupportedLocalesOf),
             Builtin::IntlSegmenter => Some(Builtin::IntlSegmenterSupportedLocalesOf),
             Builtin::IntlListFormat => Some(Builtin::IntlListFormatSupportedLocalesOf),
+            Builtin::IntlRelativeTimeFormat => {
+                Some(Builtin::IntlRelativeTimeFormatSupportedLocalesOf)
+            }
             _ => None,
         };
     }
