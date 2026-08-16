@@ -51,7 +51,7 @@ pub enum Builtin {
     StringStartsWith, StringEndsWith,
     StringAt, StringRepeat,
     StringTrim, StringToLowerCase,
-    StringToUpperCase, StringCharAt,
+    StringToUpperCase, StringNormalize, StringCharAt,
     StringCharCodeAt, StringIndexOf,
     StringLastIndexOf, StringSlice,
     StringSubstring, StringConcat,
