@@ -80,6 +80,7 @@ impl CapabilityName {
     const StreamReadable: u16 = 1310;
     const StreamWritable: u16 = 1311;
     const StreamReadableFrom: u16 = 1312;
+    const StreamDuplex: u16 = 1313;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -214,6 +215,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::Require) => require_module(arguments),
             HostCapabilityKind::Custom(CapabilityName::EventEmitter) => self.construct(capability, arguments),
             HostCapabilityKind::Custom(CapabilityName::StreamReadable | CapabilityName::StreamWritable | CapabilityName::StreamReadableFrom) => self.construct(capability, arguments),
+            HostCapabilityKind::Custom(CapabilityName::StreamDuplex) => self.construct(capability, arguments),
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -317,7 +319,7 @@ impl Host for QuenchNodeHost {
             );
             return Ok(emitter);
         }
-        if !matches!(capability.kind, HostCapabilityKind::Custom(CapabilityName::Stream | CapabilityName::StreamReadable | CapabilityName::StreamWritable | CapabilityName::StreamReadableFrom)) {
+        if !matches!(capability.kind, HostCapabilityKind::Custom(CapabilityName::Stream | CapabilityName::StreamReadable | CapabilityName::StreamWritable | CapabilityName::StreamReadableFrom | CapabilityName::StreamDuplex)) {
             return Err(VmError::NotCallable);
         }
         let id = self.next_stream.get();
@@ -351,6 +353,12 @@ impl Host for QuenchNodeHost {
         ]);
         stream = quench_runtime::execute::set_property(stream, "pipe", capability_function(HostCapabilityKind::Custom(id + 5)));
         stream = quench_runtime::execute::set_property(stream, "write", capability_function(HostCapabilityKind::Custom(id + 2)));
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::StreamDuplex) {
+            stream = quench_runtime::execute::set_property(stream, "push", capability_function(HostCapabilityKind::Custom(id + 6)));
+            stream = quench_runtime::execute::set_property(stream, "setEncoding", capability_function(HostCapabilityKind::Custom(id + 7)));
+            stream = quench_runtime::execute::set_property(stream, "resume", capability_function(HostCapabilityKind::Custom(id + 8)));
+            stream = quench_runtime::execute::set_property(stream, "pause", capability_function(HostCapabilityKind::Custom(id + 9)));
+        }
         Ok(stream)
     }
 }
@@ -456,6 +464,8 @@ impl QuenchNodeHost {
                 }
                 Ok(target.clone())
             }
+            6 => Ok(Value::Boolean(true)),
+            7..=9 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
             _ => Err(VmError::NotCallable),
         }
     }
@@ -739,6 +749,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("Transform".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::Stream))),
                 ("Readable".into(), readable),
                 ("Writable".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamWritable))),
+                ("Duplex".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamDuplex))),
             ]));
         }
         if name == "node:http" || name == "http" {
@@ -1414,6 +1425,7 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::StreamReadable),
                 HostCapabilityKind::Custom(CapabilityName::StreamWritable),
                 HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom),
+                HostCapabilityKind::Custom(CapabilityName::StreamDuplex),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
