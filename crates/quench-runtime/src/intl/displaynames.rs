@@ -9,11 +9,11 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let properties = match arguments.get(1) {
-        Some(Value::Object(properties)) => properties,
+    let options = match arguments.get(1) {
+        Some(options @ Value::Object(_)) => options,
         _ => return Err(runtime_error("TypeError: options.type is required")),
     };
-    let options = parse_options(properties)?;
+    let options = parse_options(options)?;
     Ok(make_object(vec![
         (
             "of".to_string(),
@@ -50,14 +50,14 @@ struct DisplayNamesOptions {
     language_display: String,
 }
 
-fn parse_options(properties: &[(String, Value)]) -> Result<DisplayNamesOptions, VmError> {
-    let display_type = option_string(properties, "type", "TypeError: options.type is required")?;
+fn parse_options(options: &Value) -> Result<DisplayNamesOptions, VmError> {
+    let display_type = option_string(options, "type", "TypeError: options.type is required")?;
     validate_type(&display_type)?;
-    let style = option_string(properties, "style", "")?;
+    let style = option_string(options, "style", "")?;
     validate_value(&style, &["long", "short", "narrow"], "style")?;
-    let fallback = option_string(properties, "fallback", "")?;
+    let fallback = option_string(options, "fallback", "")?;
     validate_value(&fallback, &["code", "none"], "fallback")?;
-    let language_display = option_string(properties, "languageDisplay", "")?;
+    let language_display = option_string(options, "languageDisplay", "")?;
     validate_value(
         &language_display,
         &["dialect", "standard"],
@@ -182,25 +182,15 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
     super::intl_slots(receiver)
 }
 
-fn option_string(
-    properties: &[(String, Value)],
-    name: &str,
-    missing: &str,
-) -> Result<String, VmError> {
-    properties
-        .iter()
-        .find(|(key, _)| key == name)
-        .and_then(|(_, value)| match value {
-            Value::Undefined if name == "style" => Some("long".to_string()),
-            Value::Undefined if name == "fallback" => Some("code".to_string()),
-            Value::Undefined if name == "languageDisplay" => Some("dialect".to_string()),
-            Value::Undefined => None,
-            value => Some(to_string_value(value)),
-        })
-        .or_else(|| (name == "style").then(|| "long".to_string()))
-        .or_else(|| (name == "fallback").then(|| "code".to_string()))
-        .or_else(|| (name == "languageDisplay").then(|| "dialect".to_string()))
-        .ok_or_else(|| runtime_error(missing))
+fn option_string(options: &Value, name: &str, missing: &str) -> Result<String, VmError> {
+    let value = crate::execute::get_property_result(options, name)?;
+    match value {
+        Value::Undefined if name == "style" => Ok("long".to_string()),
+        Value::Undefined if name == "fallback" => Ok("code".to_string()),
+        Value::Undefined if name == "languageDisplay" => Ok("dialect".to_string()),
+        Value::Undefined => Err(runtime_error(missing)),
+        value => Ok(crate::conversion::to_string(&value)?),
+    }
 }
 
 fn display_name(
