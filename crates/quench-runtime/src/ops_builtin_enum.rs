@@ -240,7 +240,7 @@ pub enum Builtin {
     IntlSegmenterSegmentsIterator, IntlSegmenterSegmentsContaining,
     IntlSegmenterResolvedOptions, IntlDisplayNames,
     IntlDisplayNamesOf, IntlDisplayNamesResolvedOptions,
-    IntlDurationFormat, IntlDurationFormatFormat,
+    IntlDurationFormat, IntlDurationFormatSupportedLocalesOf, IntlDurationFormatFormat,
     IntlDurationFormatFormatToParts, IntlDurationFormatResolvedOptions,
     IntlLocalePrototype, IntlNumberFormatPrototype,
     IntlPluralRulesPrototype, IntlDateTimeFormatPrototype,
