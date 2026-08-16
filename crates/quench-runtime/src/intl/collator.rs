@@ -2,6 +2,13 @@
 
 use crate::{execute::VmError, value::Value};
 
+use icu_collator::{
+    preferences::CollationType, provider::CollationTailoringV1, CollatorPreferences,
+};
+use icu_provider::{
+    marker::DataMarkerExt, DataIdentifierBorrowed, DataMarkerAttributes, DataProvider, DataRequest,
+};
+
 use super::{
     default_locale, make_object, resolve_locales, runtime_error, slot_bool, slot_string,
     to_string_value, SLOT,
@@ -11,6 +18,16 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
     let mut options = parse_options(arguments.get(1), locale.starts_with("th"))?;
+    let extension = locale_collation(&locale);
+    let option = options.collation.take();
+    let collation = select_collation(&locale, option.as_deref(), extension.as_deref());
+    locale = resolve_collation(
+        &locale,
+        option.as_deref(),
+        extension.as_deref(),
+        collation.as_deref(),
+    )?;
+    options.collation = collation;
     if options.case_first == "false" && case_first_option_absent(arguments.get(1)) {
         options.case_first =
             super::locale::case_first_extension(&locale).unwrap_or_else(|| "false".to_string());
@@ -18,7 +35,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     if locale_has_true_kn(&locale) && numeric_option_absent(arguments.get(1)) {
         options.numeric = true;
     }
-    for key in ["co", "ka", "kb", "kc", "kh", "kk", "kr", "ks", "vt"] {
+    for key in ["ka", "kb", "kc", "kh", "kk", "kr", "ks", "vt"] {
         locale = remove_unsupported_extension(&locale, key);
     }
     if options.case_first != "false" {
@@ -77,6 +94,10 @@ fn collator_object(locale: String, options: CollatorOptions) -> Value {
             make_object(vec![
                 ("locale".to_string(), Value::String(locale)),
                 ("usage".to_string(), Value::String(options.usage)),
+                (
+                    "collation".to_string(),
+                    options.collation.map_or(Value::Undefined, Value::String),
+                ),
                 ("numeric".to_string(), Value::Boolean(options.numeric)),
                 ("caseFirst".to_string(), Value::String(options.case_first)),
                 (
@@ -98,6 +119,7 @@ struct CollatorOptions {
     ignore_punctuation: bool,
     numeric: bool,
     case_first: String,
+    collation: Option<String>,
 }
 
 fn parse_options(value: Option<&Value>, default_ignore: bool) -> Result<CollatorOptions, VmError> {
@@ -107,6 +129,7 @@ fn parse_options(value: Option<&Value>, default_ignore: bool) -> Result<Collator
         ignore_punctuation: default_ignore,
         numeric: false,
         case_first: "false".to_string(),
+        collation: None,
     };
     let Some(Value::Object(properties)) = value else {
         return Ok(options);
@@ -121,7 +144,10 @@ fn apply_properties(options: &mut CollatorOptions, properties: &Value) -> Result
     validate_option(&options.usage, &["sort", "search"], "usage")?;
     let locale_matcher = option_string(properties, "localeMatcher", "best fit")?;
     validate_option(&locale_matcher, &["lookup", "best fit"], "localeMatcher")?;
-    let _ = option_value(properties, "collation")?;
+    let collation = option_value(properties, "collation")?;
+    if !matches!(collation, Value::Undefined) {
+        options.collation = Some(crate::conversion::to_string(&collation)?);
+    }
     options.numeric = option_boolean(properties, "numeric", options.numeric)?;
     options.case_first = option_string(properties, "caseFirst", &options.case_first)?;
     validate_option(
@@ -138,6 +164,71 @@ fn apply_properties(options: &mut CollatorOptions, properties: &Value) -> Result
     options.ignore_punctuation =
         option_boolean(properties, "ignorePunctuation", options.ignore_punctuation)?;
     Ok(())
+}
+
+fn locale_collation(locale: &str) -> Option<String> {
+    let parts: Vec<&str> = locale.split('-').collect();
+    let index = parts
+        .iter()
+        .position(|part| part.eq_ignore_ascii_case("co"))?;
+    parts.get(index + 1).map(|value| (*value).to_string())
+}
+
+fn select_collation(locale: &str, option: Option<&str>, extension: Option<&str>) -> Option<String> {
+    option
+        .filter(|value| provider_has_collation(locale, value))
+        .or_else(|| extension.filter(|value| provider_has_collation(locale, value)))
+        .map(str::to_string)
+}
+
+fn resolve_collation(
+    locale: &str,
+    option: Option<&str>,
+    extension: Option<&str>,
+    collation: Option<&str>,
+) -> Result<String, VmError> {
+    let Some(collation) = collation else {
+        return Ok(remove_unsupported_extension(locale, "co"));
+    };
+    if option.is_some_and(|value| Some(value) != extension && provider_has_collation(locale, value))
+    {
+        return Ok(remove_unsupported_extension(locale, "co"));
+    }
+    Ok(set_extension(locale, "co", collation))
+}
+
+fn provider_has_collation(locale: &str, collation: &str) -> bool {
+    let locale = remove_unsupported_extension(locale, "co");
+    let Ok(locale) = icu_locale_core::Locale::try_from_str(&locale) else {
+        return false;
+    };
+    let Ok(value) = collation.parse::<icu_locale_core::extensions::unicode::Value>() else {
+        return false;
+    };
+    let Ok(collation_type) = CollationType::try_from(&value) else {
+        return false;
+    };
+    let mut preferences = CollatorPreferences::default();
+    preferences.locale_preferences = (&locale).into();
+    preferences.collation_type = Some(collation_type);
+    let Ok(attributes) = DataMarkerAttributes::try_from_str(collation) else {
+        return false;
+    };
+    let data_locale = CollationTailoringV1::make_locale(preferences.locale_preferences);
+    let request = DataRequest {
+        id: DataIdentifierBorrowed::for_marker_attributes_and_locale(attributes, &data_locale),
+        metadata: Default::default(),
+    };
+    <icu_collator::provider::Baked as DataProvider<CollationTailoringV1>>::load(
+        &icu_collator::provider::Baked,
+        request,
+    )
+    .is_ok()
+}
+
+fn set_extension(locale: &str, key: &str, value: &str) -> String {
+    let locale = remove_unsupported_extension(locale, key);
+    format!("{locale}-u-{key}-{value}")
 }
 
 fn option_value(properties: &Value, name: &str) -> Result<Value, VmError> {
@@ -276,7 +367,7 @@ fn resolved_options(slots: &[(String, Value)], locale: String) -> Value {
         ),
         (
             "collation".to_string(),
-            Value::String("default".to_string()),
+            Value::String(slot_string(slots, "collation").unwrap_or_else(|| "default".to_string())),
         ),
         (
             "numeric".to_string(),
