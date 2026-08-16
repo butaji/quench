@@ -6,18 +6,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
     let month = number(arguments.get(1))?;
     let day = number(arguments.get(2))?;
-    if let Some(calendar) = arguments.get(3) {
-        if !matches!(calendar, Value::Undefined | Value::String(_)) {
-            return Err(crate::value::error::throw_type_error("Invalid calendar"));
-        }
-        if matches!(calendar, Value::String(value) if crate::conversion::is_symbol_string(value)) {
-            return Err(crate::value::error::throw_type_error("Invalid calendar"));
-        }
-        if matches!(calendar, Value::String(value) if !matches!(value.to_ascii_lowercase().as_str(), "iso8601" | "gregory"))
-        {
-            return Err(crate::value::error::throw_range_error("Invalid calendar"));
-        }
-    }
+    validate_calendar(arguments.get(3))?;
     if !(-271_821.0..=275_760.0).contains(&year)
         || !(1.0..=12.0).contains(&month)
         || !(1.0..=days_in_month(year, month)).contains(&day)
@@ -521,6 +510,9 @@ fn from_property_bag(value: &Value) -> Result<Value, VmError> {
         }
         _ => return Err(crate::value::error::throw_type_error("Invalid calendar")),
     };
+    validate_calendar(Some(&calendar))?;
+    let era = crate::execute::get_property_result(value, "era")?;
+    validate_gregory_era(&calendar, &era)?;
     validate_required_fields(&year, &month, &month_code, &day)?;
     let month = if matches!(month, Value::Undefined) {
         month_from_code(month_code)?
@@ -528,6 +520,32 @@ fn from_property_bag(value: &Value) -> Result<Value, VmError> {
         month
     };
     construct(&[year, month, day, calendar])
+}
+
+fn validate_calendar(calendar: Option<&Value>) -> Result<(), VmError> {
+    let Some(calendar) = calendar else {
+        return Ok(());
+    };
+    if !matches!(calendar, Value::Undefined | Value::String(_)) {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
+    if matches!(calendar, Value::String(value) if crate::conversion::is_symbol_string(value)) {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
+    if matches!(calendar, Value::String(value) if !matches!(value.to_ascii_lowercase().as_str(), "iso8601" | "gregory"))
+    {
+        return Err(crate::value::error::throw_range_error("Invalid calendar"));
+    }
+    Ok(())
+}
+
+fn validate_gregory_era(calendar: &Value, era: &Value) -> Result<(), VmError> {
+    let valid = matches!(era, Value::Undefined)
+        || matches!(era, Value::String(value) if matches!(value.as_str(), "ce" | "bce"));
+    if matches!(calendar, Value::String(value) if value.eq_ignore_ascii_case("gregory")) && !valid {
+        return Err(crate::value::error::throw_range_error("Invalid era"));
+    }
+    Ok(())
 }
 
 fn validate_required_fields(
