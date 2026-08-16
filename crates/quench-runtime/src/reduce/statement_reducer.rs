@@ -36,7 +36,9 @@ impl StatementReducer {
         let barrier_len = facts.eval_var_barrier.len();
         facts
             .eval_var_barrier
-            .extend(crate::semantic_early::lexically_declared_names_in(statements));
+            .extend(crate::semantic_early::lexically_declared_names_in(
+                statements,
+            ));
         let result = self.append_scoped(statements, facts, program_scope);
         facts.eval_var_barrier.truncate(barrier_len);
         result
@@ -58,12 +60,42 @@ impl StatementReducer {
         );
         if global_script {
             instantiate_global_script_functions(statements, facts, self)?;
+        } else if !self.script {
+            instantiate_module_functions(statements, facts, self)?;
         }
         self.next_register = self
             .next_register
             .max(crate::reduce_support::register_base(&self.locals));
         append_scoped_statements(self, statements, facts, program_scope, global_script)
     }
+}
+
+fn instantiate_module_functions(
+    statements: &[Statement<'_>],
+    facts: &mut ProgramDb,
+    state: &mut StatementReducer,
+) -> Result<(), Vec<String>> {
+    for statement in statements {
+        let function = match statement {
+            Statement::FunctionDeclaration(function) => Some(function),
+            Statement::ExportNamedDeclaration(export) => match &export.declaration {
+                Some(oxc::ast::ast::Declaration::FunctionDeclaration(function)) => Some(function),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(function) = function {
+            crate::reduce::reduce_function_declaration(
+                function,
+                &mut state.ops,
+                facts,
+                &mut state.next_register,
+                &mut state.next_slot,
+                &mut state.locals,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn initialize_statement_locals(source_type: SourceType) -> HashMap<String, u16> {
@@ -144,7 +176,9 @@ fn append_scoped_statements(
 ) -> Result<Option<u16>, Vec<String>> {
     let mut last = None;
     for statement in statements {
-        if global_script && matches!(statement, Statement::FunctionDeclaration(_)) {
+        if (global_script && matches!(statement, Statement::FunctionDeclaration(_)))
+            || (!global_script && is_module_function_declaration(statement))
+        {
             continue;
         }
         let limit = program_scope
@@ -156,4 +190,17 @@ fn append_scoped_statements(
         last = next;
     }
     Ok(last)
+}
+
+fn is_module_function_declaration(statement: &Statement<'_>) -> bool {
+    if matches!(statement, Statement::FunctionDeclaration(_)) {
+        return true;
+    }
+    let Statement::ExportNamedDeclaration(export) = statement else {
+        return false;
+    };
+    matches!(
+        &export.declaration,
+        Some(oxc::ast::ast::Declaration::FunctionDeclaration(_))
+    )
 }
