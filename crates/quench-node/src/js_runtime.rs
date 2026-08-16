@@ -1024,6 +1024,19 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CryptoHashWrite) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
                 let id = hash_id(receiver)?;
+                if arguments.len() < 2 {
+                    if let Ok(state) =
+                        quench_runtime::execute::get_property_result(receiver, "_writableState")
+                    {
+                        if let Ok(encoding) =
+                            quench_runtime::execute::get_property_result(&state, "defaultEncoding")
+                        {
+                            let mut write_arguments = arguments.to_vec();
+                            write_arguments.push(encoding);
+                            return self.hash_call(id, Some(receiver), &write_arguments);
+                        }
+                    }
+                }
                 self.hash_call(id, Some(receiver), arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoHashEnd) => {
@@ -1041,9 +1054,7 @@ impl Host for QuenchNodeHost {
                     {
                         if event == "data" {
                             let data = match &output {
-                                Value::String(value) => {
-                                    quench_runtime::host_api::bytes(&decode_hex(value))
-                                }
+                                Value::String(value) => node_buffer(&decode_hex(value)),
                                 _ => output.clone(),
                             };
                             quench_runtime::execute::call(&listener, receiver, &[data])?;
@@ -4894,7 +4905,19 @@ impl QuenchNodeHost {
                     ])));
                 }
             }
-            let value = string_or_bytes(arguments.first())?;
+            let value = match (arguments.first(), arguments.get(1)) {
+                (Some(Value::String(value)), Some(Value::String(encoding)))
+                    if encoding.eq_ignore_ascii_case("latin1")
+                        || encoding.eq_ignore_ascii_case("binary")
+                        || encoding.eq_ignore_ascii_case("ascii") =>
+                {
+                    value
+                        .chars()
+                        .map(|character| character as u32 as u8)
+                        .collect()
+                }
+                _ => string_or_bytes(arguments.first())?,
+            };
             self.hashes
                 .borrow_mut()
                 .entry(base)
