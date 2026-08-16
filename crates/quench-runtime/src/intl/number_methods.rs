@@ -274,6 +274,17 @@ impl NumberOptions {
                 Value::String(self.compact_display.clone()),
             ));
         }
+        if let Some(currency) = &self.currency {
+            properties.push(("currency".to_string(), Value::String(currency.clone())));
+            properties.push((
+                "currencyDisplay".to_string(),
+                Value::String(self.currency_display.clone()),
+            ));
+            properties.push((
+                "currencySign".to_string(),
+                Value::String(self.currency_sign.clone()),
+            ));
+        }
         make_object(properties)
     }
 }
