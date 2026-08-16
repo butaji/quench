@@ -147,9 +147,7 @@ impl RawOptions {
                             "invalid trailingZeroDisplay",
                         ));
                     }
-                    if *key == "numberingSystem"
-                        && !super::supported_values::NUMBERING_SYSTEMS.contains(&text.as_str())
-                    {
+                    if *key == "numberingSystem" && !valid_numbering_system_syntax(&text) {
                         return Err(crate::value::error::throw_range_error(
                             "invalid numbering system",
                         ));
@@ -160,6 +158,16 @@ impl RawOptions {
         }
         Ok(raw)
     }
+}
+
+fn valid_numbering_system_syntax(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('-').all(|part| {
+            (3..=8).contains(&part.len())
+                && part
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        })
 }
 
 fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
