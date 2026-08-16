@@ -13,7 +13,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         if matches!(calendar, Value::String(value) if crate::conversion::is_symbol_string(value)) {
             return Err(crate::value::error::throw_type_error("Invalid calendar"));
         }
-        if matches!(calendar, Value::String(value) if !value.eq_ignore_ascii_case("iso8601")) {
+        if matches!(calendar, Value::String(value) if !matches!(value.to_ascii_lowercase().as_str(), "iso8601" | "gregory"))
+        {
             return Err(crate::value::error::throw_range_error("Invalid calendar"));
         }
     }
@@ -81,7 +82,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateToJSON => Some(to_json(receiver)),
         crate::ops::Builtin::TemporalPlainDateInLeapYearGetter => Some(in_leap_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraGetter => Some(era(receiver)),
-        crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era(receiver)),
+        crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateCalendarIdGetter => Some(calendar_id(receiver)),
         crate::ops::Builtin::TemporalPlainDateWeekOfYearGetter => Some(week_of_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateYearOfWeekGetter => Some(year_of_week(receiver)),
@@ -234,11 +235,17 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
     let calendar_name = calendar_name_option(options)?;
+    let calendar = match field(object, "calendarId") {
+        Value::String(name) => name,
+        _ => "iso8601".into(),
+    };
     let mut result = format!("{}-{month:02}-{day:02}", format_year(year));
-    if calendar_name == "always" {
-        result.push_str("[u-ca=iso8601]");
-    } else if calendar_name == "critical" {
-        result.push_str("[!u-ca=iso8601]");
+    if calendar_name == "always"
+        || calendar_name == "critical"
+        || calendar_name == "auto" && calendar != "iso8601"
+    {
+        let prefix = if calendar_name == "critical" { "!" } else { "" };
+        result.push_str(&format!("[{}u-ca={calendar}]", prefix));
     }
     Ok(Value::String(result))
 }
@@ -288,7 +295,17 @@ fn era(receiver: Option<&Value>) -> Result<Value, VmError> {
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
-    Ok(Value::Undefined)
+    Ok(field(object, "era"))
+}
+
+fn era_year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(field(object, "eraYear"))
 }
 
 fn calendar_id(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -298,7 +315,10 @@ fn calendar_id(receiver: Option<&Value>) -> Result<Value, VmError> {
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
-    Ok(Value::String("iso8601".to_owned()))
+    Ok(match field(object, "calendarId") {
+        Value::String(name) => Value::String(name),
+        _ => Value::String("iso8601".to_owned()),
+    })
 }
 
 fn week_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
