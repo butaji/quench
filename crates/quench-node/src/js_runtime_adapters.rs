@@ -68,7 +68,7 @@ for (const name of ["URL", "URLSearchParams"]) {
   }
 }
 "#;
-        let source_with_globals = format!("var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var structuredClone = function(value) {{ return {{ ...value }}; }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; globalThis.global = globalThis;\n{global_source}\n{source}\nglobalThis.__quench_drain_dgram_callbacks();");
+        let source_with_globals = format!("var global = globalThis; var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var structuredClone = function(value) {{ return {{ ...value }}; }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }};\n{global_source}\n{source}");
         let program =
             match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
                 true => quench_runtime::reduce::reduce_module_source(&source_with_globals),
@@ -90,6 +90,11 @@ for (const name of ["URL", "URLSearchParams"]) {
                 HostCapabilityKind::Custom(CapabilityName::Cwd),
                 HostCapabilityKind::Custom(CapabilityName::ReadFileSync),
                 HostCapabilityKind::Custom(CapabilityName::CreateHash),
+                HostCapabilityKind::Custom(CapabilityName::CryptoHashUpdate),
+                HostCapabilityKind::Custom(CapabilityName::CryptoHashDigest),
+                HostCapabilityKind::Custom(CapabilityName::CryptoHashOn),
+                HostCapabilityKind::Custom(CapabilityName::CryptoHashWrite),
+                HostCapabilityKind::Custom(CapabilityName::CryptoHashEnd),
                 HostCapabilityKind::Custom(CapabilityName::AssertNotStrictEqual),
                 HostCapabilityKind::Custom(CapabilityName::AssertNotDeepStrictEqual),
                 HostCapabilityKind::Custom(CapabilityName::AssertError),
