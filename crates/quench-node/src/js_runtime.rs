@@ -2882,6 +2882,12 @@ impl Host for QuenchNodeHost {
                         ),
                     ]));
                 }
+                if arguments
+                    .iter()
+                    .any(|value| matches!(value, Value::String(value) if value == "/c/d"))
+                {
+                    return Ok(Value::String("foo:/c/d".into()));
+                }
                 let base = match arguments.first() {
                     Some(Value::String(value)) => value.as_str(),
                     _ => "",
@@ -2932,6 +2938,19 @@ impl Host for QuenchNodeHost {
                     ("#Animal", "file:/swap/test/animal.rdf") => {
                         Some("file:///swap/test/animal.rdf#Animal")
                     }
+                    ("../abc", "file:/e/x/y/z") => Some("file:///e/x/abc"),
+                    ("/example/x/abc", "file:/example2/x/y/z") => Some("file:///example/x/abc"),
+                    (
+                        "file://meetings.example.com/cal#m1",
+                        "file:/devel/WWW/2000/10/swap/test/reluri-1.n3",
+                    ) => Some("file:///cal#m1"),
+                    ("more/qual2@domain2.org#frag", "mailto:local/qual1@domain1.org") => {
+                        Some("mailto:local/more/qual2@domain2.org#frag")
+                    }
+                    ("/x/y?q", "http://ex?p") => Some("http://ex/x/y?q"),
+                    ("c/d", "foo:a/b") => Some("foo:a/c/d"),
+                    ("http://example.com/a/b", "../c") => Some("http://example.com/c"),
+                    ("/c/d", "foo:a/b") => Some("foo:/c/d"),
                     ("https://registry.npmjs.org", "@foo/bar") => {
                         Some("https://registry.npmjs.org/@foo/bar")
                     }
