@@ -46,6 +46,10 @@ impl CapabilityName {
     const BufferSwap32: u16 = 2048;
     const BufferSwap64: u16 = 2049;
     const BufferCopyBytesFrom: u16 = 2050;
+    const BufferReadBigInt64LE: u16 = 2051;
+    const BufferReadBigUInt64BE: u16 = 2052;
+    const BufferWriteBigInt64LE: u16 = 2053;
+    const BufferWriteBigUInt64BE: u16 = 2054;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -580,6 +584,10 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferSwap32) => buffer_swap(receiver, 4),
             HostCapabilityKind::Custom(CapabilityName::BufferSwap64) => buffer_swap(receiver, 8),
             HostCapabilityKind::Custom(CapabilityName::BufferCopyBytesFrom) => buffer_copy_bytes_from(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferReadBigInt64LE) => buffer_bigint(receiver, arguments, false, true),
+            HostCapabilityKind::Custom(CapabilityName::BufferReadBigUInt64BE) => buffer_bigint(receiver, arguments, true, false),
+            HostCapabilityKind::Custom(CapabilityName::BufferWriteBigInt64LE) => buffer_bigint(receiver, arguments, false, true),
+            HostCapabilityKind::Custom(CapabilityName::BufferWriteBigUInt64BE) => buffer_bigint(receiver, arguments, true, false),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -3433,6 +3441,10 @@ fn buffer_module() -> Value {
         ("allocUnsafeSlow", HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow)),
         ("isEncoding", HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding)),
         ("copyBytesFrom", HostCapabilityKind::Custom(CapabilityName::BufferCopyBytesFrom)),
+        ("readBigInt64LE", HostCapabilityKind::Custom(CapabilityName::BufferReadBigInt64LE)),
+        ("readBigUInt64BE", HostCapabilityKind::Custom(CapabilityName::BufferReadBigUInt64BE)),
+        ("writeBigInt64LE", HostCapabilityKind::Custom(CapabilityName::BufferWriteBigInt64LE)),
+        ("writeBigUInt64BE", HostCapabilityKind::Custom(CapabilityName::BufferWriteBigUInt64BE)),
         (
             "compare",
             HostCapabilityKind::Custom(CapabilityName::BufferCompare),
@@ -3525,6 +3537,18 @@ fn node_buffer(bytes: &[u8]) -> Value {
         capability_function(HostCapabilityKind::Custom(CapabilityName::BufferEquals)),
     );
     let mut value = value;
+    for (name, capability) in [
+        ("readBigInt64LE", CapabilityName::BufferReadBigInt64LE),
+        ("readBigUInt64BE", CapabilityName::BufferReadBigUInt64BE),
+        ("writeBigInt64LE", CapabilityName::BufferWriteBigInt64LE),
+        ("writeBigUInt64BE", CapabilityName::BufferWriteBigUInt64BE),
+    ] {
+        value = quench_runtime::execute::set_property(
+            value,
+            name,
+            capability_function(HostCapabilityKind::Custom(capability)),
+        );
+    }
     for (name, capability) in [
         ("compare", CapabilityName::BufferCompare),
         ("indexOf", CapabilityName::BufferIndexOf),
@@ -3821,6 +3845,31 @@ fn buffer_copy_bytes_from(arguments: &[Value]) -> Result<Value, VmError> {
     let offset = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize * element_size), _ => None }).unwrap_or(0).min(bytes.len());
     let length = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or(bytes.len() - offset).min(bytes.len() - offset);
     Ok(node_buffer(&bytes[offset..offset + length]))
+}
+
+fn buffer_bigint(receiver: Option<&Value>, arguments: &[Value], unsigned: bool, little: bool) -> Result<Value, VmError> {
+    let Value::Uint8Array(view) = receiver.ok_or(VmError::NotCallable)? else { return Err(VmError::NotCallable); };
+    let write = matches!(arguments.first(), Some(Value::BigInt(_)));
+    let offset = if write { 1 } else { 0 };
+    let offset = arguments.get(offset).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or(0);
+    if offset + 8 > view.length { return Err(VmError::Thrown(fs_error("ERR_BUFFER_OUT_OF_BOUNDS", "offset out of bounds"))); }
+    let mut bytes = view.buffer.bytes.borrow_mut();
+    let slice = &mut bytes[view.byte_offset + offset..view.byte_offset + offset + 8];
+    if write {
+        let value = match arguments.first() {
+            Some(Value::BigInt(value)) if unsigned => value.parse::<u64>().unwrap_or(0),
+            Some(Value::BigInt(value)) => value.parse::<i64>().unwrap_or(0) as u64,
+            _ => return Err(VmError::NotCallable),
+        };
+        let encoded = if little { value.to_le_bytes() } else { value.to_be_bytes() };
+        slice.copy_from_slice(&encoded);
+        Ok(Value::Number((offset + 8) as f64))
+    } else {
+        let mut encoded = [0u8; 8]; encoded.copy_from_slice(slice);
+        let value = if little { u64::from_le_bytes(encoded) } else { u64::from_be_bytes(encoded) };
+        let value = if unsigned { value as i128 } else { value as i64 as i128 };
+        Ok(Value::BigInt(value.to_string()))
+    }
 }
 
 fn buffer_numeric(
