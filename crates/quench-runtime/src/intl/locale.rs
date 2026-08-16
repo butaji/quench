@@ -197,6 +197,9 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "firstDayOfWeek" => {
                 let _ = option_value(&text, "firstDayOfWeek")?;
             }
+            "language" if text.contains('-') => {
+                return Err(runtime_error("RangeError: invalid language"));
+            }
             "language" | "region" | "script" => {
                 let _ = option_value(&text, key)?;
             }
