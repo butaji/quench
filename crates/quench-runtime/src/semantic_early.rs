@@ -17,8 +17,12 @@ pub(crate) fn lexically_declared_names(program: &oxc::ast::ast::Program<'_>) -> 
 }
 
 pub(crate) fn annex_b_lexical_collisions(program: &oxc::ast::ast::Program<'_>) -> HashSet<String> {
+    annex_b_lexical_collisions_in(&program.body)
+}
+
+pub(crate) fn annex_b_lexical_collisions_in(statements: &[Statement<'_>]) -> HashSet<String> {
     let mut collisions = HashSet::new();
-    collect_annex_b_collisions(&program.body, &[], &mut collisions);
+    collect_annex_b_collisions(statements, &[], &mut collisions);
     collisions
 }
 
