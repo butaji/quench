@@ -8,6 +8,7 @@ pub struct ArrayData {
     strict_arguments: bool,
     mapped: Vec<Option<Rc<RefCell<Value>>>>,
     deleted: Vec<bool>,
+    prototype: std::cell::RefCell<Option<Value>>,
     argument_live: Option<Rc<RefCell<ArgumentLive>>>,
 }
 
@@ -32,6 +33,7 @@ impl ArrayData {
             strict_arguments: false,
             mapped: Vec::new(),
             deleted: Vec::new(),
+            prototype: std::cell::RefCell::new(None),
         argument_live: Some(Rc::new(RefCell::new(ArgumentLive {
             values: live_values,
             length,
@@ -66,6 +68,14 @@ impl ArrayData {
         self.argument_live
             .as_ref()
             .map_or(self.length, |live| live.borrow().length)
+    }
+
+    pub(crate) fn prototype(&self) -> Option<Value> {
+        self.prototype.borrow().clone()
+    }
+
+    pub(crate) fn set_prototype(&self, prototype: Value) {
+        self.prototype.replace(Some(prototype));
     }
 
     pub fn set_length(&mut self, length: usize) {

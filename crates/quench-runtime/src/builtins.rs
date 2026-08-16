@@ -567,6 +567,10 @@ fn set_prototype_slot(target: &Value, key: &str, value: Value) -> Option<Value> 
             data.set_prototype(value);
             Value::Set(data.clone())
         }
+        Value::Array(data) => {
+            data.set_prototype(value);
+            Value::Array(data.clone())
+        }
         Value::Promise(data) => {
             data.set_prototype(value);
             Value::Promise(data.clone())
