@@ -179,6 +179,10 @@ for (const [name, write, byteLength, littleEndian, signed] of [
   ["writeInt32BE", true, 4, false, true]
 ]) {
   const method = function (value, offset = 0) {
+    const hostMethod = this[`_quench${name[0].toUpperCase()}${name.slice(1)}`];
+    if (typeof hostMethod === "function") {
+      return write ? hostMethod(value, offset) : hostMethod(value ?? 0);
+    }
     return NodeBuffer.prototype[write ? "_writeInteger" : "_readInteger"].call(
       this,
       ...(write ? [value, offset] : [value ?? 0]),
@@ -217,4 +221,7 @@ for (const [name, write, littleEndian] of [
     value: method
   });
 }
+NodeBuffer.prototype.readUint32BE = NodeBuffer.prototype.readUInt32BE;
+NodeBuffer.prototype.readUint32LE = NodeBuffer.prototype.readUInt32LE;
+NodeBuffer.prototype.writeUintLE = NodeBuffer.prototype.writeUIntLE;
 "#);
