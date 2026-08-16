@@ -62,10 +62,21 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     };
     let tag = locale_tag(tag_arg)?;
     let canonical = canonicalize(&tag)?;
+    let language = canonical.split('-').next().unwrap_or_default();
+    if !valid_language_subtag(language) {
+        return Err(runtime_error("RangeError: invalid language tag"));
+    }
     let locale = parse_canonical(&canonical);
     let options = arguments.get(1);
     let locale = apply_options(locale, options)?;
     Ok(build_object(locale))
+}
+
+fn valid_language_subtag(language: &str) -> bool {
+    matches!(language.len(), 2 | 3 | 5..=8)
+        && language
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
 }
 
 fn locale_tag(value: &Value) -> Result<String, VmError> {
