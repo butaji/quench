@@ -574,7 +574,14 @@ fn should_preserve_receiver_property(
     if plural_rules_instance(receiver) {
         return true;
     }
-    matches!(value, Value::Builtin(_))
+    let shadow_realm_method = matches!(
+        (value, key),
+        (
+            Value::Builtin(Builtin::ShadowRealmPrototype),
+            "evaluate" | "importValue"
+        )
+    );
+    !shadow_realm_method && matches!(value, Value::Builtin(_))
         || matches!(value, Value::Object(_)) && crate::vm::is_global_object(value)
         || is_intl_number_format_property(property)
         || is_boxed_primitive(receiver) && matches!(property, Value::Builtin(_))
