@@ -1518,6 +1518,21 @@ impl Host for QuenchNodeHost {
                 ]))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoKeyExport) => {
+                if let Some(receiver) = receiver {
+                    if let Ok(Value::String(value)) =
+                        quench_runtime::execute::get_property_result(receiver, "asymmetricKeyType")
+                    {
+                        if value.starts_with("ec:") {
+                            return Ok(Value::object(vec![(
+                                "dhParams".into(),
+                                Value::object(vec![(
+                                    "namedCurve".into(),
+                                    Value::String(value.trim_start_matches("ec:").into()),
+                                )]),
+                            )]));
+                        }
+                    }
+                }
                 Ok(node_buffer(&[0; 16]))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoDiffieHellman) => {
@@ -1536,7 +1551,13 @@ impl Host for QuenchNodeHost {
                             "asymmetricKeyType",
                         )
                         .ok();
-                        if private_type != public_type {
+                        if private_type != public_type
+                            || matches!(
+                                private_type,
+                                Some(Value::String(ref value)) if value.starts_with("ed")
+                            )
+                            || matches!(private_type, Some(Value::Undefined))
+                        {
                             return Err(VmError::Thrown(fs_error(
                                 "ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE",
                                 "key types do not match",
