@@ -2978,7 +2978,14 @@ impl Host for QuenchNodeHost {
                     ("path".into(), Value::String("/aaa/zzz?l=24".into())),
                 ]))
             }
-            HostCapabilityKind::Custom(CapabilityName::UrlIsUrl) => Ok(Value::Boolean(false)),
+            HostCapabilityKind::Custom(CapabilityName::UrlIsUrl) => {
+                Ok(Value::Boolean(arguments.first().is_some_and(|value| {
+                    matches!(
+                        quench_runtime::execute::get_property_result(value, "\0urlBrand"),
+                        Ok(Value::Boolean(true))
+                    )
+                })))
+            }
             HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String(
                 "function () {\nconsole.log(\"Hello, World!\")\n}".into(),
             )),
@@ -8479,6 +8486,7 @@ fn url_object(url: &url::Url, id: u16) -> Value {
             "toJSON".into(),
             capability_function(HostCapabilityKind::Custom(id)),
         ),
+        ("\0urlBrand".into(), Value::Boolean(true)),
     ])
 }
 
