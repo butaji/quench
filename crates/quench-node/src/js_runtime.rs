@@ -207,7 +207,7 @@ impl Host for QuenchNodeHost {
     fn call(
         &self,
         capability: HostCapabilityRef,
-        _receiver: Option<&Value>,
+        receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
         match capability.kind {
@@ -258,7 +258,7 @@ impl Host for QuenchNodeHost {
                 self.http_call(capability.kind, arguments)
             }
             HostCapabilityKind::Custom(id) if (200..300).contains(&id) => {
-                self.stream_call(id, arguments)
+                self.stream_call(id, receiver, arguments)
             }
             HostCapabilityKind::Custom(id) if id >= 100 => self.hash_call(id, arguments),
             _ => Err(VmError::NotCallable),
@@ -366,7 +366,7 @@ impl QuenchNodeHost {
         Ok(Value::String(value))
     }
 
-    fn stream_call(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
+    fn stream_call(&self, id: u16, receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
         let stream_id = id / 10 * 10;
         let operation = id % 10;
         match operation {
@@ -384,7 +384,7 @@ impl QuenchNodeHost {
                     "end" => state.end = Some(callback.clone()),
                     _ => {}
                 }
-                Ok(capability_function(HostCapabilityKind::Custom(stream_id)))
+                Ok(receiver.cloned().unwrap_or_else(|| capability_function(HostCapabilityKind::Custom(stream_id))))
             }
             2 => {
                 if self.streams.borrow().get(&stream_id).is_some_and(|state| state.transform.is_none()) {
