@@ -325,7 +325,10 @@ fn duration_properties(value: &Value) -> Result<Vec<(String, Value)>, VmError> {
         value if crate::conversion::is_symbol(value) => Err(crate::value::error::throw_type_error(
             "Duration must be an object",
         )),
-        Value::String(_) => Err(runtime_error("RangeError: invalid duration string")),
+        Value::String(text) => {
+            let parsed = crate::temporal::duration::parse_string(text)?;
+            duration_properties(&parsed)
+        }
         _ => Err(crate::value::error::throw_type_error(
             "Duration must be an object",
         )),

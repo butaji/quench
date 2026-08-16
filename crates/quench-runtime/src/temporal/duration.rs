@@ -330,6 +330,10 @@ fn from_string(text: &str) -> Result<Value, VmError> {
     construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
 }
 
+pub(crate) fn parse_string(text: &str) -> Result<Value, VmError> {
+    from_string(text)
+}
+
 fn parse_duration_section(
     section: &str,
     time: bool,
