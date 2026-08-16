@@ -61,32 +61,6 @@ fn can_construct_directly(values: &[f64; 10]) -> bool {
     !(positive && negative) && !exceeds_unit(values)
 }
 
-pub(super) fn normalize_for_construct(values: [f64; 10]) -> [f64; 10] {
-    if can_construct_directly(&values)
-        || mixed_signs(&values)
-        || values
-            .iter()
-            .any(|value| !value.is_finite() || value.fract() != 0.0)
-    {
-        values
-    } else {
-        balanced_fields(values)
-    }
-}
-
-fn mixed_signs(values: &[f64]) -> bool {
-    let Some(sign) = values
-        .iter()
-        .find(|value| **value != 0.0)
-        .map(|value| value.signum())
-    else {
-        return false;
-    };
-    values
-        .iter()
-        .any(|value| *value != 0.0 && value.signum() != sign)
-}
-
 fn exceeds_unit(values: &[f64; 10]) -> bool {
     values[4].abs() >= 24.0
         || values[5].abs() >= 60.0
