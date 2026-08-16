@@ -251,6 +251,7 @@ pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 pub struct ObjectData {
     pub(crate) properties: ObjectProperties,
     pub(crate) private_slots: PrivateSlots,
+    original_prototype: RefCell<Option<Value>>,
 }
 
 impl ObjectData {
@@ -265,7 +266,16 @@ impl ObjectData {
         Self {
             properties,
             private_slots,
+            original_prototype: RefCell::new(None),
         }
+    }
+
+    pub(crate) fn original_prototype(&self) -> Option<Value> {
+        self.original_prototype.borrow().clone()
+    }
+
+    pub(crate) fn set_original_prototype(&self, value: Value) {
+        self.original_prototype.replace(Some(value));
     }
 }
 

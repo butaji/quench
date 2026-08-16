@@ -150,8 +150,20 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
         "\0prototype"
     };
     let result = crate::builtins::set_property(target.clone(), internal_key, prototype);
+    if let Value::Object(data) = &result {
+        if data.original_prototype().is_none() {
+            data.set_original_prototype(current.clone());
+        }
+    }
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
+}
+
+pub fn original_prototype(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(data) => data.original_prototype(),
+        _ => None,
+    }
 }
 
 fn validate_set_prototype_target(target: &Value) -> Result<(), VmError> {
