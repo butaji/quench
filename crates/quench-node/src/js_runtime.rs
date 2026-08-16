@@ -9,7 +9,7 @@ use std::{
 
 use quench_runtime::{
     ops::{HostCapabilityKind, HostCapabilityRef, RealmId},
-    value::Value,
+    value::{ArrayBufferData, Uint8ArrayData, Value},
     vm::{Host, VmContext, VmError},
 };
 
@@ -3710,8 +3710,14 @@ fn buffer_is_encoding(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn node_buffer(bytes: &[u8]) -> Value {
+    let buffer = Rc::new(ArrayBufferData::new(bytes.len()));
+    buffer.bytes.borrow_mut().copy_from_slice(bytes);
+    node_buffer_view(buffer, 0, bytes.len())
+}
+
+fn node_buffer_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -> Value {
     let value = quench_runtime::execute::set_property(
-        quench_runtime::host_api::bytes(bytes),
+        Value::Uint8Array(Rc::new(Uint8ArrayData::new(buffer, offset, length))),
         "toString",
         capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString)),
     );
@@ -4304,7 +4310,14 @@ fn buffer_slice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         })
         .unwrap_or(bytes.len())
         .min(bytes.len());
-    Ok(node_buffer(&bytes[start.min(end)..end]))
+    let Some(Value::Uint8Array(source)) = receiver else {
+        return Ok(node_buffer(&bytes[start.min(end)..end]));
+    };
+    Ok(node_buffer_view(
+        source.buffer.clone(),
+        source.byte_offset + start.min(end),
+        end.saturating_sub(start.min(end)),
+    ))
 }
 
 fn buffer_copy(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
