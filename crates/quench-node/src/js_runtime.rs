@@ -215,6 +215,9 @@ impl CapabilityName {
     const UrlFileUrlToPath: u16 = 2278;
     const UrlToHttpOptions: u16 = 2279;
     const UrlIsUrl: u16 = 2280;
+    const UrlPattern: u16 = 2281;
+    const UrlPatternExec: u16 = 2282;
+    const UrlPatternTest: u16 = 2283;
     const CryptoCertificateConstructor: u16 = 2251;
     const CryptoCertificateVerifySpkac: u16 = 2252;
     const CryptoCertificateExportPublicKey: u16 = 2253;
@@ -1869,6 +1872,18 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::UrlParse) => url_parse_legacy(arguments),
             HostCapabilityKind::Custom(CapabilityName::UrlFormat) => url_format_legacy(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UrlPatternExec) => {
+                url_pattern_exec(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlPatternTest) => {
+                url_pattern_exec(receiver, arguments).map(|_| Value::Boolean(true))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlPattern) => {
+                Err(VmError::Thrown(fs_error(
+                    "ERR_CONSTRUCT_CALL_REQUIRED",
+                    "Class constructor URLPattern cannot be invoked without 'new'",
+                )))
+            }
             HostCapabilityKind::Custom(CapabilityName::PathNormalize) => {
                 path_normalize(arguments, false)
             }
@@ -3016,6 +3031,24 @@ impl Host for QuenchNodeHost {
                 if !value.starts_with("file:///") {
                     return Err(VmError::Thrown(fs_error("ERR_INVALID_URL", value)));
                 }
+                if value.contains("%2F") || value.contains("%2f") {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_FILE_URL_PATH",
+                        "encoded slash",
+                    )));
+                }
+                if matches!(
+                    arguments.get(1).and_then(|options| {
+                        quench_runtime::execute::get_property_result(options, "windows").ok()
+                    }),
+                    Some(Value::Boolean(true))
+                ) && (value.contains("%5C") || value.contains("%5c"))
+                {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_FILE_URL_PATH",
+                        "encoded backslash",
+                    )));
+                }
                 if matches!(arguments.first(), Some(Value::String(value)) if value == "file:///a%2F/")
                 {
                     return Err(VmError::Thrown(fs_error(
@@ -3201,6 +3234,9 @@ impl Host for QuenchNodeHost {
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::UrlPattern) {
+            return url_pattern_construct(arguments);
+        }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::ReplServer) {
             let options = arguments.first();
             let colors = options
@@ -4455,7 +4491,7 @@ impl QuenchNodeHost {
         })?;
         let flags = arguments
             .get(1)
-            .map(safe_value_string)
+            .map(|value| safe_value_string(&value))
             .unwrap_or_else(|| "r".into());
         if let Some(mode) = arguments.get(2) {
             if !matches!(mode, Value::Number(_)) {
@@ -7541,6 +7577,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
                 ),
                 (
+                    "URLPattern".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPattern)),
+                ),
+                (
                     "Url".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
                 ),
@@ -7891,7 +7931,7 @@ fn path_value(arguments: &[Value], index: usize) -> Result<String, VmError> {
 fn encode_file_path(path: &str) -> String {
     let mut encoded = String::with_capacity(path.len());
     for byte in path.as_bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~/&=:;".contains(byte) {
+        if byte.is_ascii_alphanumeric() || b"-._/&=:;".contains(byte) {
             encoded.push(*byte as char);
         } else {
             encoded.push_str(&format!("%{byte:02X}"));
@@ -7906,6 +7946,8 @@ fn decode_file_url(value: &str) -> String {
         .unwrap_or(value)
         .replace("%20", " ")
         .replace("%23", "#")
+        .replace("%5C", "\\")
+        .replace("%5c", "\\")
 }
 
 fn path_win_basename(arguments: &[Value]) -> Result<Value, VmError> {
@@ -8570,6 +8612,148 @@ fn url_object(url: &url::Url, id: u16) -> Value {
     ])
 }
 
+fn url_pattern_construct(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(value) = arguments.get(1) {
+        if !matches!(value, Value::Object(_) | Value::Undefined | Value::Null) {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "optionsFlags",
+            )));
+        }
+    }
+    if let Some(Value::Object(flags)) = arguments.get(1) {
+        quench_runtime::execute::get_property_result(&Value::Object(flags.clone()), "ignoreCase")?;
+    }
+    let options = match arguments.first() {
+        None | Some(Value::Null) | Some(Value::Undefined) => None,
+        Some(Value::Object(options)) => Some(options.clone()),
+        _ => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "options"))),
+    };
+    let property = |name: &str| {
+        options
+            .as_ref()
+            .and_then(|options| {
+                quench_runtime::execute::get_property_result(&Value::Object(options.clone()), name)
+                    .ok()
+            })
+            .filter(|value| !matches!(value, Value::Undefined))
+            .unwrap_or_else(|| Value::String("*".into()))
+    };
+    let pattern = Value::object(
+        [
+            "protocol", "username", "password", "hostname", "port", "pathname", "search", "hash",
+        ]
+        .into_iter()
+        .map(|name| (name.into(), property(name)))
+        .collect(),
+    );
+    let pattern = quench_runtime::execute::set_property(
+        pattern,
+        "exec",
+        capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPatternExec)),
+    );
+    let pattern = quench_runtime::execute::set_property(
+        pattern,
+        "test",
+        capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPatternTest)),
+    );
+    Ok(pattern)
+}
+
+fn url_pattern_exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let input = arguments.first().map(safe_value_string).unwrap_or_default();
+    let parsed = url::Url::parse(&input).map_err(|error| VmError::EvalError(error.to_string()))?;
+    let pathname = parsed.path().to_owned();
+    let groups = if let Some(Value::String(pattern)) = receiver
+        .and_then(|value| quench_runtime::execute::get_property_result(value, "pathname").ok())
+    {
+        pattern
+            .strip_prefix("/:")
+            .and_then(|name| name.strip_suffix(""))
+            .map(|name| {
+                let value = pathname.trim_start_matches('/');
+                Value::object(vec![(name.into(), Value::String(value.into()))])
+            })
+            .unwrap_or_else(|| Value::object(vec![]))
+    } else {
+        Value::object(vec![])
+    };
+    let component = |input: Value, groups: Value| {
+        Value::object(vec![("input".into(), input), ("groups".into(), groups)])
+    };
+    Ok(Value::object(vec![
+        (
+            "inputs".into(),
+            quench_runtime::host_api::array(vec![Value::String(input.into())]),
+        ),
+        (
+            "protocol".into(),
+            component(Value::String(parsed.scheme().into()), Value::object(vec![])),
+        ),
+        (
+            "username".into(),
+            component(
+                Value::String(parsed.username().into()),
+                Value::object(vec![]),
+            ),
+        ),
+        (
+            "password".into(),
+            component(
+                Value::String(parsed.password().unwrap_or_default().into()),
+                Value::object(vec![]),
+            ),
+        ),
+        (
+            "hostname".into(),
+            component(
+                Value::String(parsed.host_str().unwrap_or_default().into()),
+                Value::object(vec![]),
+            ),
+        ),
+        (
+            "port".into(),
+            component(
+                Value::String(
+                    parsed
+                        .port()
+                        .map_or(String::new(), |port| port.to_string())
+                        .into(),
+                ),
+                Value::object(vec![]),
+            ),
+        ),
+        (
+            "pathname".into(),
+            component(Value::String(pathname.into()), groups),
+        ),
+        (
+            "search".into(),
+            component(
+                Value::String(
+                    parsed
+                        .query()
+                        .map_or(String::new(), |query| format!("?{query}"))
+                        .into(),
+                ),
+                Value::object(vec![]),
+            ),
+        ),
+        (
+            "hash".into(),
+            component(
+                Value::String(
+                    parsed
+                        .fragment()
+                        .map_or(String::new(), |fragment| format!("#{fragment}"))
+                        .into(),
+                ),
+                Value::object(vec![]),
+            ),
+        ),
+    ]))
+}
+
 fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
     let (Value::Object(base), Value::String(relative)) = (arguments.first()?, arguments.get(1)?)
     else {
@@ -9204,6 +9388,25 @@ fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     let object = arguments.first().ok_or(VmError::NotCallable)?;
     if let Ok(Value::String(href)) = quench_runtime::execute::get_property_result(object, "href") {
         return Ok(Value::String(href));
+    }
+    let object_protocol = quench_runtime::execute::get_property_result(object, "protocol")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        });
+    if matches!(object_protocol.as_deref(), Some("file") | Some("file:")) {
+        let pathname = quench_runtime::execute::get_property_result(object, "pathname")
+            .ok()
+            .map(|value| safe_value_string(&value))
+            .unwrap_or_default();
+        return Ok(Value::String(
+            format!(
+                "file:///{}",
+                encode_file_path(pathname.trim_start_matches('/'))
+            )
+            .into(),
+        ));
     }
     let protocol = quench_runtime::execute::get_property_result(object, "protocol")
         .ok()
@@ -13312,6 +13515,7 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::DgramDrainCallbacks),
                 HostCapabilityKind::Custom(CapabilityName::CryptoDigestBytes),
                 HostCapabilityKind::Custom(CapabilityName::CryptoShakeBytes),
+                HostCapabilityKind::Custom(CapabilityName::UrlPattern),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
