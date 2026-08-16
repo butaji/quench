@@ -672,6 +672,7 @@ fn buffer_module() -> Value {
         ("from", HostCapabilityKind::Custom(30)),
         ("alloc", HostCapabilityKind::Custom(31)),
         ("isBuffer", HostCapabilityKind::Custom(32)),
+        ("byteLength", HostCapabilityKind::Custom(9)),
     ] {
         buffer = quench_runtime::execute::set_property(buffer, name, capability_function(kind));
     }
