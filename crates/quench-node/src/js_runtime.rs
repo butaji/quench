@@ -214,6 +214,7 @@ impl CapabilityName {
     const CryptoGenerateKeyPairSync: u16 = 2262;
     const CryptoGenerateKeySync: u16 = 2263;
     const CryptoKeyExport: u16 = 2264;
+    const CryptoDiffieHellman: u16 = 2265;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -1479,6 +1480,9 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoKeyExport) => {
                 Ok(node_buffer(&[0; 16]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoDiffieHellman) => {
+                Ok(node_buffer(&[0; 256]))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoHmacUpdate) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
@@ -6716,6 +6720,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "generateKeySync".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CryptoGenerateKeySync,
+                    )),
+                ),
+                (
+                    "diffieHellman".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoDiffieHellman,
                     )),
                 ),
                 (
