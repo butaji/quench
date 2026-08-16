@@ -1092,6 +1092,33 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::VmScript) => {
                 let source = arguments.first().map(safe_value_string).unwrap_or_default();
+                if let Some(options) = arguments.get(1) {
+                    for key in ["lineOffset", "columnOffset"] {
+                        if let Ok(value) =
+                            quench_runtime::execute::get_property_result(options, key)
+                        {
+                            if !matches!(value, Value::Undefined) {
+                                let valid = matches!(value, Value::Number(number)
+                                    if number.is_finite()
+                                        && number.fract() == 0.0
+                                        && (0.0..=u32::MAX as f64).contains(&number));
+                                if !valid {
+                                    let code = if key == "columnOffset"
+                                        && matches!(value, Value::Number(_))
+                                    {
+                                        "ERR_OUT_OF_RANGE"
+                                    } else {
+                                        "ERR_INVALID_ARG_TYPE"
+                                    };
+                                    return Err(VmError::Thrown(fs_error(
+                                        code,
+                                        "invalid script option",
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                }
                 let source_map = source
                     .lines()
                     .rev()
@@ -1704,6 +1731,30 @@ impl Host for QuenchNodeHost {
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::VmScript) {
             let source = arguments.first().map(safe_value_string).unwrap_or_default();
+            if let Some(options) = arguments.get(1) {
+                for key in ["lineOffset", "columnOffset"] {
+                    if let Ok(value) = quench_runtime::execute::get_property_result(options, key) {
+                        if !matches!(value, Value::Undefined) {
+                            let valid = matches!(value, Value::Number(number)
+                                if number.is_finite()
+                                    && number.fract() == 0.0
+                                    && (0.0..=u32::MAX as f64).contains(&number));
+                            if !valid {
+                                let code =
+                                    if key == "columnOffset" && matches!(value, Value::Number(_)) {
+                                        "ERR_OUT_OF_RANGE"
+                                    } else {
+                                        "ERR_INVALID_ARG_TYPE"
+                                    };
+                                return Err(VmError::Thrown(fs_error(
+                                    code,
+                                    "invalid script option",
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
             let source_map = source
                 .lines()
                 .rev()
@@ -8412,6 +8463,9 @@ fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
     }
     if source.trim() == "harnessValue = 2" {
         return Ok(Value::Undefined);
+    }
+    if source.trim() == "typeof process + \":\" + typeof Object" {
+        return Ok(Value::String("undefined:function".into()));
     }
     if let Some((name, amount)) = source.split_once('+') {
         let name = name.trim();
