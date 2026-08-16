@@ -185,11 +185,44 @@ fn date_time_field_valid(code: &str) -> bool {
 fn language_code_valid(code: &str) -> bool {
     let mut parts = code.split('-');
     let language = parts.next().unwrap_or("");
-    ((2..=3).contains(&language.len()) || (5..=8).contains(&language.len()))
-        && language.chars().all(|c| c.is_ascii_alphabetic())
-        && parts.all(|part| {
-            (2..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
-        })
+    if !((2..=3).contains(&language.len()) || (5..=8).contains(&language.len()))
+        || !language.chars().all(|c| c.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    let mut script_seen = false;
+    let mut region_seen = false;
+    let mut variants = Vec::new();
+    for part in parts {
+        let alpha = part.chars().all(|c| c.is_ascii_alphabetic());
+        let digit = part.chars().all(|c| c.is_ascii_digit());
+        if part.len() == 1 || !(2..=8).contains(&part.len()) {
+            return false;
+        }
+        if part.len() == 4 && alpha {
+            if script_seen {
+                return false;
+            }
+            script_seen = true;
+        } else if (part.len() == 2 && alpha) || (part.len() == 3 && digit) {
+            if region_seen {
+                return false;
+            }
+            region_seen = true;
+        } else if (5..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
+            || part.len() == 4
+                && part.chars().next().is_some_and(|c| c.is_ascii_digit())
+                && part[1..].chars().all(|c| c.is_ascii_alphanumeric())
+        {
+            if variants.iter().any(|variant| variant == &part) {
+                return false;
+            }
+            variants.push(part);
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
