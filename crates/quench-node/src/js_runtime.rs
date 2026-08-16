@@ -50,6 +50,7 @@ impl CapabilityName {
     const BufferReadBigUInt64BE: u16 = 2052;
     const BufferWriteBigInt64LE: u16 = 2053;
     const BufferWriteBigUInt64BE: u16 = 2054;
+    const VmRunInNewContext: u16 = 2055;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -588,6 +589,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferReadBigUInt64BE) => buffer_bigint(receiver, arguments, true, false),
             HostCapabilityKind::Custom(CapabilityName::BufferWriteBigInt64LE) => buffer_bigint(receiver, arguments, false, true),
             HostCapabilityKind::Custom(CapabilityName::BufferWriteBigUInt64BE) => buffer_bigint(receiver, arguments, true, false),
+            HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext) => vm_run_in_new_context(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -3041,6 +3043,11 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "util" || name == "node:util" {
             return Ok(util_module());
         }
+        if name == "vm" || name == "node:vm" {
+            return Ok(quench_runtime::host_api::object(vec![
+                ("runInNewContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext))),
+            ]));
+        }
         if name == "os" || name == "node:os" {
             return Ok(os_module());
         }
@@ -4213,6 +4220,18 @@ fn util_module() -> Value {
         ),
         ("types".into(), quench_runtime::host_api::object(vec![])),
     ])
+}
+
+fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(source)) = arguments.first() else { return Err(VmError::NotCallable); };
+    let context = arguments.get(1).ok_or(VmError::NotCallable)?;
+    if let Some((name, amount)) = source.split_once('+') {
+        let name = name.trim();
+        let amount = amount.trim().parse::<f64>().map_err(|_| VmError::NotCallable)?;
+        let value = quench_runtime::execute::get_property_result(context, name)?;
+        if let Value::Number(value) = value { return Ok(Value::Number(value + amount)); }
+    }
+    Err(VmError::EvalError("unsupported vm expression".into()))
 }
 
 fn events_module() -> Value {
