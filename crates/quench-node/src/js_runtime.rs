@@ -15,6 +15,7 @@ use quench_runtime::{
 
 thread_local! {
     static NODE_PROCESS_ENV: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_PATH_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
 }
 
@@ -2908,6 +2909,15 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(name)) = arguments.first() else {
         return Err(VmError::EvalError("require expects a module name".into()));
     };
+    if name == "path/win32" || name == "node:path/win32" {
+        let path = require_module(&[Value::String("path".into())])?;
+        return quench_runtime::execute::get_property_result(&path, "win32");
+    }
+    if name == "path" || name == "node:path" {
+        if let Some(path) = NODE_PATH_MODULE.with(|module| module.borrow().clone()) {
+            return Ok(path);
+        }
+    }
     if name != "node:path" && name != "path" {
         if name == "stream/iter" || name == "node:stream/iter" {
             return Ok(Value::object(vec![
@@ -3550,6 +3560,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         ),
     ]);
     path = quench_runtime::execute::set_property(path.clone(), "posix", path);
+    NODE_PATH_MODULE.with(|module| module.replace(Some(path.clone())));
     Ok(path)
 }
 
