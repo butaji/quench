@@ -128,6 +128,15 @@ impl CapabilityName {
     const FsLstatAsync: u16 = 1527;
     const FsStatsIsDirectory: u16 = 1528;
     const FsStatsIsFile: u16 = 1529;
+    const FsMkdirSync: u16 = 1530;
+    const FsRmSync: u16 = 1531;
+    const FsReaddirSync: u16 = 1532;
+    const FsReaddirAsync: u16 = 1533;
+    const FsDirentFile: u16 = 1534;
+    const FsDirentDirectory: u16 = 1535;
+    const FsDirentFileDirectory: u16 = 1536;
+    const FsDirentDirectoryFile: u16 = 1537;
+    const FsReaddirPromise: u16 = 1538;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -349,6 +358,23 @@ impl Host for QuenchNodeHost {
                 Ok(Value::Boolean(true))
             }
             HostCapabilityKind::Custom(CapabilityName::FsStatsIsFile) => Ok(Value::Boolean(false)),
+            HostCapabilityKind::Custom(CapabilityName::FsMkdirSync) => fs_mkdir(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsRmSync) => fs_rm(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsReaddirSync) => fs_readdir(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsReaddirAsync) => {
+                fs_readdir_async(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsReaddirPromise) => {
+                Ok(fulfilled(fs_readdir(arguments)?))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsDirentFile) => Ok(Value::Boolean(true)),
+            HostCapabilityKind::Custom(CapabilityName::FsDirentDirectory) => {
+                Ok(Value::Boolean(true))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsDirentFileDirectory)
+            | HostCapabilityKind::Custom(CapabilityName::FsDirentDirectoryFile) => {
+                Ok(Value::Boolean(false))
+            }
             HostCapabilityKind::Custom(id)
                 if (CapabilityName::CommonWrapperFirst
                     ..(CapabilityName::CommonWrapperFirst + 100))
@@ -1011,6 +1037,79 @@ fn fs_stat_async(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Undefined)
 }
 
+fn fs_mkdir(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    std::fs::create_dir_all(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    Ok(Value::Undefined)
+}
+
+fn fs_rm(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    if std::fs::metadata(path)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false)
+    {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    }
+    .map_err(|error| VmError::EvalError(error.to_string()))?;
+    Ok(Value::Undefined)
+}
+
+fn fs_readdir(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    let with_file_types = arguments
+        .get(1)
+        .and_then(|options| {
+            quench_runtime::execute::get_property_result(options, "withFileTypes").ok()
+        })
+        .is_some_and(|value| is_truthy(&value));
+    let entries = std::fs::read_dir(path)
+        .map_err(|error| VmError::EvalError(error.to_string()))?
+        .filter_map(Result::ok)
+        .map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !with_file_types {
+                return Value::String(name.into());
+            }
+            let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+            let (is_true, is_false) = if is_dir {
+                (
+                    CapabilityName::FsDirentDirectory,
+                    CapabilityName::FsDirentDirectoryFile,
+                )
+            } else {
+                (
+                    CapabilityName::FsDirentFileDirectory,
+                    CapabilityName::FsDirentFile,
+                )
+            };
+            Value::object(vec![
+                ("name".into(), Value::String(name.into())),
+                ("parentPath".into(), Value::String(path.to_string().into())),
+                (
+                    "isDirectory".into(),
+                    capability_function(HostCapabilityKind::Custom(is_true)),
+                ),
+                (
+                    "isFile".into(),
+                    capability_function(HostCapabilityKind::Custom(is_false)),
+                ),
+            ])
+        })
+        .collect();
+    Ok(quench_runtime::host_api::array(entries))
+}
+
+fn fs_readdir_async(arguments: &[Value]) -> Result<Value, VmError> {
+    let entries = fs_readdir(&arguments[..arguments.len().saturating_sub(1)])?;
+    if let Some(callback) = arguments.last() {
+        quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null, entries])?;
+    }
+    Ok(Value::Undefined)
+}
+
 fn fs_error(code: &str, message: &str) -> Value {
     quench_runtime::host_api::object(vec![
         ("code".into(), Value::String(code.into())),
@@ -1561,6 +1660,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsChmodSync)),
                 ),
                 (
+                    "mkdirSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdirSync)),
+                ),
+                (
+                    "rmSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsRmSync)),
+                ),
+                (
+                    "readdirSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsReaddirSync)),
+                ),
+                (
                     "access".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsAccessAsync)),
                 ),
@@ -1591,6 +1702,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadAsync)),
                 ),
                 (
+                    "readdir".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsReaddirAsync)),
+                ),
+                (
                     "open".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpenAsync)),
                 ),
@@ -1611,6 +1726,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                             "readFile".into(),
                             capability_function(HostCapabilityKind::Custom(
                                 CapabilityName::FsReadPromise,
+                            )),
+                        ),
+                        (
+                            "readdir".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::FsReaddirPromise,
                             )),
                         ),
                     ]),
