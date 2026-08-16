@@ -117,6 +117,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(32) => buffer_is_buffer(arguments),
             HostCapabilityKind::Custom(80) => util_format(arguments),
             HostCapabilityKind::Custom(81) => util_inspect(arguments),
+            HostCapabilityKind::Custom(90) => querystring_parse(arguments),
+            HostCapabilityKind::Custom(91) => querystring_escape(arguments),
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
             HostCapabilityKind::Custom(21) => next_tick(arguments),
             HostCapabilityKind::Custom(27 | 28 | 29) => timer_call(arguments),
@@ -563,6 +565,26 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "util" || name == "node:util" {
             return Ok(util_module());
         }
+        if name == "querystring" || name == "node:querystring" {
+            return Ok(quench_runtime::host_api::object(vec![
+                (
+                    "parse".into(),
+                    capability_function(HostCapabilityKind::Custom(90)),
+                ),
+                (
+                    "decode".into(),
+                    capability_function(HostCapabilityKind::Custom(90)),
+                ),
+                (
+                    "escape".into(),
+                    capability_function(HostCapabilityKind::Custom(91)),
+                ),
+                (
+                    "unescape".into(),
+                    capability_function(HostCapabilityKind::Custom(91)),
+                ),
+            ]));
+        }
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
     }
     let basename = capability_function(HostCapabilityKind::Custom(2));
@@ -757,6 +779,27 @@ fn safe_value_string(value: &Value) -> String {
         Value::Function(_) | Value::BoundFunction(_) => "[Function]".into(),
         _ => "[Value]".into(),
     }
+}
+
+fn querystring_parse(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(input)) = arguments.first() else {
+        return Ok(quench_runtime::host_api::object(vec![]));
+    };
+    let mut properties = Vec::new();
+    for pair in input.split('&').filter(|pair| !pair.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        properties.push((
+            key.replace('+', " "),
+            Value::String(value.replace('+', " ")),
+        ));
+    }
+    Ok(quench_runtime::host_api::object(properties))
+}
+
+fn querystring_escape(arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::String(
+        arguments.first().map(safe_value_string).unwrap_or_default(),
+    ))
 }
 
 fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
