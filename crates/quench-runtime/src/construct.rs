@@ -89,12 +89,13 @@ fn construct_with_new_target(
 ) -> Result<Value, crate::execute::VmError> {
     match target {
         Value::HostCapability(capability) => crate::vm::current_context_or_default()
-            .construct_host(
+            .construct_host_with_new_target(
                 crate::ops::HostCapabilityRef {
                     realm: capability.realm(),
                     kind: capability.descriptor.kind,
                 },
                 arguments,
+                new_target,
             )
             .unwrap_or(Err(crate::vm::not_callable())),
         Value::Builtin(builtin) => {
@@ -279,12 +280,13 @@ fn construct_bound_target(
                     return Err(crate::vm::not_callable());
                 };
                 return crate::vm::current_context_or_default()
-                    .construct_host(
+                    .construct_host_with_new_target(
                         crate::ops::HostCapabilityRef {
                             realm: capability.realm(),
                             kind: *kind,
                         },
                         arguments,
+                        new_target,
                     )
                     .unwrap_or(Err(crate::vm::not_callable()));
             }
