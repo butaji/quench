@@ -54,6 +54,7 @@ pub(crate) fn execute(
             "Temporal.PlainDate requires new",
         ))),
         crate::ops::Builtin::TemporalPlainDateFrom => Some(from(arguments.first())),
+        crate::ops::Builtin::TemporalPlainDateCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalPlainDateWithCalendar => {
             Some(with_calendar(receiver, arguments.first()))
         }
@@ -83,6 +84,26 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateMonthGetter => Some(month(receiver)),
         _ => None,
     }
+}
+
+fn compare(arguments: &[Value]) -> Result<Value, VmError> {
+    let left = from(arguments.first())?;
+    let right = from(arguments.get(1))?;
+    let (Value::Object(left), Value::Object(right)) = (left, right) else {
+        return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
+    };
+    let left_fields = date_fields(&left);
+    let right_fields = date_fields(&right);
+    let ordering = left_fields.cmp(&right_fields);
+    Ok(Value::Number(match ordering {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    }))
+}
+
+fn date_fields(object: &crate::value::ObjectData) -> [i64; 3] {
+    ["year", "month", "day"].map(|name| number_field(field(object, name)) as i64)
 }
 
 fn day_of_week(receiver: Option<&Value>) -> Result<Value, VmError> {
