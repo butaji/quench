@@ -248,7 +248,7 @@ pub(crate) fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmErro
             resolve_locale_list(&crate::construct::to_object(locales)?)
         }
         Value::String(_) => Ok(vec![canonicalize(&crate::conversion::to_string(locales)?)?]),
-        Value::Array(_) | Value::Object(_) => resolve_locale_list(locales),
+        locales if crate::value::is_object(locales) => resolve_locale_list(locales),
         Value::Null => Err(runtime_error("TypeError: invalid locales")),
         Value::Undefined => Ok(vec![default_locale()]),
         _ => resolve_locale_list(&crate::construct::to_object(locales)?),
@@ -260,7 +260,13 @@ fn resolve_locale_list(locales: &Value) -> Result<Vec<String>, VmError> {
     let length = locale_list_length(&length)?;
     let mut out = Vec::new();
     for index in 0..length {
+        if !crate::with_scope::has_property(locales, &index.to_string())? {
+            continue;
+        }
         let value = crate::execute::get_property_result(locales, &index.to_string())?;
+        if matches!(value, Value::Undefined) {
+            continue;
+        }
         out.push(canonicalize(&crate::conversion::to_string(&value)?)?);
     }
     Ok(dedupe(out))
