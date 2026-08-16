@@ -223,6 +223,7 @@ pub enum Builtin {
     IntlDateTimeFormatFormat, IntlDateTimeFormatFormatToParts,
     IntlDateTimeFormatFormatRange, IntlDateTimeFormatFormatRangeToParts,
     IntlDateTimeFormatResolvedOptions, IntlCollator,
+    IntlCollatorSupportedLocalesOf,
     IntlCollatorCompare, IntlCollatorResolvedOptions,
     IntlListFormat, IntlListFormatSupportedLocalesOf,
     IntlListFormatFormat, IntlListFormatFormatToParts,
