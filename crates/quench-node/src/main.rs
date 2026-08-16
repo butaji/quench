@@ -69,12 +69,59 @@ fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
         Some("-e") | Some("--eval") => {
             QuenchRuntime.execute(args.get(1).map_or("", String::as_str), None, &host)
         }
+        Some("--stage") => {
+            let stage = args.get(1).map(String::as_str).unwrap_or("0");
+            run_quench_directory(&PathBuf::from(format!("tests/node-compat/stage-{stage}")))
+        }
+        Some("--test-dir") => {
+            let dir = PathBuf::from(
+                args.get(1)
+                    .cloned()
+                    .unwrap_or_else(|| "tests/node-compat".into()),
+            );
+            run_quench_directory(&dir)
+        }
         Some(path) => {
             let path = host.resolve_module(path, None)?;
             let source = host.load_module(&path)?;
             QuenchRuntime.execute(&source, Some(path.as_path()), &host)
         }
         None => QuenchRuntime.execute("", None, &host),
+    }
+}
+
+fn run_quench_directory(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    if dir.is_file() {
+        let source = fs::read_to_string(dir)?;
+        return QuenchRuntime.execute(&source, Some(dir), &FilesystemNodeHost);
+    }
+    let mut failed = 0;
+    let mut total = 0;
+    for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
+        if entry.file_type().is_file()
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "js" || extension == "mjs")
+        {
+            total += 1;
+            let source = fs::read_to_string(entry.path())?;
+            match QuenchRuntime.execute(&source, Some(entry.path()), &FilesystemNodeHost) {
+                Ok(()) => println!("ok {}", entry.path().display()),
+                Err(error) => {
+                    failed += 1;
+                    eprintln!("not ok {}: {error:?}", entry.path().display());
+                }
+            }
+        }
+    }
+    println!("{total} tests, {} passed, {failed} failed", total - failed);
+    if total == 0 {
+        Err("Quench harness found no JavaScript tests".into())
+    } else if failed == 0 {
+        Ok(())
+    } else {
+        Err("Quench harness failures".into())
     }
 }
 fn cli_args() -> Vec<String> {
