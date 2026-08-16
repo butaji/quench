@@ -81,6 +81,7 @@ const fn intl_name_group_a_tail(b: Builtin) -> Option<&'static str> {
         Builtin::IntlDateTimeFormatResolvedOptions => {
             Some("Intl.DateTimeFormat.prototype.resolvedOptions")
         }
+        Builtin::IntlCollatorResolvedOptions => Some("Intl.Collator.prototype.resolvedOptions"),
         _ => None,
     }
 }
@@ -130,7 +131,6 @@ const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
         | Builtin::IntlDateTimeFormatFormat
         | Builtin::IntlDateTimeFormatFormatToParts
         | Builtin::IntlDateTimeFormatResolvedOptions
-        | Builtin::IntlCollatorCompare
         | Builtin::IntlCollatorResolvedOptions
         | Builtin::IntlSegmenterSegmentsIterator
         | Builtin::IntlSegmenterResolvedOptions
