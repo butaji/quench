@@ -44,7 +44,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 fn parse_options(value: Option<&Value>) -> Result<(String, String), VmError> {
     let mut style = "long".to_string();
     let mut list_type = "conjunction".to_string();
-    let Some(options) = value else {
+    let Some(options) = value.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok((style, list_type));
     };
     if !crate::value::is_object(options) {
