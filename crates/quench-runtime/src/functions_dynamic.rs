@@ -67,6 +67,11 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     {
         return Err(syntax_error("Duplicate function parameter name"));
     }
+    if matches!(strictness, crate::ops::FunctionStrictness::Strict)
+        && has_strict_parameter_name(&function.params)
+    {
+        return Err(syntax_error("Invalid strict function parameter"));
+    }
     let (parameters, count) = crate::functions::function_parameters(function)
         .map_err(|_| syntax_error("Invalid function parameters"))?;
     if matches!(strictness, crate::ops::FunctionStrictness::Strict) && contains_with_statement(body)
@@ -114,6 +119,20 @@ fn has_duplicate_parameter_names(parameters: &oxc::ast::ast::FormalParameters<'_
                 .flat_map(|rest| crate::binding_patterns::names(&rest.argument)),
         );
     names.into_iter().any(|name| !seen.insert(name))
+}
+
+fn has_strict_parameter_name(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    parameters
+        .items
+        .iter()
+        .flat_map(|item| crate::binding_patterns::names(&item.pattern))
+        .chain(
+            parameters
+                .rest
+                .iter()
+                .flat_map(|rest| crate::binding_patterns::names(&rest.argument)),
+        )
+        .any(|name| matches!(name.as_str(), "eval" | "arguments"))
 }
 
 fn contains_with_statement(body: &oxc::ast::ast::FunctionBody<'_>) -> bool {
