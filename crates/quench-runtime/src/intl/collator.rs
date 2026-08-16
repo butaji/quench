@@ -69,10 +69,6 @@ fn collator_object(locale: String, options: CollatorOptions) -> Value {
             crate::vm::realm_intrinsic(crate::ops::Builtin::IntlCollatorPrototype),
         ),
         (
-            "compare".to_string(),
-            Value::Builtin(crate::ops::Builtin::IntlCollatorCompare),
-        ),
-        (
             "resolvedOptions".to_string(),
             Value::Builtin(crate::ops::Builtin::IntlCollatorResolvedOptions),
         ),
@@ -234,6 +230,18 @@ pub(crate) fn prototype_method(
     let slots = receiver_slots(receiver)?;
     let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
     match builtin {
+        crate::ops::Builtin::IntlCollatorCompareGetter => {
+            let receiver =
+                receiver.ok_or_else(|| runtime_error("TypeError: not an Intl object"))?;
+            if !matches!(receiver, Value::Object(properties) if properties.iter().any(|(name, _)| name == SLOT))
+            {
+                return Err(runtime_error("TypeError: not an Intl object"));
+            }
+            Ok(crate::vm::bind_receiver_property(
+                Value::Builtin(crate::ops::Builtin::IntlCollatorCompare),
+                receiver,
+            ))
+        }
         crate::ops::Builtin::IntlCollatorCompare => {
             let left = to_string_value(arguments.first().unwrap_or(&Value::Undefined));
             let right = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
@@ -315,6 +323,7 @@ pub(crate) fn dispatch(
     match builtin {
         crate::ops::Builtin::IntlCollator => Some(construct(arguments)),
         crate::ops::Builtin::IntlCollatorCompare
+        | crate::ops::Builtin::IntlCollatorCompareGetter
         | crate::ops::Builtin::IntlCollatorResolvedOptions => {
             Some(prototype_method(builtin, arguments, receiver))
         }

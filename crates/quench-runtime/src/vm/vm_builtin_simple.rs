@@ -196,8 +196,11 @@ fn bigint_to_locale_string(
         ));
     };
     let locales = crate::intl::resolve_locales(arguments)?;
+    crate::intl::number::validate_options(arguments.get(1))?;
     Ok(Value::String(crate::intl::tolocale::format_bigint(
-        &value, &locales,
+        &value,
+        &locales,
+        arguments.get(1),
     )))
 }
 

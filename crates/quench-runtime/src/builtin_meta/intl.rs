@@ -81,6 +81,9 @@ const fn intl_name_group_a_tail(b: Builtin) -> Option<&'static str> {
         Builtin::IntlDateTimeFormatResolvedOptions => {
             Some("Intl.DateTimeFormat.prototype.resolvedOptions")
         }
+        Builtin::IntlDateTimeFormatFormatGetter => Some("get format"),
+        Builtin::IntlCollatorResolvedOptions => Some("Intl.Collator.prototype.resolvedOptions"),
+        Builtin::IntlCollatorCompareGetter => Some("get compare"),
         _ => None,
     }
 }
@@ -128,16 +131,16 @@ const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
         Builtin::IntlNumberFormatResolvedOptions
         | Builtin::IntlPluralRulesResolvedOptions
         | Builtin::IntlDateTimeFormatFormat
-        | Builtin::IntlDateTimeFormatFormatToParts
         | Builtin::IntlDateTimeFormatResolvedOptions
-        | Builtin::IntlCollatorCompare
         | Builtin::IntlCollatorResolvedOptions
+        | Builtin::IntlCollatorCompareGetter
         | Builtin::IntlSegmenterSegmentsIterator
         | Builtin::IntlSegmenterResolvedOptions
         | Builtin::IntlDisplayNamesOf
         | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
         Builtin::IntlSegmenterSegment | Builtin::IntlSegmenterSegmentsContaining => Some(1.0),
         Builtin::IntlNumberFormatFormatToParts => Some(1.0),
+        Builtin::IntlDateTimeFormatFormatToParts => Some(1.0),
         Builtin::IntlPluralRulesSelect => Some(1.0),
         Builtin::IntlNumberFormatFormatRange
         | Builtin::IntlNumberFormatFormatRangeToParts
@@ -205,11 +208,13 @@ const fn intl_short_name_formats(b: Builtin) -> Option<&'static str> {
         Builtin::IntlPluralRulesSelect => Some("select"),
         Builtin::IntlPluralRulesResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlDateTimeFormatFormat => Some("format"),
+        Builtin::IntlDateTimeFormatFormatGetter => Some("get format"),
         Builtin::IntlDateTimeFormatFormatToParts => Some("formatToParts"),
         Builtin::IntlDateTimeFormatFormatRange => Some("formatRange"),
         Builtin::IntlDateTimeFormatFormatRangeToParts => Some("formatRangeToParts"),
         Builtin::IntlDateTimeFormatResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlCollatorCompare => Some("compare"),
+        Builtin::IntlCollatorCompareGetter => Some("get compare"),
         Builtin::IntlCollatorResolvedOptions => Some("resolvedOptions"),
         Builtin::IntlListFormatFormat => Some("format"),
         Builtin::IntlListFormatFormatToParts => Some("formatToParts"),
