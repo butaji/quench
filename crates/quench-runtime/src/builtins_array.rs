@@ -218,6 +218,23 @@ fn validate_array_length_descriptor(
     Ok(())
 }
 
+fn validate_array_index_length(target: &Value, key: &str) -> Result<(), crate::execute::VmError> {
+    let Value::Array(values) = target else {
+        return Ok(());
+    };
+    let Some(index) = crate::arrays::array_index(key) else {
+        return Ok(());
+    };
+    if index as usize >= values.logical_len()
+        && array_descriptor_flag(values, "length", "writable") == Some(false)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot extend array with non-writable length",
+        ));
+    }
+    Ok(())
+}
+
 fn prepare_array_length_definition(
     target: &Value,
     key: &str,

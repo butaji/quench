@@ -615,6 +615,7 @@ pub(crate) fn define_own_property(
     }
     validate_redefinition(&current, descriptor)?;
     validate_array_length_descriptor(target, key, descriptor)?;
+    validate_array_index_length(target, key)?;
     let descriptor = complete_descriptor(descriptor, &current);
     if let Some(result) = prepare_array_length_definition(target, key, &descriptor)? {
         return Ok(result);
