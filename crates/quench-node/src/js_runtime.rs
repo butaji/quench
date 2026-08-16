@@ -24,6 +24,7 @@ const CAP_CREATE_HASH: u16 = 8;
 const CAP_BUFFER: u16 = 10;
 const CAP_URL: u16 = 40;
 const CAP_EVENT_EMITTER: u16 = 70;
+const CAP_QUEUE_MICROTASK: u16 = 22;
 
 pub(crate) struct FilesystemNodeHost {
     resolver: Resolver,
@@ -155,6 +156,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CAP_CWD) => current_directory(arguments),
             HostCapabilityKind::Custom(CAP_READ_FILE_SYNC) => read_file_sync(arguments),
             HostCapabilityKind::Custom(CAP_CREATE_HASH) => self.create_hash(arguments),
+            HostCapabilityKind::Custom(CAP_QUEUE_MICROTASK) => next_tick(arguments),
             HostCapabilityKind::Custom(9) => buffer_byte_length(arguments),
             HostCapabilityKind::Custom(30) => buffer_from(arguments),
             HostCapabilityKind::Custom(31) => buffer_alloc(arguments),
@@ -1238,6 +1240,7 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CAP_CWD),
                 HostCapabilityKind::Custom(CAP_READ_FILE_SYNC),
                 HostCapabilityKind::Custom(CAP_CREATE_HASH),
+                HostCapabilityKind::Custom(CAP_QUEUE_MICROTASK),
                 HostCapabilityKind::Custom(9),
                 HostCapabilityKind::Custom(CAP_BUFFER),
             ],
@@ -1284,6 +1287,10 @@ impl JsRuntime for QuenchRuntime {
         .with_host_value(
             "clearImmediate",
             capability_function(HostCapabilityKind::Custom(29)),
+        )
+        .with_host_value(
+            "queueMicrotask",
+            capability_function(HostCapabilityKind::Custom(CAP_QUEUE_MICROTASK)),
         )
         .with_host_value("Buffer", buffer_module());
         quench_runtime::execute::execute_with_context(program.ops(), &context)
