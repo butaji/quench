@@ -226,6 +226,7 @@ pub enum Builtin {
     IntlListFormat, IntlListFormatSupportedLocalesOf,
     IntlListFormatFormat, IntlListFormatFormatToParts,
     IntlListFormatResolvedOptions, IntlRelativeTimeFormat,
+    IntlRelativeTimeFormatSupportedLocalesOf,
     IntlRelativeTimeFormatFormat, IntlRelativeTimeFormatFormatToParts,
     IntlRelativeTimeFormatResolvedOptions, IntlSegmenter,
     IntlSegmenterSupportedLocalesOf, IntlSegmenterSegment,
