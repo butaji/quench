@@ -228,10 +228,12 @@ impl DateTimeOptions {
             }
             "numberingSystem" => {
                 let value = text.to_ascii_lowercase();
-                if !super::supported_values::NUMBERING_SYSTEMS.contains(&value.as_str()) {
+                if !super::supported_values::valid_numbering_system_syntax(&value) {
                     return Err(runtime_error("RangeError: invalid numberingSystem"));
                 }
-                self.numbering_system = value;
+                if super::supported_values::NUMBERING_SYSTEMS.contains(&value.as_str()) {
+                    self.numbering_system = value;
+                }
             }
             _ => {}
         }
