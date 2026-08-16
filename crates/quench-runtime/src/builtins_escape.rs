@@ -1,20 +1,20 @@
-pub(crate) fn escape(value: Option<&Value>) -> Value {
-    let source = value.map_or_else(|| value_to_string(&Value::Undefined), value_to_string);
+pub(crate) fn escape(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let source = match value {
+        Some(value) => crate::conversion::to_string(value)?,
+        None => "undefined".to_string(),
+    };
     let mut result = String::new();
-    for character in source.chars() {
-        if character.is_ascii_alphanumeric() || "@*_+-./".contains(character) {
+    for unit in source.encode_utf16() {
+        let character = unit as u8 as char;
+        if unit <= 0x7F && (character.is_ascii_alphanumeric() || "@*_+-./".contains(character)) {
             result.push(character);
+        } else if unit <= 0xFF {
+            result.push_str(&format!("%{unit:02X}"));
         } else {
-            let code = character as u32;
-            let escaped = if code <= 0xFF {
-                format!("%{code:02X}")
-            } else {
-                format!("%u{code:04X}")
-            };
-            result.push_str(&escaped);
+            result.push_str(&format!("%u{unit:04X}"));
         }
     }
-    Value::String(result)
+    Ok(Value::String(result))
 }
 
 pub(crate) fn unescape(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
