@@ -3996,6 +3996,7 @@ fn process_module() -> Value {
             Value::String(std::env::args().next().unwrap_or_default()),
         ),
         ("argv0".into(), Value::String("node".into())),
+        ("Symbol.toStringTag".into(), Value::String("process".into())),
         ("pid".into(), Value::Number(std::process::id() as f64)),
         (
             "platform".into(),
