@@ -385,9 +385,7 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             }
             "language" => {
                 let language = option_value(&text, key)?;
-                if !(2..=8).contains(&language.len())
-                    || !language.chars().all(|c| c.is_ascii_alphabetic())
-                {
+                if !valid_language_subtag(&language) {
                     return Err(runtime_error("RangeError: invalid language"));
                 }
                 locale.language = super::language_alias(language.to_ascii_lowercase());
