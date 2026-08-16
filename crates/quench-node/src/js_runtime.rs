@@ -195,6 +195,8 @@ impl CapabilityName {
     const FsUtimesAsync: u16 = 2225;
     const FsLutimesAsync: u16 = 2226;
     const UrlPathToFileUrl: u16 = 2227;
+    const TmpdirRefresh: u16 = 2228;
+    const TmpdirFileUrl: u16 = 2229;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
     const TextEncoderConstructor: u16 = 2060;
@@ -1388,6 +1390,18 @@ impl Host for QuenchNodeHost {
                 Ok(quench_runtime::host_api::object(vec![(
                     "href".into(),
                     Value::String(format!("file://{path}")),
+                )]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::TmpdirRefresh) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::TmpdirFileUrl) => {
+                let name = arguments.first().map(safe_value_string).unwrap_or_default();
+                Ok(quench_runtime::host_api::object(vec![(
+                    "href".into(),
+                    Value::String(format!(
+                        "file://{}/{}",
+                        std::env::temp_dir().display(),
+                        name
+                    )),
                 )]))
             }
             HostCapabilityKind::Custom(
@@ -5060,6 +5074,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             (
                 "path".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::FixturePath)),
+            ),
+        ]));
+    }
+    if name.contains("common/tmpdir") {
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "refresh".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::TmpdirRefresh)),
+            ),
+            (
+                "fileURL".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::TmpdirFileUrl)),
             ),
         ]));
     }
