@@ -100,7 +100,10 @@ fn sanitize_locale(locale: &str) -> String {
     while index + 1 < parts.len() {
         let key = parts[index];
         let value = parts[index + 1];
-        if matches!(key, "ca" | "hc") || (key == "nu" && NUMBERING_SYSTEMS.contains(&value)) {
+        if (key == "ca" && available_calendar(value))
+            || key == "hc"
+            || (key == "nu" && NUMBERING_SYSTEMS.contains(&value))
+        {
             kept.extend([key, value]);
         }
         index += 2;
@@ -110,6 +113,12 @@ fn sanitize_locale(locale: &str) -> String {
     } else {
         format!("{base}-u-{}", kept.join("-"))
     }
+}
+
+fn available_calendar(calendar: &str) -> bool {
+    super::supported_values::supported_calendars()
+        .iter()
+        .any(|value| matches!(value, Value::String(value) if value == calendar))
 }
 
 impl DateTimeOptions {
@@ -198,7 +207,12 @@ impl DateTimeOptions {
             }
             "calendar" => {
                 let value = super::locale::calendar_option(&text)?;
-                self.calendar = super::locale::calendar_alias(&value);
+                let value = super::locale::calendar_alias(&value);
+                self.calendar = if available_calendar(&value) {
+                    value
+                } else {
+                    "gregory".to_string()
+                };
             }
             "numberingSystem" => {
                 let value = text.to_ascii_lowercase();
