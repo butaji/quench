@@ -12,8 +12,11 @@ pub(crate) fn construct_with_legacy_receiver(
     let Some(receiver) = receiver else {
         return construct(arguments);
     };
+    if !crate::value::is_object(receiver) {
+        return construct(arguments);
+    }
     let receiver_realm = legacy_receiver_realm(receiver, prototype)?;
-    let initialized = if intl_slots(Some(receiver)).is_ok() {
+    let initialized = if receiver_realm.is_some() && intl_slots(Some(receiver)).is_ok() {
         receiver.clone()
     } else {
         let Some(realm) = receiver_realm else {
