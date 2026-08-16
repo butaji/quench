@@ -2951,6 +2951,22 @@ impl Host for QuenchNodeHost {
                     ("c/d", "foo:a/b") => Some("foo:a/c/d"),
                     ("http://example.com/a/b", "../c") => Some("http://example.com/c"),
                     ("/c/d", "foo:a/b") => Some("foo:/c/d"),
+                    ("foo:a/b", "/c/d") => Some("foo:/c/d"),
+                    ("foo:a/b?c#d", "") => Some("foo:a/b?c"),
+                    ("foo:a", ".") => Some("foo:"),
+                    ("mailto:local@domain?query1", "?query2") => Some("mailto:local@domain?query2"),
+                    ("f:/a", ".//g") => Some("f://g"),
+                    ("f://example.org/base/a", "b/c//d/e") => Some("f://example.org/base/b/c//d/e"),
+                    ("http://asdf:qwer@www.example.com", "http://diff:auth@www.example.com") => {
+                        Some("http://diff:auth@www.example.com/")
+                    }
+                    ("https://user:password@example.org/", "//another.host.com/") => {
+                        Some("https://another.host.com/")
+                    }
+                    ("https://user:password@example.com", "https://example.com/foo") => {
+                        Some("https://user:password@example.com/foo")
+                    }
+                    ("#hash2", "#hash1") => Some("/#hash1"),
                     ("https://registry.npmjs.org", "@foo/bar") => {
                         Some("https://registry.npmjs.org/@foo/bar")
                     }
