@@ -44,7 +44,7 @@ impl CapabilityRequest {
             Capability::Write => OperationKind::Write,
             Capability::Open => OperationKind::Open,
             Capability::Close => OperationKind::Close,
-            Capability::Spawn => OperationKind::Wait,
+            Capability::Spawn => OperationKind::Spawn,
             Capability::Wait => OperationKind::Wait,
             Capability::Sleep => OperationKind::Sleep,
             Capability::Resolve => OperationKind::Resolve,
