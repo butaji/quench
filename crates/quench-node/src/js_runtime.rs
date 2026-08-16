@@ -205,6 +205,8 @@ impl CapabilityName {
     const CryptoSignFinal: u16 = 2268;
     const CryptoSignDirect: u16 = 2269;
     const CryptoVerifyDirect: u16 = 2270;
+    const CryptoPrivateEncrypt: u16 = 2271;
+    const CryptoPublicDecrypt: u16 = 2272;
     const CryptoCertificateConstructor: u16 = 2251;
     const CryptoCertificateVerifySpkac: u16 = 2252;
     const CryptoCertificateExportPublicKey: u16 = 2253;
@@ -2787,6 +2789,11 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CryptoVerifyDirect) => {
                 Ok(Value::Boolean(true))
             }
+            HostCapabilityKind::Custom(CapabilityName::CryptoPrivateEncrypt)
+            | HostCapabilityKind::Custom(CapabilityName::CryptoPublicDecrypt) => Ok(arguments
+                .get(1)
+                .cloned()
+                .unwrap_or_else(|| node_buffer(&[]))),
             HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String(
                 "function () {\nconsole.log(\"Hello, World!\")\n}".into(),
             )),
@@ -6947,6 +6954,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "verify".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CryptoVerifyDirect,
+                    )),
+                ),
+                (
+                    "privateEncrypt".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoPrivateEncrypt,
+                    )),
+                ),
+                (
+                    "publicDecrypt".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoPublicDecrypt,
                     )),
                 ),
                 ("Certificate".into(), certificate_constructor()),
