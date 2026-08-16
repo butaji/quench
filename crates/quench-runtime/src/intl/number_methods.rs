@@ -153,11 +153,6 @@ impl NumberOptions {
                 "Invalid number range",
             ));
         }
-        if start > end {
-            return Err(crate::value::error::throw_range_error(
-                "Number range start is greater than end",
-            ));
-        }
         Ok((start, end))
     }
 
@@ -199,11 +194,6 @@ impl NumberOptions {
         };
         if !is_decimal_integer(start) || !is_decimal_integer(end) {
             return None;
-        }
-        if decimal_integer_greater(start, end) {
-            return Some(Err(crate::value::error::throw_range_error(
-                "Number range start is greater than end",
-            )));
         }
         let first = if self.locale.starts_with("pt") {
             group_integer_locale(start, "pt")
