@@ -3,7 +3,10 @@
 use crate::{execute::VmError, value::Value};
 
 use icu_collator::{
-    preferences::CollationType, provider::CollationTailoringV1, CollatorPreferences,
+    options::{AlternateHandling, CaseLevel, CollatorOptions as IcuOptions, Strength},
+    preferences::{CollationCaseFirst, CollationNumericOrdering, CollationType},
+    provider::CollationTailoringV1,
+    Collator, CollatorPreferences,
 };
 use icu_provider::{
     marker::DataMarkerExt, DataIdentifierBorrowed, DataMarkerAttributes, DataProvider, DataRequest,
@@ -363,12 +366,19 @@ pub(crate) fn prototype_method(
             let ignore_punctuation = slot_bool(&slots, "ignorePunctuation").unwrap_or(false);
             let sensitivity =
                 slot_string(&slots, "sensitivity").unwrap_or_else(|| "variant".to_string());
-            Ok(Value::Number(compare(
+            let usage = slot_string(&slots, "usage").unwrap_or_else(|| "sort".to_string());
+            let numeric = slot_bool(&slots, "numeric").unwrap_or(false);
+            let case_first =
+                slot_string(&slots, "caseFirst").unwrap_or_else(|| "false".to_string());
+            Ok(Value::Number(compare_with_options(
                 &left,
                 &right,
                 &locale,
                 ignore_punctuation,
                 &sensitivity,
+                &usage,
+                numeric,
+                &case_first,
             )))
         }
         crate::ops::Builtin::IntlCollatorResolvedOptions => Ok(resolved_options(&slots, locale)),
@@ -419,7 +429,44 @@ pub(crate) fn compare(
     ignore_punctuation: bool,
     sensitivity: &str,
 ) -> f64 {
-    let _ = locale;
+    compare_with_options(
+        left,
+        right,
+        locale,
+        ignore_punctuation,
+        sensitivity,
+        "sort",
+        false,
+        "false",
+    )
+}
+
+fn compare_with_options(
+    left: &str,
+    right: &str,
+    locale: &str,
+    ignore_punctuation: bool,
+    sensitivity: &str,
+    usage: &str,
+    numeric: bool,
+    case_first: &str,
+) -> f64 {
+    if let Some(ordering) = icu_ordering(
+        left,
+        right,
+        locale,
+        ignore_punctuation,
+        sensitivity,
+        usage,
+        numeric,
+        case_first,
+    ) {
+        return ordering;
+    }
+    lexical_compare(left, right, ignore_punctuation, sensitivity)
+}
+
+fn lexical_compare(left: &str, right: &str, ignore_punctuation: bool, sensitivity: &str) -> f64 {
     let left = sensitivity_text(left, ignore_punctuation, sensitivity);
     let right = sensitivity_text(right, ignore_punctuation, sensitivity);
     match left.cmp(&right) {
@@ -427,6 +474,63 @@ pub(crate) fn compare(
         std::cmp::Ordering::Equal => 0.0,
         std::cmp::Ordering::Greater => 1.0,
     }
+}
+
+fn icu_ordering(
+    left: &str,
+    right: &str,
+    locale: &str,
+    ignore_punctuation: bool,
+    sensitivity: &str,
+    usage: &str,
+    numeric: bool,
+    case_first: &str,
+) -> Option<f64> {
+    let locale = icu_locale_core::Locale::try_from_str(locale).ok()?;
+    let preferences = icu_preferences(&locale, usage, numeric, case_first);
+    let options = icu_options(ignore_punctuation, sensitivity);
+    let collator = Collator::try_new(preferences, options).ok()?;
+    Some(match collator.compare(left, right) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    })
+}
+
+fn icu_preferences(
+    locale: &icu_locale_core::Locale,
+    usage: &str,
+    numeric: bool,
+    case_first: &str,
+) -> CollatorPreferences {
+    let mut preferences = CollatorPreferences::default();
+    preferences.locale_preferences = (&*locale).into();
+    preferences.numeric_ordering = Some(if numeric {
+        CollationNumericOrdering::True
+    } else {
+        CollationNumericOrdering::False
+    });
+    preferences.case_first = Some(match case_first {
+        "upper" => CollationCaseFirst::Upper,
+        "lower" => CollationCaseFirst::Lower,
+        _ => CollationCaseFirst::False,
+    });
+    if usage == "search" {
+        preferences.collation_type = Some(CollationType::Search);
+    }
+    preferences
+}
+
+fn icu_options(ignore_punctuation: bool, sensitivity: &str) -> IcuOptions {
+    let mut options = IcuOptions::default();
+    options.strength = Some(match sensitivity {
+        "base" | "case" => Strength::Primary,
+        "accent" => Strength::Secondary,
+        _ => Strength::Tertiary,
+    });
+    options.case_level = (sensitivity == "case").then_some(CaseLevel::On);
+    options.alternate_handling = ignore_punctuation.then_some(AlternateHandling::Shifted);
+    options
 }
 
 fn sensitivity_text(value: &str, ignore_punctuation: bool, sensitivity: &str) -> String {
