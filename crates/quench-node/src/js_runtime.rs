@@ -2987,6 +2987,10 @@ fn fs_access(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn fs_access_sync(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(mode) = arguments.get(1) {
+        let Value::Number(mode) = mode else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "mode must be a number"))); };
+        if !mode.is_finite() || *mode < 0.0 || *mode > 7.0 || mode.fract() != 0.0 { return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "mode is out of range"))); }
+    }
     if !matches!(fs_access(arguments)?, Value::Boolean(true)) {
         return Err(VmError::EvalError(
             "ENOENT: no such file or directory".into(),
@@ -3042,6 +3046,7 @@ fn fs_chmod(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn fs_access_async(arguments: &[Value]) -> Result<Value, VmError> {
     path_arg(arguments, 0).map_err(invalid_path_error)?;
+    fs_access_sync(&arguments[..arguments.len().min(2)])?;
     let callback = arguments
         .get(2)
         .or_else(|| arguments.get(1))
