@@ -174,13 +174,17 @@ pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError
     open(value)
 }
 
+fn receiver_iterator(receiver: &Value) -> Result<Value, crate::execute::VmError> {
+    if matches!(receiver, Value::Generator(_)) {
+        open(receiver.clone())
+    } else {
+        from(std::slice::from_ref(receiver))
+    }
+}
+
 pub(crate) fn to_array(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let receiver = receiver.ok_or_else(not_iterable)?;
-    let iterator = if matches!(receiver, Value::Generator(_)) {
-        open(receiver.clone())?
-    } else {
-        from(std::slice::from_ref(receiver))?
-    };
+    let iterator = receiver_iterator(receiver)?;
     Ok(Value::array(collect_rest(&iterator)?))
 }
 
@@ -195,7 +199,7 @@ pub(crate) fn map(
             "Iterator.prototype.map mapper is not callable",
         ));
     }
-    let iterator = from(std::slice::from_ref(receiver))?;
+    let iterator = receiver_iterator(receiver)?;
     Ok(Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Mapped {
             iterator,
@@ -217,11 +221,7 @@ pub(crate) fn filter(
             "Iterator.prototype.filter predicate is not callable",
         ));
     }
-    let iterator = if matches!(receiver, Value::Generator(_)) {
-        open(receiver.clone())?
-    } else {
-        from(std::slice::from_ref(receiver))?
-    };
+    let iterator = receiver_iterator(receiver)?;
     Ok(Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Filtered {
             iterator,
@@ -236,8 +236,23 @@ pub(crate) fn some(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
+    predicate_terminal(receiver, arguments, true)
+}
+
+pub(crate) fn every(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    predicate_terminal(receiver, arguments, false)
+}
+
+fn predicate_terminal(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    stop_when_truthy: bool,
+) -> Result<Value, crate::execute::VmError> {
     let receiver = receiver.ok_or_else(not_iterable)?;
-    let iterator = from(std::slice::from_ref(receiver))?;
+    let iterator = receiver_iterator(receiver)?;
     let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
     if !crate::conversion::is_callable(callback) {
         return Err(crate::vm::not_callable());
@@ -245,7 +260,7 @@ pub(crate) fn some(
     let mut index = 0;
     loop {
         let Some(value) = step_value(&iterator)? else {
-            return Ok(Value::Boolean(false));
+            return Ok(Value::Boolean(!stop_when_truthy));
         };
         let result = crate::functions::execute_target(
             callback,
@@ -253,11 +268,11 @@ pub(crate) fn some(
             &[value, Value::Number(index as f64), iterator.clone()],
         );
         match result {
-            Ok(result) if crate::execute::is_truthy(&result) => {
+            Ok(result) if crate::execute::is_truthy(&result) == stop_when_truthy => {
                 let completion = close(iterator, crate::completion::Completion::Normal)?;
                 return match completion.into_vm_error() {
                     Err(error) => Err(error),
-                    Ok(_) => Ok(Value::Boolean(true)),
+                    Ok(_) => Ok(Value::Boolean(stop_when_truthy)),
                 };
             }
             Ok(_) => index += 1,

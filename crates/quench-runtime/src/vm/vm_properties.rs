@@ -256,6 +256,7 @@ fn generator_property(value: &Value, key: &str) -> Value {
         "toArray" => crate::ops::Builtin::IteratorToArray,
         "map" => crate::ops::Builtin::IteratorMap,
         "some" => crate::ops::Builtin::IteratorSome,
+        "every" => crate::ops::Builtin::IteratorEvery,
         _ => {
             let prototype = if is_async {
                 crate::builtins::async_generator_prototype()
