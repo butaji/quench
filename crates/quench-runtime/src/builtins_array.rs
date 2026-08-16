@@ -61,10 +61,7 @@ fn delete_object_property_value(
     (delete_object_property(properties, key), true)
 }
 
-fn delete_array_property(
-    mut values: Rc<crate::value::ArrayData>,
-    key: &str,
-) -> (Value, bool) {
+fn delete_array_property(mut values: Rc<crate::value::ArrayData>, key: &str) -> (Value, bool) {
     if array_descriptor_flag(&values, key, "configurable") == Some(false) {
         return (Value::Array(values), false);
     }
@@ -82,10 +79,7 @@ fn boxed_string_non_configurable(properties: &Rc<crate::value::ObjectData>, key:
     is_boxed_string && (key == "length" || key.parse::<usize>().is_ok())
 }
 
-fn delete_object_alias_property(
-    alias: crate::value::ObjectAliasValue,
-    key: &str,
-) -> (Value, bool) {
+fn delete_object_alias_property(alias: crate::value::ObjectAliasValue, key: &str) -> (Value, bool) {
     let Some(properties) = alias.0.borrow().upgrade() else {
         return (Value::ObjectAlias(alias), true);
     };
@@ -116,10 +110,10 @@ fn delete_function_property(function: Rc<crate::value::FunctionValue>, key: &str
 
 fn delete_object_property(properties: Rc<crate::value::ObjectData>, key: &str) -> Value {
     let mut values: Vec<(String, Value)> = properties
-            .iter()
-            .filter(|(name, _)| name != key && name != &descriptor_key(key))
-            .cloned()
-            .collect();
+        .iter()
+        .filter(|(name, _)| name != key && name != &descriptor_key(key))
+        .cloned()
+        .collect();
     if crate::vm::is_global_object(&Value::Object(Rc::clone(&properties)))
         && crate::vm::global_builtin_exists(key)
     {
@@ -145,7 +139,9 @@ fn define_property_value(target: Value, key: &str, value: Value) -> Value {
             let function = std::rc::Rc::clone(&function);
             {
                 let mut properties = function.properties.borrow_mut();
-                if let Some((_, current)) = properties.iter_mut().rev().find(|(name, _)| name == key) {
+                if let Some((_, current)) =
+                    properties.iter_mut().rev().find(|(name, _)| name == key)
+                {
                     *current = value;
                 } else {
                     properties.push((key.to_string(), value));
@@ -198,6 +194,30 @@ fn define_array_descriptor(target: &mut Value, key: &str, descriptor: Vec<(Strin
     *target = Value::Array(values);
 }
 
+fn validate_array_length_descriptor(
+    target: &Value,
+    key: &str,
+    descriptor: &[(String, Value)],
+) -> Result<(), crate::execute::VmError> {
+    if !matches!(target, Value::Array(_)) || key != "length" {
+        return Ok(());
+    }
+    let Some(value) = descriptor
+        .iter()
+        .rev()
+        .find_map(|(name, value)| (name == "value").then_some(value))
+    else {
+        return Ok(());
+    };
+    let number = crate::conversion::to_number(value)?;
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > u32::MAX as f64 {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
+    }
+    Ok(())
+}
+
 fn array_descriptor_flag(values: &crate::value::ArrayData, key: &str, flag: &str) -> Option<bool> {
     let Value::Object(descriptor) = values.descriptor(key)? else {
         return None;
@@ -211,11 +231,11 @@ fn array_descriptor_flag(values: &crate::value::ArrayData, key: &str, flag: &str
 fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value: Value) -> Value {
     if key == "length" {
         if values.is_arguments() {
-            let length = value_to_number(&value).max(0.0) as usize;
+            let length = array_length_number(&value) as usize;
             Rc::make_mut(&mut values).set_length(length);
             return Value::Array(values);
         }
-        let length = value_to_number(&value).max(0.0) as usize;
+        let length = array_length_number(&value) as usize;
         Rc::make_mut(&mut values).set_length(length);
         return Value::Array(values);
     }
@@ -224,7 +244,11 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         return Value::Array(values);
     };
     let index = index as usize;
-    if index > values.logical_len().saturating_add(MAX_DENSE_ARRAY_INDEX_GAP) {
+    if index
+        > values
+            .logical_len()
+            .saturating_add(MAX_DENSE_ARRAY_INDEX_GAP)
+    {
         let values = Rc::make_mut(&mut values);
         values.set_property(key, value);
         values.set_length(index.saturating_add(1));
@@ -232,4 +256,8 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
         Rc::make_mut(&mut values).set_index(index, value);
     }
     Value::Array(values)
+}
+
+fn array_length_number(value: &Value) -> f64 {
+    crate::conversion::to_number(value).unwrap_or(f64::NAN)
 }
