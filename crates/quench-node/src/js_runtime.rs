@@ -2872,6 +2872,9 @@ impl Host for QuenchNodeHost {
                 Ok(node_buffer(&[]))
             }
             HostCapabilityKind::Custom(CapabilityName::UrlResolveObject) => {
+                if let Some(value) = resolve_object_path(arguments) {
+                    return value;
+                }
                 if matches!(arguments.first(), Some(Value::String(value)) if value.starts_with("javascript:"))
                 {
                     return Ok(Value::object(vec![
@@ -8540,6 +8543,95 @@ fn url_object(url: &url::Url, id: u16) -> Value {
     ])
 }
 
+fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
+    let (Value::Object(base), Value::String(relative)) = (arguments.first()?, arguments.get(1)?)
+    else {
+        return None;
+    };
+    let pathname =
+        quench_runtime::execute::get_property_result(&Value::Object(base.clone()), "pathname")
+            .ok()
+            .and_then(|value| match value {
+                Value::String(value) => Some(value),
+                _ => None,
+            })?;
+    let resolved = resolve_legacy_path(&pathname, relative);
+    Some(url_parse_legacy(&[Value::String(resolved.into())]))
+}
+
+fn resolve_legacy_path(pathname: &str, relative: &str) -> String {
+    let mut segments = if relative.starts_with('/') {
+        Vec::new()
+    } else {
+        pathname
+            .strip_suffix('/')
+            .unwrap_or(pathname)
+            .rsplit_once('/')
+            .map_or(pathname, |(directory, _)| {
+                if pathname.ends_with('/') {
+                    pathname
+                } else {
+                    directory
+                }
+            })
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
+    for segment in relative.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            segment => segments.push(segment.to_owned()),
+        }
+    }
+    format!("/{}", segments.join("/"))
+}
+
+fn legacy_path_parse(normalized: &str) -> Result<Value, VmError> {
+    let (without_hash, hash) = normalized
+        .split_once('#')
+        .map_or((normalized, None), |(value, hash)| {
+            (value, Some(format!("#{hash}")))
+        });
+    let (pathname, search) = without_hash
+        .split_once('?')
+        .map_or((without_hash, None), |(pathname, query)| {
+            (pathname, Some(format!("?{query}")))
+        });
+    let path = format!("{}{}", pathname, search.as_deref().unwrap_or_default());
+    Ok(Value::object(vec![
+        ("protocol".into(), Value::Null),
+        ("slashes".into(), Value::Null),
+        ("auth".into(), Value::Null),
+        ("host".into(), Value::Null),
+        ("port".into(), Value::Null),
+        ("hostname".into(), Value::Null),
+        (
+            "hash".into(),
+            hash.map_or(Value::Null, |value| Value::String(value.into())),
+        ),
+        (
+            "search".into(),
+            search
+                .clone()
+                .map_or(Value::Null, |value| Value::String(value.into())),
+        ),
+        (
+            "query".into(),
+            search.map_or(Value::Null, |value| {
+                Value::String(value.trim_start_matches('?').into())
+            }),
+        ),
+        ("pathname".into(), Value::String(pathname.into())),
+        ("path".into(), Value::String(path.into())),
+        ("href".into(), Value::String(normalized.into())),
+    ]))
+}
+
 fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(value)) = arguments.first() else {
         return Err(VmError::Thrown(fs_error(
@@ -8688,6 +8780,9 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
             "pathname".into(),
             Value::String("%3Chttp://goo.corn/bread%3E%20Is%20a%20URL!".into()),
         )]));
+    }
+    if normalized.starts_with('/') {
+        return legacy_path_parse(&normalized);
     }
     let parsed =
         url::Url::parse(&normalized).map_err(|error| VmError::EvalError(error.to_string()))?;
