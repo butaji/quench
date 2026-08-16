@@ -435,6 +435,9 @@ fn validate_transformed_extensions(parts: &[&str]) -> Result<(), VmError> {
                 .iter()
                 .position(|part| part.len() == 1)
                 .map_or(parts.len(), |offset| index + 1 + offset);
+            if end < parts.len() && end + 1 == parts.len() {
+                return Err(runtime_error("RangeError: invalid language tag"));
+            }
             validate_transformed_fields(&parts[index + 1..end])?;
         }
     }
