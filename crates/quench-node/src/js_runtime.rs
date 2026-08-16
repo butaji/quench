@@ -63,6 +63,8 @@ impl CapabilityName {
     const BufferInspect: u16 = 2065;
     const InternalBinding: u16 = 2066;
     const InternalArrayBufferViewHasBuffer: u16 = 2067;
+    const UrlParse: u16 = 2068;
+    const UrlFormat: u16 = 2069;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -614,6 +616,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferInspect) => buffer_inspect(receiver),
             HostCapabilityKind::Custom(CapabilityName::InternalBinding) => internal_binding(arguments),
             HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer) => internal_view_has_buffer(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UrlParse) => url_parse_legacy(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UrlFormat) => url_format_legacy(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -3075,10 +3079,11 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ]));
         }
         if name == "url" || name == "node:url" {
-            return Ok(quench_runtime::host_api::object(vec![(
-                "URL".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
-            )]));
+            return Ok(quench_runtime::host_api::object(vec![
+                ("URL".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::Url))),
+                ("parse".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::UrlParse))),
+                ("format".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::UrlFormat))),
+            ]));
         }
         if name == "util" || name == "node:util" {
             return Ok(util_module());
@@ -3439,13 +3444,16 @@ fn url_object(url: &url::Url, id: u16) -> Value {
         ),
         (
             "host".into(),
-            Value::String(url.host_str().unwrap_or("").into()),
+            Value::String((url.host_str().unwrap_or("").to_string() + &url.port().map(|port| format!(":{port}")).unwrap_or_default()).into()),
         ),
         (
             "port".into(),
             Value::String(url.port().map(|port| port.to_string()).unwrap_or_default()),
         ),
         ("pathname".into(), Value::String(url.path().into())),
+        ("hostname".into(), Value::String(url.host_str().unwrap_or("").into())),
+        ("path".into(), Value::String(format!("{}{}", url.path(), url.query().map(|query| format!("?{query}")).unwrap_or_default()).into())),
+        ("query".into(), Value::String(url.query().unwrap_or("").into())),
         (
             "search".into(),
             Value::String(
@@ -3471,6 +3479,26 @@ fn url_object(url: &url::Url, id: u16) -> Value {
             capability_function(HostCapabilityKind::Custom(id)),
         ),
     ])
+}
+
+fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(value)) = arguments.first() else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "url must be a string"))); };
+    let parsed = url::Url::parse(value).map_err(|error| VmError::EvalError(error.to_string()))?;
+    Ok(url_object(&parsed, 0))
+}
+
+fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(Value::String(value)) = arguments.first() {
+        let mut output = value.clone();
+        if output.ends_with('?') { output.insert(output.len() - 1, '/'); }
+        return Ok(Value::String(output.into()));
+    }
+    let object = arguments.first().ok_or(VmError::NotCallable)?;
+    let protocol = quench_runtime::execute::get_property_result(object, "protocol").ok().and_then(|value| match value { Value::String(value) => Some(value), _ => None }).unwrap_or_default();
+    let host = quench_runtime::execute::get_property_result(object, "host").ok().and_then(|value| match value { Value::String(value) => Some(value), _ => None }).unwrap_or_default();
+    let pathname = quench_runtime::execute::get_property_result(object, "pathname").ok().and_then(|value| match value { Value::String(value) => Some(value), _ => None }).unwrap_or_default();
+    let search = quench_runtime::execute::get_property_result(object, "search").ok().and_then(|value| match value { Value::String(value) => Some(value), _ => None }).unwrap_or_default();
+    Ok(Value::String(format!("{}//{}{}{}", protocol, host, if pathname.is_empty() { "/" } else { &pathname }, search).into()))
 }
 
 fn buffer_module() -> Value {
