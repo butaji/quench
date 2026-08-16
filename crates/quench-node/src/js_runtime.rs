@@ -4673,6 +4673,7 @@ fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, V
                 if let Some(value) = remaining.next() {
                     output.push_str(&match specifier {
                         's' => format_string(value, separators.unwrap_or(false)),
+                        'o' => format_object_string(value),
                         'd' => format_decimal(value, separators.unwrap_or(false)),
                         'f' => format_number(value, separators.unwrap_or(false)),
                         'i' => format_integer(value, separators.unwrap_or(false)),
@@ -4695,6 +4696,11 @@ fn format_string(value: &Value, separators: bool) -> String {
         Value::Number(_) => format_number(value, separators),
         Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
         Value::Object(_) | Value::ObjectAlias(_) => {
+            if let Ok(method) = quench_runtime::execute::get_property_result(value, "toISOString") {
+                if let Ok(Value::String(result)) = quench_runtime::execute::call(&method, value, &[]) {
+                    return result;
+                }
+            }
             if matches!(quench_runtime::execute::get_property_result(value, "a"), Ok(Value::Array(_))) {
                 "{ a: [Array] }".into()
             } else if matches!(
@@ -4717,6 +4723,13 @@ fn format_string(value: &Value, separators: bool) -> String {
             }
         }
         _ => safe_value_string(value),
+    }
+}
+
+fn format_object_string(value: &Value) -> String {
+    match value {
+        Value::String(value) => format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'")),
+        _ => format_inspected(value),
     }
 }
 
