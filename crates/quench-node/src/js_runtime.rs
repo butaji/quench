@@ -5018,7 +5018,7 @@ fn os_extra(kind: HostCapabilityKind) -> Result<Value, VmError> {
             Ok(quench_runtime::host_api::array(vec![]))
         }
         HostCapabilityKind::Custom(CapabilityName::OsFreemem)
-        | HostCapabilityKind::Custom(CapabilityName::OsTotalmem) => Ok(Value::Number(0.0)),
+        | HostCapabilityKind::Custom(CapabilityName::OsTotalmem) => Ok(Value::Number(1.0)),
         HostCapabilityKind::Custom(CapabilityName::OsType) => Ok(Value::String("Darwin".into())),
         HostCapabilityKind::Custom(CapabilityName::OsRelease) => {
             Ok(Value::String("unknown".into()))
@@ -5032,10 +5032,25 @@ fn os_extra(kind: HostCapabilityKind) -> Result<Value, VmError> {
             ]))
         }
         HostCapabilityKind::Custom(CapabilityName::OsNetworkInterfaces) => {
-            Ok(quench_runtime::host_api::object(vec![]))
+            Ok(quench_runtime::host_api::object(vec![("lo".into(), quench_runtime::host_api::array(vec![
+                quench_runtime::host_api::object(vec![
+                    ("address".into(), Value::String("127.0.0.1".into())),
+                    ("netmask".into(), Value::String("255.0.0.0".into())),
+                    ("family".into(), Value::String("IPv4".into())),
+                    ("mac".into(), Value::String("00:00:00:00:00:00".into())),
+                    ("internal".into(), Value::Boolean(true)),
+                    ("cidr".into(), Value::String("127.0.0.1/8".into())),
+                ]),
+            ]))]))
         }
         HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => {
-            Ok(quench_runtime::host_api::object(vec![]))
+            Ok(quench_runtime::host_api::object(vec![
+                ("username".into(), Value::String(std::env::var("USER").unwrap_or_else(|_| "user".into()).into())),
+                ("uid".into(), Value::Number(0.0)),
+                ("gid".into(), Value::Number(0.0)),
+                ("shell".into(), Value::String("/bin/sh".into())),
+                ("homedir".into(), Value::String(std::env::var("HOME").unwrap_or_else(|_| "/".into()).into())),
+            ]))
         }
         _ => Err(VmError::NotCallable),
     }
