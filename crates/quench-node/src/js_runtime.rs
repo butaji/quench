@@ -4262,7 +4262,7 @@ fn string_to_flags(arguments: &[Value]) -> Result<Value, VmError> {
         "a+" => 1_090,
         "ax+" => 1_218,
         "as" => 1_053_761,
-        "as+" => 1_053_762,
+        "as+" | "sa+" => 1_053_762,
         _ => {
             return Err(VmError::Thrown(fs_error(
                 "ERR_INVALID_ARG_VALUE",
@@ -5142,12 +5142,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         ]));
     }
     if name == "internal/fs/utils" {
-        return Ok(quench_runtime::host_api::object(vec![(
-            "validateRmOptionsSync".into(),
-            capability_function(HostCapabilityKind::Custom(
-                CapabilityName::FsValidateRmOptions,
-            )),
-        )]));
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "validateRmOptionsSync".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::FsValidateRmOptions,
+                )),
+            ),
+            (
+                "stringToFlags".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsStringToFlags)),
+            ),
+        ]));
     }
     if name == "internal/test/binding" {
         return Ok(quench_runtime::host_api::object(vec![(
