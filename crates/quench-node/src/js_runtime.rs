@@ -84,6 +84,24 @@ fn is_util_resolver(id: u16) -> bool {
                 | CapabilityName::CryptoHashDigest
                 | CapabilityName::DgramDrainCallbacks
                 | CapabilityName::UtilIsDate
+                | CapabilityName::UrlSearchParamsGetAll
+                | CapabilityName::UrlSearchParamsSet
+                | CapabilityName::UrlSearchParamsToString
+                | CapabilityName::UrlSearchParams
+                | CapabilityName::UrlSearchParamsGet
+                | CapabilityName::UrlSearchParamsSort
+                | CapabilityName::UrlSearchParamsOwner
+                | CapabilityName::UrlHrefSet
+                | CapabilityName::UrlUsernameSet
+                | CapabilityName::UrlPasswordGet
+                | CapabilityName::UrlPasswordSet
+                | CapabilityName::UrlPathnameGet
+                | CapabilityName::UrlPathnameSet
+                | CapabilityName::UrlSearchSet
+                | CapabilityName::UrlSearchGet
+                | CapabilityName::UrlHashSet
+                | CapabilityName::UrlHrefGet
+                | CapabilityName::UrlProtocolSet
         )
 }
 
