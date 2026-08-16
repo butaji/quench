@@ -172,7 +172,10 @@ impl VmContext {
     }
 
     pub(crate) fn permits(&self, capability: HostCapabilityRef) -> bool {
-        capability.realm == self.realm && self.has_capability(capability.kind)
+        capability.realm == self.realm
+            && (self.has_capability(capability.kind)
+                || (self.host.is_some()
+                    && matches!(capability.kind, HostCapabilityKind::Custom(_))))
     }
 
     pub fn emit_output(&self, text: &str) {
