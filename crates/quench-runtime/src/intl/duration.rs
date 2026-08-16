@@ -2,7 +2,10 @@
 
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
-use super::{default_locale, make_array, make_object, resolve_locales, runtime_error, SLOT};
+use super::{
+    default_locale, make_array, make_object, resolve_locales, runtime_error,
+    supported_numbering_systems, SLOT,
+};
 
 pub(crate) fn dispatch(
     builtin: Builtin,
@@ -228,7 +231,9 @@ fn locale_for_numbering(locale: &str, numbering: &str) -> String {
 }
 
 fn valid_numbering_system(value: &str) -> bool {
-    super::NUMBERING_SYSTEMS.contains(&value)
+    supported_numbering_systems()
+        .iter()
+        .any(|item| matches!(item, Value::String(item) if item == value))
 }
 
 fn valid_unit_style(unit: &str, style: &str) -> bool {
