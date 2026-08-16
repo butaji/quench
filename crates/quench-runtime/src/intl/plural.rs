@@ -105,8 +105,15 @@ pub(crate) fn prototype_method(
             let number = super::number::to_number(arguments.first());
             let slots = super::intl_slots(receiver)?;
             let plural_type = slot_string(&slots, "type").unwrap_or_else(|| "cardinal".to_string());
+            let notation =
+                slot_string(&slots, "notation").unwrap_or_else(|| "standard".to_string());
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
-            Ok(Value::String(select(number, &plural_type, &locale)))
+            Ok(Value::String(select(
+                number,
+                &plural_type,
+                &notation,
+                &locale,
+            )))
         }
         crate::ops::Builtin::IntlPluralRulesResolvedOptions => plural_resolved_options(receiver),
         _ => Err(runtime_error("TypeError: method not found")),
@@ -171,12 +178,21 @@ fn number_slot_value(slots: &[(String, Value)], key: &str, default: f64) -> Valu
     Value::Number(slot_number(slots, key).unwrap_or(default))
 }
 
-fn select(number: f64, plural_type: &str, locale: &str) -> String {
+fn select(number: f64, plural_type: &str, notation: &str, locale: &str) -> String {
     if plural_type == "ordinal" {
         return ordinal_select(number);
     }
     if locale.starts_with("fr") {
-        return if number == 0.0 || number == 1.0 {
+        if notation == "compact" && number.abs() >= 1_000_000.0 {
+            return "many".to_string();
+        }
+        if notation == "standard" && number.abs() >= 1_000_000.0 {
+            if number.abs() % 1_000_000.0 == 0.0 {
+                return "many".to_string();
+            }
+            return "other".to_string();
+        }
+        return if number == 0.0 || number == 1.0 || number.abs() < 1.0 {
             "one"
         } else {
             "other"
