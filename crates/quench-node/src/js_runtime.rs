@@ -347,11 +347,10 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
             HostCapabilityKind::Custom(CapabilityName::ProcessNextTick) => next_tick(arguments),
-            HostCapabilityKind::Custom(
-                CapabilityName::TimerImmediate
-                | CapabilityName::Timer
-                | CapabilityName::TimerClearImmediate,
-            ) => timer_call(arguments),
+            HostCapabilityKind::Custom(CapabilityName::TimerImmediate | CapabilityName::Timer) => {
+                timer_call(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::TimerClearImmediate) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(id)
                 if (13..=20).contains(&id) || (24..=26).contains(&id) =>
             {
