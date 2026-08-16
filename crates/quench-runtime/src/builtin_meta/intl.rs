@@ -153,6 +153,7 @@ const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
 const fn intl_short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IntlDisplayNames => Some("DisplayNames"),
+        Builtin::IntlRelativeTimeFormat => Some("RelativeTimeFormat"),
         Builtin::IntlSegmenter => Some("Segmenter"),
         Builtin::IntlLocaleToString => Some("toString"),
         Builtin::IntlLocaleMaximize => Some("maximize"),
