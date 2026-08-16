@@ -470,6 +470,9 @@ fn add_minimum_fraction(formatted: &mut String, locales: &[String], options: Opt
     else {
         return;
     };
+    if digits == 0 {
+        return;
+    }
     let separator = locales
         .first()
         .is_some_and(|locale| locale.starts_with("de"))
