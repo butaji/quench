@@ -24,6 +24,7 @@ mod blocks;
 mod branch;
 mod builtin_meta;
 pub mod builtins;
+pub mod capability;
 mod classes;
 mod collections;
 pub mod completion;
