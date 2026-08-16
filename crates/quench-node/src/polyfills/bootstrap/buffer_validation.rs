@@ -294,33 +294,22 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     const max = signed ? 2 ** (size * 8 - 1) - 1 : 2 ** (size * 8) - 1;
     const min = signed ? -(2 ** (size * 8 - 1)) : 0;
     __nodeBufferValidateIntegerValue(value, min, max);
-    const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
-    if (size === 1) view.setInt8(offset, value);
-    else if (size === 2) {
-      signed
-        ? view.setInt16(offset, value, littleEndian)
-        : view.setUint16(offset, value, littleEndian);
-    } else {
-      signed
-        ? view.setInt32(offset, value, littleEndian)
-        : view.setUint32(offset, value, littleEndian);
+    let integer = signed && value < 0 ? value + 2 ** (size * 8) : value;
+    for (let index = 0; index < size; index++) {
+      const shift = littleEndian ? index : size - index - 1;
+      this[offset + index] = Math.floor(integer / 2 ** (shift * 8)) & 0xff;
     }
     return offset + size;
   }
   _readInteger(offset, size, littleEndian, signed) {
     NodeBuffer.prototype._integerOffset.call(this, offset, size);
-    const view = new DataView(this.buffer, this.byteOffset, this.byteLength);
-    if (size === 1) {
-      return signed ? view.getInt8(offset) : view.getUint8(offset);
+    let integer = 0;
+    for (let index = 0; index < size; index++) {
+      const shift = littleEndian ? index : size - index - 1;
+      integer += this[offset + index] * 2 ** (shift * 8);
     }
-    if (size === 2) {
-      return signed
-        ? view.getInt16(offset, littleEndian)
-        : view.getUint16(offset, littleEndian);
-    }
-    return signed
-      ? view.getInt32(offset, littleEndian)
-      : view.getUint32(offset, littleEndian);
+    if (signed && integer >= 2 ** (size * 8 - 1)) integer -= 2 ** (size * 8);
+    return integer;
   }
   readUInt8(offset = 0) {
     return NodeBuffer.prototype._readInteger.call(
@@ -332,9 +321,11 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     );
   }
   readUInt16LE(offset = 0) {
+    if (typeof this._quenchReadUInt16LE === "function") return this._quenchReadUInt16LE(offset);
     return NodeBuffer.prototype._readInteger.call(this, offset, 2, true, false);
   }
   readUInt16BE(offset = 0) {
+    if (typeof this._quenchReadUInt16BE === "function") return this._quenchReadUInt16BE(offset);
     return NodeBuffer.prototype._readInteger.call(
       this,
       offset,
@@ -366,6 +357,7 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
     );
   }
   writeUInt16LE(value, offset = 0) {
+    if (typeof this._quenchWriteUInt16LE === "function") return this._quenchWriteUInt16LE(value, offset);
     return NodeBuffer.prototype._writeInteger.call(
       this,
       value,
@@ -374,6 +366,10 @@ NodeBuffer = class NodeBuffer extends __NodeBufferBase02 {
       true,
       false
     );
+  }
+  writeUInt16BE(value, offset = 0) {
+    if (typeof this._quenchWriteUInt16BE === "function") return this._quenchWriteUInt16BE(value, offset);
+    return NodeBuffer.prototype._writeInteger.call(this, value, offset, 2, false, false);
   }
 };
 "#);

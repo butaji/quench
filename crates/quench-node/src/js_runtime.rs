@@ -3330,6 +3330,22 @@ fn buffer_module() -> Value {
     ] {
         buffer = quench_runtime::execute::set_property(buffer, name, capability_function(kind));
     }
+    let mut prototype = Value::object(vec![]);
+    let read_uint32_be = capability_function(HostCapabilityKind::Custom(
+        CapabilityName::BufferNumericFirst + 12,
+    ));
+    prototype = quench_runtime::execute::set_property(
+        prototype,
+        "readUInt32BE",
+        read_uint32_be.clone(),
+    );
+    prototype = quench_runtime::execute::set_property(prototype, "readUint32BE", read_uint32_be);
+    let write_uint_le = capability_function(HostCapabilityKind::Custom(
+        CapabilityName::BufferNumericFirst + 19,
+    ));
+    prototype = quench_runtime::execute::set_property(prototype, "writeUIntLE", write_uint_le.clone());
+    prototype = quench_runtime::execute::set_property(prototype, "writeUintLE", write_uint_le);
+    buffer = quench_runtime::execute::set_property(buffer, "prototype", prototype);
     buffer
 }
 
@@ -3444,20 +3460,55 @@ fn node_buffer(bytes: &[u8]) -> Value {
             )),
         );
     }
-    let prototype = Value::object(vec![
-        (
-            "readUInt32BE".into(),
+    for (name, index) in [
+        ("_quenchReadUInt16BE", 8),
+        ("_quenchReadUInt16LE", 9),
+        ("_quenchWriteUInt16BE", 10),
+        ("_quenchWriteUInt16LE", 11),
+        ("_quenchReadInt16BE", 20),
+        ("_quenchReadInt16LE", 21),
+        ("_quenchWriteInt16BE", 22),
+        ("_quenchWriteInt16LE", 23),
+    ] {
+        value = quench_runtime::execute::set_property(
+            value,
+            name,
             capability_function(HostCapabilityKind::Custom(
-                CapabilityName::BufferNumericFirst + 12,
+                CapabilityName::BufferNumericFirst + index,
             )),
-        ),
-        (
-            "writeUIntLE".into(),
+        );
+    }
+    let mut prototype = Value::object(vec![]);
+    for (index, name) in [
+        "readDoubleBE", "readDoubleLE", "writeDoubleBE", "writeDoubleLE",
+        "readFloatBE", "readFloatLE", "writeFloatBE", "writeFloatLE",
+        "readUInt16BE", "readUInt16LE", "writeUInt16BE", "writeUInt16LE",
+        "readUInt32BE", "readUInt32LE", "writeUInt32BE", "writeUInt32LE",
+        "readUIntBE", "readUIntLE", "writeUIntBE", "writeUIntLE",
+        "readInt16BE", "readInt16LE", "writeInt16BE", "writeInt16LE",
+        "readIntBE", "readIntLE", "writeIntBE", "writeIntLE",
+    ]
+    .iter()
+    .enumerate()
+    {
+        prototype = quench_runtime::execute::set_property(
+            prototype,
+            name,
             capability_function(HostCapabilityKind::Custom(
-                CapabilityName::BufferNumericFirst + 19,
+                CapabilityName::BufferNumericFirst + index as u16,
             )),
-        ),
-    ]);
+        );
+    }
+    let read_uint32_be = capability_function(HostCapabilityKind::Custom(
+        CapabilityName::BufferNumericFirst + 12,
+    ));
+    prototype = quench_runtime::execute::set_property(prototype, "readUInt32BE", read_uint32_be.clone());
+    prototype = quench_runtime::execute::set_property(prototype, "readUint32BE", read_uint32_be);
+    let write_uint_le = capability_function(HostCapabilityKind::Custom(
+        CapabilityName::BufferNumericFirst + 19,
+    ));
+    prototype = quench_runtime::execute::set_property(prototype, "writeUIntLE", write_uint_le.clone());
+    prototype = quench_runtime::execute::set_property(prototype, "writeUintLE", write_uint_le);
     value = quench_runtime::execute::set_property(value, "prototype", prototype);
     value
 }
