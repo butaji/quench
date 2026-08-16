@@ -200,6 +200,8 @@ impl CapabilityName {
     const CryptoCertificateExportPublicKey: u16 = 2253;
     const CryptoCertificateExportChallenge: u16 = 2254;
     const CryptoCertificateHasInstance: u16 = 2255;
+    const CryptoCreatePrivateKey: u16 = 2256;
+    const CryptoCreatePublicKey: u16 = 2257;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -1415,6 +1417,14 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CryptoCertificateHasInstance) => {
                 Ok(Value::Boolean(true))
             }
+            HostCapabilityKind::Custom(
+                CapabilityName::CryptoCreatePrivateKey | CapabilityName::CryptoCreatePublicKey,
+            ) => Ok(Value::object(vec![(
+                "export".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CryptoCertificateExportPublicKey,
+                )),
+            )])),
             HostCapabilityKind::Custom(CapabilityName::CryptoHmacUpdate) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
                 if let Some(Value::String(value)) = arguments.first() {
@@ -2110,7 +2120,17 @@ impl Host for QuenchNodeHost {
             ),
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoGetDiffieHellman | CapabilityName::CryptoCreateDiffieHellman,
-            ) => Ok(self.dh_object()),
+            ) => {
+                if arguments.iter().any(|argument| {
+                    matches!(argument, Value::Number(value) if !value.is_finite() || value.fract() != 0.0)
+                }) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_OUT_OF_RANGE",
+                        "value is out of range",
+                    )));
+                }
+                Ok(self.dh_object())
+            }
             HostCapabilityKind::Custom(CapabilityName::CryptoDhHasInstance) => {
                 Ok(Value::Boolean(true))
             }
@@ -6396,6 +6416,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     )),
                 ),
                 ("Certificate".into(), certificate_constructor()),
+                (
+                    "createPrivateKey".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCreatePrivateKey,
+                    )),
+                ),
+                (
+                    "createPublicKey".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCreatePublicKey,
+                    )),
+                ),
                 (
                     "createCipheriv".into(),
                     capability_function(HostCapabilityKind::Custom(
