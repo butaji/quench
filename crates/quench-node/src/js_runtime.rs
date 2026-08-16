@@ -352,6 +352,7 @@ struct StreamState {
     data: Option<Value>,
     end: Option<Value>,
     drain: Option<Value>,
+    error: Option<Value>,
     source: Vec<Value>,
 }
 
@@ -921,6 +922,7 @@ impl Host for QuenchNodeHost {
                 data: None,
                 end: None,
                 drain: None,
+                error: None,
                 source: if capability.kind
                     == HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom)
                 {
@@ -958,6 +960,11 @@ impl Host for QuenchNodeHost {
             stream,
             "write",
             capability_function(HostCapabilityKind::Custom(id + 2)),
+        );
+        stream = quench_runtime::execute::set_property(
+            stream,
+            "push",
+            capability_function(HostCapabilityKind::Custom(id + 6)),
         );
         stream = quench_runtime::execute::set_property(
             stream,
@@ -1622,6 +1629,7 @@ impl QuenchNodeHost {
                     "data" => state.data = Some(callback.clone()),
                     "end" => state.end = Some(callback.clone()),
                     "drain" => state.drain = Some(callback.clone()),
+                    "error" => state.error = Some(callback.clone()),
                     _ => {}
                 }
                 Ok(receiver
@@ -1725,7 +1733,32 @@ impl QuenchNodeHost {
                 }
                 Ok(target.clone())
             }
-            6 => Ok(Value::Boolean(true)),
+            6 => {
+                let chunk = match string_or_bytes(arguments.first()) {
+                    Ok(chunk) => chunk,
+                    Err(VmError::Thrown(error)) => {
+                        if let Some(callback) = self.streams.borrow().get(&stream_id).and_then(|state| state.error.clone()) {
+                            quench_runtime::execute::call(&callback, &Value::Undefined, &[error])?;
+                            return Ok(Value::Boolean(false));
+                        }
+                        return Err(VmError::Thrown(error));
+                    }
+                    Err(error) => return Err(error),
+                };
+                if let Some(data) = self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .and_then(|state| state.data.clone())
+                {
+                    quench_runtime::execute::call(
+                        &data,
+                        &Value::Undefined,
+                        &[node_buffer(&chunk)],
+                    )?;
+                }
+                Ok(Value::Boolean(true))
+            },
             7..=8 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
             9 => {
                 if let Some(callback) = arguments.get(1).or_else(|| arguments.first()) {
