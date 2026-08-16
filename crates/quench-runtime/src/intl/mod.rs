@@ -286,6 +286,29 @@ pub(crate) fn default_locale() -> String {
     "en".to_string()
 }
 
+pub(crate) fn number_locale(locale: &str) -> String {
+    let Some((base, extension)) = locale.split_once("-u-") else {
+        return locale.to_string();
+    };
+    let parts: Vec<&str> = extension.split('-').collect();
+    let mut index = 0;
+    while index < parts.len() {
+        let key = parts[index];
+        index += 1;
+        let start = index;
+        while index < parts.len() && parts[index].len() != 2 {
+            index += 1;
+        }
+        if key == "nu"
+            && start < index
+            && supported_values::NUMBERING_SYSTEMS.contains(&parts[start])
+        {
+            return format!("{base}-u-nu-{}", parts[start]);
+        }
+    }
+    base.to_string()
+}
+
 fn dedupe(locales: Vec<String>) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     locales
