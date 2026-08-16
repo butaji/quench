@@ -355,7 +355,13 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlNumberFormat => Some(construct(arguments)),
+        crate::ops::Builtin::IntlNumberFormat => Some(crate::intl::construct_with_legacy_receiver(
+            arguments,
+            receiver,
+            crate::ops::Builtin::IntlNumberFormatPrototype,
+            SLOT,
+            super::construct,
+        )),
         crate::ops::Builtin::IntlNumberFormatFormat
         | crate::ops::Builtin::IntlNumberFormatFormatToParts
         | crate::ops::Builtin::IntlNumberFormatFormatRange
