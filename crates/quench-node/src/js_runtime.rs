@@ -53,6 +53,8 @@ impl CapabilityName {
     const InternalUtilEmitExperimentalWarning: u16 = 2089;
     const ProcessOn: u16 = 2090;
     const ProcessEmit: u16 = 2091;
+    const ProcessCpuUsage: u16 = 2110;
+    const ProcessHrtime: u16 = 2111;
     const UtilDeprecatedFirst: u16 = 2092;
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
@@ -808,6 +810,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::InternalUtilEmitExperimentalWarning) => internal_util_emit_experimental_warning(arguments),
             HostCapabilityKind::Custom(CapabilityName::ProcessOn) => process_on(arguments),
             HostCapabilityKind::Custom(CapabilityName::ProcessEmit) => process_emit(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage) => process_cpu_usage(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessHrtime) => process_hrtime(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
@@ -3987,6 +3991,8 @@ fn process_module() -> Value {
         ),
         ("on".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessOn))),
         ("emit".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessEmit))),
+        ("cpuUsage".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage))),
+        ("hrtime".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime))),
     ]);
     NODE_PROCESS_MODULE.with(|current| current.replace(Some(module.clone())));
     module
@@ -4011,6 +4017,26 @@ fn process_emit(arguments: &[Value]) -> Result<Value, VmError> {
         }
     }
     Ok(Value::Boolean(false))
+}
+
+fn process_cpu_usage(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(value) = arguments.first() {
+        if !matches!(value, Value::Object(_)) {
+            return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "options must be an object")));
+        }
+        if let Ok(Value::Number(user)) = quench_runtime::execute::get_property_result(value, "user") {
+            if user < 0.0 { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "user must be non-negative"))); }
+        }
+    }
+    Ok(quench_runtime::host_api::object(vec![("user".into(), Value::Number(0.0)), ("system".into(), Value::Number(0.0))]))
+}
+
+fn process_hrtime(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(value) = arguments.first() {
+        let values = array_values(value).map_err(|_| VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "time must be an array")))?;
+        if values.len() != 2 { return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "time must have two elements"))); }
+    }
+    Ok(quench_runtime::host_api::array(vec![Value::Number(0.0), Value::Number(0.0)]))
 }
 
 fn url_object(url: &url::Url, id: u16) -> Value {
