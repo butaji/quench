@@ -119,12 +119,8 @@ fn parse_options(value: Option<&Value>, default_ignore: bool) -> Result<Collator
 fn apply_properties(options: &mut CollatorOptions, properties: &Value) -> Result<(), VmError> {
     options.usage = option_string(properties, "usage", &options.usage)?;
     validate_option(&options.usage, &["sort", "search"], "usage")?;
-    let locale_matcher = option_value(properties, "localeMatcher")?;
-    if matches!(locale_matcher, Value::Null) {
-        return Err(crate::value::error::throw_type_error(
-            "Invalid localeMatcher",
-        ));
-    }
+    let locale_matcher = option_string(properties, "localeMatcher", "best fit")?;
+    validate_option(&locale_matcher, &["lookup", "best fit"], "localeMatcher")?;
     let _ = option_value(properties, "collation")?;
     options.numeric = option_boolean(properties, "numeric", options.numeric)?;
     options.case_first = option_string(properties, "caseFirst", &options.case_first)?;
