@@ -4809,6 +4809,20 @@ impl QuenchNodeHost {
     ) -> Result<Value, VmError> {
         let base = id - (id % 2);
         if id % 2 == 0 {
+            if let (Some(Value::String(value)), Some(Value::String(encoding))) =
+                (arguments.first(), arguments.get(1))
+            {
+                if encoding.eq_ignore_ascii_case("hex") && value.len() % 2 != 0 {
+                    return Err(VmError::Thrown(quench_runtime::host_api::object(vec![
+                        ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+                        (
+                            "message".into(),
+                            Value::String("The argument 'encoding' is invalid".into()),
+                        ),
+                        ("name".into(), Value::String("TypeError".into())),
+                    ])));
+                }
+            }
             let value = string_or_bytes(arguments.first())?;
             self.hashes
                 .borrow_mut()
