@@ -329,7 +329,7 @@ fn custom_object_prototype(value: &Value) -> Option<Value> {
         Value::Object(properties) => properties
             .iter()
             .rev()
-            .find(|(name, _)| name == "\0prototype")
+            .find(|(name, _)| name == "\0prototype" || name == "prototype")
             .map(|(_, prototype)| prototype.clone()),
         Value::Function(function) => function
             .properties
@@ -337,6 +337,13 @@ fn custom_object_prototype(value: &Value) -> Option<Value> {
             .iter()
             .rev()
             .find(|(name, _)| name == "\0prototype")
+            .map(|(_, prototype)| prototype.clone()),
+        Value::BoundFunction(function) => function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == "\0prototype" || name == "prototype")
             .map(|(_, prototype)| prototype.clone()),
         _ => None,
     }
