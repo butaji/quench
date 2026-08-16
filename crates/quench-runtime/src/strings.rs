@@ -390,6 +390,7 @@ pub(crate) fn locale_compare(
         &right,
         &crate::intl::default_locale(),
         false,
+        "variant",
     )))
 }
 
