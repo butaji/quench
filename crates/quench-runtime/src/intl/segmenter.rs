@@ -47,26 +47,30 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn segmenter_granularity(option: Option<&Value>) -> Result<String, VmError> {
     let mut granularity = "grapheme".to_string();
-    if matches!(option, Some(Value::Null)) {
+    let Some(option) = option else {
+        return Ok(granularity);
+    };
+    if matches!(option, Value::Undefined) {
+        return Ok(granularity);
+    }
+    if !crate::value::is_object(option) {
         return Err(crate::value::error::throw_type_error(
-            "Cannot convert null to object",
+            "Cannot convert options to object",
         ));
     }
-    if let Some(Value::Object(properties)) = option {
-        let options = Value::Object(properties.clone());
-        let matcher = crate::execute::get_property_result(&options, "localeMatcher")?;
-        if !matches!(matcher, Value::Undefined) {
-            let matcher = crate::conversion::to_string(&matcher)?;
-            if matcher != "lookup" && matcher != "best fit" {
-                return Err(runtime_error("RangeError: invalid localeMatcher"));
-            }
+    let options = crate::construct::to_object(option)?;
+    let matcher = crate::execute::get_property_result(&options, "localeMatcher")?;
+    if !matches!(matcher, Value::Undefined) {
+        let matcher = crate::conversion::to_string(&matcher)?;
+        if matcher != "lookup" && matcher != "best fit" {
+            return Err(runtime_error("RangeError: invalid localeMatcher"));
         }
-        let value = crate::execute::get_property_result(&options, "granularity")?;
-        if !matches!(value, Value::Undefined) {
-            granularity = crate::conversion::to_string(&value)?;
-            if !matches!(granularity.as_str(), "grapheme" | "word" | "sentence") {
-                return Err(runtime_error("RangeError: invalid granularity"));
-            }
+    }
+    let value = crate::execute::get_property_result(&options, "granularity")?;
+    if !matches!(value, Value::Undefined) {
+        granularity = crate::conversion::to_string(&value)?;
+        if !matches!(granularity.as_str(), "grapheme" | "word" | "sentence") {
+            return Err(runtime_error("RangeError: invalid granularity"));
         }
     }
     Ok(granularity)
