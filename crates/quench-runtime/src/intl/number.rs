@@ -227,6 +227,7 @@ pub(crate) fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         let raw = RawOptions::from_value(options)?;
+        validate_unit_display(&raw.unit_display)?;
         validate_rounding_mode(&raw.rounding_mode)?;
         validate_rounding_increment(&raw)?;
         let minimum_fraction_digits = fraction_digits(
@@ -481,6 +482,12 @@ fn valid_unit(unit: Option<&str>) -> bool {
     };
     super::supported_values::UNITS.contains(&left)
         && super::supported_values::UNITS.contains(&right)
+}
+
+fn validate_unit_display(value: &str) -> Result<(), VmError> {
+    matches!(value, "short" | "narrow" | "long")
+        .then_some(())
+        .ok_or_else(|| crate::value::error::throw_range_error("invalid unitDisplay"))
 }
 
 fn grouping_enabled(value: &str) -> bool {
