@@ -4967,6 +4967,11 @@ fn format_inspected(value: &Value) -> String {
             format!("Symbol({name})")
         }
         Value::Array(values) => format!("[ {} ]", values.iter().map(format_inspected).collect::<Vec<_>>().join(", ")),
+        Value::ArrayBuffer(buffer) if buffer.shared => {
+            let bytes = buffer.bytes.borrow();
+            let hex = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<Vec<_>>().join(" ");
+            format!("SharedArrayBuffer {{ [Uint8Contents]: <{hex}>, [byteLength]: {} }}", bytes.len())
+        }
         Value::Object(_) | Value::ObjectAlias(_) => {
             if let Ok(value) = quench_runtime::execute::get_property_result(value, "foo") {
                 format!("{{ foo: {} }}", format_inspected(&value))
