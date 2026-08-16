@@ -1031,8 +1031,10 @@ impl Host for QuenchNodeHost {
                     if let Ok(prototype) =
                         quench_runtime::execute::get_property_result(constructor, "prototype")
                     {
-                        cipher =
-                            quench_runtime::execute::set_property(cipher, "__proto__", prototype);
+                        if matches!(prototype, Value::Object(_) | Value::ObjectAlias(_)) {
+                            cipher =
+                                quench_runtime::execute::set_prototype_of(&cipher, &prototype)?;
+                        }
                     }
                 }
                 Ok(cipher)
@@ -5026,13 +5028,6 @@ fn hash_id(value: &Value) -> Result<u16, VmError> {
         .ok_or(VmError::NotCallable)
 }
 
-fn cipher_constructor() -> Value {
-    let function = capability_function(HostCapabilityKind::Custom(
-        CapabilityName::CryptoCreateCipheriv,
-    ));
-    quench_runtime::execute::set_property(function, "prototype", Value::object(vec![]))
-}
-
 fn console_log(arguments: &[Value]) -> Result<Value, VmError> {
     let line = arguments
         .iter()
@@ -5950,9 +5945,20 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "createHash".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash)),
                 ),
-                ("createCipheriv".into(), cipher_constructor()),
-                ("Cipheriv".into(), cipher_constructor()),
-                ("Decipheriv".into(), cipher_constructor()),
+                (
+                    "createCipheriv".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCreateCipheriv,
+                    )),
+                ),
+                (
+                    "Cipheriv".into(),
+                    Value::Builtin(quench_runtime::ops::Builtin::Object),
+                ),
+                (
+                    "Decipheriv".into(),
+                    Value::Builtin(quench_runtime::ops::Builtin::Object),
+                ),
                 (
                     "getHashes".into(),
                     capability_function(HostCapabilityKind::Custom(
