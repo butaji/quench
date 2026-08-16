@@ -123,7 +123,7 @@ fn prototype_for_value_tail(value: &Value) -> Value {
         Value::Generator(generator) => generator_prototype(generator),
         Value::Iterator(_) => crate::collections::iterator::prototype_of(value),
         Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
+        Value::Array(values) => values.prototype().unwrap_or(Value::Builtin(Builtin::ArrayPrototype)),
         Value::String(value) if crate::conversion::is_symbol_string(value) => {
             Value::Builtin(Builtin::SymbolPrototype)
         }
