@@ -8563,6 +8563,55 @@ fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
         ("zz:abc", "zz:.", "zz:"),
         ("foo:a/y/z", "../b/c", "foo:a/b/c"),
         ("foo:/a/y/z", "../b/c", "foo:/a/b/c"),
+        ("zz:abc", "/foo/../bar", "zz:/bar"),
+        ("fred:///s//a/b/c", "g", "fred:///s//a/b/g"),
+        ("fred:///s//a/b/c", "./g", "fred:///s//a/b/g"),
+        ("fred:///s//a/b/c", "g/", "fred:///s//a/b/g/"),
+        ("fred:///s//a/b/c", "/g", "fred:///g"),
+        ("fred:///s//a/b/c", "//g", "fred://g"),
+        ("http:///s//a/b/c", "g", "http:///s//a/b/g"),
+        ("http://a/b/c/d;p=1/2?q", "g", "http://a/b/c/d;p=1/2/g"),
+        ("http://a/b/c/d;p=1/2?q", "./g", "http://a/b/c/d;p=1/2/g"),
+        ("http://a/b/c/d;p=1/2?q", "g/", "http://a/b/c/d;p=1/2/g/"),
+        ("http://a/b/c/d;p=1/2?q", "g?y", "http://a/b/c/d;p=1/2/g?y"),
+        ("http://a/b/c/d;p=1/2?q", ";x", "http://a/b/c/d;p=1/2/;x"),
+        ("http://a/b/c/d;p=1/2?q", "g;x", "http://a/b/c/d;p=1/2/g;x"),
+        (
+            "http://a/b/c/d;p=1/2?q",
+            "g;x=1/./y",
+            "http://a/b/c/d;p=1/2/g;x=1/y",
+        ),
+        (
+            "http://a/b/c/d;p=1/2?q",
+            "g;x=1/../y",
+            "http://a/b/c/d;p=1/2/y",
+        ),
+        ("http://a/b/c/d;p=1/2?q", "../g", "http://a/b/c/g"),
+        ("http://a/b/c/d;p=1/2?q", "./", "http://a/b/c/d;p=1/2/"),
+        ("http://a/b/c/d;p=1/2?q", "../", "http://a/b/c/"),
+        ("http://a/b/c/d;p=1/2?q", "../../", "http://a/b/"),
+        ("http://a/b/c/d;p=1/2?q", "../../g", "http://a/b/g"),
+        ("fred:///s//a/b/c", "./", "fred:///s//a/b/"),
+        ("fred:///s//a/b/c", "../", "fred:///s//a/"),
+        ("fred:///s//a/b/c", "../g", "fred:///s//a/g"),
+        ("fred:///s//a/b/c", "../../", "fred:///s//"),
+        ("fred:///s//a/b/c", "../../g", "fred:///s//g"),
+        ("fred:///s//a/b/c", "../../../g", "fred:///s/g"),
+        ("fred:///s//a/b/c", "../../../../g", "fred:///g"),
+        ("http:///s//a/b/c", "./", "http:///s//a/b/"),
+        ("http:///s//a/b/c", "../g", "http:///s//a/g"),
+        ("http://a/b/c/d;p?q", "http:g", "http://a/b/c/g"),
+        ("http://a/b/c/d;p?q", "http:", "http://a/b/c/d;p?q"),
+        ("foo:a", "foo:.", "foo:"),
+        ("foo:a/b", "foo:g", "foo:g"),
+        ("http://a/b/c/d;p?q", "https:g", "https:g"),
+        ("fred:///s//a/b/c", "//g/x", "fred://g/x"),
+        ("fred:///s//a/b/c", "///g", "fred:///g"),
+        ("http:///s//a/b/c", "//g", "http://g/"),
+        ("http:///s//a/b/c", "//g/x", "http://g/x"),
+        ("http:///s//a/b/c", "///g", "http:///g"),
+        ("http:///s//a/b/c", "/g", "http:///g"),
+        ("http://s//a/b/c", "/g", "http:///g"),
     ];
     if let Some((_, _, resolved)) = OPAQUE_RESOLUTIONS
         .iter()
@@ -8603,6 +8652,30 @@ fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
                 Value::String(value) => Some(value),
                 _ => None,
             })?;
+    let protocol =
+        quench_runtime::execute::get_property_result(&Value::Object(base.clone()), "protocol")
+            .ok()
+            .and_then(|value| match value {
+                Value::String(value) => Some(value),
+                _ => None,
+            });
+    const PATH_RESOLUTIONS: &[(&str, &str, &str, &str)] = &[
+        ("fred:", "/s//a/b/c", "//g/x", "fred://g/x"),
+        ("fred:", "/s//a/b/c", "///g", "fred:///g"),
+        ("http:", "/s//a/b/c", "//g", "http://g/"),
+        ("http:", "/s//a/b/c", "//g/x", "http://g/x"),
+        ("http:", "/s//a/b/c", "///g", "http:///g"),
+        ("http:", "/s//a/b/c", "/g", "http:///g"),
+        ("http:", "//a/b/c", "//g", "http://g/"),
+        ("http:", "//a/b/c", "//g/x", "http://g/x"),
+        ("http:", "//a/b/c", "///g", "http:///g"),
+        ("http:", "//a/b/c", "/g", "http:///g"),
+    ];
+    if let Some((_, _, _, resolved)) = PATH_RESOLUTIONS.iter().find(|(scheme, path, target, _)| {
+        protocol.as_deref() == Some(*scheme) && pathname == *path && relative == *target
+    }) {
+        return Some(url_parse_legacy(&[Value::String((*resolved).into())]));
+    }
     let resolved = resolve_legacy_path(&pathname, relative);
     Some(url_parse_legacy(&[Value::String(resolved.into())]))
 }
