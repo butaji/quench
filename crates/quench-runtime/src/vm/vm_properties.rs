@@ -400,6 +400,9 @@ fn object_inherited_property_result(
         .iter()
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then_some(value))?;
+    if matches!(prototype, Value::Null) {
+        return Some(Ok(Value::Undefined));
+    }
     match get_property_with_receiver(prototype, key, receiver) {
         Ok(Value::Undefined) => None,
         result => Some(result),
