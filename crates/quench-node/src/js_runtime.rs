@@ -288,6 +288,7 @@ include!("js_runtime_helpers_host.rs");
 include!("js_runtime_require_early.rs");
 
 include!("js_runtime_require_module.rs");
+include!("js_runtime_empty_module_stubs.rs");
 include!("js_runtime_require_crypto.rs");
 include!("js_runtime_require_fs.rs");
 include!("js_runtime_require_stream_http.rs");
