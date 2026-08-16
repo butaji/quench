@@ -8,7 +8,7 @@ use std::{
 
 use quench_runtime::{
     ops::{HostCapabilityKind, HostCapabilityRef, RealmId},
-    value::{HostCapabilityValue, Value},
+    value::Value,
     vm::{Host, VmContext, VmError},
 };
 
@@ -108,6 +108,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(7) => read_file_sync(arguments),
             HostCapabilityKind::Custom(8) => self.create_hash(arguments),
             HostCapabilityKind::Custom(9) => buffer_byte_length(arguments),
+            HostCapabilityKind::Custom(id) if (13..=20).contains(&id) => {
+                assertion_call(id, arguments)
+            }
             HostCapabilityKind::Custom(11 | 12) => self.http_call(capability.kind, arguments),
             HostCapabilityKind::Custom(id) if (400..600).contains(&id) => {
                 self.http_call(capability.kind, arguments)
@@ -176,12 +179,7 @@ impl QuenchNodeHost {
                     "end" => state.end = Some(callback.clone()),
                     _ => {}
                 }
-                Ok(Value::HostCapability(Rc::new(HostCapabilityValue::new(
-                    HostCapabilityRef {
-                        realm: RealmId::ROOT,
-                        kind: HostCapabilityKind::Custom(stream_id),
-                    },
-                ))))
+                Ok(capability_function(HostCapabilityKind::Custom(stream_id)))
             }
             2 => {
                 let chunk = string_or_bytes(arguments.first())?;
@@ -441,11 +439,7 @@ fn read_file_sync(arguments: &[Value]) -> Result<Value, VmError> {
             .map(Value::String)
             .map_err(|error| VmError::EvalError(error.to_string()));
     }
-    let buffer = std::rc::Rc::new(quench_runtime::value::ArrayBufferData::new(bytes.len()));
-    buffer.bytes.borrow_mut().copy_from_slice(&bytes);
-    Ok(Value::Uint8Array(std::rc::Rc::new(
-        quench_runtime::value::Uint8ArrayData::new(buffer, 0, bytes.len()),
-    )))
+    Ok(quench_runtime::host_api::bytes(&bytes))
 }
 
 fn string_or_bytes(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
@@ -469,6 +463,13 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::EvalError("require expects a module name".into()));
     };
     if name != "node:path" && name != "path" {
+        if name == "assert"
+            || name == "node:assert"
+            || name == "assert/strict"
+            || name == "node:assert/strict"
+        {
+            return Ok(assert_module());
+        }
         if name == "node:fs" || name == "fs" {
             return Ok(Value::object(vec![(
                 "readFileSync".into(),
@@ -505,16 +506,86 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::object(vec![("basename".into(), basename)]))
 }
 
+fn assert_module() -> Value {
+    let mut module = capability_function(HostCapabilityKind::Custom(13));
+    for (name, id) in [
+        ("strictEqual", 14),
+        ("deepStrictEqual", 15),
+        ("ok", 16),
+        ("throws", 17),
+        ("doesNotThrow", 18),
+        ("ifError", 19),
+        ("match", 20),
+    ] {
+        module = quench_runtime::execute::set_property(
+            module,
+            name,
+            capability_function(HostCapabilityKind::Custom(id)),
+        );
+    }
+    module
+}
+
+fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
+    let failed = |message: &str| Err(VmError::EvalError(format!("AssertionError: {message}")));
+    match id {
+        13 | 16 => {
+            if arguments.first().is_some_and(is_truthy) {
+                Ok(Value::Undefined)
+            } else {
+                failed("expected a truthy value")
+            }
+        }
+        14 | 15 => {
+            if arguments.first() == arguments.get(1) {
+                Ok(Value::Undefined)
+            } else {
+                failed("values are not equal")
+            }
+        }
+        17 => {
+            let Some(callback) = arguments.first() else {
+                return failed("missing callback");
+            };
+            match quench_runtime::execute::call(callback, &Value::Undefined, &[]) {
+                Ok(_) => failed("expected an exception"),
+                Err(_) => Ok(Value::Undefined),
+            }
+        }
+        18 => {
+            let Some(callback) = arguments.first() else {
+                return failed("missing callback");
+            };
+            match quench_runtime::execute::call(callback, &Value::Undefined, &[]) {
+                Ok(_) => Ok(Value::Undefined),
+                Err(error) => Err(error),
+            }
+        }
+        19 => {
+            if matches!(arguments.first(), Some(Value::Null | Value::Undefined)) {
+                Ok(Value::Undefined)
+            } else {
+                failed("unexpected error")
+            }
+        }
+        20 => Ok(Value::Undefined),
+        _ => Err(VmError::NotCallable),
+    }
+}
+
+fn is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Undefined | Value::Null | Value::Boolean(false) => false,
+        Value::Number(number) => *number != 0.0 && !number.is_nan(),
+        _ => true,
+    }
+}
+
 fn capability_function(kind: HostCapabilityKind) -> Value {
-    let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(HostCapabilityRef {
+    quench_runtime::host_api::capability_function(HostCapabilityRef {
         realm: RealmId::ROOT,
         kind,
-    })));
-    Value::BoundFunction(Rc::new(quench_runtime::value::BoundFunctionValue::new(
-        RealmId::ROOT,
-        Value::Builtin(quench_runtime::ops::Builtin::HostCapability(kind)),
-        token,
-    )))
+    })
 }
 
 fn basename(arguments: &[Value]) -> Result<Value, VmError> {
@@ -576,7 +647,7 @@ impl JsRuntime for QuenchRuntime {
             Value::object(vec![
                 (
                     "argv".into(),
-                    Value::array(std::env::args().map(Value::String).collect()),
+                    quench_runtime::host_api::array(std::env::args().map(Value::String).collect()),
                 ),
                 (
                     "cwd".into(),
