@@ -220,7 +220,7 @@ pub enum Builtin {
     IntlPluralRulesSupportedLocalesOf,
     IntlPluralRulesSelect, IntlPluralRulesResolvedOptions,
     IntlDateTimeFormat, IntlDateTimeFormatSupportedLocalesOf,
-    IntlDateTimeFormatFormat, IntlDateTimeFormatFormatToParts,
+    IntlDateTimeFormatFormat, IntlDateTimeFormatFormatGetter, IntlDateTimeFormatFormatToParts,
     IntlDateTimeFormatFormatRange, IntlDateTimeFormatFormatRangeToParts,
     IntlDateTimeFormatResolvedOptions, IntlCollator,
     IntlCollatorSupportedLocalesOf,
