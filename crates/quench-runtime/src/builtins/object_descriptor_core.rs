@@ -250,6 +250,7 @@ fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (TemporalDurationPrototype, "milliseconds") => TemporalDurationMillisecondsGetter,
         (TemporalDurationPrototype, "microseconds") => TemporalDurationMicrosecondsGetter,
         (TemporalDurationPrototype, "nanoseconds") => TemporalDurationNanosecondsGetter,
+        (TemporalPlainDatePrototype, "dayOfWeek") => TemporalPlainDateDayOfWeekGetter,
         (IntlDateTimeFormatPrototype, "format") => IntlDateTimeFormatFormatGetter,
         (IntlNumberFormatPrototype, "format") => IntlNumberFormatFormat,
         (IntlCollatorPrototype, "compare") => IntlCollatorCompareGetter,

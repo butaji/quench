@@ -1,3 +1,5 @@
+use chrono::Datelike;
+
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -60,8 +62,26 @@ pub(crate) fn execute(
                 "Temporal.PlainDate.prototype.valueOf is not allowed",
             )))
         }
+        crate::ops::Builtin::TemporalPlainDateDayOfWeekGetter => Some(day_of_week(receiver)),
         _ => None,
     }
+}
+
+fn day_of_week(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let day = number_field(field(object, "day")) as u32;
+    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    Ok(Value::Number(f64::from(
+        date.weekday().number_from_monday(),
+    )))
 }
 
 fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
@@ -102,6 +122,13 @@ fn field(object: &crate::value::ObjectData, name: &str) -> Value {
         .iter()
         .find(|(key, _)| key == name)
         .map_or(Value::Undefined, |(_, value)| value.clone())
+}
+
+fn number_field(value: Value) -> f64 {
+    match value {
+        Value::Number(value) => value,
+        _ => 0.0,
+    }
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
