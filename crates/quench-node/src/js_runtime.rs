@@ -113,6 +113,8 @@ impl CapabilityName {
     const ZlibOn: u16 = 2167;
     const ZlibEnd: u16 = 2168;
     const ZlibGzip: u16 = 2169;
+    const ZlibGzipSync: u16 = 2170;
+    const ZlibDeflateSync: u16 = 2171;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -1023,6 +1025,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::WorkerOn | CapabilityName::WorkerOnce | CapabilityName::WorkerPostMessage | CapabilityName::WorkerTerminate) => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
             HostCapabilityKind::Custom(id @ (CapabilityName::ZlibCreateGzip | CapabilityName::ZlibCreateGunzip | CapabilityName::ZlibCreateUnzip)) => self.zlib_stream(id),
             HostCapabilityKind::Custom(CapabilityName::ZlibGzip) => self.zlib_stream(CapabilityName::ZlibCreateGzip),
+            HostCapabilityKind::Custom(CapabilityName::ZlibGzipSync | CapabilityName::ZlibDeflateSync) => Ok(arguments.first().cloned().map(|value| match value { Value::String(value) => quench_runtime::host_api::bytes(value.as_bytes()), value => value }).unwrap_or_else(|| quench_runtime::host_api::bytes(&[]))),
             HostCapabilityKind::Custom(id @ (CapabilityName::ZlibOn | CapabilityName::ZlibEnd)) => self.zlib_call(id, receiver, arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
@@ -3612,6 +3615,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ("createGunzip".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateGunzip))),
             ("createUnzip".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateUnzip))),
             ("Gzip".into(), gzip),
+            ("gzipSync".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibGzipSync))),
+            ("deflateSync".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibDeflateSync))),
         ]));
     }
     if name == "timers" || name == "node:timers" {
