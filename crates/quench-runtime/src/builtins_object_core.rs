@@ -53,14 +53,6 @@ pub(crate) fn is_array(value: Option<&Value>) -> Value {
     Value::Boolean(matches!(value, Some(Value::Array(_))))
 }
 
-fn value_to_number(value: &Value) -> f64 {
-    match value {
-        Value::Number(value) => *value,
-        Value::String(value) => value.parse().unwrap_or(f64::NAN),
-        _ => f64::NAN,
-    }
-}
-
 pub(crate) fn object(arguments: &[Value]) -> Value {
     match arguments.first() {
         Some(Value::Array(_))

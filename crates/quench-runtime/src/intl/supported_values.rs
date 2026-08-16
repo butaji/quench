@@ -1,27 +1,31 @@
 use crate::value::Value;
 
 pub(crate) fn supported_calendars() -> Vec<Value> {
-    strings(&[
-        "buddhist",
-        "chinese",
-        "coptic",
-        "dangi",
-        "ethioaa",
-        "ethiopic",
-        "gregory",
-        "hebrew",
-        "indian",
-        "islamic",
-        "islamic-civil",
-        "islamic-rgsa",
-        "islamic-tbla",
-        "islamic-umalqura",
-        "iso8601",
-        "japanese",
-        "persian",
-        "roc",
-    ])
+    strings(CALENDARS)
 }
+
+pub(crate) fn is_supported_calendar(value: &str) -> bool {
+    CALENDARS.contains(&value)
+}
+
+const CALENDARS: &[&str] = &[
+    "buddhist",
+    "chinese",
+    "coptic",
+    "dangi",
+    "ethioaa",
+    "ethiopic",
+    "gregory",
+    "hebrew",
+    "indian",
+    "islamic-civil",
+    "islamic-tbla",
+    "islamic-umalqura",
+    "iso8601",
+    "japanese",
+    "persian",
+    "roc",
+];
 
 pub(crate) fn supported_collations() -> Vec<Value> {
     strings(&["default"])
@@ -58,6 +62,16 @@ pub(crate) fn supported_currencies() -> Vec<Value> {
 
 pub(crate) fn supported_numbering_systems() -> Vec<Value> {
     strings(NUMBERING_SYSTEMS)
+}
+
+pub(crate) fn valid_numbering_system_syntax(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('-').all(|part| {
+            (3..=8).contains(&part.len())
+                && part
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        })
 }
 
 pub(crate) const NUMBERING_SYSTEMS: &[&str] = &[

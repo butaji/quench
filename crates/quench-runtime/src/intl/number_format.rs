@@ -42,7 +42,7 @@ pub(crate) fn group_integer_locale(text: &str, locale: &str) -> String {
         .split_once('.')
         .map_or((body, None), |value| (value.0, Some(value.1)));
     let grouped = group_integer(integer);
-    let (grouping, decimal) = if locale.starts_with("de") {
+    let (grouping, decimal) = if locale.starts_with("de") && !locale.contains("-u-") {
         ('.', ',')
     } else if locale.starts_with("pt") {
         ('\u{a0}', ',')
@@ -300,6 +300,9 @@ pub(crate) fn format_number_rounded(
         if text.ends_with('.') {
             text.pop();
         }
+    }
+    if rounded == 0.0 && value.is_sign_negative() {
+        text.insert(0, '-');
     }
     text
 }

@@ -43,6 +43,11 @@ fn default_prototype_from_constructor(target: &Value, global: &Value) -> Option<
     let Value::Builtin(builtin) = target else {
         return None;
     };
+    if let Some(realm) = crate::vm::realm_id_for_global_value(global) {
+        if let Some(prototype) = crate::builtin_meta::prototype(*builtin) {
+            return Some(crate::vm::realm_intrinsic_for(realm, prototype));
+        }
+    }
     let constructor = crate::execute::get_property(global, crate::builtins::builtin_name(*builtin));
     let prototype = crate::execute::get_property(&constructor, "prototype");
     if crate::value::is_object(&prototype) {

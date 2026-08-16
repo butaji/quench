@@ -1,4 +1,9 @@
-use std::{env, path::Path, path::PathBuf, process::ExitCode};
+use std::{
+    env,
+    io::{self, Write},
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use quench_test262::{
     discover_js_files, resolve_stages, HarnessCache, ResolvedStage, RuntimeHost, StageReport,
@@ -214,6 +219,7 @@ fn run_stages(root: &Path, stages: Vec<ResolvedStage>, args: &Args) -> ExitCode 
     let mut overall = StageReport::default();
     let mut has_failure = false;
     for stage in &stages {
+        print_stage_start(stage);
         let report = match run_single_stage(&mut runner, &mut harness, stage, args.max_failures) {
             Ok(report) => report,
             Err(error) => return fail(error),
@@ -232,6 +238,12 @@ fn run_stages(root: &Path, stages: Vec<ResolvedStage>, args: &Args) -> ExitCode 
     }
     print_stage_totals(stages.len(), overall);
     ExitCode::SUCCESS
+}
+
+fn print_stage_start(stage: &ResolvedStage) {
+    let mut stdout = io::stdout().lock();
+    let _ = writeln!(stdout, "stage {:>3}: {} starting", stage.id, stage.path);
+    let _ = stdout.flush();
 }
 
 fn accumulate_stage_report(overall: &mut StageReport, report: &StageReport) {

@@ -37,7 +37,7 @@ pub(crate) fn japanese_speed_parts(formatted: &str) -> Vec<Value> {
 }
 
 pub(crate) fn pad_locale_fraction(text: &str, minimum: u32, locale: &str) -> String {
-    if !locale.starts_with("de") && !locale.starts_with("pt") {
+    if (!locale.starts_with("de") && !locale.starts_with("pt")) || locale.contains("-u-") {
         return pad_fraction(text, minimum);
     }
     let (sign, rest) = text
@@ -118,30 +118,48 @@ pub(crate) fn rounded_text(
     value: f64,
     fraction_digits: u32,
 ) -> (String, bool) {
-    let fraction_text = format_number_rounded(
-        value,
-        fraction_digits,
-        options.rounding_increment,
-        &options.rounding_mode,
-    );
-    let Some(maximum) = options.maximum_significant_digits else {
-        return (fraction_text, false);
+    let fraction_result = RoundingResult {
+        text: format_number_rounded(
+            value,
+            fraction_digits,
+            options.rounding_increment,
+            &options.rounding_mode,
+        ),
+        rounding_magnitude: -(fraction_digits as i32),
     };
-    let significant_text = format_significant(
-        value,
-        options.minimum_significant_digits.unwrap_or(1),
-        maximum,
-        &options.rounding_mode,
-    );
-    match options.rounding_priority.as_str() {
-        "morePrecision" if decimal_places(&fraction_text) > decimal_places(&significant_text) => {
-            (fraction_text, false)
-        }
-        "lessPrecision" if decimal_places(&fraction_text) < decimal_places(&significant_text) => {
-            (fraction_text, false)
-        }
-        _ => (significant_text, true),
+    let Some(maximum) = options.maximum_significant_digits else {
+        return (fraction_result.text, false);
+    };
+    let significant_result = RoundingResult {
+        text: format_significant(
+            value,
+            options.minimum_significant_digits.unwrap_or(1),
+            maximum,
+            &options.rounding_mode,
+        ),
+        rounding_magnitude: significant_rounding_magnitude(value, maximum),
+    };
+    let fixed_is_more_precise =
+        fraction_result.rounding_magnitude < significant_result.rounding_magnitude;
+    if options.rounding_priority == "morePrecision" && fixed_is_more_precise
+        || options.rounding_priority == "lessPrecision" && !fixed_is_more_precise
+    {
+        (fraction_result.text, false)
+    } else {
+        (significant_result.text, true)
     }
+}
+
+struct RoundingResult {
+    text: String,
+    rounding_magnitude: i32,
+}
+
+fn significant_rounding_magnitude(value: f64, maximum: u32) -> i32 {
+    if value == 0.0 {
+        return 1 - maximum as i32;
+    }
+    value.abs().log10().floor() as i32 - maximum as i32 + 1
 }
 
 pub(crate) fn decorate_numeric_text(
@@ -158,11 +176,11 @@ pub(crate) fn decorate_numeric_text(
         && (options.notation != "compact" || (compact_unscaled_de && scaled.abs() >= 10_000.0))
     {
         text = group_integer_locale(&text, &options.locale);
-    } else if options.notation == "compact" && options.locale.starts_with("de") {
+    } else if options.notation == "compact" && plain_decimal_locale(&options.locale) {
         text = text.replace('.', ",");
     }
     if let Some((_, exponent)) = scientific.filter(|(value, _)| value.is_finite()) {
-        if options.locale.starts_with("de") {
+        if plain_decimal_locale(&options.locale) {
             text = text.replace('.', ",");
         }
         text.push_str(&format!("E{exponent}"));
@@ -301,12 +319,6 @@ pub(crate) fn is_decimal_literal(value: &str) -> bool {
         && fraction.chars().all(|c| c.is_ascii_digit())
 }
 
-pub(crate) fn decimal_places(value: &str) -> usize {
-    value
-        .split_once('.')
-        .map_or(0, |(_, fraction)| fraction.len())
-}
-
 pub(crate) fn format_decimal_literal(value: &str, locale: &str) -> String {
     let (sign, body) = value
         .strip_prefix('-')
@@ -316,13 +328,17 @@ pub(crate) fn format_decimal_literal(value: &str, locale: &str) -> String {
     if fraction.is_empty() {
         format!("{sign}{integer}")
     } else {
-        let decimal = if locale.starts_with("de") || locale.starts_with("pt") {
+        let decimal = if plain_decimal_locale(locale) {
             ","
         } else {
             "."
         };
         format!("{sign}{integer}{decimal}{fraction}")
     }
+}
+
+fn plain_decimal_locale(locale: &str) -> bool {
+    !locale.contains("-u-") && (locale.starts_with("de") || locale.starts_with("pt"))
 }
 
 pub(crate) fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
@@ -343,7 +359,13 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlNumberFormat => Some(construct(arguments)),
+        crate::ops::Builtin::IntlNumberFormat => Some(crate::intl::construct_with_legacy_receiver(
+            arguments,
+            receiver,
+            crate::ops::Builtin::IntlNumberFormatPrototype,
+            SLOT,
+            super::construct,
+        )),
         crate::ops::Builtin::IntlNumberFormatFormat
         | crate::ops::Builtin::IntlNumberFormatFormatToParts
         | crate::ops::Builtin::IntlNumberFormatFormatRange

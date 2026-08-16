@@ -402,7 +402,7 @@ pub(crate) fn proxy_define_property(
                     Value::String(prop.to_string()),
                     descriptor.clone(),
                 ],
-                None,
+                Some(&proxy.handler),
             )?;
             if crate::execute::is_truthy(&result) {
                 validate_define_invariant(&proxy.target, prop, descriptor)?;
