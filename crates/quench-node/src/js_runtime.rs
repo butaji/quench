@@ -1296,6 +1296,8 @@ include!("js_runtime_require_module.rs");
 include!("js_runtime_require_crypto.rs");
 include!("js_runtime_require_fs.rs");
 include!("js_runtime_require_stream_http.rs");
+include!("js_runtime_require_url.rs");
+include!("js_runtime_require_path.rs");
 include!("js_runtime_path.rs");
 include!("js_runtime_process_modules.rs");
 include!("js_runtime_url_object.rs");
