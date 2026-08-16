@@ -33,6 +33,9 @@ impl NodeHost for FilesystemNodeHost {
         request: &str,
         parent: Option<&Path>,
     ) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        if parent.is_none() && Path::new(request).exists() {
+            return Ok(PathBuf::from(request));
+        }
         let base = parent
             .and_then(Path::parent)
             .unwrap_or_else(|| Path::new("."));
