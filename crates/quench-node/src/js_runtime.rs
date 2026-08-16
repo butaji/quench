@@ -115,6 +115,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(30) => buffer_from(arguments),
             HostCapabilityKind::Custom(31) => buffer_alloc(arguments),
             HostCapabilityKind::Custom(32) => buffer_is_buffer(arguments),
+            HostCapabilityKind::Custom(80) => util_format(arguments),
+            HostCapabilityKind::Custom(81) => util_inspect(arguments),
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
             HostCapabilityKind::Custom(21) => next_tick(arguments),
             HostCapabilityKind::Custom(27 | 28 | 29) => timer_call(arguments),
@@ -558,6 +560,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 capability_function(HostCapabilityKind::Custom(40)),
             )]));
         }
+        if name == "util" || name == "node:util" {
+            return Ok(util_module());
+        }
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
     }
     let basename = capability_function(HostCapabilityKind::Custom(2));
@@ -704,6 +709,54 @@ fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {
         arguments.first(),
         Some(Value::Uint8Array(_))
     )))
+}
+
+fn util_module() -> Value {
+    quench_runtime::host_api::object(vec![
+        (
+            "format".into(),
+            capability_function(HostCapabilityKind::Custom(80)),
+        ),
+        (
+            "inspect".into(),
+            capability_function(HostCapabilityKind::Custom(81)),
+        ),
+        ("types".into(), quench_runtime::host_api::object(vec![])),
+    ])
+}
+
+fn util_format(arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::String(
+        arguments
+            .iter()
+            .map(safe_value_string)
+            .collect::<Vec<_>>()
+            .join(" "),
+    ))
+}
+
+fn util_inspect(arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::String(
+        arguments
+            .first()
+            .map(safe_value_string)
+            .unwrap_or_else(|| "undefined".into()),
+    ))
+}
+
+fn safe_value_string(value: &Value) -> String {
+    match value {
+        Value::Undefined => "undefined".into(),
+        Value::Null => "null".into(),
+        Value::Boolean(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => value.clone(),
+        Value::BigInt(value) => format!("{value}n"),
+        Value::Array(_) => "[Array]".into(),
+        Value::Object(_) | Value::ObjectAlias(_) => "[Object]".into(),
+        Value::Function(_) | Value::BoundFunction(_) => "[Function]".into(),
+        _ => "[Value]".into(),
+    }
 }
 
 fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
