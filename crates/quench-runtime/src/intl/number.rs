@@ -120,7 +120,10 @@ impl RawOptions {
             for key in OPTION_KEYS {
                 let value = crate::execute::get_property_result(options, key)?;
                 if !matches!(value, Value::Undefined) {
-                    let text = if matches!(*key, "roundingMode" | "trailingZeroDisplay") {
+                    let text = if matches!(
+                        *key,
+                        "roundingMode" | "roundingPriority" | "trailingZeroDisplay"
+                    ) {
                         crate::conversion::to_string(&value)?
                     } else if *key == "roundingIncrement" {
                         crate::conversion::to_number(&value)?.to_string()
@@ -145,6 +148,13 @@ impl RawOptions {
                     {
                         return Err(crate::value::error::throw_range_error(
                             "invalid trailingZeroDisplay",
+                        ));
+                    }
+                    if *key == "roundingPriority"
+                        && !matches!(text.as_str(), "auto" | "morePrecision" | "lessPrecision")
+                    {
+                        return Err(crate::value::error::throw_range_error(
+                            "invalid roundingPriority",
                         ));
                     }
                     if *key == "numberingSystem" && !valid_numbering_system_syntax(&text) {
