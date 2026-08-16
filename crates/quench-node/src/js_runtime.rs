@@ -129,7 +129,12 @@ impl Default for QuenchNodeHost {
 }
 
 impl Host for QuenchNodeHost {
-    fn call(&self, capability: HostCapabilityRef, arguments: &[Value]) -> Result<Value, VmError> {
+    fn call(
+        &self,
+        capability: HostCapabilityRef,
+        _receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
         match capability.kind {
             HostCapabilityKind::Custom(1) => require_module(arguments),
             HostCapabilityKind::Custom(2) => basename(arguments),
