@@ -91,10 +91,7 @@ fn retarget_optional(value: &mut Option<Value>, old: &Rc<ObjectData>, new: &Weak
 fn retarget(value: &mut Value, old: &Rc<ObjectData>, new: &WeakObject) {
     let targets_old = match value {
         Value::Object(object) if Rc::ptr_eq(object, old) => true,
-        Value::Object(object) => {
-            *value = alias(object);
-            false
-        }
+        Value::Object(_) => false,
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
