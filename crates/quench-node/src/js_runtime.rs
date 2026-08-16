@@ -2687,6 +2687,7 @@ impl QuenchNodeHost {
             }
             CapabilityName::DgramClose => {
                 state.0 = false;
+                state.1 = false;
                 Ok(Value::Undefined)
             }
             CapabilityName::DgramConnect => {
@@ -2705,7 +2706,9 @@ impl QuenchNodeHost {
                     })
                     .unwrap_or(0);
                 let callback = arguments
-                    .get(2)
+                    .iter()
+                    .rev()
+                    .find(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_)))
                     .cloned()
                     .or_else(|| self.dgram_listeners.borrow_mut().remove(&id));
                 drop(states);
@@ -2791,7 +2794,10 @@ impl QuenchNodeHost {
                         "message must be a string or a Uint8Array",
                     )));
                 }
-                let callback = arguments.last().cloned();
+                let callback = arguments
+                    .last()
+                    .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_)))
+                    .cloned();
                 let total = arguments
                     .first()
                     .map(|value| match value {
