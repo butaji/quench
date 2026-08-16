@@ -217,7 +217,11 @@ pub(crate) fn filter(
             "Iterator.prototype.filter predicate is not callable",
         ));
     }
-    let iterator = from(std::slice::from_ref(receiver))?;
+    let iterator = if matches!(receiver, Value::Generator(_)) {
+        open(receiver.clone())?
+    } else {
+        from(std::slice::from_ref(receiver))?
+    };
     Ok(Value::Iterator(Rc::new(IteratorData {
         state: RefCell::new(IteratorState::Filtered {
             iterator,
