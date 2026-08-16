@@ -94,6 +94,8 @@ impl CapabilityName {
     const FsUnlinkSync: u16 = 1508;
     const FsRmdirSync: u16 = 1509;
     const FsRealpathSync: u16 = 1510;
+    const FsOpenSync: u16 = 1511;
+    const FsCloseSync: u16 = 1512;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -189,6 +191,8 @@ struct QuenchNodeHost {
     next_url: Cell<u16>,
     event_max: RefCell<HashMap<u16, f64>>,
     next_event: Cell<u16>,
+    fd_paths: RefCell<HashMap<i32, String>>,
+    next_fd: Cell<i32>,
 }
 
 struct StreamState {
@@ -223,6 +227,8 @@ impl Default for QuenchNodeHost {
             next_url: Cell::new(600),
             event_max: RefCell::new(HashMap::new()),
             next_event: Cell::new(900),
+            fd_paths: RefCell::new(HashMap::new()),
+            next_fd: Cell::new(3),
         }
     }
 }
@@ -270,6 +276,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsUnlinkSync) => fs_unlink(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsRmdirSync) => fs_rmdir(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsRealpathSync) => fs_realpath(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsOpenSync) => self.fs_open(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsCloseSync) => self.fs_close(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -330,7 +338,9 @@ impl Host for QuenchNodeHost {
                 | CapabilityName::Timer
                 | CapabilityName::TimerClearImmediate,
             ) => timer_call(arguments),
-            HostCapabilityKind::Custom(id) if (13..=20).contains(&id) => {
+            HostCapabilityKind::Custom(id)
+                if (13..=20).contains(&id) || (24..=26).contains(&id) =>
+            {
                 assertion_call(id, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::HttpServer | CapabilityName::HttpGet) => {
@@ -495,6 +505,43 @@ impl Host for QuenchNodeHost {
 }
 
 impl QuenchNodeHost {
+    fn fs_open(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let path = path_arg(arguments, 0)?;
+        let flags = arguments
+            .get(1)
+            .map(safe_value_string)
+            .unwrap_or_else(|| "r".into());
+        if flags.starts_with('w') || flags.starts_with('a') {
+            if flags.starts_with('w') {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(path)
+            } else {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+            }
+        } else {
+            std::fs::File::open(path)
+        }
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+        let fd = self.next_fd.get();
+        self.next_fd.set(fd.saturating_add(1));
+        self.fd_paths.borrow_mut().insert(fd, path.to_owned());
+        Ok(Value::Number(fd as f64))
+    }
+
+    fn fs_close(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let Some(Value::Number(fd)) = arguments.first() else {
+            return Err(VmError::EvalError("fd must be a number".into()));
+        };
+        self.fd_paths.borrow_mut().remove(&(*fd as i32));
+        Ok(Value::Undefined)
+    }
+
     fn url_call(&self, id: u16) -> Result<Value, VmError> {
         let value = self
             .urls
@@ -959,9 +1006,20 @@ fn read_file_sync(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn fixture_common_path(path: &str) -> std::borrow::Cow<'_, str> {
-    if path.contains("tests/node-compat/common") {
+    let mut normalized = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::CurDir => {}
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    let normalized = normalized.to_string_lossy();
+    if normalized.contains("tests/node-compat/common") {
         return std::borrow::Cow::Owned(
-            path.replace("tests/node-compat/common", "tests/node/test/common"),
+            normalized.replace("tests/node-compat/common", "tests/node/test/common"),
         );
     }
     std::borrow::Cow::Borrowed(path)
@@ -1047,6 +1105,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "realpathSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsRealpathSync)),
+                ),
+                (
+                    "openSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpenSync)),
+                ),
+                (
+                    "closeSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsCloseSync)),
                 ),
             ]));
         }
@@ -1858,6 +1924,9 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::Cwd),
                 HostCapabilityKind::Custom(CapabilityName::ReadFileSync),
                 HostCapabilityKind::Custom(CapabilityName::CreateHash),
+                HostCapabilityKind::Custom(CapabilityName::AssertNotStrictEqual),
+                HostCapabilityKind::Custom(CapabilityName::AssertNotDeepStrictEqual),
+                HostCapabilityKind::Custom(CapabilityName::AssertError),
                 HostCapabilityKind::Custom(CapabilityName::QueueMicrotask),
                 HostCapabilityKind::Custom(CapabilityName::BufferByteLength),
                 HostCapabilityKind::Custom(CapabilityName::Stream),
@@ -1872,6 +1941,14 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::FsAppendBytes),
                 HostCapabilityKind::Custom(CapabilityName::FsUnlink),
                 HostCapabilityKind::Custom(CapabilityName::FsMkdtemp),
+                HostCapabilityKind::Custom(CapabilityName::FsAccessSync),
+                HostCapabilityKind::Custom(CapabilityName::FsWriteFileSync),
+                HostCapabilityKind::Custom(CapabilityName::FsAppendFileSync),
+                HostCapabilityKind::Custom(CapabilityName::FsUnlinkSync),
+                HostCapabilityKind::Custom(CapabilityName::FsRmdirSync),
+                HostCapabilityKind::Custom(CapabilityName::FsRealpathSync),
+                HostCapabilityKind::Custom(CapabilityName::FsOpenSync),
+                HostCapabilityKind::Custom(CapabilityName::FsCloseSync),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
