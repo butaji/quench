@@ -403,10 +403,7 @@ fn object_inherited_property_result(
     if matches!(prototype, Value::Null) {
         return Some(Ok(Value::Undefined));
     }
-    match get_property_with_receiver(prototype, key, receiver) {
-        Ok(Value::Undefined) => None,
-        result => Some(result),
-    }
+    Some(get_property_with_receiver(prototype, key, receiver))
 }
 
 fn finish_property_access(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
