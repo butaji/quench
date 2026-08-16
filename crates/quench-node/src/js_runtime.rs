@@ -81,6 +81,8 @@ impl CapabilityName {
     const QuerystringParse: u16 = 90;
     const QuerystringEscape: u16 = 91;
     const QuerystringStringify: u16 = 92;
+    const QuerystringUnescapeBuffer: u16 = 93;
+    const QuerystringUnescape: u16 = 2072;
     const EventsGetMax: u16 = 94;
     const EventsSetMax: u16 = 95;
     const OsRelease: u16 = 96;
@@ -741,6 +743,14 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::QuerystringStringify) => {
                 querystring_stringify(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::QuerystringUnescapeBuffer) => {
+                querystring_unescape_buffer(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::QuerystringUnescape) => {
+                Ok(Value::String(querystring_decode(
+                    arguments.first().and_then(|value| match value { Value::String(value) => Some(value.as_str()), _ => None }).unwrap_or_default(),
+                ).into()))
             }
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
             HostCapabilityKind::Custom(CapabilityName::ProcessNextTick) => next_tick(arguments),
@@ -3145,13 +3155,19 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "unescape".into(),
                     capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::QuerystringEscape,
+                        CapabilityName::QuerystringUnescape,
                     )),
                 ),
                 (
                     "stringify".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::QuerystringStringify,
+                    )),
+                ),
+                (
+                    "unescapeBuffer".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::QuerystringUnescapeBuffer,
                     )),
                 ),
             ]));
@@ -4921,11 +4937,16 @@ fn querystring_parse(arguments: &[Value]) -> Result<Value, VmError> {
         .and_then(|options| quench_runtime::execute::get_property_result(options, "maxKeys").ok())
         .and_then(|value| match value { Value::Number(value) => Some(value as usize), _ => None })
         .filter(|value| *value > 0);
+    let decoder = arguments.get(3).and_then(|options| {
+        quench_runtime::execute::get_property_result(options, "decodeURIComponent")
+            .ok()
+            .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)))
+    });
     let mut properties: Vec<(String, Value)> = Vec::new();
-    for pair in input.split(&separator).filter(|pair| !pair.is_empty()).take(max_keys.unwrap_or(usize::MAX)) {
+    for pair in input.split(&separator).take(max_keys.unwrap_or(usize::MAX)).filter(|pair| !pair.is_empty()) {
         let (key, value) = pair.split_once(&equals).unwrap_or((pair, ""));
-        let key = querystring_decode(key);
-        let value = Value::String(querystring_decode(value).into());
+        let key = querystring_apply_decoder(&querystring_decode(key), decoder.as_ref());
+        let value = Value::String(querystring_apply_decoder(&querystring_decode(value), decoder.as_ref()).into());
         if let Some((_, existing)) = properties.iter_mut().find(|(name, _)| *name == key) {
             *existing = match existing.clone() {
                 Value::Array(array) => {
@@ -4975,6 +4996,10 @@ fn array_length(value: &Value) -> usize {
 }
 
 fn querystring_decode(value: &str) -> String {
+    String::from_utf8_lossy(&querystring_decode_bytes(value)).into_owned()
+}
+
+fn querystring_decode_bytes(value: &str) -> Vec<u8> {
     let bytes = value.as_bytes();
     let mut output = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -4999,7 +5024,7 @@ fn querystring_decode(value: &str) -> String {
         }
         index += 1;
     }
-    String::from_utf8_lossy(&output).into_owned()
+    output
 }
 
 fn querystring_escape(arguments: &[Value]) -> Result<Value, VmError> {
@@ -5018,6 +5043,20 @@ fn querystring_encode(value: &str) -> String {
         }
     }
     output
+}
+
+fn querystring_unescape_buffer(arguments: &[Value]) -> Result<Value, VmError> {
+    let input = match arguments.first() {
+        Some(Value::String(value)) => value.as_str(),
+        _ => "",
+    };
+    let decode_spaces = matches!(arguments.get(1), Some(Value::Boolean(true)));
+    let input = if decode_spaces {
+        input.to_owned()
+    } else {
+        input.replace('+', "%2B")
+    };
+    Ok(node_buffer(&querystring_decode_bytes(&input)))
 }
 
 fn querystring_stringify(arguments: &[Value]) -> Result<Value, VmError> {
@@ -5103,6 +5142,20 @@ fn querystring_apply_encoder(value: &Value, encoder: Option<&Value>, fallback: &
         .and_then(|encoder| quench_runtime::execute::call(encoder, &Value::Undefined, &[value.clone()]).ok())
         .map(|value| safe_value_string(&value))
         .unwrap_or_else(|| fallback.to_owned())
+}
+
+fn querystring_apply_decoder(value: &str, decoder: Option<&Value>) -> String {
+    decoder
+        .and_then(|decoder| {
+            quench_runtime::execute::call(
+                decoder,
+                &Value::Undefined,
+                &[Value::String(value.to_owned())],
+            )
+            .ok()
+        })
+        .map(|value| safe_value_string(&value))
+        .unwrap_or_else(|| value.to_owned())
 }
 
 fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
