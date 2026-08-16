@@ -102,6 +102,9 @@ impl CapabilityName {
     const OsGetPriority: u16 = 1002;
     const OsSetPriority: u16 = 1003;
     const OsAvailableParallelism: u16 = 1004;
+    const OsHostname: u16 = 1005;
+    const OsVersion: u16 = 1006;
+    const OsMachine: u16 = 1007;
     const TimerImmediate: u16 = 27;
     const Timer: u16 = 28;
     const TimerClearImmediate: u16 = 29;
@@ -739,6 +742,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::OsAvailableParallelism) => Ok(Value::Number(
                 std::thread::available_parallelism().map(|value| value.get() as f64).unwrap_or(1.0),
             )),
+            HostCapabilityKind::Custom(CapabilityName::OsHostname) => Ok(Value::String("localhost".into())),
+            HostCapabilityKind::Custom(CapabilityName::OsVersion) => Ok(Value::String("".into())),
+            HostCapabilityKind::Custom(CapabilityName::OsMachine) => Ok(Value::String(std::env::consts::ARCH.into())),
             HostCapabilityKind::Custom(CapabilityName::OsTmpdir) => os_tmpdir(receiver),
             HostCapabilityKind::Custom(CapabilityName::OsHomedir) => os_homedir(),
             HostCapabilityKind::Custom(CapabilityName::OsCpus..=CapabilityName::OsType)
@@ -4879,19 +4885,19 @@ fn os_module() -> Value {
     let mut module = quench_runtime::host_api::object(vec![
         (
             "platform".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::OsPlatform)),
+            os_string_function(CapabilityName::OsPlatform),
         ),
         (
             "arch".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::OsArch)),
+            os_string_function(CapabilityName::OsArch),
         ),
         (
             "tmpdir".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::OsTmpdir)),
+            os_string_function(CapabilityName::OsTmpdir),
         ),
         (
             "homedir".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::OsHomedir)),
+            os_string_function(CapabilityName::OsHomedir),
         ),
         ("EOL".into(), Value::String("\n".into())),
         (
@@ -4912,15 +4918,15 @@ fn os_module() -> Value {
         ),
         (
             "type".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::OsType)),
+            os_string_function(CapabilityName::OsType),
         ),
         (
             "release".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::OsRelease)),
+            os_string_function(CapabilityName::OsRelease),
         ),
         (
             "endianness".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::OsEndianness)),
+            os_string_function(CapabilityName::OsEndianness),
         ),
         (
             "loadavg".into(),
@@ -4940,6 +4946,9 @@ fn os_module() -> Value {
         ("getPriority".into(), os_numeric_function(CapabilityName::OsGetPriority)),
         ("setPriority".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::OsSetPriority))),
         ("availableParallelism".into(), os_numeric_function(CapabilityName::OsAvailableParallelism)),
+        ("hostname".into(), os_string_function(CapabilityName::OsHostname)),
+        ("version".into(), os_string_function(CapabilityName::OsVersion)),
+        ("machine".into(), os_string_function(CapabilityName::OsMachine)),
         ("constants".into(), quench_runtime::host_api::object(vec![
             ("priority".into(), quench_runtime::host_api::object(vec![("PRIORITY_LOW".into(), Value::Number(0.0))])),
         ])),
@@ -4952,6 +4961,11 @@ fn os_module() -> Value {
 fn os_numeric_function(kind: u16) -> Value {
     let function = capability_function(HostCapabilityKind::Custom(kind));
     quench_runtime::execute::set_property(function.clone(), "valueOf", function)
+}
+
+fn os_string_function(kind: u16) -> Value {
+    let function = capability_function(HostCapabilityKind::Custom(kind));
+    quench_runtime::execute::set_property(function.clone(), "toString", function)
 }
 
 fn os_platform() -> Result<Value, VmError> {
