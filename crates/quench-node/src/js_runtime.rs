@@ -1213,6 +1213,7 @@ impl QuenchNodeHost {
         if let Ok(length) = quench_runtime::execute::get_property_result(arguments.first().unwrap(), "length") {
             quench_runtime::execute::set_callable_property(&wrapper, "length", length)?;
         }
+        quench_runtime::execute::set_prototype_of(&wrapper, arguments.first().unwrap())?;
         Ok(wrapper)
     }
 
