@@ -148,6 +148,15 @@ pub(crate) fn predeclare_functions(
     locals: &mut HashMap<String, u16>,
     next_slot: &mut u16,
 ) {
+    predeclare_functions_excluding(statements, locals, next_slot, &[]);
+}
+
+pub(crate) fn predeclare_functions_excluding(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+    excluded: &[String],
+) {
     for statement in statements {
         let names = if matches!(statement, oxc::ast::ast::Statement::FunctionDeclaration(_)) {
             declared_names(statement)
@@ -155,7 +164,11 @@ pub(crate) fn predeclare_functions(
             nested_var_names(statement)
         };
         for name in names {
-            reserve(&name, locals, next_slot);
+            if !excluded.contains(&name)
+                || matches!(statement, oxc::ast::ast::Statement::FunctionDeclaration(_))
+            {
+                reserve(&name, locals, next_slot);
+            }
         }
     }
 }
@@ -163,6 +176,19 @@ pub(crate) fn predeclare_functions(
 fn nested_var_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
     match statement {
         oxc::ast::ast::Statement::FunctionDeclaration(_) => Vec::new(),
+        oxc::ast::ast::Statement::BlockStatement(block) => annex_b_function_names(&block.body),
+        oxc::ast::ast::Statement::IfStatement(statement) => {
+            let mut names = annex_b_function_names(std::slice::from_ref(&statement.consequent));
+            if let Some(alternate) = &statement.alternate {
+                names.extend(annex_b_function_names(std::slice::from_ref(alternate)));
+            }
+            names
+        }
+        oxc::ast::ast::Statement::SwitchStatement(statement) => statement
+            .cases
+            .iter()
+            .flat_map(|case| annex_b_function_names(&case.consequent))
+            .collect(),
         _ => declared_names(statement),
     }
 }

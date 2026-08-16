@@ -1,3 +1,5 @@
+use chrono::Datelike;
+
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -60,10 +62,197 @@ pub(crate) fn execute(
                 "Temporal.PlainDate.prototype.valueOf is not allowed",
             )))
         }
+        crate::ops::Builtin::TemporalPlainDateDayOfWeekGetter => Some(day_of_week(receiver)),
+        crate::ops::Builtin::TemporalPlainDateDayOfYearGetter => Some(day_of_year(receiver)),
+        crate::ops::Builtin::TemporalPlainDateDaysInMonthGetter => {
+            Some(days_in_month_getter(receiver))
+        }
+        crate::ops::Builtin::TemporalPlainDateDaysInYearGetter => Some(days_in_year(receiver)),
+        crate::ops::Builtin::TemporalPlainDateDaysInWeekGetter => Some(days_in_week(receiver)),
+        crate::ops::Builtin::TemporalPlainDateInLeapYearGetter => Some(in_leap_year(receiver)),
+        crate::ops::Builtin::TemporalPlainDateEraGetter => Some(era(receiver)),
+        crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era(receiver)),
+        crate::ops::Builtin::TemporalPlainDateCalendarIdGetter => Some(calendar_id(receiver)),
+        crate::ops::Builtin::TemporalPlainDateWeekOfYearGetter => Some(week_of_year(receiver)),
+        crate::ops::Builtin::TemporalPlainDateYearOfWeekGetter => Some(year_of_week(receiver)),
+        crate::ops::Builtin::TemporalPlainDateDayGetter => Some(day(receiver)),
+        crate::ops::Builtin::TemporalPlainDateYearGetter => Some(year(receiver)),
+        crate::ops::Builtin::TemporalPlainDateMonthCodeGetter => Some(month_code(receiver)),
+        crate::ops::Builtin::TemporalPlainDateMonthGetter => Some(month(receiver)),
         _ => None,
     }
 }
 
+fn day_of_week(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let day = number_field(field(object, "day")) as u32;
+    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    Ok(Value::Number(f64::from(
+        date.weekday().number_from_monday(),
+    )))
+}
+
+fn day_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let day = number_field(field(object, "day")) as u32;
+    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    Ok(Value::Number(f64::from(date.ordinal())))
+}
+
+fn days_in_month_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year"));
+    let month = number_field(field(object, "month"));
+    Ok(Value::Number(days_in_month(year, month)))
+}
+
+fn days_in_year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    Ok(Value::Number(if is_leap_year(year) {
+        366.0
+    } else {
+        365.0
+    }))
+}
+
+fn days_in_week(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(Value::Number(7.0))
+}
+
+fn in_leap_year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    Ok(Value::Boolean(is_leap_year(year)))
+}
+
+fn era(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(Value::Undefined)
+}
+
+fn calendar_id(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(Value::String("iso8601".to_owned()))
+}
+
+fn week_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let day = number_field(field(object, "day")) as u32;
+    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    Ok(Value::Number(f64::from(date.iso_week().week())))
+}
+
+fn year_of_week(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let day = number_field(field(object, "day")) as u32;
+    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
+    Ok(Value::Number(f64::from(date.iso_week().year())))
+}
+
+fn day(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(field(object, "day"))
+}
+
+fn year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(field(object, "year"))
+}
+
+fn month_code(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let month = number_field(field(object, "month")) as u32;
+    Ok(Value::String(format!("M{month:02}")))
+}
+
+fn month(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(field(object, "month"))
+}
 fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
     let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
         return Err(invalid_receiver());
@@ -102,6 +291,13 @@ fn field(object: &crate::value::ObjectData, name: &str) -> Value {
         .iter()
         .find(|(key, _)| key == name)
         .map_or(Value::Undefined, |(_, value)| value.clone())
+}
+
+fn number_field(value: Value) -> f64 {
+    match value {
+        Value::Number(value) => value,
+        _ => 0.0,
+    }
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {

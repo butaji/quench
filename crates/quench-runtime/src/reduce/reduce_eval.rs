@@ -90,7 +90,7 @@ fn instantiate_context<'a>(
     let winners = selected_function_names(&selected);
     let mut variables = global_variable_names(statements, &winners);
     if annex_b {
-        variables.extend(annex_b_function_names(statements));
+        variables.extend(crate::reduce_support::annex_b_function_names(statements));
         variables.sort_unstable();
         variables.dedup();
     }
@@ -100,37 +100,6 @@ fn instantiate_context<'a>(
         Vec::new()
     };
     (selected, variables, lexical)
-}
-
-fn annex_b_function_names(statements: &[Statement<'_>]) -> Vec<String> {
-    let mut names = Vec::new();
-    for statement in statements {
-        match statement {
-            Statement::BlockStatement(block) => collect_block_annex_names(&block.body, &mut names),
-            Statement::IfStatement(statement) => {
-                collect_block_annex_names(std::slice::from_ref(&statement.consequent), &mut names);
-                if let Some(alternate) = &statement.alternate {
-                    collect_block_annex_names(std::slice::from_ref(alternate), &mut names);
-                }
-            }
-            _ => {}
-        }
-    }
-    names
-}
-
-fn collect_block_annex_names(statements: &[Statement<'_>], names: &mut Vec<String>) {
-    for statement in statements {
-        match statement {
-            Statement::FunctionDeclaration(function) => {
-                if let Some(identifier) = &function.id {
-                    names.push(identifier.name.to_string());
-                }
-            }
-            Statement::BlockStatement(block) => collect_block_annex_names(&block.body, names),
-            _ => {}
-        }
-    }
 }
 
 fn emit_function_declarations(
