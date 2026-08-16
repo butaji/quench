@@ -20,6 +20,21 @@ pub(crate) struct Locale {
     pub numbering_system: Option<String>,
     pub numeric: bool,
     pub numeric_explicit: bool,
+    pub unicode_extensions: Vec<UnicodeExtension>,
+    pub other_extensions: Vec<OtherExtension>,
+}
+
+#[derive(Clone)]
+pub(crate) struct UnicodeExtension {
+    pub attributes: Vec<String>,
+    pub key: String,
+    pub types: Vec<String>,
+}
+
+#[derive(Clone)]
+pub(crate) struct OtherExtension {
+    pub singleton: String,
+    pub subtags: Vec<String>,
 }
 
 impl Locale {
@@ -43,19 +58,44 @@ impl Locale {
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(tag_arg) = arguments.first() else {
-        return Err(runtime_error("RangeError: Locale requires a tag"));
+        return Err(crate::value::error::throw_type_error(
+            "Locale requires a tag",
+        ));
     };
     let tag = locale_tag(tag_arg)?;
-    let canonical = canonicalize(&tag)?;
-    let locale = parse_canonical(&canonical);
     let options = arguments.get(1);
-    let locale = apply_options(locale, options)?;
+    let has_options = options.is_some_and(|value| !matches!(value, Value::Undefined));
+    let grandfathered = matches!(
+        tag.to_ascii_lowercase().as_str(),
+        "art-lojban" | "cel-gaulish"
+    );
+    let canonical = if grandfathered && has_options {
+        tag.clone()
+    } else {
+        canonicalize(&tag)?
+    };
+    let language = canonical.split('-').next().unwrap_or_default();
+    if !valid_language_subtag(language) {
+        return Err(runtime_error("RangeError: invalid language tag"));
+    }
+    let locale = parse_canonical(&canonical);
+    let mut locale = apply_options(locale, options)?;
+    if grandfathered && has_options {
+        locale.variants.clear();
+    }
     Ok(build_object(locale))
+}
+
+fn valid_language_subtag(language: &str) -> bool {
+    matches!(language.len(), 2 | 3 | 5..=8)
+        && language
+            .chars()
+            .all(|character| character.is_ascii_alphabetic())
 }
 
 fn locale_tag(value: &Value) -> Result<String, VmError> {
     match value {
-        Value::String(_) => crate::conversion::to_string(value),
+        Value::String(_) | Value::StringUnits(_) => crate::conversion::to_string(value),
         Value::Object(_) => crate::conversion::to_string(value),
         _ => Err(runtime_error("TypeError: locale tag must be a string")),
     }
@@ -76,6 +116,8 @@ fn parse_canonical(tag: &str) -> Locale {
         numbering_system: None,
         numeric: false,
         numeric_explicit: false,
+        unicode_extensions: Vec::new(),
+        other_extensions: Vec::new(),
     };
     let mut index = 1;
     if parts
@@ -99,8 +141,113 @@ fn parse_canonical(tag: &str) -> Locale {
         locale.variants.push((*part).to_string());
         index += 1;
     }
+    locale.variants.sort_by(|left, right| {
+        let left_numeric = left.chars().next().is_some_and(|c| c.is_ascii_digit());
+        let right_numeric = right.chars().next().is_some_and(|c| c.is_ascii_digit());
+        right_numeric
+            .cmp(&left_numeric)
+            .then_with(|| left.cmp(right))
+    });
+    locale.unicode_extensions = parse_unicode_extensions(&parts[index..]);
+    locale.other_extensions = parse_other_extensions(&parts[index..]);
     parse_extensions(&mut locale, &parts[index..]);
     locale
+}
+
+fn parse_other_extensions(parts: &[&str]) -> Vec<OtherExtension> {
+    let mut extensions = Vec::new();
+    let mut index = 0;
+    while index < parts.len() {
+        if parts[index] == "u" {
+            index += 1;
+            while index < parts.len() && parts[index].len() != 1 {
+                index += 1;
+            }
+            continue;
+        }
+        if parts[index].len() != 1 {
+            index += 1;
+            continue;
+        }
+        let singleton = parts[index].to_string();
+        index += 1;
+        let start = index;
+        if singleton == "x" {
+            extensions.push(OtherExtension {
+                singleton,
+                subtags: parts[start..]
+                    .iter()
+                    .map(|part| (*part).to_string())
+                    .collect(),
+            });
+            break;
+        }
+        while index < parts.len() && parts[index].len() != 1 {
+            index += 1;
+        }
+        extensions.push(OtherExtension {
+            singleton,
+            subtags: parts[start..index]
+                .iter()
+                .map(|part| (*part).to_string())
+                .collect(),
+        });
+    }
+    extensions
+}
+
+fn parse_unicode_extensions(parts: &[&str]) -> Vec<UnicodeExtension> {
+    let Some(start) = parts
+        .iter()
+        .position(|part| *part == "u")
+        .filter(|start| !parts[..*start].contains(&"x"))
+    else {
+        return Vec::new();
+    };
+    let mut extensions = Vec::new();
+    let mut index = start + 1;
+    let mut attributes = Vec::new();
+    while index < parts.len() && parts[index].len() != 2 && parts[index].len() != 1 {
+        attributes.push(parts[index].to_string());
+        index += 1;
+    }
+    attributes.sort();
+    if !attributes.is_empty() {
+        extensions.push(UnicodeExtension {
+            attributes: attributes.clone(),
+            key: String::new(),
+            types: Vec::new(),
+        });
+    }
+    while index < parts.len() && parts[index].len() != 1 {
+        if parts[index].len() != 2 {
+            index += 1;
+            continue;
+        }
+        let key = parts[index].to_string();
+        index += 1;
+        let value_start = index;
+        while index < parts.len() && parts[index].len() != 2 && parts[index].len() != 1 {
+            index += 1;
+        }
+        if extensions
+            .iter()
+            .any(|extension: &UnicodeExtension| extension.key == key)
+        {
+            continue;
+        }
+        extensions.push(UnicodeExtension {
+            attributes: Vec::new(),
+            key,
+            types: parts[value_start..index]
+                .iter()
+                .map(|part| (*part).to_string())
+                .collect(),
+        });
+        attributes.clear();
+    }
+    extensions.sort_by(|left, right| left.key.cmp(&right.key));
+    extensions
 }
 
 pub(crate) fn case_first_extension(tag: &str) -> Option<String> {
@@ -141,7 +288,10 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
                     }
                     "co" if locale.collation.is_none() => locale.collation = Some(item.to_string()),
                     "kf" if locale.case_first.is_none() => {
-                        locale.case_first = Some(item.to_string())
+                        locale.case_first = Some(match item {
+                            "upper" | "lower" | "false" => item.to_string(),
+                            _ => String::new(),
+                        })
                     }
                     "hc" if locale.hour_cycle.is_none() => {
                         locale.hour_cycle = Some(item.to_string())
@@ -178,10 +328,9 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "Cannot convert null or undefined to object",
         ));
     }
-    let Some(Value::Object(properties)) = options else {
+    let Some(options) = options.filter(|value| crate::value::is_object(value)) else {
         return Ok(locale);
     };
-    let object = Value::Object(properties.clone());
     for key in [
         "language",
         "script",
@@ -195,7 +344,7 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
         "numeric",
         "numberingSystem",
     ] {
-        let value = crate::execute::get_property_result(&object, key)?;
+        let value = crate::execute::get_property_result(options, key)?;
         if matches!(value, Value::Undefined) {
             continue;
         }
@@ -252,9 +401,7 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             }
             "language" => {
                 let language = option_value(&text, key)?;
-                if !(2..=8).contains(&language.len())
-                    || !language.chars().all(|c| c.is_ascii_alphabetic())
-                {
+                if !valid_language_subtag(&language) {
                     return Err(runtime_error("RangeError: invalid language"));
                 }
                 locale.language = super::language_alias(language.to_ascii_lowercase());
@@ -281,7 +428,57 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
         locale.language = "xtg".to_string();
         locale.variants.clear();
     }
+    sync_unicode_extensions(&mut locale);
     Ok(locale)
+}
+
+fn sync_unicode_extensions(locale: &mut Locale) {
+    let known = [
+        ("ca", locale.calendar.clone()),
+        ("co", locale.collation.clone()),
+        ("kf", locale.case_first.clone()),
+        ("hc", locale.hour_cycle.clone()),
+        ("nu", locale.numbering_system.clone()),
+        ("fw", locale.first_day_of_week.clone()),
+    ];
+    for (key, value) in known {
+        sync_unicode_key(&mut locale.unicode_extensions, key, value);
+    }
+    sync_unicode_key(
+        &mut locale.unicode_extensions,
+        "kn",
+        locale
+            .numeric_explicit
+            .then(|| if locale.numeric { "true" } else { "false" }.to_string()),
+    );
+    sort_unicode_extensions(&mut locale.unicode_extensions);
+}
+
+fn sort_unicode_extensions(extensions: &mut Vec<UnicodeExtension>) {
+    let attributes = extensions
+        .iter_mut()
+        .flat_map(|extension| std::mem::take(&mut extension.attributes))
+        .collect::<Vec<_>>();
+    extensions.sort_by(|left, right| left.key.cmp(&right.key));
+    if let Some(first) = extensions.first_mut() {
+        first.attributes = attributes;
+    }
+}
+
+fn sync_unicode_key(extensions: &mut Vec<UnicodeExtension>, key: &str, value: Option<String>) {
+    let position = extensions.iter().position(|extension| extension.key == key);
+    match (position, value) {
+        (Some(index), Some(value)) => extensions[index].types = vec![value],
+        (Some(index), None) => {
+            extensions.remove(index);
+        }
+        (None, Some(value)) => extensions.push(UnicodeExtension {
+            attributes: Vec::new(),
+            key: key.to_string(),
+            types: vec![value],
+        }),
+        (None, None) => {}
+    }
 }
 
 fn normalize_first_day(value: &str) -> String {
@@ -452,7 +649,10 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlLocale => Some(construct(arguments)),
+        crate::ops::Builtin::IntlLocale => Some(match receiver {
+            None => construct(arguments),
+            Some(_) => Err(runtime_error("TypeError: Intl.Locale requires new")),
+        }),
         crate::ops::Builtin::IntlLocaleToString
         | crate::ops::Builtin::IntlLocaleMaximize
         | crate::ops::Builtin::IntlLocaleMinimize

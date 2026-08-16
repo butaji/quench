@@ -8,6 +8,9 @@ license = "MIT"
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
+icu_collator = "2.3"
+icu_locale_core = "2.3"
+icu_provider = "2.3"
 num-bigint = "0.4"
 oxc = { version = "0.47", features = ["semantic"] }
 regress = "0.10"

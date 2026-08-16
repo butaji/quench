@@ -14,13 +14,20 @@ pub(crate) fn slice(
     let count = (end - start).max(0);
     let species = slice_species(&this, count)?;
     if species.is_none() && count > 4_294_967_295 {
-        return Err(crate::value::error::throw_range_error("Invalid array length"));
+        return Err(crate::value::error::throw_range_error(
+            "Invalid array length",
+        ));
     }
     copy_slice(&this, start, end, species)
 }
 
 /// `LengthOfArrayLike`: `ToLength` of the receiver's `length` property.
 fn slice_length(this: &Value) -> Result<isize, crate::execute::VmError> {
+    if crate::typed_array_prototype::is_out_of_bounds(this) {
+        return Err(crate::value::error::throw_type_error(
+            "TypedArray is out of bounds",
+        ));
+    }
     let length = crate::execute::get_property_result(this, "length")?;
     let number = crate::conversion::to_number(&length)?;
     if number.is_nan() || number <= 0.0 {
@@ -63,9 +70,10 @@ fn slice_species(this: &Value, count: isize) -> Result<Option<Value>, crate::exe
     if !matches!(this, Value::Array(_)) {
         return Ok(None);
     }
-    let constructor = crate::locals::resolved_replacement(
-        crate::execute::get_property_result(this, "constructor")?,
-    );
+    let constructor = crate::locals::resolved_replacement(crate::execute::get_property_result(
+        this,
+        "constructor",
+    )?);
     if matches!(constructor, Value::Undefined) {
         return Ok(None);
     }

@@ -10,8 +10,8 @@ pub(crate) fn prototype_method(
     let slot = slot_string(&intl_slots(receiver)?, "full").unwrap_or_default();
     match builtin {
         crate::ops::Builtin::IntlLocaleToString => Ok(Value::String(slot)),
-        crate::ops::Builtin::IntlLocaleMaximize => Ok(Value::String(maximize(&slot))),
-        crate::ops::Builtin::IntlLocaleMinimize => Ok(Value::String(minimize(&slot))),
+        crate::ops::Builtin::IntlLocaleMaximize => Ok(locale_result(maximize(&slot))),
+        crate::ops::Builtin::IntlLocaleMinimize => Ok(locale_result(minimize(&slot))),
         crate::ops::Builtin::IntlLocaleGetCalendars => {
             let calendar = slot_string(&intl_slots(receiver)?, "calendar")
                 .unwrap_or_else(|| "gregory".to_string());
@@ -30,6 +30,10 @@ pub(crate) fn prototype_method(
         }
         _ => prototype_method_middle(builtin, receiver),
     }
+}
+
+fn locale_result(tag: String) -> Value {
+    super::build_object(super::parse_canonical(&tag))
 }
 
 fn prototype_method_middle(
@@ -115,6 +119,12 @@ fn prototype_method_tail(
 }
 
 fn maximize(tag: &str) -> String {
+    if tag == "xtg" || tag.starts_with("xtg-") {
+        return tag.to_string();
+    }
+    if tag == "posix" {
+        return tag.to_string();
+    }
     let (base, extension) = tag
         .split_once("-u")
         .map_or((tag, String::new()), |(a, b)| (a, format!("-u{b}")));
@@ -133,7 +143,9 @@ fn maximize(tag: &str) -> String {
         parts.first().copied().unwrap_or("und")
     };
     let (default_script, default_region) = likely_subtags(language);
-    let default_region = if language == "zh" && script == Some("Hant") {
+    let default_region = if language == "en" && script == Some("Shaw") {
+        "GB"
+    } else if language == "zh" && script == Some("Hant") {
         "TW"
     } else {
         default_region
@@ -163,6 +175,7 @@ fn append_extensions(result: &mut String, parts: &[&str], extension: &str) {
 fn undefined_language(script: Option<&str>, region: Option<&str>) -> &'static str {
     match (script, region) {
         (Some("Thai"), _) => "th",
+        (Some("Cyrl"), Some("RO")) => "bg",
         (_, Some("419")) => "es",
         (_, Some("150")) => "en",
         (_, Some("AT")) => "de",
@@ -172,6 +185,9 @@ fn undefined_language(script: Option<&str>, region: Option<&str>) -> &'static st
 }
 
 fn minimize(tag: &str) -> String {
+    if tag == "xtg" || tag.starts_with("xtg-") {
+        return tag.to_string();
+    }
     let maximized = maximize(tag);
     let (base, extension) = maximized
         .split_once("-u")
@@ -182,6 +198,11 @@ fn minimize(tag: &str) -> String {
     let language = parts.first().copied().unwrap_or("und");
     let (default_script, default_region) = likely_subtags(language);
     let script = parts.get(1).copied().unwrap_or(default_script);
+    let default_region = if language == "en" && script == "Shaw" {
+        "GB"
+    } else {
+        default_region
+    };
     let region = parts.get(2).copied().unwrap_or(default_region);
     if language == "zh" && script == "Hant" && region == "TW" {
         return format!("{language}-{region}") + &extension;
@@ -195,22 +216,39 @@ fn minimize(tag: &str) -> String {
     } else {
         format!("{language}-{script}-{region}")
     };
-    short + &extension
+    let variants = parts.get(3..).unwrap_or(&[]).join("-");
+    if variants.is_empty() {
+        short + &extension
+    } else {
+        format!("{short}-{variants}{extension}")
+    }
 }
 
 fn likely_subtags(language: &str) -> (&'static str, &'static str) {
     match language {
+        "aa" => ("Latn", "ET"),
         "aae" => ("Latn", "IT"),
         "ar" => ("Arab", "EG"),
+        "bg" => ("Cyrl", "BG"),
         "de" => ("Latn", "DE"),
         "en" => ("Latn", "US"),
         "es" => ("Latn", "ES"),
         "fr" => ("Latn", "FR"),
+        "hak" => ("Hans", "CN"),
+        "he" => ("Hebr", "IL"),
+        "hy" => ("Armn", "AM"),
+        "hi" => ("Deva", "IN"),
+        "hsn" => ("Hans", "CN"),
+        "hyw" => ("Armn", "AM"),
         "ja" => ("Jpan", "JP"),
+        "jbo" => ("Latn", "001"),
         "ko" => ("Kore", "KR"),
+        "cs" => ("Latn", "CZ"),
         "ru" => ("Cyrl", "RU"),
+        "ro" => ("Latn", "RO"),
         "sr" => ("Cyrl", "RS"),
         "th" => ("Thai", "TH"),
+        "uz" => ("Latn", "UZ"),
         "pap" => ("Latn", "CW"),
         "zh" => ("Hans", "CN"),
         "und" => ("Latn", "US"),

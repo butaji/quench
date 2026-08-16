@@ -190,7 +190,10 @@ pub(crate) fn enumerable_key_strings(target: Option<&Value>) -> Vec<String> {
 
 fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
     let Some((_, Value::String(value))) = properties.iter().find(|(key, _)| key == "_value") else {
-        return ordered(properties, symbols);
+        return ordered(properties, symbols)
+            .into_iter()
+            .filter(|key| key != "_value")
+            .collect();
     };
     if crate::conversion::is_symbol_string(value) {
         return ordered(properties, symbols);

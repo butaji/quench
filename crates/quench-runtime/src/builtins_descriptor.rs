@@ -137,6 +137,25 @@ fn validate_redefinition(
     {
         return Err(cannot_redefine());
     }
+    if descriptor_value(current, "get").is_some()
+        && descriptor_value_in(requested, "get").is_some_and(|requested_get| {
+            !crate::builtins::same_value(Some(requested_get), descriptor_value(current, "get"))
+        })
+    {
+        return Err(cannot_redefine());
+    }
+    if descriptor_value(current, "set").is_some()
+        && descriptor_value_in(requested, "set").is_some_and(|requested_set| {
+            !crate::builtins::same_value(Some(requested_set), descriptor_value(current, "set"))
+        })
+    {
+        return Err(cannot_redefine());
+    }
+    if descriptor_value(current, "enumerable") != descriptor_value_in(requested, "enumerable")
+        && descriptor_value_in(requested, "enumerable").is_some()
+    {
+        return Err(cannot_redefine());
+    }
     if descriptor_value(current, "writable") == Some(&Value::Boolean(false))
         && descriptor_value_in(requested, "writable") == Some(&Value::Boolean(true))
     {

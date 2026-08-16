@@ -51,12 +51,22 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
         (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
         (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
+        (TemporalDurationPrototype, "constructor") => Some(Value::Builtin(TemporalDuration)),
+        (TemporalDurationPrototype, "add") => Some(Value::Builtin(TemporalDurationAdd)),
         (TemporalDurationPrototype, "abs") => Some(Value::Builtin(TemporalDurationAbs)),
+        (TemporalDurationPrototype, "sign") => Some(Value::Builtin(TemporalDurationSignGetter)),
+        (TemporalDurationPrototype, "blank") => Some(Value::Builtin(TemporalDurationBlankGetter)),
+        (TemporalDurationPrototype, "valueOf") => Some(Value::Builtin(TemporalDurationValueOf)),
+        (TemporalDurationPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Temporal.Duration".into()))
+        }
         (TemporalDurationPrototype, "toLocaleString") => {
             Some(Value::Builtin(TemporalDurationToLocaleString))
         }
+        (TemporalDurationPrototype, "toJSON") => Some(Value::Builtin(TemporalDurationToJSON)),
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
+        (TemporalPlainDate, "compare") => Some(Value::Builtin(TemporalPlainDateCompare)),
         (TemporalPlainDatePrototype, "constructor") => Some(Value::Builtin(TemporalPlainDate)),
         (TemporalPlainDatePrototype, "Symbol.toStringTag") => {
             Some(Value::String("Temporal.PlainDate".into()))
@@ -64,6 +74,11 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDatePrototype, "withCalendar") => {
             Some(Value::Builtin(TemporalPlainDateWithCalendar))
         }
+        (TemporalPlainDatePrototype, "monthsInYear") => {
+            Some(Value::Builtin(TemporalPlainDateMonthsInYearGetter))
+        }
+        (TemporalPlainDatePrototype, "toString") => Some(Value::Builtin(TemporalPlainDateToString)),
+        (TemporalPlainDatePrototype, "toJSON") => Some(Value::Builtin(TemporalPlainDateToJSON)),
         (TemporalPlainDatePrototype, "valueOf") => Some(Value::Builtin(TemporalPlainDateValueOf)),
         (AbstractModuleSource, "prototype") => Some(Value::Builtin(AbstractModuleSourcePrototype)),
         (AbstractModuleSourcePrototype, "constructor") => {
@@ -100,8 +115,14 @@ fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "map" {
         return Some(Value::Builtin(IteratorMap));
     }
+    if builtin == IteratorPrototype && key == "filter" {
+        return Some(Value::Builtin(IteratorFilter));
+    }
     if builtin == IteratorPrototype && key == "some" {
         return Some(Value::Builtin(IteratorSome));
+    }
+    if builtin == IteratorPrototype && key == "every" {
+        return Some(Value::Builtin(IteratorEvery));
     }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);

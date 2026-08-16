@@ -83,6 +83,17 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         return Some(crate::ops::Builtin::StringIterator);
     }
     match key {
+        "anchor" => Some(crate::ops::Builtin::StringAnchor),
+        "big" => Some(crate::ops::Builtin::StringBig),
+        "blink" => Some(crate::ops::Builtin::StringBlink),
+        "bold" => Some(crate::ops::Builtin::StringBold),
+        "fixed" => Some(crate::ops::Builtin::StringFixed),
+        "fontcolor" => Some(crate::ops::Builtin::StringFontcolor),
+        "fontsize" => Some(crate::ops::Builtin::StringFontsize),
+        "italics" => Some(crate::ops::Builtin::StringItalics),
+        "link" => Some(crate::ops::Builtin::StringLink),
+        "strike" => Some(crate::ops::Builtin::StringStrike),
+        "small" => Some(crate::ops::Builtin::StringSmall),
         "includes" => Some(crate::ops::Builtin::StringIncludes),
         "isWellFormed" => Some(crate::ops::Builtin::StringIsWellFormed),
         "toWellFormed" => Some(crate::ops::Builtin::StringToWellFormed),
@@ -93,6 +104,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "trim" => Some(crate::ops::Builtin::StringTrim),
         "toLowerCase" => Some(crate::ops::Builtin::StringToLowerCase),
         "toUpperCase" => Some(crate::ops::Builtin::StringToUpperCase),
+        "normalize" => Some(crate::ops::Builtin::StringNormalize),
         "charAt" => Some(crate::ops::Builtin::StringCharAt),
         "charCodeAt" => Some(crate::ops::Builtin::StringCharCodeAt),
         "indexOf" => Some(crate::ops::Builtin::StringIndexOf),
@@ -104,7 +116,9 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "padStart" => Some(crate::ops::Builtin::StringPadStart),
         "padEnd" => Some(crate::ops::Builtin::StringPadEnd),
         "trimStart" => Some(crate::ops::Builtin::StringTrimStart),
+        "trimLeft" => Some(crate::ops::Builtin::StringTrimStart),
         "trimEnd" => Some(crate::ops::Builtin::StringTrimEnd),
+        "trimRight" => Some(crate::ops::Builtin::StringTrimEnd),
         "codePointAt" => Some(crate::ops::Builtin::StringCodePointAt),
         "toString" => Some(crate::ops::Builtin::StringToString),
         "valueOf" => Some(crate::ops::Builtin::StringValueOf),
@@ -134,10 +148,11 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringStartsWith => starts_with(receiver, arguments),
         crate::ops::Builtin::StringEndsWith => ends_with(receiver, arguments),
         crate::ops::Builtin::StringAt => at(receiver, arguments),
-        crate::ops::Builtin::StringRepeat => Ok(repeat(receiver, arguments)),
+        crate::ops::Builtin::StringRepeat => repeat(receiver, arguments),
         crate::ops::Builtin::StringTrim => trim(receiver),
-        crate::ops::Builtin::StringToLowerCase => Ok(to_lower_case(receiver)),
-        crate::ops::Builtin::StringToUpperCase => Ok(to_upper_case(receiver)),
+        crate::ops::Builtin::StringToLowerCase => to_lower_case(receiver),
+        crate::ops::Builtin::StringToUpperCase => to_upper_case(receiver),
+        crate::ops::Builtin::StringNormalize => normalize(receiver, arguments),
         crate::ops::Builtin::StringCharAt => char_at(receiver, arguments),
         crate::ops::Builtin::StringCharCodeAt => char_code_at(receiver, arguments),
         crate::ops::Builtin::StringIndexOf => index_of(receiver, arguments),
@@ -153,6 +168,21 @@ fn execute_builtin_tail(
     arguments: &[Value],
 ) -> Option<Result<Value, crate::execute::VmError>> {
     let result = match builtin {
+        crate::ops::Builtin::StringAnchor => anchor(receiver, arguments),
+        crate::ops::Builtin::StringBig => html_wrapper(receiver, "big"),
+        crate::ops::Builtin::StringBlink => html_wrapper(receiver, "blink"),
+        crate::ops::Builtin::StringBold => html_wrapper(receiver, "b"),
+        crate::ops::Builtin::StringFixed => html_wrapper(receiver, "tt"),
+        crate::ops::Builtin::StringFontcolor => {
+            html_attribute_wrapper(receiver, arguments, "font", "color")
+        }
+        crate::ops::Builtin::StringFontsize => {
+            html_attribute_wrapper(receiver, arguments, "font", "size")
+        }
+        crate::ops::Builtin::StringItalics => html_wrapper(receiver, "i"),
+        crate::ops::Builtin::StringLink => html_attribute_wrapper(receiver, arguments, "a", "href"),
+        crate::ops::Builtin::StringStrike => html_wrapper(receiver, "strike"),
+        crate::ops::Builtin::StringSmall => html_wrapper(receiver, "small"),
         crate::ops::Builtin::StringSlice => Ok(slice(receiver, arguments)),
         crate::ops::Builtin::StringSubstring => Ok(substring(receiver, arguments)),
         crate::ops::Builtin::StringConcat => concat(receiver, arguments),
@@ -165,13 +195,41 @@ fn execute_builtin_tail(
         crate::ops::Builtin::StringToString => Ok(to_string_value(receiver)),
         crate::ops::Builtin::StringReplace => replace(receiver, arguments, false),
         crate::ops::Builtin::StringReplaceAll => replace(receiver, arguments, true),
-        crate::ops::Builtin::StringSearch => Ok(search(receiver, arguments)),
+        crate::ops::Builtin::StringSearch => search(receiver, arguments),
         crate::ops::Builtin::StringLocaleCompare => locale_compare(receiver, arguments),
         crate::ops::Builtin::StringMatch => string_match(receiver, arguments),
         crate::ops::Builtin::StringMatchAll => string_match_all(receiver, arguments),
         _ => return None,
     };
     Some(result)
+}
+
+fn html_wrapper(receiver: Option<&Value>, tag: &str) -> Result<Value, crate::execute::VmError> {
+    let text = string_receiver(receiver)?;
+    Ok(Value::String(format!("<{tag}>{text}</{tag}>")))
+}
+
+fn anchor(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    html_attribute_wrapper(receiver, arguments, "a", "name")
+}
+
+fn html_attribute_wrapper(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    tag: &str,
+    attribute: &str,
+) -> Result<Value, crate::execute::VmError> {
+    let text = string_receiver(receiver)?;
+    let name = arguments
+        .first()
+        .map(crate::conversion::to_string)
+        .transpose()?;
+    let attribute_value = name.map_or_else(String::new, |value| {
+        format!(" {attribute}=\"{}\"", value.replace('"', "&quot;"))
+    });
+    Ok(Value::String(format!(
+        "<{tag}{attribute_value}>{text}</{tag}>"
+    )))
 }
 
 fn at(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -260,26 +318,44 @@ fn string_receiver(receiver: Option<&Value>) -> Result<String, crate::execute::V
     crate::conversion::to_string(value)
 }
 
-pub(crate) fn repeat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::String(value)) = receiver else {
-        return Value::String(String::new());
+fn normalize(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = string_receiver(receiver)?;
+    let form = arguments
+        .first()
+        .filter(|value| !matches!(value, Value::Undefined))
+        .map_or_else(|| Ok("NFC".to_string()), crate::conversion::to_string)?;
+    let normalized = match form.as_str() {
+        "NFC" => unicode_normalization::UnicodeNormalization::nfc(value.chars()).collect(),
+        "NFD" => unicode_normalization::UnicodeNormalization::nfd(value.chars()).collect(),
+        "NFKC" => unicode_normalization::UnicodeNormalization::nfkc(value.chars()).collect(),
+        "NFKD" => unicode_normalization::UnicodeNormalization::nfkd(value.chars()).collect(),
+        _ => {
+            return Err(crate::value::error::throw_range_error(
+                "Invalid normalization form",
+            ))
+        }
     };
+    Ok(Value::String(normalized))
+}
+
+pub(crate) fn repeat(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = string_receiver(receiver)?;
     let count = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    Value::String(value.repeat(count))
+    Ok(Value::String(value.repeat(count)))
 }
 
-pub(crate) fn to_lower_case(receiver: Option<&Value>) -> Value {
-    let Some(Value::String(value)) = receiver else {
-        return Value::String(String::new());
-    };
-    Value::String(value.to_lowercase())
+pub(crate) fn to_lower_case(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    Ok(Value::String(string_receiver(receiver)?.to_lowercase()))
 }
 
-pub(crate) fn to_upper_case(receiver: Option<&Value>) -> Value {
-    let Some(Value::String(value)) = receiver else {
-        return Value::String(String::new());
-    };
-    Value::String(value.to_uppercase())
+pub(crate) fn to_upper_case(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    Ok(Value::String(string_receiver(receiver)?.to_uppercase()))
 }
 
 pub(crate) fn char_at(
@@ -390,6 +466,7 @@ pub(crate) fn locale_compare(
         &right,
         &crate::intl::default_locale(),
         false,
+        "variant",
     )))
 }
 

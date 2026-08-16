@@ -63,20 +63,16 @@ fn lithuanian_lower(value: &str) -> String {
 }
 
 fn case_turkish(value: &str, upper: bool) -> String {
-    value
-        .chars()
-        .map(|character| match (character, upper) {
-            ('i', true) => 'İ',
-            ('ı', true) => 'I',
-            ('I', false) => 'ı',
-            ('İ', false) => 'i',
-            (character, _) => {
-                if upper {
-                    character.to_ascii_uppercase()
-                } else {
-                    character.to_ascii_lowercase()
-                }
-            }
-        })
-        .collect()
+    let mut result = String::new();
+    for character in value.chars() {
+        match (character, upper) {
+            ('i', true) => result.push('İ'),
+            ('ı', true) => result.push('I'),
+            ('I', false) => result.push('ı'),
+            ('İ', false) => result.push('i'),
+            (character, true) => result.extend(character.to_uppercase()),
+            (character, false) => result.extend(character.to_lowercase()),
+        }
+    }
+    result
 }

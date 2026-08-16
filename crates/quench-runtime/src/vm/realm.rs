@@ -16,6 +16,7 @@ struct RealmState {
     context: VmContext,
     token: Rc<HostCapabilityValue>,
     intrinsics: RefCell<Vec<(Builtin, Value)>>,
+    intl_fallback_symbol: RefCell<Option<Value>>,
     global_aliases: RefCell<Vec<Weak<RefCell<WeakObject>>>>,
 }
 
@@ -26,6 +27,7 @@ struct ExecutionGuard {
 thread_local! {
     static REALMS: RefCell<Vec<Option<Rc<RealmState>>>> = const { RefCell::new(Vec::new()) };
     static ROOT_INTRINSICS: RefCell<Vec<(Builtin, Value)>> = const { RefCell::new(Vec::new()) };
+    static ROOT_INTL_FALLBACK_SYMBOL: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NEXT_REALM: Cell<u64> = const { Cell::new(1) };
 }
 
@@ -44,6 +46,7 @@ pub(super) fn create(parent: &VmContext) -> RealmId {
             kind: HostCapabilityKind::GetGlobal,
         })),
         intrinsics: RefCell::new(Vec::new()),
+        intl_fallback_symbol: RefCell::new(None),
         global_aliases: RefCell::new(Vec::new()),
     });
     register(state);
@@ -179,6 +182,26 @@ pub(super) fn intrinsic(id: RealmId, builtin: Builtin) -> Option<Value> {
     }));
     state.intrinsics.borrow_mut().push((builtin, value.clone()));
     Some(value)
+}
+
+pub(super) fn intl_fallback_symbol(id: RealmId) -> Option<Value> {
+    if id == RealmId::ROOT {
+        return ROOT_INTL_FALLBACK_SYMBOL.with(|slot| {
+            if let Some(symbol) = slot.borrow().clone() {
+                return Some(symbol);
+            }
+            let symbol = crate::intl::tolocale::symbol::legacy_symbol().ok()?;
+            *slot.borrow_mut() = Some(symbol.clone());
+            Some(symbol)
+        });
+    }
+    let state = state(id)?;
+    if let Some(symbol) = state.intl_fallback_symbol.borrow().clone() {
+        return Some(symbol);
+    }
+    let symbol = crate::intl::tolocale::symbol::legacy_symbol().ok()?;
+    *state.intl_fallback_symbol.borrow_mut() = Some(symbol.clone());
+    Some(symbol)
 }
 
 fn root_intrinsic(builtin: Builtin) -> Value {

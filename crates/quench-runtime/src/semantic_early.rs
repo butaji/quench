@@ -86,6 +86,27 @@ fn collect_annex_b_collisions(
                     collisions,
                 );
             }
+            Statement::LabeledStatement(statement) => {
+                collect_annex_b_collisions(
+                    std::slice::from_ref(&statement.body),
+                    visible,
+                    collisions,
+                );
+            }
+            Statement::WhileStatement(statement) => {
+                collect_annex_b_collisions(
+                    std::slice::from_ref(&statement.body),
+                    visible,
+                    collisions,
+                );
+            }
+            Statement::DoWhileStatement(statement) => {
+                collect_annex_b_collisions(
+                    std::slice::from_ref(&statement.body),
+                    visible,
+                    collisions,
+                );
+            }
             Statement::SwitchStatement(statement) => {
                 let mut nested = visible.to_vec();
                 for case in &statement.cases {

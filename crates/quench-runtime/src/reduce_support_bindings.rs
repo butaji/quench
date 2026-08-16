@@ -153,6 +153,15 @@ fn annex_b_function_names_in(statement: &oxc::ast::ast::Statement<'_>) -> Vec<St
             .iter()
             .flat_map(|case| annex_b_function_names(&case.consequent))
             .collect(),
+        oxc::ast::ast::Statement::LabeledStatement(statement) => {
+            annex_b_function_names(std::slice::from_ref(&statement.body))
+        }
+        oxc::ast::ast::Statement::WhileStatement(statement) => {
+            annex_b_function_names(std::slice::from_ref(&statement.body))
+        }
+        oxc::ast::ast::Statement::DoWhileStatement(statement) => {
+            annex_b_function_names(std::slice::from_ref(&statement.body))
+        }
         _ => Vec::new(),
     }
 }
