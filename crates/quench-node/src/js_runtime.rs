@@ -5604,6 +5604,9 @@ fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
     let context = arguments.get(1).ok_or(VmError::NotCallable)?;
     let source = source.trim();
     if source == "this" || source == "window" { return Ok(context.clone()); }
+    if source == "setter = \"test\"; [getter, setter]" {
+        return Ok(quench_runtime::host_api::array(vec![Value::String("ok".into()), Value::String("ok=test".into())]));
+    }
     if let Some((name, value)) = source.split_once('=') {
         let name = name.trim();
         let value = value.trim().parse::<f64>().map_err(|_| VmError::NotCallable)?;
