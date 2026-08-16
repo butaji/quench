@@ -349,7 +349,11 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let tag = tag.trim();
     match tag.to_ascii_lowercase().as_str() {
+        "art-lojban" => return Ok("jbo".to_string()),
         "cel-gaulish" => return Ok("xtg".to_string()),
+        "zh-guoyu" => return Ok("zh".to_string()),
+        "zh-hakka" => return Ok("hak".to_string()),
+        "zh-xiang" => return Ok("hsn".to_string()),
         "en-gb-oed" | "zh-min" | "i-default" => {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
