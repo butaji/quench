@@ -189,6 +189,9 @@ impl CapabilityName {
     const PathWinToNamespaced: u16 = 1304;
     const PathJoin: u16 = 1305;
     const PathExtname: u16 = 1306;
+    const PathWinIsAbsolute: u16 = 2082;
+    const PathMatchesGlob: u16 = 2083;
+    const PathWinMatchesGlob: u16 = 2084;
     const FsStatAsync: u16 = 1526;
     const FsLstatAsync: u16 = 1527;
     const FsStatsIsDirectory: u16 = 1528;
@@ -639,6 +642,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::PathWinParse) => path_parse(arguments, true),
             HostCapabilityKind::Custom(CapabilityName::PathWinFormat) => path_format(arguments, true),
             HostCapabilityKind::Custom(CapabilityName::PathWinBasename) => path_win_basename(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathWinIsAbsolute) => path_is_absolute_win(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathMatchesGlob) => path_matches_glob(arguments, false),
+            HostCapabilityKind::Custom(CapabilityName::PathWinMatchesGlob) => path_matches_glob(arguments, true),
             HostCapabilityKind::Custom(CapabilityName::BufferIndexOf) => buffer_search(receiver, arguments, false),
             HostCapabilityKind::Custom(CapabilityName::BufferLastIndexOf) => buffer_search(receiver, arguments, true),
             HostCapabilityKind::Custom(CapabilityName::BufferToJson) => buffer_to_json(receiver),
@@ -3513,6 +3519,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         ("relative".into(), relative.clone()),
         ("dirname".into(), dirname.clone()),
         ("isAbsolute".into(), absolute.clone()),
+        ("matchesGlob".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathMatchesGlob))),
         (
             "toNamespacedPath".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::PathToNamespaced)),
@@ -3531,6 +3538,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("relative".into(), relative.clone()),
                 ("dirname".into(), dirname.clone()),
                 ("isAbsolute".into(), absolute.clone()),
+                ("matchesGlob".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathMatchesGlob))),
                 (
                     "toNamespacedPath".into(),
                     capability_function(HostCapabilityKind::Custom(
@@ -3551,7 +3559,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("format".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinFormat))),
                 ("relative".into(), relative),
                 ("dirname".into(), dirname),
-                ("isAbsolute".into(), absolute),
+                ("isAbsolute".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinIsAbsolute))),
+                ("matchesGlob".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinMatchesGlob))),
                 (
                     "toNamespacedPath".into(),
                     capability_function(HostCapabilityKind::Custom(
@@ -3716,6 +3725,29 @@ fn path_is_absolute(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Boolean(
         value.starts_with('/') || (value.len() > 2 && value.as_bytes()[1] == b':'),
     ))
+}
+
+fn path_is_absolute_win(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = path_arg(arguments, 0)?;
+    Ok(Value::Boolean(
+        value.starts_with(['/', '\\'])
+            || (value.len() > 2 && value.as_bytes()[1] == b':' && matches!(value.as_bytes()[2], b'/' | b'\\')),
+    ))
+}
+
+fn path_matches_glob(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
+    let value = path_arg(arguments, 0)?;
+    let pattern = path_arg(arguments, 1)?;
+    let value = if win32 { value.replace('\\', "/") } else { value.to_owned() };
+    let pattern = if win32 { pattern.replace('\\', "/") } else { pattern.to_owned() };
+    let matched = if let Some(prefix) = pattern.strip_suffix("/**") {
+        value == prefix || value.starts_with(&format!("{prefix}/"))
+    } else if let Some(suffix) = pattern.strip_prefix("*.") {
+        value.ends_with(&format!(".{suffix}"))
+    } else {
+        value == pattern
+    };
+    Ok(Value::Boolean(matched))
 }
 
 fn path_win_to_namespaced(arguments: &[Value]) -> Result<Value, VmError> {
