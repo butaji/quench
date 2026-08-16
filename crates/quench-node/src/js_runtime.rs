@@ -3905,6 +3905,7 @@ fn buffer_module() -> Value {
 
 fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
     match arguments.first() {
+        Some(Value::String(value)) if value.starts_with("Symbol.") => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", &format!("The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. {}", buffer_from_received(&Value::String(value.clone())))))),
         Some(Value::String(value)) if matches!(arguments.get(1), Some(Value::String(encoding)) if encoding.eq_ignore_ascii_case("hex")) =>
         {
             let bytes = decode_hex(value);
@@ -3951,11 +3952,6 @@ fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
             if let Ok(method) = quench_runtime::execute::get_property_result(object, "Symbol.toPrimitive") {
                 if let Ok(value) = quench_runtime::execute::call(&method, object, &[]) { return buffer_from(&[value]); }
             }
-            if let Ok(method) = quench_runtime::execute::get_property_result(object, "toString") {
-                if let Ok(Value::String(value)) = quench_runtime::execute::call(&method, object, &[]) {
-                    if value != "[object Object]" { return buffer_from(&[Value::String(value)]); }
-                }
-            }
             if let Ok(Value::Number(length)) = quench_runtime::execute::get_property_result(object, "length") {
                 let mut bytes = Vec::new();
                 for index in 0..(length.max(0.0) as usize) {
@@ -3967,9 +3963,34 @@ fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
             }
             Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "value must be a string, Buffer, or array-like object")))
         }
-        _ => Err(VmError::EvalError(
-            "Buffer.from expects bytes or a string".into(),
-        )),
+        Some(value) => Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            &format!("The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. {}", buffer_from_received(value)),
+        ))),
+        None => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received undefined"))),
+    }
+}
+
+fn buffer_from_received(value: &Value) -> String {
+    match value {
+        Value::Undefined => "Received undefined".into(),
+        Value::Null => "Received null".into(),
+        Value::BigInt(value) => format!("Received type bigint ({}n)", value),
+        Value::String(value) if value.contains("Symbol") => format!("Received type symbol ({})", value.replace('\0', "")),
+        Value::Function(_) | Value::BoundFunction(_) => "Received function ".into(),
+        Value::Boolean(_) | Value::Number(_) => format!("Received type {} ({})", type_name(value), safe_value_string(value)),
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            if matches!(quench_runtime::execute::call(&Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf), &Value::Undefined, &[value.clone()]), Ok(Value::Null)) {
+                return "Received [Object: null prototype] {}".into();
+            }
+            let name = quench_runtime::execute::call(&Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf), &Value::Undefined, &[value.clone()]).ok()
+                .and_then(|prototype| quench_runtime::execute::get_property_result(&prototype, "constructor").ok())
+                .and_then(|constructor| quench_runtime::execute::get_property_result(&constructor, "name").ok())
+                .and_then(|name| match name { Value::String(name) => Some(name), _ => None })
+                .unwrap_or_else(|| "Object".into());
+            format!("Received an instance of {name}")
+        }
+        _ => format!("Received type {}", type_name(value)),
     }
 }
 
