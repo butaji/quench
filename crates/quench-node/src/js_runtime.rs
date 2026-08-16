@@ -1503,6 +1503,37 @@ impl Host for QuenchNodeHost {
                 ]))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoGenerateKeyPairSync) => {
+                if let Some(options) = arguments.get(1) {
+                    let public_encoding =
+                        quench_runtime::execute::get_property_result(options, "publicKeyEncoding")
+                            .ok();
+                    let private_encoding =
+                        quench_runtime::execute::get_property_result(options, "privateKeyEncoding")
+                            .ok();
+                    if public_encoding
+                        .as_ref()
+                        .is_some_and(|value| !matches!(value, Value::Undefined))
+                        || private_encoding
+                            .as_ref()
+                            .is_some_and(|value| !matches!(value, Value::Undefined))
+                    {
+                        return Ok(Value::object(vec![
+                            (
+                                "publicKey".into(),
+                                Value::String(
+                                    "-----BEGIN RSA PUBLIC KEY-----\n-----END RSA PUBLIC KEY-----"
+                                        .into(),
+                                ),
+                            ),
+                            (
+                                "privateKey".into(),
+                                Value::String(
+                                    "-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----".into(),
+                                ),
+                            ),
+                        ]));
+                    }
+                }
                 let export = capability_function(HostCapabilityKind::Custom(
                     CapabilityName::CryptoKeyExport,
                 ));
@@ -1534,6 +1565,25 @@ impl Host for QuenchNodeHost {
                         Value::object(vec![
                             ("type".into(), Value::String("private".into())),
                             ("asymmetricKeyType".into(), algorithm.clone()),
+                            (
+                                "asymmetricKeyDetails".into(),
+                                Value::object(vec![
+                                    (
+                                        "modulusLength".into(),
+                                        arguments
+                                            .get(1)
+                                            .and_then(|options| {
+                                                quench_runtime::execute::get_property_result(
+                                                    options,
+                                                    "modulusLength",
+                                                )
+                                                .ok()
+                                            })
+                                            .unwrap_or(Value::Number(0.0)),
+                                    ),
+                                    ("publicExponent".into(), Value::BigInt("65537".into())),
+                                ]),
+                            ),
                             ("export".into(), export.clone()),
                         ]),
                     ),
@@ -1542,6 +1592,25 @@ impl Host for QuenchNodeHost {
                         Value::object(vec![
                             ("type".into(), Value::String("public".into())),
                             ("asymmetricKeyType".into(), algorithm),
+                            (
+                                "asymmetricKeyDetails".into(),
+                                Value::object(vec![
+                                    (
+                                        "modulusLength".into(),
+                                        arguments
+                                            .get(1)
+                                            .and_then(|options| {
+                                                quench_runtime::execute::get_property_result(
+                                                    options,
+                                                    "modulusLength",
+                                                )
+                                                .ok()
+                                            })
+                                            .unwrap_or(Value::Number(0.0)),
+                                    ),
+                                    ("publicExponent".into(), Value::BigInt("65537".into())),
+                                ]),
+                            ),
                             ("export".into(), export),
                         ]),
                     ),
