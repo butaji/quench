@@ -4085,8 +4085,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 Value::object(vec![("readableEnded".into(), Value::Boolean(false))]),
             );
             let promises = stream_promises_module();
-            let writable = capability_function(HostCapabilityKind::Custom(CapabilityName::StreamWritable));
-            let _ = quench_runtime::execute::set_callable_property(&writable, "prototype", Value::object(vec![]));
+            let writable = Value::Builtin(quench_runtime::ops::Builtin::Object);
             return Ok(Value::object(vec![
                 ("Stream".into(), stream),
                 (
