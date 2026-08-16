@@ -119,6 +119,7 @@ impl CapabilityName {
     const FsCloseAsync: u16 = 1525;
     const CommonMustSucceed: u16 = 1701;
     const CommonMustNotCall: u16 = 1702;
+    const CommonGetArrayBufferViews: u16 = 1703;
     const CommonWrapperFirst: u16 = 1800;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
@@ -351,7 +352,11 @@ impl Host for QuenchNodeHost {
                 fs_write_bytes(arguments, false)
             }
             HostCapabilityKind::Custom(CapabilityName::FsAppendBytes) => {
-                fs_write_bytes(arguments, true)
+                if matches!(arguments.first(), Some(Value::Number(_))) {
+                    self.fs_append_file_async(arguments)
+                } else {
+                    fs_write_bytes(arguments, true)
+                }
             }
             HostCapabilityKind::Custom(CapabilityName::FsUnlink) => fs_unlink_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsMkdtemp) => fs_mkdtemp(arguments),
@@ -360,7 +365,7 @@ impl Host for QuenchNodeHost {
                 self.fs_write_file(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::FsAppendFileSync) => {
-                fs_write_bytes(arguments, true)
+                self.fs_append_file(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::FsUnlinkSync) => fs_unlink(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsRmdirSync) => fs_rmdir(arguments),
@@ -386,6 +391,14 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::CommonMustNotCall) => {
                 self.common_wrapper(arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CommonGetArrayBufferViews) => {
+                let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+                Ok(quench_runtime::host_api::array(vec![
+                    value.clone(),
+                    value.clone(),
+                    value,
+                ]))
             }
             HostCapabilityKind::Custom(CapabilityName::FsWriteAsync) => fs_write_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReadAsync) => fs_read_async(arguments),
@@ -1135,6 +1148,31 @@ impl QuenchNodeHost {
         } else {
             fs_write_bytes(arguments, false)
         }
+    }
+
+    fn fs_append_file(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let fd = match arguments.first() {
+            Some(Value::Number(value)) => *value as i32,
+            _ => return fs_write_bytes(arguments, true),
+        };
+        let path = self
+            .fd_paths
+            .borrow()
+            .get(&fd)
+            .cloned()
+            .ok_or(VmError::NotCallable)?;
+        let mut data = std::fs::read(&path).unwrap_or_default();
+        data.extend(string_or_bytes(arguments.get(1))?);
+        std::fs::write(path, data).map_err(|error| VmError::EvalError(error.to_string()))?;
+        Ok(Value::Undefined)
+    }
+
+    fn fs_append_file_async(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        self.fs_append_file(&arguments[..arguments.len().saturating_sub(1)])?;
+        if let Some(callback) = arguments.last() {
+            quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
+        }
+        Ok(Value::Undefined)
     }
 
     fn fs_readv(&self, arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
@@ -1956,6 +1994,14 @@ fn fs_write_options(arguments: &[Value]) -> Result<Value, VmError> {
         Some(Value::String(flag)) if flag == "a"
     );
     let encoding = quench_runtime::execute::get_property_result(options, "encoding").ok();
+    if let Ok(flush) = quench_runtime::execute::get_property_result(options, "flush") {
+        if !matches!(flush, Value::Boolean(_)) {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "flush must be a boolean",
+            )));
+        }
+    }
     let mut bytes = string_or_bytes(arguments.get(1))?;
     if matches!(encoding, Some(Value::String(value)) if value == "hex") {
         let text =
@@ -2296,6 +2342,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                         CapabilityName::CommonMustNotCall,
                     )),
                 ),
+                (
+                    "getArrayBufferViews".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonGetArrayBufferViews,
+                    )),
+                ),
             ]));
         }
         if name == "assert"
@@ -2345,6 +2397,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::FsAppendFileSync,
                     )),
+                ),
+                (
+                    "appendFile".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsAppendBytes)),
                 ),
                 (
                     "accessSync".into(),
