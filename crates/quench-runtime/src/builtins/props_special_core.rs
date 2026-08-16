@@ -78,6 +78,9 @@ fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "map" {
         return Some(Value::Builtin(IteratorMap));
     }
+    if builtin == IteratorPrototype && key == "some" {
+        return Some(Value::Builtin(IteratorSome));
+    }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);
     }
