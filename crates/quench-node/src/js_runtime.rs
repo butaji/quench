@@ -652,6 +652,7 @@ impl Default for QuenchNodeHost {
     }
 }
 
+include!("js_runtime_construct_b.rs");
 include!("js_runtime_construct_a.rs");
 include!("js_runtime_dispatch_misc_e.rs");
 include!("js_runtime_dispatch_misc_d.rs");
@@ -746,56 +747,11 @@ impl Host for QuenchNodeHost {
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
-        if let Some(result) = self.construct_a(capability, arguments) {
+        if let Some(result) = self.construct_b(capability, arguments) {
             return result;
         }
-        if capability.kind == HostCapabilityKind::Custom(CapabilityName::BufferFrom) {
-            if matches!(arguments.first(), Some(Value::Number(_))) {
-                if arguments.len() > 1 {
-                    return Err(VmError::Thrown(fs_error(
-                        "ERR_INVALID_ARG_TYPE",
-                        &format!(
-                            "The \"string\" argument must be of type string. Received type number ({})",
-                            safe_value_string(arguments.first().unwrap()),
-                        ),
-                    )));
-                }
-                return buffer_alloc(arguments);
-            }
-            return buffer_from(arguments);
-        }
-        if capability.kind == HostCapabilityKind::Custom(CapabilityName::StringDecoderConstructor) {
-            return string_decoder_constructor(None, arguments);
-        }
-        if capability.kind == HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor) {
-            return text_encoder_constructor();
-        }
-        if capability.kind == HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor) {
-            return text_decoder_constructor();
-        }
-        if capability.kind == HostCapabilityKind::Custom(CapabilityName::WorkerConstructor) {
-            return Ok(quench_runtime::host_api::object(vec![
-                (
-                    "on".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerOn)),
-                ),
-                (
-                    "once".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerOnce)),
-                ),
-                (
-                    "postMessage".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::WorkerPostMessage,
-                    )),
-                ),
-                (
-                    "terminate".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::WorkerTerminate,
-                    )),
-                ),
-            ]));
+        if let Some(result) = self.construct_a(capability, arguments) {
+            return result;
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::ZlibGzip) {
             return self.zlib_stream(CapabilityName::ZlibCreateGzip);
