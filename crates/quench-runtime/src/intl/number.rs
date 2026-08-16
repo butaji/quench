@@ -7,7 +7,7 @@ use super::number_format::*;
 mod number_methods;
 mod number_render;
 
-pub(crate) use number_methods::prototype_method;
+pub(crate) use number_methods::{localize_digits, prototype_method, supports_digit_system};
 pub(crate) use number_render::*;
 
 use super::{

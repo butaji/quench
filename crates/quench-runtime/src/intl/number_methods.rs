@@ -406,7 +406,7 @@ const DIGIT_BASES: &[(&str, u32)] = &[
     ("wcho", 0x1e2f0),
 ];
 
-fn localize_digits(text: String, numbering_system: &str) -> String {
+pub(crate) fn localize_digits(text: String, numbering_system: &str) -> String {
     if numbering_system == "hanidec" {
         return text
             .chars()
@@ -432,4 +432,11 @@ fn localize_digits(text: String, numbering_system: &str) -> String {
                 .unwrap_or(character)
         })
         .collect()
+}
+
+pub(crate) fn supports_digit_system(numbering_system: &str) -> bool {
+    numbering_system == "hanidec"
+        || DIGIT_BASES
+            .iter()
+            .any(|(name, _)| *name == numbering_system)
 }
