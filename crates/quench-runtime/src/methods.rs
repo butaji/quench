@@ -70,7 +70,10 @@ fn execute_callee(
         }
         Value::Function(function) => crate::functions::execute(&function, receiver, arguments)?,
         Value::BoundFunction(bound)
-            if matches!(bound.target, Value::Builtin(crate::ops::Builtin::HostCapability(_))) =>
+            if matches!(
+                bound.target,
+                Value::Builtin(crate::ops::Builtin::HostCapability(_))
+            ) =>
         {
             let Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
                 unreachable!()
