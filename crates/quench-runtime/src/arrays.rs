@@ -52,7 +52,7 @@ fn execute_builtin_match(
         ArrayFlatMap => return Some(flat_map(receiver, arguments)),
         ArrayAt => return Some(Ok(at(receiver, arguments))),
         ArraySort => return Some(Ok(sort(receiver))),
-        ArrayToReversed => return Some(Ok(to_reversed(receiver))),
+        ArrayToReversed => return Some(to_reversed(receiver)),
         ArraySplice => return Some(Ok(splice(receiver, arguments))),
         ArrayReduce => return Some(reduce_values(receiver, arguments, false)),
         ArrayReduceRight => return Some(reduce_values(receiver, arguments, true)),
@@ -422,11 +422,22 @@ pub(crate) fn at(receiver: Option<&Value>, arguments: &[Value]) -> Value {
         .cloned()
         .unwrap_or(Value::Undefined)
 }
-pub(crate) fn to_reversed(receiver: Option<&Value>) -> Value {
-    let Some(Value::Array(values)) = receiver else {
-        return Value::array(Vec::new());
-    };
-    Value::array(values.iter().rev().cloned().collect())
+pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let this = receiver.cloned().unwrap_or(Value::Undefined);
+    if matches!(this, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.toReversed called on null or undefined",
+        ));
+    }
+    let length = array_like_length(&this)?;
+    let mut values = Vec::with_capacity(length);
+    for index in (0..length).rev() {
+        values.push(crate::execute::get_property_result(
+            &this,
+            &index.to_string(),
+        )?);
+    }
+    Ok(Value::array(values))
 }
 pub(crate) fn reduce_values(
     receiver: Option<&Value>,
