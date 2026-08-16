@@ -118,7 +118,12 @@ pub(crate) fn rounded_text(
     value: f64,
     fraction_digits: u32,
 ) -> (String, bool) {
-    let fraction_text = format_number_rounded(value, fraction_digits, options.rounding_increment);
+    let fraction_text = format_number_rounded(
+        value,
+        fraction_digits,
+        options.rounding_increment,
+        &options.rounding_mode,
+    );
     let Some(maximum) = options.maximum_significant_digits else {
         return (fraction_text, false);
     };

@@ -264,7 +264,12 @@ fn western_compact_suffix(magnitude: i32, display: &str) -> &'static str {
     }
 }
 
-pub(crate) fn format_number_rounded(value: f64, max_fraction: u32, increment: u32) -> String {
+pub(crate) fn format_number_rounded(
+    value: f64,
+    max_fraction: u32,
+    increment: u32,
+    mode: &str,
+) -> String {
     if value.is_nan() {
         return "NaN".to_string();
     }
@@ -283,7 +288,7 @@ pub(crate) fn format_number_rounded(value: f64, max_fraction: u32, increment: u3
     let quantum = f64::from(increment.max(1)) / scale;
     let units = value / quantum;
     let adjusted = units + units.signum() * 1e-9;
-    let rounded = adjusted.round() * quantum;
+    let rounded = round_units(adjusted, mode) * quantum;
     let mut text = format!("{:.*}", max_fraction as usize, rounded);
     if text.contains('.') {
         while text.ends_with('0') {

@@ -32,11 +32,11 @@ fn box_primitive(value: &Value, constructor: crate::ops::Builtin) -> Value {
 
 /// Implement `Object.prototype.toString` using the receiver's [[Class]].
 pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
-    if receiver.is_some_and(crate::conversion::is_callable) {
-        return Value::String("[object Function]".into());
-    }
     if let Some(tag) = receiver.and_then(string_tag) {
         return Value::String(format!("[object {tag}]"));
+    }
+    if receiver.is_some_and(crate::conversion::is_callable) {
+        return Value::String("[object Function]".into());
     }
     Value::String(format!("[object {}]", prototype_tag(receiver)))
 }
@@ -102,7 +102,9 @@ fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
             | Builtin::SyntaxErrorPrototype
             | Builtin::URIErrorPrototype
             | Builtin::AggregateErrorPrototype
-            | Builtin::SuppressedErrorPrototype,
+            | Builtin::SuppressedErrorPrototype
+            | Builtin::IntlCollatorPrototype
+            | Builtin::IntlPluralRulesPrototype,
         )) => "Object",
         Some(Value::Builtin(_)) => "Function",
         Some(Value::Proxy(_)) => "Object",

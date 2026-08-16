@@ -148,6 +148,22 @@ fn static_accessor(builtin: Builtin, key: &str) -> Option<Value> {
 
 fn static_accessor_builtin(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
+        (Builtin::TemporalDurationPrototype, "years") => Builtin::TemporalDurationYearsGetter,
+        (Builtin::TemporalDurationPrototype, "months") => Builtin::TemporalDurationMonthsGetter,
+        (Builtin::TemporalDurationPrototype, "weeks") => Builtin::TemporalDurationWeeksGetter,
+        (Builtin::TemporalDurationPrototype, "days") => Builtin::TemporalDurationDaysGetter,
+        (Builtin::TemporalDurationPrototype, "hours") => Builtin::TemporalDurationHoursGetter,
+        (Builtin::TemporalDurationPrototype, "minutes") => Builtin::TemporalDurationMinutesGetter,
+        (Builtin::TemporalDurationPrototype, "seconds") => Builtin::TemporalDurationSecondsGetter,
+        (Builtin::TemporalDurationPrototype, "milliseconds") => {
+            Builtin::TemporalDurationMillisecondsGetter
+        }
+        (Builtin::TemporalDurationPrototype, "microseconds") => {
+            Builtin::TemporalDurationMicrosecondsGetter
+        }
+        (Builtin::TemporalDurationPrototype, "nanoseconds") => {
+            Builtin::TemporalDurationNanosecondsGetter
+        }
         (Builtin::SetPrototype, "size") => Builtin::SetSizeGetter,
         (Builtin::MapPrototype, "size") => Builtin::MapSizeGetter,
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,

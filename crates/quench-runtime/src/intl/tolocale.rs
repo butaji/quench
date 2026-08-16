@@ -1,5 +1,4 @@
 //! `toLocaleString` family and number/string formatting helpers.
-use self::locale_number::format_number;
 use super::{resolve_locales, runtime_error, to_string_value};
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
@@ -9,9 +8,6 @@ pub(crate) use date_kind::DateLocaleKind;
 mod array_values;
 mod date;
 mod locale_number;
-
-#[path = "tolocale_number.rs"]
-mod number;
 
 pub(crate) mod value {
     use crate::value::Value;
@@ -345,6 +341,10 @@ pub(crate) mod symbol {
         Ok(Value::String(format!("Symbol.{description}\0{counter}")))
     }
 
+    pub(crate) fn legacy_symbol() -> Result<Value, VmError> {
+        make_symbol(&[Value::String("IntlLegacyConstructedSymbol".to_string())])
+    }
+
     fn symbol_for(arguments: &[Value]) -> Result<Value, VmError> {
         let key = crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
         Ok(Value::String(format!("Symbol.for.{key}\0")))
@@ -393,10 +393,10 @@ pub(crate) fn array_to_locale_string(
             ))
         }
     };
-    let locales = resolve_locales(arguments)?;
+    let _ = resolve_locales(arguments)?;
     let mut parts = Vec::new();
     for value in values.iter() {
-        parts.push(element_to_locale_string(value, &locales, arguments)?);
+        parts.push(element_to_locale_string(value, arguments)?);
     }
     Ok(Value::String(parts.join(",")))
 }
@@ -470,6 +470,9 @@ fn add_minimum_fraction(formatted: &mut String, locales: &[String], options: Opt
     else {
         return;
     };
+    if digits == 0 {
+        return;
+    }
     let separator = locales
         .first()
         .is_some_and(|locale| locale.starts_with("de"))
@@ -570,13 +573,9 @@ fn string_locale_compare(receiver: Option<&Value>, arguments: &[Value]) -> Resul
     Ok(Value::Number(result))
 }
 
-fn element_to_locale_string(
-    value: &Value,
-    locales: &[String],
-    arguments: &[Value],
-) -> Result<String, VmError> {
+fn element_to_locale_string(value: &Value, arguments: &[Value]) -> Result<String, VmError> {
     match value {
-        Value::Number(number) => Ok(format_number(*number, locales, arguments.get(1))),
+        Value::Number(_) => locale_element_call(value, arguments),
         Value::Null | Value::Undefined => Ok(String::new()),
         _ => locale_element_call(value, arguments),
     }

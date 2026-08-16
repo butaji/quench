@@ -96,11 +96,24 @@ pub(crate) fn reduce_for_in(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
+    let outer_locals = locals.clone();
     let (slot, per_iteration) = for_in_slot(&statement.left, next_slot, locals)?;
-    let object =
-        crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
-            .ok_or_else(|| vec!["Unsupported for-in object".to_string()])?;
-    let body = crate::branch::reduce(&statement.body, facts, locals)?;
+    let object = crate::reduce::reduce_expression(
+        &statement.right,
+        ops,
+        facts,
+        next_register,
+        &outer_locals,
+    )
+    .ok_or_else(|| vec!["Unsupported for-in object".to_string()])?;
+    let mut body_locals = locals.clone();
+    if per_iteration {
+        if let Some(name) = for_in_name(&statement.left) {
+            body_locals.insert(format!("\0lexical-predeclared:{name}"), slot);
+        }
+    }
+    let body = crate::branch::reduce(&statement.body, facts, &mut body_locals)?;
+    *locals = outer_locals;
     ops.push(Op::ForIn {
         label: None,
         object,
@@ -111,6 +124,18 @@ pub(crate) fn reduce_for_in(
     Ok(())
 }
 
+fn for_in_name(left: &oxc::ast::ast::ForStatementLeft<'_>) -> Option<String> {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        return None;
+    };
+    let declarator = declaration.declarations.first()?;
+    let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind
+    else {
+        return None;
+    };
+    Some(identifier.name.to_string())
+}
+
 pub(crate) fn reduce_for_of(
     statement: &ForOfStatement<'_>,
     ops: &mut Vec<Op>,
@@ -119,14 +144,27 @@ pub(crate) fn reduce_for_of(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
+    let outer_locals = locals.clone();
     let (slot, per_iteration, pattern) = for_of_slot(&statement.left, next_slot, locals)?;
-    let iterable =
-        crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
-            .ok_or_else(|| vec!["Unsupported for-of iterable".to_string()])?;
-    let mut body = crate::branch::reduce(&statement.body, facts, locals)?;
-    if let Some(pattern) = pattern {
-        prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, locals)?;
+    let iterable = crate::reduce::reduce_expression(
+        &statement.right,
+        ops,
+        facts,
+        next_register,
+        &outer_locals,
+    )
+    .ok_or_else(|| vec!["Unsupported for-of iterable".to_string()])?;
+    let mut body_locals = locals.clone();
+    if per_iteration {
+        if let Some(name) = for_in_name(&statement.left) {
+            body_locals.insert(format!("\0lexical-predeclared:{name}"), slot);
+        }
     }
+    let mut body = crate::branch::reduce(&statement.body, facts, &mut body_locals)?;
+    if let Some(pattern) = pattern {
+        prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
+    }
+    *locals = outer_locals;
     ops.push(Op::ForOf {
         label: None,
         iterable,

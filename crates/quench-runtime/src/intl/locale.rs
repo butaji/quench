@@ -19,6 +19,7 @@ pub(crate) struct Locale {
     pub first_day_of_week: Option<String>,
     pub numbering_system: Option<String>,
     pub numeric: bool,
+    pub numeric_explicit: bool,
 }
 
 impl Locale {
@@ -74,6 +75,7 @@ fn parse_canonical(tag: &str) -> Locale {
         first_day_of_week: None,
         numbering_system: None,
         numeric: false,
+        numeric_explicit: false,
     };
     let mut index = 1;
     if parts
@@ -113,10 +115,28 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
             while j + 1 < parts.len() {
                 let key = parts[j];
                 let item = parts[j + 1];
+                if key == "kn" {
+                    locale.numeric = item != "false";
+                    locale.numeric_explicit = true;
+                    j += if matches!(item, "true" | "false") {
+                        2
+                    } else {
+                        1
+                    };
+                    continue;
+                }
                 match key {
                     "ca" => {
                         if locale.calendar.is_none() {
-                            locale.calendar = Some(calendar_alias(item));
+                            let calendar = if item == "ethiopic"
+                                && parts.get(j + 2) == Some(&"amete")
+                                && parts.get(j + 3) == Some(&"alem")
+                            {
+                                "ethiopic-amete-alem"
+                            } else {
+                                item
+                            };
+                            locale.calendar = Some(calendar_alias(calendar));
                         }
                     }
                     "co" if locale.collation.is_none() => locale.collation = Some(item.to_string()),
@@ -147,6 +167,7 @@ pub(crate) fn calendar_alias(value: &str) -> String {
     match value.as_str() {
         "islamicc" => "islamic-civil".to_string(),
         "islamic" | "islamic-rgsa" => "islamic-civil".to_string(),
+        "ethiopic-amete-alem" => "ethioaa".to_string(),
         other => other.to_string(),
     }
 }
@@ -184,7 +205,7 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
                 let value = option_value(&text, "calendar")?;
                 locale.calendar = Some(calendar_alias(&calendar_option(&value)?));
             }
-            "collation" => locale.collation = Some(option_value(&text, "collation")?),
+            "collation" => locale.collation = Some(keyword_option(&text, "collation")?),
             "caseFirst" => locale.case_first = Some(normalize_case_first(&text)?),
             "hourCycle" => locale.hour_cycle = Some(normalize_hour_cycle(&text)?),
             "numberingSystem" => {
@@ -199,7 +220,10 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
                 }
                 locale.numbering_system = Some(value);
             }
-            "numeric" => locale.numeric = normalize_numeric(&value, &text)?,
+            "numeric" => {
+                locale.numeric = normalize_numeric(&value, &text)?;
+                locale.numeric_explicit = true;
+            }
             "firstDayOfWeek" => {
                 let value = option_value(&text, "firstDayOfWeek")?;
                 if value.len() < 3
@@ -226,10 +250,26 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "language" if text.contains('-') => {
                 return Err(runtime_error("RangeError: invalid language"));
             }
-            "language" | "script" => {
-                let _ = option_value(&text, key)?;
+            "language" => {
+                let language = option_value(&text, key)?;
+                if !(2..=8).contains(&language.len())
+                    || !language.chars().all(|c| c.is_ascii_alphabetic())
+                {
+                    return Err(runtime_error("RangeError: invalid language"));
+                }
+                locale.language = super::language_alias(language.to_ascii_lowercase());
             }
-            "region" => validate_region(&text)?,
+            "script" => {
+                let script = option_value(&text, key)?;
+                if script.len() != 4 || !script.chars().all(|c| c.is_ascii_alphabetic()) {
+                    return Err(runtime_error("RangeError: invalid script"));
+                }
+                locale.script = Some(super::titlecase_script(&script));
+            }
+            "region" => {
+                validate_region(&text)?;
+                locale.region = Some(super::canonical_region(&text, &[locale.language.clone()]));
+            }
             "variants" => {
                 let value = option_value(&text, key)?;
                 locale.variants = variants_option(&value)?;
@@ -292,12 +332,16 @@ fn option_value(value: &str, name: &str) -> Result<String, VmError> {
 }
 
 pub(crate) fn calendar_option(value: &str) -> Result<String, VmError> {
+    keyword_option(value, "calendar")
+}
+
+fn keyword_option(value: &str, name: &str) -> Result<String, VmError> {
     if value.split('-').all(|part| {
         (3..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
     }) {
         Ok(value.to_string())
     } else {
-        Err(runtime_error("RangeError: invalid calendar"))
+        Err(runtime_error(&format!("RangeError: invalid {name}")))
     }
 }
 
@@ -486,8 +530,15 @@ fn slot_keys(locale: &Locale) -> Vec<(&'static str, String)> {
     if let Some(first_day) = &locale.first_day_of_week {
         keys.push(("fw", first_day.clone()));
     }
-    if locale.numeric {
-        keys.push(("kn", "true".to_string()));
+    if locale.numeric_explicit {
+        keys.push((
+            "kn",
+            if locale.numeric {
+                "true".to_string()
+            } else {
+                "false".to_string()
+            },
+        ));
     }
     keys
 }

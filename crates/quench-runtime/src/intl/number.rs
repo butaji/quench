@@ -7,7 +7,7 @@ use super::number_format::*;
 mod number_methods;
 mod number_render;
 
-pub(crate) use number_methods::prototype_method;
+pub(crate) use number_methods::{localize_digits, prototype_method, supports_digit_system};
 pub(crate) use number_render::*;
 
 use super::{
@@ -17,12 +17,14 @@ use super::{
 
 pub(crate) struct NumberOptions {
     pub locale: String,
+    pub numbering_system: String,
     pub style: String,
     pub currency: Option<String>,
     pub currency_display: String,
     pub currency_sign: String,
     pub unit: Option<String>,
     pub unit_display: String,
+    pub grouping: String,
     pub minimum_integer_digits: u32,
     pub minimum_fraction_digits: u32,
     pub maximum_fraction_digits: u32,
@@ -41,11 +43,13 @@ pub(crate) struct NumberOptions {
 
 pub(crate) struct RawOptions {
     style: String,
+    numbering_system: Option<String>,
     currency: Option<String>,
     currency_display: String,
     currency_sign: String,
     unit: Option<String>,
     unit_display: String,
+    grouping: String,
     minimum_fraction_digits: f64,
     minimum_integer_digits: f64,
     maximum_fraction_digits: f64,
@@ -90,11 +94,13 @@ impl RawOptions {
     fn from_value(options: Option<&Value>) -> Result<Self, VmError> {
         let mut raw = RawOptions {
             style: "decimal".to_string(),
+            numbering_system: None,
             currency: None,
             currency_display: "symbol".to_string(),
             currency_sign: "standard".to_string(),
             unit: None,
             unit_display: "short".to_string(),
+            grouping: "auto".to_string(),
             minimum_fraction_digits: -1.0,
             minimum_integer_digits: 1.0,
             maximum_fraction_digits: -1.0,
@@ -118,6 +124,8 @@ impl RawOptions {
                         crate::conversion::to_string(&value)?
                     } else if *key == "roundingIncrement" {
                         crate::conversion::to_number(&value)?.to_string()
+                    } else if matches!(*key, "currency" | "currencyDisplay" | "unitDisplay") {
+                        crate::conversion::to_string(&value)?
                     } else {
                         to_string_value(&value)
                     };
@@ -132,14 +140,16 @@ impl RawOptions {
                             ));
                         }
                     }
-                    if *key == "numberingSystem" {
-                        let _ = super::locale::calendar_option(&text)?;
-                    }
                     if *key == "trailingZeroDisplay"
                         && !matches!(text.as_str(), "auto" | "stripIfInteger")
                     {
                         return Err(crate::value::error::throw_range_error(
                             "invalid trailingZeroDisplay",
+                        ));
+                    }
+                    if *key == "numberingSystem" && !valid_numbering_system_syntax(&text) {
+                        return Err(crate::value::error::throw_range_error(
+                            "invalid numbering system",
                         ));
                     }
                     apply_option(&mut raw, key, &text);
@@ -150,9 +160,22 @@ impl RawOptions {
     }
 }
 
+fn valid_numbering_system_syntax(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('-').all(|part| {
+            (3..=8).contains(&part.len())
+                && part
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        })
+}
+
 fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
     match key {
         "style" => raw.style = value.to_string(),
+        "numberingSystem" if super::supported_values::NUMBERING_SYSTEMS.contains(&value) => {
+            raw.numbering_system = Some(value.to_string())
+        }
         "currency" => raw.currency = Some(value.to_ascii_uppercase()),
         "currencyDisplay" => raw.currency_display = value.to_string(),
         "currencySign" => raw.currency_sign = value.to_string(),
@@ -162,6 +185,7 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
         "minimumIntegerDigits" => raw.minimum_integer_digits = value.parse().unwrap_or(1.0),
         "maximumFractionDigits" => raw.maximum_fraction_digits = value.parse().unwrap_or(3.0),
         "useGrouping" => {
+            raw.grouping = value.to_string();
             raw.use_grouping = grouping_enabled(value);
             raw.grouping_min2 = value == "min2";
         }
@@ -185,6 +209,11 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    if matches!(arguments.get(1), Some(Value::Null)) {
+        return Err(crate::value::error::throw_type_error(
+            "options must not be null",
+        ));
+    }
     validate_options(arguments.get(1))?;
     let options = NumberOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
@@ -208,18 +237,15 @@ pub(crate) fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
         return Err(runtime_error("TypeError: localeMatcher"));
     }
     let currency = property("currency")?;
+    let currency_is_undefined = matches!(currency, Value::Undefined);
     let currency = crate::conversion::to_string(&currency)?;
-    if style == "currency" && currency == "undefined" {
+    if style == "currency" && currency_is_undefined {
         return Err(runtime_error("TypeError: currency"));
     }
-    if currency != "undefined"
+    if !currency_is_undefined
         && (currency.len() != 3 || !currency.chars().all(|c| c.is_ascii_alphabetic()))
     {
         return Err(runtime_error("RangeError: currency"));
-    }
-    let significant = property("maximumSignificantDigits")?;
-    if crate::conversion::to_string(&significant)? == "-Infinity" {
-        return Err(runtime_error("RangeError: maximumSignificantDigits"));
     }
     Ok(())
 }
@@ -227,21 +253,32 @@ pub(crate) fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         let raw = RawOptions::from_value(options)?;
+        validate_unit_display(&raw.unit_display)?;
+        validate_significant_digits(&raw)?;
         validate_rounding_mode(&raw.rounding_mode)?;
         validate_rounding_increment(&raw)?;
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),
+            raw.notation.as_str(),
             raw.minimum_fraction_digits,
         );
         let maximum_fraction_digits = maximum_fraction(
             &raw.style,
             &raw.currency,
+            &raw.notation,
             raw.maximum_fraction_digits,
             minimum_fraction_digits,
         );
         let minimum_fraction_digits = minimum_fraction_digits.min(maximum_fraction_digits);
-        if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
+        if raw.style == "unit" {
+            if raw.unit.is_none() {
+                return Err(crate::value::error::throw_type_error("unit is required"));
+            }
+            if !valid_unit(raw.unit.as_deref()) {
+                return Err(crate::value::error::throw_range_error("invalid unit"));
+            }
+        } else if raw.unit.is_some() && !valid_unit(raw.unit.as_deref()) {
             return Err(crate::value::error::throw_range_error("invalid unit"));
         }
         Ok(number_options(
@@ -274,25 +311,17 @@ impl NumberOptions {
                 "resolvedOptions".to_string(),
                 Value::Builtin(crate::ops::Builtin::IntlNumberFormatResolvedOptions),
             ),
+            (
+                "\0prototype".to_string(),
+                crate::vm::realm_intrinsic(crate::ops::Builtin::IntlNumberFormatPrototype),
+            ),
             (SLOT.to_string(), self.slot()),
         ];
         make_object(properties)
     }
 
     fn slot(&self) -> Value {
-        let mut properties = slot_base(self);
-        if let Some(value) = self.minimum_significant_digits {
-            properties.push((
-                "minimumSignificantDigits".to_string(),
-                Value::Number(value as f64),
-            ));
-        }
-        if let Some(value) = self.maximum_significant_digits {
-            properties.push((
-                "maximumSignificantDigits".to_string(),
-                Value::Number(value as f64),
-            ));
-        }
+        let mut properties = slot_primary(self);
         if let Some(currency) = &self.currency {
             properties.push(("currency".to_string(), Value::String(currency.clone())));
             properties.push((
@@ -311,6 +340,41 @@ impl NumberOptions {
                 Value::String(self.unit_display.clone()),
             ));
         }
+        properties.extend([
+            (
+                "minimumIntegerDigits".to_string(),
+                Value::Number(self.minimum_integer_digits as f64),
+            ),
+            (
+                "minimumFractionDigits".to_string(),
+                Value::Number(self.minimum_fraction_digits as f64),
+            ),
+            (
+                "maximumFractionDigits".to_string(),
+                Value::Number(self.maximum_fraction_digits as f64),
+            ),
+        ]);
+        if let Some(value) = self.minimum_significant_digits {
+            properties.push((
+                "minimumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
+        if let Some(value) = self.maximum_significant_digits {
+            properties.push((
+                "maximumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
+        properties.push((
+            "useGrouping".to_string(),
+            Value::String(self.grouping.clone()),
+        ));
+        properties.push((
+            "groupingMin2".to_string(),
+            Value::Boolean(self.grouping_min2),
+        ));
+        properties.extend(slot_tail(self));
         make_object(properties)
     }
 }
@@ -374,14 +438,34 @@ fn number_options(
     minimum_fraction_digits: f64,
     maximum_fraction_digits: f64,
 ) -> NumberOptions {
+    let locale_numbering = super::numbering_system(&locale);
+    let numbering_system = raw
+        .numbering_system
+        .as_deref()
+        .or(locale_numbering)
+        .unwrap_or("latn")
+        .to_string();
+    let locale = match raw.numbering_system.as_deref() {
+        Some(option) if locale_numbering != Some(option) => locale
+            .split_once("-u-")
+            .map_or(locale.clone(), |(base, _)| base.to_string()),
+        _ => super::number_locale(&locale),
+    };
+    let currency = raw
+        .currency
+        .as_ref()
+        .filter(|_| raw.style == "currency")
+        .cloned();
     NumberOptions {
         locale,
+        numbering_system,
         style: raw.style,
-        currency: raw.currency,
+        currency,
         currency_display: raw.currency_display,
         currency_sign: raw.currency_sign,
         unit: raw.unit,
         unit_display: raw.unit_display,
+        grouping: raw.grouping,
         minimum_integer_digits: raw.minimum_integer_digits.max(1.0) as u32,
         minimum_fraction_digits: minimum_fraction_digits as u32,
         maximum_fraction_digits: maximum_fraction_digits as u32,
@@ -392,7 +476,8 @@ fn number_options(
         rounding_mode: raw.rounding_mode,
         rounding_increment: raw.rounding_increment.max(1.0) as u32,
         sign_display: raw.sign_display,
-        minimum_significant_digits: significant_digits(raw.minimum_significant_digits),
+        minimum_significant_digits: significant_digits(raw.minimum_significant_digits)
+            .or_else(|| significant_digits(raw.maximum_significant_digits).map(|_| 1)),
         maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
             .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
         rounding_priority: raw.rounding_priority,
@@ -400,16 +485,26 @@ fn number_options(
     }
 }
 
-fn slot_base(number: &NumberOptions) -> Vec<(String, Value)> {
-    let mut properties = slot_primary(number);
+fn slot_tail(number: &NumberOptions) -> Vec<(String, Value)> {
+    let mut properties = Vec::new();
+    properties.push((
+        "notation".to_string(),
+        Value::String(number.notation.clone()),
+    ));
+    if number.notation == "compact" {
+        properties.push((
+            "compactDisplay".to_string(),
+            Value::String(number.compact_display.clone()),
+        ));
+    }
     properties.extend([
-        (
-            "notation".to_string(),
-            Value::String(number.notation.clone()),
-        ),
         (
             "signDisplay".to_string(),
             Value::String(number.sign_display.clone()),
+        ),
+        (
+            "roundingIncrement".to_string(),
+            Value::Number(number.rounding_increment as f64),
         ),
         (
             "roundingMode".to_string(),
@@ -420,67 +515,77 @@ fn slot_base(number: &NumberOptions) -> Vec<(String, Value)> {
             Value::String(number.rounding_priority.clone()),
         ),
         (
-            "roundingIncrement".to_string(),
-            Value::Number(number.rounding_increment as f64),
-        ),
-        (
             "trailingZeroDisplay".to_string(),
             Value::String(number.trailing_zero_display.clone()),
         ),
     ]);
-    if number.notation == "compact" {
-        properties.push((
-            "compactDisplay".to_string(),
-            Value::String(number.compact_display.clone()),
-        ));
-    }
     properties
 }
 
 fn slot_primary(number: &NumberOptions) -> Vec<(String, Value)> {
     vec![
         ("locale".to_string(), Value::String(number.locale.clone())),
+        (
+            "numberingSystem".to_string(),
+            Value::String(number.numbering_system.clone()),
+        ),
         ("style".to_string(), Value::String(number.style.clone())),
-        (
-            "useGrouping".to_string(),
-            Value::Boolean(number.use_grouping),
-        ),
-        (
-            "groupingMin2".to_string(),
-            Value::Boolean(number.grouping_min2),
-        ),
-        (
-            "minimumIntegerDigits".to_string(),
-            Value::Number(number.minimum_integer_digits as f64),
-        ),
-        (
-            "minimumFractionDigits".to_string(),
-            Value::Number(number.minimum_fraction_digits as f64),
-        ),
-        (
-            "maximumFractionDigits".to_string(),
-            Value::Number(number.maximum_fraction_digits as f64),
-        ),
     ]
 }
 
 fn valid_unit(unit: Option<&str>) -> bool {
-    matches!(
-        unit,
-        Some("percent" | "meter" | "kilometer" | "kilometer-per-hour")
-    )
+    let Some(unit) = unit else { return false };
+    if super::supported_values::UNITS.contains(&unit) {
+        return true;
+    }
+    let Some((left, right)) = unit.split_once("-per-") else {
+        return false;
+    };
+    super::supported_values::UNITS.contains(&left)
+        && super::supported_values::UNITS.contains(&right)
+}
+
+fn validate_unit_display(value: &str) -> Result<(), VmError> {
+    matches!(value, "short" | "narrow" | "long")
+        .then_some(())
+        .ok_or_else(|| crate::value::error::throw_range_error("invalid unitDisplay"))
+}
+
+fn validate_significant_digits(raw: &RawOptions) -> Result<(), VmError> {
+    for value in [
+        raw.minimum_significant_digits,
+        raw.maximum_significant_digits,
+    ] {
+        if value != -1.0
+            && (!value.is_finite() || value.fract() != 0.0 || !(1.0..=21.0).contains(&value))
+        {
+            return Err(crate::value::error::throw_range_error(
+                "invalid significant digits",
+            ));
+        }
+    }
+    if raw.minimum_significant_digits >= 0.0
+        && raw.maximum_significant_digits >= 0.0
+        && raw.maximum_significant_digits < raw.minimum_significant_digits
+    {
+        return Err(crate::value::error::throw_range_error(
+            "maximum significant digits below minimum",
+        ));
+    }
+    Ok(())
 }
 
 fn grouping_enabled(value: &str) -> bool {
     matches!(value, "true" | "always" | "auto" | "min2")
 }
 
-fn fraction_digits(style: &str, currency: Option<&str>, requested: f64) -> u32 {
+fn fraction_digits(style: &str, currency: Option<&str>, notation: &str, requested: f64) -> u32 {
     if requested >= 0.0 {
         return requested as u32;
     }
     match style {
         "percent" => 0,
+        "currency" if notation != "standard" => 0,
         "currency" if currency == Some("JPY") => 0,
         "currency" => 2,
         _ => requested as u32,
@@ -491,8 +596,16 @@ fn significant_digits(value: f64) -> Option<u32> {
     (value >= 1.0).then_some(value as u32)
 }
 
-fn maximum_fraction(style: &str, currency: &Option<String>, requested: f64, minimum: u32) -> u32 {
+fn maximum_fraction(
+    style: &str,
+    currency: &Option<String>,
+    notation: &str,
+    requested: f64,
+    minimum: u32,
+) -> u32 {
     let default = match style {
+        "currency" if notation == "compact" => 0,
+        "currency" if notation != "standard" => 3,
         "currency" if currency.as_deref() == Some("JPY") => 0,
         "currency" => 2,
         _ => 3,

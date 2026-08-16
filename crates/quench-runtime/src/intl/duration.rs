@@ -2,7 +2,10 @@
 
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
-use super::{default_locale, make_array, make_object, resolve_locales, runtime_error, SLOT};
+use super::{
+    default_locale, make_array, make_object, resolve_locales, runtime_error,
+    supported_numbering_systems, SLOT,
+};
 
 pub(crate) fn dispatch(
     builtin: Builtin,
@@ -16,6 +19,26 @@ pub(crate) fn dispatch(
         | Builtin::IntlDurationFormatResolvedOptions => Some(method(builtin, arguments, receiver)),
         _ => None,
     }
+}
+
+pub(crate) fn format_temporal_duration(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let duration = receiver.ok_or_else(|| {
+        crate::value::error::throw_type_error(
+            "Temporal.Duration.prototype.toLocaleString called on incompatible receiver",
+        )
+    })?;
+    let formatter = construct(&[
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+        arguments.get(1).cloned().unwrap_or(Value::Undefined),
+    ])?;
+    method(
+        Builtin::IntlDurationFormatFormat,
+        &[duration.clone()],
+        Some(&formatter),
+    )
 }
 
 fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -228,7 +251,9 @@ fn locale_for_numbering(locale: &str, numbering: &str) -> String {
 }
 
 fn valid_numbering_system(value: &str) -> bool {
-    super::NUMBERING_SYSTEMS.contains(&value)
+    supported_numbering_systems()
+        .iter()
+        .any(|item| matches!(item, Value::String(item) if item == value))
 }
 
 fn valid_unit_style(unit: &str, style: &str) -> bool {
