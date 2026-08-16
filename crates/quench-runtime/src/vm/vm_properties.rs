@@ -591,6 +591,9 @@ fn is_iterator_next_builtin(builtin: Builtin) -> bool {
 /// them to the object they were read from (e.g. a property descriptor's
 /// `.get`) would call them with the wrong receiver.
 fn is_accessor_builtin(builtin: Builtin) -> bool {
+    if builtin == Builtin::IntlNumberFormatFormat {
+        return false;
+    }
     let name = crate::builtins::builtin_name(builtin);
     name.starts_with("get ") || name.starts_with("set ")
 }
