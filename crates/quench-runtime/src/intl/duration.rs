@@ -296,19 +296,11 @@ fn method(
 
 fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<String, VmError> {
     let value = value.unwrap_or(&Value::Undefined);
-    let Value::Object(properties) = value else {
-        return Err(match value {
-            value if crate::conversion::is_symbol(value) => {
-                crate::value::error::throw_type_error("Duration must be an object")
-            }
-            Value::String(_) => runtime_error("RangeError: invalid duration string"),
-            _ => crate::value::error::throw_type_error("Duration must be an object"),
-        });
-    };
-    validate_duration_fields(properties)?;
+    let properties = duration_properties(value)?;
+    validate_duration_fields(&properties)?;
     let [_, _, _, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] =
-        duration_values(properties);
-    validate_duration(properties)?;
+        duration_values(&properties);
+    validate_duration(&properties)?;
     format_duration_values(
         slots,
         days,
@@ -319,6 +311,25 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
         microseconds,
         nanoseconds,
     )
+}
+
+fn duration_properties(value: &Value) -> Result<Vec<(String, Value)>, VmError> {
+    match value {
+        Value::Object(object) => Ok(object.properties.clone()),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(|object| object.properties.clone())
+            .ok_or_else(|| crate::value::error::throw_type_error("Duration must be an object")),
+        value if crate::conversion::is_symbol(value) => Err(crate::value::error::throw_type_error(
+            "Duration must be an object",
+        )),
+        Value::String(_) => Err(runtime_error("RangeError: invalid duration string")),
+        _ => Err(crate::value::error::throw_type_error(
+            "Duration must be an object",
+        )),
+    }
 }
 
 fn format_duration_values(
