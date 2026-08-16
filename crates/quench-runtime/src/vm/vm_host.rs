@@ -40,7 +40,7 @@ pub(crate) fn execute_host_capability(
                     .as_ref()
                     .and_then(VmContext::host_handle)
             });
-            host.map(|host| host.call(descriptor, arguments))
+            host.map(|host| host.call(descriptor, receiver, arguments))
                 .unwrap_or(Err(VmError::NotCallable))
         }
     }
