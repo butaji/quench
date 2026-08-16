@@ -1,4 +1,5 @@
 pub(crate) fn transform_esm_imports(source: &str) -> String {
+    let source = transform_import_meta(source);
     let mut out = String::with_capacity(source.len());
     let mut iter = source.chars().peekable();
     while let Some(ch) = iter.next() {
@@ -165,4 +166,15 @@ fn parse_import_names(inner: &str) -> String {
         names.push(current);
     }
     names.into_iter().collect::<Vec<_>>().join(", ")
+}
+
+/// Replace `import.meta` with a `globalThis.import_meta` reference.
+///
+/// The runtime has no native `import.meta` object; the host preloads one on
+/// the global. This keeps the syntax intact for subsequent reducer passes.
+fn transform_import_meta(source: &str) -> String {
+    source
+        .replace("import.meta.url", "globalThis.import_meta.url")
+        .replace("import.meta.dirname", "globalThis.import_meta.dirname")
+        .replace("import.meta.filename", "globalThis.import_meta.filename")
 }

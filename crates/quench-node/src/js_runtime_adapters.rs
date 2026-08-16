@@ -73,6 +73,9 @@ for (const name of ["URL", "URLSearchParams"]) {
   }
 }
 */
+const __quench_import_meta = { url: __quench_module_url, dirname: __filename.replace(/[^/\\]*$/, ""), filename: __filename, resolve(specifier, parent) { return new URL(specifier, parent || __quench_module_url).href; } };
+Object.defineProperty(globalThis, "import_meta", { configurable: true, value: __quench_import_meta });
+let __quench_import_meta_alias = __quench_import_meta;
 "#;
         let source = source
             .replace("require(\"events\")", "__quench_events_module()")
@@ -207,6 +210,13 @@ for (const name of ["URL", "URLSearchParams"]) {
             "__filename",
             Value::String(
                 path.map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            ),
+        )
+        .with_host_value(
+            "__quench_module_url",
+            Value::String(
+                path.map(|path| format!("file://{}", path.to_string_lossy()))
                     .unwrap_or_default(),
             ),
         )
