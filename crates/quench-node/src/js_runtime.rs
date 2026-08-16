@@ -3479,6 +3479,13 @@ fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
             Ok(node_buffer(&bytes))
         }
         Some(Value::String(value)) => Ok(node_buffer(value.as_bytes())),
+        Some(Value::ArrayBuffer(buffer)) => {
+            let offset = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or(0);
+            let length = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or_else(|| buffer.bytes.borrow().len().saturating_sub(offset));
+            if offset + length > buffer.bytes.borrow().len() { return Err(VmError::Thrown(fs_error("ERR_BUFFER_OUT_OF_BOUNDS", "offset out of bounds"))); }
+            let view = Value::Uint8Array(Rc::new(quench_runtime::value::Uint8ArrayData::new(Rc::clone(buffer), offset, length)));
+            Ok(quench_runtime::execute::set_property(view, "toString", capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString))))
+        }
         Some(Value::Uint8Array(view)) => Ok(node_buffer(
             &view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length],
         )),
