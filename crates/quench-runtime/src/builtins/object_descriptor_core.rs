@@ -253,6 +253,7 @@ fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (TemporalPlainDatePrototype, "dayOfWeek") => TemporalPlainDateDayOfWeekGetter,
         (TemporalPlainDatePrototype, "dayOfYear") => TemporalPlainDateDayOfYearGetter,
         (TemporalPlainDatePrototype, "daysInMonth") => TemporalPlainDateDaysInMonthGetter,
+        (TemporalPlainDatePrototype, "daysInYear") => TemporalPlainDateDaysInYearGetter,
         (IntlDateTimeFormatPrototype, "format") => IntlDateTimeFormatFormatGetter,
         (IntlNumberFormatPrototype, "format") => IntlNumberFormatFormat,
         (IntlCollatorPrototype, "compare") => IntlCollatorCompareGetter,
