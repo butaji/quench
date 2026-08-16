@@ -22,6 +22,7 @@ impl CapabilityName {
     const PathBasename: u16 = 2;
     const ConsoleLog: u16 = 4;
     const Cwd: u16 = 6;
+    const ProcessUmask: u16 = 1574;
     const ReadFileSync: u16 = 7;
     const CreateHash: u16 = 8;
     const Stream: u16 = 10;
@@ -350,7 +351,9 @@ impl Host for QuenchNodeHost {
                 stream_finished(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::StreamIsPaused) => Ok(Value::Boolean(false)),
-            HostCapabilityKind::Custom(CapabilityName::FsAccess) => fs_access(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsAccess) => {
+                fs_access(arguments).map_err(invalid_path_error)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsWriteBytes) => {
                 fs_write_bytes(arguments, false)
             }
@@ -363,7 +366,9 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsUnlink) => fs_unlink_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsMkdtemp) => fs_mkdtemp(arguments),
-            HostCapabilityKind::Custom(CapabilityName::FsAccessSync) => fs_access_sync(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsAccessSync) => {
+                fs_access_sync(arguments).map_err(invalid_path_error)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsWriteFileSync) => {
                 self.fs_write_file(arguments)
             }
@@ -485,7 +490,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsDirCloseAsync) => {
                 self.fs_dir_close(receiver, arguments, true)
             }
-            HostCapabilityKind::Custom(CapabilityName::FsLinkSync) => fs_link(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsLinkSync) => {
+                fs_link(arguments).map_err(invalid_path_error)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsLinkAsync) => fs_link_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsLinkPromise) => {
                 fs_link(arguments).map(fulfilled)
@@ -534,6 +541,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessUmask) => Ok(Value::Number(0.0)),
             HostCapabilityKind::Custom(CapabilityName::ReadFileSync) => read_file_sync(arguments),
             HostCapabilityKind::Custom(CapabilityName::CreateHash) => self.create_hash(arguments),
             HostCapabilityKind::Custom(CapabilityName::QueueMicrotask) => next_tick(arguments),
@@ -1858,6 +1866,10 @@ fn fs_error(code: &str, message: &str) -> Value {
     ])
 }
 
+fn invalid_path_error(_: VmError) -> VmError {
+    VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "path must be a string"))
+}
+
 fn array_values(value: &Value) -> Result<Vec<Value>, VmError> {
     let length = match quench_runtime::execute::get_property_result(value, "length")? {
         Value::Number(length) => length.max(0.0) as usize,
@@ -2026,7 +2038,12 @@ fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
         file.write_all(&bytes)
             .map_err(|error| VmError::EvalError(error.to_string()))?;
     } else {
-        std::fs::write(path, bytes).map_err(|error| VmError::EvalError(error.to_string()))?;
+        std::fs::write(path, &bytes).map_err(|error| VmError::EvalError(error.to_string()))?;
+        #[cfg(unix)]
+        if !append {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, PermissionsExt::from_mode(0o666));
+        }
     }
     Ok(Value::Undefined)
 }
@@ -2505,6 +2522,11 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(Value::object(vec![("Buffer".into(), buffer_module())]));
         }
         if name == "node:fs" || name == "fs" {
+            let realpath_sync = quench_runtime::execute::set_property(
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsRealpathSync)),
+                "native",
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsRealpathSync)),
+            );
             let module = Value::object(vec![
                 (
                     "readFileSync".into(),
@@ -2572,10 +2594,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "mkdtempSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdtemp)),
                 ),
-                (
-                    "realpathSync".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsRealpathSync)),
-                ),
+                ("realpathSync".into(), realpath_sync),
                 (
                     "openSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpenSync)),
@@ -3095,6 +3114,10 @@ fn process_module() -> Value {
         (
             "nextTick".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessNextTick)),
+        ),
+        (
+            "umask".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessUmask)),
         ),
     ])
 }
