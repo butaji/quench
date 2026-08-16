@@ -212,9 +212,8 @@ fn get_canonical_locales(arguments: &[Value]) -> Result<Value, VmError> {
 
 /// Implement `Intl.supportedValuesOf`.
 fn supported_values_of(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(key)) = arguments.first() else {
-        return Err(runtime_error("TypeError: key must be a string"));
-    };
+    let key =
+        crate::conversion::to_string(arguments.first().map_or(&Value::Undefined, |value| value))?;
     let values: Vec<Value> = match key.as_str() {
         "calendar" => supported_calendars(),
         "collation" => supported_collations(),
