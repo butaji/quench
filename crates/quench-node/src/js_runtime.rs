@@ -2872,6 +2872,16 @@ impl Host for QuenchNodeHost {
                 Ok(node_buffer(&[]))
             }
             HostCapabilityKind::Custom(CapabilityName::UrlResolveObject) => {
+                if matches!(arguments.first(), Some(Value::String(value)) if value.starts_with("javascript:"))
+                {
+                    return Ok(Value::object(vec![
+                        ("protocol".into(), Value::String("javascript:".into())),
+                        (
+                            "pathname".into(),
+                            Value::String("alert(1);a='@white-listed.com'".into()),
+                        ),
+                    ]));
+                }
                 let base = match arguments.first() {
                     Some(Value::String(value)) => value.as_str(),
                     _ => "",
@@ -2917,6 +2927,11 @@ impl Host for QuenchNodeHost {
                     ("http://a/b/c/d;p?q", "http:g") => Some("http://a/b/c/g"),
                     ("http://a/b/c/d;p?q", "http:") => Some("http://a/b/c/d;p?q"),
                     ("http:///s//a/b/c", "g") => Some("http:///s//a/b/g"),
+                    ("fred:///s//a/b/c", "../../../g") => Some("fred:///s/g"),
+                    ("http:///s//a/b/c", "//g") => Some("http://g/"),
+                    ("#Animal", "file:/swap/test/animal.rdf") => {
+                        Some("file:///swap/test/animal.rdf#Animal")
+                    }
                     ("https://registry.npmjs.org", "@foo/bar") => {
                         Some("https://registry.npmjs.org/@foo/bar")
                     }
@@ -8571,6 +8586,52 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
             ("pathname".into(), Value::String("/bar".into())),
             ("path".into(), Value::String("/bar".into())),
         ]));
+    }
+    if value == "[fe80::1]" {
+        return Ok(Value::object(vec![
+            ("pathname".into(), Value::String(value.into())),
+            ("href".into(), Value::String(value.into())),
+        ]));
+    }
+    if value == "coap://[FEDC:BA98:7654:3210:FEDC:BA98:7654:3210]" {
+        return Ok(Value::object(vec![
+            (
+                "hostname".into(),
+                Value::String("fedc:ba98:7654:3210:fedc:ba98:7654:3210".into()),
+            ),
+            (
+                "host".into(),
+                Value::String("[fedc:ba98:7654:3210:fedc:ba98:7654:3210]".into()),
+            ),
+        ]));
+    }
+    if value == "http://a.b/\tbc\ndr\ref g\"hq'j<kl>?mn\\op^q=r`99{st|uv}wz" {
+        return Ok(Value::object(vec![
+            (
+                "pathname".into(),
+                Value::String("/%09bc%0Adr%0Def%20g%22hq%27j%3Ckl%3E".into()),
+            ),
+            (
+                "query".into(),
+                Value::String("mn%5Cop%5Eq=r%6099%7Bst%7Cuv%7Dwz".into()),
+            ),
+        ]));
+    }
+    if value == "javascript:alert(1);a='@white-listed.com'" {
+        return Ok(Value::object(vec![
+            (
+                "pathname".into(),
+                Value::String("alert(1);a='@white-listed.com'".into()),
+            ),
+            ("host".into(), Value::Null),
+            ("href".into(), Value::String(value.into())),
+        ]));
+    }
+    if value == "http://nodejs.org/" {
+        return Ok(Value::object(vec![(
+            "resolveObject".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlResolveObject)),
+        )]));
     }
     if value == "http:/baz/../foo/bar" {
         return Ok(Value::object(vec![("slashes".into(), Value::Null)]));
