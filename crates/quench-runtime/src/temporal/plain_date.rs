@@ -28,7 +28,11 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
-    Ok(date_object(year, month, day))
+    let calendar = match arguments.get(3) {
+        Some(Value::String(name)) => Value::String(name.clone()),
+        _ => Value::String("iso8601".into()),
+    };
+    Ok(date_object_with_calendar(year, month, day, calendar))
 }
 
 fn days_in_month(year: f64, month: f64) -> f64 {
@@ -616,15 +620,31 @@ fn number(value: Option<&Value>) -> Result<f64, VmError> {
 }
 
 fn date_object(year: f64, month: f64, day: f64) -> Value {
-    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
+    date_object_with_calendar(year, month, day, Value::String("iso8601".into()))
+}
+
+fn date_object_with_calendar(year: f64, month: f64, day: f64, calendar: Value) -> Value {
+    let mut properties = vec![
         ("year".into(), Value::Number(year)),
         ("month".into(), Value::Number(month)),
         ("monthCode".into(), Value::String(format!("M{month:02.0}"))),
         ("day".into(), Value::Number(day)),
-        ("calendarId".into(), Value::String("iso8601".into())),
-        (
-            "\0prototype".into(),
-            Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype),
-        ),
-    ])))
+        ("calendarId".into(), calendar.clone()),
+    ];
+    if matches!(&calendar, Value::String(name) if name.eq_ignore_ascii_case("gregory")) {
+        let (era, era_year) = if year >= 1.0 {
+            ("ce", year)
+        } else {
+            ("bce", 1.0 - year)
+        };
+        properties.extend([
+            ("era".into(), Value::String(era.into())),
+            ("eraYear".into(), Value::Number(era_year)),
+        ]);
+    }
+    properties.push((
+        "\0prototype".into(),
+        Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype),
+    ));
+    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
 }
