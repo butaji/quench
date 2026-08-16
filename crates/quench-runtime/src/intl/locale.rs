@@ -197,6 +197,7 @@ fn parse_unicode_extensions(parts: &[&str]) -> Vec<UnicodeExtension> {
         attributes.push(parts[index].to_string());
         index += 1;
     }
+    attributes.sort();
     if !attributes.is_empty() {
         extensions.push(UnicodeExtension {
             attributes: attributes.clone(),
@@ -204,7 +205,6 @@ fn parse_unicode_extensions(parts: &[&str]) -> Vec<UnicodeExtension> {
             types: Vec::new(),
         });
     }
-    attributes.sort();
     while index < parts.len() && parts[index].len() != 1 {
         if parts[index].len() != 2 {
             index += 1;
@@ -223,7 +223,7 @@ fn parse_unicode_extensions(parts: &[&str]) -> Vec<UnicodeExtension> {
             continue;
         }
         extensions.push(UnicodeExtension {
-            attributes: attributes.clone(),
+            attributes: Vec::new(),
             key,
             types: parts[value_start..index]
                 .iter()
