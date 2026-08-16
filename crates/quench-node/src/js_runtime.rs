@@ -4826,6 +4826,13 @@ fn util_inspect(_receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
     if matches!(arguments.first(), Some(Value::Uint8Array(_))) {
         return buffer_inspect(arguments.first());
     }
+    if let Some(value) = arguments.first() {
+        if let Ok(method) = quench_runtime::execute::get_property_result(value, "toISOString") {
+            if let Ok(Value::String(result)) = quench_runtime::execute::call(&method, value, &[]) {
+                return Ok(Value::String(result.into()));
+            }
+        }
+    }
     Ok(Value::String(
         arguments
             .first()
