@@ -288,7 +288,10 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
                     }
                     "co" if locale.collation.is_none() => locale.collation = Some(item.to_string()),
                     "kf" if locale.case_first.is_none() => {
-                        locale.case_first = Some(item.to_string())
+                        locale.case_first = Some(match item {
+                            "upper" | "lower" | "false" => item.to_string(),
+                            _ => String::new(),
+                        })
                     }
                     "hc" if locale.hour_cycle.is_none() => {
                         locale.hour_cycle = Some(item.to_string())
@@ -737,7 +740,7 @@ fn unicode_subtags(locale: &Locale) -> Vec<String> {
             extension
                 .types
                 .iter()
-                .filter(|value| value.as_str() != "true")
+                .filter(|value| !value.is_empty() && value.as_str() != "true")
                 .cloned(),
         );
     }
