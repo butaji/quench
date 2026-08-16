@@ -299,6 +299,13 @@ impl NumberOptions {
                 Value::String(self.currency_sign.clone()),
             ));
         }
+        if let Some(unit) = &self.unit {
+            properties.push(("unit".to_string(), Value::String(unit.clone())));
+            properties.push((
+                "unitDisplay".to_string(),
+                Value::String(self.unit_display.clone()),
+            ));
+        }
         make_object(properties)
     }
 }
