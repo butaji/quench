@@ -497,5 +497,4 @@ impl QuenchNodeHost {
             Err(VmError::EvalError(message)) if message == DISPATCH_UNHANDLED => None,
             result => Some(result),
         }
-    }
-}
+    }}
