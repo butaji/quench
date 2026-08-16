@@ -70,6 +70,7 @@ impl CapabilityName {
     const Gc: u16 = 2117;
     const VmScriptRunInNewContext: u16 = 2118;
     const VmScriptCreateCachedData: u16 = 2123;
+    const UtilGetCallSites: u16 = 2124;
     const VmCompileFunction: u16 = 2119;
     const VmCompiledFunction: u16 = 2120;
     const VmCompiledToString: u16 = 2121;
@@ -943,6 +944,7 @@ impl Host for QuenchNodeHost {
                 ]))
             }
             HostCapabilityKind::Custom(CapabilityName::VmScriptCreateCachedData) => Ok(VM_SCRIPT_CACHE_SOURCE.with(|stored| quench_runtime::host_api::bytes(stored.borrow().as_deref().unwrap_or_default().as_bytes()))),
+            HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
             }
@@ -6956,6 +6958,7 @@ fn util_module() -> Value {
             )),
         ),
         ("types".into(), types),
+        ("getCallSites".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites))),
         (
             "TextEncoder".into(),
             capability_function(HostCapabilityKind::Custom(
