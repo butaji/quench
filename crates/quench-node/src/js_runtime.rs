@@ -39,6 +39,9 @@ impl CapabilityName {
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
     const BufferToJson: u16 = 2043;
+    const BufferOf: u16 = 2044;
+    const BufferAllocUnsafeSlow: u16 = 2045;
+    const BufferIsEncoding: u16 = 2046;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -566,6 +569,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferIndexOf) => buffer_search(receiver, arguments, false),
             HostCapabilityKind::Custom(CapabilityName::BufferLastIndexOf) => buffer_search(receiver, arguments, true),
             HostCapabilityKind::Custom(CapabilityName::BufferToJson) => buffer_to_json(receiver),
+            HostCapabilityKind::Custom(CapabilityName::BufferOf) => buffer_of(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow) => buffer_alloc(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding) => buffer_is_encoding(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -3415,6 +3421,9 @@ fn buffer_module() -> Value {
             "concat",
             HostCapabilityKind::Custom(CapabilityName::BufferConcat),
         ),
+        ("of", HostCapabilityKind::Custom(CapabilityName::BufferOf)),
+        ("allocUnsafeSlow", HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow)),
+        ("isEncoding", HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding)),
         (
             "compare",
             HostCapabilityKind::Custom(CapabilityName::BufferCompare),
@@ -3484,6 +3493,15 @@ fn buffer_alloc(arguments: &[Value]) -> Result<Value, VmError> {
         _ => 0,
     };
     Ok(node_buffer(&vec![fill; *length as usize]))
+}
+
+fn buffer_of(arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(node_buffer(&arguments.iter().map(|value| match value { Value::Number(value) => (*value as i64).rem_euclid(256) as u8, _ => 0 }).collect::<Vec<_>>()))
+}
+
+fn buffer_is_encoding(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(value)) = arguments.first() else { return Ok(Value::Boolean(false)); };
+    Ok(Value::Boolean(matches!(value.to_ascii_lowercase().as_str(), "utf8" | "utf-8" | "utf16le" | "ucs2" | "ucs-2" | "latin1" | "binary" | "ascii" | "base64" | "base64url" | "hex")))
 }
 
 fn node_buffer(bytes: &[u8]) -> Value {
