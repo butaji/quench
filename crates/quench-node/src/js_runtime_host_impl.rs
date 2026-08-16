@@ -19,6 +19,9 @@ impl Host for QuenchNodeHost {
         receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        if let Some(result) = self.dispatch_tmpdir(capability, receiver, arguments) {
+            return result;
+        }
         if let Some(result) = self.dispatch_misc_e(capability, receiver, arguments) {
             return result;
         }
