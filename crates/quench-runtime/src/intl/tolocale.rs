@@ -402,6 +402,27 @@ pub(crate) fn array_to_locale_string(
     Ok(Value::String(parts.join(",")))
 }
 
+pub(crate) fn format_bigint(value: &str, locales: &[String]) -> String {
+    let (sign, digits) = value
+        .strip_prefix('-')
+        .map_or(("", value), |digits| ("-", digits));
+    let separator = locales.first().map_or(',', |locale| {
+        if locale.starts_with("de") || locale.starts_with("es") {
+            '.'
+        } else {
+            ','
+        }
+    });
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && (digits.len() - index) % 3 == 0 {
+            grouped.push(separator);
+        }
+        grouped.push(digit);
+    }
+    format!("{sign}{grouped}")
+}
+
 pub(crate) fn dispatch(
     builtin: Builtin,
     receiver: Option<&Value>,
