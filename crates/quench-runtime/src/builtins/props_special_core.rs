@@ -58,6 +58,7 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (TemporalPlainDatePrototype, "withCalendar") => {
             Some(Value::Builtin(TemporalPlainDateWithCalendar))
         }
+        (TemporalPlainDatePrototype, "valueOf") => Some(Value::Builtin(TemporalPlainDateValueOf)),
         (AbstractModuleSource, "prototype") => Some(Value::Builtin(AbstractModuleSourcePrototype)),
         (AbstractModuleSourcePrototype, "constructor") => {
             Some(Value::Builtin(AbstractModuleSource))
