@@ -57,6 +57,7 @@ fn prototype_number_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 
 fn prototype_property_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
+        (Builtin::IntlDateTimeFormatPrototype, "constructor") => Builtin::IntlDateTimeFormat,
         (Builtin::IntlSegmenterPrototype, "constructor") => Builtin::IntlSegmenter,
         (Builtin::IntlSegmenterPrototype, "segment") => Builtin::IntlSegmenterSegment,
         (Builtin::IntlSegmenterPrototype, "resolvedOptions") => {
