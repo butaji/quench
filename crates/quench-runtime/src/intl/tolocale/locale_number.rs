@@ -7,8 +7,8 @@ pub(super) fn to_locale_string(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let number = match receiver {
-        Some(Value::Number(number)) => *number,
+    let number = match crate::vm::number_value_of(receiver)? {
+        Value::Number(number) => number,
         _ => return Err(runtime_error("TypeError: Number.prototype.toLocaleString")),
     };
     let locales = resolve_locales(arguments)?;
