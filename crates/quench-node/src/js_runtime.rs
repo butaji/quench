@@ -1290,13 +1290,14 @@ fn child_fork(arguments: &[Value]) -> Result<Value, VmError> {
     )]))
 }
 
+include!("js_runtime_require_early.rs");
+
 fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(name)) = arguments.first() else {
         return Err(VmError::EvalError("require expects a module name".into()));
     };
-    if name == "path/win32" || name == "node:path/win32" {
-        let path = require_module(&[Value::String("path".into())])?;
-        return quench_runtime::execute::get_property_result(&path, "win32");
+    if let Some(value) = require_early_module(name)? {
+        return Ok(value);
     }
     if name.ends_with("/common/fixtures") || name.ends_with("/common/fixtures.js") {
         return Ok(quench_runtime::host_api::object(vec![
@@ -1371,25 +1372,6 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ("promises".into(), promises),
         ]));
     }
-    if name == "dgram" || name == "node:dgram" {
-        return Ok(quench_runtime::host_api::object(vec![(
-            "createSocket".into(),
-            capability_function(HostCapabilityKind::Custom(
-                CapabilityName::DgramCreateSocket,
-            )),
-        )]));
-    }
-    if name == "timers/promises" || name == "node:timers/promises" {
-        return Ok(timers_promises_module());
-    }
-    if name == "worker_threads" || name == "node:worker_threads" {
-        return Ok(quench_runtime::host_api::object(vec![(
-            "Worker".into(),
-            capability_function(HostCapabilityKind::Custom(
-                CapabilityName::WorkerConstructor,
-            )),
-        )]));
-    }
     if name == "zlib" || name == "node:zlib" {
         let gzip = Value::Builtin(quench_runtime::ops::Builtin::Object);
         return Ok(quench_runtime::host_api::object(vec![
@@ -1416,12 +1398,6 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ),
         ]));
     }
-    if name == "internal/dgram" || name == "node:internal/dgram" {
-        return Ok(quench_runtime::host_api::object(vec![(
-            "kStateSymbol".into(),
-            Value::String("__dgramState".into()),
-        )]));
-    }
     if name == "tls" || name == "node:tls" {
         return Ok(quench_runtime::host_api::object(vec![
             (
@@ -1435,12 +1411,6 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 )),
             ),
         ]));
-    }
-    if name == "timers" || name == "node:timers" {
-        return Ok(quench_runtime::host_api::object(vec![(
-            "promises".into(),
-            timers_promises_module(),
-        )]));
     }
     if name == "net" || name == "node:net" {
         return Ok(quench_runtime::host_api::object(vec![
