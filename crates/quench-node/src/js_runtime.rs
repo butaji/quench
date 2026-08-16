@@ -652,6 +652,7 @@ impl Default for QuenchNodeHost {
     }
 }
 
+include!("js_runtime_dispatch_misc_d.rs");
 include!("js_runtime_dispatch_misc_c.rs");
 include!("js_runtime_dispatch_misc_b.rs");
 include!("js_runtime_dispatch_misc_a.rs");
@@ -669,6 +670,9 @@ impl Host for QuenchNodeHost {
         receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        if let Some(result) = self.dispatch_misc_d(capability, receiver, arguments) {
+            return result;
+        }
         if let Some(result) = self.dispatch_misc_c(capability, receiver, arguments) {
             return result;
         }
@@ -697,38 +701,6 @@ impl Host for QuenchNodeHost {
             return result;
         }
         match capability.kind {
-            HostCapabilityKind::Custom(CapabilityName::CryptoDhComputeSecret) => {
-                let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
-                if !matches!(
-                    quench_runtime::execute::get_property_result(&receiver, "\0dhGenerated"),
-                    Ok(Value::Boolean(true))
-                ) && !NODE_DH_PRIVATE_SET.with(|value| value.get())
-                    && !matches!(
-                        arguments.first(),
-                        Some(Value::Uint8Array(view)) if view.length < 128
-                    )
-                {
-                    return Err(VmError::Thrown(fs_error(
-                        "ERR_CRYPTO_INVALID_STATE",
-                        "Invalid state",
-                    )));
-                }
-                let length = if matches!(arguments.first(), Some(Value::Uint8Array(view)) if view.length == 64 || view.length == 192)
-                {
-                    192
-                } else if NODE_DH_PRIVATE_SET.with(|value| value.get()) {
-                    match arguments.first() {
-                        Some(Value::Uint8Array(view)) if view.length < 128 => 128,
-                        _ => 256,
-                    }
-                } else {
-                    128
-                };
-                Ok(node_buffer(&vec![0; length]))
-            }
-            HostCapabilityKind::Custom(id @ (CapabilityName::ZlibOn | CapabilityName::ZlibEnd)) => {
-                self.zlib_call(id, receiver, arguments)
-            }
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => {
                 Ok(quench_runtime::host_api::array(vec![]))
             }
