@@ -96,6 +96,10 @@ impl CapabilityName {
     const FsRealpathSync: u16 = 1510;
     const FsOpenSync: u16 = 1511;
     const FsCloseSync: u16 = 1512;
+    const FsFchmod: u16 = 1513;
+    const FsFstatSync: u16 = 1514;
+    const FsChmodSync: u16 = 1515;
+    const FsAccessAsync: u16 = 1516;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -193,6 +197,7 @@ struct QuenchNodeHost {
     next_event: Cell<u16>,
     fd_paths: RefCell<HashMap<i32, String>>,
     next_fd: Cell<i32>,
+    fd_modes: RefCell<HashMap<i32, u32>>,
 }
 
 struct StreamState {
@@ -229,6 +234,7 @@ impl Default for QuenchNodeHost {
             next_event: Cell::new(900),
             fd_paths: RefCell::new(HashMap::new()),
             next_fd: Cell::new(3),
+            fd_modes: RefCell::new(HashMap::new()),
         }
     }
 }
@@ -278,6 +284,10 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsRealpathSync) => fs_realpath(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsOpenSync) => self.fs_open(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsCloseSync) => self.fs_close(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsFchmod) => self.fs_fchmod(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsFstatSync) => self.fs_fstat(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsChmodSync) => fs_chmod(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsAccessAsync) => fs_access_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -531,6 +541,20 @@ impl QuenchNodeHost {
         let fd = self.next_fd.get();
         self.next_fd.set(fd.saturating_add(1));
         self.fd_paths.borrow_mut().insert(fd, path.to_owned());
+        let mode = std::fs::metadata(path)
+            .ok()
+            .map(|metadata| {
+                #[cfg(unix)]
+                {
+                    std::os::unix::fs::PermissionsExt::mode(&metadata.permissions())
+                }
+                #[cfg(not(unix))]
+                {
+                    0o666
+                }
+            })
+            .unwrap_or(0o666);
+        self.fd_modes.borrow_mut().insert(fd, mode);
         Ok(Value::Number(fd as f64))
     }
 
@@ -539,7 +563,48 @@ impl QuenchNodeHost {
             return Err(VmError::EvalError("fd must be a number".into()));
         };
         self.fd_paths.borrow_mut().remove(&(*fd as i32));
+        self.fd_modes.borrow_mut().remove(&(*fd as i32));
         Ok(Value::Undefined)
+    }
+
+    fn fs_fchmod(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let Some(Value::Number(fd)) = arguments.first() else {
+            return Err(VmError::EvalError("fd must be a number".into()));
+        };
+        let Some(Value::Number(mode)) = arguments.get(1) else {
+            return Err(VmError::EvalError("mode must be a number".into()));
+        };
+        let fd = *fd as i32;
+        let path = self
+            .fd_paths
+            .borrow()
+            .get(&fd)
+            .cloned()
+            .ok_or(VmError::NotCallable)?;
+        let permissions = std::os::unix::fs::PermissionsExt::from_mode(*mode as u32);
+        std::fs::set_permissions(path, permissions)
+            .map_err(|error| VmError::EvalError(error.to_string()))?;
+        self.fd_modes.borrow_mut().insert(fd, *mode as u32);
+        if let Some(callback) = arguments.get(2) {
+            quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
+        }
+        Ok(Value::Undefined)
+    }
+
+    fn fs_fstat(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let Some(Value::Number(fd)) = arguments.first() else {
+            return Err(VmError::NotCallable);
+        };
+        let mode = self
+            .fd_modes
+            .borrow()
+            .get(&(*fd as i32))
+            .copied()
+            .ok_or(VmError::NotCallable)?;
+        Ok(Value::object(vec![(
+            "mode".into(),
+            Value::Number(mode as f64),
+        )]))
     }
 
     fn url_call(&self, id: u16) -> Result<Value, VmError> {
@@ -831,6 +896,24 @@ fn fs_access_sync(arguments: &[Value]) -> Result<Value, VmError> {
             "ENOENT: no such file or directory".into(),
         ));
     }
+    if let Some(Value::Number(mode)) = arguments.get(1) {
+        if (*mode as u32 & 2) != 0 {
+            #[cfg(unix)]
+            if let Some(path) = arguments.first().and_then(|value| match value {
+                Value::String(path) => Some(path.as_str()),
+                _ => None,
+            }) {
+                use std::os::unix::fs::PermissionsExt;
+                let permissions = std::fs::metadata(path)
+                    .map_err(|error| VmError::EvalError(error.to_string()))?
+                    .permissions()
+                    .mode();
+                if permissions & 0o222 == 0 {
+                    return Err(VmError::EvalError("EACCES: permission denied".into()));
+                }
+            }
+        }
+    }
     Ok(Value::Undefined)
 }
 
@@ -848,6 +931,33 @@ fn fs_realpath(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::String(
         resolved.to_string_lossy().into_owned().into(),
     ))
+}
+
+fn fs_chmod(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    let Some(Value::Number(mode)) = arguments.get(1) else {
+        return Err(VmError::EvalError("mode must be a number".into()));
+    };
+    let permissions = std::os::unix::fs::PermissionsExt::from_mode(*mode as u32);
+    std::fs::set_permissions(path, permissions)
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    Ok(Value::Undefined)
+}
+
+fn fs_access_async(arguments: &[Value]) -> Result<Value, VmError> {
+    let callback = arguments
+        .get(2)
+        .or_else(|| arguments.get(1))
+        .ok_or(VmError::NotCallable)?;
+    match fs_access_sync(arguments) {
+        Ok(_) => quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null]),
+        Err(error) => quench_runtime::execute::call(
+            callback,
+            &Value::Undefined,
+            &[Value::String(format!("{error:?}").into())],
+        ),
+    }?;
+    Ok(Value::Undefined)
 }
 
 fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
@@ -1113,6 +1223,31 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "closeSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsCloseSync)),
+                ),
+                (
+                    "fchmod".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsFchmod)),
+                ),
+                (
+                    "fstatSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsFstatSync)),
+                ),
+                (
+                    "chmodSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsChmodSync)),
+                ),
+                (
+                    "access".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsAccessAsync)),
+                ),
+                (
+                    "constants".into(),
+                    Value::object(vec![
+                        ("R_OK".into(), Value::Number(4.0)),
+                        ("W_OK".into(), Value::Number(2.0)),
+                        ("X_OK".into(), Value::Number(1.0)),
+                        ("F_OK".into(), Value::Number(0.0)),
+                    ]),
                 ),
             ]));
         }
@@ -1949,6 +2084,10 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::FsRealpathSync),
                 HostCapabilityKind::Custom(CapabilityName::FsOpenSync),
                 HostCapabilityKind::Custom(CapabilityName::FsCloseSync),
+                HostCapabilityKind::Custom(CapabilityName::FsFchmod),
+                HostCapabilityKind::Custom(CapabilityName::FsFstatSync),
+                HostCapabilityKind::Custom(CapabilityName::FsChmodSync),
+                HostCapabilityKind::Custom(CapabilityName::FsAccessAsync),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
