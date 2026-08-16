@@ -16,6 +16,8 @@ impl CapabilityName {
     const BufferHasInstance: u16 = 1326;
     const BufferInspectMaxBytesGet: u16 = 1327;
     const BufferInspectMaxBytesSet: u16 = 1328;
+    const FsCpSync: u16 = 1329;
+    const FsCp: u16 = 1330;
     const BufferAlloc: u16 = 31;
     const BufferIsBuffer: u16 = 32;
     const UtilFormat: u16 = 80;
