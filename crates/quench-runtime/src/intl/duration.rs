@@ -21,6 +21,26 @@ pub(crate) fn dispatch(
     }
 }
 
+pub(crate) fn format_temporal_duration(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let duration = receiver.ok_or_else(|| {
+        crate::value::error::throw_type_error(
+            "Temporal.Duration.prototype.toLocaleString called on incompatible receiver",
+        )
+    })?;
+    let formatter = construct(&[
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+        arguments.get(1).cloned().unwrap_or(Value::Undefined),
+    ])?;
+    method(
+        Builtin::IntlDurationFormatFormat,
+        &[duration.clone()],
+        Some(&formatter),
+    )
+}
+
 fn construct_call(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
     if receiver.is_some() {
         return Err(crate::value::error::throw_type_error(

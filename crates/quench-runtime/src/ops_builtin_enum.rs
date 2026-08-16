@@ -135,6 +135,7 @@ pub enum Builtin {
     TemporalDurationDaysGetter, TemporalDurationHoursGetter, TemporalDurationMinutesGetter,
     TemporalDurationSecondsGetter, TemporalDurationMillisecondsGetter,
     TemporalDurationMicrosecondsGetter, TemporalDurationNanosecondsGetter,
+    TemporalDurationToLocaleString,
     TemporalPlainDate, TemporalPlainDatePrototype,
     TemporalPlainDateFrom, AbstractModuleSource,
     AbstractModuleSourcePrototype, AbstractModuleSourceToStringTagGetter, ShadowRealm,
