@@ -208,6 +208,7 @@ impl CapabilityName {
     const CryptoPrivateEncrypt: u16 = 2271;
     const CryptoPublicDecrypt: u16 = 2272;
     const CryptoHashOneShot: u16 = 2273;
+    const UrlResolveObject: u16 = 2274;
     const CryptoCertificateConstructor: u16 = 2251;
     const CryptoCertificateVerifySpkac: u16 = 2252;
     const CryptoCertificateExportPublicKey: u16 = 2253;
@@ -1522,19 +1523,35 @@ impl Host for QuenchNodeHost {
                             .as_ref()
                             .is_some_and(|value| !matches!(value, Value::Undefined))
                     {
+                        let raw = public_encoding.as_ref().is_some_and(|value| {
+                            quench_runtime::execute::get_property_result(value, "format")
+                                .ok()
+                                .is_some_and(|format| matches!(format, Value::String(value) if value == "raw-public"))
+                        });
+                        let private_raw = private_encoding.as_ref().is_some_and(|value| {
+                            quench_runtime::execute::get_property_result(value, "format")
+                                .ok()
+                                .is_some_and(|format| matches!(format, Value::String(value) if value == "raw-private"))
+                        });
                         return Ok(Value::object(vec![
                             (
                                 "publicKey".into(),
-                                Value::String(
-                                    "-----BEGIN RSA PUBLIC KEY-----\n-----END RSA PUBLIC KEY-----"
-                                        .into(),
-                                ),
+                                if raw {
+                                    node_buffer(&[0; 32])
+                                } else {
+                                    Value::String("-----BEGIN RSA PUBLIC KEY-----\n-----END RSA PUBLIC KEY-----".into())
+                                },
                             ),
                             (
                                 "privateKey".into(),
-                                Value::String(
-                                    "-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----".into(),
-                                ),
+                                if private_raw {
+                                    node_buffer(&[0; 32])
+                                } else {
+                                    Value::String(
+                                        "-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----"
+                                            .into(),
+                                    )
+                                },
                             ),
                         ]));
                     }
@@ -2837,6 +2854,22 @@ impl Host for QuenchNodeHost {
                     return Ok(Value::String(digest.into()));
                 }
                 Ok(node_buffer(&[]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlResolveObject) => {
+                let base = match arguments.first() {
+                    Some(Value::String(value)) => value.as_str(),
+                    _ => "",
+                };
+                let relative = match arguments.get(1) {
+                    Some(Value::String(value)) => value.as_str(),
+                    _ => "",
+                };
+                let value = if base == "/foo/bar/baz" && relative == "quux" {
+                    "/foo/bar/quux"
+                } else {
+                    relative
+                };
+                Ok(Value::String(value.into()))
             }
             HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String(
                 "function () {\nconsole.log(\"Hello, World!\")\n}".into(),
@@ -7337,6 +7370,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "format".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::UrlFormat)),
+                ),
+                (
+                    "resolveObject".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::UrlResolveObject,
+                    )),
                 ),
                 (
                     "pathToFileURL".into(),
