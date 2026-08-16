@@ -306,7 +306,8 @@ fn time_nanoseconds(value: &Value) -> i128 {
 }
 
 pub(super) fn validate_range(values: &[f64]) -> Result<(), VmError> {
-    if mixed_signs(values)
+    if values.iter().any(|value| value.fract() != 0.0)
+        || mixed_signs(values)
         || date_fields_out_of_range(&values[..3])
         || time_fields_out_of_range(&values[3..])
     {
