@@ -122,7 +122,6 @@ const fn intl_fn_len(b: Builtin) -> Option<f64> {
 const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
     match b {
         Builtin::IntlNumberFormatResolvedOptions
-        | Builtin::IntlPluralRulesSelect
         | Builtin::IntlPluralRulesResolvedOptions
         | Builtin::IntlDateTimeFormatFormat
         | Builtin::IntlDateTimeFormatFormatToParts
@@ -136,6 +135,7 @@ const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
         | Builtin::IntlDisplayNamesOf
         | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
         Builtin::IntlNumberFormatFormatToParts => Some(1.0),
+        Builtin::IntlPluralRulesSelect => Some(1.0),
         Builtin::IntlNumberFormatFormatRange
         | Builtin::IntlNumberFormatFormatRangeToParts
         | Builtin::IntlDateTimeFormatFormatRange
