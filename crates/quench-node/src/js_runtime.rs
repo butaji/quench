@@ -203,6 +203,8 @@ impl CapabilityName {
     const CryptoCreatePrivateKey: u16 = 2256;
     const CryptoCreatePublicKey: u16 = 2257;
     const CryptoCreateEcdh: u16 = 2258;
+    const CryptoDhGetPrivateKey: u16 = 2259;
+    const CryptoDhSetPrivateKey: u16 = 2260;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -2123,7 +2125,9 @@ impl Host for QuenchNodeHost {
                 CapabilityName::CryptoGetDiffieHellman | CapabilityName::CryptoCreateDiffieHellman,
             ) => {
                 if let Some(Value::String(group)) = arguments.first() {
-                    if arguments.len() == 1 && !matches!(group.as_str(), "modp5" | "modp14") {
+                    if arguments.len() == 1
+                        && !matches!(group.as_str(), "modp1" | "modp5" | "modp14")
+                    {
                         return Err(VmError::Thrown(fs_error(
                             "ERR_CRYPTO_UNKNOWN_DH_GROUP",
                             "Unknown DH group",
@@ -2191,7 +2195,18 @@ impl Host for QuenchNodeHost {
                         "value is out of range",
                     )));
                 }
-                Ok(self.dh_object())
+                let group = self.dh_object();
+                if arguments.len() == 1 && matches!(arguments.first(), Some(Value::String(_))) {
+                    for name in ["setPrivateKey", "setPublicKey"] {
+                        let updated = quench_runtime::execute::set_property(
+                            group.clone(),
+                            name,
+                            Value::Undefined,
+                        );
+                        quench_runtime::execute::replace_value(&group, &updated);
+                    }
+                }
+                Ok(group)
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoCreateEcdh) => {
                 if arguments.first().is_none()
@@ -2208,10 +2223,41 @@ impl Host for QuenchNodeHost {
                 Ok(Value::Boolean(true))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPrime) => {
-                Ok(quench_runtime::host_api::bytes(&[0; 128]))
+                Ok(node_buffer(&[0; 128]))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoDhGetGenerator) => {
-                Ok(quench_runtime::host_api::bytes(&[2]))
+                Ok(node_buffer(&[2]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPrivateKey) => {
+                if let Ok(value) = quench_runtime::execute::get_property_result(
+                    receiver.ok_or(VmError::NotCallable)?,
+                    "\0dhPrivateKey",
+                ) {
+                    if !matches!(value, Value::Undefined) {
+                        return Ok(value);
+                    }
+                }
+                Err(VmError::Thrown(fs_error(
+                    "ERR_CRYPTO_INVALID_STATE",
+                    "Invalid state",
+                )))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoDhSetPrivateKey) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+                let updated = quench_runtime::execute::set_property(
+                    receiver.clone(),
+                    "\0dhPrivateKey",
+                    value,
+                );
+                quench_runtime::execute::replace_value(receiver, &updated);
+                let updated = quench_runtime::execute::set_property(
+                    receiver.clone(),
+                    "\0dhGeneratedKey",
+                    Value::Undefined,
+                );
+                quench_runtime::execute::replace_value(receiver, &updated);
+                Ok(receiver.clone())
             }
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoDhGenerateKeys | CapabilityName::CryptoDhGetPublicKey,
@@ -2223,7 +2269,25 @@ impl Host for QuenchNodeHost {
                     Value::Boolean(true),
                 );
                 quench_runtime::execute::replace_value(&receiver, &updated);
-                Ok(quench_runtime::host_api::bytes(&[0; 128]))
+                if let Ok(existing) =
+                    quench_runtime::execute::get_property_result(&receiver, "\0dhGeneratedKey")
+                {
+                    if !matches!(existing, Value::Undefined) {
+                        return Ok(existing);
+                    }
+                }
+                let private = matches!(
+                    quench_runtime::execute::get_property_result(&receiver, "\0dhPrivateKey"),
+                    Ok(value) if !matches!(value, Value::Undefined)
+                );
+                let key = node_buffer(if private { &[1; 128] } else { &[0; 128] });
+                let updated = quench_runtime::execute::set_property(
+                    receiver.clone(),
+                    "\0dhGeneratedKey",
+                    key.clone(),
+                );
+                quench_runtime::execute::replace_value(&receiver, &updated);
+                Ok(key)
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoDhComputeSecret) => {
                 let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
@@ -2236,7 +2300,7 @@ impl Host for QuenchNodeHost {
                         "Invalid state",
                     )));
                 }
-                Ok(quench_runtime::host_api::bytes(&[0; 128]))
+                Ok(node_buffer(&[0; 128]))
             }
             HostCapabilityKind::Custom(id @ (CapabilityName::ZlibOn | CapabilityName::ZlibEnd)) => {
                 self.zlib_call(id, receiver, arguments)
@@ -3006,6 +3070,18 @@ impl QuenchNodeHost {
                 "getPublicKey".into(),
                 capability_function(HostCapabilityKind::Custom(
                     CapabilityName::CryptoDhGetPublicKey,
+                )),
+            ),
+            (
+                "getPrivateKey".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CryptoDhGetPrivateKey,
+                )),
+            ),
+            (
+                "setPrivateKey".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CryptoDhSetPrivateKey,
                 )),
             ),
             (
@@ -6563,7 +6639,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
                 ("DiffieHellmanGroup".into(), dh_constructor()),
                 ("DiffieHellman".into(), dh_constructor()),
-                ("ECDH".into(), dh_constructor()),
+                ("ECDH".into(), ecdh_constructor()),
                 (
                     "createECDH".into(),
                     capability_function(HostCapabilityKind::Custom(
@@ -11757,6 +11833,20 @@ fn dh_constructor() -> Value {
         )),
     )
     .expect("callable hasInstance");
+    constructor
+}
+
+fn ecdh_constructor() -> Value {
+    let constructor =
+        capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoCreateEcdh));
+    quench_runtime::execute::set_callable_property(
+        &constructor,
+        "Symbol.hasInstance",
+        capability_function(HostCapabilityKind::Custom(
+            CapabilityName::CryptoDhHasInstance,
+        )),
+    )
+    .expect("callable ECDH hasInstance");
     constructor
 }
 
