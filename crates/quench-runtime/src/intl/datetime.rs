@@ -210,7 +210,7 @@ impl DateTimeOptions {
         if self.contains("dateStyle") || self.contains("timeStyle") {
             return;
         }
-        if !self.components.is_empty() {
+        if self.contains("year") || self.contains("month") || self.contains("day") {
             return;
         }
         for key in ["year", "month", "day"] {
