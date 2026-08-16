@@ -203,6 +203,8 @@ impl CapabilityName {
     const CryptoCreateVerify: u16 = 2250;
     const CryptoSignUpdate: u16 = 2267;
     const CryptoSignFinal: u16 = 2268;
+    const CryptoSignDirect: u16 = 2269;
+    const CryptoVerifyDirect: u16 = 2270;
     const CryptoCertificateConstructor: u16 = 2251;
     const CryptoCertificateVerifySpkac: u16 = 2252;
     const CryptoCertificateExportPublicKey: u16 = 2253;
@@ -1617,6 +1619,31 @@ impl Host for QuenchNodeHost {
                 ]))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoGenerateKeySync) => {
+                if let Some(Value::String(algorithm)) = arguments.first() {
+                    let length = arguments.get(1).and_then(|options| {
+                        quench_runtime::execute::get_property_result(options, "length").ok()
+                    });
+                    if algorithm == "aes"
+                        && length.as_ref().is_some_and(|value| {
+                            matches!(value, Value::Number(value) if *value != 128.0 && *value != 192.0 && *value != 256.0)
+                        })
+                    {
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_INVALID_ARG_VALUE",
+                            "Invalid key length",
+                        )));
+                    }
+                    if algorithm == "hmac"
+                        && length.as_ref().is_some_and(
+                            |value| matches!(value, Value::Number(value) if *value < 8.0),
+                        )
+                    {
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_OUT_OF_RANGE",
+                            "length out of range",
+                        )));
+                    }
+                }
                 Ok(Value::object(vec![
                     ("type".into(), Value::String("secret".into())),
                     (
@@ -2753,6 +2780,12 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoSignFinal) => {
                 Ok(node_buffer(&[0; 64]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoSignDirect) => {
+                Ok(node_buffer(&[0; 64]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoVerifyDirect) => {
+                Ok(Value::Boolean(true))
             }
             HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String(
                 "function () {\nconsole.log(\"Hello, World!\")\n}".into(),
@@ -6902,6 +6935,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "createVerify".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CryptoCreateVerify,
+                    )),
+                ),
+                (
+                    "sign".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoSignDirect,
+                    )),
+                ),
+                (
+                    "verify".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoVerifyDirect,
                     )),
                 ),
                 ("Certificate".into(), certificate_constructor()),
