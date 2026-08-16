@@ -163,6 +163,7 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    validate_options(arguments.get(1))?;
     let options = NumberOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
 }
