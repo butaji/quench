@@ -45,6 +45,7 @@ impl CapabilityName {
     const BufferSwap16: u16 = 2047;
     const BufferSwap32: u16 = 2048;
     const BufferSwap64: u16 = 2049;
+    const BufferCopyBytesFrom: u16 = 2050;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -578,6 +579,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferSwap16) => buffer_swap(receiver, 2),
             HostCapabilityKind::Custom(CapabilityName::BufferSwap32) => buffer_swap(receiver, 4),
             HostCapabilityKind::Custom(CapabilityName::BufferSwap64) => buffer_swap(receiver, 8),
+            HostCapabilityKind::Custom(CapabilityName::BufferCopyBytesFrom) => buffer_copy_bytes_from(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -3430,6 +3432,7 @@ fn buffer_module() -> Value {
         ("of", HostCapabilityKind::Custom(CapabilityName::BufferOf)),
         ("allocUnsafeSlow", HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow)),
         ("isEncoding", HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding)),
+        ("copyBytesFrom", HostCapabilityKind::Custom(CapabilityName::BufferCopyBytesFrom)),
         (
             "compare",
             HostCapabilityKind::Custom(CapabilityName::BufferCompare),
@@ -3806,6 +3809,18 @@ fn buffer_swap(receiver: Option<&Value>, width: usize) -> Result<Value, VmError>
     let range = &mut bytes[view.byte_offset..view.byte_offset + view.length];
     for chunk in range.chunks_exact_mut(width) { chunk.reverse(); }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+fn buffer_copy_bytes_from(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(source) = arguments.first() else { return Err(VmError::NotCallable); };
+    let (bytes, element_size) = match source {
+        Value::Uint8Array(view) => (view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec(), 1),
+        Value::Uint16Array(view) => (view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length * 2].to_vec(), 2),
+        _ => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "source must be a typed array"))),
+    };
+    let offset = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize * element_size), _ => None }).unwrap_or(0).min(bytes.len());
+    let length = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or(bytes.len() - offset).min(bytes.len() - offset);
+    Ok(node_buffer(&bytes[offset..offset + length]))
 }
 
 fn buffer_numeric(
