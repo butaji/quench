@@ -1,4 +1,3 @@
-use rquickjs::Runtime;
 use std::{env, fs, path::PathBuf, sync::atomic::AtomicUsize};
 use walkdir::WalkDir;
 mod esm;
@@ -91,7 +90,8 @@ fn print_help() {
 }
 fn run_single_file(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(dir)?;
-    match quickjs_backend::execute_source(&source, &Runtime::new()?, Some(dir)) {
+    let runtime = QuickJsRuntime::new()?;
+    match runtime.execute(&source, Some(dir), &FilesystemNodeHost) {
         Ok(()) => {
             println!("ok {}", dir.display());
             Ok(())
@@ -127,7 +127,7 @@ fn run_directory_with_runtime(
     empty_error: &str,
     failure_error: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let shared_runtime = reuse.then(Runtime::new).transpose()?;
+    let shared_runtime = reuse.then(QuickJsRuntime::new).transpose()?;
     let mut failed = 0;
     let mut total = 0;
     for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
@@ -140,11 +140,9 @@ fn run_directory_with_runtime(
             total += 1;
             let source = fs::read_to_string(entry.path())?;
             let result = match shared_runtime.as_ref() {
-                Some(runtime) => {
-                    quickjs_backend::execute_source(&source, runtime, Some(entry.path()))
-                }
+                Some(runtime) => runtime.execute(&source, Some(entry.path()), &FilesystemNodeHost),
                 None => {
-                    quickjs_backend::execute_source(&source, &Runtime::new()?, Some(entry.path()))
+                    QuickJsRuntime::new()?.execute(&source, Some(entry.path()), &FilesystemNodeHost)
                 }
             };
             match result {
