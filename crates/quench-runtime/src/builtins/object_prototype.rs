@@ -77,7 +77,9 @@ fn prototype_for_value_tail(value: &Value) -> Value {
                     })
                     .unwrap_or(Value::Builtin(Builtin::AsyncFunctionPrototype));
             }
-            internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
+            function.properties.borrow().iter().rev()
+                .find_map(|(name, value)| (name == "\0function_prototype").then(|| value.clone()))
+                .unwrap_or_else(|| internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype))
         }
         Value::Builtin(Builtin::AsyncFunction) => Value::Builtin(Builtin::Function),
         Value::Builtin(
