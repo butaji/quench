@@ -74,6 +74,7 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             Builtin::IntlRelativeTimeFormat => {
                 Some(Builtin::IntlRelativeTimeFormatSupportedLocalesOf)
             }
+            Builtin::IntlDurationFormat => Some(Builtin::IntlDurationFormatSupportedLocalesOf),
             _ => None,
         };
     }
@@ -109,6 +110,7 @@ pub(crate) fn execute(
         Builtin::IntlPluralRulesSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
         Builtin::IntlListFormatSupportedLocalesOf => Some(list_supported_locales_of(arguments)),
+        Builtin::IntlDurationFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlGetCanonicalLocales => Some(get_canonical_locales(arguments)),
         Builtin::IntlSupportedValuesOf => Some(supported_values_of(arguments)),
         _ => dispatch_all(builtin, arguments, receiver),
