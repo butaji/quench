@@ -461,11 +461,81 @@ fn transformed_language_length(parts: &[&str]) -> Result<usize, VmError> {
     Ok(index)
 }
 
+fn canonicalize_unicode_aliases(parts: &[&str]) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut index = 0;
+    while index < parts.len() {
+        result.push(parts[index].to_ascii_lowercase());
+        if parts[index].eq_ignore_ascii_case("u") {
+            index += 1;
+            append_unicode_extension(parts, &mut index, &mut result);
+        } else {
+            index += 1;
+        }
+    }
+    result
+}
+
+fn append_unicode_extension(parts: &[&str], index: &mut usize, result: &mut Vec<String>) {
+    while *index < parts.len() && parts[*index].len() != 1 {
+        let key = parts[*index].to_ascii_lowercase();
+        result.push(key.clone());
+        *index += 1;
+        if key.len() != 2 {
+            continue;
+        }
+        let start = *index;
+        while *index < parts.len() && parts[*index].len() != 2 && parts[*index].len() != 1 {
+            *index += 1;
+        }
+        let values = &parts[start..*index];
+        if is_true_alias(&key, values) {
+            continue;
+        }
+        if let Some(alias) = unicode_alias(&key, values) {
+            result.push(alias.to_string());
+        } else {
+            result.extend(values.iter().map(|value| value.to_ascii_lowercase()));
+        }
+    }
+}
+
+fn is_true_alias(key: &str, values: &[&str]) -> bool {
+    matches!(key, "kb" | "kc" | "kh" | "kk" | "kn") && values == ["yes"]
+}
+
+fn unicode_alias(key: &str, values: &[&str]) -> Option<&'static str> {
+    match (key, values) {
+        ("ca", ["ethiopic", "amete", "alem"]) => Some("ethioaa"),
+        ("ca", ["islamicc"]) => Some("islamic-civil"),
+        ("ks", ["primary"]) => Some("level1"),
+        ("ks", ["secondary"]) => Some("level2"),
+        ("ks", ["tertiary"]) => Some("level3"),
+        ("ks", ["quaternary" | "quarternary"]) => Some("level4"),
+        ("ks", ["identical"]) => Some("identic"),
+        ("ms", ["imperial"]) => Some("uksystem"),
+        ("rg", ["no23"]) | ("sd", ["no23"]) => Some("no50"),
+        ("rg", ["cn11"]) | ("sd", ["cn11"]) => Some("cnbj"),
+        ("rg", ["cz10a"]) | ("sd", ["cz10a"]) => Some("cz110"),
+        ("rg", ["fra"]) | ("sd", ["fra"]) => Some("frges"),
+        ("rg", ["frg"]) | ("sd", ["frg"]) => Some("frges"),
+        ("rg", ["lud"]) | ("sd", ["lud"]) => Some("lucl"),
+        ("tz", ["cnckg"]) => Some("cnsha"),
+        ("tz", ["eire"]) => Some("iedub"),
+        ("tz", ["est"]) => Some("papty"),
+        ("tz", ["gmt0"]) => Some("gmt"),
+        ("tz", ["uct" | "zulu"]) => Some("utc"),
+        _ => None,
+    }
+}
+
 fn canonicalize_subtags(
     parts: Vec<&str>,
     mut out: Vec<String>,
     mut script_done: bool,
 ) -> Result<Vec<String>, VmError> {
+    let aliased = canonicalize_unicode_aliases(&parts);
+    let parts: Vec<&str> = aliased.iter().map(String::as_str).collect();
     let mut region_done = false;
     let mut variant_done = false;
     let mut extension = false;
