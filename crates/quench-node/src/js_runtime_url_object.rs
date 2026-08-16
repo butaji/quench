@@ -23,6 +23,18 @@ fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
                 CapabilityName::UrlSearchParamsSort,
             )),
         ),
+        (
+            "getAll".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsGetAll)),
+        ),
+        (
+            "set".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsSet)),
+        ),
+        (
+            "toString".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsToString)),
+        ),
         ("\0urlId".into(), Value::Number(id as f64)),
     ]);
     let search_params = quench_runtime::execute::define_property(
@@ -140,22 +152,7 @@ fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
         ),
         ("\0hrefValue".into(), Value::String(string.clone())),
     ]);
-    let object = quench_runtime::execute::define_property(
-        object,
-        "username",
-        quench_runtime::host_api::object(vec![
-            (
-                "get".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
-            ),
-            (
-                "set".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlUsernameSet)),
-            ),
-            ("enumerable".into(), Value::Boolean(true)),
-            ("configurable".into(), Value::Boolean(true)),
-        ]),
-    )?;
+    let object = object;
     let object = quench_runtime::execute::define_property(
         object,
         "password",
@@ -204,22 +201,7 @@ fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
             ("configurable".into(), Value::Boolean(true)),
         ]),
     )?;
-    let object = quench_runtime::execute::define_property(
-        object,
-        "hash",
-        quench_runtime::host_api::object(vec![
-            (
-                "get".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
-            ),
-            (
-                "set".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlHashSet)),
-            ),
-            ("enumerable".into(), Value::Boolean(true)),
-            ("configurable".into(), Value::Boolean(true)),
-        ]),
-    )?;
+    let object = object;
     let object = quench_runtime::execute::define_property(
         object,
         "searchParams",
@@ -246,22 +228,7 @@ fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
             ("configurable".into(), Value::Boolean(true)),
         ]),
     )?;
-    let mut object = quench_runtime::execute::define_property(
-        object,
-        "protocol",
-        quench_runtime::host_api::object(vec![
-            (
-                "get".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
-            ),
-            (
-                "set".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlProtocolSet)),
-            ),
-            ("enumerable".into(), Value::Boolean(true)),
-            ("configurable".into(), Value::Boolean(true)),
-        ]),
-    )?;
+    let mut object = object;
     for name in [
         "origin", "hostname", "host", "port", "path", "query", "toString", "toJSON",
     ] {
@@ -284,16 +251,6 @@ fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
             Some(CapabilityName::UrlHrefSet),
         ),
         (
-            "protocol",
-            CapabilityName::Url,
-            Some(CapabilityName::UrlProtocolSet),
-        ),
-        (
-            "username",
-            CapabilityName::Url,
-            Some(CapabilityName::UrlUsernameSet),
-        ),
-        (
             "password",
             CapabilityName::UrlPasswordGet,
             Some(CapabilityName::UrlPasswordSet),
@@ -307,11 +264,6 @@ fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
             "search",
             CapabilityName::UrlSearchGet,
             Some(CapabilityName::UrlSearchSet),
-        ),
-        (
-            "hash",
-            CapabilityName::Url,
-            Some(CapabilityName::UrlHashSet),
         ),
     ] {
         object = quench_runtime::execute::define_property(

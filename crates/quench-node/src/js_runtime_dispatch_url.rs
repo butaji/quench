@@ -64,10 +64,19 @@ impl QuenchNodeHost {
                 )))
             }
             HostCapabilityKind::Custom(CapabilityName::UrlSearchParams) => {
-                url_search_params_construct(arguments)
+                url_search_params_construct(self, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsGet) => {
-                Ok(Value::String("new".into()))
+                self.url_search_params_get(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsGetAll) => {
+                self.url_search_params_get_all(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsSet) => {
+                self.url_search_params_set(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsToString) => {
+                self.url_search_params_to_string(receiver)
             }
             HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsOwner) => {
                 let id = receiver
@@ -315,5 +324,102 @@ impl QuenchNodeHost {
             Err(VmError::EvalError(message)) if message == DISPATCH_UNHANDLED => None,
             result => Some(result),
         }
+    }
+    fn url_search_params_get(
+        &self,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        let id = params_id_from_receiver(receiver).ok_or(VmError::NotCallable)?;
+        let name = arguments
+            .first()
+            .and_then(|value| match value {
+                Value::String(value) => Some(value.to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let pairs = self.params_state.borrow();
+        let value = pairs
+            .get(&id)
+            .and_then(|pairs| pairs.iter().find(|(key, _)| key == &name))
+            .map(|(_, value)| Value::String(value.clone().into()));
+        Ok(value.unwrap_or(Value::Null))
+    }
+    fn url_search_params_get_all(
+        &self,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        let id = params_id_from_receiver(receiver).ok_or(VmError::NotCallable)?;
+        let name = arguments
+            .first()
+            .and_then(|value| match value {
+                Value::String(value) => Some(value.to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let pairs = self.params_state.borrow();
+        let values: Vec<Value> = pairs
+            .get(&id)
+            .map(|pairs| {
+                pairs
+                    .iter()
+                    .filter(|(key, _)| key == &name)
+                    .map(|(_, value)| Value::String(value.clone().into()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Value::Array(Rc::new(quench_runtime::value::ArrayData::new(values))))
+    }
+    fn url_search_params_set(
+        &self,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        let id = params_id_from_receiver(receiver).ok_or(VmError::NotCallable)?;
+        let name = arguments
+            .first()
+            .and_then(|value| match value {
+                Value::String(value) => Some(value.to_string()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let value = arguments
+            .get(1)
+            .map(value_to_literal_string)
+            .unwrap_or_default();
+        {
+            let mut pairs = self.params_state.borrow_mut();
+            if let Some(pairs) = pairs.get_mut(&id) {
+                pairs.retain(|(key, _)| key != &name);
+                pairs.push((name, value));
+            }
+        }
+        let url = self.urls.borrow().get(&id).cloned();
+        if let Some(url) = url {
+            let pairs = self.params_state.borrow();
+            let query = format_pairs(pairs.get(&id).map(|v| v.as_slice()).unwrap_or(&[]));
+            drop(pairs);
+            let base = url.split('?').next().unwrap_or(&url).to_string();
+            let updated = if query.is_empty() {
+                base
+            } else {
+                format!("{base}?{query}")
+            };
+            self.urls.borrow_mut().insert(id, updated);
+        }
+        Ok(Value::Undefined)
+    }
+    fn url_search_params_to_string(
+        &self,
+        receiver: Option<&Value>,
+    ) -> Result<Value, VmError> {
+        let id = params_id_from_receiver(receiver).ok_or(VmError::NotCallable)?;
+        let pairs = self.params_state.borrow();
+        let text = pairs
+            .get(&id)
+            .map(|pairs| format_pairs(pairs))
+            .unwrap_or_default();
+        Ok(Value::String(text.into()))
     }
 }

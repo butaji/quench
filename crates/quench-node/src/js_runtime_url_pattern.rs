@@ -179,18 +179,78 @@ fn url_pattern_test(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     url_pattern_exec(receiver, arguments).map(|value| Value::Boolean(!matches!(value, Value::Null)))
 }
 
-fn url_search_params_construct(arguments: &[Value]) -> Result<Value, VmError> {
-    let size = match arguments.first() {
-        Some(Value::String(value)) => value
-            .trim_start_matches('?')
-            .split('&')
-            .filter(|pair| !pair.is_empty())
-            .count(),
-        None | Some(Value::Undefined) => 0,
-        _ => 0,
+fn url_search_params_construct(host: &QuenchNodeHost, arguments: &[Value]) -> Result<Value, VmError> {
+    let pairs = match arguments.first() {
+        Some(Value::String(value)) => query_pairs(value),
+        Some(Value::Object(properties)) => read_pairs_from_object(properties),
+        _ => Vec::new(),
     };
-    Ok(Value::object(vec![(
-        "size".into(),
-        Value::Number(size as f64),
-    )]))
+    let id = host.next_params.get();
+    host.next_params.set(id.saturating_add(1));
+    host.params_state.borrow_mut().insert(id, pairs);
+    let object = Value::object(vec![
+        ("size".into(), Value::Number(0.0)),
+        (
+            "get".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsGet)),
+        ),
+        (
+            "getAll".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsGetAll)),
+        ),
+        (
+            "set".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsSet)),
+        ),
+        (
+            "toString".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UrlSearchParamsToString,
+            )),
+        ),
+        ("\0urlId".into(), Value::Number(id as f64)),
+    ]);
+    host.params_objects.borrow_mut().insert(id, object.clone());
+    Ok(object)
+}
+
+fn read_pairs_from_object(
+    properties: &std::rc::Rc<quench_runtime::value::ObjectData>,
+) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for (key, value) in properties.iter() {
+        if key.starts_with('\0') {
+            continue;
+        }
+        let literal = value_to_literal_string(value);
+        pairs.push((key.clone(), literal));
+    }
+    pairs
+}
+
+fn value_to_literal_string(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Boolean(value) => value.to_string(),
+        Value::Undefined | Value::Null => String::new(),
+        other => format!("{other:?}"),
+    }
+}
+
+fn params_id_from_receiver(receiver: Option<&Value>) -> Option<u16> {
+    let receiver = receiver?;
+    let id = quench_runtime::execute::get_property_result(receiver, "\0urlId").ok()?;
+    match id {
+        Value::Number(id) => Some(id as u16),
+        _ => None,
+    }
+}
+
+fn format_pairs(pairs: &[(String, String)]) -> String {
+    pairs
+        .iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join("&")
 }

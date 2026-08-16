@@ -6,7 +6,7 @@ impl QuenchNodeHost {
     ) -> Option<Result<Value, VmError>> {
         let result = (|| -> Result<Value, VmError> {
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::UrlSearchParams) {
-            return url_search_params_construct(arguments);
+            return url_search_params_construct(self, arguments);
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::UrlPattern) {
             return url_pattern_construct(arguments);
