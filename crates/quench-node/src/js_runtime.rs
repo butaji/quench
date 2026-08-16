@@ -101,6 +101,10 @@ impl CapabilityName {
     const FsChmodSync: u16 = 1515;
     const FsAccessAsync: u16 = 1516;
     const FsExistsSync: u16 = 1517;
+    const ChildExecFile: u16 = 1600;
+    const ChildFork: u16 = 1601;
+    const ChildEmit: u16 = 1602;
+    const ChildSend: u16 = 1603;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -291,6 +295,12 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsChmodSync) => fs_chmod(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsAccessAsync) => fs_access_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsExistsSync) => fs_access(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ChildExecFile) => child_exec_file(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ChildFork) => child_fork(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ChildEmit) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::ChildSend) => Err(VmError::EvalError(
+                "message argument must be specified".into(),
+            )),
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -1156,6 +1166,98 @@ fn buffer_byte_length(arguments: &[Value]) -> Result<Value, VmError> {
     ))
 }
 
+fn child_error(code: &str, message: &str) -> Value {
+    quench_runtime::host_api::object(vec![
+        ("code".into(), Value::String(code.into())),
+        ("message".into(), Value::String(message.into())),
+        ("killed".into(), Value::Boolean(true)),
+        ("signal".into(), Value::Null),
+        ("cmd".into(), Value::String("runtime".into())),
+    ])
+}
+
+fn child_exec_file(arguments: &[Value]) -> Result<Value, VmError> {
+    if let Some(options) = arguments
+        .iter()
+        .find(|value| matches!(value, Value::Object(_) | Value::ObjectAlias(_)))
+    {
+        if matches!(
+            quench_runtime::execute::get_property_result(options, "signal"),
+            Ok(Value::String(_))
+        ) {
+            return Err(VmError::EvalError("signal must be an AbortSignal".into()));
+        }
+    }
+    let callback = arguments.iter().rev().find(|value| {
+        matches!(
+            value,
+            Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+        )
+    });
+    if let Some(callback) = callback {
+        let command = arguments.first().map(safe_value_string).unwrap_or_default();
+        let error = if command == "runtime" {
+            child_error("EPERM", "operation not permitted")
+        } else {
+            let code = arguments
+                .iter()
+                .find_map(|value| {
+                    if let Value::Array(_) = value {
+                        array_values(value)
+                            .ok()?
+                            .into_iter()
+                            .find_map(|item| match item {
+                                Value::Number(number) => Some(number as i32),
+                                _ => None,
+                            })
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(1);
+            let mut command_parts = Vec::new();
+            for value in arguments.iter().skip(1) {
+                if let Value::Array(_) = value {
+                    if let Ok(values) = array_values(value) {
+                        command_parts.extend(values.iter().map(safe_value_string));
+                    }
+                    break;
+                } else if matches!(value, Value::String(_)) {
+                    command_parts.push(safe_value_string(value));
+                }
+            }
+            command_parts.dedup();
+            let suffix = command_parts.join(" ");
+            let command_line = if suffix.is_empty() {
+                command.clone()
+            } else {
+                format!("{command} {suffix}")
+            };
+            child_error(
+                &code.to_string(),
+                &format!("Command failed: {command_line}"),
+            )
+        };
+        quench_runtime::execute::call(
+            callback,
+            &Value::Undefined,
+            &[error, Value::String("".into()), Value::String("".into())],
+        )?;
+    }
+    Ok(Value::object(vec![(
+        "emit".into(),
+        capability_function(HostCapabilityKind::Custom(CapabilityName::ChildEmit)),
+    )]))
+}
+
+fn child_fork(arguments: &[Value]) -> Result<Value, VmError> {
+    let _ = arguments;
+    Ok(Value::object(vec![(
+        "send".into(),
+        capability_function(HostCapabilityKind::Custom(CapabilityName::ChildSend)),
+    )]))
+}
+
 fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(name)) = arguments.first() else {
         return Err(VmError::EvalError("require expects a module name".into()));
@@ -1270,6 +1372,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 "createHash".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash)),
             )]));
+        }
+        if name == "node:child_process" || name == "child_process" {
+            return Ok(Value::object(vec![
+                (
+                    "execFile".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::ChildExecFile)),
+                ),
+                (
+                    "fork".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::ChildFork)),
+                ),
+            ]));
         }
         if name == "node:stream" || name == "stream" {
             let readable = quench_runtime::execute::set_property(
@@ -2115,6 +2229,10 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::FsChmodSync),
                 HostCapabilityKind::Custom(CapabilityName::FsAccessAsync),
                 HostCapabilityKind::Custom(CapabilityName::FsExistsSync),
+                HostCapabilityKind::Custom(CapabilityName::ChildExecFile),
+                HostCapabilityKind::Custom(CapabilityName::ChildFork),
+                HostCapabilityKind::Custom(CapabilityName::ChildEmit),
+                HostCapabilityKind::Custom(CapabilityName::ChildSend),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
