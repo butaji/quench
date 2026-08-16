@@ -12,6 +12,14 @@ pub fn call(
 ) -> Result<crate::value::Value, VmError> {
     crate::functions::execute_target(function, receiver, arguments)
 }
+
+pub fn set_property(
+    target: crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> crate::value::Value {
+    crate::builtins::set_property(target, key, value)
+}
 pub(crate) use crate::vm::{
     execute_completion_in_place, execute_completion_step_in_place, not_callable,
 };
