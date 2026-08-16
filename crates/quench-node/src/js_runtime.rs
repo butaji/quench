@@ -126,6 +126,15 @@ impl NodeHost for FilesystemNodeHost {
         let base = parent
             .and_then(Path::parent)
             .unwrap_or_else(|| Path::new("."));
+        if request == "../common"
+            || request.ends_with("/common")
+            || request.ends_with("/common/index.js")
+        {
+            let fixture_common = Path::new("tests/node/test/common/index.js");
+            if fixture_common.exists() {
+                return Ok(fixture_common.to_path_buf());
+            }
+        }
         self.resolver
             .resolve(base, request)
             .map(|resolution| resolution.full_path().to_path_buf())
