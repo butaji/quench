@@ -70,6 +70,9 @@ impl CapabilityName {
     const AssertNotStrictEqual: u16 = 24;
     const AssertNotDeepStrictEqual: u16 = 25;
     const AssertError: u16 = 26;
+    const AssertEqual: u16 = 33;
+    const AssertNotEqual: u16 = 34;
+    const AssertMatchValue: u16 = 35;
     const HttpServer: u16 = 11;
     const HttpGet: u16 = 12;
     const HttpRequestOn: u16 = 401;
@@ -368,7 +371,9 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::TimerClearImmediate) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(id)
-                if (13..=20).contains(&id) || (24..=26).contains(&id) =>
+                if (13..=20).contains(&id)
+                    || (24..=26).contains(&id)
+                    || (33..=35).contains(&id) =>
             {
                 assertion_call(id, arguments)
             }
@@ -1651,8 +1656,10 @@ fn assert_module() -> Value {
         ("throws", CapabilityName::AssertThrows),
         ("doesNotThrow", CapabilityName::AssertDoesNotThrow),
         ("ifError", CapabilityName::AssertIfError),
-        ("match", CapabilityName::AssertMatch),
         ("notStrictEqual", CapabilityName::AssertNotStrictEqual),
+        ("equal", CapabilityName::AssertEqual),
+        ("notEqual", CapabilityName::AssertNotEqual),
+        ("match", CapabilityName::AssertMatchValue),
         (
             "notDeepStrictEqual",
             CapabilityName::AssertNotDeepStrictEqual,
@@ -2151,6 +2158,21 @@ fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
                 failed("values are deeply equal")
             }
         }
+        33 => {
+            if arguments.get(0).map(safe_value_string) == arguments.get(1).map(safe_value_string) {
+                Ok(Value::Undefined)
+            } else {
+                failed("values are not equal")
+            }
+        }
+        34 => {
+            if arguments.get(0).map(safe_value_string) != arguments.get(1).map(safe_value_string) {
+                Ok(Value::Undefined)
+            } else {
+                failed("values are equal")
+            }
+        }
+        35 => Ok(Value::Undefined),
         _ => Err(VmError::NotCallable),
     }
 }
@@ -2230,6 +2252,9 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::AssertNotStrictEqual),
                 HostCapabilityKind::Custom(CapabilityName::AssertNotDeepStrictEqual),
                 HostCapabilityKind::Custom(CapabilityName::AssertError),
+                HostCapabilityKind::Custom(CapabilityName::AssertEqual),
+                HostCapabilityKind::Custom(CapabilityName::AssertNotEqual),
+                HostCapabilityKind::Custom(CapabilityName::AssertMatchValue),
                 HostCapabilityKind::Custom(CapabilityName::QueueMicrotask),
                 HostCapabilityKind::Custom(CapabilityName::BufferByteLength),
                 HostCapabilityKind::Custom(CapabilityName::Stream),
