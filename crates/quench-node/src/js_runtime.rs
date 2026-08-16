@@ -195,6 +195,7 @@ impl CapabilityName {
     const FsUtimesAsync: u16 = 2225;
     const FsLutimesAsync: u16 = 2226;
     const UrlPathToFileUrl: u16 = 2227;
+    const FsValidateRmOptions: u16 = 2230;
     const TmpdirRefresh: u16 = 2228;
     const TmpdirFileUrl: u16 = 2229;
     const BufferIsAscii: u16 = 2058;
@@ -1403,6 +1404,57 @@ impl Host for QuenchNodeHost {
                         name
                     )),
                 )]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsValidateRmOptions) => {
+                let options = arguments.get(1);
+                let retry_delay = options.and_then(|value| {
+                    quench_runtime::execute::get_property_result(value, "retryDelay").ok()
+                });
+                if matches!(retry_delay, Some(Value::Number(value)) if value < 0.0) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_OUT_OF_RANGE",
+                        "retryDelay is out of range",
+                    )));
+                }
+                if matches!(
+                    options.and_then(|value| quench_runtime::execute::get_property_result(
+                        value,
+                        "recursive"
+                    )
+                    .ok()),
+                    Some(Value::Undefined)
+                ) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "recursive must be a boolean",
+                    )));
+                }
+                Ok(quench_runtime::host_api::object(vec![
+                    (
+                        "retryDelay".into(),
+                        Value::Number(
+                            retry_delay
+                                .and_then(|value| match value {
+                                    Value::Number(value) => Some(value),
+                                    _ => None,
+                                })
+                                .unwrap_or(100.0),
+                        ),
+                    ),
+                    ("maxRetries".into(), Value::Number(0.0)),
+                    (
+                        "recursive".into(),
+                        Value::Boolean(
+                            options
+                                .and_then(|value| {
+                                    quench_runtime::execute::get_property_result(value, "recursive")
+                                        .ok()
+                                })
+                                .is_some_and(|value| matches!(value, Value::Boolean(true))),
+                        ),
+                    ),
+                    ("force".into(), Value::Boolean(false)),
+                ]))
             }
             HostCapabilityKind::Custom(
                 CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes,
@@ -5088,6 +5140,20 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 capability_function(HostCapabilityKind::Custom(CapabilityName::TmpdirFileUrl)),
             ),
         ]));
+    }
+    if name == "internal/fs/utils" {
+        return Ok(quench_runtime::host_api::object(vec![(
+            "validateRmOptionsSync".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::FsValidateRmOptions,
+            )),
+        )]));
+    }
+    if name == "internal/test/binding" {
+        return Ok(quench_runtime::host_api::object(vec![(
+            "internalBinding".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
+        )]));
     }
     if name == "dns" || name == "node:dns" {
         let promises = quench_runtime::host_api::object(vec![(
