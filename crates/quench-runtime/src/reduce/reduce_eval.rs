@@ -45,7 +45,8 @@ pub(super) fn instantiate_functions(
 ) -> Result<(), Vec<String>> {
     let (ops, next_register, next_slot, locals) = state;
     if !facts.strict && is_global_behavior(behavior) {
-        reserve_annex_b_bindings(statements, locals, next_slot);
+        let collisions = crate::semantic_early::annex_b_lexical_collisions_in(statements);
+        reserve_annex_b_bindings(statements, locals, next_slot, &collisions);
     }
     let (selected, variables, lexical) = instantiate_context(statements, behavior, !facts.strict);
     if is_global_behavior(behavior) {
@@ -226,29 +227,74 @@ fn reserve_annex_b_bindings(
     statements: &[Statement<'_>],
     locals: &mut HashMap<String, u16>,
     next_slot: &mut u16,
+    collisions: &HashSet<String>,
 ) {
     for statement in statements {
-        match statement {
-            Statement::BlockStatement(block) => {
-                reserve_annex_b_bindings(&block.body, locals, next_slot);
-            }
-            Statement::FunctionDeclaration(function) => {
-                if let Some(identifier) = &function.id {
+        reserve_annex_b_statement(statement, locals, next_slot, collisions);
+    }
+}
+
+fn reserve_annex_b_statement(
+    statement: &Statement<'_>,
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+    collisions: &HashSet<String>,
+) {
+    match statement {
+        Statement::BlockStatement(block) => {
+            reserve_annex_b_bindings(&block.body, locals, next_slot, collisions)
+        }
+        Statement::FunctionDeclaration(function) => {
+            if let Some(identifier) = &function.id {
+                if !collisions.contains(identifier.name.as_str()) {
                     reserve_annex_b_name(identifier.name.as_str(), locals, next_slot);
                 }
             }
-            Statement::IfStatement(statement) => {
-                reserve_annex_b_bindings(
-                    std::slice::from_ref(&statement.consequent),
-                    locals,
-                    next_slot,
-                );
-                if let Some(alternate) = &statement.alternate {
-                    reserve_annex_b_bindings(std::slice::from_ref(alternate), locals, next_slot);
-                }
-            }
-            _ => {}
         }
+        Statement::IfStatement(statement) => {
+            reserve_annex_b_if(statement, locals, next_slot, collisions)
+        }
+        Statement::TryStatement(statement) => {
+            reserve_annex_b_try(statement, locals, next_slot, collisions)
+        }
+        _ => {}
+    }
+}
+
+fn reserve_annex_b_if(
+    statement: &oxc::ast::ast::IfStatement<'_>,
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+    collisions: &HashSet<String>,
+) {
+    reserve_annex_b_bindings(
+        std::slice::from_ref(&statement.consequent),
+        locals,
+        next_slot,
+        collisions,
+    );
+    if let Some(alternate) = &statement.alternate {
+        reserve_annex_b_bindings(
+            std::slice::from_ref(alternate),
+            locals,
+            next_slot,
+            collisions,
+        );
+    }
+}
+
+fn reserve_annex_b_try(
+    statement: &oxc::ast::ast::TryStatement<'_>,
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+    collisions: &HashSet<String>,
+) {
+    reserve_annex_b_bindings(&statement.block.body, locals, next_slot, collisions);
+    if let Some(handler) = &statement.handler {
+        reserve_annex_b_bindings(&handler.body.body, locals, next_slot, collisions);
+    }
+    if let Some(finalizer) = &statement.finalizer {
+        reserve_annex_b_bindings(&finalizer.body, locals, next_slot, collisions);
     }
 }
 
