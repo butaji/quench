@@ -3500,7 +3500,15 @@ fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
             let bytes = decode_hex(value);
             Ok(node_buffer(&bytes))
         }
-        Some(Value::String(value)) => Ok(node_buffer(value.as_bytes())),
+        Some(Value::String(value)) => {
+            let encoding = arguments.get(1).and_then(|value| match value { Value::String(value) => Some(value.to_ascii_lowercase()), _ => None }).unwrap_or_else(|| "utf8".into());
+            match encoding.as_str() {
+                "ascii" | "latin1" | "binary" => Ok(node_buffer(&value.chars().map(|character| character as u32 as u8).collect::<Vec<_>>())),
+                "utf16le" | "utf-16le" | "ucs2" | "ucs-2" => Ok(node_buffer(&value.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>())),
+                "utf8" | "utf-8" | "hex" | "base64" | "base64url" => Ok(node_buffer(value.as_bytes())),
+                _ => Err(VmError::Thrown(fs_error("ERR_UNKNOWN_ENCODING", "Unknown encoding"))),
+            }
+        }
         Some(Value::ArrayBuffer(buffer)) => {
             let offset = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or(0);
             let length = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or_else(|| buffer.bytes.borrow().len().saturating_sub(offset));
@@ -3556,12 +3564,14 @@ fn buffer_alloc(arguments: &[Value]) -> Result<Value, VmError> {
     if !length.is_finite() || *length < 0.0 {
         return Err(VmError::EvalError("invalid buffer length".into()));
     }
-    let fill = match arguments.get(1) {
-        Some(Value::Number(value)) => *value as u8,
-        Some(Value::String(value)) => value.as_bytes().first().copied().unwrap_or(0),
-        _ => 0,
+    let pattern = match arguments.get(1) {
+        Some(Value::Number(value)) => vec![*value as u8],
+        Some(Value::String(value)) if matches!(arguments.get(2), Some(Value::String(encoding)) if encoding.eq_ignore_ascii_case("hex")) => decode_hex(value),
+        Some(Value::String(value)) => value.as_bytes().to_vec(),
+        _ => vec![0],
     };
-    Ok(node_buffer(&vec![fill; *length as usize]))
+    let pattern = if pattern.is_empty() { vec![0] } else { pattern };
+    Ok(node_buffer(&(0..*length as usize).map(|index| pattern[index % pattern.len()]).collect::<Vec<_>>()))
 }
 
 fn buffer_of(arguments: &[Value]) -> Result<Value, VmError> {
@@ -3724,7 +3734,10 @@ fn node_buffer(bytes: &[u8]) -> Value {
 }
 
 fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let bytes = string_or_bytes(receiver)?;
+    let mut bytes = string_or_bytes(receiver)?;
+    let start = arguments.get(1).and_then(|value| match value { Value::Number(value) if *value >= 0.0 => Some(*value as usize), _ => None }).unwrap_or(0).min(bytes.len());
+    let end = arguments.get(2).and_then(|value| match value { Value::Number(value) if *value >= 0.0 => Some(*value as usize), _ => None }).unwrap_or(bytes.len()).min(bytes.len()).max(start);
+    bytes = bytes[start..end].to_vec();
     if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("hex")) {
         return Ok(Value::String(
             bytes
@@ -3739,6 +3752,13 @@ fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     }
     if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("base64url")) {
         return Ok(Value::String(base64_encode(&bytes).trim_end_matches('=').replace('+', "-").replace('/', "_").into()));
+    }
+    if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("ascii")) {
+        return Ok(Value::String(bytes.iter().map(|byte| char::from(*byte & 0x7f)).collect::<String>().into()));
+    }
+    if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("utf16le") || value.eq_ignore_ascii_case("utf-16le")) {
+        let values = bytes.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>();
+        return Ok(Value::String(String::from_utf16_lossy(&values).into()));
     }
     Ok(Value::String(
         String::from_utf8_lossy(&bytes).into_owned().into(),
