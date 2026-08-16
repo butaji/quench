@@ -160,16 +160,37 @@ pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "has") {
-            return call_trap(
+            let result = call_trap(
                 &trap,
                 &[proxy.target.clone(), Value::String(prop.to_string())],
                 Some(&proxy.handler),
-            );
+            )?;
+            if !crate::execute::is_truthy(&result) {
+                let descriptor = crate::builtins::object::descriptor(
+                    Some(&proxy.target),
+                    Some(&Value::String(prop.to_string())),
+                )?;
+                if is_non_configurable_descriptor(&descriptor) {
+                    return Err(crate::value::error::throw_type_error(
+                        "Proxy has invariant violated",
+                    ));
+                }
+            }
+            return Ok(Value::Boolean(crate::execute::is_truthy(&result)));
         }
     }
     Ok(Value::Boolean(crate::with_scope::has_property(
         target, prop,
     )?))
+}
+
+fn is_non_configurable_descriptor(descriptor: &Value) -> bool {
+    let Value::Object(properties) = descriptor else {
+        return false;
+    };
+    properties
+        .iter()
+        .any(|(name, value)| name == "configurable" && matches!(value, Value::Boolean(false)))
 }
 
 pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError> {
