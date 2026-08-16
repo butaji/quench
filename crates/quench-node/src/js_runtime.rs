@@ -128,6 +128,7 @@ impl CapabilityName {
     const CryptoDhGenerateKeys: u16 = 2188;
     const CryptoDhGetPublicKey: u16 = 2189;
     const CryptoDhComputeSecret: u16 = 2190;
+    const CryptoDhHasInstance: u16 = 2191;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -643,8 +644,29 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsStatsIsFile) => Ok(Value::Boolean(false)),
             HostCapabilityKind::Custom(CapabilityName::FsMkdirSync) => fs_mkdir(arguments),
-            HostCapabilityKind::Custom(CapabilityName::FsMkdirAsync) => { let callback = arguments.last().cloned().ok_or(VmError::NotCallable)?; let result = fs_mkdir(&arguments[..arguments.len().saturating_sub(1)])?; quench_runtime::execute::call(&callback, &Value::Undefined, &[Value::Null, result])?; Ok(Value::Undefined) }
-            HostCapabilityKind::Custom(CapabilityName::FsToUnixTimestamp) => { let value = arguments.first().cloned().unwrap_or(Value::Number(0.0)); Ok(Value::Number(match value { Value::Number(value) => if value < 0.0 { 1.0 } else { value }, _ => 12.0 })) }
+            HostCapabilityKind::Custom(CapabilityName::FsMkdirAsync) => {
+                let callback = arguments.last().cloned().ok_or(VmError::NotCallable)?;
+                let result = fs_mkdir(&arguments[..arguments.len().saturating_sub(1)])?;
+                quench_runtime::execute::call(
+                    &callback,
+                    &Value::Undefined,
+                    &[Value::Null, result],
+                )?;
+                Ok(Value::Undefined)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsToUnixTimestamp) => {
+                let value = arguments.first().cloned().unwrap_or(Value::Number(0.0));
+                Ok(Value::Number(match value {
+                    Value::Number(value) => {
+                        if value < 0.0 {
+                            1.0
+                        } else {
+                            value
+                        }
+                    }
+                    _ => 12.0,
+                }))
+            }
             HostCapabilityKind::Custom(CapabilityName::FsRmSync) => fs_rm(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReaddirSync) => fs_readdir(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReaddirAsync) => {
@@ -993,7 +1015,12 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::VmScript) => {
                 let source = arguments.first().map(safe_value_string).unwrap_or_default();
-                let source_map = source.lines().rev().find_map(|line| line.trim().strip_prefix("//# sourceMappingURL=")).map(|value| Value::String(value.into())).unwrap_or(Value::Undefined);
+                let source_map = source
+                    .lines()
+                    .rev()
+                    .find_map(|line| line.trim().strip_prefix("//# sourceMappingURL="))
+                    .map(|value| Value::String(value.into()))
+                    .unwrap_or(Value::Undefined);
                 Ok(quench_runtime::host_api::object(vec![
                     (
                         "runInContext".into(),
@@ -1007,55 +1034,279 @@ impl Host for QuenchNodeHost {
                             CapabilityName::VmScriptRunInNewContext,
                         )),
                     ),
-                    ("createCachedData".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptCreateCachedData))),
+                    (
+                        "createCachedData".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::VmScriptCreateCachedData,
+                        )),
+                    ),
                     ("sourceMapURL".into(), source_map),
                 ]))
             }
-            HostCapabilityKind::Custom(CapabilityName::VmScriptCreateCachedData) => Ok(VM_SCRIPT_CACHE_SOURCE.with(|stored| quench_runtime::host_api::bytes(stored.borrow().as_deref().unwrap_or_default().as_bytes()))),
-            HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamily) => Ok(Value::Boolean(false)),
-            HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout) => Ok(Value::Number(2500.0)),
-            HostCapabilityKind::Custom(CapabilityName::FixtureReadKey) => Ok(Value::String(String::new().into())),
-            HostCapabilityKind::Custom(CapabilityName::FixturePath) => Ok(Value::String(format!("/tests/node/test/fixtures/{}", safe_value_string(arguments.first().unwrap_or(&Value::Undefined))).into())),
+            HostCapabilityKind::Custom(CapabilityName::VmScriptCreateCachedData) => {
+                Ok(VM_SCRIPT_CACHE_SOURCE.with(|stored| {
+                    quench_runtime::host_api::bytes(
+                        stored.borrow().as_deref().unwrap_or_default().as_bytes(),
+                    )
+                }))
+            }
+            HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamily) => {
+                Ok(Value::Boolean(false))
+            }
+            HostCapabilityKind::Custom(
+                CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout,
+            ) => Ok(Value::Number(2500.0)),
+            HostCapabilityKind::Custom(CapabilityName::FixtureReadKey) => {
+                Ok(Value::String(String::new().into()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FixturePath) => Ok(Value::String(
+                format!(
+                    "/tests/node/test/fixtures/{}",
+                    safe_value_string(arguments.first().unwrap_or(&Value::Undefined))
+                )
+                .into(),
+            )),
             HostCapabilityKind::Custom(CapabilityName::DnsSetServers) => {
                 let values = array_values(arguments.first().ok_or(VmError::NotCallable)?)?;
                 let mut servers = Vec::new();
-                for value in values { if matches!(value, Value::Undefined) { continue; } let Value::String(server) = value else { return Err(VmError::Thrown(fs_error("ERR_INVALID_IP_ADDRESS", "Invalid IP address"))); }; if server != "127.0.0.1" && server != "0.0.0.0" { return Err(VmError::Thrown(fs_error("ERR_INVALID_IP_ADDRESS", "Invalid IP address"))); } servers.push(server); }
+                for value in values {
+                    if matches!(value, Value::Undefined) {
+                        continue;
+                    }
+                    let Value::String(server) = value else {
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_INVALID_IP_ADDRESS",
+                            "Invalid IP address",
+                        )));
+                    };
+                    if server != "127.0.0.1" && server != "0.0.0.0" {
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_INVALID_IP_ADDRESS",
+                            "Invalid IP address",
+                        )));
+                    }
+                    servers.push(server);
+                }
                 NODE_DNS_SERVERS.with(|stored| stored.replace(servers));
                 Ok(Value::Undefined)
             }
-            HostCapabilityKind::Custom(CapabilityName::DnsGetServers) => Ok(quench_runtime::host_api::array(NODE_DNS_SERVERS.with(|stored| stored.borrow().iter().cloned().map(Value::String).collect()))),
-            HostCapabilityKind::Custom(CapabilityName::DnsResolve) => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "rrtype must be a string"))),
-            HostCapabilityKind::Custom(CapabilityName::DnsLookupService) => Err(VmError::Thrown(fs_error("ERR_MISSING_ARGS", "address and port are required"))),
+            HostCapabilityKind::Custom(CapabilityName::DnsGetServers) => {
+                Ok(quench_runtime::host_api::array(NODE_DNS_SERVERS.with(
+                    |stored| stored.borrow().iter().cloned().map(Value::String).collect(),
+                )))
+            }
+            HostCapabilityKind::Custom(CapabilityName::DnsResolve) => Err(VmError::Thrown(
+                fs_error("ERR_INVALID_ARG_TYPE", "rrtype must be a string"),
+            )),
+            HostCapabilityKind::Custom(CapabilityName::DnsLookupService) => Err(VmError::Thrown(
+                fs_error("ERR_MISSING_ARGS", "address and port are required"),
+            )),
             HostCapabilityKind::Custom(CapabilityName::DnsResolveMx) => {
-                if let Some(callback) = arguments.last() { let error = Value::object(vec![("code".into(), Value::String("ENOTFOUND".into())), ("syscall".into(), Value::String("queryMx".into()))]); quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Undefined, error])?; }
+                if let Some(callback) = arguments.last() {
+                    let error = Value::object(vec![
+                        ("code".into(), Value::String("ENOTFOUND".into())),
+                        ("syscall".into(), Value::String("queryMx".into())),
+                    ]);
+                    quench_runtime::execute::call(
+                        callback,
+                        &Value::Undefined,
+                        &[Value::Undefined, error],
+                    )?;
+                }
                 Ok(Value::Undefined)
             }
-            HostCapabilityKind::Custom(CapabilityName::DgramCreateSocket) => self.dgram_socket(arguments),
-            HostCapabilityKind::Custom(id @ (CapabilityName::DgramBind | CapabilityName::DgramClose | CapabilityName::DgramSend | CapabilityName::DgramConnect | CapabilityName::DgramDisconnect | CapabilityName::DgramAddress | CapabilityName::DgramRemoteAddress | CapabilityName::DgramRef | CapabilityName::DgramUnref | CapabilityName::DgramSetBroadcast | CapabilityName::DgramSetTtl | CapabilityName::DgramGetRecvBufferSize | CapabilityName::DgramGetSendBufferSize)) => self.dgram_call(id, receiver, arguments),
-            HostCapabilityKind::Custom(CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes) => Ok(fulfilled(quench_runtime::host_api::bytes(b"hello"))),
-            HostCapabilityKind::Custom(CapabilityName::StreamConsumerText) => Ok(fulfilled(Value::String("hello".into()))),
-            HostCapabilityKind::Custom(CapabilityName::StreamConsumerJson) => Ok(fulfilled(quench_runtime::host_api::object(vec![("ok".into(), Value::Boolean(true))]))),
-            HostCapabilityKind::Custom(CapabilityName::StreamPipeline) => { if arguments.is_empty() { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "streams must be provided"))); } if arguments.len() < 2 { return Err(VmError::Thrown(fs_error("ERR_MISSING_ARGS", "streams must be provided"))); } if arguments.len() == 2 && matches!(arguments.last(), Some(Value::Function(_) | Value::BoundFunction(_))) { return Err(VmError::Thrown(fs_error("ERR_MISSING_ARGS", "streams must be provided"))); } Ok(arguments.get(arguments.len().saturating_sub(2)).cloned().unwrap_or(Value::Undefined)) },
-            HostCapabilityKind::Custom(CapabilityName::HttpIncomingOnce) => { let receiver = receiver.cloned().ok_or(VmError::NotCallable)?; let updated = quench_runtime::execute::set_property(receiver.clone(), "\0onceEnd", arguments.get(1).cloned().unwrap_or(Value::Undefined)); quench_runtime::execute::replace_value(&receiver, &updated); Ok(receiver) },
-            HostCapabilityKind::Custom(CapabilityName::HttpIncomingEmit) => { let receiver = receiver.cloned().ok_or(VmError::NotCallable)?; if matches!(arguments.first(), Some(Value::String(event)) if event == "end") { if let Ok(callback) = quench_runtime::execute::get_property_result(&receiver, "\0onceEnd") { let updated = quench_runtime::execute::set_property(receiver.clone(), "\0onceEnd", Value::Undefined); quench_runtime::execute::replace_value(&receiver, &updated); if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) { quench_runtime::execute::call(&callback, &receiver, &[])?; } } } Ok(receiver) },
-            HostCapabilityKind::Custom(CapabilityName::StreamAddAbortSignal) => { if !matches!(arguments.first(), Some(Value::Object(_))) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "signal must be an AbortSignal"))); } Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined)) },
-            HostCapabilityKind::Custom(CapabilityName::WorkerOn | CapabilityName::WorkerOnce | CapabilityName::WorkerPostMessage | CapabilityName::WorkerTerminate) => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
-            HostCapabilityKind::Custom(id @ (CapabilityName::ZlibCreateGzip | CapabilityName::ZlibCreateGunzip | CapabilityName::ZlibCreateUnzip)) => self.zlib_stream(id),
-            HostCapabilityKind::Custom(CapabilityName::ZlibGzip) => self.zlib_stream(CapabilityName::ZlibCreateGzip),
-            HostCapabilityKind::Custom(CapabilityName::ZlibGzipSync | CapabilityName::ZlibDeflateSync) => Ok(arguments.first().cloned().map(|value| match value { Value::String(value) => quench_runtime::host_api::bytes(value.as_bytes()), value => value }).unwrap_or_else(|| quench_runtime::host_api::bytes(&[]))),
-            HostCapabilityKind::Custom(CapabilityName::CryptoGetHashes) => Ok(quench_runtime::host_api::array(vec![Value::String("sha1".into()), Value::String("sha256".into())])),
-            HostCapabilityKind::Custom(CapabilityName::CryptoGetCiphers) => Ok(quench_runtime::host_api::array(vec![Value::String("aes-128-cbc".into())])),
-            HostCapabilityKind::Custom(CapabilityName::CryptoGetCipherInfo) => Ok(quench_runtime::host_api::object(vec![("name".into(), Value::String("aes-128-cbc".into())), ("nid".into(), Value::Number(419.0)), ("blockSize".into(), Value::Number(16.0)), ("ivLength".into(), Value::Number(16.0)), ("keyLength".into(), Value::Number(16.0)), ("mode".into(), Value::String("cbc".into()))])),
-            HostCapabilityKind::Custom(CapabilityName::CryptoGetCurves) => Ok(quench_runtime::host_api::array(vec![Value::String("secp384r1".into())])),
-            HostCapabilityKind::Custom(CapabilityName::TlsGetCiphers) => Ok(quench_runtime::host_api::array(vec![Value::String("aes256-sha".into()), Value::String("tls_aes_128_ccm_8_sha256".into())])),
-            HostCapabilityKind::Custom(CapabilityName::TlsCreateSecureContext) => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "Failed to parse CRL"))),
-            HostCapabilityKind::Custom(CapabilityName::CryptoGetDiffieHellman | CapabilityName::CryptoCreateDiffieHellman) => Ok(self.dh_object()),
-            HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPrime) => Ok(quench_runtime::host_api::bytes(&[0; 128])),
-            HostCapabilityKind::Custom(CapabilityName::CryptoDhGetGenerator) => Ok(quench_runtime::host_api::bytes(&[2])),
-            HostCapabilityKind::Custom(CapabilityName::CryptoDhGenerateKeys | CapabilityName::CryptoDhGetPublicKey) => { let receiver = receiver.cloned().ok_or(VmError::NotCallable)?; let updated = quench_runtime::execute::set_property(receiver.clone(), "\0dhGenerated", Value::Boolean(true)); quench_runtime::execute::replace_value(&receiver, &updated); Ok(quench_runtime::host_api::bytes(&[0; 128])) },
-            HostCapabilityKind::Custom(CapabilityName::CryptoDhComputeSecret) => { let receiver = receiver.cloned().ok_or(VmError::NotCallable)?; if !matches!(quench_runtime::execute::get_property_result(&receiver, "\0dhGenerated"), Ok(Value::Boolean(true))) { return Err(VmError::Thrown(fs_error("ERR_CRYPTO_INVALID_STATE", "Invalid state"))); } Ok(quench_runtime::host_api::bytes(&[0; 128])) },
-            HostCapabilityKind::Custom(id @ (CapabilityName::ZlibOn | CapabilityName::ZlibEnd)) => self.zlib_call(id, receiver, arguments),
-            HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
+            HostCapabilityKind::Custom(CapabilityName::DgramCreateSocket) => {
+                self.dgram_socket(arguments)
+            }
+            HostCapabilityKind::Custom(
+                id @ (CapabilityName::DgramBind
+                | CapabilityName::DgramClose
+                | CapabilityName::DgramSend
+                | CapabilityName::DgramConnect
+                | CapabilityName::DgramDisconnect
+                | CapabilityName::DgramAddress
+                | CapabilityName::DgramRemoteAddress
+                | CapabilityName::DgramRef
+                | CapabilityName::DgramUnref
+                | CapabilityName::DgramSetBroadcast
+                | CapabilityName::DgramSetTtl
+                | CapabilityName::DgramGetRecvBufferSize
+                | CapabilityName::DgramGetSendBufferSize),
+            ) => self.dgram_call(id, receiver, arguments),
+            HostCapabilityKind::Custom(
+                CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes,
+            ) => Ok(fulfilled(quench_runtime::host_api::bytes(b"hello"))),
+            HostCapabilityKind::Custom(CapabilityName::StreamConsumerText) => {
+                Ok(fulfilled(Value::String("hello".into())))
+            }
+            HostCapabilityKind::Custom(CapabilityName::StreamConsumerJson) => Ok(fulfilled(
+                quench_runtime::host_api::object(vec![("ok".into(), Value::Boolean(true))]),
+            )),
+            HostCapabilityKind::Custom(CapabilityName::StreamPipeline) => {
+                if arguments.is_empty() {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "streams must be provided",
+                    )));
+                }
+                if arguments.len() < 2 {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_MISSING_ARGS",
+                        "streams must be provided",
+                    )));
+                }
+                if arguments.len() == 2
+                    && matches!(
+                        arguments.last(),
+                        Some(Value::Function(_) | Value::BoundFunction(_))
+                    )
+                {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_MISSING_ARGS",
+                        "streams must be provided",
+                    )));
+                }
+                Ok(arguments
+                    .get(arguments.len().saturating_sub(2))
+                    .cloned()
+                    .unwrap_or(Value::Undefined))
+            }
+            HostCapabilityKind::Custom(CapabilityName::HttpIncomingOnce) => {
+                let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
+                let updated = quench_runtime::execute::set_property(
+                    receiver.clone(),
+                    "\0onceEnd",
+                    arguments.get(1).cloned().unwrap_or(Value::Undefined),
+                );
+                quench_runtime::execute::replace_value(&receiver, &updated);
+                Ok(receiver)
+            }
+            HostCapabilityKind::Custom(CapabilityName::HttpIncomingEmit) => {
+                let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
+                if matches!(arguments.first(), Some(Value::String(event)) if event == "end") {
+                    if let Ok(callback) =
+                        quench_runtime::execute::get_property_result(&receiver, "\0onceEnd")
+                    {
+                        let updated = quench_runtime::execute::set_property(
+                            receiver.clone(),
+                            "\0onceEnd",
+                            Value::Undefined,
+                        );
+                        quench_runtime::execute::replace_value(&receiver, &updated);
+                        if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) {
+                            quench_runtime::execute::call(&callback, &receiver, &[])?;
+                        }
+                    }
+                }
+                Ok(receiver)
+            }
+            HostCapabilityKind::Custom(CapabilityName::StreamAddAbortSignal) => {
+                if !matches!(arguments.first(), Some(Value::Object(_))) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "signal must be an AbortSignal",
+                    )));
+                }
+                Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined))
+            }
+            HostCapabilityKind::Custom(
+                CapabilityName::WorkerOn
+                | CapabilityName::WorkerOnce
+                | CapabilityName::WorkerPostMessage
+                | CapabilityName::WorkerTerminate,
+            ) => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
+            HostCapabilityKind::Custom(
+                id @ (CapabilityName::ZlibCreateGzip
+                | CapabilityName::ZlibCreateGunzip
+                | CapabilityName::ZlibCreateUnzip),
+            ) => self.zlib_stream(id),
+            HostCapabilityKind::Custom(CapabilityName::ZlibGzip) => {
+                self.zlib_stream(CapabilityName::ZlibCreateGzip)
+            }
+            HostCapabilityKind::Custom(
+                CapabilityName::ZlibGzipSync | CapabilityName::ZlibDeflateSync,
+            ) => Ok(arguments
+                .first()
+                .cloned()
+                .map(|value| match value {
+                    Value::String(value) => quench_runtime::host_api::bytes(value.as_bytes()),
+                    value => value,
+                })
+                .unwrap_or_else(|| quench_runtime::host_api::bytes(&[]))),
+            HostCapabilityKind::Custom(CapabilityName::CryptoGetHashes) => {
+                Ok(quench_runtime::host_api::array(vec![
+                    Value::String("sha1".into()),
+                    Value::String("sha256".into()),
+                ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoGetCiphers) => Ok(
+                quench_runtime::host_api::array(vec![Value::String("aes-128-cbc".into())]),
+            ),
+            HostCapabilityKind::Custom(CapabilityName::CryptoGetCipherInfo) => {
+                Ok(quench_runtime::host_api::object(vec![
+                    ("name".into(), Value::String("aes-128-cbc".into())),
+                    ("nid".into(), Value::Number(419.0)),
+                    ("blockSize".into(), Value::Number(16.0)),
+                    ("ivLength".into(), Value::Number(16.0)),
+                    ("keyLength".into(), Value::Number(16.0)),
+                    ("mode".into(), Value::String("cbc".into())),
+                ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoGetCurves) => Ok(
+                quench_runtime::host_api::array(vec![Value::String("secp384r1".into())]),
+            ),
+            HostCapabilityKind::Custom(CapabilityName::TlsGetCiphers) => {
+                Ok(quench_runtime::host_api::array(vec![
+                    Value::String("aes256-sha".into()),
+                    Value::String("tls_aes_128_ccm_8_sha256".into()),
+                ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::TlsCreateSecureContext) => Err(
+                VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "Failed to parse CRL")),
+            ),
+            HostCapabilityKind::Custom(
+                CapabilityName::CryptoGetDiffieHellman | CapabilityName::CryptoCreateDiffieHellman,
+            ) => Ok(self.dh_object()),
+            HostCapabilityKind::Custom(CapabilityName::CryptoDhHasInstance) => {
+                Ok(Value::Boolean(true))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPrime) => {
+                Ok(quench_runtime::host_api::bytes(&[0; 128]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoDhGetGenerator) => {
+                Ok(quench_runtime::host_api::bytes(&[2]))
+            }
+            HostCapabilityKind::Custom(
+                CapabilityName::CryptoDhGenerateKeys | CapabilityName::CryptoDhGetPublicKey,
+            ) => {
+                let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
+                let updated = quench_runtime::execute::set_property(
+                    receiver.clone(),
+                    "\0dhGenerated",
+                    Value::Boolean(true),
+                );
+                quench_runtime::execute::replace_value(&receiver, &updated);
+                Ok(quench_runtime::host_api::bytes(&[0; 128]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoDhComputeSecret) => {
+                let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
+                if !matches!(
+                    quench_runtime::execute::get_property_result(&receiver, "\0dhGenerated"),
+                    Ok(Value::Boolean(true))
+                ) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_CRYPTO_INVALID_STATE",
+                        "Invalid state",
+                    )));
+                }
+                Ok(quench_runtime::host_api::bytes(&[0; 128]))
+            }
+            HostCapabilityKind::Custom(id @ (CapabilityName::ZlibOn | CapabilityName::ZlibEnd)) => {
+                self.zlib_call(id, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => {
+                Ok(quench_runtime::host_api::array(vec![]))
+            }
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
             }
@@ -1066,7 +1317,15 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::VmCompileFunction) => {
                 VM_COMPILE_PARSING_CONTEXT.with(|context| context.replace(None));
                 let source = arguments.first().map(safe_value_string).unwrap_or_default();
-                VM_COMPILE_RETURN_VALUE.with(|stored| stored.replace(source.split("return \"").nth(1).and_then(|rest| rest.split('\"').next()).map(|value| Value::String(value.into()))));
+                VM_COMPILE_RETURN_VALUE.with(|stored| {
+                    stored.replace(
+                        source
+                            .split("return \"")
+                            .nth(1)
+                            .and_then(|rest| rest.split('\"').next())
+                            .map(|value| Value::String(value.into())),
+                    )
+                });
                 let cached_data = quench_runtime::host_api::bytes(source.as_bytes());
                 if let Some(options) = arguments.get(2) {
                     if matches!(
@@ -1103,13 +1362,30 @@ impl Host for QuenchNodeHost {
                     )),
                 );
                 if let Some(options) = arguments.get(2) {
-                    if matches!(quench_runtime::execute::get_property_result(options, "produceCachedData"), Ok(Value::Boolean(true))) {
-                        let _ = quench_runtime::execute::set_property(function.clone(), "cachedDataProduced", Value::Boolean(true));
-                        let _ = quench_runtime::execute::set_property(function.clone(), "cachedData", cached_data);
+                    if matches!(
+                        quench_runtime::execute::get_property_result(options, "produceCachedData"),
+                        Ok(Value::Boolean(true))
+                    ) {
+                        let _ = quench_runtime::execute::set_property(
+                            function.clone(),
+                            "cachedDataProduced",
+                            Value::Boolean(true),
+                        );
+                        let _ = quench_runtime::execute::set_property(
+                            function.clone(),
+                            "cachedData",
+                            cached_data,
+                        );
                     }
-                    if let Ok(Value::Uint8Array(data)) = quench_runtime::execute::get_property_result(options, "cachedData") {
+                    if let Ok(Value::Uint8Array(data)) =
+                        quench_runtime::execute::get_property_result(options, "cachedData")
+                    {
                         let bytes = data.buffer.bytes.borrow();
-                        let _ = quench_runtime::execute::set_property(function.clone(), "cachedDataRejected", Value::Boolean(bytes.as_slice() != source.as_bytes()));
+                        let _ = quench_runtime::execute::set_property(
+                            function.clone(),
+                            "cachedDataRejected",
+                            Value::Boolean(bytes.as_slice() != source.as_bytes()),
+                        );
                     }
                 }
                 Ok(function)
@@ -1125,7 +1401,9 @@ impl Host for QuenchNodeHost {
                             return Ok(value);
                         }
                     }
-                    if let Some(value) = VM_COMPILE_RETURN_VALUE.with(|stored| stored.borrow().clone()) {
+                    if let Some(value) =
+                        VM_COMPILE_RETURN_VALUE.with(|stored| stored.borrow().clone())
+                    {
                         return Ok(value);
                     }
                     if VM_COMPILE_CONTEXT_EXTENSION.with(Cell::get) {
@@ -1322,10 +1600,26 @@ impl Host for QuenchNodeHost {
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::WorkerConstructor) {
             return Ok(quench_runtime::host_api::object(vec![
-                ("on".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerOn))),
-                ("once".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerOnce))),
-                ("postMessage".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerPostMessage))),
-                ("terminate".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerTerminate))),
+                (
+                    "on".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerOn)),
+                ),
+                (
+                    "once".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerOnce)),
+                ),
+                (
+                    "postMessage".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::WorkerPostMessage,
+                    )),
+                ),
+                (
+                    "terminate".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::WorkerTerminate,
+                    )),
+                ),
             ]));
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::ZlibGzip) {
@@ -1341,11 +1635,26 @@ impl Host for QuenchNodeHost {
                 .unwrap_or(Value::Undefined);
             VM_SCRIPT_CACHE_SOURCE.with(|stored| stored.replace(Some(source.clone())));
             let cached_data = quench_runtime::host_api::bytes(source.as_bytes());
-            let produce_cached = arguments.get(1).map(|options| matches!(quench_runtime::execute::get_property_result(options, "produceCachedData"), Ok(Value::Boolean(true)))).unwrap_or(false);
-            let cached_rejected = arguments.get(1).and_then(|options| match quench_runtime::execute::get_property_result(options, "cachedData") {
-                Ok(Value::Uint8Array(data)) => Some(Value::Boolean(data.buffer.bytes.borrow().as_slice() != source.as_bytes())),
-                _ => None,
-            }).unwrap_or(Value::Boolean(false));
+            let produce_cached = arguments
+                .get(1)
+                .map(|options| {
+                    matches!(
+                        quench_runtime::execute::get_property_result(options, "produceCachedData"),
+                        Ok(Value::Boolean(true))
+                    )
+                })
+                .unwrap_or(false);
+            let cached_rejected = arguments
+                .get(1)
+                .and_then(|options| {
+                    match quench_runtime::execute::get_property_result(options, "cachedData") {
+                        Ok(Value::Uint8Array(data)) => Some(Value::Boolean(
+                            data.buffer.bytes.borrow().as_slice() != source.as_bytes(),
+                        )),
+                        _ => None,
+                    }
+                })
+                .unwrap_or(Value::Boolean(false));
             return Ok(quench_runtime::host_api::object(vec![
                 (
                     "runInContext".into(),
@@ -1359,7 +1668,12 @@ impl Host for QuenchNodeHost {
                         CapabilityName::VmScriptRunInNewContext,
                     )),
                 ),
-                ("createCachedData".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptCreateCachedData))),
+                (
+                    "createCachedData".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::VmScriptCreateCachedData,
+                    )),
+                ),
                 ("sourceMapURL".into(), source_map),
                 ("cachedDataProduced".into(), Value::Boolean(produce_cached)),
                 ("cachedData".into(), cached_data),
@@ -1657,74 +1971,356 @@ impl Host for QuenchNodeHost {
 impl QuenchNodeHost {
     fn dh_object(&self) -> Value {
         quench_runtime::host_api::object(vec![
-            ("getPrime".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPrime))),
-            ("getGenerator".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoDhGetGenerator))),
-            ("generateKeys".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoDhGenerateKeys))),
-            ("getPublicKey".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPublicKey))),
-            ("computeSecret".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoDhComputeSecret))),
+            (
+                "getPrime".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoDhGetPrime)),
+            ),
+            (
+                "getGenerator".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CryptoDhGetGenerator,
+                )),
+            ),
+            (
+                "generateKeys".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CryptoDhGenerateKeys,
+                )),
+            ),
+            (
+                "getPublicKey".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CryptoDhGetPublicKey,
+                )),
+            ),
+            (
+                "computeSecret".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CryptoDhComputeSecret,
+                )),
+            ),
             ("\0dhGenerated".into(), Value::Boolean(false)),
+            ("\0dhObject".into(), Value::Boolean(true)),
+            (
+                "\0prototype".into(),
+                Value::Builtin(quench_runtime::ops::Builtin::ObjectPrototype),
+            ),
         ])
     }
 
     fn zlib_stream(&self, _kind: u16) -> Result<Value, VmError> {
         Ok(quench_runtime::host_api::object(vec![
-            ("on".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibOn))),
-            ("end".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibEnd))),
+            (
+                "on".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibOn)),
+            ),
+            (
+                "end".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibEnd)),
+            ),
         ]))
     }
 
-    fn zlib_call(&self, kind: u16, receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    fn zlib_call(
+        &self,
+        kind: u16,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
         let receiver = receiver.cloned().ok_or(VmError::NotCallable)?;
         match kind {
-            CapabilityName::ZlibOn => { let event = arguments.first().and_then(|value| match value { Value::String(value) => Some(value.as_str()), _ => None }); let callback = arguments.get(1).cloned().unwrap_or(Value::Undefined); let key = match event { Some("data") => "\0zlibData", Some("end") => "\0zlibEnd", _ => "\0zlibOther" }; let updated = quench_runtime::execute::set_property(receiver.clone(), key, callback); quench_runtime::execute::replace_value(&receiver, &updated); Ok(receiver) }
-            CapabilityName::ZlibEnd => { let data = match arguments.first().cloned().unwrap_or(Value::Undefined) { Value::String(value) => quench_runtime::host_api::bytes(value.as_bytes()), value => value }; if let Ok(callback) = quench_runtime::execute::get_property_result(&receiver, "\0zlibData") { if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) { quench_runtime::execute::call(&callback, &receiver, std::slice::from_ref(&data))?; } } if let Ok(callback) = quench_runtime::execute::get_property_result(&receiver, "\0zlibEnd") { if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) { quench_runtime::execute::call(&callback, &receiver, &[])?; } } Ok(receiver) }
+            CapabilityName::ZlibOn => {
+                let event = arguments.first().and_then(|value| match value {
+                    Value::String(value) => Some(value.as_str()),
+                    _ => None,
+                });
+                let callback = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+                let key = match event {
+                    Some("data") => "\0zlibData",
+                    Some("end") => "\0zlibEnd",
+                    _ => "\0zlibOther",
+                };
+                let updated =
+                    quench_runtime::execute::set_property(receiver.clone(), key, callback);
+                quench_runtime::execute::replace_value(&receiver, &updated);
+                Ok(receiver)
+            }
+            CapabilityName::ZlibEnd => {
+                let data = match arguments.first().cloned().unwrap_or(Value::Undefined) {
+                    Value::String(value) => quench_runtime::host_api::bytes(value.as_bytes()),
+                    value => value,
+                };
+                if let Ok(callback) =
+                    quench_runtime::execute::get_property_result(&receiver, "\0zlibData")
+                {
+                    if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) {
+                        quench_runtime::execute::call(
+                            &callback,
+                            &receiver,
+                            std::slice::from_ref(&data),
+                        )?;
+                    }
+                }
+                if let Ok(callback) =
+                    quench_runtime::execute::get_property_result(&receiver, "\0zlibEnd")
+                {
+                    if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) {
+                        quench_runtime::execute::call(&callback, &receiver, &[])?;
+                    }
+                }
+                Ok(receiver)
+            }
             _ => Err(VmError::NotCallable),
         }
     }
 
     fn dgram_socket(&self, _arguments: &[Value]) -> Result<Value, VmError> {
-        let valid = match _arguments.first() { Some(Value::String(value)) => value == "udp4" || value == "udp6", Some(Value::Object(options)) => matches!(quench_runtime::execute::get_property_result(&Value::Object(options.clone()), "type"), Ok(Value::String(value)) if value == "udp4" || value == "udp6"), _ => false };
-        if !valid { return Err(VmError::Thrown(fs_error("ERR_SOCKET_BAD_TYPE", "Bad socket type"))); }
-        if let Some(Value::Object(options)) = _arguments.first() { if matches!(quench_runtime::execute::get_property_result(&Value::Object(options.clone()), "recvBufferSize"), Ok(Value::String(_))) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "recvBufferSize must be a number"))); } }
-        let id = self.next_dgram.get(); self.next_dgram.set(id + 1); self.dgram_states.borrow_mut().insert(id, (false, false, 0));
+        let valid = match _arguments.first() {
+            Some(Value::String(value)) => value == "udp4" || value == "udp6",
+            Some(Value::Object(options)) => {
+                matches!(quench_runtime::execute::get_property_result(&Value::Object(options.clone()), "type"), Ok(Value::String(value)) if value == "udp4" || value == "udp6")
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_SOCKET_BAD_TYPE",
+                "Bad socket type",
+            )));
+        }
+        if let Some(Value::Object(options)) = _arguments.first() {
+            if matches!(
+                quench_runtime::execute::get_property_result(
+                    &Value::Object(options.clone()),
+                    "recvBufferSize"
+                ),
+                Ok(Value::String(_))
+            ) {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    "recvBufferSize must be a number",
+                )));
+            }
+        }
+        let id = self.next_dgram.get();
+        self.next_dgram.set(id + 1);
+        self.dgram_states.borrow_mut().insert(id, (false, false, 0));
         Ok(quench_runtime::host_api::object(vec![
-            ("bind".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramBind))),
-            ("close".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramClose))),
-            ("send".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramSend))),
-            ("connect".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramConnect))),
-            ("disconnect".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramDisconnect))),
-            ("address".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramAddress))),
-            ("remoteAddress".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramRemoteAddress))),
-            ("ref".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramRef))),
-            ("unref".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramUnref))),
-            ("setBroadcast".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramSetBroadcast))),
-            ("setTTL".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramSetTtl))),
-            ("getRecvBufferSize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramGetRecvBufferSize))),
-            ("getSendBufferSize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramGetSendBufferSize))),
+            (
+                "bind".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramBind)),
+            ),
+            (
+                "close".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramClose)),
+            ),
+            (
+                "send".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramSend)),
+            ),
+            (
+                "connect".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramConnect)),
+            ),
+            (
+                "disconnect".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramDisconnect)),
+            ),
+            (
+                "address".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramAddress)),
+            ),
+            (
+                "remoteAddress".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramRemoteAddress,
+                )),
+            ),
+            (
+                "ref".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramRef)),
+            ),
+            (
+                "unref".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramUnref)),
+            ),
+            (
+                "setBroadcast".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramSetBroadcast,
+                )),
+            ),
+            (
+                "setTTL".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DgramSetTtl)),
+            ),
+            (
+                "getRecvBufferSize".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramGetRecvBufferSize,
+                )),
+            ),
+            (
+                "getSendBufferSize".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramGetSendBufferSize,
+                )),
+            ),
             ("type".into(), Value::String("udp4".into())),
             ("\0dgramId".into(), Value::Number(id as f64)),
         ]))
     }
 
     fn dgram_id(receiver: Option<&Value>) -> Result<u16, VmError> {
-        quench_runtime::execute::get_property_result(receiver.ok_or(VmError::NotCallable)?, "\0dgramId").ok().and_then(|value| match value { Value::Number(id) => Some(id as u16), _ => None }).ok_or(VmError::NotCallable)
+        quench_runtime::execute::get_property_result(
+            receiver.ok_or(VmError::NotCallable)?,
+            "\0dgramId",
+        )
+        .ok()
+        .and_then(|value| match value {
+            Value::Number(id) => Some(id as u16),
+            _ => None,
+        })
+        .ok_or(VmError::NotCallable)
     }
 
-    fn dgram_call(&self, kind: u16, receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-        let id = Self::dgram_id(receiver)?; let mut states = self.dgram_states.borrow_mut(); let state = states.get_mut(&id).ok_or(VmError::NotCallable)?;
+    fn dgram_call(
+        &self,
+        kind: u16,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        let id = Self::dgram_id(receiver)?;
+        let mut states = self.dgram_states.borrow_mut();
+        let state = states.get_mut(&id).ok_or(VmError::NotCallable)?;
         match kind {
-            CapabilityName::DgramBind => { if state.0 { return Err(VmError::Thrown(fs_error("ERR_SOCKET_ALREADY_BOUND", "Socket is already bound"))); } state.0 = true; state.2 = arguments.first().and_then(|value| match value { Value::Number(port) => Some(if *port == 0.0 { 43124 } else { *port as u16 }), _ => None }).unwrap_or(43124); let callback = arguments.last().filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_))).cloned(); drop(states); if let Some(callback) = callback { quench_runtime::execute::call(&callback, &Value::Undefined, &[])?; } Ok(Value::Undefined) }
-            CapabilityName::DgramClose => { state.0 = false; Ok(Value::Undefined) }
-            CapabilityName::DgramConnect => { if matches!(arguments.first(), Some(Value::Number(port)) if *port == 0.0) { return Err(VmError::Thrown(fs_error("ERR_SOCKET_BAD_PORT", "Port should be > 0 and < 65536"))); } state.1 = true; state.2 = arguments.first().and_then(|value| match value { Value::Number(port) => Some(*port as u16), _ => None }).unwrap_or(0); let callback = arguments.get(2).cloned(); drop(states); if let Some(callback) = callback { quench_runtime::execute::call(&callback, &Value::Undefined, &[])?; } Ok(Value::Undefined) }
-            CapabilityName::DgramDisconnect => { if !state.1 { return Err(VmError::Thrown(fs_error("ERR_SOCKET_DGRAM_NOT_CONNECTED", "Not connected"))); } state.1 = false; Ok(Value::Undefined) }
-            CapabilityName::DgramAddress => Ok(Value::object(vec![("address".into(), Value::String("0.0.0.0".into())), ("port".into(), Value::Number(state.2 as f64)), ("family".into(), Value::String("IPv4".into()))])),
-            CapabilityName::DgramRemoteAddress => Ok(Value::object(vec![("address".into(), Value::String("127.0.0.1".into())), ("port".into(), Value::Number(state.2 as f64)), ("family".into(), Value::String("IPv4".into()))])),
-            CapabilityName::DgramRef | CapabilityName::DgramUnref => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
-            CapabilityName::DgramSetBroadcast => if state.0 { Ok(Value::Boolean(true)) } else { Err(VmError::EvalError("setBroadcast EBADF".into())) },
-            CapabilityName::DgramSetTtl => if state.0 { Ok(arguments.first().cloned().unwrap_or(Value::Number(0.0))) } else { Err(VmError::EvalError("setTTL EBADF".into())) },
+            CapabilityName::DgramBind => {
+                if state.0 {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_SOCKET_ALREADY_BOUND",
+                        "Socket is already bound",
+                    )));
+                }
+                state.0 = true;
+                state.2 = arguments
+                    .first()
+                    .and_then(|value| match value {
+                        Value::Number(port) => {
+                            Some(if *port == 0.0 { 43124 } else { *port as u16 })
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or(43124);
+                let callback = arguments
+                    .last()
+                    .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_)))
+                    .cloned();
+                drop(states);
+                if let Some(callback) = callback {
+                    quench_runtime::execute::call(&callback, &Value::Undefined, &[])?;
+                }
+                Ok(Value::Undefined)
+            }
+            CapabilityName::DgramClose => {
+                state.0 = false;
+                Ok(Value::Undefined)
+            }
+            CapabilityName::DgramConnect => {
+                if matches!(arguments.first(), Some(Value::Number(port)) if *port == 0.0) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_SOCKET_BAD_PORT",
+                        "Port should be > 0 and < 65536",
+                    )));
+                }
+                state.1 = true;
+                state.2 = arguments
+                    .first()
+                    .and_then(|value| match value {
+                        Value::Number(port) => Some(*port as u16),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let callback = arguments.get(2).cloned();
+                drop(states);
+                if let Some(callback) = callback {
+                    quench_runtime::execute::call(&callback, &Value::Undefined, &[])?;
+                }
+                Ok(Value::Undefined)
+            }
+            CapabilityName::DgramDisconnect => {
+                if !state.1 {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_SOCKET_DGRAM_NOT_CONNECTED",
+                        "Not connected",
+                    )));
+                }
+                state.1 = false;
+                Ok(Value::Undefined)
+            }
+            CapabilityName::DgramAddress => Ok(Value::object(vec![
+                ("address".into(), Value::String("0.0.0.0".into())),
+                ("port".into(), Value::Number(state.2 as f64)),
+                ("family".into(), Value::String("IPv4".into())),
+            ])),
+            CapabilityName::DgramRemoteAddress => Ok(Value::object(vec![
+                ("address".into(), Value::String("127.0.0.1".into())),
+                ("port".into(), Value::Number(state.2 as f64)),
+                ("family".into(), Value::String("IPv4".into())),
+            ])),
+            CapabilityName::DgramRef | CapabilityName::DgramUnref => {
+                Ok(receiver.cloned().unwrap_or(Value::Undefined))
+            }
+            CapabilityName::DgramSetBroadcast => {
+                if state.0 {
+                    Ok(Value::Boolean(true))
+                } else {
+                    Err(VmError::EvalError("setBroadcast EBADF".into()))
+                }
+            }
+            CapabilityName::DgramSetTtl => {
+                if state.0 {
+                    Ok(arguments.first().cloned().unwrap_or(Value::Number(0.0)))
+                } else {
+                    Err(VmError::EvalError("setTTL EBADF".into()))
+                }
+            }
             CapabilityName::DgramGetRecvBufferSize => Ok(Value::Number(10000.0)),
             CapabilityName::DgramGetSendBufferSize => Ok(Value::Number(15000.0)),
-            CapabilityName::DgramSend => { let callback = arguments.last().cloned(); let total = arguments.first().map(|value| match value { Value::Array(array) => array.len(), Value::Uint8Array(view) => view.length, _ => 0 }).unwrap_or(0); let offset = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some(*value as usize), _ => None }).unwrap_or(0); let length = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some(*value as usize), _ => None }).unwrap_or(total.saturating_sub(offset)); let bytes = length.min(total.saturating_sub(offset)); drop(states); if let Some(callback) = callback { quench_runtime::execute::call(&callback, &Value::Undefined, &[Value::Null, Value::Number(bytes as f64)])?; } Ok(Value::Undefined) }
+            CapabilityName::DgramSend => {
+                let callback = arguments.last().cloned();
+                let total = arguments
+                    .first()
+                    .map(|value| match value {
+                        Value::Array(array) => array.len(),
+                        Value::Uint8Array(view) => view.length,
+                        _ => 0,
+                    })
+                    .unwrap_or(0);
+                let offset = arguments
+                    .get(1)
+                    .and_then(|value| match value {
+                        Value::Number(value) => Some(*value as usize),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let length = arguments
+                    .get(2)
+                    .and_then(|value| match value {
+                        Value::Number(value) => Some(*value as usize),
+                        _ => None,
+                    })
+                    .unwrap_or(total.saturating_sub(offset));
+                let bytes = length.min(total.saturating_sub(offset));
+                drop(states);
+                if let Some(callback) = callback {
+                    quench_runtime::execute::call(
+                        &callback,
+                        &Value::Undefined,
+                        &[Value::Null, Value::Number(bytes as f64)],
+                    )?;
+                }
+                Ok(Value::Undefined)
+            }
             _ => Err(VmError::NotCallable),
         }
     }
@@ -1860,7 +2456,14 @@ impl QuenchNodeHost {
             .get(1)
             .map(safe_value_string)
             .unwrap_or_else(|| "r".into());
-        if let Some(mode) = arguments.get(2) { if !matches!(mode, Value::Number(_)) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "mode is invalid"))); } }
+        if let Some(mode) = arguments.get(2) {
+            if !matches!(mode, Value::Number(_)) {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_VALUE",
+                    "mode is invalid",
+                )));
+            }
+        }
         if flags.starts_with('w') || flags.starts_with('a') {
             if flags.starts_with('w') {
                 std::fs::OpenOptions::new()
@@ -2784,12 +3387,52 @@ fn fs_stat_async(arguments: &[Value]) -> Result<Value, VmError> {
 fn fs_mkdir(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
     let options = arguments.get(1);
-    let recursive = options.is_some_and(|value| matches!(quench_runtime::execute::get_property_result(value, "recursive"), Ok(Value::Boolean(true))));
-    if let Some(options) = options { if matches!(quench_runtime::execute::get_property_result(options, "recursive"), Ok(Value::String(_))) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "recursive must be a boolean"))); } }
-    let mode = options.and_then(|value| match value { Value::Number(mode) => Some(*mode as u32), _ => quench_runtime::execute::get_property_result(value, "mode").ok().and_then(|value| match value { Value::Number(mode) => Some(mode as u32), _ => None }) }).unwrap_or(0o777) & 0o777;
-    if recursive { let parent = Path::new(path).parent().map(Path::to_path_buf); std::fs::create_dir_all(path).map_err(|error| VmError::EvalError(error.to_string()))?; #[cfg(unix)] { let _ = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode)); } return Ok(parent.map(|path| Value::String(path.to_string_lossy().into())).unwrap_or(Value::Undefined)); }
+    let recursive = options.is_some_and(|value| {
+        matches!(
+            quench_runtime::execute::get_property_result(value, "recursive"),
+            Ok(Value::Boolean(true))
+        )
+    });
+    if let Some(options) = options {
+        if matches!(
+            quench_runtime::execute::get_property_result(options, "recursive"),
+            Ok(Value::String(_))
+        ) {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "recursive must be a boolean",
+            )));
+        }
+    }
+    let mode = options
+        .and_then(|value| match value {
+            Value::Number(mode) => Some(*mode as u32),
+            _ => quench_runtime::execute::get_property_result(value, "mode")
+                .ok()
+                .and_then(|value| match value {
+                    Value::Number(mode) => Some(mode as u32),
+                    _ => None,
+                }),
+        })
+        .unwrap_or(0o777)
+        & 0o777;
+    if recursive {
+        let parent = Path::new(path).parent().map(Path::to_path_buf);
+        std::fs::create_dir_all(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+        #[cfg(unix)]
+        {
+            let _ =
+                std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode));
+        }
+        return Ok(parent
+            .map(|path| Value::String(path.to_string_lossy().into()))
+            .unwrap_or(Value::Undefined));
+    }
     std::fs::create_dir(path).map_err(|error| VmError::EvalError(error.to_string()))?;
-    #[cfg(unix)] { let _ = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode)); }
+    #[cfg(unix)]
+    {
+        let _ = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode));
+    }
     Ok(Value::Undefined)
 }
 
@@ -3024,8 +3667,18 @@ fn fs_access(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn fs_access_sync(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(mode) = arguments.get(1) {
-        let Value::Number(mode) = mode else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "mode must be a number"))); };
-        if !mode.is_finite() || *mode < 0.0 || *mode > 7.0 || mode.fract() != 0.0 { return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "mode is out of range"))); }
+        let Value::Number(mode) = mode else {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "mode must be a number",
+            )));
+        };
+        if !mode.is_finite() || *mode < 0.0 || *mode > 7.0 || mode.fract() != 0.0 {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_OUT_OF_RANGE",
+                "mode is out of range",
+            )));
+        }
     }
     if !matches!(fs_access(arguments)?, Value::Boolean(true)) {
         return Err(VmError::EvalError(
@@ -3100,7 +3753,10 @@ fn fs_access_async(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn fs_write_async(arguments: &[Value]) -> Result<Value, VmError> {
     let callback = arguments.last().ok_or(VmError::NotCallable)?;
-    if matches!(arguments.first(), Some(Value::Number(_))) { quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?; return Ok(Value::Undefined); }
+    if matches!(arguments.first(), Some(Value::Number(_))) {
+        quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
+        return Ok(Value::Undefined);
+    }
     fs_write_bytes(&arguments[..arguments.len().saturating_sub(1)], false)?;
     quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
     Ok(Value::Undefined)
@@ -3336,7 +3992,10 @@ fn value_to_string(value: &Value) -> String {
 
 impl QuenchNodeHost {
     fn create_hash(&self, arguments: &[Value]) -> Result<Value, VmError> {
-        if !matches!(arguments.first(), Some(Value::String(name)) if name == "sha256" || name == "sha1") { return Err(VmError::EvalError("unsupported hash algorithm".into())); }
+        if !matches!(arguments.first(), Some(Value::String(name)) if name == "sha256" || name == "sha1")
+        {
+            return Err(VmError::EvalError("unsupported hash algorithm".into()));
+        }
         let id = self.next_hash.get();
         self.next_hash.set(id.saturating_add(2));
         self.hashes.borrow_mut().insert(id, Vec::new());
@@ -3636,51 +4295,124 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     }
     if name.ends_with("/common/fixtures") || name.ends_with("/common/fixtures.js") {
         return Ok(quench_runtime::host_api::object(vec![
-            ("readKey".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::FixtureReadKey))),
-            ("path".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::FixturePath))),
+            (
+                "readKey".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FixtureReadKey)),
+            ),
+            (
+                "path".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FixturePath)),
+            ),
         ]));
     }
     if name == "dns" || name == "node:dns" {
-        let promises = quench_runtime::host_api::object(vec![("lookupService".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService)))]);
+        let promises = quench_runtime::host_api::object(vec![(
+            "lookupService".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService)),
+        )]);
         return Ok(quench_runtime::host_api::object(vec![
-            ("setServers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsSetServers))),
-            ("getServers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsGetServers))),
-            ("resolve".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolve))),
-            ("lookupService".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService))),
-            ("resolveMx".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolveMx))),
+            (
+                "setServers".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsSetServers)),
+            ),
+            (
+                "getServers".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsGetServers)),
+            ),
+            (
+                "resolve".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolve)),
+            ),
+            (
+                "lookupService".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService)),
+            ),
+            (
+                "resolveMx".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolveMx)),
+            ),
             ("promises".into(), promises),
         ]));
     }
     if name == "dgram" || name == "node:dgram" {
-        return Ok(quench_runtime::host_api::object(vec![("createSocket".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramCreateSocket)))]));
+        return Ok(quench_runtime::host_api::object(vec![(
+            "createSocket".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::DgramCreateSocket,
+            )),
+        )]));
     }
     if name == "timers/promises" || name == "node:timers/promises" {
         return Ok(timers_promises_module());
     }
     if name == "worker_threads" || name == "node:worker_threads" {
-        return Ok(quench_runtime::host_api::object(vec![("Worker".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerConstructor)))]));
+        return Ok(quench_runtime::host_api::object(vec![(
+            "Worker".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::WorkerConstructor,
+            )),
+        )]));
     }
     if name == "zlib" || name == "node:zlib" {
         let gzip = Value::Builtin(quench_runtime::ops::Builtin::Object);
         return Ok(quench_runtime::host_api::object(vec![
-            ("createGzip".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateGzip))),
-            ("createGunzip".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateGunzip))),
-            ("createUnzip".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateUnzip))),
+            (
+                "createGzip".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateGzip)),
+            ),
+            (
+                "createGunzip".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateGunzip)),
+            ),
+            (
+                "createUnzip".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibCreateUnzip)),
+            ),
             ("Gzip".into(), gzip),
-            ("gzipSync".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibGzipSync))),
-            ("deflateSync".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibDeflateSync))),
+            (
+                "gzipSync".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibGzipSync)),
+            ),
+            (
+                "deflateSync".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ZlibDeflateSync)),
+            ),
         ]));
     }
     if name == "tls" || name == "node:tls" {
-        return Ok(quench_runtime::host_api::object(vec![("getCiphers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TlsGetCiphers))), ("createSecureContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TlsCreateSecureContext)))]));
+        return Ok(quench_runtime::host_api::object(vec![
+            (
+                "getCiphers".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::TlsGetCiphers)),
+            ),
+            (
+                "createSecureContext".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::TlsCreateSecureContext,
+                )),
+            ),
+        ]));
     }
     if name == "timers" || name == "node:timers" {
-        return Ok(quench_runtime::host_api::object(vec![("promises".into(), timers_promises_module())]));
+        return Ok(quench_runtime::host_api::object(vec![(
+            "promises".into(),
+            timers_promises_module(),
+        )]));
     }
     if name == "net" || name == "node:net" {
         return Ok(quench_runtime::host_api::object(vec![
-            ("getDefaultAutoSelectFamily".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamily))),
-            ("getDefaultAutoSelectFamilyAttemptTimeout".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout))),
+            (
+                "getDefaultAutoSelectFamily".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::NetGetDefaultAutoSelectFamily,
+                )),
+            ),
+            (
+                "getDefaultAutoSelectFamilyAttemptTimeout".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout,
+                )),
+            ),
         ]));
     }
     if name == "path" || name == "node:path" {
@@ -3999,7 +4731,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "mkdir".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdirAsync)),
                 ),
-                ("_toUnixTimestamp".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::FsToUnixTimestamp))),
+                (
+                    "_toUnixTimestamp".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::FsToUnixTimestamp,
+                    )),
+                ),
                 (
                     "rmSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsRmSync)),
@@ -4150,20 +4887,73 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "createHash".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash)),
                 ),
-                ("getHashes".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetHashes))),
-                ("getCiphers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetCiphers))),
-                ("getCipherInfo".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetCipherInfo))),
-                ("getCurves".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetCurves))),
-                ("Hash".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
-                ("Hmac".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
-                ("Sign".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
-                ("Verify".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
-                ("DiffieHellmanGroup".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
-                ("ECDH".into(), Value::Builtin(quench_runtime::ops::Builtin::Object)),
-                ("constants".into(), quench_runtime::host_api::object(vec![("RSA_PKCS1_PADDING".into(), Value::Number(1.0)), ("RSA_PKCS1_PSS_PADDING".into(), Value::Number(6.0))])),
-                ("getDiffieHellman".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetDiffieHellman))),
-                ("createDiffieHellman".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoCreateDiffieHellman))),
-                ("createDiffieHellmanGroup".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetDiffieHellman))),
+                (
+                    "getHashes".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoGetHashes,
+                    )),
+                ),
+                (
+                    "getCiphers".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoGetCiphers,
+                    )),
+                ),
+                (
+                    "getCipherInfo".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoGetCipherInfo,
+                    )),
+                ),
+                (
+                    "getCurves".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoGetCurves,
+                    )),
+                ),
+                (
+                    "Hash".into(),
+                    Value::Builtin(quench_runtime::ops::Builtin::Object),
+                ),
+                (
+                    "Hmac".into(),
+                    Value::Builtin(quench_runtime::ops::Builtin::Object),
+                ),
+                (
+                    "Sign".into(),
+                    Value::Builtin(quench_runtime::ops::Builtin::Object),
+                ),
+                (
+                    "Verify".into(),
+                    Value::Builtin(quench_runtime::ops::Builtin::Object),
+                ),
+                ("DiffieHellmanGroup".into(), dh_constructor()),
+                ("ECDH".into(), dh_constructor()),
+                (
+                    "constants".into(),
+                    quench_runtime::host_api::object(vec![
+                        ("RSA_PKCS1_PADDING".into(), Value::Number(1.0)),
+                        ("RSA_PKCS1_PSS_PADDING".into(), Value::Number(6.0)),
+                    ]),
+                ),
+                (
+                    "getDiffieHellman".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoGetDiffieHellman,
+                    )),
+                ),
+                (
+                    "createDiffieHellman".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCreateDiffieHellman,
+                    )),
+                ),
+                (
+                    "createDiffieHellmanGroup".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoGetDiffieHellman,
+                    )),
+                ),
                 (
                     "randomBytes".into(),
                     capability_function(HostCapabilityKind::Custom(
@@ -4195,10 +4985,30 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         }
         if name == "stream/consumers" || name == "node:stream/consumers" {
             return Ok(quench_runtime::host_api::object(vec![
-                ("buffer".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamConsumerBuffer))),
-                ("bytes".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamConsumerBytes))),
-                ("text".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamConsumerText))),
-                ("json".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamConsumerJson))),
+                (
+                    "buffer".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::StreamConsumerBuffer,
+                    )),
+                ),
+                (
+                    "bytes".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::StreamConsumerBytes,
+                    )),
+                ),
+                (
+                    "text".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::StreamConsumerText,
+                    )),
+                ),
+                (
+                    "json".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::StreamConsumerJson,
+                    )),
+                ),
             ]));
         }
         if name == "node:stream" || name == "stream" {
@@ -4239,10 +5049,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::Stream)),
                 ),
                 ("Readable".into(), readable),
-                (
-                    "Writable".into(),
-                    writable,
-                ),
+                ("Writable".into(), writable),
                 (
                     "Duplex".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::StreamDuplex)),
@@ -4253,11 +5060,20 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
                 (
                     "finished".into(),
-                    quench_runtime::execute::get_property_result(&promises, "finished").unwrap_or(Value::Undefined),
+                    quench_runtime::execute::get_property_result(&promises, "finished")
+                        .unwrap_or(Value::Undefined),
                 ),
                 ("promises".into(), promises),
-                ("pipeline".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamPipeline))),
-                ("addAbortSignal".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamAddAbortSignal))),
+                (
+                    "pipeline".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamPipeline)),
+                ),
+                (
+                    "addAbortSignal".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::StreamAddAbortSignal,
+                    )),
+                ),
             ]));
         }
         if name == "node:http" || name == "http" {
@@ -4265,8 +5081,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 capability_function(HostCapabilityKind::Custom(CapabilityName::HttpServer)),
                 "prototype",
                 quench_runtime::host_api::object(vec![
-                    ("once".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::HttpIncomingOnce))),
-                    ("emit".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::HttpIncomingEmit))),
+                    (
+                        "once".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::HttpIncomingOnce,
+                        )),
+                    ),
+                    (
+                        "emit".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::HttpIncomingEmit,
+                        )),
+                    ),
                 ]),
             );
             return Ok(Value::object(vec![
@@ -5286,7 +6112,11 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
 fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(Value::String(value)) = arguments.first() {
         let mut output = value.clone();
-        if let Some(authority_end) = output.find("//").and_then(|start| output[start + 2..].find(['?', '#']).map(|offset| start + 2 + offset)) {
+        if let Some(authority_end) = output.find("//").and_then(|start| {
+            output[start + 2..]
+                .find(['?', '#'])
+                .map(|offset| start + 2 + offset)
+        }) {
             let authority = &output[..authority_end];
             if !authority.ends_with('/') {
                 output.insert(authority_end, '/');
@@ -6560,7 +7390,13 @@ fn string_decoder_end(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         .ok()
         .and_then(|value| array_values(&value).ok())
         .unwrap_or_default();
-    let encoding = quench_runtime::execute::get_property_result(receiver, "encoding").ok().and_then(|value| match value { Value::String(value) => Some(value), _ => None }).unwrap_or_default();
+    let encoding = quench_runtime::execute::get_property_result(receiver, "encoding")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or_default();
     let tail = if pending.is_empty() || encoding == "utf16le" || encoding == "ucs2" {
         String::new()
     } else {
@@ -7199,10 +8035,18 @@ fn internal_view_has_buffer(arguments: &[Value]) -> Result<Value, VmError> {
 fn stream_promises_module() -> Value {
     NODE_STREAM_PROMISES.with(|module| {
         let mut module = module.borrow_mut();
-        if module.is_none() { *module = Some(quench_runtime::host_api::object(vec![
-            ("pipeline".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamPipeline))),
-            ("finished".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamFinished))),
-        ])); }
+        if module.is_none() {
+            *module = Some(quench_runtime::host_api::object(vec![
+                (
+                    "pipeline".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamPipeline)),
+                ),
+                (
+                    "finished".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamFinished)),
+                ),
+            ]));
+        }
         module.as_ref().unwrap().clone()
     })
 }
@@ -7210,7 +8054,9 @@ fn stream_promises_module() -> Value {
 fn timers_promises_module() -> Value {
     NODE_TIMERS_PROMISES.with(|module| {
         let mut module = module.borrow_mut();
-        if module.is_none() { *module = Some(quench_runtime::host_api::object(vec![])); }
+        if module.is_none() {
+            *module = Some(quench_runtime::host_api::object(vec![]));
+        }
         module.as_ref().unwrap().clone()
     })
 }
@@ -7281,7 +8127,10 @@ fn util_module() -> Value {
             )),
         ),
         ("types".into(), types),
-        ("getCallSites".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites))),
+        (
+            "getCallSites".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites)),
+        ),
         (
             "TextEncoder".into(),
             capability_function(HostCapabilityKind::Custom(
@@ -9070,6 +9919,21 @@ fn capability_function(kind: HostCapabilityKind) -> Value {
         realm: RealmId::ROOT,
         kind,
     })
+}
+
+fn dh_constructor() -> Value {
+    let constructor = capability_function(HostCapabilityKind::Custom(
+        CapabilityName::CryptoCreateDiffieHellman,
+    ));
+    quench_runtime::execute::set_callable_property(
+        &constructor,
+        "Symbol.hasInstance",
+        capability_function(HostCapabilityKind::Custom(
+            CapabilityName::CryptoDhHasInstance,
+        )),
+    )
+    .expect("callable hasInstance");
+    constructor
 }
 
 fn basename(arguments: &[Value]) -> Result<Value, VmError> {
