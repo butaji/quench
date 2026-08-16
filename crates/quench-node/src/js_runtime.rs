@@ -1046,7 +1046,16 @@ impl QuenchNodeHost {
 
     fn fs_readv(&self, arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
         let fd = arguments.first().cloned().ok_or(VmError::NotCallable)?;
-        let buffers = array_values(arguments.get(1).ok_or(VmError::NotCallable)?)?;
+        let buffers_value = arguments.get(1).ok_or(VmError::NotCallable)?;
+        if !matches!(buffers_value, Value::Array(_)) {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "buffers must be an array",
+            )));
+        }
+        let buffers = array_values(buffers_value).map_err(|_| {
+            VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "buffers must be an array"))
+        })?;
         let position = arguments
             .get(2)
             .and_then(|value| match value {
@@ -1106,7 +1115,16 @@ impl QuenchNodeHost {
 
     fn fs_writev(&self, arguments: &[Value]) -> Result<Value, VmError> {
         let fd = arguments.first().cloned().ok_or(VmError::NotCallable)?;
-        let buffers = array_values(arguments.get(1).ok_or(VmError::NotCallable)?)?;
+        let buffers_value = arguments.get(1).ok_or(VmError::NotCallable)?;
+        if !matches!(buffers_value, Value::Array(_)) {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "buffers must be an array",
+            )));
+        }
+        let buffers = array_values(buffers_value).map_err(|_| {
+            VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "buffers must be an array"))
+        })?;
         let mut total = 0.0;
         for buffer in buffers {
             let position = Value::Number(total);
