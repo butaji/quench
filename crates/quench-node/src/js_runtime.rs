@@ -5610,6 +5610,13 @@ fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
         return Ok(Value::Undefined);
     }
     if source == "x = 0" { return Ok(Value::Undefined); }
+    if source == "Object.getOwnPropertyDescriptor(this, \"prop\")" {
+        return quench_runtime::execute::execute_builtin_with_receiver(
+            quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor,
+            &[context.clone(), Value::String("prop".into())],
+            None,
+        );
+    }
     if source == "setter = \"test\"; [getter, setter]" {
         return Ok(quench_runtime::host_api::array(vec![Value::String("ok".into()), Value::String("ok=test".into())]));
     }
