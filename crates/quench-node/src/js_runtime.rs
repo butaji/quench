@@ -896,6 +896,16 @@ impl Host for QuenchNodeHost {
         ) {
             return Err(VmError::NotCallable);
         }
+        if let Some(options) = arguments.first() {
+            for key in ["defaultEncoding", "readableDefaultEncoding", "writableDefaultEncoding"] {
+                if let Ok(Value::String(encoding)) = quench_runtime::execute::get_property_result(options, key) {
+                    let valid = matches!(encoding.to_ascii_lowercase().as_str(), "utf8" | "utf-8" | "utf16le" | "ucs2" | "ucs-2" | "latin1" | "binary" | "ascii" | "base64" | "base64url" | "hex");
+                    if !valid {
+                        return Err(VmError::Thrown(fs_error("ERR_UNKNOWN_ENCODING", "Unknown encoding")));
+                    }
+                }
+            }
+        }
         let id = self.next_stream.get();
         self.next_stream.set(id.saturating_add(10));
         let transform = arguments
@@ -925,7 +935,11 @@ impl Host for QuenchNodeHost {
         );
         let mut stream = Value::object(vec![
             ("readableEnded".into(), Value::Boolean(false)),
-            ("readableDefaultEncoding".into(), Value::String("utf8".into())),
+            ("readableDefaultEncoding".into(), arguments.first()
+                .and_then(|options| quench_runtime::execute::get_property_result(options, "defaultEncoding").ok())
+                .filter(|value| matches!(value, Value::String(_)))
+                .unwrap_or_else(|| Value::String("utf8".into()))),
+            ("_writableState".into(), Value::object(vec![("needDrain".into(), Value::Boolean(false))])),
             (
                 "on".into(),
                 capability_function(HostCapabilityKind::Custom(id + 1)),
