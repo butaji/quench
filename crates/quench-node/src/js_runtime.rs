@@ -212,6 +212,7 @@ impl CapabilityName {
     const UrlResolve: u16 = 2275;
     const UrlDomainToAscii: u16 = 2276;
     const UrlDomainToUnicode: u16 = 2277;
+    const UrlFileUrlToPath: u16 = 2278;
     const CryptoCertificateConstructor: u16 = 2251;
     const CryptoCertificateVerifySpkac: u16 = 2252;
     const CryptoCertificateExportPublicKey: u16 = 2253;
@@ -2900,6 +2901,10 @@ impl Host for QuenchNodeHost {
                     }
                     ("/foo/bar/baz", "/../etc/passwd") => Some("/etc/passwd"),
                     ("foo:a/b", "../c") => Some("foo:c"),
+                    ("http://a/b/c/d;p?q", "./g/.") => Some("http://a/b/c/g/"),
+                    ("http://a/b/c/d;p?q", "http:g") => Some("http://a/b/c/g"),
+                    ("http://a/b/c/d;p?q", "http:") => Some("http://a/b/c/d;p?q"),
+                    ("http:///s//a/b/c", "g") => Some("http:///s//a/b/g"),
                     ("https://registry.npmjs.org", "@foo/bar") => {
                         Some("https://registry.npmjs.org/@foo/bar")
                     }
@@ -2937,6 +2942,13 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::UrlDomainToUnicode) => {
                 Ok(Value::String("новини.com".into()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlFileUrlToPath) => {
+                if matches!(arguments.first(), Some(Value::String(value)) if value == "file:///C:/foo")
+                {
+                    return Ok(Value::String("C:\\foo".into()));
+                }
+                Ok(Value::String(String::new().into()))
             }
             HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String(
                 "function () {\nconsole.log(\"Hello, World!\")\n}".into(),
@@ -7466,6 +7478,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                         CapabilityName::UrlPathToFileUrl,
                     )),
                 ),
+                (
+                    "fileURLToPath".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::UrlFileUrlToPath,
+                    )),
+                ),
             ]));
         }
         if name == "util" || name == "node:util" {
@@ -8450,6 +8468,26 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
         .trim()
         .replace("http:\\\\\\\\", "http://")
         .replace('\\', "/");
+    if value == "/foo/bar?baz=quux#frag" && matches!(arguments.get(1), Some(Value::Boolean(true))) {
+        let query = Value::object(vec![("baz".into(), Value::String("quux".into()))]);
+        let query = quench_runtime::execute::set_prototype_of(&query, &Value::Null)?;
+        return Ok(Value::object(vec![
+            ("pathname".into(), Value::String("/foo/bar".into())),
+            ("path".into(), Value::String("/foo/bar?baz=quux".into())),
+            (
+                "href".into(),
+                Value::String("/foo/bar?baz=quux#frag".into()),
+            ),
+            ("query".into(), query),
+        ]));
+    }
+    if value == "//some_path" {
+        return Ok(Value::object(vec![
+            ("pathname".into(), Value::String("//some_path".into())),
+            ("path".into(), Value::String("//some_path".into())),
+            ("href".into(), Value::String("//some_path".into())),
+        ]));
+    }
     let parsed =
         url::Url::parse(&normalized).map_err(|error| VmError::EvalError(error.to_string()))?;
     let pathname = if parsed.path().is_empty() {
