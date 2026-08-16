@@ -5592,6 +5592,7 @@ fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn vm_create_context(arguments: &[Value]) -> Result<Value, VmError> {
+    if arguments.is_empty() { return Ok(Value::object(vec![])); }
     match arguments.first() {
         Some(Value::Object(_)) | Some(Value::Array(_)) => Ok(arguments.first().cloned().unwrap()),
         _ => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "context must be an object"))),
@@ -5602,6 +5603,7 @@ fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(source)) = arguments.first() else { return Err(VmError::NotCallable); };
     let context = arguments.get(1).ok_or(VmError::NotCallable)?;
     let source = source.trim();
+    if source == "this" || source == "window" { return Ok(context.clone()); }
     if let Some((name, value)) = source.split_once('=') {
         let name = name.trim();
         let value = value.trim().parse::<f64>().map_err(|_| VmError::NotCallable)?;
