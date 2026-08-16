@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use oxc::{allocator::Allocator, ast::visit::Visit, parser::Parser, span::SourceType};
 
@@ -53,9 +53,14 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     if matches!(kind, FunctionKind::Generator) && has_yield_expression(&function.params) {
         return Err(syntax_error("Invalid generator parameters"));
     }
+    let strictness = crate::reduce_support::function_strictness(body, false);
+    if matches!(strictness, crate::ops::FunctionStrictness::Strict)
+        && has_duplicate_parameter_names(&function.params)
+    {
+        return Err(syntax_error("Duplicate function parameter name"));
+    }
     let (parameters, count) = crate::functions::function_parameters(function)
         .map_err(|_| syntax_error("Invalid function parameters"))?;
-    let strictness = crate::reduce_support::function_strictness(body, false);
     if matches!(strictness, crate::ops::FunctionStrictness::Strict) && contains_with_statement(body)
     {
         return Err(syntax_error("Invalid strict function body"));
@@ -83,6 +88,21 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     crate::builtins::set_function_name(&value, "anonymous")?;
     mark_dynamic(&value);
     Ok(value)
+}
+
+fn has_duplicate_parameter_names(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    let mut seen = HashSet::new();
+    let names = parameters
+        .items
+        .iter()
+        .flat_map(|item| crate::binding_patterns::names(&item.pattern))
+        .chain(
+            parameters
+                .rest
+                .iter()
+                .flat_map(|rest| crate::binding_patterns::names(&rest.argument)),
+        );
+    names.into_iter().any(|name| !seen.insert(name))
 }
 
 fn contains_with_statement(body: &oxc::ast::ast::FunctionBody<'_>) -> bool {
