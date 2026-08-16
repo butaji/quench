@@ -336,7 +336,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlSegmenter => Some(construct(arguments)),
+        crate::ops::Builtin::IntlSegmenter => Some(construct_if_new(arguments, receiver)),
         crate::ops::Builtin::IntlSegmenterSegment
         | crate::ops::Builtin::IntlSegmenterSegmentsIterator
         | crate::ops::Builtin::IntlSegmenterSegmentsContaining
@@ -345,4 +345,11 @@ pub(crate) fn dispatch(
         }
         _ => None,
     }
+}
+
+fn construct_if_new(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    if receiver.is_some() {
+        return Err(runtime_error("TypeError: Intl.Segmenter requires 'new'"));
+    }
+    construct(arguments)
 }
