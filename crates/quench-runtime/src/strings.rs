@@ -165,7 +165,7 @@ fn execute_builtin_tail(
         crate::ops::Builtin::StringToString => Ok(to_string_value(receiver)),
         crate::ops::Builtin::StringReplace => replace(receiver, arguments, false),
         crate::ops::Builtin::StringReplaceAll => replace(receiver, arguments, true),
-        crate::ops::Builtin::StringSearch => Ok(search(receiver, arguments)),
+        crate::ops::Builtin::StringSearch => search(receiver, arguments),
         crate::ops::Builtin::StringLocaleCompare => locale_compare(receiver, arguments),
         crate::ops::Builtin::StringMatch => string_match(receiver, arguments),
         crate::ops::Builtin::StringMatchAll => string_match_all(receiver, arguments),
