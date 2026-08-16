@@ -166,7 +166,16 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "caseFirst" => locale.case_first = Some(normalize_case_first(&text)?),
             "hourCycle" => locale.hour_cycle = Some(normalize_hour_cycle(&text)?),
             "numberingSystem" => {
-                locale.numbering_system = Some(option_value(&text, "numberingSystem")?)
+                let value = option_value(&text, "numberingSystem")?;
+                if !value.split('-').all(|part| {
+                    (3..=8).contains(&part.len())
+                        && part
+                            .chars()
+                            .all(|character| character.is_ascii_alphanumeric())
+                }) {
+                    return Err(runtime_error("RangeError: invalid numberingSystem"));
+                }
+                locale.numbering_system = Some(value);
             }
             "numeric" => locale.numeric = normalize_numeric(&value, &text)?,
             "firstDayOfWeek" => {
