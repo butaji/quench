@@ -342,7 +342,11 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
             "relativeTo is required for date units",
         ));
     }
-    let difference = duration_value(&left) - duration_value(&right);
+    let difference = if date_units(&left) || date_units(&right) {
+        duration_value(&left) - duration_value(&right)
+    } else {
+        exact_time_difference(&left, &right)
+    };
     if difference == 0.0 {
         return Ok(Value::Number(0.0));
     }
@@ -400,6 +404,31 @@ fn duration_value(value: &Value) -> f64 {
     ]
     .iter()
     .map(|(name, scale)| number_property(value, name) * scale)
+    .sum()
+}
+
+fn exact_time_difference(left: &Value, right: &Value) -> f64 {
+    let left = time_nanoseconds(left);
+    let right = time_nanoseconds(right);
+    match left.cmp(&right) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    }
+}
+
+fn time_nanoseconds(value: &Value) -> i128 {
+    [
+        ("days", 86_400_000_000_000_i128),
+        ("hours", 3_600_000_000_000),
+        ("minutes", 60_000_000_000),
+        ("seconds", 1_000_000_000),
+        ("milliseconds", 1_000_000),
+        ("microseconds", 1_000),
+        ("nanoseconds", 1),
+    ]
+    .iter()
+    .map(|(name, scale)| i128::from(number_property(value, name) as i64) * scale)
     .sum()
 }
 
