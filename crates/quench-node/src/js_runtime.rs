@@ -1130,6 +1130,8 @@ impl QuenchNodeHost {
                 arguments.get(1).cloned().ok_or(VmError::NotCallable)?,
             ])
             .map(|_| Value::Undefined)
+        } else if matches!(arguments.get(2), Some(Value::Object(_))) {
+            fs_write_options(arguments)
         } else {
             fs_write_bytes(arguments, false)
         }
@@ -1946,6 +1948,38 @@ fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
     Ok(Value::Undefined)
 }
 
+fn fs_write_options(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    let options = arguments.get(2).ok_or(VmError::NotCallable)?;
+    let append = matches!(
+        quench_runtime::execute::get_property_result(options, "flag").ok(),
+        Some(Value::String(flag)) if flag == "a"
+    );
+    let encoding = quench_runtime::execute::get_property_result(options, "encoding").ok();
+    let mut bytes = string_or_bytes(arguments.get(1))?;
+    if matches!(encoding, Some(Value::String(value)) if value == "hex") {
+        let text =
+            String::from_utf8(bytes).map_err(|_| VmError::EvalError("invalid hex input".into()))?;
+        bytes = (0..text.len())
+            .step_by(2)
+            .filter_map(|index| u8::from_str_radix(&text[index..index + 2], 16).ok())
+            .collect();
+    }
+    if append {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|error| VmError::EvalError(error.to_string()))?;
+        file.write_all(&bytes)
+            .map_err(|error| VmError::EvalError(error.to_string()))?;
+    } else {
+        std::fs::write(path, bytes).map_err(|error| VmError::EvalError(error.to_string()))?;
+    }
+    Ok(Value::Undefined)
+}
+
 fn fs_unlink(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
     std::fs::remove_file(path).map_err(|error| VmError::EvalError(error.to_string()))?;
@@ -2125,9 +2159,12 @@ fn fixture_common_path(path: &str) -> std::borrow::Cow<'_, str> {
 fn string_or_bytes(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
     match value {
         Some(Value::String(value)) => Ok(value.as_bytes().to_vec()),
-        Some(Value::Uint8Array(view)) => Ok(
-            view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec(),
-        ),
+        Some(Value::Uint8Array(view)) => Ok(view.buffer.bytes.borrow()
+            [view.byte_offset..view.byte_offset + view.length]
+            .to_vec()),
+        Some(Value::DataView(view)) => Ok(view.buffer.bytes.borrow()
+            [view.byte_offset..view.byte_offset + view.byte_length]
+            .to_vec()),
         _ => Err(VmError::EvalError("expected string or bytes".into())),
     }
 }
