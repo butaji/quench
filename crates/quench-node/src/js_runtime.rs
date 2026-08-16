@@ -2448,6 +2448,18 @@ impl QuenchNodeHost {
 
     fn util_deprecate(&self, arguments: &[Value]) -> Result<Value, VmError> {
         let callback = arguments.first().cloned().ok_or(VmError::NotCallable)?;
+        if let Some(code) = arguments.get(2) {
+            if !matches!(code, Value::String(_)) {
+                return Err(VmError::Thrown(quench_runtime::host_api::object(vec![
+                    ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                    ("name".into(), Value::String("TypeError".into())),
+                    (
+                        "message".into(),
+                        Value::String("The \"code\" argument must be of type string.".into()),
+                    ),
+                ])));
+            }
+        }
         let id = self.next_deprecated.get();
         self.next_deprecated.set(id.saturating_add(1));
         self.deprecated.borrow_mut().insert(id, callback);
