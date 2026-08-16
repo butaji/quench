@@ -20,6 +20,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateInLeapYearGetter => Some("get inLeapYear"),
         Builtin::TemporalPlainDateEraGetter => Some("get era"),
         Builtin::TemporalPlainDateEraYearGetter => Some("get eraYear"),
+        Builtin::TemporalPlainDateCalendarIdGetter => Some("get calendarId"),
         Builtin::TemporalPlainDateValueOf => Some("Temporal.PlainDate.prototype.valueOf"),
         _ => None,
     }
@@ -43,6 +44,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDateInLeapYearGetter => Some("inLeapYear"),
         Builtin::TemporalPlainDateEraGetter => Some("era"),
         Builtin::TemporalPlainDateEraYearGetter => Some("eraYear"),
+        Builtin::TemporalPlainDateCalendarIdGetter => Some("calendarId"),
         Builtin::TemporalPlainDateValueOf => Some("valueOf"),
         _ => None,
     }
@@ -65,6 +67,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalPlainDateInLeapYearGetter => Some(0.0),
         Builtin::TemporalPlainDateEraGetter => Some(0.0),
         Builtin::TemporalPlainDateEraYearGetter => Some(0.0),
+        Builtin::TemporalPlainDateCalendarIdGetter => Some(0.0),
         Builtin::TemporalPlainDateValueOf => Some(0.0),
         _ => None,
     }
