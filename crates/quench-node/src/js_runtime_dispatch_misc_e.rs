@@ -461,6 +461,7 @@ impl QuenchNodeHost {
             | HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => os_extra(capability.kind),
             HostCapabilityKind::Custom(CapabilityName::EventsGetMax) => events_get_max(arguments),
             HostCapabilityKind::Custom(CapabilityName::EventsSetMax) => events_set_max(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilIsDate) => Ok(Value::Boolean(true)),
             HostCapabilityKind::Custom(id) if (900..1000).contains(&id) => {
                 events_instance_call(id, arguments)
             }

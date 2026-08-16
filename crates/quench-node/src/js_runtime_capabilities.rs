@@ -28,6 +28,7 @@ impl CapabilityName {
     const ProcessCpuUsage: u16 = 2110;
     const ProcessHrtime: u16 = 2111;
     const ProcessActiveResourcesInfo: u16 = 2112;
+    const UtilIsDate: u16 = 2130;
     const VmCreateContext: u16 = 2113;
     const VmRunInContext: u16 = 2114;
     const VmScript: u16 = 2115;
@@ -312,6 +313,9 @@ impl CapabilityName {
     const UrlSearchParams: u16 = 2287;
     const UrlSearchParamsGet: u16 = 2288;
     const UrlSearchParamsSort: u16 = 2289;
+    const UrlSearchParamsGetAll: u16 = 2310;
+    const UrlSearchParamsSet: u16 = 2311;
+    const UrlSearchParamsToString: u16 = 2312;
     const UrlSearchParamsOwner: u16 = 2290;
     const UrlUsernameSet: u16 = 2291;
     const UrlPasswordGet: u16 = 2292;

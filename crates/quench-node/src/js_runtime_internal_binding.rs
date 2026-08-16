@@ -55,9 +55,6 @@ fn util_types_module() -> Value {
         module
             .borrow_mut()
             .get_or_insert_with(|| {
-                let predicate = capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::InternalArrayBufferViewHasBuffer,
-                ));
                 let names = [
                     "isAnyArrayBuffer",
                     "isArrayBuffer",
@@ -76,12 +73,14 @@ fn util_types_module() -> Value {
                     "isTypedArray",
                     "isUint8Array",
                 ];
-                quench_runtime::host_api::object(
-                    names
-                        .into_iter()
-                        .map(|name| (name.into(), predicate.clone()))
-                        .collect(),
-                )
+                quench_runtime::host_api::object(names.into_iter().map(|name| {
+                    let capability = if name == "isDate" {
+                        CapabilityName::UtilIsDate
+                    } else {
+                        CapabilityName::InternalArrayBufferViewHasBuffer
+                    };
+                    (name.into(), capability_function(HostCapabilityKind::Custom(capability)))
+                }).collect())
             })
             .clone()
     })

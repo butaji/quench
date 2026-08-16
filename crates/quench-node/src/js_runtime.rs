@@ -83,6 +83,7 @@ fn is_util_resolver(id: u16) -> bool {
                 | CapabilityName::CryptoHashUpdate
                 | CapabilityName::CryptoHashDigest
                 | CapabilityName::DgramDrainCallbacks
+                | CapabilityName::UtilIsDate
         )
 }
 
