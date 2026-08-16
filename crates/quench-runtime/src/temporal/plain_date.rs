@@ -72,6 +72,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateInLeapYearGetter => Some(in_leap_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraGetter => Some(era(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era(receiver)),
+        crate::ops::Builtin::TemporalPlainDateCalendarIdGetter => Some(calendar_id(receiver)),
         _ => None,
     }
 }
@@ -166,6 +167,15 @@ fn era(receiver: Option<&Value>) -> Result<Value, VmError> {
     Ok(Value::Undefined)
 }
 
+fn calendar_id(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(Value::String("iso8601".to_owned()))
+}
 fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
     let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
         return Err(invalid_receiver());
