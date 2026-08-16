@@ -218,6 +218,7 @@ fn likely_subtags(language: &str) -> (&'static str, &'static str) {
         "he" => ("Hebr", "IL"),
         "hy" => ("Armn", "AM"),
         "hi" => ("Deva", "IN"),
+        "hyw" => ("Armn", "AM"),
         "ja" => ("Jpan", "JP"),
         "ko" => ("Kore", "KR"),
         "cs" => ("Latn", "CZ"),
