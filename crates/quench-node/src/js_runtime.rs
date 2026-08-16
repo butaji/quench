@@ -77,6 +77,11 @@ impl CapabilityName {
     const HttpRequestWrite: u16 = 403;
     const Console: u16 = 3;
     const TimerValidation: u16 = 5;
+    const PathRelative: u16 = 1300;
+    const PathDirname: u16 = 1301;
+    const PathIsAbsolute: u16 = 1302;
+    const PathToNamespaced: u16 = 1303;
+    const PathWinToNamespaced: u16 = 1304;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -210,6 +215,11 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ReadFileSync) => read_file_sync(arguments),
             HostCapabilityKind::Custom(CapabilityName::CreateHash) => self.create_hash(arguments),
             HostCapabilityKind::Custom(CapabilityName::QueueMicrotask) => next_tick(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathRelative) => path_relative(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathDirname) => path_dirname(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute) => path_is_absolute(arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathToNamespaced) => path_arg(arguments, 0).map(|value| Value::String(value.into())),
+            HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced) => path_win_to_namespaced(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferByteLength) => buffer_byte_length(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferFrom) => buffer_from(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferAlloc) => buffer_alloc(arguments),
@@ -740,7 +750,68 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
     }
     let basename = capability_function(HostCapabilityKind::Custom(CapabilityName::PathBasename));
-    Ok(Value::object(vec![("basename".into(), basename)]))
+    let relative = capability_function(HostCapabilityKind::Custom(CapabilityName::PathRelative));
+    let dirname = capability_function(HostCapabilityKind::Custom(CapabilityName::PathDirname));
+    let absolute = capability_function(HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute));
+    Ok(Value::object(vec![
+        ("basename".into(), basename),
+        ("relative".into(), relative.clone()),
+        ("dirname".into(), dirname.clone()),
+        ("isAbsolute".into(), absolute.clone()),
+        ("toNamespacedPath".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathToNamespaced))),
+        ("posix".into(), Value::object(vec![("relative".into(), relative.clone()), ("dirname".into(), dirname.clone()), ("isAbsolute".into(), absolute.clone()), ("toNamespacedPath".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathToNamespaced)))])),
+        ("win32".into(), Value::object(vec![("relative".into(), relative), ("dirname".into(), dirname), ("isAbsolute".into(), absolute), ("toNamespacedPath".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced)))])),
+    ]))
+}
+
+fn path_arg(arguments: &[Value], index: usize) -> Result<&str, VmError> {
+    match arguments.get(index) { Some(Value::String(value)) => Ok(value), _ => Err(VmError::EvalError("path argument must be a string".into())) }
+}
+
+fn path_relative(arguments: &[Value]) -> Result<Value, VmError> {
+    let from = path_arg(arguments, 0)?;
+    let to = path_arg(arguments, 1)?;
+    if from.contains('\\') || to.contains('\\') {
+        let from = from.replace('/', "\\");
+        let to = to.replace('/', "\\");
+        let from = from.split('\\').filter(|part| !part.is_empty()).collect::<Vec<_>>();
+        let to = to.split('\\').filter(|part| !part.is_empty()).collect::<Vec<_>>();
+        let common = from.iter().zip(&to).take_while(|(a, b)| a.eq_ignore_ascii_case(b)).count();
+        let mut result = vec![".."; from.len().saturating_sub(common)];
+        result.extend(to[common..].iter().copied());
+        return Ok(Value::String(result.join("\\")));
+    }
+    let from = from.split('/').filter(|part| !part.is_empty() && *part != ".").collect::<Vec<_>>();
+    let to = to.split('/').filter(|part| !part.is_empty() && *part != ".").collect::<Vec<_>>();
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let mut result = vec![".."; from.len().saturating_sub(common)];
+    result.extend(to[common..].iter().copied());
+    Ok(Value::String(result.join("/")))
+}
+
+fn path_dirname(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = path_arg(arguments, 0)?;
+    let value = value.trim_end_matches('/');
+    let dirname = match value.rfind('/') {
+        Some(0) => "/",
+        Some(index) => &value[..index],
+        None => ".",
+    };
+    Ok(Value::String(dirname.into()))
+}
+
+fn path_is_absolute(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = path_arg(arguments, 0)?;
+    Ok(Value::Boolean(value.starts_with('/') || (value.len() > 2 && value.as_bytes()[1] == b':')))
+}
+
+fn path_win_to_namespaced(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(value) = arguments.first() else { return Ok(Value::Undefined) };
+    let Value::String(value) = value else { return Ok(value.clone()) };
+    let value = value.replace('/', "\\");
+    if value.starts_with("\\\\") { Ok(Value::String(format!("\\\\?\\UNC\\{}\\", value.trim_start_matches("\\\\")))) }
+    else if value.len() > 2 && value.as_bytes()[1] == b':' { Ok(Value::String(format!("\\\\?\\{}", value))) }
+    else { Ok(Value::String(value)) }
 }
 
 fn assert_module() -> Value {
@@ -1296,6 +1367,11 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::QueueMicrotask),
                 HostCapabilityKind::Custom(CapabilityName::BufferByteLength),
                 HostCapabilityKind::Custom(CapabilityName::Stream),
+                HostCapabilityKind::Custom(CapabilityName::PathRelative),
+                HostCapabilityKind::Custom(CapabilityName::PathDirname),
+                HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
+                HostCapabilityKind::Custom(CapabilityName::PathToNamespaced),
+                HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
