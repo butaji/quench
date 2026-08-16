@@ -52,7 +52,11 @@ fn reduce_cases(
         let mut body = Vec::new();
         let mut next_slot = crate::reduce_support::register_base(locals);
         let mut body_locals = locals.clone();
+        prepare_case_locals(&case.consequent, &mut body_locals, &mut next_slot);
         for statement in &case.consequent {
+            if skip_annex_b_function(statement, facts) {
+                continue;
+            }
             crate::reduce::reduce_statement(
                 statement,
                 &mut body,
@@ -67,6 +71,38 @@ fn reduce_cases(
     let (tests, bodies): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
     let stores = crate::machine::FunctionCode::from_ops_many(bodies);
     Ok(tests.into_iter().zip(stores).collect())
+}
+
+fn skip_annex_b_function(statement: &oxc::ast::ast::Statement<'_>, facts: &ProgramDb) -> bool {
+    let oxc::ast::ast::Statement::FunctionDeclaration(function) = statement else {
+        return false;
+    };
+    function.id.as_ref().is_some_and(|identifier| {
+        facts
+            .eval_var_barrier
+            .contains(&identifier.name.to_string())
+    })
+}
+
+fn prepare_case_locals(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    for statement in statements {
+        let oxc::ast::ast::Statement::FunctionDeclaration(function) = statement else {
+            continue;
+        };
+        let Some(identifier) = function.id.as_ref() else {
+            continue;
+        };
+        let name = identifier.name.as_str();
+        if let Some(slot) = locals.get(name).copied() {
+            locals.insert(format!("\0annex-b-outer:{name}"), slot);
+        }
+        locals.insert(name.to_string(), *next_slot);
+        *next_slot = next_slot.saturating_add(1);
+    }
 }
 
 pub(crate) fn execute(

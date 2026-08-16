@@ -68,6 +68,11 @@ fn reduce_eval_program(
     deletable: Vec<(String, u16)>,
 ) -> Result<ResidualProgram, Vec<String>> {
     facts.eval_deletable = deletable;
+    facts
+        .eval_var_barrier
+        .extend(crate::semantic_early::lexically_declared_names_in(
+            statements,
+        ));
     let ops = reduce_eval_body(
         statements,
         &mut facts,
