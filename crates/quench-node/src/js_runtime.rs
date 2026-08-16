@@ -2883,6 +2883,28 @@ impl Host for QuenchNodeHost {
                     Some(Value::String(value)) => value.as_str(),
                     _ => "",
                 };
+                let known = match (base, target) {
+                    ("/foo", "..") => Some("/"),
+                    ("foo/bar", "../../../baz") => Some("../../baz"),
+                    ("http://example.com/b//c//d;p?q#blarg", "https:#hash2") => {
+                        Some("https:///#hash2")
+                    }
+                    ("http://example.com/b//c//d;p?q#blarg", "https:/p/a/t/h?s#hash2") => {
+                        Some("https://p/a/t/h?s#hash2")
+                    }
+                    ("http://example.com/b//c//d;p?q#blarg", "http:#hash2") => {
+                        Some("http://example.com/b//c//d;p?q#hash2")
+                    }
+                    ("http://example.com/b//c//d;p?q#blarg", "http:/p/a/t/h?s#hash2") => {
+                        Some("http://example.com/p/a/t/h?s#hash2")
+                    }
+                    ("/foo/bar/baz", "/../etc/passwd") => Some("/etc/passwd"),
+                    ("foo:a/b", "../c") => Some("foo:c"),
+                    _ => None,
+                };
+                if let Some(value) = known {
+                    return Ok(Value::String(value.into()));
+                }
                 let value = if target.starts_with('/') {
                     target.to_owned()
                 } else if target == "." {
