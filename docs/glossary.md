@@ -56,3 +56,32 @@ convention. It is an output, not an additional source of truth.
 
 The smallest implementation that remains auditable: duplicated mechanics are
 generated, while declarations and genuinely special behavior remain readable.
+
+## JsRuntime
+
+The engine-neutral JavaScript execution contract. It covers realms, opaque
+values, evaluation, callbacks, jobs, module evaluation, buffers, and
+structured errors without exposing a concrete engine type.
+
+## NodeHost
+
+The host-policy layer above `JsRuntime`. It provides Node module resolution,
+module loading and caching, globals, native functions, filesystem/network
+capabilities, and event-loop integration.
+
+## Runtime plugin
+
+An implementation of `JsRuntime`. `QuickJsRuntime` adapts rquickjs;
+`QuenchRuntime` adapts the standalone quench-runtime engine.
+
+## Opaque JsValue
+
+A handle to a JavaScript value whose representation is private to a runtime
+plugin. Host code uses engine-neutral operations instead of matching on
+rquickjs or Quench value types.
+
+## Engine-neutral host function
+
+A typed function registration and invocation contract shared by runtime
+plugins. It owns argument conversion, callback behavior, errors, and sync or
+async completion without naming a concrete JavaScript engine.
