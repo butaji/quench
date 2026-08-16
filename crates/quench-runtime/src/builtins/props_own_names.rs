@@ -1,5 +1,6 @@
 const TEMPORAL_DURATION_PROTOTYPE_NAMES: &[&str] = &[
     "constructor",
+    "Symbol.toStringTag",
     "years",
     "months",
     "weeks",
@@ -218,6 +219,7 @@ fn own_property_names_tail(builtin: Builtin) -> &'static [&'static str] {
         Builtin::IntlLocalePrototype => &["Symbol.toStringTag"],
         Builtin::IntlPluralRulesPrototype => &["Symbol.toStringTag"],
         Builtin::IntlRelativeTimeFormatPrototype => &["Symbol.toStringTag"],
+        Builtin::IntlDurationFormatPrototype => &["Symbol.toStringTag"],
         Builtin::DisposableStack => &["length", "name", "prototype"],
         Builtin::DisposableStackPrototype => &[
             "constructor",
