@@ -3932,6 +3932,18 @@ fn buffer_module() -> Value {
     ));
     prototype = quench_runtime::execute::set_property(prototype, "writeUIntLE", write_uint_le.clone());
     prototype = quench_runtime::execute::set_property(prototype, "writeUintLE", write_uint_le);
+    for (name, capability) in [
+        ("copy", CapabilityName::BufferCopy),
+        ("swap16", CapabilityName::BufferSwap16),
+        ("readBigInt64LE", CapabilityName::BufferReadBigInt64LE),
+        ("writeBigInt64LE", CapabilityName::BufferWriteBigInt64LE),
+    ] {
+        prototype = quench_runtime::execute::set_property(
+            prototype,
+            name,
+            capability_function(HostCapabilityKind::Custom(capability)),
+        );
+    }
     buffer = quench_runtime::execute::set_property(buffer, "prototype", prototype);
     let constants = quench_runtime::host_api::object(vec![
         ("MAX_LENGTH".into(), Value::Number(4_294_967_296.0)),
