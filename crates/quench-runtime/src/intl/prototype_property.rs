@@ -40,6 +40,7 @@ fn prototype_locale_property(builtin: Builtin, key: &str) -> Option<Builtin> {
 
 fn prototype_number_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     Some(match (builtin, key) {
+        (Builtin::IntlNumberFormatPrototype, "constructor") => Builtin::IntlNumberFormat,
         (Builtin::IntlNumberFormatPrototype, "format") => Builtin::IntlNumberFormatFormat,
         (Builtin::IntlNumberFormatPrototype, "formatToParts") => {
             Builtin::IntlNumberFormatFormatToParts
