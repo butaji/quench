@@ -451,7 +451,7 @@ fn substr(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate:
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined))
         .map_or(Ok(length - start), substr_length)?;
-    let end = (start + count).min(length);
+    let end = start.saturating_add(count).min(length);
     Ok(from_units(
         units[start as usize..end.max(start) as usize].to_vec(),
     ))
