@@ -377,7 +377,6 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 
 /// Canonicalize a single BCP-47 language tag.
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
-    let tag = tag.trim();
     match tag.to_ascii_lowercase().as_str() {
         "art-lojban" => return Ok("jbo".to_string()),
         "cel-gaulish" => return Ok("xtg".to_string()),
@@ -843,7 +842,10 @@ enum Subtag {
 fn classify_subtag(part: &str, script_done: bool, region_done: bool) -> Subtag {
     let all_alpha = part.chars().all(|c| c.is_ascii_alphabetic());
     let all_digit = part.chars().all(|c| c.is_ascii_digit());
-    if !script_done && part.len() == 4 && all_alpha {
+    if region_done && part.len() == 4 && all_alpha {
+        return Subtag::Extension;
+    }
+    if !script_done && !region_done && part.len() == 4 && all_alpha {
         Subtag::Script
     } else if !region_done && ((part.len() == 2 && all_alpha) || (part.len() == 3 && all_digit)) {
         Subtag::Region
