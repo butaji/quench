@@ -36,6 +36,9 @@ impl CapabilityName {
     const UtilFormat: u16 = 80;
     const UtilInspect: u16 = 81;
     const UtilFormatWithOptions: u16 = 2040;
+    const BufferIndexOf: u16 = 2041;
+    const BufferLastIndexOf: u16 = 2042;
+    const BufferToJson: u16 = 2043;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -560,6 +563,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::PathWinParse) => path_parse(arguments, true),
             HostCapabilityKind::Custom(CapabilityName::PathWinFormat) => path_format(arguments, true),
             HostCapabilityKind::Custom(CapabilityName::PathWinBasename) => path_win_basename(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferIndexOf) => buffer_search(receiver, arguments, false),
+            HostCapabilityKind::Custom(CapabilityName::BufferLastIndexOf) => buffer_search(receiver, arguments, true),
+            HostCapabilityKind::Custom(CapabilityName::BufferToJson) => buffer_to_json(receiver),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -569,7 +575,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferFill) => {
                 buffer_fill(receiver, arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::BufferCompare) => buffer_compare(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferCompare) => buffer_compare(receiver, arguments),
             HostCapabilityKind::Custom(id)
                 if (CapabilityName::BufferNumericFirst
                     ..CapabilityName::BufferNumericFirst + 32)
@@ -2440,7 +2446,7 @@ fn string_or_bytes(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
         Some(Value::DataView(view)) => Ok(view.buffer.bytes.borrow()
             [view.byte_offset..view.byte_offset + view.byte_length]
             .to_vec()),
-        _ => Err(VmError::EvalError("expected string or bytes".into())),
+        _ => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "value must be a string or Buffer"))),
     }
 }
 
@@ -3441,6 +3447,10 @@ fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
                 })
                 .collect::<Vec<_>>(),
         )),
+        Some(Value::Object(_)) => {
+            let data = quench_runtime::execute::get_property_result(arguments.first().unwrap(), "data")?;
+            buffer_from(&[data])
+        }
         _ => Err(VmError::EvalError(
             "Buffer.from expects bytes or a string".into(),
         )),
@@ -3474,6 +3484,18 @@ fn node_buffer(bytes: &[u8]) -> Value {
         capability_function(HostCapabilityKind::Custom(CapabilityName::BufferEquals)),
     );
     let mut value = value;
+    for (name, capability) in [
+        ("compare", CapabilityName::BufferCompare),
+        ("indexOf", CapabilityName::BufferIndexOf),
+        ("lastIndexOf", CapabilityName::BufferLastIndexOf),
+        ("toJSON", CapabilityName::BufferToJson),
+    ] {
+        value = quench_runtime::execute::set_property(
+            value,
+            name,
+            capability_function(HostCapabilityKind::Custom(capability)),
+        );
+    }
     for (name, capability) in [
         ("write", CapabilityName::BufferWrite),
         ("includes", CapabilityName::BufferIncludes),
@@ -3687,14 +3709,20 @@ fn buffer_concat(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn buffer_equals(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    if matches!(arguments.first(), Some(Value::String(_))) {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "value must be a Buffer")));
+    }
     Ok(Value::Boolean(
         string_or_bytes(receiver)? == string_or_bytes(arguments.first())?,
     ))
 }
 
-fn buffer_compare(arguments: &[Value]) -> Result<Value, VmError> {
-    let left = string_or_bytes(arguments.first())?;
-    let right = string_or_bytes(arguments.get(1))?;
+fn buffer_compare(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let (left, right) = if matches!(receiver, Some(Value::Uint8Array(_))) {
+        (string_or_bytes(receiver)?, string_or_bytes(arguments.first())?)
+    } else {
+        (string_or_bytes(arguments.first())?, string_or_bytes(arguments.get(1))?)
+    };
     Ok(Value::Number(if left < right {
         -1.0
     } else if left > right {
@@ -3702,6 +3730,30 @@ fn buffer_compare(arguments: &[Value]) -> Result<Value, VmError> {
     } else {
         0.0
     }))
+}
+
+fn buffer_search(receiver: Option<&Value>, arguments: &[Value], reverse: bool) -> Result<Value, VmError> {
+    let haystack = string_or_bytes(receiver)?;
+    let needle = match arguments.first() {
+        Some(Value::Number(value)) => vec![*value as u8],
+        value => string_or_bytes(value)?,
+    };
+    let offset = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some((*value as isize).max(0) as usize), _ => None }).unwrap_or(if reverse { haystack.len() } else { 0 });
+    if needle.is_empty() { return Ok(Value::Number(offset.min(haystack.len()) as f64)); }
+    let result = if reverse {
+        haystack[..offset.min(haystack.len())].windows(needle.len()).rposition(|window| window == needle.as_slice())
+    } else {
+        haystack[offset.min(haystack.len())..].windows(needle.len()).position(|window| window == needle.as_slice()).map(|index| index + offset.min(haystack.len()))
+    };
+    Ok(Value::Number(result.map_or(-1.0, |index| index as f64)))
+}
+
+fn buffer_to_json(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let bytes = string_or_bytes(receiver)?;
+    Ok(quench_runtime::host_api::object(vec![
+        ("type".into(), Value::String("Buffer".into())),
+        ("data".into(), quench_runtime::host_api::array(bytes.into_iter().map(|byte| Value::Number(byte as f64)).collect())),
+    ]))
 }
 
 fn buffer_numeric(
