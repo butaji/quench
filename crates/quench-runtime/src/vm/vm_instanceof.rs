@@ -7,6 +7,12 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     if builtin_error_instance(&value, &constructor) {
         return Ok(true);
     }
+    if !crate::value::is_object(&value) {
+        return Ok(false);
+    }
+    if let Some(result) = builtin_instanceof(&value, &constructor) {
+        return Ok(result);
+    }
     if let Some(handler) = has_instance_handler(&constructor)? {
         let arguments = [value.clone()];
         let result = crate::functions::execute_target(&handler, &constructor, &arguments)?;
@@ -14,12 +20,6 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     }
     if !instanceof_callable(&constructor) {
         return Err(type_error("Right-hand side of instanceof is not callable"));
-    }
-    if !crate::value::is_object(&value) {
-        return Ok(false);
-    }
-    if let Some(result) = builtin_instanceof(&value, &constructor) {
-        return Ok(result);
     }
     ordinary_instanceof(&value, &constructor)
 }
