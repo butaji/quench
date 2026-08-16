@@ -49,7 +49,10 @@ fn prototype_method_middle(
             Value::String("ltr".to_string()),
         )])),
         crate::ops::Builtin::IntlLocaleGetWeekInfo => Ok(make_object(vec![
-            ("firstDay".to_string(), Value::Number(1.0)),
+            (
+                "firstDay".to_string(),
+                Value::Number(first_day_number(&intl_slots(receiver)?)),
+            ),
             (
                 "weekend".to_string(),
                 make_array(vec![Value::Number(6.0), Value::Number(7.0)]),
@@ -59,6 +62,18 @@ fn prototype_method_middle(
             slot_string(&intl_slots(receiver)?, "base").unwrap_or_default(),
         )),
         _ => prototype_method_tail(builtin, receiver),
+    }
+}
+
+fn first_day_number(slots: &[(String, Value)]) -> f64 {
+    match slot_string(slots, "firstDayOfWeek").as_deref() {
+        Some("sun") => 7.0,
+        Some("tue") => 2.0,
+        Some("wed") => 3.0,
+        Some("thu") => 4.0,
+        Some("fri") => 5.0,
+        Some("sat") => 6.0,
+        _ => 1.0,
     }
 }
 

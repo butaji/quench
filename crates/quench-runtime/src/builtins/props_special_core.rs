@@ -20,6 +20,20 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     }
     match (builtin, key) {
         (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
+        (IntlSegmenterPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.Segmenter".into()))
+        }
+        (Intl, "Symbol.toStringTag") => Some(Value::String("Intl".into())),
+        (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DisplayNames".into()))
+        }
+        (IntlListFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.ListFormat".into()))
+        }
+        (IntlLocalePrototype, "Symbol.toStringTag") => Some(Value::String("Intl.Locale".into())),
+        (IntlRelativeTimeFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.RelativeTimeFormat".into()))
+        }
         (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
         (Temporal, "Symbol.toStringTag") => Some(Value::String("Temporal".into())),
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
@@ -63,6 +77,9 @@ fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
     }
     if builtin == IteratorPrototype && key == "map" {
         return Some(Value::Builtin(IteratorMap));
+    }
+    if builtin == IteratorPrototype && key == "some" {
+        return Some(Value::Builtin(IteratorSome));
     }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);

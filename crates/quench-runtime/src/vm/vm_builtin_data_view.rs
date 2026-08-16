@@ -32,7 +32,7 @@ fn typed_array_accessor(
     macro_rules! access {
         ($view:expr) => {
             Some(Ok(match builtin {
-                Builtin::DataViewByteLengthGetter => Value::Number(
+                Builtin::TypedArrayByteLengthGetter => Value::Number(
                     if $view.buffer.byte_length() < $view.byte_offset + $view.byte_length() {
                         0.0
                     } else {

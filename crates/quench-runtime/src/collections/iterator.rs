@@ -206,6 +206,44 @@ pub(crate) fn map(
     })))
 }
 
+pub(crate) fn some(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let receiver = receiver.ok_or_else(not_iterable)?;
+    let iterator = from(std::slice::from_ref(receiver))?;
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let mut index = 0;
+    loop {
+        let Some(value) = step_value(&iterator)? else {
+            return Ok(Value::Boolean(false));
+        };
+        let result = crate::functions::execute_target(
+            callback,
+            &Value::Undefined,
+            &[value, Value::Number(index as f64), iterator.clone()],
+        );
+        match result {
+            Ok(result) if crate::execute::is_truthy(&result) => {
+                let completion = close(iterator, crate::completion::Completion::Normal)?;
+                return match completion.into_vm_error() {
+                    Err(error) => Err(error),
+                    Ok(_) => Ok(Value::Boolean(true)),
+                };
+            }
+            Ok(_) => index += 1,
+            Err(error) => {
+                let completion = crate::completion::Completion::from_vm_error(error)?;
+                return close(iterator, completion)
+                    .and_then(|completion| completion.into_vm_error());
+            }
+        }
+    }
+}
+
 pub(crate) fn next_string(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     let branded = matches!(receiver, Some(Value::Iterator(data)) if matches!(
         &*data.state.borrow(), IteratorState::String { .. }

@@ -50,6 +50,7 @@ fn is_simple_numbers(builtin: Builtin) -> bool {
             | Builtin::BigIntAsIntN
             | Builtin::BigIntAsUintN
             | Builtin::BigIntToString
+            | Builtin::BigIntToLocaleString
             | Builtin::NumberToString
             | Builtin::NumberValueOf
             | Builtin::BigIntValueOf
@@ -172,6 +173,7 @@ fn execute_simple_number(
             bigint_as_n(arguments, builtin == Builtin::BigIntAsIntN)
         }
         Builtin::BigIntToString => bigint_to_string(receiver, arguments),
+        Builtin::BigIntToLocaleString => bigint_to_locale_string(receiver, arguments),
         Builtin::NumberToString => boolean_or_number_string(receiver, arguments),
         Builtin::NumberValueOf => number_value_of(receiver),
         Builtin::BigIntValueOf => bigint_value_of(receiver),
@@ -181,6 +183,22 @@ fn execute_simple_number(
         _ => return None,
     };
     Some(result)
+}
+
+fn bigint_to_locale_string(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let value = bigint_value_of(receiver)?;
+    let Value::BigInt(value) = value else {
+        return Err(crate::value::error::throw_type_error(
+            "Invalid BigInt receiver",
+        ));
+    };
+    let locales = crate::intl::resolve_locales(arguments)?;
+    Ok(Value::String(crate::intl::tolocale::format_bigint(
+        &value, &locales,
+    )))
 }
 
 fn execute_simple_regexp(

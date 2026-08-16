@@ -10,7 +10,14 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let options = parse_options(arguments.get(1), locale.starts_with("th"))?;
+    let mut options = parse_options(arguments.get(1), locale.starts_with("th"))?;
+    if options.case_first == "false" && case_first_option_absent(arguments.get(1)) {
+        options.case_first =
+            super::locale::case_first_extension(&locale).unwrap_or_else(|| "false".to_string());
+    }
+    if locale_has_true_kn(&locale) && numeric_option_absent(arguments.get(1)) {
+        options.numeric = true;
+    }
     for key in ["co", "ka", "kb", "kc", "kh", "kk", "kr", "ks", "vt"] {
         locale = remove_unsupported_extension(&locale, key);
     }
@@ -23,8 +30,44 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(collator_object(locale, options))
 }
 
+fn locale_has_true_kn(locale: &str) -> bool {
+    let parts: Vec<&str> = locale.split('-').collect();
+    parts
+        .iter()
+        .position(|part| part.eq_ignore_ascii_case("kn"))
+        .is_some_and(|index| {
+            parts
+                .get(index + 1)
+                .is_none_or(|value| value.len() == 2 || value.eq_ignore_ascii_case("true"))
+        })
+}
+
+fn case_first_option_absent(value: Option<&Value>) -> bool {
+    let Some(Value::Object(properties)) = value else {
+        return true;
+    };
+    properties
+        .iter()
+        .find(|(name, _)| name == "caseFirst")
+        .is_none_or(|(_, value)| matches!(value, Value::Undefined))
+}
+
+fn numeric_option_absent(value: Option<&Value>) -> bool {
+    let Some(Value::Object(properties)) = value else {
+        return true;
+    };
+    properties
+        .iter()
+        .find(|(name, _)| name == "numeric")
+        .is_none_or(|(_, value)| matches!(value, Value::Undefined))
+}
+
 fn collator_object(locale: String, options: CollatorOptions) -> Value {
     make_object(vec![
+        (
+            "\0prototype".to_string(),
+            crate::vm::realm_intrinsic(crate::ops::Builtin::IntlCollatorPrototype),
+        ),
         (
             "compare".to_string(),
             Value::Builtin(crate::ops::Builtin::IntlCollatorCompare),
@@ -141,6 +184,14 @@ fn remove_conflicting_extension(locale: &str, key: &str, value: &str) -> String 
     };
     let extension_value = parts.get(index + 1).copied().unwrap_or("true");
     if extension_value.eq_ignore_ascii_case(value) {
+        if value == "true" && parts.get(index + 1).is_some() {
+            return parts[..=index]
+                .iter()
+                .chain(parts.get(index + 2..).unwrap_or_default().iter())
+                .copied()
+                .collect::<Vec<_>>()
+                .join("-");
+        }
         return locale.to_string();
     }
     let result = parts[..index]
@@ -186,7 +237,13 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlCollatorCompare => {
             let left = to_string_value(arguments.first().unwrap_or(&Value::Undefined));
             let right = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
-            Ok(Value::Number(compare(&left, &right, &locale)))
+            let ignore_punctuation = slot_bool(&slots, "ignorePunctuation").unwrap_or(false);
+            Ok(Value::Number(compare(
+                &left,
+                &right,
+                &locale,
+                ignore_punctuation,
+            )))
         }
         crate::ops::Builtin::IntlCollatorResolvedOptions => Ok(resolved_options(&slots, locale)),
         _ => Err(runtime_error("TypeError: method not found")),
@@ -229,13 +286,25 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
     super::intl_slots(receiver)
 }
 
-pub(crate) fn compare(left: &str, right: &str, locale: &str) -> f64 {
+pub(crate) fn compare(left: &str, right: &str, locale: &str, ignore_punctuation: bool) -> f64 {
     let _ = locale;
-    match left.cmp(right) {
+    let left = comparable_text(left, ignore_punctuation);
+    let right = comparable_text(right, ignore_punctuation);
+    match left.cmp(&right) {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => 0.0,
         std::cmp::Ordering::Greater => 1.0,
     }
+}
+
+fn comparable_text(value: &str, ignore_punctuation: bool) -> String {
+    if !ignore_punctuation {
+        return value.to_string();
+    }
+    value
+        .chars()
+        .filter(|character| !character.is_ascii_punctuation() && !character.is_whitespace())
+        .collect()
 }
 
 pub(crate) fn dispatch(
