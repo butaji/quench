@@ -119,6 +119,16 @@ fn process_module() -> Value {
                 CapabilityName::ProcessActiveResourcesInfo,
             )),
         ),
+        (
+            "features".into(),
+            quench_runtime::host_api::object(vec![
+                ("inspector".into(), Value::Boolean(false)),
+                ("tls".into(), Value::Boolean(false)),
+                ("quic".into(), Value::Boolean(false)),
+                ("dtls".into(), Value::Boolean(false)),
+                ("openssl_is_boringssl".into(), Value::Boolean(false)),
+            ]),
+        ),
     ]);
     NODE_PROCESS_MODULE.with(|current| current.replace(Some(module.clone())));
     module
