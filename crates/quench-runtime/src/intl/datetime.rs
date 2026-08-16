@@ -6,7 +6,7 @@ use crate::{conversion, execute::VmError, value::Value};
 
 use super::{
     default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
-    slot_string, to_string_value, SLOT,
+    slot_string, SLOT,
 };
 
 /// Allowed values for each string-valued date/time component option.
@@ -95,7 +95,7 @@ impl DateTimeOptions {
         if matches!(value, Value::Undefined) {
             return Ok(());
         }
-        let text = to_string_value(value);
+        let text = conversion::to_string(value)?;
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
             if let Some(valid) = valid_component(&text, allowed) {
                 self.set_component(name, valid);
