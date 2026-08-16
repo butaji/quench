@@ -455,6 +455,7 @@ fn builtin_method3_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (NumberPrototype, "constructor") => Some(Number),
         (ObjectPrototype, "constructor") => Some(Object),
         (ObjectPrototype, "toLocaleString") => Some(ObjectPrototypeToString),
+        (TemporalPlainDatePrototype, "toJSON") => Some(TemporalPlainDateToJSON),
         (Symbol, "prototype") => Some(SymbolPrototype),
         (SymbolPrototype, "toString") => Some(SymbolToString),
         (SymbolPrototype, "valueOf") => Some(SymbolValueOf),
