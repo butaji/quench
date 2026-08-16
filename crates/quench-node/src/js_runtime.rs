@@ -4715,6 +4715,7 @@ fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, V
             if let Some(specifier) = chars.next() {
                 if specifier == '%' { output.push('%'); continue; }
                 if let Some(value) = remaining.next() {
+                    if specifier == 'c' { continue; }
                     output.push_str(&match specifier {
                         's' => format_string(value, separators.unwrap_or(false)),
                         'o' => format_detailed_value(value),
