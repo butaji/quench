@@ -156,6 +156,7 @@ fn split_import_body(body: &str) -> Option<(String, String)> {
 fn convert_import_spec(spec: &str) -> Option<String> {
     let spec = spec.trim();
     let rest = spec.trim_end_matches(';').trim();
+    let rest = strip_import_with_clause(rest);
     let from_index = rest.rfind(" from ")?;
     let (left, right) = rest.split_at(from_index);
     let right = &right[" from ".len()..];
@@ -163,9 +164,15 @@ fn convert_import_spec(spec: &str) -> Option<String> {
     let module = module.trim_matches(|c| c == '"' || c == '\'');
     let module = module.trim();
     let module = module
+        .split_whitespace()
+        .next()
+        .unwrap_or(module)
+        .to_string();
+    let module = module
         .strip_suffix(".mjs")
         .or_else(|| module.strip_suffix(".js"))
-        .unwrap_or(module);
+        .unwrap_or(&module)
+        .to_string();
     let left = left.trim();
     if left.is_empty() {
         return Some(format!("require(\"{module}\");"));
@@ -269,6 +276,35 @@ fn parse_import_names(inner: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Strip the trailing `with { type: 'json' }` clause from an import path.
+fn strip_import_with_clause(rest: &str) -> &str {
+    let bytes = rest.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    let mut in_string = None;
+    while i < len {
+        let c = bytes[i];
+        match in_string {
+            Some(quote) => {
+                if c == quote && (i == 0 || bytes[i - 1] != b'\\') {
+                    in_string = None;
+                }
+            }
+            None => match c {
+                b'"' | b'\'' | b'`' => in_string = Some(c),
+                b'w' => {
+                    if bytes[i..].starts_with(b"with ") {
+                        return rest[..i].trim();
+                    }
+                }
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+    rest
 }
 
 /// Replace `import.meta` with a `globalThis.import_meta` reference.
