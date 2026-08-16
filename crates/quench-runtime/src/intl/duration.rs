@@ -3,7 +3,7 @@
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
 use super::{
-    default_locale, make_array, make_object, resolve_locales, runtime_error,
+    default_locale, make_array, make_object, resolve_locales, runtime_error, slot_string,
     supported_numbering_systems, SLOT,
 };
 
@@ -298,11 +298,14 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
     let value = value.unwrap_or(&Value::Undefined);
     let properties = duration_properties(value)?;
     validate_duration_fields(&properties)?;
-    let [_, _, _, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] =
+    let [years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] =
         duration_values(&properties);
     validate_duration(&properties)?;
     format_duration_values(
         slots,
+        years,
+        months,
+        weeks,
         days,
         hours,
         minutes,
@@ -337,6 +340,9 @@ fn duration_properties(value: &Value) -> Result<Vec<(String, Value)>, VmError> {
 
 fn format_duration_values(
     slots: &[(String, Value)],
+    years: i64,
+    months: i64,
+    weeks: i64,
     days: i64,
     hours: i64,
     minutes: i64,
@@ -357,6 +363,9 @@ fn format_duration_values(
         slots,
         style,
         negative,
+        years,
+        months,
+        weeks,
         days,
         hours,
         minutes,
@@ -371,6 +380,9 @@ fn format_duration_shape(
     slots: &[(String, Value)],
     style: &str,
     negative: bool,
+    years: i64,
+    months: i64,
+    weeks: i64,
     days: i64,
     hours: i64,
     minutes: i64,
@@ -399,6 +411,11 @@ fn format_duration_shape(
     }
     Ok(format_standard_duration(
         slots,
+        style,
+        years,
+        months,
+        weeks,
+        days,
         hours,
         minutes,
         seconds,
@@ -480,6 +497,11 @@ fn format_digital_duration(
 
 fn format_standard_duration(
     slots: &[(String, Value)],
+    style: &str,
+    years: i64,
+    months: i64,
+    weeks: i64,
+    days: i64,
     hours: i64,
     minutes: i64,
     seconds: i64,
@@ -487,52 +509,27 @@ fn format_standard_duration(
     microseconds: i64,
     nanoseconds: i64,
 ) -> String {
-    let mut parts = Vec::new();
-    if hours != 0 {
-        parts.push(format!("{hours} hr"));
-    }
-    if minutes != 0 {
-        parts.push(format!("{minutes} min"));
-    }
-    if seconds != 0 {
-        parts.push(format!("{seconds} sec"));
-    }
-    append_subsecond_parts(&mut parts, slots, milliseconds, microseconds, nanoseconds);
-    parts.join(", ")
-}
-
-fn append_subsecond_parts(
-    parts: &mut Vec<String>,
-    slots: &[(String, Value)],
-    milliseconds: i64,
-    microseconds: i64,
-    nanoseconds: i64,
-) {
-    if slot_value(slots, "microseconds") == Some("numeric")
-        && (milliseconds != 0 || microseconds != 0 || nanoseconds != 0)
-    {
-        let value = format!(
-            "{:03}.{:03}{:03}",
-            milliseconds.abs(),
-            microseconds.abs(),
-            nanoseconds.abs()
-        );
-        let formatted = value.parse::<f64>().map_or(value, |value| {
-            crate::intl::number_format::format_number_rounded(value, 9, 1, "trunc")
-        });
-        parts.push(format!("{formatted} ms"));
-    } else if slot_value(slots, "nanoseconds") == Some("numeric") {
-        if milliseconds != 0 {
-            parts.push(format!("{milliseconds} ms"));
-        }
-        if microseconds != 0 || nanoseconds != 0 {
-            parts.push(format!(
-                "{:02}.{:03} μs",
-                microseconds.abs(),
-                nanoseconds.abs()
-            ));
-        }
-    }
+    let locale = slot_string(slots, "locale").unwrap_or_else(default_locale);
+    let units = [
+        ("years", "year", years),
+        ("months", "month", months),
+        ("weeks", "week", weeks),
+        ("days", "day", days),
+        ("hours", "hour", hours),
+        ("minutes", "minute", minutes),
+        ("seconds", "second", seconds),
+        ("milliseconds", "millisecond", milliseconds),
+        ("microseconds", "microsecond", microseconds),
+        ("nanoseconds", "nanosecond", nanoseconds),
+    ];
+    let items = units
+        .iter()
+        .map(|(slot, unit, value)| {
+            let display = slot_value(slots, slot).unwrap_or(style);
+            crate::intl::number_format::format_unit(&value.to_string(), Some(unit), display)
+        })
+        .collect::<Vec<_>>();
+    crate::intl::list::format_list(&items, &locale, style, "unit")
 }
 
 include!("duration_tail.rs");

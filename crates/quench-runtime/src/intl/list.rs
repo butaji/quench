@@ -238,7 +238,7 @@ fn final_joiner(style: &str, spanish: bool, disjunction: bool, word: &str) -> St
     }
 }
 
-fn format_list(items: &[String], locale: &str, style: &str, list_type: &str) -> String {
+pub(crate) fn format_list(items: &[String], locale: &str, style: &str, list_type: &str) -> String {
     format_parts(items, locale, style, list_type)
         .into_iter()
         .filter_map(|part| match part {
