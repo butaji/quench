@@ -777,7 +777,10 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlLocale => Some(construct(arguments)),
+        crate::ops::Builtin::IntlLocale => Some(match receiver {
+            None => construct(arguments),
+            Some(_) => Err(runtime_error("TypeError: Intl.Locale requires new")),
+        }),
         crate::ops::Builtin::IntlLocaleToString
         | crate::ops::Builtin::IntlLocaleMaximize
         | crate::ops::Builtin::IntlLocaleMinimize
