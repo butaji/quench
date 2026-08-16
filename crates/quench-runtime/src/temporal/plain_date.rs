@@ -55,6 +55,11 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateWithCalendar => {
             Some(with_calendar(receiver, arguments.first()))
         }
+        crate::ops::Builtin::TemporalPlainDateValueOf => {
+            Some(Err(crate::value::error::throw_type_error(
+                "Temporal.PlainDate.prototype.valueOf is not allowed",
+            )))
+        }
         _ => None,
     }
 }
