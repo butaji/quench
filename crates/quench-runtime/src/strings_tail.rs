@@ -111,7 +111,10 @@ pub(crate) fn replace(
     let Some(Value::String(value)) = receiver else {
         return Ok(Value::String(String::new()));
     };
-    if let Some(pattern) = arguments.first() {
+    if let Some(pattern) = arguments
+        .first()
+        .filter(|value| crate::value::is_object(value))
+    {
         let matcher = crate::execute::get_property_result(pattern, "Symbol.replace")?;
         if crate::conversion::is_callable(&matcher) {
             let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
