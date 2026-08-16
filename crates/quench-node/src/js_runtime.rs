@@ -1014,6 +1014,55 @@ impl Host for QuenchNodeHost {
                 self.hash_call(id, receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoCreateCipheriv) => {
+                let algorithm = match arguments.first() {
+                    Some(Value::String(value)) => value.to_ascii_lowercase(),
+                    _ => String::new(),
+                };
+                if arguments.len() < 3 || matches!(arguments.get(2), Some(Value::Undefined)) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "The initialization vector argument must be specified",
+                    )));
+                }
+                let iv_length = match arguments.get(2) {
+                    Some(Value::Null) => 0,
+                    Some(value) => string_or_bytes(Some(value))
+                        .map(|bytes| bytes.len())
+                        .unwrap_or(0),
+                    None => 0,
+                };
+                let expected = if algorithm.contains("gcm") {
+                    if iv_length == 0 || iv_length > 64 {
+                        Some(16)
+                    } else {
+                        None
+                    }
+                } else if algorithm.contains("ecb") {
+                    if iv_length != 0 {
+                        Some(0)
+                    } else {
+                        None
+                    }
+                } else if algorithm.contains("cbc") {
+                    let length = if algorithm.contains("des-ede3") {
+                        8
+                    } else {
+                        16
+                    };
+                    if iv_length != length {
+                        Some(length)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                if expected.is_some() {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_CRYPTO_INVALID_IV",
+                        "Invalid initialization vector",
+                    )));
+                }
                 let mut cipher = Value::object(vec![
                     (
                         "update".into(),
