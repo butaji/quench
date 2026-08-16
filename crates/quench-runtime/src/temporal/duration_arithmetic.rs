@@ -61,6 +61,32 @@ fn can_construct_directly(values: &[f64; 10]) -> bool {
     !(positive && negative) && !exceeds_unit(values)
 }
 
+pub(super) fn normalize_for_construct(values: [f64; 10]) -> [f64; 10] {
+    if can_construct_directly(&values)
+        || mixed_signs(&values)
+        || values
+            .iter()
+            .any(|value| !value.is_finite() || value.fract() != 0.0)
+    {
+        values
+    } else {
+        balanced_fields(values)
+    }
+}
+
+fn mixed_signs(values: &[f64]) -> bool {
+    let Some(sign) = values
+        .iter()
+        .find(|value| **value != 0.0)
+        .map(|value| value.signum())
+    else {
+        return false;
+    };
+    values
+        .iter()
+        .any(|value| *value != 0.0 && value.signum() != sign)
+}
+
 fn exceeds_unit(values: &[f64; 10]) -> bool {
     values[4].abs() >= 24.0
         || values[5].abs() >= 60.0
@@ -77,6 +103,10 @@ fn balanced_fields(mut values: [f64; 10]) -> [f64; 10] {
     }
     values[3] += (values[4] / 24.0).trunc();
     values[4] %= 24.0;
+    if largest > 5 {
+        balance_subsecond_fields(&mut values);
+        return values;
+    }
     let time = total_time(&values);
     let days = if largest <= 4 {
         (time / 86_400_000_000_000.0).trunc()
@@ -92,6 +122,29 @@ fn balanced_fields(mut values: [f64; 10]) -> [f64; 10] {
     values[8] = unit(&mut remainder, 1_000.0, true);
     values[9] = remainder;
     values
+}
+
+fn balance_subsecond_fields(values: &mut [f64; 10]) {
+    let (millisecond_seconds, millisecond_remainder) = split_unit(values[7], 1_000);
+    let (microsecond_seconds, microsecond_remainder) = split_unit(values[8], 1_000_000);
+    let (nanosecond_microseconds, nanosecond_remainder) = split_unit(values[9], 1_000);
+    let nanosecond_milliseconds = nanosecond_microseconds / 1_000;
+    let milliseconds =
+        millisecond_remainder + microsecond_remainder / 1_000 + nanosecond_microseconds % 1_000;
+    let seconds = values[6] as i128
+        + millisecond_seconds
+        + microsecond_seconds
+        + nanosecond_milliseconds
+        + milliseconds / 1_000;
+    values[6] = seconds as f64;
+    values[7] = (milliseconds % 1_000) as f64;
+    values[8] = (microsecond_remainder % 1_000) as f64;
+    values[9] = nanosecond_remainder as f64;
+}
+
+fn split_unit(value: f64, divisor: i128) -> (i128, i128) {
+    let value = value as i128;
+    (value / divisor, value % divisor)
 }
 
 fn limit(index: usize) -> f64 {
