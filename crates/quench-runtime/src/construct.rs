@@ -92,7 +92,7 @@ fn construct_with_new_target(
             .construct_host(
                 crate::ops::HostCapabilityRef {
                     realm: capability.realm(),
-                    kind: crate::ops::HostCapabilityKind::Custom(0),
+                    kind: capability.descriptor.kind,
                 },
                 arguments,
             )
