@@ -4027,6 +4027,11 @@ fn node_buffer_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -
         capability_function(HostCapabilityKind::Custom(CapabilityName::BufferEquals)),
     );
     let mut value = value;
+    value = quench_runtime::execute::set_property(
+        value,
+        "constructor",
+        Value::object(vec![("name".into(), Value::String("NodeBuffer".into()))]),
+    );
     let inspect = capability_function(HostCapabilityKind::Custom(CapabilityName::BufferInspect));
     value = quench_runtime::execute::set_property(value, "inspect", inspect.clone());
     value = quench_runtime::execute::set_property(value, "Symbol.for.nodejs.util.inspect.custom\0", inspect);
@@ -4680,8 +4685,12 @@ fn buffer_slice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
 
 fn buffer_copy(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let source = string_or_bytes(receiver)?;
-    let Value::Uint8Array(target) = arguments.first().ok_or(VmError::NotCallable)? else {
-        return Err(VmError::NotCallable);
+    let target = arguments.first().ok_or(VmError::NotCallable)?;
+    let (target_buffer, target_offset, target_bytes) = match target {
+        Value::Uint8Array(target) => (target.buffer.clone(), target.byte_offset, target.length),
+        Value::Uint16Array(target) => (target.buffer.clone(), target.byte_offset, target.length * 2),
+        Value::Uint32Array(target) => (target.buffer.clone(), target.byte_offset, target.length * 4),
+        _ => return Err(VmError::NotCallable),
     };
     let target_start = arguments
         .get(1)
@@ -4707,9 +4716,9 @@ fn buffer_copy(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
         .min(source.len());
     let count = source_end
         .saturating_sub(source_start)
-        .min(target.length.saturating_sub(target_start));
-    target.buffer.bytes.borrow_mut()
-        [target.byte_offset + target_start..target.byte_offset + target_start + count]
+        .min(target_bytes.saturating_sub(target_start));
+    target_buffer.bytes.borrow_mut()
+        [target_offset + target_start..target_offset + target_start + count]
         .copy_from_slice(&source[source_start..source_start + count]);
     Ok(Value::Number(count as f64))
 }
