@@ -420,21 +420,8 @@ impl QuenchNodeHost {
             {
                 self.call_deprecated(id, arguments)
             }
-            HostCapabilityKind::Custom(
-                CapabilityName::CryptoHashOn
-                | CapabilityName::CryptoHashWrite
-                | CapabilityName::CryptoHashEnd
-                | CapabilityName::CryptoHashUpdate
-                | CapabilityName::CryptoHashDigest,
-            ) => Err(VmError::EvalError(DISPATCH_UNHANDLED.into())),
-            HostCapabilityKind::Custom(
-                CapabilityName::ProcessOn
-                | CapabilityName::ProcessEmit
-                | CapabilityName::ProcessCpuUsage
-                | CapabilityName::ProcessHrtime
-                | CapabilityName::ProcessActiveResourcesInfo,
-            ) => Err(VmError::EvalError(DISPATCH_UNHANDLED.into())),
-            HostCapabilityKind::Custom(id) if id >= CapabilityName::UtilResolverFirst => {
+            HostCapabilityKind::Custom(id) if is_util_resolver(id) =>
+            {
                 self.resolve_promisified(id, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin) => {
@@ -510,5 +497,4 @@ impl QuenchNodeHost {
         match result {
             Err(VmError::EvalError(message)) if message == DISPATCH_UNHANDLED => None,
             result => Some(result),
-        }
-    }}
+        }}}
