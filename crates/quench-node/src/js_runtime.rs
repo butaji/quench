@@ -26,6 +26,7 @@ thread_local! {
     static VM_COMPILE_CONTEXT_EXTENSION: Cell<bool> = const { Cell::new(false) };
     static VM_COMPILE_PARSING_CONTEXT: RefCell<Option<Value>> = const { RefCell::new(None) };
     static VM_COMPILE_RETURN_VALUE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static VM_SCRIPT_CACHE_SOURCE: RefCell<Option<String>> = const { RefCell::new(None) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
 }
 
@@ -68,6 +69,7 @@ impl CapabilityName {
     const VmScriptRunInContext: u16 = 2116;
     const Gc: u16 = 2117;
     const VmScriptRunInNewContext: u16 = 2118;
+    const VmScriptCreateCachedData: u16 = 2123;
     const VmCompileFunction: u16 = 2119;
     const VmCompiledFunction: u16 = 2120;
     const VmCompiledToString: u16 = 2121;
@@ -921,6 +923,8 @@ impl Host for QuenchNodeHost {
                 vm_run_in_context(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::VmScript) => {
+                let source = arguments.first().map(safe_value_string).unwrap_or_default();
+                let source_map = source.lines().rev().find_map(|line| line.trim().strip_prefix("//# sourceMappingURL=")).map(|value| Value::String(value.into())).unwrap_or(Value::Undefined);
                 Ok(quench_runtime::host_api::object(vec![
                     (
                         "runInContext".into(),
@@ -934,8 +938,11 @@ impl Host for QuenchNodeHost {
                             CapabilityName::VmScriptRunInNewContext,
                         )),
                     ),
+                    ("createCachedData".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptCreateCachedData))),
+                    ("sourceMapURL".into(), source_map),
                 ]))
             }
+            HostCapabilityKind::Custom(CapabilityName::VmScriptCreateCachedData) => Ok(VM_SCRIPT_CACHE_SOURCE.with(|stored| quench_runtime::host_api::bytes(stored.borrow().as_deref().unwrap_or_default().as_bytes()))),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
             }
@@ -1201,6 +1208,20 @@ impl Host for QuenchNodeHost {
             return text_decoder_constructor();
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::VmScript) {
+            let source = arguments.first().map(safe_value_string).unwrap_or_default();
+            let source_map = source
+                .lines()
+                .rev()
+                .find_map(|line| line.trim().strip_prefix("//# sourceMappingURL="))
+                .map(|value| Value::String(value.into()))
+                .unwrap_or(Value::Undefined);
+            VM_SCRIPT_CACHE_SOURCE.with(|stored| stored.replace(Some(source.clone())));
+            let cached_data = quench_runtime::host_api::bytes(source.as_bytes());
+            let produce_cached = arguments.get(1).map(|options| matches!(quench_runtime::execute::get_property_result(options, "produceCachedData"), Ok(Value::Boolean(true)))).unwrap_or(false);
+            let cached_rejected = arguments.get(1).and_then(|options| match quench_runtime::execute::get_property_result(options, "cachedData") {
+                Ok(Value::Uint8Array(data)) => Some(Value::Boolean(data.buffer.bytes.borrow().as_slice() != source.as_bytes())),
+                _ => None,
+            }).unwrap_or(Value::Boolean(false));
             return Ok(quench_runtime::host_api::object(vec![
                 (
                     "runInContext".into(),
@@ -1214,6 +1235,11 @@ impl Host for QuenchNodeHost {
                         CapabilityName::VmScriptRunInNewContext,
                     )),
                 ),
+                ("createCachedData".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptCreateCachedData))),
+                ("sourceMapURL".into(), source_map),
+                ("cachedDataProduced".into(), Value::Boolean(produce_cached)),
+                ("cachedData".into(), cached_data),
+                ("cachedDataRejected".into(), cached_rejected),
             ]));
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::Url) {
