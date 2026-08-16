@@ -346,7 +346,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsMkdtemp) => fs_mkdtemp(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsAccessSync) => fs_access_sync(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsWriteFileSync) => {
-                fs_write_bytes(arguments, false)
+                self.fs_write_file(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::FsAppendFileSync) => {
                 fs_write_bytes(arguments, true)
@@ -1042,6 +1042,18 @@ impl QuenchNodeHost {
         existing[position..position + bytes.len()].copy_from_slice(&bytes);
         std::fs::write(path, existing).map_err(|error| VmError::EvalError(error.to_string()))?;
         Ok(Value::Number(bytes.len() as f64))
+    }
+
+    fn fs_write_file(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        if matches!(arguments.first(), Some(Value::Number(_))) {
+            self.fs_write_fd(&[
+                arguments[0].clone(),
+                arguments.get(1).cloned().ok_or(VmError::NotCallable)?,
+            ])
+            .map(|_| Value::Undefined)
+        } else {
+            fs_write_bytes(arguments, false)
+        }
     }
 
     fn fs_readv(&self, arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
