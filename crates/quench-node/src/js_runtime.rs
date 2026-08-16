@@ -3155,6 +3155,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     let dirname = capability_function(HostCapabilityKind::Custom(CapabilityName::PathDirname));
     let absolute = capability_function(HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute));
     let mut path = Value::object(vec![
+        ("sep".into(), Value::String("/".into())),
+        ("delimiter".into(), Value::String(":".into())),
         (
             "join".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::PathJoin)),
@@ -3177,6 +3179,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         (
             "posix".into(),
             Value::object(vec![
+                ("sep".into(), Value::String("/".into())),
+                ("delimiter".into(), Value::String(":".into())),
                 ("normalize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathNormalize))),
                 ("basename".into(), basename),
                 ("join".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathJoin))),
@@ -3196,6 +3200,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         (
             "win32".into(),
             Value::object(vec![
+                ("sep".into(), Value::String("\\".into())),
+                ("delimiter".into(), Value::String(";".into())),
                 ("basename".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinBasename))),
                 ("normalize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinNormalize))),
                 ("parse".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinParse))),
