@@ -22,7 +22,7 @@ fn apply_unicode_extension(formatter: &mut RelativeOptions) -> (Option<String>, 
             .map(|pair| pair[1])
         {
             unicode_numbering = Some(value.to_string());
-            if matches!(value, "arab" | "latn") {
+            if super::number::supports_digit_system(value) {
                 formatter.numbering_system = value.to_string();
                 unicode_locale = Some(formatter.locale.clone());
             }
@@ -213,9 +213,10 @@ fn format_relative(
     style: &str,
     numeric: &str,
     locale: &str,
+    numbering_system: &str,
 ) -> Result<String, VmError> {
     let unit = valid_unit(unit)?;
-    let parts = phrase_parts(value, &unit, style, numeric, locale);
+    let parts = phrase_parts(value, &unit, style, numeric, locale, numbering_system);
     Ok(parts.iter().map(|part| part.value.clone()).collect())
 }
 
@@ -225,9 +226,10 @@ fn parts_value(
     style: &str,
     numeric: &str,
     locale: &str,
+    numbering_system: &str,
 ) -> Result<Value, VmError> {
     let unit = valid_unit(unit)?;
-    let parts = phrase_parts(value, &unit, style, numeric, locale);
+    let parts = phrase_parts(value, &unit, style, numeric, locale, numbering_system);
     let values = parts
         .into_iter()
         .map(|part| part_object(part, &unit))
@@ -246,7 +248,14 @@ fn part_object(part: Part, unit: &str) -> Value {
     make_object(properties)
 }
 
-fn phrase_parts(value: f64, unit: &str, style: &str, numeric: &str, locale: &str) -> Vec<Part> {
+fn phrase_parts(
+    value: f64,
+    unit: &str,
+    style: &str,
+    numeric: &str,
+    locale: &str,
+    numbering_system: &str,
+) -> Vec<Part> {
     if numeric == "auto" {
         if let Some(exception) = auto_exception(value, unit) {
             return vec![Part {
@@ -256,11 +265,17 @@ fn phrase_parts(value: f64, unit: &str, style: &str, numeric: &str, locale: &str
             }];
         }
     }
-    if locale.starts_with("pl") {
+    let mut parts = if locale.starts_with("pl") {
         polish::parts(value, unit, style)
     } else {
         numeric_parts(value, unit, style)
+    };
+    for part in &mut parts {
+        if matches!(part.ty, "integer" | "fraction") {
+            part.value = super::number::localize_digits(part.value.clone(), numbering_system);
+        }
     }
+    parts
 }
 
 fn auto_exception(value: f64, unit: &str) -> Option<String> {
@@ -444,6 +459,8 @@ pub(crate) fn prototype_method(
     let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
     let style = slot_string(&slots, "style").unwrap_or_else(|| "long".to_string());
     let numeric = slot_string(&slots, "numeric").unwrap_or_else(|| "always".to_string());
+    let numbering_system =
+        slot_string(&slots, "numberingSystem").unwrap_or_else(|| "latn".to_string());
     match builtin {
         crate::ops::Builtin::IntlRelativeTimeFormatFormat => {
             let value = super::tolocale::value::to_number_result(arguments.first())?;
@@ -454,7 +471,12 @@ pub(crate) fn prototype_method(
                 return Err(runtime_error("RangeError: value must be finite"));
             }
             Ok(Value::String(format_relative(
-                value, &unit, &style, &numeric, &locale,
+                value,
+                &unit,
+                &style,
+                &numeric,
+                &locale,
+                &numbering_system,
             )?))
         }
         crate::ops::Builtin::IntlRelativeTimeFormatFormatToParts => {
@@ -462,7 +484,7 @@ pub(crate) fn prototype_method(
             let unit = crate::conversion::to_string(
                 arguments.get(1).map_or(&Value::Undefined, |value| value),
             )?;
-            relative_parts(value, &unit, &style, &numeric, &locale)
+            relative_parts(value, &unit, &style, &numeric, &locale, &numbering_system)
         }
         crate::ops::Builtin::IntlRelativeTimeFormatResolvedOptions => {
             relative_resolved_options(&slots, locale, style, numeric)
