@@ -113,6 +113,7 @@ impl CapabilityName {
     const FsWritePromise: u16 = 1522;
     const FsReadPromise: u16 = 1523;
     const FsOpenAsync: u16 = 1524;
+    const FsCloseAsync: u16 = 1525;
     const CommonMustSucceed: u16 = 1701;
     const CommonMustNotCall: u16 = 1702;
     const CommonWrapperFirst: u16 = 1800;
@@ -320,11 +321,12 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CommonMustCall) => {
                 arguments.first().cloned().ok_or(VmError::NotCallable)
             }
-            HostCapabilityKind::Custom(CapabilityName::CommonMustSucceed)
-            | HostCapabilityKind::Custom(CapabilityName::CommonMustNotCall) => self.common_wrapper(
-                arguments,
-                capability.kind == HostCapabilityKind::Custom(CapabilityName::CommonMustSucceed),
-            ),
+            HostCapabilityKind::Custom(CapabilityName::CommonMustSucceed) => {
+                self.common_wrapper(arguments, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CommonMustNotCall) => {
+                self.common_wrapper(arguments, false)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsWriteAsync) => fs_write_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReadAsync) => fs_read_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsWritePromise) => {
@@ -333,6 +335,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsReadPromise) => fs_read_promise(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsOpenAsync) => {
                 self.fs_open_async(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsCloseAsync) => {
+                self.fs_close_async(arguments)
             }
             HostCapabilityKind::Custom(id)
                 if (CapabilityName::CommonWrapperFirst
@@ -572,7 +577,7 @@ impl Host for QuenchNodeHost {
 
 impl QuenchNodeHost {
     fn common_wrapper(&self, arguments: &[Value], succeeds: bool) -> Result<Value, VmError> {
-        let callback = arguments.first().cloned().ok_or(VmError::NotCallable)?;
+        let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
         let id = self.next_common_wrapper.get();
         self.next_common_wrapper.set(id.saturating_add(1));
         self.common_wrappers
@@ -595,7 +600,9 @@ impl QuenchNodeHost {
     }
 
     fn fs_open(&self, arguments: &[Value]) -> Result<Value, VmError> {
-        let path = path_arg(arguments, 0)?;
+        let path = path_arg(arguments, 0).map_err(|_| {
+            VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "path must be a string"))
+        })?;
         let flags = arguments
             .get(1)
             .map(safe_value_string)
@@ -616,7 +623,14 @@ impl QuenchNodeHost {
         } else {
             std::fs::File::open(path)
         }
-        .map_err(|error| VmError::EvalError(error.to_string()))?;
+        .map_err(|error| {
+            let code = if error.kind() == std::io::ErrorKind::NotFound {
+                "ENOENT"
+            } else {
+                "EIO"
+            };
+            VmError::Thrown(fs_error(code, &error.to_string()))
+        })?;
         let fd = self.next_fd.get();
         self.next_fd.set(fd.saturating_add(1));
         self.fd_paths.borrow_mut().insert(fd, path.to_owned());
@@ -650,6 +664,13 @@ impl QuenchNodeHost {
         let callback = arguments.last().ok_or(VmError::NotCallable)?;
         let fd = self.fs_open(&arguments[..arguments.len().saturating_sub(1)])?;
         quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null, fd])?;
+        Ok(Value::Undefined)
+    }
+
+    fn fs_close_async(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let callback = arguments.last().ok_or(VmError::NotCallable)?;
+        self.fs_close(&arguments[..arguments.len().saturating_sub(1)])?;
+        quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
         Ok(Value::Undefined)
     }
 
@@ -949,6 +970,14 @@ impl QuenchNodeHost {
             _ => Err(VmError::NotCallable),
         }
     }
+}
+
+fn fs_error(code: &str, message: &str) -> Value {
+    quench_runtime::host_api::object(vec![
+        ("code".into(), Value::String(code.into())),
+        ("message".into(), Value::String(message.into())),
+        ("name".into(), Value::String("Error".into())),
+    ])
 }
 
 fn array_values(value: &Value) -> Result<Vec<Value>, VmError> {
@@ -1517,6 +1546,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "open".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpenAsync)),
+                ),
+                (
+                    "close".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsCloseAsync)),
                 ),
                 (
                     "promises".into(),
@@ -2448,6 +2481,7 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::FsWritePromise),
                 HostCapabilityKind::Custom(CapabilityName::FsReadPromise),
                 HostCapabilityKind::Custom(CapabilityName::FsOpenAsync),
+                HostCapabilityKind::Custom(CapabilityName::FsCloseAsync),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
