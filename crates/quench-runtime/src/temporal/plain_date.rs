@@ -44,7 +44,7 @@ fn is_leap_year(year: i32) -> bool {
 
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
-    _receiver: Option<&Value>,
+    receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
@@ -52,8 +52,51 @@ pub(crate) fn execute(
             "Temporal.PlainDate requires new",
         ))),
         crate::ops::Builtin::TemporalPlainDateFrom => Some(from(arguments.first())),
+        crate::ops::Builtin::TemporalPlainDateWithCalendar => {
+            Some(with_calendar(receiver, arguments.first()))
+        }
         _ => None,
     }
+}
+
+fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let calendar = calendar.unwrap_or(&Value::Undefined);
+    if !matches!(calendar, Value::Undefined | Value::String(_)) {
+        return Err(crate::value::error::throw_type_error("Invalid calendar"));
+    }
+    construct(&[
+        field(object, "year"),
+        field(object, "month"),
+        field(object, "day"),
+        calendar.clone(),
+    ])
+}
+
+fn invalid_receiver() -> VmError {
+    crate::value::error::throw_type_error(
+        "Temporal.PlainDate.prototype.withCalendar called on incompatible receiver",
+    )
+}
+
+fn has_date_fields(object: &crate::value::ObjectData) -> bool {
+    ["year", "month", "day"].iter().all(|name| {
+        object
+            .iter()
+            .any(|(key, value)| key == *name && matches!(value, Value::Number(_)))
+    })
+}
+
+fn field(object: &crate::value::ObjectData, name: &str) -> Value {
+    object
+        .iter()
+        .find(|(key, _)| key == name)
+        .map_or(Value::Undefined, |(_, value)| value.clone())
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
