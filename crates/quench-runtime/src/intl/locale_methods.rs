@@ -115,6 +115,9 @@ fn prototype_method_tail(
 }
 
 fn maximize(tag: &str) -> String {
+    if tag == "posix" {
+        return tag.to_string();
+    }
     let (base, extension) = tag
         .split_once("-u")
         .map_or((tag, String::new()), |(a, b)| (a, format!("-u{b}")));
