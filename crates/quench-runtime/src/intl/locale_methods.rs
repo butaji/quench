@@ -209,6 +209,7 @@ fn likely_subtags(language: &str) -> (&'static str, &'static str) {
         "ja" => ("Jpan", "JP"),
         "ko" => ("Kore", "KR"),
         "ru" => ("Cyrl", "RU"),
+        "ro" => ("Latn", "RO"),
         "sr" => ("Cyrl", "RS"),
         "th" => ("Thai", "TH"),
         "pap" => ("Latn", "CW"),
