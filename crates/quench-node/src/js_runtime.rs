@@ -3065,6 +3065,7 @@ fn fs_access_async(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn fs_write_async(arguments: &[Value]) -> Result<Value, VmError> {
     let callback = arguments.last().ok_or(VmError::NotCallable)?;
+    if matches!(arguments.first(), Some(Value::Number(_))) { quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?; return Ok(Value::Undefined); }
     fs_write_bytes(&arguments[..arguments.len().saturating_sub(1)], false)?;
     quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
     Ok(Value::Undefined)
