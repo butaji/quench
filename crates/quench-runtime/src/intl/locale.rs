@@ -99,6 +99,10 @@ fn parse_canonical(tag: &str) -> Locale {
     locale
 }
 
+pub(crate) fn case_first_extension(tag: &str) -> Option<String> {
+    parse_canonical(tag).case_first
+}
+
 fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
     let mut i = 0;
     while i < parts.len() {
