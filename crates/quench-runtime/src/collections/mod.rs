@@ -37,6 +37,7 @@ fn execute_core(
         IteratorMap => Some(iterator::map(receiver, arguments)),
         IteratorFilter => Some(iterator::filter(receiver, arguments)),
         IteratorSome => Some(iterator::some(receiver, arguments)),
+        IteratorEvery => Some(iterator::every(receiver, arguments)),
         Map => Some(constructor_requires_new("Map")),
         MapGroupBy => Some(map::map_group_by(arguments)),
         MapGetOrInsert => Some(map::map_get_or_insert(receiver, arguments)),
