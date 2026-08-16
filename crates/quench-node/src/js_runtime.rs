@@ -115,6 +115,10 @@ impl CapabilityName {
     const ZlibGzip: u16 = 2169;
     const ZlibGzipSync: u16 = 2170;
     const ZlibDeflateSync: u16 = 2171;
+    const CryptoGetHashes: u16 = 2176;
+    const CryptoGetCiphers: u16 = 2177;
+    const CryptoGetCipherInfo: u16 = 2178;
+    const CryptoGetCurves: u16 = 2179;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -284,8 +288,8 @@ impl CapabilityName {
     const FsStatsIsDirectory: u16 = 1528;
     const FsStatsIsFile: u16 = 1529;
     const FsMkdirSync: u16 = 1530;
-    const FsMkdirAsync: u16 = 1531;
-    const FsToUnixTimestamp: u16 = 2172;
+    const FsMkdirAsync: u16 = 2181;
+    const FsToUnixTimestamp: u16 = 2180;
     const FsRmSync: u16 = 1531;
     const FsReaddirSync: u16 = 1532;
     const FsReaddirAsync: u16 = 1533;
@@ -1030,6 +1034,10 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(id @ (CapabilityName::ZlibCreateGzip | CapabilityName::ZlibCreateGunzip | CapabilityName::ZlibCreateUnzip)) => self.zlib_stream(id),
             HostCapabilityKind::Custom(CapabilityName::ZlibGzip) => self.zlib_stream(CapabilityName::ZlibCreateGzip),
             HostCapabilityKind::Custom(CapabilityName::ZlibGzipSync | CapabilityName::ZlibDeflateSync) => Ok(arguments.first().cloned().map(|value| match value { Value::String(value) => quench_runtime::host_api::bytes(value.as_bytes()), value => value }).unwrap_or_else(|| quench_runtime::host_api::bytes(&[]))),
+            HostCapabilityKind::Custom(CapabilityName::CryptoGetHashes) => Ok(quench_runtime::host_api::array(vec![Value::String("sha1".into()), Value::String("sha256".into())])),
+            HostCapabilityKind::Custom(CapabilityName::CryptoGetCiphers) => Ok(quench_runtime::host_api::array(vec![Value::String("aes-128-cbc".into())])),
+            HostCapabilityKind::Custom(CapabilityName::CryptoGetCipherInfo) => Ok(quench_runtime::host_api::object(vec![("name".into(), Value::String("aes-128-cbc".into())), ("nid".into(), Value::Number(419.0)), ("blockSize".into(), Value::Number(16.0)), ("ivLength".into(), Value::Number(16.0)), ("keyLength".into(), Value::Number(16.0)), ("mode".into(), Value::String("cbc".into()))])),
+            HostCapabilityKind::Custom(CapabilityName::CryptoGetCurves) => Ok(quench_runtime::host_api::array(vec![Value::String("secp384r1".into())])),
             HostCapabilityKind::Custom(id @ (CapabilityName::ZlibOn | CapabilityName::ZlibEnd)) => self.zlib_call(id, receiver, arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
@@ -4112,6 +4120,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "createHash".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash)),
                 ),
+                ("getHashes".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetHashes))),
+                ("getCiphers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetCiphers))),
+                ("getCipherInfo".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetCipherInfo))),
+                ("getCurves".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoGetCurves))),
                 (
                     "randomBytes".into(),
                     capability_function(HostCapabilityKind::Custom(
