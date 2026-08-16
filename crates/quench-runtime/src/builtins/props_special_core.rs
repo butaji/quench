@@ -21,6 +21,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
     match (builtin, key) {
         (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
         (Intl, "Symbol.toStringTag") => Some(Value::String("Intl".into())),
+        (IntlDisplayNamesPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DisplayNames".into()))
+        }
         (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
         (Temporal, "Symbol.toStringTag") => Some(Value::String("Temporal".into())),
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
