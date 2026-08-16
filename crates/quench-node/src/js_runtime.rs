@@ -3073,16 +3073,16 @@ impl Host for QuenchNodeHost {
                 util_system_error_map_get(arguments)
             }
             HostCapabilityKind::Custom(id)
-                if (CapabilityName::UtilDeprecatedFirst..CapabilityName::UtilPromisifiedFirst)
-                    .contains(&id) =>
-            {
-                self.call_deprecated(id, arguments)
-            }
-            HostCapabilityKind::Custom(id)
-                if (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilResolverFirst)
+                if (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilDeprecatedFirst)
                     .contains(&id) =>
             {
                 self.call_promisified(id, arguments)
+            }
+            HostCapabilityKind::Custom(id)
+                if (CapabilityName::UtilDeprecatedFirst..CapabilityName::UtilResolverFirst)
+                    .contains(&id) =>
+            {
+                self.call_deprecated(id, arguments)
             }
             HostCapabilityKind::Custom(id) if id >= CapabilityName::UtilResolverFirst => {
                 self.resolve_promisified(id, arguments)
