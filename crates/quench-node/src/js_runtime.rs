@@ -4865,7 +4865,7 @@ fn util_inspect(_receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
 }
 
 fn os_module() -> Value {
-    quench_runtime::host_api::object(vec![
+    let module = quench_runtime::host_api::object(vec![
         (
             "platform".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::OsPlatform)),
@@ -4893,11 +4893,11 @@ fn os_module() -> Value {
         ),
         (
             "freemem".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::OsFreemem)),
+            os_numeric_function(CapabilityName::OsFreemem),
         ),
         (
             "totalmem".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::OsTotalmem)),
+            os_numeric_function(CapabilityName::OsTotalmem),
         ),
         (
             "type".into(),
@@ -4925,14 +4925,20 @@ fn os_module() -> Value {
             "userInfo".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::OsUserInfo)),
         ),
-        ("uptime".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::OsUptime))),
-        ("getPriority".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::OsGetPriority))),
+        ("uptime".into(), os_numeric_function(CapabilityName::OsUptime)),
+        ("getPriority".into(), os_numeric_function(CapabilityName::OsGetPriority)),
         ("setPriority".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::OsSetPriority))),
-        ("availableParallelism".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::OsAvailableParallelism))),
+        ("availableParallelism".into(), os_numeric_function(CapabilityName::OsAvailableParallelism)),
         ("constants".into(), quench_runtime::host_api::object(vec![
             ("priority".into(), quench_runtime::host_api::object(vec![("PRIORITY_LOW".into(), Value::Number(0.0))])),
         ])),
-    ])
+    ]);
+    module
+}
+
+fn os_numeric_function(kind: u16) -> Value {
+    let function = capability_function(HostCapabilityKind::Custom(kind));
+    quench_runtime::execute::set_property(function.clone(), "valueOf", function)
 }
 
 fn os_platform() -> Result<Value, VmError> {
