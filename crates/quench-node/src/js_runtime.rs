@@ -176,6 +176,7 @@ impl CapabilityName {
     const CryptoDigestBytes: u16 = 2205;
     const CryptoShakeBytes: u16 = 2206;
     const CryptoHashDigest: u16 = 2209;
+    const CryptoHashUpdate: u16 = 2210;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
     const TextEncoderConstructor: u16 = 2060;
@@ -967,6 +968,19 @@ impl Host for QuenchNodeHost {
                 })
                 .ok_or(VmError::NotCallable)?;
                 self.hash_call(id + 1, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoHashUpdate) => {
+                let id = quench_runtime::execute::get_property_result(
+                    receiver.ok_or(VmError::NotCallable)?,
+                    "\0hashId",
+                )
+                .ok()
+                .and_then(|value| match value {
+                    Value::Number(value) => Some(value as u16),
+                    _ => None,
+                })
+                .ok_or(VmError::NotCallable)?;
+                self.hash_call(id, receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferIsAscii) => buffer_is_ascii(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8) => buffer_is_utf8(arguments),
@@ -4394,7 +4408,7 @@ impl QuenchNodeHost {
         let hash = Value::object(vec![
             (
                 "update".into(),
-                capability_function(HostCapabilityKind::Custom(id)),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoHashUpdate)),
             ),
             (
                 "digest".into(),
