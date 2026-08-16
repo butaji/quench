@@ -61,6 +61,8 @@ impl CapabilityName {
     const TextDecoderConstructor: u16 = 2062;
     const TextDecoderDecode: u16 = 2063;
     const BufferInspect: u16 = 2065;
+    const InternalBinding: u16 = 2066;
+    const InternalArrayBufferViewHasBuffer: u16 = 2067;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -610,6 +612,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor) => text_decoder_constructor(),
             HostCapabilityKind::Custom(CapabilityName::TextDecoderDecode) => text_decoder_decode(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferInspect) => buffer_inspect(receiver),
+            HostCapabilityKind::Custom(CapabilityName::InternalBinding) => internal_binding(arguments),
+            HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer) => internal_view_has_buffer(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -3091,6 +3095,11 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ])),
             ]));
         }
+        if name == "internal/test/binding" {
+            return Ok(quench_runtime::host_api::object(vec![
+                ("internalBinding".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding))),
+            ]));
+        }
         if name == "os" || name == "node:os" {
             return Ok(os_module());
         }
@@ -4352,6 +4361,18 @@ fn buffer_inspect(receiver: Option<&Value>) -> Result<Value, VmError> {
     let bytes = string_or_bytes(receiver)?;
     let shown = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<Vec<_>>().join(" ");
     Ok(Value::String(format!("<Buffer {shown}>").into()))
+}
+
+fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
+    if matches!(arguments.first(), Some(Value::String(value)) if value == "util") {
+        return Ok(quench_runtime::host_api::object(vec![("arrayBufferViewHasBuffer".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer)))]));
+    }
+    Ok(quench_runtime::host_api::object(vec![]))
+}
+
+fn internal_view_has_buffer(arguments: &[Value]) -> Result<Value, VmError> {
+    let length = quench_runtime::execute::get_property_result(arguments.first().ok_or(VmError::NotCallable)?, "byteLength").ok();
+    Ok(Value::Boolean(matches!(length, Some(Value::Number(value)) if value >= 64.0)))
 }
 
 fn util_module() -> Value {
