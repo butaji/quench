@@ -261,7 +261,7 @@ impl DateTimeOptions {
             return;
         }
         let keys = defaults.unwrap_or(&["year", "month", "day"]);
-        if keys.iter().any(|key| self.contains(key)) {
+        if !self.components.is_empty() || keys.iter().any(|key| self.contains(key)) {
             return;
         }
         for key in keys {
