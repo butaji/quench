@@ -183,9 +183,9 @@ fn collect_declared_names(statement: &oxc::ast::ast::Statement<'_>, names: &mut 
             collect_declared_names(&statement.body, names);
         }
         oxc::ast::ast::Statement::IfStatement(statement) => {
-            collect_declared_names(&statement.consequent, names);
+            collect_nested_declared_names(&statement.consequent, names);
             if let Some(alternate) = &statement.alternate {
-                collect_declared_names(alternate, names);
+                collect_nested_declared_names(alternate, names);
             }
         }
         oxc::ast::ast::Statement::WhileStatement(statement) => {
@@ -195,6 +195,25 @@ fn collect_declared_names(statement: &oxc::ast::ast::Statement<'_>, names: &mut 
             collect_declared_names(&statement.body, names);
         }
         _ => {}
+    }
+}
+
+fn collect_nested_declared_names(
+    statement: &oxc::ast::ast::Statement<'_>,
+    names: &mut Vec<String>,
+) {
+    match statement {
+        oxc::ast::ast::Statement::FunctionDeclaration(_) => {}
+        oxc::ast::ast::Statement::BlockStatement(block) => {
+            collect_block_var_names(&block.body, names)
+        }
+        oxc::ast::ast::Statement::IfStatement(statement) => {
+            collect_nested_declared_names(&statement.consequent, names);
+            if let Some(alternate) = &statement.alternate {
+                collect_nested_declared_names(alternate, names);
+            }
+        }
+        _ => collect_declared_names(statement, names),
     }
 }
 
