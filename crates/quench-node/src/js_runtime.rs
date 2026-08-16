@@ -100,11 +100,13 @@ impl CapabilityName {
     const FsFstatSync: u16 = 1514;
     const FsChmodSync: u16 = 1515;
     const FsAccessAsync: u16 = 1516;
+    const FsExistsSync: u16 = 1517;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
     const PathToNamespaced: u16 = 1303;
     const PathWinToNamespaced: u16 = 1304;
+    const PathJoin: u16 = 1305;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -288,6 +290,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsFstatSync) => self.fs_fstat(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsChmodSync) => fs_chmod(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsAccessAsync) => fs_access_async(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsExistsSync) => fs_access(arguments),
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -305,6 +308,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced) => {
                 path_win_to_namespaced(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::PathJoin) => path_join(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferByteLength) => {
                 buffer_byte_length(arguments)
             }
@@ -998,9 +1002,11 @@ fn fs_unlink(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn fs_mkdtemp(arguments: &[Value]) -> Result<Value, VmError> {
     let prefix = path_arg(arguments, 0)?;
-    let mut path = std::path::PathBuf::from(prefix);
-    path.push(format!("quench-{}", std::process::id()));
-    std::fs::create_dir_all(&path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    let path = std::path::PathBuf::from(format!("{}{:06}", prefix, std::process::id() % 1_000_000));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| VmError::EvalError(error.to_string()))?;
+    }
+    std::fs::create_dir(&path).map_err(|error| VmError::EvalError(error.to_string()))?;
     Ok(Value::String(path.to_string_lossy().into_owned().into()))
 }
 
@@ -1242,12 +1248,20 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
                 (
                     "constants".into(),
-                    Value::object(vec![
+                    quench_runtime::host_api::object(vec![
+                        ("O_RDONLY".into(), Value::Number(0.0)),
+                        ("S_IFDIR".into(), Value::Number(0o40000 as f64)),
+                        ("S_IRUSR".into(), Value::Number(0o400 as f64)),
+                        ("S_IWUSR".into(), Value::Number(0o200 as f64)),
                         ("R_OK".into(), Value::Number(4.0)),
                         ("W_OK".into(), Value::Number(2.0)),
                         ("X_OK".into(), Value::Number(1.0)),
                         ("F_OK".into(), Value::Number(0.0)),
                     ]),
+                ),
+                (
+                    "existsSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsExistsSync)),
                 ),
             ]));
         }
@@ -1354,6 +1368,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     let dirname = capability_function(HostCapabilityKind::Custom(CapabilityName::PathDirname));
     let absolute = capability_function(HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute));
     Ok(Value::object(vec![
+        (
+            "join".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::PathJoin)),
+        ),
         ("basename".into(), basename),
         ("relative".into(), relative.clone()),
         ("dirname".into(), dirname.clone()),
@@ -1435,6 +1453,14 @@ fn path_relative(arguments: &[Value]) -> Result<Value, VmError> {
     let mut result = vec![".."; from.len().saturating_sub(common)];
     result.extend(to[common..].iter().copied());
     Ok(Value::String(result.join("/")))
+}
+
+fn path_join(arguments: &[Value]) -> Result<Value, VmError> {
+    let mut path = PathBuf::new();
+    for argument in arguments {
+        path.push(path_arg(std::slice::from_ref(argument), 0)?);
+    }
+    Ok(Value::String(path.to_string_lossy().into_owned().into()))
 }
 
 fn path_dirname(arguments: &[Value]) -> Result<Value, VmError> {
@@ -2088,11 +2114,13 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::FsFstatSync),
                 HostCapabilityKind::Custom(CapabilityName::FsChmodSync),
                 HostCapabilityKind::Custom(CapabilityName::FsAccessAsync),
+                HostCapabilityKind::Custom(CapabilityName::FsExistsSync),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
                 HostCapabilityKind::Custom(CapabilityName::PathToNamespaced),
                 HostCapabilityKind::Custom(CapabilityName::PathWinToNamespaced),
+                HostCapabilityKind::Custom(CapabilityName::PathJoin),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
@@ -2136,6 +2164,12 @@ impl JsRuntime for QuenchRuntime {
         .with_host_value(
             "setInterval",
             capability_function(HostCapabilityKind::Custom(CapabilityName::Timer)),
+        )
+        .with_host_value(
+            "clearInterval",
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::TimerClearImmediate,
+            )),
         )
         .with_host_value(
             "clearImmediate",
