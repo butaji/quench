@@ -10,9 +10,31 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let (notation, compact_display, plural_type) = plural_options(arguments.get(1))?;
+    let (notation, compact_display, plural_type, significant) = plural_options(arguments.get(1))?;
     if !matches!(plural_type.as_str(), "cardinal" | "ordinal") {
         return Err(runtime_error("RangeError: invalid type"));
+    }
+    let mut slots = vec![
+        ("locale".to_string(), Value::String(locale)),
+        ("type".to_string(), Value::String(plural_type)),
+        ("notation".to_string(), Value::String(notation)),
+        (
+            "compactDisplay".to_string(),
+            Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
+        ),
+        ("minimumIntegerDigits".to_string(), Value::Number(1.0)),
+        ("minimumFractionDigits".to_string(), Value::Number(0.0)),
+        ("maximumFractionDigits".to_string(), Value::Number(3.0)),
+    ];
+    if let Some((minimum, maximum)) = significant {
+        slots.push((
+            "minimumSignificantDigits".to_string(),
+            Value::Number(minimum),
+        ));
+        slots.push((
+            "maximumSignificantDigits".to_string(),
+            Value::Number(maximum),
+        ));
     }
     Ok(make_object(vec![
         (
@@ -23,28 +45,16 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             "resolvedOptions".to_string(),
             Value::Builtin(crate::ops::Builtin::IntlPluralRulesResolvedOptions),
         ),
-        (
-            SLOT.to_string(),
-            make_object(vec![
-                ("locale".to_string(), Value::String(locale)),
-                ("type".to_string(), Value::String(plural_type)),
-                ("notation".to_string(), Value::String(notation)),
-                (
-                    "compactDisplay".to_string(),
-                    Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
-                ),
-                ("minimumIntegerDigits".to_string(), Value::Number(1.0)),
-                ("minimumFractionDigits".to_string(), Value::Number(0.0)),
-                ("maximumFractionDigits".to_string(), Value::Number(3.0)),
-            ]),
-        ),
+        (SLOT.to_string(), make_object(slots)),
     ]))
 }
 
-fn plural_options(option: Option<&Value>) -> Result<(String, Option<String>, String), VmError> {
+fn plural_options(
+    option: Option<&Value>,
+) -> Result<(String, Option<String>, String, Option<(f64, f64)>), VmError> {
     let Some(option) = option.filter(|value| !matches!(value, Value::Undefined | Value::Null))
     else {
-        return Ok(("standard".to_string(), None, "cardinal".to_string()));
+        return Ok(("standard".to_string(), None, "cardinal".to_string(), None));
     };
     let keys = [
         "localeMatcher",
@@ -81,7 +91,11 @@ fn plural_options(option: Option<&Value>) -> Result<(String, Option<String>, Str
         "" => "cardinal".to_string(),
         value => value.to_string(),
     };
-    Ok((notation, compact_display, plural_type))
+    let significant = match (&values[7], &values[8]) {
+        (Value::Number(minimum), Value::Number(maximum)) => Some((*minimum, *maximum)),
+        _ => None,
+    };
+    Ok((notation, compact_display, plural_type, significant))
 }
 
 fn read_option(option: &Value, key: &str) -> Result<Value, VmError> {
@@ -143,11 +157,23 @@ fn plural_resolved_options(receiver: Option<&Value>) -> Result<Value, VmError> {
             "maximumFractionDigits".to_string(),
             number_slot_value(&slots, "maximumFractionDigits", 3.0),
         ),
-        (
-            "pluralCategories".to_string(),
-            plural_categories(&locale, &plural_type),
-        ),
     ];
+    if let Some(minimum) = slot_number(&slots, "minimumSignificantDigits") {
+        properties.push((
+            "minimumSignificantDigits".to_string(),
+            Value::Number(minimum),
+        ));
+        if let Some(maximum) = slot_number(&slots, "maximumSignificantDigits") {
+            properties.push((
+                "maximumSignificantDigits".to_string(),
+                Value::Number(maximum),
+            ));
+        }
+    }
+    properties.push((
+        "pluralCategories".to_string(),
+        plural_categories(&locale, &plural_type),
+    ));
     if notation == "compact" {
         properties.push(("compactDisplay".to_string(), Value::String(compact_display)));
     }
