@@ -4325,8 +4325,9 @@ fn buffer_concat(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn buffer_equals(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    if matches!(arguments.first(), Some(Value::String(_))) {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "value must be a Buffer")));
+    let Some(other) = arguments.first() else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "The \"otherBuffer\" argument must be an instance of Buffer or Uint8Array. Received undefined"))); };
+    if !matches!(other, Value::Uint8Array(_)) {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", &format!("The \"otherBuffer\" argument must be an instance of Buffer or Uint8Array. {}", buffer_received(other)))));
     }
     Ok(Value::Boolean(
         string_or_bytes(receiver)? == string_or_bytes(arguments.first())?,
@@ -4334,6 +4335,11 @@ fn buffer_equals(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
 }
 
 fn buffer_compare(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let other = if matches!(receiver, Some(Value::Uint8Array(_))) { arguments.first() } else { arguments.get(1) };
+    if !matches!(other, Some(Value::Uint8Array(_))) {
+        let value = other.cloned().unwrap_or(Value::Undefined);
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", &format!("The \"buf2\" argument must be an instance of Buffer or Uint8Array. {}", buffer_received(&value)))));
+    }
     let (left, right) = if matches!(receiver, Some(Value::Uint8Array(_))) {
         let left = string_or_bytes(receiver)?;
         let right_full = string_or_bytes(arguments.first())?;
@@ -4352,6 +4358,16 @@ fn buffer_compare(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
     } else {
         0.0
     }))
+}
+
+fn buffer_received(value: &Value) -> String {
+    match value {
+        Value::String(value) => format!("Received type string ('{value}')"),
+        Value::Number(value) => format!("Received type number ({value})"),
+        Value::Null => "Received null".into(),
+        Value::Undefined => "Received undefined".into(),
+        _ => format!("Received {}", type_name(value)),
+    }
 }
 
 fn buffer_search(receiver: Option<&Value>, arguments: &[Value], reverse: bool) -> Result<Value, VmError> {
