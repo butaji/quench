@@ -302,7 +302,11 @@ impl NumberOptions {
         }
         properties.push((
             "useGrouping".to_string(),
-            Value::String(self.grouping.clone()),
+            if self.use_grouping {
+                Value::String(self.grouping.clone())
+            } else {
+                Value::Boolean(false)
+            },
         ));
         properties.push(("notation".to_string(), Value::String(self.notation.clone())));
         if self.notation == "compact" {
