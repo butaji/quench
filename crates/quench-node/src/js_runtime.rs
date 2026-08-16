@@ -194,6 +194,7 @@ impl CapabilityName {
     const FsLutimesSync: u16 = 2224;
     const FsUtimesAsync: u16 = 2225;
     const FsLutimesAsync: u16 = 2226;
+    const UrlPathToFileUrl: u16 = 2227;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
     const TextEncoderConstructor: u16 = 2060;
@@ -1382,6 +1383,13 @@ impl Host for QuenchNodeHost {
                 | CapabilityName::FsUtimesAsync
                 | CapabilityName::FsLutimesAsync,
             ) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::UrlPathToFileUrl) => {
+                let path = arguments.first().map(safe_value_string).unwrap_or_default();
+                Ok(quench_runtime::host_api::object(vec![(
+                    "href".into(),
+                    Value::String(format!("file://{path}")),
+                )]))
+            }
             HostCapabilityKind::Custom(
                 CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes,
             ) => Ok(fulfilled(quench_runtime::host_api::bytes(b"hello"))),
@@ -4398,7 +4406,7 @@ fn fs_read_promise(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
-    let path = path_arg(arguments, 0)?;
+    let path = path_value(arguments, 0)?;
     let bytes = match arguments.get(1) {
         Some(Value::Array(_)) => array_values(arguments.get(1).unwrap())?
             .into_iter()
@@ -4422,11 +4430,11 @@ fn fs_write_bytes(arguments: &[Value], append: bool) -> Result<Value, VmError> {
         file.write_all(&bytes)
             .map_err(|error| VmError::EvalError(error.to_string()))?;
     } else {
-        std::fs::write(path, &bytes).map_err(|error| VmError::EvalError(error.to_string()))?;
+        std::fs::write(&path, &bytes).map_err(|error| VmError::EvalError(error.to_string()))?;
         #[cfg(unix)]
         if !append {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(path, PermissionsExt::from_mode(0o666));
+            let _ = std::fs::set_permissions(&path, PermissionsExt::from_mode(0o666));
         }
     }
     Ok(Value::Undefined)
@@ -4800,10 +4808,8 @@ fn current_directory(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn read_file_sync(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(path)) = arguments.first() else {
-        return Err(VmError::EvalError("readFileSync expects a path".into()));
-    };
-    let path = fixture_common_path(path);
+    let path = path_value(arguments, 0)?;
+    let path = fixture_common_path(&path);
     let options = arguments.get(1);
     let flag = options.and_then(|value| match value {
         Value::Object(_) => quench_runtime::execute::get_property_result(value, "flag").ok(),
@@ -5913,6 +5919,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "format".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::UrlFormat)),
                 ),
+                (
+                    "pathToFileURL".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::UrlPathToFileUrl,
+                    )),
+                ),
             ]));
         }
         if name == "util" || name == "node:util" {
@@ -6179,6 +6191,32 @@ fn path_arg(arguments: &[Value], index: usize) -> Result<&str, VmError> {
         _ => Err(VmError::Thrown(fs_error(
             "ERR_INVALID_ARG_TYPE",
             "path must be a string",
+        ))),
+    }
+}
+
+fn path_value(arguments: &[Value], index: usize) -> Result<String, VmError> {
+    match arguments.get(index) {
+        Some(Value::String(value)) => Ok(value.clone()),
+        Some(Value::Object(_)) => {
+            let href =
+                quench_runtime::execute::get_property_result(arguments.get(index).unwrap(), "href")
+                    .ok()
+                    .and_then(|value| match value {
+                        Value::String(value) => Some(value),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        VmError::Thrown(fs_error(
+                            "ERR_INVALID_ARG_TYPE",
+                            "path must be a string or URL",
+                        ))
+                    })?;
+            Ok(href.strip_prefix("file://").unwrap_or(&href).to_owned())
+        }
+        _ => Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "path must be a string or URL",
         ))),
     }
 }
