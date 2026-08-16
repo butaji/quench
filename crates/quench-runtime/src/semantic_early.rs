@@ -73,6 +73,15 @@ fn collect_annex_b_collisions(
                     collisions,
                 );
             }
+            Statement::SwitchStatement(statement) => {
+                let mut nested = visible.to_vec();
+                for case in &statement.cases {
+                    nested.extend(lexically_declared_names_in(&case.consequent));
+                }
+                for case in &statement.cases {
+                    collect_annex_b_collisions(&case.consequent, &nested, collisions);
+                }
+            }
             _ => {}
         }
     }
