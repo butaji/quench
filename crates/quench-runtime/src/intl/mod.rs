@@ -161,16 +161,20 @@ fn requested_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
 }
 
 fn validate_supported_options(options: Option<&Value>) -> Result<(), VmError> {
-    let Some(Value::Object(properties)) = options else {
-        if matches!(options, Some(Value::Null)) {
-            return Err(crate::value::error::throw_type_error(
-                "Cannot convert null to object",
-            ));
-        }
+    let Some(options) = options else {
         return Ok(());
     };
-    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "localeMatcher") {
-        let matcher = to_string_value(value);
+    if matches!(options, Value::Undefined) {
+        return Ok(());
+    }
+    if matches!(options, Value::Null) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert null to object",
+        ));
+    }
+    let value = crate::execute::get_property_result(options, "localeMatcher")?;
+    if !matches!(value, Value::Undefined) {
+        let matcher = crate::conversion::to_string(&value)?;
         if matcher != "lookup" && matcher != "best fit" {
             return Err(runtime_error("RangeError: invalid localeMatcher"));
         }
