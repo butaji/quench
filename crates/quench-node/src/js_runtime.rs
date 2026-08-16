@@ -4717,7 +4717,7 @@ fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, V
                 if let Some(value) = remaining.next() {
                     output.push_str(&match specifier {
                         's' => format_string(value, separators.unwrap_or(false)),
-                        'o' => format_object_string(value),
+                        'o' | 'O' => format_object_string(value),
                         'd' => format_decimal(value, separators.unwrap_or(false)),
                         'f' => format_number(value, separators.unwrap_or(false)),
                         'i' => format_integer(value, separators.unwrap_or(false)),
@@ -4784,7 +4784,45 @@ fn format_string(value: &Value, separators: bool) -> String {
 fn format_object_string(value: &Value) -> String {
     match value {
         Value::String(value) => format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'")),
-        _ => format_inspected(value),
+        _ => format_compact_value(value),
+    }
+}
+
+fn format_compact_value(value: &Value) -> String {
+    match value {
+        Value::String(value) => format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'")),
+        Value::Boolean(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::Function(_) | Value::BoundFunction(_) => {
+            let name = quench_runtime::execute::get_property_result(value, "name")
+                .ok()
+                .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
+                .unwrap_or_default();
+            if name.is_empty() { "[Function]".into() } else { format!("[Function: {name}]") }
+        }
+        Value::Object(_) | Value::ObjectAlias(_) => {
+            let keys = quench_runtime::execute::call(
+                &Value::Builtin(quench_runtime::ops::Builtin::ObjectKeys),
+                &Value::Undefined,
+                &[value.clone()],
+            ).ok();
+            let length = keys.as_ref()
+                .and_then(|keys| quench_runtime::execute::get_property_result(keys, "length").ok())
+                .and_then(|value| match value { Value::Number(value) => Some(value as usize), _ => None })
+                .unwrap_or(0);
+            let mut properties = Vec::new();
+            for index in 0..length {
+                let Some(key) = keys.as_ref()
+                    .and_then(|keys| quench_runtime::execute::get_property_result(keys, &index.to_string()).ok())
+                    .and_then(|value| match value { Value::String(value) => Some(value), _ => None }) else { continue };
+                if let Ok(property) = quench_runtime::execute::get_property_result(value, &key) {
+                    properties.push(format!("{}: {}", key, format_compact_value(&property)));
+                }
+            }
+            format!("{{ {} }}", properties.join(", "))
+        }
+        Value::Array(_) => "[Array]".into(),
+        _ => safe_value_string(value),
     }
 }
 
