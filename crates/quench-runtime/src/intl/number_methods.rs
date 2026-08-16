@@ -288,6 +288,18 @@ impl NumberOptions {
                 Value::String(self.compact_display.clone()),
             ));
         }
+        if let Some(value) = self.minimum_significant_digits {
+            properties.push((
+                "minimumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
+        if let Some(value) = self.maximum_significant_digits {
+            properties.push((
+                "maximumSignificantDigits".to_string(),
+                Value::Number(value as f64),
+            ));
+        }
         if let Some(currency) = &self.currency {
             properties.push(("currency".to_string(), Value::String(currency.clone())));
             properties.push((

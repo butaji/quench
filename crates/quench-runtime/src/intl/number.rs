@@ -235,6 +235,7 @@ impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         let raw = RawOptions::from_value(options)?;
         validate_unit_display(&raw.unit_display)?;
+        validate_significant_digits(&raw)?;
         validate_rounding_mode(&raw.rounding_mode)?;
         validate_rounding_increment(&raw)?;
         let minimum_fraction_digits = fraction_digits(
@@ -411,7 +412,8 @@ fn number_options(
         rounding_mode: raw.rounding_mode,
         rounding_increment: raw.rounding_increment.max(1.0) as u32,
         sign_display: raw.sign_display,
-        minimum_significant_digits: significant_digits(raw.minimum_significant_digits),
+        minimum_significant_digits: significant_digits(raw.minimum_significant_digits)
+            .or_else(|| significant_digits(raw.maximum_significant_digits).map(|_| 1)),
         maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
             .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
         rounding_priority: raw.rounding_priority,
@@ -499,6 +501,28 @@ fn validate_unit_display(value: &str) -> Result<(), VmError> {
     matches!(value, "short" | "narrow" | "long")
         .then_some(())
         .ok_or_else(|| crate::value::error::throw_range_error("invalid unitDisplay"))
+}
+
+fn validate_significant_digits(raw: &RawOptions) -> Result<(), VmError> {
+    for value in [
+        raw.minimum_significant_digits,
+        raw.maximum_significant_digits,
+    ] {
+        if value >= 0.0 && (value.fract() != 0.0 || !(1.0..=21.0).contains(&value)) {
+            return Err(crate::value::error::throw_range_error(
+                "invalid significant digits",
+            ));
+        }
+    }
+    if raw.minimum_significant_digits >= 0.0
+        && raw.maximum_significant_digits >= 0.0
+        && raw.maximum_significant_digits < raw.minimum_significant_digits
+    {
+        return Err(crate::value::error::throw_range_error(
+            "maximum significant digits below minimum",
+        ));
+    }
+    Ok(())
 }
 
 fn grouping_enabled(value: &str) -> bool {
