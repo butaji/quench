@@ -137,6 +137,11 @@ fn validate_redefinition(
     {
         return Err(cannot_redefine());
     }
+    if descriptor_value(current, "enumerable") != descriptor_value_in(requested, "enumerable")
+        && descriptor_value_in(requested, "enumerable").is_some()
+    {
+        return Err(cannot_redefine());
+    }
     if descriptor_value(current, "writable") == Some(&Value::Boolean(false))
         && descriptor_value_in(requested, "writable") == Some(&Value::Boolean(true))
     {
