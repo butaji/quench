@@ -58,7 +58,9 @@ impl Locale {
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(tag_arg) = arguments.first() else {
-        return Err(runtime_error("RangeError: Locale requires a tag"));
+        return Err(crate::value::error::throw_type_error(
+            "Locale requires a tag",
+        ));
     };
     let tag = locale_tag(tag_arg)?;
     let options = arguments.get(1);
