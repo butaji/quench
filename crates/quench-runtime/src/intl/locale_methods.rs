@@ -10,8 +10,8 @@ pub(crate) fn prototype_method(
     let slot = slot_string(&intl_slots(receiver)?, "full").unwrap_or_default();
     match builtin {
         crate::ops::Builtin::IntlLocaleToString => Ok(Value::String(slot)),
-        crate::ops::Builtin::IntlLocaleMaximize => Ok(Value::String(maximize(&slot))),
-        crate::ops::Builtin::IntlLocaleMinimize => Ok(Value::String(minimize(&slot))),
+        crate::ops::Builtin::IntlLocaleMaximize => Ok(locale_result(maximize(&slot))),
+        crate::ops::Builtin::IntlLocaleMinimize => Ok(locale_result(minimize(&slot))),
         crate::ops::Builtin::IntlLocaleGetCalendars => {
             let calendar = slot_string(&intl_slots(receiver)?, "calendar")
                 .unwrap_or_else(|| "gregory".to_string());
@@ -30,6 +30,10 @@ pub(crate) fn prototype_method(
         }
         _ => prototype_method_middle(builtin, receiver),
     }
+}
+
+fn locale_result(tag: String) -> Value {
+    super::build_object(super::parse_canonical(&tag))
 }
 
 fn prototype_method_middle(
@@ -115,6 +119,9 @@ fn prototype_method_tail(
 }
 
 fn maximize(tag: &str) -> String {
+    if tag == "xtg" || tag.starts_with("xtg-") {
+        return tag.to_string();
+    }
     if tag == "posix" {
         return tag.to_string();
     }
@@ -178,6 +185,9 @@ fn undefined_language(script: Option<&str>, region: Option<&str>) -> &'static st
 }
 
 fn minimize(tag: &str) -> String {
+    if tag == "xtg" || tag.starts_with("xtg-") {
+        return tag.to_string();
+    }
     let maximized = maximize(tag);
     let (base, extension) = maximized
         .split_once("-u")
@@ -224,11 +234,14 @@ fn likely_subtags(language: &str) -> (&'static str, &'static str) {
         "en" => ("Latn", "US"),
         "es" => ("Latn", "ES"),
         "fr" => ("Latn", "FR"),
+        "hak" => ("Hans", "CN"),
         "he" => ("Hebr", "IL"),
         "hy" => ("Armn", "AM"),
         "hi" => ("Deva", "IN"),
+        "hsn" => ("Hans", "CN"),
         "hyw" => ("Armn", "AM"),
         "ja" => ("Jpan", "JP"),
+        "jbo" => ("Latn", "001"),
         "ko" => ("Kore", "KR"),
         "cs" => ("Latn", "CZ"),
         "ru" => ("Cyrl", "RU"),
