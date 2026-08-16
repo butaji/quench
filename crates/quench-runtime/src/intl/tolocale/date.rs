@@ -25,15 +25,25 @@ pub(super) fn to_locale_string(
 }
 
 fn is_date_receiver(receiver: Option<&Value>) -> bool {
-    matches!(receiver, Some(Value::Object(properties)) if properties.iter().any(|(name, _)| name == "timeValue"))
+    date_time_value(receiver).is_some()
 }
 
 fn is_invalid_date(receiver: Option<&Value>) -> bool {
-    let Some(Value::Object(properties)) = receiver else {
-        return false;
+    date_time_value(receiver).is_some_and(|value| value.is_nan())
+}
+
+fn date_time_value(receiver: Option<&Value>) -> Option<f64> {
+    let Value::Object(properties) = receiver? else {
+        return None;
     };
-    properties.iter().any(|(name, _)| name == "timeValue")
-        && crate::date::extract_time(receiver).is_nan()
+    let (_, Value::BindingCell(cell)) = properties.iter().find(|(name, _)| name == "timeValue")?
+    else {
+        return None;
+    };
+    match &*cell.borrow() {
+        Value::Number(value) => Some(*value),
+        _ => None,
+    }
 }
 
 fn default_components(kind: DateLocaleKind) -> &'static [&'static str] {
