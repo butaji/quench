@@ -90,6 +90,14 @@ fn process_module() -> Value {
             capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessOn)),
         ),
         (
+            "once".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessOn)),
+        ),
+        (
+            "removeListener".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessOn)),
+        ),
+        (
             "emit".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessEmit)),
         ),
@@ -117,11 +125,8 @@ fn process_module() -> Value {
 }
 
 fn process_on(arguments: &[Value]) -> Result<Value, VmError> {
-    if matches!(arguments.first(), Some(Value::String(event)) if event == "warning") {
-        if let Some(listener) = arguments.get(1) {
-            NODE_PROCESS_WARNING_LISTENERS
-                .with(|listeners| listeners.borrow_mut().push(listener.clone()));
-        }
+    if let Some(listener) = arguments.get(1) {
+        NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow_mut().push(listener.clone()));
     }
     Ok(NODE_PROCESS_MODULE
         .with(|module| module.borrow().clone())
@@ -129,18 +134,12 @@ fn process_on(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn process_emit(arguments: &[Value]) -> Result<Value, VmError> {
-    if matches!(arguments.first(), Some(Value::String(event)) if event == "warning") {
-        if let Some(warning) = arguments.get(1) {
-            let listeners =
-                NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow().clone());
-            for listener in listeners {
-                quench_runtime::execute::call(
-                    &listener,
-                    &Value::Undefined,
-                    std::slice::from_ref(warning),
-                )?;
-            }
+    if let Some(value) = arguments.get(1) {
+        let listeners = NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow().clone());
+        for listener in listeners {
+            quench_runtime::execute::call(&listener, &Value::Undefined, std::slice::from_ref(value))?;
         }
+        return Ok(Value::Boolean(true));
     }
     Ok(Value::Boolean(false))
 }

@@ -300,7 +300,7 @@ impl QuenchNodeHost {
                 self.dgram_call(CapabilityName::DgramGetSendQueueCount, receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::DgramDrainCallbacks) => {
-                drain_dgram_callbacks()
+                drain_scheduled_callbacks().and_then(|_| drain_dgram_callbacks())
             }
             HostCapabilityKind::Custom(
                 CapabilityName::FsUtimesSync

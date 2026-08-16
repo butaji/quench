@@ -297,19 +297,39 @@ fn url_identity(value: &Value) -> Option<String> {
     }
 }
 
+thread_local! {
+    static NODE_MICROTASKS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+    static NODE_TIMERS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+}
+
+fn drain_scheduled_callbacks() -> Result<(), VmError> {
+    loop {
+        let callback = NODE_MICROTASKS.with(|queue| queue.borrow_mut().pop());
+        if let Some(callback) = callback {
+            quench_runtime::execute::call(&callback, &Value::Undefined, &[])?;
+            continue;
+        }
+        let callback = NODE_TIMERS.with(|queue| queue.borrow_mut().pop());
+        let Some(callback) = callback else { return Ok(()) };
+        quench_runtime::execute::call(&callback, &Value::Undefined, &[])?;
+    }
+}
+
 fn next_tick(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(callback) = arguments.first() else {
         return Err(VmError::EvalError("nextTick expects a callback".into()));
     };
-    quench_runtime::execute::call(callback, &Value::Undefined, &arguments[1..])
-        .map(|_| Value::Undefined)
+    let _ = arguments;
+    NODE_MICROTASKS.with(|queue| queue.borrow_mut().insert(0, callback.clone()));
+    Ok(Value::Undefined)
 }
 
 fn timer_call(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(callback) = arguments.first() else {
         return Err(VmError::EvalError("timer expects a callback".into()));
     };
-    quench_runtime::execute::call(callback, &Value::Undefined, &[]).map(|_| Value::Number(1.0))
+    NODE_TIMERS.with(|queue| queue.borrow_mut().insert(0, callback.clone()));
+    Ok(Value::Number(1.0))
 }
 
 fn is_truthy(value: &Value) -> bool {
