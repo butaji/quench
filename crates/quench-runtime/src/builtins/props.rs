@@ -51,7 +51,7 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         return Some(ArrayFrom);
     }
     if builtin == Array && key == "of" {
-        return Some(TypedArrayOf);
+        return Some(ArrayOf);
     }
     if builtin == ArrayBuffer && key == "prototype" {
         return Some(ArrayBufferPrototype);

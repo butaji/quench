@@ -6,6 +6,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
     match builtin {
         Builtin::ArrayIsArray => Some("isArray"),
         Builtin::ArrayFrom => Some("from"),
+        Builtin::ArrayOf => Some("of"),
         Builtin::TypedArrayFrom => Some("from"),
         Builtin::TypedArrayOf => Some("of"),
         Builtin::Uint8ArrayFromBase64 => Some("fromBase64"),
@@ -68,6 +69,7 @@ const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
 pub const fn fn_len(builtin: Builtin) -> Option<f64> {
     match builtin {
         Builtin::ArrayIsArray | Builtin::ArrayFrom | Builtin::TypedArrayFrom => Some(1.0),
+        Builtin::ArrayOf => Some(0.0),
         Builtin::TypedArrayOf => Some(0.0),
         Builtin::Uint8ArrayFromBase64
         | Builtin::Uint8ArrayFromHex
