@@ -390,16 +390,27 @@ fn normalize_offset(time_zone: &str) -> Option<String> {
         '-' => ('-', &time_zone[1..]),
         _ => return None,
     };
-    let (hours, minutes) = rest.split_once(':')?;
-    if hours.len() != 2 || minutes.len() != 2 {
-        return None;
-    }
+    let (hours, minutes) = offset_parts(rest)?;
     let hour: u32 = hours.parse().ok()?;
     let minute: u32 = minutes.parse().ok()?;
     if hour > 23 || minute > 59 {
         return None;
     }
     Some(format!("{sign}{hour:02}:{minute:02}"))
+}
+
+fn offset_parts(rest: &str) -> Option<(&str, &str)> {
+    if let Some((hours, minutes)) = rest.split_once(':') {
+        return (hours.len() == 2 && minutes.len() == 2).then_some((hours, minutes));
+    }
+    if !rest.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    match rest.len() {
+        2 => Some((rest, "00")),
+        4 => Some((&rest[..2], &rest[2..])),
+        _ => None,
+    }
 }
 
 fn literal_part(value: &str) -> Value {
