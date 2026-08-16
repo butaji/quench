@@ -18,12 +18,13 @@ mod host_context;
 mod js_runtime;
 
 mod polyfills;
-use js_runtime::{JsRuntime, QuenchRuntime, QuickJsRuntime};
+use js_runtime::{FilesystemNodeHost, JsRuntime, NodeHost, QuenchRuntime, QuickJsRuntime};
 #[rustfmt::skip]
 static BOOTSTRAP_SOURCE: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| polyfills::node_compat().bootstrap_source());
 static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let host = FilesystemNodeHost;
     if !env::args().skip(1).any(|arg| arg == "--quickjs") {
         return run_quench_cli();
     }
@@ -51,20 +52,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match mode.as_deref() {
         Some("-e") | Some("--eval") => {
             let runtime = QuickJsRuntime::new()?;
-            runtime.execute(&args.next().unwrap_or_default(), None)
+            runtime.execute(&args.next().unwrap_or_default(), None, &host)
         }
         Some(path) => {
-            let source = fs::read_to_string(path)?;
+            let path = host.resolve_module(path, None)?;
+            let source = host.load_module(&path)?;
             let runtime = QuickJsRuntime::new()?;
-            runtime.execute(&source, Some(PathBuf::from(path).as_path()))
+            runtime.execute(&source, Some(path.as_path()), &host)
         }
         None => {
             let runtime = QuickJsRuntime::new()?;
-            runtime.execute("", None)
+            runtime.execute("", None, &host)
         }
     }
 }
 fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
+    let host = FilesystemNodeHost;
     let args: Vec<String> = env::args()
         .skip(1)
         .filter(|arg| arg != "--quickjs")
@@ -75,13 +78,14 @@ fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         Some("-e") | Some("--eval") => {
-            QuenchRuntime.execute(args.get(1).map_or("", String::as_str), None)
+            QuenchRuntime.execute(args.get(1).map_or("", String::as_str), None, &host)
         }
         Some(path) => {
-            let source = fs::read_to_string(path)?;
-            QuenchRuntime.execute(&source, Some(PathBuf::from(path).as_path()))
+            let path = host.resolve_module(path, None)?;
+            let source = host.load_module(&path)?;
+            QuenchRuntime.execute(&source, Some(path.as_path()), &host)
         }
-        None => QuenchRuntime.execute("", None),
+        None => QuenchRuntime.execute("", None, &host),
     }
 }
 fn cli_args() -> Vec<String> {
@@ -218,12 +222,19 @@ fn run_directory_with_runtime(
 }
 #[cfg(test)]
 mod tests {
-    use super::{js_runtime::JsRuntime, QuickJsRuntime};
+    use super::{
+        js_runtime::{FilesystemNodeHost, JsRuntime},
+        QuickJsRuntime,
+    };
     #[test]
     fn evaluates_javascript_source() {
         QuickJsRuntime::new()
             .unwrap()
-            .execute("if (1 + 1 !== 2) throw new Error('bad arithmetic');", None)
+            .execute(
+                "if (1 + 1 !== 2) throw new Error('bad arithmetic');",
+                None,
+                &FilesystemNodeHost,
+            )
             .unwrap();
     }
     #[test]
@@ -233,6 +244,7 @@ mod tests {
             .execute(
                 "if (typeof Buffer !== 'function') throw new Error('Buffer missing');",
                 None,
+                &FilesystemNodeHost,
             )
             .unwrap();
     }
