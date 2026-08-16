@@ -43,6 +43,15 @@ globalThis.require = (specifier) => {
       }
     };
   }
+  if (
+    (rawName.startsWith(".") || rawName.startsWith("/")) &&
+    typeof globalThis.__quenchLoadLocalModule === "function"
+  ) {
+    return globalThis.__quenchLoadLocalModule(
+      rawName,
+      globalThis.__quench_script_filename || globalThis.__filename
+    );
+  }
   if (name === "internal/vfs/router") {
     const path = globalThis.__nodePath;
     return {
