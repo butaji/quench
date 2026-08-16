@@ -347,10 +347,10 @@ fn intl_constructor_length(builtin: Builtin) -> Option<f64> {
         Builtin::Intl
         | Builtin::IntlCollator
         | Builtin::IntlPluralRules
+        | Builtin::IntlListFormat
         | Builtin::IntlRelativeTimeFormat => 0.0,
         Builtin::IntlDateTimeFormat
         | Builtin::IntlDisplayNames
-        | Builtin::IntlListFormat
         | Builtin::IntlNumberFormat
         | Builtin::IntlSegmenter => 2.0,
         Builtin::IntlLocale => 1.0,
