@@ -163,6 +163,14 @@ pub(crate) fn predeclare_functions(
 fn nested_var_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
     match statement {
         oxc::ast::ast::Statement::FunctionDeclaration(_) => Vec::new(),
+        oxc::ast::ast::Statement::BlockStatement(block) => annex_b_function_names(&block.body),
+        oxc::ast::ast::Statement::IfStatement(statement) => {
+            let mut names = annex_b_function_names(std::slice::from_ref(&statement.consequent));
+            if let Some(alternate) = &statement.alternate {
+                names.extend(annex_b_function_names(std::slice::from_ref(alternate)));
+            }
+            names
+        }
         _ => declared_names(statement),
     }
 }
