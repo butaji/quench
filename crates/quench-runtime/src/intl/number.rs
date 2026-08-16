@@ -206,6 +206,7 @@ impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         let raw = RawOptions::from_value(options)?;
         validate_rounding_mode(&raw.rounding_mode)?;
+        validate_rounding_increment(&raw)?;
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),
@@ -308,6 +309,41 @@ fn validate_rounding_mode(value: &str) -> Result<(), VmError> {
     valid
         .then_some(())
         .ok_or_else(|| crate::value::error::throw_range_error("invalid roundingMode"))
+}
+
+fn validate_rounding_increment(raw: &RawOptions) -> Result<(), VmError> {
+    if raw.rounding_increment != 1.0
+        && (!raw.rounding_increment.is_finite()
+            || raw.rounding_increment.fract() != 0.0
+            || !matches!(
+                raw.rounding_increment as u32,
+                1 | 2 | 5 | 10 | 20 | 25 | 50 | 100 | 200 | 250 | 500 | 1000 | 2000 | 2500 | 5000
+            ))
+    {
+        return Err(crate::value::error::throw_range_error(
+            "invalid roundingIncrement",
+        ));
+    }
+    if raw.rounding_increment == 1.0 {
+        return Ok(());
+    }
+    if raw.minimum_fraction_digits >= 0.0
+        && raw.maximum_fraction_digits >= 0.0
+        && raw.minimum_fraction_digits != raw.maximum_fraction_digits
+    {
+        return Err(crate::value::error::throw_range_error(
+            "roundingIncrement requires equal fraction digits",
+        ));
+    }
+    if raw.rounding_priority != "auto"
+        || raw.minimum_significant_digits >= 0.0
+        || raw.maximum_significant_digits >= 0.0
+    {
+        return Err(crate::value::error::throw_type_error(
+            "roundingIncrement requires fraction-digit rounding",
+        ));
+    }
+    Ok(())
 }
 
 fn number_options(
