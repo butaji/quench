@@ -1950,6 +1950,7 @@ fn fs_chmod(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn fs_access_async(arguments: &[Value]) -> Result<Value, VmError> {
+    path_arg(arguments, 0).map_err(invalid_path_error)?;
     let callback = arguments
         .get(2)
         .or_else(|| arguments.get(1))
