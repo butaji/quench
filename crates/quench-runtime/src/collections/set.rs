@@ -103,32 +103,17 @@ pub(crate) fn weak_set_new(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(Value::Object(iterable)) = arguments.first() {
         return weak_set_from_iterable(Value::Object(iterable.clone()));
     }
-    let values = match arguments.first() {
-        None | Some(Value::Undefined | Value::Null) => VecDeque::new(),
-        Some(Value::Array(values)) => values.iter().cloned().collect(),
-        Some(_) => {
-            return Err(crate::value::error::throw_type_error(
-                "WeakSet iterator is not callable",
-            ))
-        }
-    };
-    if values.iter().any(|value| !is_weakly_holdable(value)) {
-        return Err(crate::value::error::throw_type_error(
-            "Invalid value used in weak set",
-        ));
+    match arguments.first() {
+        None | Some(Value::Undefined | Value::Null) => Ok(Value::Set(Rc::new(SetData {
+            weak: true,
+            values: std::cell::RefCell::new(VecDeque::new()),
+            prototype: std::cell::RefCell::new(None),
+        }))),
+        Some(Value::Array(iterable)) => weak_set_from_iterable(Value::Array(iterable.clone())),
+        Some(_) => Err(crate::value::error::throw_type_error(
+            "WeakSet iterator is not callable",
+        )),
     }
-    let set = Value::Set(Rc::new(SetData {
-        weak: true,
-        values: std::cell::RefCell::new(values),
-        prototype: std::cell::RefCell::new(None),
-    }));
-    if matches!(
-        arguments.first(),
-        None | Some(Value::Undefined | Value::Null)
-    ) {
-        return Ok(set);
-    }
-    populate_weak_set(set)
 }
 
 fn weak_set_from_iterable(iterable: Value) -> Result<Value, VmError> {
@@ -148,24 +133,6 @@ fn weak_set_from_iterable(iterable: Value) -> Result<Value, VmError> {
         crate::functions::execute_target(&adder, &set, &[value])?;
         Ok(())
     })?;
-    Ok(set)
-}
-
-fn populate_weak_set(set: Value) -> Result<Value, VmError> {
-    let adder =
-        crate::execute::get_property_result(&Value::Builtin(Builtin::WeakSetPrototype), "add")?;
-    if !crate::conversion::is_callable(&adder) {
-        return Err(crate::value::error::throw_type_error(
-            "WeakSet.prototype.add is not callable",
-        ));
-    }
-    let values = match &set {
-        Value::Set(data) => data.values.borrow().iter().cloned().collect(),
-        _ => Vec::new(),
-    };
-    for value in values {
-        crate::functions::execute_target(&adder, &set, &[value])?;
-    }
     Ok(set)
 }
 
