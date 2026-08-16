@@ -489,6 +489,13 @@ fn array_property_result(
     if array_has_own_property(values, key) {
         return None;
     }
+    if values.is_arguments() {
+        return Some(get_property_with_receiver(
+            &Value::Builtin(crate::ops::Builtin::ObjectPrototype),
+            key,
+            receiver,
+        ));
+    }
     crate::arrays::prototype_override_getter(key).map(|getter| match getter {
         Value::Undefined => Ok(Value::Undefined),
         getter => invoke_accessor(&getter, receiver),
