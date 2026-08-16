@@ -622,11 +622,12 @@ fn is_region_shape(part: &str) -> bool {
     alphabetic || numeric
 }
 
-fn canonical_region(part: &str, emitted: &[String]) -> String {
+pub(crate) fn canonical_region(part: &str, emitted: &[String]) -> String {
     let region = part.to_ascii_uppercase();
     match region.as_str() {
         "CS" => "RS".to_string(),
         "NT" => "SA".to_string(),
+        "554" => "NZ".to_string(),
         "SU" | "810"
             if emitted.first().is_some_and(|language| language == "hy")
                 || emitted.iter().any(|subtag| subtag == "Armn") =>
