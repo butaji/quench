@@ -346,7 +346,86 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     } else {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
-    Ok(canonicalize_subtags(parts.collect(), out, script_done)?.join("-"))
+    let parts: Vec<&str> = parts.collect();
+    validate_transformed_extensions(&parts)?;
+    Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
+}
+
+fn validate_transformed_extensions(parts: &[&str]) -> Result<(), VmError> {
+    for (index, part) in parts.iter().enumerate() {
+        if part.eq_ignore_ascii_case("x") {
+            break;
+        }
+        if part.eq_ignore_ascii_case("t") {
+            let end = parts[index + 1..]
+                .iter()
+                .position(|part| part.len() == 1)
+                .map_or(parts.len(), |offset| index + 1 + offset);
+            validate_transformed_fields(&parts[index + 1..end])?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_transformed_fields(parts: &[&str]) -> Result<(), VmError> {
+    if parts.is_empty() {
+        return Err(runtime_error("RangeError: invalid language tag"));
+    }
+    let mut index = if is_transformed_language(parts[0]) {
+        transformed_language_length(parts)?
+    } else {
+        0
+    };
+    while index < parts.len() {
+        let key = parts[index];
+        if key.len() != 2 || !key.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        index += 1;
+        let start = index;
+        while index < parts.len() && parts[index].len() != 2 {
+            if !(3..=8).contains(&parts[index].len())
+                || !parts[index].chars().all(|c| c.is_ascii_alphanumeric())
+            {
+                return Err(runtime_error("RangeError: invalid language tag"));
+            }
+            index += 1;
+        }
+        if start == index {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+    }
+    Ok(())
+}
+
+fn is_transformed_language(part: &str) -> bool {
+    (2..=3).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphabetic())
+        || (5..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+fn transformed_language_length(parts: &[&str]) -> Result<usize, VmError> {
+    let mut index = 1;
+    if parts
+        .get(index)
+        .is_some_and(|part| part.len() == 4 && part.chars().all(|c| c.is_ascii_alphabetic()))
+    {
+        index += 1;
+    }
+    if parts.get(index).is_some_and(|part| {
+        (part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic()))
+            || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
+    }) {
+        index += 1;
+    }
+    while parts.get(index).is_some_and(|part| {
+        (5..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
+            || part.len() == 4
+                && part.chars().next().is_some_and(|c| c.is_ascii_digit())
+                && part.chars().skip(1).all(|c| c.is_ascii_alphanumeric())
+    }) {
+        index += 1;
+    }
+    Ok(index)
 }
 
 fn canonicalize_subtags(
