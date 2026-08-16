@@ -17,8 +17,11 @@ pub(crate) fn escape(value: Option<&Value>) -> Value {
     Value::String(result)
 }
 
-pub(crate) fn unescape(value: Option<&Value>) -> Value {
-    let text = value.map_or_else(|| value_to_string(&Value::Undefined), value_to_string);
+pub(crate) fn unescape(value: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    let text = match value {
+        Some(value) => crate::conversion::to_string(value)?,
+        None => "undefined".to_string(),
+    };
     let mut result = String::new();
     let mut chars = text.chars().peekable();
     while let Some(character) = chars.next() {
@@ -34,5 +37,5 @@ pub(crate) fn unescape(value: Option<&Value>) -> Value {
             result.push_str(&digits);
         }
     }
-    Value::String(result)
+    Ok(Value::String(result))
 }

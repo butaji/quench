@@ -255,7 +255,7 @@ fn tail_conversion_dispatch(
             Some(value) => crate::conversion::to_string_explicit(value).map(Value::String),
             None => Ok(Value::String(String::new())),
         },
-        Builtin::Unescape => Ok(crate::builtins::unescape(arguments.first())),
+        Builtin::Unescape => crate::builtins::unescape(arguments.first()),
         Builtin::MathPow => crate::builtins::math_pow(arguments),
         _ => return None,
     };
