@@ -211,7 +211,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
             ]));
         }
-        if name == "../common" || name.ends_with("/common") {
+        if name == "../common" || name.ends_with("/common") || name.ends_with("/common/index") {
             return Ok(Value::object(vec![
                 (
                     "mustCall".into(),
@@ -254,6 +254,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     )),
                 ),
             ]));
+        }
+        if name.starts_with("../common/") {
+            return Ok(quench_runtime::host_api::object(Vec::new()));
         }
         if name == "assert"
             || name == "node:assert"
