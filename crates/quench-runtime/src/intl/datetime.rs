@@ -120,6 +120,20 @@ impl DateTimeOptions {
         if matches!(value, Value::Undefined) {
             return Ok(());
         }
+        let recognized = COMPONENT_VALUES.iter().any(|(name, _)| *name == key)
+            || matches!(
+                key,
+                "localeMatcher"
+                    | "formatMatcher"
+                    | "hour12"
+                    | "timeZone"
+                    | "calendar"
+                    | "numberingSystem"
+                    | "fractionalSecondDigits"
+            );
+        if !recognized {
+            return Ok(());
+        }
         let text = conversion::to_string(value)?;
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
             if let Some(valid) = valid_component(&text, allowed) {
