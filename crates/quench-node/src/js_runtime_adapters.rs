@@ -14,7 +14,11 @@ impl JsRuntime for QuenchRuntime {
         }) {
             NODE_PROCESS_TITLE.with(|current| current.replace(title.to_owned()));
         }
-        let global_source = r#"globalThis.URLSearchParams = function URLSearchParams(init) {
+        let global_source = r#"/* URLSearchParams is supplied by the engine realm. */
+/* global URLSearchParams compatibility methods are installed by the Node facade. */
+/*
+globalThis.URLSearchParams = class URLSearchParams {
+  constructor(init) {
   this._pairs = [];
   if (typeof init === "string") {
     const query = init.replace(/^\?/, "");
@@ -23,6 +27,7 @@ impl JsRuntime for QuenchRuntime {
       const separator = pair.indexOf("=");
       this._pairs.push(separator < 0 ? [pair, ""] : [pair.slice(0, separator), pair.slice(separator + 1)]);
     }
+  }
   }
 };
 {
@@ -67,6 +72,7 @@ for (const name of ["URL", "URLSearchParams"]) {
     });
   }
 }
+*/
 "#;
         let source = source
             .replace("require(\"events\")", "__quench_events_module()")
@@ -74,7 +80,7 @@ for (const name of ["URL", "URLSearchParams"]) {
             .replace("require(\"node:events\")", "__quench_events_module()")
             .replace("require('node:events')", "__quench_events_module()");
         let support_source = crate::polyfills::bootstrap::lookup("support").unwrap_or("");
-        let source_with_globals = format!("var global = globalThis; var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var structuredClone = function(value) {{ return {{ ...value }}; }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; var Date = class Date {{}};\n{support_source}\n{global_source}\nvar __quench_events_module = function() {{ return {{ EventEmitter: globalThis.__nodeEventEmitter, EventEmitterAsyncResource: globalThis.__nodeEventEmitter, default: globalThis.__nodeEventEmitter }}; }};\n{source}\nglobalThis.__quench_drain_dgram_callbacks();");
+        let source_with_globals = format!("var global = globalThis; var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var structuredClone = function(value) {{ return {{ ...value }}; }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }};\n{support_source}\n{global_source}\nvar __quench_events_module = function() {{ return {{ EventEmitter: globalThis.__nodeEventEmitter, EventEmitterAsyncResource: globalThis.__nodeEventEmitter, default: globalThis.__nodeEventEmitter }}; }};\n{source}\nglobalThis.__quench_drain_dgram_callbacks();");
         let program =
             match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
                 true => quench_runtime::reduce::reduce_module_source(&source_with_globals),
@@ -212,6 +218,10 @@ for (const name of ["URL", "URLSearchParams"]) {
         .with_host_value(
             "URL",
             capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+        )
+        .with_host_value(
+            "URLSearchParams",
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchParams)),
         )
         .with_host_value(
             "setImmediate",
