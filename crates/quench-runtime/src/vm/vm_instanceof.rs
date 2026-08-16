@@ -298,6 +298,7 @@ fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
             | Builtin::WeakSetPrototype
             | Builtin::SharedArrayBufferPrototype
             | Builtin::WeakRefPrototype
+            | Builtin::IntlPluralRulesPrototype
             | Builtin::DisposableStackPrototype
             | Builtin::AbstractModuleSourcePrototype
     )
