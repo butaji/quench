@@ -217,6 +217,8 @@ impl QuenchNodeHost {
                 }))
             }
             HostCapabilityKind::Custom(CapabilityName::FsRmSync) => fs_rm(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsCpSync) => fs_cp(arguments, false),
+            HostCapabilityKind::Custom(CapabilityName::FsCp) => fs_cp(arguments, true),
             HostCapabilityKind::Custom(CapabilityName::FsReaddirSync) => fs_readdir(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReaddirAsync) => {
                 fs_readdir_async(arguments)
