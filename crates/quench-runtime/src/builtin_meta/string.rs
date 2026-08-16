@@ -5,6 +5,7 @@ use crate::ops::Builtin;
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::StringAnchor => Some("String.prototype.anchor"),
+        Builtin::StringBig => Some("String.prototype.big"),
         Builtin::StringIterator => Some("[Symbol.iterator]"),
         Builtin::StringIteratorNext => Some("StringIterator.prototype.next"),
         Builtin::StringFromCharCode => Some("String.fromCharCode"),
@@ -56,6 +57,7 @@ const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::StringAnchor => Some(1.0),
+        Builtin::StringBig => Some(0.0),
         Builtin::StringIterator => Some(0.0),
         Builtin::StringIteratorNext => Some(0.0),
         Builtin::StringFromCharCode => Some(1.0),
@@ -103,6 +105,7 @@ const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::StringAnchor => Some("anchor"),
+        Builtin::StringBig => Some("big"),
         Builtin::StringIteratorNext => Some("next"),
         Builtin::StringFromCharCode => Some("fromCharCode"),
         Builtin::StringFromCodePoint => Some("fromCodePoint"),
