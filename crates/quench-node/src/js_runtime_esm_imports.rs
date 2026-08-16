@@ -2,24 +2,76 @@ pub(crate) fn transform_esm_imports(source: &str) -> String {
     let source = transform_import_meta(source);
     let mut out = String::with_capacity(source.len());
     let mut iter = source.chars().peekable();
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut in_string: Option<char> = None;
+    let mut prev_char: Option<char> = None;
     while let Some(ch) = iter.next() {
+        if in_line_comment {
+            out.push(ch);
+            if ch == '\n' {
+                in_line_comment = false;
+            }
+            prev_char = Some(ch);
+            continue;
+        }
+        if in_block_comment {
+            out.push(ch);
+            if prev_char == Some('*') && ch == '/' {
+                in_block_comment = false;
+            }
+            prev_char = Some(ch);
+            continue;
+        }
+        if let Some(quote) = in_string {
+            out.push(ch);
+            if ch == quote && prev_char != Some('\\') {
+                in_string = None;
+            }
+            prev_char = Some(ch);
+            continue;
+        }
+        if ch == '/' && matches!(iter.peek(), Some('/')) {
+            iter.next();
+            out.push_str("//");
+            in_line_comment = true;
+            prev_char = Some('/');
+            continue;
+        }
+        if ch == '/' && matches!(iter.peek(), Some('*')) {
+            iter.next();
+            out.push_str("/*");
+            in_block_comment = true;
+            prev_char = Some('*');
+            continue;
+        }
+        if ch == '"' || ch == '\'' || ch == '`' {
+            in_string = Some(ch);
+            out.push(ch);
+            prev_char = Some(ch);
+            continue;
+        }
         if ch != 'i' || !matches!(iter.peek(), Some('m')) {
             out.push(ch);
+            prev_char = Some(ch);
             continue;
         }
         let snapshot: String = iter.clone().collect();
         if !snapshot.starts_with("mport") {
             out.push(ch);
+            prev_char = Some(ch);
             continue;
         }
         let after: String = iter.clone().collect();
         let after_skip = skip_chars(&after, 5);
         let Some(first_after) = after_skip.chars().next() else {
             out.push(ch);
+            prev_char = Some(ch);
             continue;
         };
         if !first_after.is_whitespace() && first_after != '{' {
             out.push(ch);
+            prev_char = Some(ch);
             continue;
         }
         if let Some((replacement, rest)) = convert_import_statement(&after) {
@@ -29,6 +81,7 @@ pub(crate) fn transform_esm_imports(source: &str) -> String {
         } else {
             out.push(ch);
         }
+        prev_char = Some(ch);
     }
     out
 }
@@ -125,16 +178,22 @@ fn convert_import_spec(spec: &str) -> Option<String> {
         let local = rest.trim();
         return Some(format!("const {local} = require(\"{module}\");"));
     }
+    if let Some(rest) = left.strip_prefix("default as ") {
+        let local = rest.trim();
+        return Some(format!("const {local} = require(\"{module}\");"));
+    }
     Some(format!("const {left} = require(\"{module}\");"))
 }
 
 fn parse_import_names(inner: &str) -> String {
-    let mut names: Vec<String> = Vec::new();
+    let trimmed = inner.trim();
+    let mut parts: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut depth: i32 = 0;
     let mut in_string = false;
     let mut quote = b'\0';
-    for ch in inner.chars() {
+    let mut chars = trimmed.chars().peekable();
+    while let Some(ch) = chars.next() {
         if !in_string && (ch == '"' || ch == '\'') {
             in_string = true;
             quote = ch as u8;
@@ -155,17 +214,61 @@ fn parse_import_names(inner: &str) -> String {
         }
         if depth == 0 && (ch == ',' || ch.is_whitespace()) {
             if !current.is_empty() {
-                names.push(current.clone());
+                parts.push(current.clone());
                 current.clear();
             }
-        } else {
-            current.push(ch);
+            continue;
         }
+        if depth == 0 && ch == 'a' && chars.peek() == Some(&'s') && current.is_empty() {
+            chars.next();
+            if chars.peek() == Some(&' ') {
+                chars.next();
+                while chars.peek() == Some(&' ') {
+                    chars.next();
+                }
+                if chars.peek().is_some() && chars.peek() != Some(&' ') && chars.peek() != Some(&',') {
+                    let saved = parts.pop().unwrap_or_default();
+                    if !saved.is_empty() {
+                        parts.push("as".to_string());
+                    }
+                    current.clear();
+                    continue;
+                }
+            }
+            current.push('a');
+            current.push('s');
+            continue;
+        }
+        current.push(ch);
     }
     if !current.is_empty() {
-        names.push(current);
+        parts.push(current);
     }
-    names.into_iter().collect::<Vec<_>>().join(", ")
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut iter = parts.iter();
+    while let Some(part) = iter.next() {
+        let part = part.trim();
+        if part == "as" {
+            if let Some(prev) = pairs.last_mut() {
+                if let Some(next) = iter.next() {
+                    prev.1 = next.trim().to_string();
+                }
+            }
+            continue;
+        }
+        pairs.push((part.to_string(), part.to_string()));
+    }
+    pairs
+        .into_iter()
+        .map(|(imported, local)| {
+            if imported == local {
+                local
+            } else {
+                format!("{imported}: {local}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Replace `import.meta` with a `globalThis.import_meta` reference.
