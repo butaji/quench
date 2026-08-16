@@ -148,6 +148,8 @@ impl CapabilityName {
     const FsStatsIsDirectoryFile: u16 = 1543;
     const FsStatsIsSymbolicLink: u16 = 1544;
     const FsStatsIsNotSymbolicLink: u16 = 1545;
+    const FsFtruncateSync: u16 = 1571;
+    const FsTruncateAsync: u16 = 1572;
     const FsFsyncSync: u16 = 1546;
     const FsFdatasyncSync: u16 = 1547;
     const FsFsyncAsync: u16 = 1548;
@@ -441,6 +443,12 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsStatsIsNotSymbolicLink) => {
                 Ok(Value::Boolean(false))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsFtruncateSync) => {
+                self.fs_ftruncate(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsTruncateAsync) => {
+                fs_truncate_async(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::FsFsyncSync)
             | HostCapabilityKind::Custom(CapabilityName::FsFdatasyncSync) => Ok(Value::Undefined),
@@ -1006,6 +1014,35 @@ impl QuenchNodeHost {
         }
         self.fd_paths.borrow_mut().remove(&fd);
         self.fd_modes.borrow_mut().remove(&fd);
+        Ok(Value::Undefined)
+    }
+
+    fn fs_ftruncate(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let fd = match arguments.first() {
+            Some(Value::Number(value)) => *value as i32,
+            _ => return Err(VmError::NotCallable),
+        };
+        let length = match arguments.get(1) {
+            Some(Value::Number(value)) if *value >= 0.0 => *value as u64,
+            _ => {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    "length must be a number",
+                )))
+            }
+        };
+        let path = self
+            .fd_paths
+            .borrow()
+            .get(&fd)
+            .cloned()
+            .ok_or(VmError::NotCallable)?;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .map_err(|error| VmError::EvalError(error.to_string()))?;
+        file.set_len(length)
+            .map_err(|error| VmError::EvalError(error.to_string()))?;
         Ok(Value::Undefined)
     }
 
@@ -1708,7 +1745,11 @@ fn fs_stat_sync(arguments: &[Value]) -> Result<Value, VmError> {
         | if metadata.is_dir() { 0o40000 } else { 0o100000 };
     #[cfg(not(unix))]
     let mode = if metadata.is_dir() { 0o40777 } else { 0o100666 };
-    Ok(fs_stats(mode))
+    Ok(quench_runtime::execute::set_property(
+        fs_stats(mode),
+        "size",
+        Value::Number(metadata.len() as f64),
+    ))
 }
 
 fn fs_lstat_sync(arguments: &[Value]) -> Result<Value, VmError> {
@@ -2022,6 +2063,29 @@ fn fs_write_options(arguments: &[Value]) -> Result<Value, VmError> {
             .map_err(|error| VmError::EvalError(error.to_string()))?;
     } else {
         std::fs::write(path, bytes).map_err(|error| VmError::EvalError(error.to_string()))?;
+    }
+    Ok(Value::Undefined)
+}
+
+fn fs_truncate_async(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    let length = match arguments.get(1) {
+        Some(Value::Number(value)) if *value >= 0.0 => *value as u64,
+        _ => {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "length must be a number",
+            )))
+        }
+    };
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    file.set_len(length)
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    if let Some(callback) = arguments.last() {
+        quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
     }
     Ok(Value::Undefined)
 }
@@ -2461,6 +2525,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsFchmod)),
                 ),
                 (
+                    "ftruncateSync".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::FsFtruncateSync,
+                    )),
+                ),
+                (
                     "fstatSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsFstatSync)),
                 ),
@@ -2507,6 +2577,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "access".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsAccessAsync)),
+                ),
+                (
+                    "truncate".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::FsTruncateAsync,
+                    )),
                 ),
                 (
                     "constants".into(),
