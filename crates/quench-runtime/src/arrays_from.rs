@@ -141,7 +141,7 @@ fn collect_array_like(
     Ok(())
 }
 
-fn array_like_length(source: &Value) -> Result<usize, crate::execute::VmError> {
+pub(crate) fn array_like_length(source: &Value) -> Result<usize, crate::execute::VmError> {
     if matches!(source, Value::ArrayBuffer(_) | Value::DataView(_)) {
         return Ok(0);
     }

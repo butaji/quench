@@ -64,8 +64,13 @@ fn constructor_property(builtin: Builtin, key: &str) -> Option<Builtin> {
     if key == "supportedLocalesOf" {
         return match builtin {
             Builtin::IntlDateTimeFormat => Some(Builtin::IntlDateTimeFormatSupportedLocalesOf),
+            Builtin::IntlCollator => Some(Builtin::IntlCollatorSupportedLocalesOf),
+            Builtin::IntlPluralRules => Some(Builtin::IntlPluralRulesSupportedLocalesOf),
             Builtin::IntlSegmenter => Some(Builtin::IntlSegmenterSupportedLocalesOf),
             Builtin::IntlListFormat => Some(Builtin::IntlListFormatSupportedLocalesOf),
+            Builtin::IntlRelativeTimeFormat => {
+                Some(Builtin::IntlRelativeTimeFormatSupportedLocalesOf)
+            }
             _ => None,
         };
     }
@@ -95,6 +100,8 @@ pub(crate) fn execute(
 ) -> Option<Result<Value, VmError>> {
     match builtin {
         Builtin::IntlDateTimeFormatSupportedLocalesOf => Some(supported_locales_of(arguments)),
+        Builtin::IntlCollatorSupportedLocalesOf => Some(supported_locales_of(arguments)),
+        Builtin::IntlPluralRulesSupportedLocalesOf => Some(supported_locales_of(arguments)),
         Builtin::IntlSegmenterSupportedLocalesOf => Some(segmenter_supported_locales_of(arguments)),
         Builtin::IntlListFormatSupportedLocalesOf => Some(list_supported_locales_of(arguments)),
         Builtin::IntlGetCanonicalLocales => Some(get_canonical_locales(arguments)),
@@ -158,16 +165,20 @@ fn requested_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
 }
 
 fn validate_supported_options(options: Option<&Value>) -> Result<(), VmError> {
-    let Some(Value::Object(properties)) = options else {
-        if matches!(options, Some(Value::Null)) {
-            return Err(crate::value::error::throw_type_error(
-                "Cannot convert null to object",
-            ));
-        }
+    let Some(options) = options else {
         return Ok(());
     };
-    if let Some((_, value)) = properties.iter().find(|(name, _)| name == "localeMatcher") {
-        let matcher = to_string_value(value);
+    if matches!(options, Value::Undefined) {
+        return Ok(());
+    }
+    if matches!(options, Value::Null) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert null to object",
+        ));
+    }
+    let value = crate::execute::get_property_result(options, "localeMatcher")?;
+    if !matches!(value, Value::Undefined) {
+        let matcher = crate::conversion::to_string(&value)?;
         if matcher != "lookup" && matcher != "best fit" {
             return Err(runtime_error("RangeError: invalid localeMatcher"));
         }
@@ -209,9 +220,8 @@ fn get_canonical_locales(arguments: &[Value]) -> Result<Value, VmError> {
 
 /// Implement `Intl.supportedValuesOf`.
 fn supported_values_of(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(key)) = arguments.first() else {
-        return Err(runtime_error("TypeError: key must be a string"));
-    };
+    let key =
+        crate::conversion::to_string(arguments.first().map_or(&Value::Undefined, |value| value))?;
     let values: Vec<Value> = match key.as_str() {
         "calendar" => supported_calendars(),
         "collation" => supported_collations(),
@@ -225,7 +235,7 @@ fn supported_values_of(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Resolve the `locales` argument to a canonical list of BCP-47 tags.
-fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
+pub(crate) fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
     let Some(locales) = arguments.first() else {
         return Ok(vec![default_locale()]);
     };
@@ -287,6 +297,13 @@ pub(crate) fn to_string_value(value: &Value) -> String {
 /// Canonicalize a single BCP-47 language tag.
 pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let tag = tag.trim();
+    match tag.to_ascii_lowercase().as_str() {
+        "cel-gaulish" => return Ok("xtg".to_string()),
+        "en-gb-oed" | "zh-min" | "i-default" => {
+            return Err(runtime_error("RangeError: invalid language tag"));
+        }
+        _ => {}
+    }
     if tag.is_empty()
         || tag.eq_ignore_ascii_case("nan")
         || !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')

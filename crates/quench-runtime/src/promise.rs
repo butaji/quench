@@ -320,12 +320,22 @@ fn resolve_object_value(promise: Rc<PromiseData>, value: Value) -> Value {
 }
 
 fn bound_settler(target: Builtin, promise: &Rc<PromiseData>) -> Value {
+    let length = Value::Number(1.0);
+    let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), length.clone()),
+        ("writable".to_string(), Value::Boolean(false)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])));
     Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
         realm: crate::vm::current_context_or_default().realm(),
         target: Value::Builtin(target),
         receiver: Value::Promise(Rc::clone(promise)),
         arguments: Vec::new(),
-        properties: RefCell::new(Vec::new()),
+        properties: RefCell::new(vec![
+            ("length".to_string(), length),
+            (crate::builtins::descriptor_key("length"), descriptor),
+        ]),
     }))
 }
 
@@ -393,21 +403,16 @@ fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
 
 pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
     let promise = new_promise();
-    let resolve = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
-        target: Value::Builtin(Builtin::PromiseResolve),
-        receiver: promise.clone(),
-        arguments: Vec::new(),
-        properties: RefCell::new(Vec::new()),
-    }));
-    let reject = Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
-        target: Value::Builtin(Builtin::PromiseReject),
-        receiver: promise.clone(),
-        arguments: Vec::new(),
-        properties: RefCell::new(Vec::new()),
-    }));
-    crate::functions::execute_target(executor, &Value::Undefined, &[resolve, reject])?;
+    let Value::Promise(promise_data) = &promise else {
+        return Err(VmError::NotCallable);
+    };
+    let resolve = bound_settler(Builtin::PromiseResolve, promise_data);
+    let reject = bound_settler(Builtin::PromiseReject, promise_data);
+    if let Err(VmError::Thrown(reason)) =
+        crate::functions::execute_target(executor, &Value::Undefined, &[resolve, reject])
+    {
+        reject_promise(promise_data, reason);
+    }
     Ok(promise)
 }
 

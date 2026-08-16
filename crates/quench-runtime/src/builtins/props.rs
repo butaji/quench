@@ -51,7 +51,7 @@ fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
         return Some(ArrayFrom);
     }
     if builtin == Array && key == "of" {
-        return Some(TypedArrayOf);
+        return Some(ArrayOf);
     }
     if builtin == ArrayBuffer && key == "prototype" {
         return Some(ArrayBufferPrototype);
@@ -265,6 +265,10 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             (is_typed_array_prototype(builtin) && key == "keys").then_some(Builtin::ArrayKeys)
         })
         .or_else(|| {
+            (is_typed_array_prototype(builtin) && key == "toLocaleString")
+                .then_some(Builtin::ArrayToLocaleString)
+        })
+        .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "fill").then_some(Builtin::TypedArrayFill)
         })
         .or_else(|| uint8_array_base64_method(builtin, key))
@@ -472,7 +476,8 @@ fn builtin_method3_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (BigInt, "asUintN") => Some(BigIntAsUintN),
         (BigIntPrototype, "valueOf") => Some(BigIntValueOf),
         (BigIntPrototype, "constructor") => Some(BigInt),
-        (BigIntPrototype, "toString" | "toLocaleString") => Some(BigIntToString),
+        (BigIntPrototype, "toString") => Some(BigIntToString),
+        (BigIntPrototype, "toLocaleString") => Some(BigIntToLocaleString),
         _ => None,
     }
 }
@@ -542,6 +547,7 @@ fn builtin_length(builtin: Builtin) -> f64 {
         | AsyncGeneratorReturn | AsyncGeneratorThrow => 1.0,
         ArrayBuffer => 1.0,
         Object => 1.0,
+        ObjectCreate => 2.0,
         Float64Array => 3.0,
         Float32Array => 3.0,
         Int8Array => 3.0,

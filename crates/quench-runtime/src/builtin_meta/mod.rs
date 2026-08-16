@@ -97,9 +97,9 @@ fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
     Some(match builtin {
         Builtin::Intl => "Intl",
         Builtin::IntlCollator => "Intl.Collator",
-        Builtin::IntlDateTimeFormat => "Intl.DateTimeFormat",
+        Builtin::IntlDateTimeFormat => "DateTimeFormat",
         Builtin::IntlDisplayNames => "Intl.DisplayNames",
-        Builtin::IntlListFormat => "Intl.ListFormat",
+        Builtin::IntlListFormat => "ListFormat",
         Builtin::IntlLocale => "Intl.Locale",
         Builtin::IntlNumberFormat => "Intl.NumberFormat",
         Builtin::IntlPluralRules => "Intl.PluralRules",
@@ -344,13 +344,14 @@ fn constructor_length_tail(builtin: Builtin) -> Option<f64> {
 
 fn intl_constructor_length(builtin: Builtin) -> Option<f64> {
     Some(match builtin {
-        Builtin::Intl | Builtin::IntlCollator | Builtin::IntlPluralRules => 0.0,
-        Builtin::IntlDateTimeFormat
-        | Builtin::IntlDisplayNames
+        Builtin::Intl
+        | Builtin::IntlCollator
+        | Builtin::IntlPluralRules
         | Builtin::IntlListFormat
-        | Builtin::IntlNumberFormat
-        | Builtin::IntlRelativeTimeFormat
-        | Builtin::IntlSegmenter => 2.0,
+        | Builtin::IntlRelativeTimeFormat => 0.0,
+        Builtin::IntlDateTimeFormat => 0.0,
+        Builtin::IntlDisplayNames | Builtin::IntlNumberFormat => 2.0,
+        Builtin::IntlSegmenter => 0.0,
         Builtin::IntlLocale => 1.0,
         _ => return None,
     })

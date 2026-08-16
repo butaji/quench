@@ -16,6 +16,7 @@ pub(crate) struct Locale {
     pub collation: Option<String>,
     pub case_first: Option<String>,
     pub hour_cycle: Option<String>,
+    pub first_day_of_week: Option<String>,
     pub numbering_system: Option<String>,
     pub numeric: bool,
 }
@@ -70,6 +71,7 @@ fn parse_canonical(tag: &str) -> Locale {
         collation: None,
         case_first: None,
         hour_cycle: None,
+        first_day_of_week: None,
         numbering_system: None,
         numeric: false,
     };
@@ -99,6 +101,10 @@ fn parse_canonical(tag: &str) -> Locale {
     locale
 }
 
+pub(crate) fn case_first_extension(tag: &str) -> Option<String> {
+    parse_canonical(tag).case_first
+}
+
 fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
     let mut i = 0;
     while i < parts.len() {
@@ -120,6 +126,9 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
                     "hc" if locale.hour_cycle.is_none() => {
                         locale.hour_cycle = Some(item.to_string())
                     }
+                    "fw" if locale.first_day_of_week.is_none() => {
+                        locale.first_day_of_week = Some(item.to_string())
+                    }
                     "nu" if locale.numbering_system.is_none() => {
                         locale.numbering_system = Some(item.to_string())
                     }
@@ -133,10 +142,12 @@ fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
     }
 }
 
-fn calendar_alias(value: &str) -> String {
-    match value {
+pub(crate) fn calendar_alias(value: &str) -> String {
+    let value = value.to_ascii_lowercase();
+    match value.as_str() {
         "islamicc" => "islamic-civil".to_string(),
-        other => canonicalize(other).unwrap_or_else(|_| other.to_string()),
+        "islamic" | "islamic-rgsa" => "islamic-civil".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -150,34 +161,127 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
         return Ok(locale);
     };
     let object = Value::Object(properties.clone());
-    for (key, _) in properties.iter() {
+    for key in [
+        "language",
+        "script",
+        "region",
+        "variants",
+        "calendar",
+        "collation",
+        "hourCycle",
+        "firstDayOfWeek",
+        "caseFirst",
+        "numeric",
+        "numberingSystem",
+    ] {
         let value = crate::execute::get_property_result(&object, key)?;
         if matches!(value, Value::Undefined) {
             continue;
         }
         let text = crate::conversion::to_string(&value)?;
-        match key.as_str() {
+        match key {
             "calendar" => {
                 let value = option_value(&text, "calendar")?;
-                locale.calendar = Some(calendar_alias(&value));
+                locale.calendar = Some(calendar_alias(&calendar_option(&value)?));
             }
             "collation" => locale.collation = Some(option_value(&text, "collation")?),
             "caseFirst" => locale.case_first = Some(normalize_case_first(&text)?),
             "hourCycle" => locale.hour_cycle = Some(normalize_hour_cycle(&text)?),
             "numberingSystem" => {
-                locale.numbering_system = Some(option_value(&text, "numberingSystem")?)
+                let value = option_value(&text, "numberingSystem")?;
+                if !value.split('-').all(|part| {
+                    (3..=8).contains(&part.len())
+                        && part
+                            .chars()
+                            .all(|character| character.is_ascii_alphanumeric())
+                }) {
+                    return Err(runtime_error("RangeError: invalid numberingSystem"));
+                }
+                locale.numbering_system = Some(value);
             }
             "numeric" => locale.numeric = normalize_numeric(&value, &text)?,
             "firstDayOfWeek" => {
-                let _ = option_value(&text, "firstDayOfWeek")?;
+                let value = option_value(&text, "firstDayOfWeek")?;
+                if value.len() < 3
+                    && !matches!(
+                        value.as_str(),
+                        "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7"
+                    )
+                {
+                    return Err(runtime_error("RangeError: invalid firstDayOfWeek"));
+                }
+                if !matches!(
+                    value.as_str(),
+                    "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7"
+                ) && value.split('-').any(|part| {
+                    !(3..=8).contains(&part.len())
+                        || !part
+                            .chars()
+                            .all(|character| character.is_ascii_alphanumeric())
+                }) {
+                    return Err(runtime_error("RangeError: invalid firstDayOfWeek"));
+                }
+                locale.first_day_of_week = Some(normalize_first_day(&value));
             }
-            "language" | "region" | "script" | "variants" => {
+            "language" if text.contains('-') => {
+                return Err(runtime_error("RangeError: invalid language"));
+            }
+            "language" | "script" => {
                 let _ = option_value(&text, key)?;
+            }
+            "region" => validate_region(&text)?,
+            "variants" => {
+                let value = option_value(&text, key)?;
+                locale.variants = variants_option(&value)?;
             }
             _ => {}
         }
     }
+    if locale.language == "cel" && locale.variants == ["gaulish"] {
+        locale.language = "xtg".to_string();
+        locale.variants.clear();
+    }
     Ok(locale)
+}
+
+fn normalize_first_day(value: &str) -> String {
+    match value {
+        "0" | "sun" => "sun".to_string(),
+        "1" | "mon" => "mon".to_string(),
+        "2" | "tue" => "tue".to_string(),
+        "3" | "wed" => "wed".to_string(),
+        "4" | "thu" => "thu".to_string(),
+        "5" | "fri" => "fri".to_string(),
+        "6" | "sat" => "sat".to_string(),
+        "7" => "sun".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn validate_region(value: &str) -> Result<(), VmError> {
+    let valid = (value.len() == 2 && value.chars().all(|c| c.is_ascii_alphabetic()))
+        || (value.len() == 3 && value.chars().all(|c| c.is_ascii_digit()));
+    valid
+        .then_some(())
+        .ok_or_else(|| runtime_error("RangeError: invalid region"))
+}
+
+fn variants_option(value: &str) -> Result<Vec<String>, VmError> {
+    let mut variants = value
+        .split('-')
+        .map(|variant| variant.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    if variants.iter().any(|variant| {
+        !((5..=8).contains(&variant.len()) && variant.chars().all(|c| c.is_ascii_alphanumeric())
+            || variant.len() == 4 && variant.chars().next().is_some_and(|c| c.is_ascii_digit()))
+    }) {
+        return Err(runtime_error("RangeError: invalid variants"));
+    }
+    variants.sort();
+    if variants.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(runtime_error("RangeError: invalid variants"));
+    }
+    Ok(variants)
 }
 
 fn option_value(value: &str, name: &str) -> Result<String, VmError> {
@@ -185,6 +289,16 @@ fn option_value(value: &str, name: &str) -> Result<String, VmError> {
         return Err(runtime_error(&format!("RangeError: invalid {name}")));
     }
     Ok(value.to_string())
+}
+
+pub(crate) fn calendar_option(value: &str) -> Result<String, VmError> {
+    if value.split('-').all(|part| {
+        (3..=8).contains(&part.len()) && part.chars().all(|c| c.is_ascii_alphanumeric())
+    }) {
+        Ok(value.to_string())
+    } else {
+        Err(runtime_error("RangeError: invalid calendar"))
+    }
 }
 
 fn normalize_case_first(value: &str) -> Result<String, VmError> {
@@ -216,6 +330,10 @@ fn build_object(locale: Locale) -> Value {
     let mut properties = base_properties(&locale);
     properties.extend(method_properties());
     properties.push(("__intl".to_string(), locale_slot(&locale)));
+    properties.push((
+        "\0prototype".to_string(),
+        Value::Builtin(crate::ops::Builtin::IntlLocalePrototype),
+    ));
     make_object(properties)
 }
 
@@ -296,6 +414,12 @@ fn locale_slot(locale: &Locale) -> Value {
     if let Some(region) = &locale.region {
         properties.push(("region".to_string(), Value::String(region.clone())));
     }
+    if !locale.variants.is_empty() {
+        properties.push((
+            "variants".to_string(),
+            Value::String(locale.variants.join("-")),
+        ));
+    }
     if let Some(calendar) = &locale.calendar {
         properties.push(("calendar".to_string(), Value::String(calendar.clone())));
     }
@@ -314,6 +438,12 @@ fn locale_slot(locale: &Locale) -> Value {
             Value::String(numbering_system.clone()),
         ));
     }
+    if let Some(first_day) = &locale.first_day_of_week {
+        properties.push((
+            "firstDayOfWeek".to_string(),
+            Value::String(first_day.clone()),
+        ));
+    }
     properties.push(("numeric".to_string(), Value::Boolean(locale.numeric)));
     properties.push(("full".to_string(), Value::String(slot_full(locale))));
     make_object(properties)
@@ -327,8 +457,10 @@ fn slot_full(locale: &Locale) -> String {
         for (key, item) in keys {
             full.push('-');
             full.push_str(key);
-            full.push('-');
-            full.push_str(&item);
+            if item != "true" {
+                full.push('-');
+                full.push_str(&item);
+            }
         }
     }
     full
@@ -350,6 +482,9 @@ fn slot_keys(locale: &Locale) -> Vec<(&'static str, String)> {
     }
     if let Some(numbering) = &locale.numbering_system {
         keys.push(("nu", numbering.clone()));
+    }
+    if let Some(first_day) = &locale.first_day_of_week {
+        keys.push(("fw", first_day.clone()));
     }
     if locale.numeric {
         keys.push(("kn", "true".to_string()));
