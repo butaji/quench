@@ -53,6 +53,7 @@ impl CapabilityName {
     const InternalUtilEmitExperimentalWarning: u16 = 2089;
     const ProcessOn: u16 = 2090;
     const ProcessEmit: u16 = 2091;
+    const UtilDeprecatedFirst: u16 = 2092;
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
     const BufferToJson: u16 = 2043;
@@ -90,6 +91,7 @@ impl CapabilityName {
     const PathNormalize: u16 = 2070;
     const PathWinNormalize: u16 = 2071;
     const UtilPromisify: u16 = 1950;
+    const UtilDeprecate: u16 = 2099;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
     const OsPlatform: u16 = 82;
@@ -367,6 +369,8 @@ struct QuenchNodeHost {
     next_common_wrapper: Cell<u16>,
     promisified: RefCell<HashMap<u16, Value>>,
     next_promisified: Cell<u16>,
+    deprecated: RefCell<HashMap<u16, Value>>,
+    next_deprecated: Cell<u16>,
     pending_promises: RefCell<HashMap<u16, Rc<quench_runtime::value::PromiseData>>>,
     next_promise: Cell<u16>,
 }
@@ -419,6 +423,8 @@ impl Default for QuenchNodeHost {
             next_common_wrapper: Cell::new(CapabilityName::CommonWrapperFirst),
             promisified: RefCell::new(HashMap::new()),
             next_promisified: Cell::new(CapabilityName::UtilPromisifiedFirst),
+            deprecated: RefCell::new(HashMap::new()),
+            next_deprecated: Cell::new(CapabilityName::UtilDeprecatedFirst),
             pending_promises: RefCell::new(HashMap::new()),
             next_promise: Cell::new(CapabilityName::UtilResolverFirst),
         }
@@ -799,6 +805,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::UtilDeprecate) => self.util_deprecate(arguments),
+            HostCapabilityKind::Custom(id) if (CapabilityName::UtilDeprecatedFirst..CapabilityName::UtilPromisifiedFirst).contains(&id) => self.call_deprecated(id, arguments),
             HostCapabilityKind::Custom(id)
                 if (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilResolverFirst)
                     .contains(&id) =>
@@ -1192,6 +1200,23 @@ impl QuenchNodeHost {
         self.next_promisified.set(id.saturating_add(1));
         self.promisified.borrow_mut().insert(id, callback);
         Ok(capability_function(HostCapabilityKind::Custom(id)))
+    }
+
+    fn util_deprecate(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let callback = arguments.first().cloned().ok_or(VmError::NotCallable)?;
+        let id = self.next_deprecated.get();
+        self.next_deprecated.set(id.saturating_add(1));
+        self.deprecated.borrow_mut().insert(id, callback);
+        let wrapper = capability_function(HostCapabilityKind::Custom(id));
+        if let Ok(length) = quench_runtime::execute::get_property_result(arguments.first().unwrap(), "length") {
+            quench_runtime::execute::set_callable_property(&wrapper, "length", length)?;
+        }
+        Ok(wrapper)
+    }
+
+    fn call_deprecated(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
+        let callback = self.deprecated.borrow().get(&id).cloned().ok_or(VmError::NotCallable)?;
+        quench_runtime::execute::call(&callback, &Value::Undefined, arguments)
     }
 
     fn call_promisified(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
@@ -5361,6 +5386,10 @@ fn util_module() -> Value {
         (
             "promisify".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::UtilPromisify)),
+        ),
+        (
+            "deprecate".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilDeprecate)),
         ),
         ("types".into(), types),
         ("TextEncoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor))),
