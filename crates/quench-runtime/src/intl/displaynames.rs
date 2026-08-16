@@ -228,7 +228,11 @@ fn language_code_valid(code: &str) -> bool {
 }
 
 fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmError> {
-    super::intl_slots(receiver)
+    let slots = super::intl_slots(receiver)?;
+    if slot_string(&slots, "type").is_none() {
+        return Err(runtime_error("TypeError: not a DisplayNames object"));
+    }
+    Ok(slots)
 }
 
 fn option_string(options: &Value, name: &str, missing: &str) -> Result<String, VmError> {
