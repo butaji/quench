@@ -302,6 +302,13 @@ fn is_typed_array_prototype(builtin: Builtin) -> bool {
 }
 fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
     use crate::ops::HostCapabilityKind::*;
+    if let Custom(id) = _kind {
+        let custom = match (id, key) {
+            (1, "basename") => Custom(2),
+            _ => return None,
+        };
+        return Some(Builtin::HostCapability(custom));
+    }
     let kind = match key {
         "global" => GetGlobal,
         "createRealm" => CreateRealm,

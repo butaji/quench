@@ -158,7 +158,17 @@ fn global_property(
     }
     if realm.is_none() {
         if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
-            return Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(binding)));
+            let token = Value::HostCapability(Rc::new(
+                crate::value::HostCapabilityValue::new(binding),
+            ));
+            if matches!(binding.kind, crate::ops::HostCapabilityKind::Custom(_)) {
+                return Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue::new(
+                    binding.realm,
+                    Value::Builtin(Builtin::HostCapability(binding.kind)),
+                    token,
+                )));
+            }
+            return token;
         }
     }
     realm::global_builtin(key).map_or_else(
