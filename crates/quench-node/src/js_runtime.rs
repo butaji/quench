@@ -4870,6 +4870,7 @@ fn assert_module() -> Value {
     for (name, id) in [
         ("strictEqual", CapabilityName::AssertStrictEqual),
         ("deepStrictEqual", CapabilityName::AssertDeepStrictEqual),
+        ("deepEqual", CapabilityName::AssertDeepStrictEqual),
         ("ok", CapabilityName::AssertOk),
         ("throws", CapabilityName::AssertThrows),
         ("doesNotThrow", CapabilityName::AssertDoesNotThrow),
