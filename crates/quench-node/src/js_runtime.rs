@@ -186,6 +186,9 @@ impl CapabilityName {
     const CryptoCipherFinal: u16 = 2239;
     const CryptoCipherEnd: u16 = 2241;
     const CryptoCipherRead: u16 = 2242;
+    const CryptoCipherSetAad: u16 = 2243;
+    const CryptoCipherGetAuthTag: u16 = 2244;
+    const CryptoCipherSetAuthTag: u16 = 2245;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -1018,6 +1021,41 @@ impl Host for QuenchNodeHost {
                     Some(Value::String(value)) => value.to_ascii_lowercase(),
                     _ => String::new(),
                 };
+                if algorithm == "aes-127" {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_CRYPTO_UNKNOWN_CIPHER",
+                        "Unknown cipher",
+                    )));
+                }
+                if algorithm.starts_with("aes-128-")
+                    && arguments.get(1).map(|value| {
+                        string_or_bytes(Some(value))
+                            .map(|bytes| bytes.len())
+                            .unwrap_or(0)
+                    }) != Some(16)
+                {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_CRYPTO_INVALID_KEYLEN",
+                        "Invalid key length",
+                    )));
+                }
+                if algorithm == "chacha20-poly1305" {
+                    if let Some(Value::Object(options)) = arguments.get(3) {
+                        if let Ok(Value::Number(length)) =
+                            quench_runtime::execute::get_property_result(
+                                &Value::Object(options.clone()),
+                                "authTagLength",
+                            )
+                        {
+                            if length != 16.0 {
+                                return Err(VmError::Thrown(fs_error(
+                                    "ERR_CRYPTO_INVALID_AUTH_TAG",
+                                    "Invalid authentication tag length",
+                                )));
+                            }
+                        }
+                    }
+                }
                 if arguments.len() < 3 || matches!(arguments.get(2), Some(Value::Undefined)) {
                     return Err(VmError::Thrown(fs_error(
                         "ERR_INVALID_ARG_TYPE",
@@ -1090,6 +1128,24 @@ impl Host for QuenchNodeHost {
                         )),
                     ),
                     ("\0cipherEncoding".into(), Value::Undefined),
+                    (
+                        "setAAD".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoCipherSetAad,
+                        )),
+                    ),
+                    (
+                        "getAuthTag".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoCipherGetAuthTag,
+                        )),
+                    ),
+                    (
+                        "setAuthTag".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoCipherSetAuthTag,
+                        )),
+                    ),
                 ]);
                 if let Some(constructor) = receiver {
                     if let Ok(prototype) =
@@ -1206,6 +1262,31 @@ impl Host for QuenchNodeHost {
                 Ok(receiver.clone())
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoCipherRead) => Ok(node_buffer(&[])),
+            HostCapabilityKind::Custom(CapabilityName::CryptoCipherSetAad) => {
+                Ok(receiver.cloned().unwrap_or(Value::Undefined))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCipherGetAuthTag) => {
+                Ok(node_buffer(&[0; 16]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoCipherSetAuthTag) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                if matches!(
+                    quench_runtime::execute::get_property_result(receiver, "\0authTagSet"),
+                    Ok(Value::String(_))
+                ) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_CRYPTO_INVALID_STATE",
+                        "Invalid state",
+                    )));
+                }
+                let updated = quench_runtime::execute::set_property(
+                    receiver.clone(),
+                    "\0authTagSet",
+                    Value::String("set".into()),
+                );
+                quench_runtime::execute::replace_value(receiver, &updated);
+                Ok(receiver.clone())
+            }
             HostCapabilityKind::Custom(CapabilityName::CryptoHashOn) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
                 let event = match arguments.first() {
