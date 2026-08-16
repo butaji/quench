@@ -4988,7 +4988,9 @@ fn format_inspected(value: &Value) -> String {
             format!("SharedArrayBuffer {{ [Uint8Contents]: <{hex}>, [byteLength]: {} }}", bytes.len())
         }
         Value::Object(_) | Value::ObjectAlias(_) => {
-            if let Ok(value) = quench_runtime::execute::get_property_result(value, "foo") {
+            if let Ok(Value::String(stack)) = quench_runtime::execute::get_property_result(value, "stack") {
+                stack
+            } else if let Ok(value) = quench_runtime::execute::get_property_result(value, "foo") {
                 format!("{{ foo: {} }}", format_inspected(&value))
             } else {
                 "{}".into()
