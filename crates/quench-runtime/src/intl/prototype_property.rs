@@ -1,4 +1,7 @@
 fn prototype_property(builtin: Builtin, key: &str) -> Option<Builtin> {
+    if builtin == Builtin::IntlRelativeTimeFormatPrototype && key == "constructor" {
+        return Some(Builtin::IntlRelativeTimeFormat);
+    }
     prototype_locale_property(builtin, key)
 }
 

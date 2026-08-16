@@ -89,6 +89,10 @@ impl RelativeOptions {
     fn build_object(&self) -> Value {
         let properties = vec![
             (
+                "\0prototype".to_string(),
+                Value::Builtin(crate::ops::Builtin::IntlRelativeTimeFormatPrototype),
+            ),
+            (
                 "format".to_string(),
                 Value::Builtin(crate::ops::Builtin::IntlRelativeTimeFormatFormat),
             ),
