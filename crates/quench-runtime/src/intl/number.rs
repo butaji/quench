@@ -137,7 +137,10 @@ impl RawOptions {
                         crate::conversion::to_string(&value)?
                     } else if *key == "roundingIncrement" {
                         crate::conversion::to_number(&value)?.to_string()
-                    } else if matches!(*key, "currency" | "currencyDisplay" | "unitDisplay") {
+                    } else if matches!(
+                        *key,
+                        "style" | "currency" | "currencyDisplay" | "unitDisplay"
+                    ) {
                         crate::conversion::to_string(&value)?
                     } else {
                         to_string_value(&value)
