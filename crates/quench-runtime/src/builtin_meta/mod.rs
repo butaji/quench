@@ -97,7 +97,7 @@ fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
     Some(match builtin {
         Builtin::Intl => "Intl",
         Builtin::IntlCollator => "Intl.Collator",
-        Builtin::IntlDateTimeFormat => "Intl.DateTimeFormat",
+        Builtin::IntlDateTimeFormat => "DateTimeFormat",
         Builtin::IntlDisplayNames => "Intl.DisplayNames",
         Builtin::IntlListFormat => "Intl.ListFormat",
         Builtin::IntlLocale => "Intl.Locale",
