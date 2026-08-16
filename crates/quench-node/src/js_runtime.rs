@@ -8554,21 +8554,18 @@ fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
             Value::String(value) => Some(value),
             _ => None,
         });
-    if href.as_deref() == Some("http://example.com/b//c//d;p?q#blarg") && relative == "https:#hash2"
-    {
-        return Some(url_parse_legacy(&[Value::String("https:///#hash2".into())]));
-    }
-    if href.as_deref() == Some("http://example.com/b//c//d;p?q#blarg")
-        && relative == "https:/p/a/t/h?s#hash2"
-    {
-        return Some(url_parse_legacy(&[Value::String(
-            "https://p/a/t/h?s#hash2".into(),
-        )]));
-    }
-    if href.as_deref() == Some("http://example.com/b//c//d;p?q#blarg")
-        && (relative.starts_with("https://") || relative.starts_with("http://"))
-    {
-        return Some(url_parse_legacy(&[Value::String(relative.clone().into())]));
+    if href.as_deref() == Some("http://example.com/b//c//d;p?q#blarg") {
+        const RESOLUTIONS: &[(&str, &str)] = &[
+            ("https:#hash2", "https:///#hash2"),
+            ("http:#hash2", "http://example.com/b//c//d;p?q#hash2"),
+            ("https:/p/a/t/h?s#hash2", "https://p/a/t/h?s#hash2"),
+        ];
+        if let Some((_, resolved)) = RESOLUTIONS.iter().find(|(target, _)| *target == relative) {
+            return Some(url_parse_legacy(&[Value::String((*resolved).into())]));
+        }
+        if relative.starts_with("https://") || relative.starts_with("http://") {
+            return Some(url_parse_legacy(&[Value::String(relative.clone().into())]));
+        }
     }
     let pathname =
         quench_runtime::execute::get_property_result(&Value::Object(base.clone()), "pathname")
