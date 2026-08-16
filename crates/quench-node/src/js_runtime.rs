@@ -158,6 +158,7 @@ impl CapabilityName {
     const ChildEmit: u16 = 1602;
     const ChildSend: u16 = 1603;
     const CommonMustCall: u16 = 1700;
+    const CommonMustCallAtLeast: u16 = 1705;
     const FsWriteAsync: u16 = 1520;
     const FsReadAsync: u16 = 1521;
     const FsWritePromise: u16 = 1522;
@@ -337,7 +338,7 @@ struct QuenchNodeHost {
     fd_modes: RefCell<HashMap<i32, u32>>,
     directories: RefCell<HashMap<u16, (Vec<Value>, usize)>>,
     next_directory: Cell<u16>,
-    common_wrappers: RefCell<HashMap<u16, (Value, bool)>>,
+    common_wrappers: RefCell<HashMap<u16, (Value, bool, u32, Value)>>,
     next_common_wrapper: Cell<u16>,
     promisified: RefCell<HashMap<u16, Value>>,
     next_promisified: Cell<u16>,
@@ -457,7 +458,10 @@ impl Host for QuenchNodeHost {
                 "message argument must be specified".into(),
             )),
             HostCapabilityKind::Custom(CapabilityName::CommonMustCall) => {
-                arguments.first().cloned().ok_or(VmError::NotCallable)
+                self.common_wrapper(arguments, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CommonMustCallAtLeast) => {
+                self.common_wrapper(arguments, true)
             }
             HostCapabilityKind::Custom(CapabilityName::CommonMustSucceed) => {
                 self.common_wrapper(arguments, true)
@@ -975,26 +979,33 @@ impl QuenchNodeHost {
         let callback = arguments.first().cloned().unwrap_or(Value::Undefined);
         let id = self.next_common_wrapper.get();
         self.next_common_wrapper.set(id.saturating_add(1));
+        let wrapper = capability_function(HostCapabilityKind::Custom(id));
+        let wrapper = quench_runtime::execute::set_property(wrapper, "calls", Value::Number(0.0));
         self.common_wrappers
             .borrow_mut()
-            .insert(id, (callback, succeeds));
-        Ok(capability_function(HostCapabilityKind::Custom(id)))
+            .insert(id, (callback, succeeds, 0, wrapper.clone()));
+        Ok(wrapper)
     }
 
     fn common_wrapper_call(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
-        let (callback, succeeds) = self
+        let (callback, succeeds, calls, wrapper) = self
             .common_wrappers
             .borrow()
             .get(&id)
             .cloned()
             .ok_or(VmError::NotCallable)?;
+        let calls = calls + 1;
+        if let Some(entry) = self.common_wrappers.borrow_mut().get_mut(&id) {
+            entry.2 = calls;
+        }
+        let _ = quench_runtime::execute::set_property(wrapper, "calls", Value::Number(calls as f64));
         if !succeeds {
             return Err(VmError::EvalError("unexpected callback call".into()));
         }
         if matches!(callback, Value::Undefined) {
             return Ok(Value::Undefined);
         }
-        quench_runtime::execute::call(&callback, &Value::Undefined, &arguments[1..])
+        quench_runtime::execute::call(&callback, &Value::Undefined, if arguments.len() > 1 { &arguments[1..] } else { &[] })
     }
 
     fn util_promisify(&self, arguments: &[Value]) -> Result<Value, VmError> {
@@ -2747,6 +2758,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CommonMustSucceed,
                     )),
+                ),
+                (
+                    "mustCallAtLeast".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::CommonMustCallAtLeast)),
                 ),
                 (
                     "mustNotCall".into(),
