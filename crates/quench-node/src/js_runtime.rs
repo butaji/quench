@@ -3557,7 +3557,12 @@ fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
         }
         Some(Value::ArrayBuffer(buffer)) => {
             let offset = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or(0);
-            let length = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or_else(|| buffer.bytes.borrow().len().saturating_sub(offset));
+            let length = match arguments.get(2) {
+                None | Some(Value::Undefined) => buffer.bytes.borrow().len().saturating_sub(offset),
+                Some(Value::Number(value)) if value.is_finite() && *value >= 0.0 => *value as usize,
+                Some(Value::Number(_)) => return Err(VmError::Thrown(fs_error("ERR_BUFFER_OUT_OF_BOUNDS", "length out of bounds"))),
+                Some(_) => 0,
+            };
             if offset + length > buffer.bytes.borrow().len() { return Err(VmError::Thrown(fs_error("ERR_BUFFER_OUT_OF_BOUNDS", "offset out of bounds"))); }
             let view = Value::Uint8Array(Rc::new(quench_runtime::value::Uint8ArrayData::new(Rc::clone(buffer), offset, length)));
             let view = quench_runtime::execute::set_property(view, "toString", capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString)));
@@ -3567,6 +3572,7 @@ fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
         Some(Value::Uint8Array(view)) => Ok(node_buffer(
             &view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length],
         )),
+        Some(Value::Uint16Array(_)) | Some(Value::Uint32Array(_)) | Some(Value::Int8Array(_)) | Some(Value::Int16Array(_)) | Some(Value::Int32Array(_)) | Some(Value::Float32Array(_)) | Some(Value::Float64Array(_)) => Ok(node_buffer(&array_values(arguments.first().unwrap())?.into_iter().filter_map(|value| match value { Value::Number(value) => Some((value as i64).rem_euclid(256) as u8), _ => None }).collect::<Vec<_>>())),
         Some(Value::Array(_)) => Ok(node_buffer(
             &array_values(arguments.first().unwrap())?
                 .into_iter()
@@ -3794,8 +3800,8 @@ fn node_buffer(bytes: &[u8]) -> Value {
 
 fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let mut bytes = string_or_bytes(receiver)?;
-    let start = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some(if *value < 0.0 { bytes.len().saturating_sub((-*value) as usize) } else { *value as usize }), _ => None }).unwrap_or(0).min(bytes.len());
-    let end = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some(if *value < 0.0 { bytes.len().saturating_sub((-*value) as usize) } else { *value as usize }), _ => None }).unwrap_or(bytes.len()).min(bytes.len());
+    let start = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some(value.max(0.0) as usize), _ => None }).unwrap_or(0).min(bytes.len());
+    let end = match arguments.get(2) { None | Some(Value::Undefined) => bytes.len(), Some(Value::Number(value)) => (*value).max(0.0) as usize, Some(_) => 0 } .min(bytes.len());
     bytes = if end >= start { bytes[start..end].to_vec() } else { Vec::new() };
     if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("hex")) {
         return Ok(Value::String(
@@ -4572,6 +4578,7 @@ fn format_decimal(value: &Value, separators: bool) -> String {
     match value {
         Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
         Value::String(value) if value.is_empty() => "0".into(),
+        Value::String(value) => value.trim().parse::<f64>().map(|number| if number == 0.0 && value.trim_start().starts_with('-') { "-0".into() } else { separator_string(&(number as i64).to_string(), separators) }).unwrap_or_else(|_| "NaN".into()),
         _ => format_number(value, separators),
     }
 }
@@ -4592,7 +4599,7 @@ fn format_integer(value: &Value, separators: bool) -> String {
         Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
         Value::Number(value) if value.is_nan() => "NaN".into(),
         Value::Number(value) => separator_string(&(*value as i64).to_string(), separators),
-        Value::String(value) => value.parse::<f64>().map(|value| separator_string(&(value as i64).to_string(), separators)).unwrap_or_else(|_| "NaN".into()),
+        Value::String(value) => value.parse::<f64>().map(|number| if number == 0.0 && value.trim_start().starts_with('-') { "-0".into() } else { separator_string(&(number as i64).to_string(), separators) }).unwrap_or_else(|_| "NaN".into()),
         _ => "NaN".into(),
     }
 }
