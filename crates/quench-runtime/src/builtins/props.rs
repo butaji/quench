@@ -305,6 +305,8 @@ fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> O
     if let Custom(id) = _kind {
         let custom = match (id, key) {
             (1, "basename") => Custom(2),
+            (3, "log") => Custom(4),
+            (5, "cwd") => Custom(6),
             _ => return None,
         };
         return Some(Builtin::HostCapability(custom));
