@@ -97,7 +97,7 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     let length = crate::function_parameters::expected_argument_count(&function.params);
     let value = dynamic_value(ops, count, length, strictness, kind, is_async);
     crate::builtins::set_function_name(&value, "anonymous")?;
-    mark_dynamic(&value);
+    mark_dynamic(&value, source);
     Ok(value)
 }
 
@@ -277,12 +277,14 @@ fn normalize_annex_b_comments(source: &str) -> String {
         .join("\n")
 }
 
-fn mark_dynamic(value: &Value) {
+fn mark_dynamic(value: &Value, source: &str) {
     if let Value::Function(function) = value {
-        function
-            .properties
-            .borrow_mut()
-            .push(("\0dynamic_function".to_string(), Value::Boolean(true)));
+        let mut properties = function.properties.borrow_mut();
+        properties.push(("\0dynamic_function".to_string(), Value::Boolean(true)));
+        properties.push((
+            "\0dynamic_source".to_string(),
+            Value::String(source.to_string()),
+        ));
     }
 }
 
