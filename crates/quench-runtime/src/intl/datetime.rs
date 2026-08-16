@@ -69,6 +69,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 
 impl DateTimeOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
+        if matches!(options, Some(Value::Null)) {
+            return Err(runtime_error("TypeError: Cannot convert null to object"));
+        }
         let mut formatter = DateTimeOptions {
             locale,
             calendar: "gregory".to_string(),
@@ -105,9 +108,21 @@ impl DateTimeOptions {
             return Ok(());
         }
         match key {
+            "localeMatcher" if matches!(value, Value::Null) => {
+                return Err(runtime_error("TypeError: localeMatcher"));
+            }
+            "formatMatcher" if !matches!(text.as_str(), "basic" | "best fit") => {
+                return Err(runtime_error("RangeError: invalid formatMatcher"));
+            }
             "hour12" => self.hour12 = Some(text == "true"),
             "timeZone" => {
                 if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
+                    return Err(runtime_error("RangeError: invalid time zone"));
+                }
+                if !text.eq_ignore_ascii_case("utc")
+                    && normalize_offset(&text).is_none()
+                    && text.parse::<chrono_tz::Tz>().is_err()
+                {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
                 self.time_zone = canonicalize_time_zone(&text);
