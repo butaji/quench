@@ -20,6 +20,7 @@ thread_local! {
     static NODE_PROCESS_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_PROCESS_WARNING_LISTENERS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     static NODE_EXPERIMENTAL_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static NODE_TIMER_COUNTS: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
 }
 
@@ -55,6 +56,7 @@ impl CapabilityName {
     const ProcessEmit: u16 = 2091;
     const ProcessCpuUsage: u16 = 2110;
     const ProcessHrtime: u16 = 2111;
+    const ProcessActiveResourcesInfo: u16 = 2112;
     const UtilDeprecatedFirst: u16 = 2092;
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
@@ -812,6 +814,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ProcessEmit) => process_emit(arguments),
             HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage) => process_cpu_usage(arguments),
             HostCapabilityKind::Custom(CapabilityName::ProcessHrtime) => process_hrtime(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo) => process_active_resources_info(),
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
@@ -883,6 +886,14 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
             HostCapabilityKind::Custom(CapabilityName::ProcessNextTick) => next_tick(arguments),
             HostCapabilityKind::Custom(CapabilityName::TimerImmediate | CapabilityName::Timer) => {
+                NODE_TIMER_COUNTS.with(|counts| {
+                    let (timeouts, immediates) = counts.get();
+                    if capability.kind == HostCapabilityKind::Custom(CapabilityName::TimerImmediate) {
+                        counts.set((timeouts, immediates + 1));
+                    } else {
+                        counts.set((timeouts + 1, immediates));
+                    }
+                });
                 timer_call(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::TimerClearImmediate) => Ok(Value::Undefined),
@@ -3993,6 +4004,7 @@ fn process_module() -> Value {
         ("emit".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessEmit))),
         ("cpuUsage".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage))),
         ("hrtime".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime))),
+        ("getActiveResourcesInfo".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo))),
     ]);
     NODE_PROCESS_MODULE.with(|current| current.replace(Some(module.clone())));
     module
@@ -4037,6 +4049,14 @@ fn process_hrtime(arguments: &[Value]) -> Result<Value, VmError> {
         if values.len() != 2 { return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "time must have two elements"))); }
     }
     Ok(quench_runtime::host_api::array(vec![Value::Number(0.0), Value::Number(0.0)]))
+}
+
+fn process_active_resources_info() -> Result<Value, VmError> {
+    let (timeouts, immediates) = NODE_TIMER_COUNTS.with(Cell::get);
+    let mut resources = Vec::new();
+    resources.extend((0..timeouts).map(|_| Value::String("Timeout".into())));
+    resources.extend((0..immediates).map(|_| Value::String("Immediate".into())));
+    Ok(quench_runtime::host_api::array(resources))
 }
 
 fn url_object(url: &url::Url, id: u16) -> Value {
