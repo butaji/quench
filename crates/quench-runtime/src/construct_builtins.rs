@@ -517,6 +517,10 @@ pub(crate) fn to_object(value: &Value) -> Result<Value, crate::execute::VmError>
             Value::Boolean(*value),
             crate::ops::Builtin::Boolean,
         )),
+        Value::String(value) if crate::conversion::is_symbol_string(value) => Ok(boxed_primitive(
+            Value::String(value.clone()),
+            crate::ops::Builtin::Symbol,
+        )),
         Value::String(value) => Ok(boxed_primitive(
             Value::String(value.clone()),
             crate::ops::Builtin::String,
