@@ -53,6 +53,8 @@ impl CapabilityName {
     const VmRunInNewContext: u16 = 2055;
     const CryptoRandomBytes: u16 = 2056;
     const CryptoRandomFillSync: u16 = 2057;
+    const BufferIsAscii: u16 = 2058;
+    const BufferIsUtf8: u16 = 2059;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -594,6 +596,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext) => vm_run_in_new_context(arguments),
             HostCapabilityKind::Custom(CapabilityName::CryptoRandomBytes) => crypto_random_bytes(arguments),
             HostCapabilityKind::Custom(CapabilityName::CryptoRandomFillSync) => crypto_random_fill(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferIsAscii) => buffer_is_ascii(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8) => buffer_is_utf8(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -2709,6 +2713,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("constants".into(), constants),
                 ("kMaxLength".into(), Value::Number(4_294_967_296.0)),
                 ("kStringMaxLength".into(), Value::Number(536_870_888.0)),
+                ("isAscii".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::BufferIsAscii))),
+                ("isUtf8".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8))),
             ]));
         }
         if name == "node:fs" || name == "fs" {
@@ -4265,6 +4271,14 @@ fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {
         arguments.first(),
         Some(Value::Uint8Array(_))
     )))
+}
+
+fn buffer_is_ascii(arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::Boolean(string_or_bytes(arguments.first())?.iter().all(|byte| *byte < 0x80)))
+}
+
+fn buffer_is_utf8(arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::Boolean(std::str::from_utf8(&string_or_bytes(arguments.first())?).is_ok()))
 }
 
 fn util_module() -> Value {
