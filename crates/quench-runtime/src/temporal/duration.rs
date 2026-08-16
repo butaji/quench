@@ -48,8 +48,36 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalDurationCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalDurationAbs => Some(abs(receiver)),
+        crate::ops::Builtin::TemporalDurationYearsGetter => Some(field_getter(receiver, "years")),
+        crate::ops::Builtin::TemporalDurationMonthsGetter => Some(field_getter(receiver, "months")),
+        crate::ops::Builtin::TemporalDurationWeeksGetter => Some(field_getter(receiver, "weeks")),
+        crate::ops::Builtin::TemporalDurationDaysGetter => Some(field_getter(receiver, "days")),
+        crate::ops::Builtin::TemporalDurationHoursGetter => Some(field_getter(receiver, "hours")),
+        crate::ops::Builtin::TemporalDurationMinutesGetter => {
+            Some(field_getter(receiver, "minutes"))
+        }
+        crate::ops::Builtin::TemporalDurationSecondsGetter => {
+            Some(field_getter(receiver, "seconds"))
+        }
+        crate::ops::Builtin::TemporalDurationMillisecondsGetter => {
+            Some(field_getter(receiver, "milliseconds"))
+        }
+        crate::ops::Builtin::TemporalDurationMicrosecondsGetter => {
+            Some(field_getter(receiver, "microseconds"))
+        }
+        crate::ops::Builtin::TemporalDurationNanosecondsGetter => {
+            Some(field_getter(receiver, "nanoseconds"))
+        }
         _ => None,
     }
+}
+
+fn field_getter(receiver: Option<&Value>, field: &str) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    Ok(object
+        .iter()
+        .find(|(key, _)| key == field)
+        .map_or(Value::Number(0.0), |(_, value)| value.clone()))
 }
 
 fn abs(receiver: Option<&Value>) -> Result<Value, VmError> {
