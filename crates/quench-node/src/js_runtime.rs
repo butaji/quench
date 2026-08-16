@@ -165,6 +165,7 @@ impl CapabilityName {
     const BufferCopy: u16 = 1584;
     const BufferFill: u16 = 1585;
     const BufferCompare: u16 = 1586;
+    const BufferNumericFirst: u16 = 1590;
     const FsFsyncSync: u16 = 1546;
     const FsFdatasyncSync: u16 = 1547;
     const FsFsyncAsync: u16 = 1548;
@@ -558,6 +559,13 @@ impl Host for QuenchNodeHost {
                 buffer_fill(receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferCompare) => buffer_compare(arguments),
+            HostCapabilityKind::Custom(id)
+                if (CapabilityName::BufferNumericFirst
+                    ..CapabilityName::BufferNumericFirst + 32)
+                    .contains(&id) =>
+            {
+                buffer_numeric(id, receiver, arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsWriteSyncFd) => {
                 self.fs_write_fd(arguments)
             }
@@ -3392,6 +3400,65 @@ fn node_buffer(bytes: &[u8]) -> Value {
             capability_function(HostCapabilityKind::Custom(capability)),
         );
     }
+    for (index, name) in [
+        "readDoubleBE",
+        "readDoubleLE",
+        "writeDoubleBE",
+        "writeDoubleLE",
+        "readFloatBE",
+        "readFloatLE",
+        "writeFloatBE",
+        "writeFloatLE",
+        "readUInt16BE",
+        "readUInt16LE",
+        "writeUInt16BE",
+        "writeUInt16LE",
+        "readUInt32BE",
+        "readUInt32LE",
+        "writeUInt32BE",
+        "writeUInt32LE",
+        "readUIntBE",
+        "readUIntLE",
+        "writeUIntBE",
+        "writeUIntLE",
+        "readInt16BE",
+        "readInt16LE",
+        "writeInt16BE",
+        "writeInt16LE",
+        "readIntBE",
+        "readIntLE",
+        "writeIntBE",
+        "writeIntLE",
+        "readUint32BE",
+        "readUint32LE",
+        "writeUintLE",
+    ]
+    .iter()
+    .enumerate()
+    {
+        value = quench_runtime::execute::set_property(
+            value,
+            name,
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::BufferNumericFirst + index as u16,
+            )),
+        );
+    }
+    let prototype = Value::object(vec![
+        (
+            "readUInt32BE".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::BufferNumericFirst + 12,
+            )),
+        ),
+        (
+            "writeUIntLE".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::BufferNumericFirst + 19,
+            )),
+        ),
+    ]);
+    value = quench_runtime::execute::set_property(value, "prototype", prototype);
     value
 }
 
@@ -3512,6 +3579,130 @@ fn buffer_compare(arguments: &[Value]) -> Result<Value, VmError> {
     } else {
         0.0
     }))
+}
+
+fn buffer_numeric(
+    id: u16,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let Value::Uint8Array(view) = receiver.ok_or(VmError::NotCallable)? else {
+        return Err(VmError::NotCallable);
+    };
+    let index = id - CapabilityName::BufferNumericFirst;
+    let is_write = matches!(
+        index,
+        2 | 3 | 6 | 7 | 10 | 11 | 12 | 13 | 18 | 19 | 22 | 23 | 26 | 27 | 28
+    );
+    let variable = matches!(index, 16 | 17 | 18 | 19 | 24 | 25 | 26 | 27);
+    let offset_arg = if is_write { 1 } else { 0 };
+    let offset = match arguments.get(offset_arg) {
+        Some(Value::Number(value)) if *value >= 0.0 => *value as usize,
+        _ => {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "offset must be a number",
+            )))
+        }
+    };
+    let size = if variable {
+        match arguments.get(offset_arg + 1) {
+            Some(Value::Number(value))
+                if *value >= 1.0 && *value <= 6.0 && value.fract() == 0.0 =>
+            {
+                *value as usize
+            }
+            _ => {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_OUT_OF_RANGE",
+                    "byteLength out of range",
+                )))
+            }
+        }
+    } else if index <= 3 {
+        8
+    } else if index <= 7 {
+        4
+    } else if index <= 11 || (index >= 20 && index <= 23) {
+        2
+    } else {
+        4
+    };
+    if offset + size > view.length {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_BUFFER_OUT_OF_BOUNDS",
+            "offset out of bounds",
+        )));
+    }
+    let little = matches!(
+        index,
+        1 | 3 | 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 | 25 | 27
+    );
+    let mut bytes = view.buffer.bytes.borrow_mut();
+    let slice = &mut bytes[view.byte_offset + offset..view.byte_offset + offset + size];
+    if is_write {
+        let value = match arguments.first() {
+            Some(Value::Number(value)) => *value,
+            _ => return Err(VmError::NotCallable),
+        };
+        if index <= 3 || (index >= 6 && index <= 7) {
+            if index <= 3 {
+                let data = if little {
+                    value.to_le_bytes()
+                } else {
+                    value.to_be_bytes()
+                };
+                slice.copy_from_slice(&data);
+            } else {
+                let raw = (value as f32).to_bits();
+                let data = if little {
+                    raw.to_le_bytes()
+                } else {
+                    raw.to_be_bytes()
+                };
+                slice.copy_from_slice(&data);
+            }
+        } else {
+            let mut raw = value as u64;
+            for byte in slice.iter_mut().rev() {
+                *byte = (raw & 0xff) as u8;
+                raw >>= 8;
+            }
+            if little {
+                slice.reverse();
+            }
+        }
+        Ok(Value::Number((offset + size) as f64))
+    } else {
+        let mut raw = 0u64;
+        if little {
+            for (shift, byte) in slice.iter().enumerate() {
+                raw |= u64::from(*byte) << (shift * 8);
+            }
+        } else {
+            for byte in slice.iter() {
+                raw = (raw << 8) | u64::from(*byte);
+            }
+        }
+        let value = if index <= 1 {
+            f64::from_bits(raw)
+        } else if index >= 4 && index <= 5 {
+            f32::from_bits(raw as u32) as f64
+        } else if index <= 7 {
+            raw as f64
+        } else if index >= 20 && index <= 27 {
+            let bits = size * 8;
+            let signed = if raw & (1 << (bits - 1)) != 0 {
+                raw as i64 - (1i64 << bits)
+            } else {
+                raw as i64
+            };
+            signed as f64
+        } else {
+            raw as f64
+        };
+        Ok(Value::Number(value))
+    }
 }
 
 fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
