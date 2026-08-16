@@ -394,10 +394,9 @@ pub(crate) fn array_to_locale_string(
         }
     };
     let locales = resolve_locales(arguments)?;
-    let options = arguments.get(1);
     let mut parts = Vec::new();
     for value in values.iter() {
-        parts.push(element_to_locale_string(value, &locales, options)?);
+        parts.push(element_to_locale_string(value, &locales, arguments)?);
     }
     Ok(Value::String(parts.join(",")))
 }
@@ -478,27 +477,23 @@ fn string_locale_compare(receiver: Option<&Value>, arguments: &[Value]) -> Resul
 fn element_to_locale_string(
     value: &Value,
     locales: &[String],
-    options: Option<&Value>,
+    arguments: &[Value],
 ) -> Result<String, VmError> {
     match value {
-        Value::Number(number) => Ok(format_number(*number, locales, options)),
+        Value::Number(number) => Ok(format_number(*number, locales, arguments.get(1))),
         Value::Null | Value::Undefined => Ok(String::new()),
-        _ => locale_element_call(value, locales, options),
+        _ => locale_element_call(value, arguments),
     }
 }
-fn locale_element_call(
-    value: &Value,
-    locales: &[String],
-    options: Option<&Value>,
-) -> Result<String, VmError> {
+fn locale_element_call(value: &Value, arguments: &[Value]) -> Result<String, VmError> {
     let method = crate::execute::get_property_result(value, "toLocaleString")?;
     if !matches!(method, Value::Undefined | Value::Null) {
-        let locale_value = Value::array(locales.iter().cloned().map(Value::String).collect());
-        let mut arguments = vec![locale_value];
-        if let Some(options) = options {
-            arguments.push(options.clone());
-        }
-        let result = crate::functions::execute_target_with_receiver(&method, value, &arguments)?;
+        let invoke_arguments = vec![
+            arguments.first().cloned().unwrap_or(Value::Undefined),
+            arguments.get(1).cloned().unwrap_or(Value::Undefined),
+        ];
+        let result =
+            crate::functions::execute_target_with_receiver(&method, value, &invoke_arguments)?;
         return crate::conversion::to_string(&result.0);
     }
     Ok(to_string_value(value))
