@@ -4019,6 +4019,19 @@ fn fs_mkdir(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn fs_rm(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
+    let force = arguments
+        .get(1)
+        .and_then(|options| quench_runtime::execute::get_property_result(options, "force").ok())
+        .is_some_and(|value| is_truthy(&value));
+    if !std::path::Path::new(path).exists() {
+        if force {
+            return Ok(Value::Undefined);
+        }
+        return Err(VmError::Thrown(fs_error(
+            "ENOENT",
+            "no such file or directory",
+        )));
+    }
     if std::fs::metadata(path)
         .map(|metadata| metadata.is_dir())
         .unwrap_or(false)
