@@ -467,8 +467,7 @@ fn builtin_method3_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (BigInt, "asUintN") => Some(BigIntAsUintN),
         (BigIntPrototype, "valueOf") => Some(BigIntValueOf),
         (BigIntPrototype, "constructor") => Some(BigInt),
-        (BigIntPrototype, "toString") => Some(BigIntToString),
-        (BigIntPrototype, "toLocaleString") => Some(BigIntToLocaleString),
+        (BigIntPrototype, "toString" | "toLocaleString") => Some(BigIntToString),
         _ => None,
     }
 }
