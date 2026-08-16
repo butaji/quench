@@ -145,10 +145,11 @@ const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
         | Builtin::IntlDateTimeFormatFormatRangeToParts => Some(2.0),
         Builtin::IntlListFormatFormat
         | Builtin::IntlListFormatFormatToParts
-        | Builtin::IntlListFormatResolvedOptions
-        | Builtin::IntlRelativeTimeFormatFormat
-        | Builtin::IntlRelativeTimeFormatFormatToParts
-        | Builtin::IntlRelativeTimeFormatResolvedOptions => Some(1.0),
+        | Builtin::IntlListFormatResolvedOptions => Some(1.0),
+        Builtin::IntlRelativeTimeFormatFormat | Builtin::IntlRelativeTimeFormatFormatToParts => {
+            Some(2.0)
+        }
+        Builtin::IntlRelativeTimeFormatResolvedOptions => Some(0.0),
         _ => None,
     }
 }
