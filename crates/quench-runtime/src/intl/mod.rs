@@ -23,7 +23,8 @@ mod supported_values;
 pub(crate) mod tolocale;
 
 pub(crate) use support::{
-    intl_slots, make_array, make_object, runtime_error, slot_bool, slot_number, slot_string,
+    construct_with_legacy_receiver, intl_slots, make_array, make_object, runtime_error, slot_bool,
+    slot_number, slot_string,
 };
 pub(crate) use supported_values::{
     supported_calendars, supported_collations, supported_currencies, supported_numbering_systems,
