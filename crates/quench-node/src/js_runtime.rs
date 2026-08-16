@@ -3523,8 +3523,25 @@ fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
                 .collect::<Vec<_>>(),
         )),
         Some(Value::Object(_)) => {
-            let data = quench_runtime::execute::get_property_result(arguments.first().unwrap(), "data")?;
-            buffer_from(&[data])
+            let object = arguments.first().unwrap();
+            if let Ok(method) = quench_runtime::execute::get_property_result(object, "Symbol.toPrimitive") {
+                if let Ok(value) = quench_runtime::execute::call(&method, object, &[]) { return buffer_from(&[value]); }
+            }
+            if let Ok(method) = quench_runtime::execute::get_property_result(object, "toString") {
+                if let Ok(Value::String(value)) = quench_runtime::execute::call(&method, object, &[]) {
+                    if value != "[object Object]" { return buffer_from(&[Value::String(value)]); }
+                }
+            }
+            if let Ok(Value::Number(length)) = quench_runtime::execute::get_property_result(object, "length") {
+                let mut bytes = Vec::new();
+                for index in 0..(length.max(0.0) as usize) {
+                    if let Ok(Value::Number(value)) = quench_runtime::execute::get_property_result(object, &index.to_string()) {
+                        bytes.push((value as i64).rem_euclid(256) as u8);
+                    }
+                }
+                if length > 0.0 && bytes.len() == length as usize { return Ok(node_buffer(&bytes)); }
+            }
+            Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "value must be a string, Buffer, or array-like object")))
         }
         _ => Err(VmError::EvalError(
             "Buffer.from expects bytes or a string".into(),
