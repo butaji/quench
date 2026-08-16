@@ -13,6 +13,18 @@ use quench_runtime::{
     vm::{Host, VmContext, VmError},
 };
 
+// Capability numbers are an internal NodeHost registry. Keep them named so
+// the runtime boundary carries intent instead of opaque numeric protocol IDs.
+const CAP_REQUIRE: u16 = 1;
+const CAP_PATH_BASENAME: u16 = 2;
+const CAP_CONSOLE_LOG: u16 = 4;
+const CAP_CWD: u16 = 6;
+const CAP_READ_FILE_SYNC: u16 = 7;
+const CAP_CREATE_HASH: u16 = 8;
+const CAP_BUFFER: u16 = 10;
+const CAP_URL: u16 = 40;
+const CAP_EVENT_EMITTER: u16 = 70;
+
 pub(crate) struct FilesystemNodeHost {
     resolver: Resolver,
     source_cache: RefCell<HashMap<PathBuf, String>>,
@@ -136,13 +148,13 @@ impl Host for QuenchNodeHost {
         arguments: &[Value],
     ) -> Result<Value, VmError> {
         match capability.kind {
-            HostCapabilityKind::Custom(1) => require_module(arguments),
-            HostCapabilityKind::Custom(70) => self.construct(capability, arguments),
-            HostCapabilityKind::Custom(2) => basename(arguments),
-            HostCapabilityKind::Custom(4) => console_log(arguments),
-            HostCapabilityKind::Custom(6) => current_directory(arguments),
-            HostCapabilityKind::Custom(7) => read_file_sync(arguments),
-            HostCapabilityKind::Custom(8) => self.create_hash(arguments),
+            HostCapabilityKind::Custom(CAP_REQUIRE) => require_module(arguments),
+            HostCapabilityKind::Custom(CAP_EVENT_EMITTER) => self.construct(capability, arguments),
+            HostCapabilityKind::Custom(CAP_PATH_BASENAME) => basename(arguments),
+            HostCapabilityKind::Custom(CAP_CONSOLE_LOG) => console_log(arguments),
+            HostCapabilityKind::Custom(CAP_CWD) => current_directory(arguments),
+            HostCapabilityKind::Custom(CAP_READ_FILE_SYNC) => read_file_sync(arguments),
+            HostCapabilityKind::Custom(CAP_CREATE_HASH) => self.create_hash(arguments),
             HostCapabilityKind::Custom(9) => buffer_byte_length(arguments),
             HostCapabilityKind::Custom(30) => buffer_from(arguments),
             HostCapabilityKind::Custom(31) => buffer_alloc(arguments),
@@ -188,7 +200,7 @@ impl Host for QuenchNodeHost {
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
-        if capability.kind == HostCapabilityKind::Custom(40) {
+        if capability.kind == HostCapabilityKind::Custom(CAP_URL) {
             let input = match arguments.first() {
                 Some(Value::String(value)) => value.as_str(),
                 _ => return Err(VmError::EvalError("URL expects a string".into())),
@@ -205,7 +217,7 @@ impl Host for QuenchNodeHost {
             self.urls.borrow_mut().insert(id, parsed.to_string());
             return Ok(url_object(&parsed, id));
         }
-        if capability.kind == HostCapabilityKind::Custom(70) {
+        if capability.kind == HostCapabilityKind::Custom(CAP_EVENT_EMITTER) {
             let id = self.next_event.get();
             self.next_event.set(id.saturating_add(10));
             self.event_max.borrow_mut().insert(id, 10.0);
@@ -235,7 +247,7 @@ impl Host for QuenchNodeHost {
             );
             return Ok(emitter);
         }
-        if capability.kind != HostCapabilityKind::Custom(10) {
+        if capability.kind != HostCapabilityKind::Custom(CAP_BUFFER) {
             return Err(VmError::NotCallable);
         }
         let id = self.next_stream.get();
@@ -605,19 +617,19 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "node:fs" || name == "fs" {
             return Ok(Value::object(vec![(
                 "readFileSync".into(),
-                capability_function(HostCapabilityKind::Custom(7)),
+                capability_function(HostCapabilityKind::Custom(CAP_READ_FILE_SYNC)),
             )]));
         }
         if name == "node:crypto" || name == "crypto" {
             return Ok(Value::object(vec![(
                 "createHash".into(),
-                capability_function(HostCapabilityKind::Custom(8)),
+                capability_function(HostCapabilityKind::Custom(CAP_CREATE_HASH)),
             )]));
         }
         if name == "node:stream" || name == "stream" {
             return Ok(Value::object(vec![(
                 "Transform".into(),
-                capability_function(HostCapabilityKind::Custom(10)),
+                capability_function(HostCapabilityKind::Custom(CAP_BUFFER)),
             )]));
         }
         if name == "node:http" || name == "http" {
@@ -635,7 +647,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "url" || name == "node:url" {
             return Ok(quench_runtime::host_api::object(vec![(
                 "URL".into(),
-                capability_function(HostCapabilityKind::Custom(40)),
+                capability_function(HostCapabilityKind::Custom(CAP_URL)),
             )]));
         }
         if name == "util" || name == "node:util" {
@@ -672,7 +684,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         }
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
     }
-    let basename = capability_function(HostCapabilityKind::Custom(2));
+    let basename = capability_function(HostCapabilityKind::Custom(CAP_PATH_BASENAME));
     Ok(Value::object(vec![("basename".into(), basename)]))
 }
 
@@ -723,7 +735,7 @@ fn process_module() -> Value {
         ("arch".into(), Value::String(std::env::consts::ARCH.into())),
         (
             "cwd".into(),
-            capability_function(HostCapabilityKind::Custom(6)),
+            capability_function(HostCapabilityKind::Custom(CAP_CWD)),
         ),
         (
             "nextTick".into(),
@@ -844,14 +856,14 @@ fn util_module() -> Value {
 }
 
 fn events_module() -> Value {
-    let mut emitter = capability_function(HostCapabilityKind::Custom(70));
+    let mut emitter = capability_function(HostCapabilityKind::Custom(CAP_EVENT_EMITTER));
     emitter =
         quench_runtime::execute::set_property(emitter, "captureRejections", Value::Boolean(false));
     quench_runtime::host_api::object(vec![
         ("EventEmitter".into(), emitter),
         (
             "EventEmitterAsyncResource".into(),
-            capability_function(HostCapabilityKind::Custom(70)),
+            capability_function(HostCapabilityKind::Custom(CAP_EVENT_EMITTER)),
         ),
         ("defaultMaxListeners".into(), Value::Number(10.0)),
         (
@@ -1213,21 +1225,21 @@ impl JsRuntime for QuenchRuntime {
             .map_err(|errors| errors.join("\n"))?;
         let capability = HostCapabilityRef {
             realm: RealmId::ROOT,
-            kind: HostCapabilityKind::Custom(1),
+            kind: HostCapabilityKind::Custom(CAP_REQUIRE),
         };
         let context = VmContext::for_realm(
             RealmId::ROOT,
             vec![
-                HostCapabilityKind::Custom(1),
-                HostCapabilityKind::Custom(2),
+                HostCapabilityKind::Custom(CAP_REQUIRE),
+                HostCapabilityKind::Custom(CAP_PATH_BASENAME),
                 HostCapabilityKind::Custom(3),
-                HostCapabilityKind::Custom(4),
+                HostCapabilityKind::Custom(CAP_CONSOLE_LOG),
                 HostCapabilityKind::Custom(5),
-                HostCapabilityKind::Custom(6),
-                HostCapabilityKind::Custom(7),
-                HostCapabilityKind::Custom(8),
+                HostCapabilityKind::Custom(CAP_CWD),
+                HostCapabilityKind::Custom(CAP_READ_FILE_SYNC),
+                HostCapabilityKind::Custom(CAP_CREATE_HASH),
                 HostCapabilityKind::Custom(9),
-                HostCapabilityKind::Custom(10),
+                HostCapabilityKind::Custom(CAP_BUFFER),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
@@ -1256,7 +1268,7 @@ impl JsRuntime for QuenchRuntime {
                     .into_owned(),
             ),
         )
-        .with_host_value("URL", capability_function(HostCapabilityKind::Custom(40)))
+        .with_host_value("URL", capability_function(HostCapabilityKind::Custom(CAP_URL)))
         .with_host_value(
             "setImmediate",
             capability_function(HostCapabilityKind::Custom(27)),
