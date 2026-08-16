@@ -156,6 +156,9 @@ impl CapabilityName {
     const FsDirReadAsync: u16 = 1555;
     const FsDirCloseSync: u16 = 1556;
     const FsDirCloseAsync: u16 = 1557;
+    const FsLinkSync: u16 = 1558;
+    const FsLinkAsync: u16 = 1559;
+    const FsLinkPromise: u16 = 1560;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -435,6 +438,11 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsDirCloseAsync) => {
                 self.fs_dir_close(receiver, arguments, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsLinkSync) => fs_link(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsLinkAsync) => fs_link_async(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsLinkPromise) => {
+                fs_link(arguments).map(fulfilled)
             }
             HostCapabilityKind::Custom(CapabilityName::FsDirentFile) => Ok(Value::Boolean(true)),
             HostCapabilityKind::Custom(CapabilityName::FsDirentDirectory) => {
@@ -1596,6 +1604,22 @@ fn fs_unlink_async(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(result)
 }
 
+fn fs_link(arguments: &[Value]) -> Result<Value, VmError> {
+    let source = path_arg(arguments, 0)?;
+    let destination = path_arg(arguments, 1)?;
+    std::fs::hard_link(source, destination)
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    Ok(Value::Undefined)
+}
+
+fn fs_link_async(arguments: &[Value]) -> Result<Value, VmError> {
+    let result = fs_link(&arguments[..arguments.len().saturating_sub(1)])?;
+    if let Some(callback) = arguments.last() {
+        quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
+    }
+    Ok(result)
+}
+
 fn fs_mkdtemp(arguments: &[Value]) -> Result<Value, VmError> {
     let prefix = path_arg(arguments, 0)?;
     let path = std::path::PathBuf::from(format!("{}{:06}", prefix, std::process::id() % 1_000_000));
@@ -1929,6 +1953,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsUnlink)),
                 ),
                 (
+                    "linkSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsLinkSync)),
+                ),
+                (
+                    "link".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsLinkAsync)),
+                ),
+                (
                     "fsyncSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsFsyncSync)),
                 ),
@@ -2097,6 +2129,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                             "opendir".into(),
                             capability_function(HostCapabilityKind::Custom(
                                 CapabilityName::FsOpendirPromise,
+                            )),
+                        ),
+                        (
+                            "link".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::FsLinkPromise,
                             )),
                         ),
                     ]),
