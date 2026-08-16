@@ -84,6 +84,8 @@ fn is_util_resolver(id: u16) -> bool {
                 | CapabilityName::CryptoHashDigest
                 | CapabilityName::DgramDrainCallbacks
                 | CapabilityName::UtilIsDate
+                | CapabilityName::TmpdirRefresh
+                | CapabilityName::TmpdirFileUrl
                 | CapabilityName::UrlSearchParamsGetAll
                 | CapabilityName::UrlSearchParamsSet
                 | CapabilityName::UrlSearchParamsToString
