@@ -113,6 +113,8 @@ impl RawOptions {
                 if !matches!(value, Value::Undefined) {
                     let text = if *key == "roundingMode" {
                         crate::conversion::to_string(&value)?
+                    } else if *key == "roundingIncrement" {
+                        crate::conversion::to_number(&value)?.to_string()
                     } else {
                         to_string_value(&value)
                     };
