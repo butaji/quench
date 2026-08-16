@@ -233,7 +233,13 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlCollatorCompare => {
             let left = to_string_value(arguments.first().unwrap_or(&Value::Undefined));
             let right = to_string_value(arguments.get(1).unwrap_or(&Value::Undefined));
-            Ok(Value::Number(compare(&left, &right, &locale)))
+            let ignore_punctuation = slot_bool(&slots, "ignorePunctuation").unwrap_or(false);
+            Ok(Value::Number(compare(
+                &left,
+                &right,
+                &locale,
+                ignore_punctuation,
+            )))
         }
         crate::ops::Builtin::IntlCollatorResolvedOptions => Ok(resolved_options(&slots, locale)),
         _ => Err(runtime_error("TypeError: method not found")),
@@ -276,13 +282,25 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
     super::intl_slots(receiver)
 }
 
-pub(crate) fn compare(left: &str, right: &str, locale: &str) -> f64 {
+pub(crate) fn compare(left: &str, right: &str, locale: &str, ignore_punctuation: bool) -> f64 {
     let _ = locale;
-    match left.cmp(right) {
+    let left = comparable_text(left, ignore_punctuation);
+    let right = comparable_text(right, ignore_punctuation);
+    match left.cmp(&right) {
         std::cmp::Ordering::Less => -1.0,
         std::cmp::Ordering::Equal => 0.0,
         std::cmp::Ordering::Greater => 1.0,
     }
+}
+
+fn comparable_text(value: &str, ignore_punctuation: bool) -> String {
+    if !ignore_punctuation {
+        return value.to_string();
+    }
+    value
+        .chars()
+        .filter(|character| !character.is_ascii_punctuation() && !character.is_whitespace())
+        .collect()
 }
 
 pub(crate) fn dispatch(
