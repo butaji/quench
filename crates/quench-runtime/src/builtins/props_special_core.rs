@@ -43,6 +43,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (IntlRelativeTimeFormatPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.RelativeTimeFormat".into()))
         }
+        (IntlDurationFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.DurationFormat".into()))
+        }
         (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
         (Temporal, "Symbol.toStringTag") => Some(Value::String("Temporal".into())),
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
