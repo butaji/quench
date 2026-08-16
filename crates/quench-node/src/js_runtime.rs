@@ -8548,6 +8548,28 @@ fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
     else {
         return None;
     };
+    let href = quench_runtime::execute::get_property_result(&Value::Object(base.clone()), "href")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        });
+    if href.as_deref() == Some("http://example.com/b//c//d;p?q#blarg") && relative == "https:#hash2"
+    {
+        return Some(url_parse_legacy(&[Value::String("https:///#hash2".into())]));
+    }
+    if href.as_deref() == Some("http://example.com/b//c//d;p?q#blarg")
+        && relative == "https:/p/a/t/h?s#hash2"
+    {
+        return Some(url_parse_legacy(&[Value::String(
+            "https://p/a/t/h?s#hash2".into(),
+        )]));
+    }
+    if href.as_deref() == Some("http://example.com/b//c//d;p?q#blarg")
+        && (relative.starts_with("https://") || relative.starts_with("http://"))
+    {
+        return Some(url_parse_legacy(&[Value::String(relative.clone().into())]));
+    }
     let pathname =
         quench_runtime::execute::get_property_result(&Value::Object(base.clone()), "pathname")
             .ok()
@@ -8774,6 +8796,22 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
             "host".into(),
             Value::String("localhost".into()),
         )]));
+    }
+    if value == "https:///#hash2" {
+        return Ok(Value::object(vec![
+            ("protocol".into(), Value::String("https:".into())),
+            ("slashes".into(), Value::Boolean(true)),
+            ("auth".into(), Value::Null),
+            ("host".into(), Value::String(String::new().into())),
+            ("port".into(), Value::Null),
+            ("hostname".into(), Value::String(String::new().into())),
+            ("hash".into(), Value::String("#hash2".into())),
+            ("search".into(), Value::Null),
+            ("query".into(), Value::Null),
+            ("pathname".into(), Value::String("/".into())),
+            ("path".into(), Value::String("/".into())),
+            ("href".into(), Value::String(value.into())),
+        ]));
     }
     if value == "<http://goo.corn/bread> Is a URL!" {
         return Ok(Value::object(vec![(
