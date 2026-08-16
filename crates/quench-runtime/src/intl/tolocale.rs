@@ -1,5 +1,4 @@
 //! `toLocaleString` family and number/string formatting helpers.
-use self::locale_number::format_number;
 use super::{resolve_locales, runtime_error, to_string_value};
 use crate::{execute::VmError, ops::Builtin, value::Value};
 
@@ -9,9 +8,6 @@ pub(crate) use date_kind::DateLocaleKind;
 mod array_values;
 mod date;
 mod locale_number;
-
-#[path = "tolocale_number.rs"]
-mod number;
 
 pub(crate) mod value {
     use crate::value::Value;
@@ -393,10 +389,10 @@ pub(crate) fn array_to_locale_string(
             ))
         }
     };
-    let locales = resolve_locales(arguments)?;
+    let _ = resolve_locales(arguments)?;
     let mut parts = Vec::new();
     for value in values.iter() {
-        parts.push(element_to_locale_string(value, &locales, arguments)?);
+        parts.push(element_to_locale_string(value, arguments)?);
     }
     Ok(Value::String(parts.join(",")))
 }
@@ -573,13 +569,9 @@ fn string_locale_compare(receiver: Option<&Value>, arguments: &[Value]) -> Resul
     Ok(Value::Number(result))
 }
 
-fn element_to_locale_string(
-    value: &Value,
-    locales: &[String],
-    arguments: &[Value],
-) -> Result<String, VmError> {
+fn element_to_locale_string(value: &Value, arguments: &[Value]) -> Result<String, VmError> {
     match value {
-        Value::Number(number) => Ok(format_number(*number, locales, arguments.get(1))),
+        Value::Number(_) => locale_element_call(value, arguments),
         Value::Null | Value::Undefined => Ok(String::new()),
         _ => locale_element_call(value, arguments),
     }
