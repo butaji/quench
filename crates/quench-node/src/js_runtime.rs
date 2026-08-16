@@ -1249,6 +1249,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "constants".into(),
                     quench_runtime::host_api::object(vec![
+                        ("\0prototype".into(), Value::Null),
                         ("O_RDONLY".into(), Value::Number(0.0)),
                         ("S_IFDIR".into(), Value::Number(0o40000 as f64)),
                         ("S_IRUSR".into(), Value::Number(0o400 as f64)),
