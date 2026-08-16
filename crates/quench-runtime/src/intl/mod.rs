@@ -656,7 +656,7 @@ fn is_variant_shape(part: &str) -> bool {
     let all_alpha = part
         .chars()
         .all(|character| character.is_ascii_alphabetic());
-    let numeric_variant = part.len() >= 5
+    let numeric_variant = (4..=8).contains(&part.len())
         && part
             .chars()
             .next()
