@@ -64,6 +64,8 @@ impl NumberOptions {
             rounding_priority: slot_string(slots, "roundingPriority")
                 .unwrap_or_else(|| "auto".to_string()),
             rounding_increment: slot_number(slots, "roundingIncrement").unwrap_or(1.0) as u32,
+            trailing_zero_display: slot_string(slots, "trailingZeroDisplay")
+                .unwrap_or_else(|| "auto".to_string()),
             sign_display: slot_string(slots, "signDisplay").unwrap_or_else(|| "auto".to_string()),
             minimum_significant_digits: slot_number(slots, "minimumSignificantDigits")
                 .map(|v| v as u32),
@@ -266,6 +268,10 @@ impl NumberOptions {
             (
                 "roundingIncrement".to_string(),
                 Value::Number(self.rounding_increment as f64),
+            ),
+            (
+                "trailingZeroDisplay".to_string(),
+                Value::String(self.trailing_zero_display.clone()),
             ),
         ];
         if self.notation == "compact" {
