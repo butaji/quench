@@ -193,6 +193,8 @@ impl CapabilityName {
     const CryptoCreateHmac: u16 = 2246;
     const CryptoHmacUpdate: u16 = 2247;
     const CryptoHmacDigest: u16 = 2248;
+    const CryptoCreateSign: u16 = 2249;
+    const CryptoCreateVerify: u16 = 2250;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -1330,6 +1332,15 @@ impl Host for QuenchNodeHost {
                     ("\0hmacKey".into(), Value::String(key)),
                     ("\0hmacData".into(), Value::String(String::new())),
                 ]))
+            }
+            HostCapabilityKind::Custom(
+                CapabilityName::CryptoCreateSign | CapabilityName::CryptoCreateVerify,
+            ) => {
+                let value = Value::object(vec![]);
+                Ok(quench_runtime::execute::set_prototype_of(
+                    &value,
+                    &Value::Builtin(quench_runtime::ops::Builtin::ObjectPrototype),
+                )?)
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoHmacUpdate) => {
                 let receiver = receiver.ok_or(VmError::NotCallable)?;
@@ -6273,6 +6284,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "createHmac".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CryptoCreateHmac,
+                    )),
+                ),
+                (
+                    "createSign".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCreateSign,
+                    )),
+                ),
+                (
+                    "createVerify".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoCreateVerify,
                     )),
                 ),
                 (
