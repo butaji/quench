@@ -65,12 +65,20 @@ struct QuenchNodeHost {
     streams: RefCell<HashMap<u16, StreamState>>,
     next_hash: Cell<u16>,
     next_stream: Cell<u16>,
+    http: RefCell<HttpState>,
 }
 
 struct StreamState {
     transform: Option<Value>,
     data: Option<Value>,
     end: Option<Value>,
+}
+
+struct HttpState {
+    server_callback: Option<Value>,
+    body: String,
+    data_callback: Option<Value>,
+    end_callback: Option<Value>,
 }
 
 impl Default for QuenchNodeHost {
@@ -80,6 +88,12 @@ impl Default for QuenchNodeHost {
             streams: RefCell::new(HashMap::new()),
             next_hash: Cell::new(100),
             next_stream: Cell::new(200),
+            http: RefCell::new(HttpState {
+                server_callback: None,
+                body: String::new(),
+                data_callback: None,
+                end_callback: None,
+            }),
         }
     }
 }
@@ -94,6 +108,10 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(7) => read_file_sync(arguments),
             HostCapabilityKind::Custom(8) => self.create_hash(arguments),
             HostCapabilityKind::Custom(9) => buffer_byte_length(arguments),
+            HostCapabilityKind::Custom(11 | 12) => self.http_call(capability.kind, arguments),
+            HostCapabilityKind::Custom(id) if (400..600).contains(&id) => {
+                self.http_call(capability.kind, arguments)
+            }
             HostCapabilityKind::Custom(id) if (200..300).contains(&id) => {
                 self.stream_call(id, arguments)
             }
@@ -220,6 +238,124 @@ impl QuenchNodeHost {
             }
             _ => Err(VmError::NotCallable),
         }
+    }
+
+    fn http_call(&self, kind: HostCapabilityKind, arguments: &[Value]) -> Result<Value, VmError> {
+        match kind {
+            HostCapabilityKind::Custom(11) => {
+                self.http.borrow_mut().server_callback = arguments.first().cloned();
+                Ok(Value::object(vec![
+                    (
+                        "listen".into(),
+                        capability_function(HostCapabilityKind::Custom(401)),
+                    ),
+                    (
+                        "address".into(),
+                        capability_function(HostCapabilityKind::Custom(402)),
+                    ),
+                    (
+                        "close".into(),
+                        capability_function(HostCapabilityKind::Custom(403)),
+                    ),
+                ]))
+            }
+            HostCapabilityKind::Custom(12) => {
+                let url = arguments
+                    .first()
+                    .and_then(|v| match v {
+                        Value::String(s) => Some(s),
+                        _ => None,
+                    })
+                    .ok_or(VmError::NotCallable)?;
+                let callback = arguments.get(1).cloned().ok_or(VmError::NotCallable)?;
+                let path = url
+                    .split('/')
+                    .skip(3)
+                    .next()
+                    .map(|p| format!("/{p}"))
+                    .unwrap_or_else(|| "/".into());
+                let response = response_object(500);
+                let request = Value::object(vec![("url".into(), Value::String(path))]);
+                let server = self
+                    .http
+                    .borrow()
+                    .server_callback
+                    .clone()
+                    .ok_or(VmError::NotCallable)?;
+                quench_runtime::execute::call(
+                    &server,
+                    &Value::Undefined,
+                    &[request, response.clone()],
+                )?;
+                quench_runtime::execute::call(&callback, &Value::Undefined, &[response])?;
+                let state = self.http.borrow();
+                if let Some(data) = state.data_callback.clone() {
+                    quench_runtime::execute::call(
+                        &data,
+                        &Value::Undefined,
+                        &[Value::String(state.body.clone())],
+                    )?;
+                }
+                if let Some(end) = state.end_callback.clone() {
+                    quench_runtime::execute::call(&end, &Value::Undefined, &[])?;
+                }
+                Ok(Value::Undefined)
+            }
+            HostCapabilityKind::Custom(401) => {
+                if let Some(callback) = arguments.last() {
+                    quench_runtime::execute::call(callback, &Value::Undefined, &[])?;
+                }
+                Ok(Value::Undefined)
+            }
+            HostCapabilityKind::Custom(402) => {
+                Ok(Value::object(vec![("port".into(), Value::Number(43123.0))]))
+            }
+            HostCapabilityKind::Custom(403) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(id) if (500..600).contains(&id) => {
+                match id % 10 {
+                    4 => {
+                        self.http.borrow_mut().body =
+                            arguments.first().map(value_to_string).unwrap_or_default()
+                    }
+                    5 => {
+                        if matches!(arguments.first(), Some(Value::String(event)) if event == "data")
+                        {
+                            self.http.borrow_mut().data_callback = arguments.get(1).cloned();
+                        } else if matches!(arguments.first(), Some(Value::String(event)) if event == "end")
+                        {
+                            self.http.borrow_mut().end_callback = arguments.get(1).cloned();
+                        }
+                    }
+                    _ => {}
+                }
+                Ok(Value::Undefined)
+            }
+            _ => Err(VmError::NotCallable),
+        }
+    }
+}
+
+fn response_object(base: u16) -> Value {
+    Value::object(vec![
+        (
+            "end".into(),
+            capability_function(HostCapabilityKind::Custom(base + 4)),
+        ),
+        (
+            "on".into(),
+            capability_function(HostCapabilityKind::Custom(base + 5)),
+        ),
+        (
+            "setEncoding".into(),
+            capability_function(HostCapabilityKind::Custom(base + 6)),
+        ),
+    ])
+}
+
+fn value_to_string(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        other => format!("{other:?}"),
     }
 }
 
@@ -350,6 +486,18 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 "Transform".into(),
                 capability_function(HostCapabilityKind::Custom(10)),
             )]));
+        }
+        if name == "node:http" || name == "http" {
+            return Ok(Value::object(vec![
+                (
+                    "createServer".into(),
+                    capability_function(HostCapabilityKind::Custom(11)),
+                ),
+                (
+                    "get".into(),
+                    capability_function(HostCapabilityKind::Custom(12)),
+                ),
+            ]));
         }
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
     }
