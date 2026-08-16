@@ -70,6 +70,8 @@ impl CapabilityName {
     const Gc: u16 = 2117;
     const VmScriptRunInNewContext: u16 = 2118;
     const VmScriptCreateCachedData: u16 = 2123;
+    const FixtureReadKey: u16 = 2130;
+    const FixturePath: u16 = 2131;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -948,6 +950,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::VmScriptCreateCachedData) => Ok(VM_SCRIPT_CACHE_SOURCE.with(|stored| quench_runtime::host_api::bytes(stored.borrow().as_deref().unwrap_or_default().as_bytes()))),
             HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamily) => Ok(Value::Boolean(false)),
             HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout) => Ok(Value::Number(2500.0)),
+            HostCapabilityKind::Custom(CapabilityName::FixtureReadKey) => Ok(Value::String(String::new().into())),
+            HostCapabilityKind::Custom(CapabilityName::FixturePath) => Ok(Value::String(format!("/tests/node/test/fixtures/{}", safe_value_string(arguments.first().unwrap_or(&Value::Undefined))).into())),
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
@@ -3428,6 +3432,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     if name == "path/win32" || name == "node:path/win32" {
         let path = require_module(&[Value::String("path".into())])?;
         return quench_runtime::execute::get_property_result(&path, "win32");
+    }
+    if name.ends_with("/common/fixtures") || name.ends_with("/common/fixtures.js") {
+        return Ok(quench_runtime::host_api::object(vec![
+            ("readKey".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::FixtureReadKey))),
+            ("path".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::FixturePath))),
+        ]));
     }
     if name == "net" || name == "node:net" {
         return Ok(quench_runtime::host_api::object(vec![
