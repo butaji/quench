@@ -1,4 +1,11 @@
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use quench_runtime::{
+    ops::{HostCapabilityKind, HostCapabilityRef, RealmId},
+    value::{HostCapabilityValue, ObjectData, Value},
+    vm::{Host, VmContext, VmError},
+};
 
 pub(crate) struct FilesystemNodeHost;
 
@@ -48,6 +55,57 @@ pub(crate) trait JsRuntime {
 
 pub(crate) struct QuenchRuntime;
 
+struct QuenchNodeHost;
+
+impl Host for QuenchNodeHost {
+    fn call(&self, capability: HostCapabilityRef, arguments: &[Value]) -> Result<Value, VmError> {
+        match capability.kind {
+            HostCapabilityKind::Custom(1) => require_module(arguments),
+            HostCapabilityKind::Custom(2) => basename(arguments),
+            _ => Err(VmError::NotCallable),
+        }
+    }
+}
+
+fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(name)) = arguments.first() else {
+        return Err(VmError::EvalError("require expects a module name".into()));
+    };
+    if name != "node:path" && name != "path" {
+        return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
+    }
+    let basename = capability_function(HostCapabilityKind::Custom(2));
+    Ok(Value::Object(Rc::new(ObjectData::from_properties(vec![(
+        "basename".into(),
+        basename,
+    )]))))
+}
+
+fn capability_function(kind: HostCapabilityKind) -> Value {
+    let token = Value::HostCapability(Rc::new(HostCapabilityValue::new(HostCapabilityRef {
+        realm: RealmId::ROOT,
+        kind,
+    })));
+    Value::BoundFunction(Rc::new(quench_runtime::value::BoundFunctionValue::new(
+        RealmId::ROOT,
+        Value::Builtin(quench_runtime::ops::Builtin::HostCapability(kind)),
+        token,
+    )))
+}
+
+fn basename(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(path)) = arguments.first() else {
+        return Err(VmError::EvalError("path.basename expects a string".into()));
+    };
+    Ok(Value::String(
+        Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(path)
+            .into(),
+    ))
+}
+
 impl JsRuntime for QuenchRuntime {
     fn execute(
         &self,
@@ -61,7 +119,17 @@ impl JsRuntime for QuenchRuntime {
                 false => quench_runtime::reduce::reduce_source(source),
             }
             .map_err(|errors| errors.join("\n"))?;
-        quench_runtime::execute::run_vm(program.ops())
+        let capability = HostCapabilityRef {
+            realm: RealmId::ROOT,
+            kind: HostCapabilityKind::Custom(1),
+        };
+        let context = VmContext::for_realm(
+            RealmId::ROOT,
+            vec![HostCapabilityKind::Custom(1), HostCapabilityKind::Custom(2)],
+        )
+        .with_host(Rc::new(QuenchNodeHost))
+        .with_host_capability("require", capability);
+        quench_runtime::execute::execute_with_context(program.ops(), &context)
             .map(|_| ())
             .map_err(|error| error.render().into())
     }
