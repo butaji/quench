@@ -58,6 +58,8 @@ impl CapabilityName {
     const ProcessCpuUsage: u16 = 2110;
     const ProcessHrtime: u16 = 2111;
     const ProcessActiveResourcesInfo: u16 = 2112;
+    const VmCreateContext: u16 = 2113;
+    const VmRunInContext: u16 = 2114;
     const UtilDeprecatedFirst: u16 = 2092;
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
@@ -816,6 +818,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage) => process_cpu_usage(arguments),
             HostCapabilityKind::Custom(CapabilityName::ProcessHrtime) => process_hrtime(arguments),
             HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo) => process_active_resources_info(),
+            HostCapabilityKind::Custom(CapabilityName::VmCreateContext) => vm_create_context(arguments),
+            HostCapabilityKind::Custom(CapabilityName::VmRunInContext) => vm_run_in_context(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
@@ -3517,6 +3521,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "vm" || name == "node:vm" {
             return Ok(quench_runtime::host_api::object(vec![
                 ("runInNewContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext))),
+                ("createContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmCreateContext))),
+                ("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInContext))),
             ]));
         }
         if name == "internal/errors" {
@@ -5583,6 +5589,27 @@ fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
         if let Value::Number(value) = value { return Ok(Value::Number(value + amount)); }
     }
     Err(VmError::EvalError("unsupported vm expression".into()))
+}
+
+fn vm_create_context(arguments: &[Value]) -> Result<Value, VmError> {
+    match arguments.first() {
+        Some(Value::Object(_)) | Some(Value::Array(_)) => Ok(arguments.first().cloned().unwrap()),
+        _ => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "context must be an object"))),
+    }
+}
+
+fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(source)) = arguments.first() else { return Err(VmError::NotCallable); };
+    let context = arguments.get(1).ok_or(VmError::NotCallable)?;
+    let source = source.trim();
+    if let Some((name, value)) = source.split_once('=') {
+        let name = name.trim();
+        let value = value.trim().parse::<f64>().map_err(|_| VmError::NotCallable)?;
+        let updated = quench_runtime::execute::set_property(context.clone(), name, Value::Number(value));
+        quench_runtime::execute::replace_value(context, &updated);
+        return Ok(Value::Number(value));
+    }
+    quench_runtime::execute::get_property_result(context, source)
 }
 
 fn crypto_random_bytes(arguments: &[Value]) -> Result<Value, VmError> {
