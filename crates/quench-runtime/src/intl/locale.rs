@@ -226,8 +226,21 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "language" if text.contains('-') => {
                 return Err(runtime_error("RangeError: invalid language"));
             }
-            "language" | "script" => {
-                let _ = option_value(&text, key)?;
+            "language" => {
+                let language = option_value(&text, key)?;
+                if !(2..=8).contains(&language.len())
+                    || !language.chars().all(|c| c.is_ascii_alphabetic())
+                {
+                    return Err(runtime_error("RangeError: invalid language"));
+                }
+                locale.language = super::language_alias(language.to_ascii_lowercase());
+            }
+            "script" => {
+                let script = option_value(&text, key)?;
+                if script.len() != 4 || !script.chars().all(|c| c.is_ascii_alphabetic()) {
+                    return Err(runtime_error("RangeError: invalid script"));
+                }
+                locale.script = Some(super::titlecase_script(&script));
             }
             "region" => validate_region(&text)?,
             "variants" => {
