@@ -3084,6 +3084,13 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("runInNewContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext))),
             ]));
         }
+        if name == "internal/errors" {
+            return Ok(quench_runtime::host_api::object(vec![
+                ("codes".into(), quench_runtime::host_api::object(vec![
+                    ("ERR_OUT_OF_RANGE".into(), Value::Builtin(quench_runtime::ops::Builtin::RangeError)),
+                ])),
+            ]));
+        }
         if name == "os" || name == "node:os" {
             return Ok(os_module());
         }
