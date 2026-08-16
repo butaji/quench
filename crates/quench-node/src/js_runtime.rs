@@ -149,6 +149,13 @@ impl CapabilityName {
     const FsFsyncAsync: u16 = 1548;
     const FsFdatasyncAsync: u16 = 1549;
     const FsUnlinkPromise: u16 = 1550;
+    const FsOpendirSync: u16 = 1551;
+    const FsOpendirAsync: u16 = 1552;
+    const FsOpendirPromise: u16 = 1553;
+    const FsDirReadSync: u16 = 1554;
+    const FsDirReadAsync: u16 = 1555;
+    const FsDirCloseSync: u16 = 1556;
+    const FsDirCloseAsync: u16 = 1557;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -242,6 +249,8 @@ struct QuenchNodeHost {
     fd_paths: RefCell<HashMap<i32, String>>,
     next_fd: Cell<i32>,
     fd_modes: RefCell<HashMap<i32, u32>>,
+    directories: RefCell<HashMap<u16, (Vec<Value>, usize)>>,
+    next_directory: Cell<u16>,
     common_wrappers: RefCell<HashMap<u16, (Value, bool)>>,
     next_common_wrapper: Cell<u16>,
 }
@@ -281,6 +290,8 @@ impl Default for QuenchNodeHost {
             fd_paths: RefCell::new(HashMap::new()),
             next_fd: Cell::new(3),
             fd_modes: RefCell::new(HashMap::new()),
+            directories: RefCell::new(HashMap::new()),
+            next_directory: Cell::new(1),
             common_wrappers: RefCell::new(HashMap::new()),
             next_common_wrapper: Cell::new(CapabilityName::CommonWrapperFirst),
         }
@@ -405,6 +416,25 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsUnlinkPromise) => {
                 fs_unlink(arguments).map(|value| fulfilled(value))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsOpendirSync) => self.fs_opendir(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsOpendirAsync) => {
+                self.fs_opendir_async(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsOpendirPromise) => {
+                self.fs_opendir(arguments).map(fulfilled)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsDirReadSync) => {
+                self.fs_dir_read(receiver, arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsDirReadAsync) => {
+                self.fs_dir_read(receiver, arguments, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsDirCloseSync) => {
+                self.fs_dir_close(receiver, arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsDirCloseAsync) => {
+                self.fs_dir_close(receiver, arguments, true)
             }
             HostCapabilityKind::Custom(CapabilityName::FsDirentFile) => Ok(Value::Boolean(true)),
             HostCapabilityKind::Custom(CapabilityName::FsDirentDirectory) => {
@@ -732,6 +762,99 @@ impl QuenchNodeHost {
             .unwrap_or(0o666);
         self.fd_modes.borrow_mut().insert(fd, mode);
         Ok(Value::Number(fd as f64))
+    }
+
+    fn fs_opendir(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let path = path_arg(arguments, 0)?;
+        let values = directory_entries(path)?;
+        let id = self.next_directory.get();
+        self.next_directory.set(id.saturating_add(1));
+        self.directories.borrow_mut().insert(id, (values, 0));
+        Ok(Value::object(vec![
+            (
+                "readSync".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsDirReadSync)),
+            ),
+            (
+                "read".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsDirReadAsync)),
+            ),
+            (
+                "closeSync".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsDirCloseSync)),
+            ),
+            (
+                "close".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::FsDirCloseAsync)),
+            ),
+            ("\0dirId".into(), Value::Number(id as f64)),
+        ]))
+    }
+
+    fn fs_opendir_async(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let callback = arguments.last().ok_or(VmError::NotCallable)?;
+        let handle = self.fs_opendir(&arguments[..arguments.len().saturating_sub(1)])?;
+        quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null, handle])?;
+        Ok(Value::Undefined)
+    }
+
+    fn fs_dir_id(receiver: Option<&Value>) -> Result<u16, VmError> {
+        let Value::Object(object) = receiver.ok_or(VmError::NotCallable)? else {
+            return Err(VmError::NotCallable);
+        };
+        object
+            .iter()
+            .find_map(|(key, value)| {
+                (key == "\0dirId").then(|| match value {
+                    Value::Number(id) => Some(*id as u16),
+                    _ => None,
+                })
+            })
+            .flatten()
+            .ok_or(VmError::NotCallable)
+    }
+
+    fn fs_dir_read(
+        &self,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+        asynchronous: bool,
+    ) -> Result<Value, VmError> {
+        let id = Self::fs_dir_id(receiver)?;
+        let entry = self
+            .directories
+            .borrow_mut()
+            .get_mut(&id)
+            .and_then(|(values, index)| {
+                let value = values.get(*index).cloned().unwrap_or(Value::Null);
+                *index = index.saturating_add(1);
+                Some(value)
+            })
+            .ok_or(VmError::NotCallable)?;
+        if asynchronous {
+            if let Some(callback) = arguments.last() {
+                quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null, entry])?;
+            }
+            Ok(Value::Undefined)
+        } else {
+            Ok(entry)
+        }
+    }
+
+    fn fs_dir_close(
+        &self,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+        asynchronous: bool,
+    ) -> Result<Value, VmError> {
+        let id = Self::fs_dir_id(receiver)?;
+        self.directories.borrow_mut().remove(&id);
+        if asynchronous {
+            if let Some(callback) = arguments.last() {
+                quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
+            }
+        }
+        Ok(Value::Undefined)
     }
 
     fn fs_close(&self, arguments: &[Value]) -> Result<Value, VmError> {
@@ -1166,6 +1289,12 @@ fn fs_readdir(arguments: &[Value]) -> Result<Value, VmError> {
         })
         .collect();
     Ok(quench_runtime::host_api::array(entries))
+}
+
+fn directory_entries(path: &str) -> Result<Vec<Value>, VmError> {
+    let options = Value::object(vec![("withFileTypes".into(), Value::Boolean(true))]);
+    let result = fs_readdir(&[Value::String(path.to_owned().into()), options])?;
+    array_values(&result)
 }
 
 fn fs_readdir_async(arguments: &[Value]) -> Result<Value, VmError> {
@@ -1878,6 +2007,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsReaddirSync)),
                 ),
                 (
+                    "opendirSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpendirSync)),
+                ),
+                (
                     "access".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsAccessAsync)),
                 ),
@@ -1910,6 +2043,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "readdir".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsReaddirAsync)),
+                ),
+                (
+                    "opendir".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpendirAsync)),
                 ),
                 (
                     "open".into(),
@@ -1954,6 +2091,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                             "unlink".into(),
                             capability_function(HostCapabilityKind::Custom(
                                 CapabilityName::FsUnlinkPromise,
+                            )),
+                        ),
+                        (
+                            "opendir".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::FsOpendirPromise,
                             )),
                         ),
                     ]),
