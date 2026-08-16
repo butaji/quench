@@ -1559,6 +1559,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CryptoGetHashes) => {
                 Ok(quench_runtime::host_api::array(vec![
                     Value::String("sha1".into()),
+                    Value::String("RSA-SHA1".into()),
                     Value::String("sha256".into()),
                 ]))
             }
@@ -4772,7 +4773,10 @@ impl QuenchNodeHost {
         let Some(Value::String(name)) = arguments.first() else {
             return Err(VmError::EvalError("unsupported hash algorithm".into()));
         };
-        let algorithm = name.to_lowercase();
+        let algorithm = match name.to_lowercase().as_str() {
+            "rsa-sha1" => "sha1".to_owned(),
+            other => other.to_owned(),
+        };
         if !matches!(
             algorithm.as_str(),
             "sha256" | "sha1" | "shake128" | "shake256"
