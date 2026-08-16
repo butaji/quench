@@ -510,6 +510,25 @@ fn format_standard_duration(
     nanoseconds: i64,
 ) -> String {
     let locale = slot_string(slots, "locale").unwrap_or_else(default_locale);
+    if slot_value(slots, "microseconds") == Some("numeric")
+        || slot_value(slots, "nanoseconds") == Some("numeric")
+    {
+        return format_fractional_standard(
+            slots,
+            style,
+            years,
+            months,
+            weeks,
+            days,
+            hours,
+            minutes,
+            seconds,
+            milliseconds,
+            microseconds,
+            nanoseconds,
+            &locale,
+        );
+    }
     let units = [
         ("years", "year", years),
         ("months", "month", months),
@@ -530,6 +549,150 @@ fn format_standard_duration(
         })
         .collect::<Vec<_>>();
     crate::intl::list::format_list(&items, &locale, style, "unit")
+}
+
+fn format_fractional_standard(
+    slots: &[(String, Value)],
+    style: &str,
+    years: i64,
+    months: i64,
+    weeks: i64,
+    days: i64,
+    hours: i64,
+    minutes: i64,
+    seconds: i64,
+    milliseconds: i64,
+    microseconds: i64,
+    nanoseconds: i64,
+    locale: &str,
+) -> String {
+    let mut items = format_fractional_prefix(
+        slots, style, years, months, weeks, days, hours, minutes, seconds,
+    );
+    items.extend(format_fractional_subseconds(
+        slots,
+        style,
+        milliseconds,
+        microseconds,
+        nanoseconds,
+    ));
+    crate::intl::list::format_list(items.as_slice(), locale, style, "unit")
+}
+
+fn format_fractional_prefix(
+    slots: &[(String, Value)],
+    style: &str,
+    years: i64,
+    months: i64,
+    weeks: i64,
+    days: i64,
+    hours: i64,
+    minutes: i64,
+    seconds: i64,
+) -> Vec<String> {
+    let mut items = Vec::new();
+    for (slot, unit, value) in [
+        ("years", "year", years),
+        ("months", "month", months),
+        ("weeks", "week", weeks),
+        ("days", "day", days),
+        ("hours", "hour", hours),
+        ("minutes", "minute", minutes),
+        ("seconds", "second", seconds),
+    ] {
+        if value != 0 {
+            items.push(format_duration_unit(
+                slots,
+                style,
+                slot,
+                unit,
+                &value.to_string(),
+            ));
+        }
+    }
+    items
+}
+
+fn format_fractional_subseconds(
+    slots: &[(String, Value)],
+    style: &str,
+    milliseconds: i64,
+    microseconds: i64,
+    nanoseconds: i64,
+) -> Vec<String> {
+    let mut items = Vec::new();
+    if slot_value(slots, "microseconds") == Some("numeric") {
+        let value = fractional_number(format!(
+            "{milliseconds}.{:03}{:03}",
+            microseconds.abs(),
+            nanoseconds.abs()
+        ));
+        items.push(format_duration_unit(
+            slots,
+            style,
+            "milliseconds",
+            "millisecond",
+            &value,
+        ));
+    } else {
+        if milliseconds != 0 {
+            items.push(format_duration_unit(
+                slots,
+                style,
+                "milliseconds",
+                "millisecond",
+                &milliseconds.to_string(),
+            ));
+        }
+        if slot_value(slots, "nanoseconds") == Some("numeric") {
+            let value = fractional_number(format!("{microseconds}.{:03}", nanoseconds.abs()));
+            items.push(format_duration_unit(
+                slots,
+                style,
+                "microseconds",
+                "microsecond",
+                &value,
+            ));
+        } else if microseconds != 0 {
+            items.push(format_duration_unit(
+                slots,
+                style,
+                "microseconds",
+                "microsecond",
+                &microseconds.to_string(),
+            ));
+        }
+    }
+    if slot_value(slots, "microseconds") != Some("numeric")
+        && slot_value(slots, "nanoseconds") != Some("numeric")
+        && nanoseconds != 0
+    {
+        items.push(format_duration_unit(
+            slots,
+            style,
+            "nanoseconds",
+            "nanosecond",
+            &nanoseconds.to_string(),
+        ));
+    }
+    items
+}
+
+fn fractional_number(value: String) -> String {
+    value.parse::<f64>().map_or(value, |value| {
+        crate::intl::number_format::format_number_rounded(value, 9, 1, "trunc")
+    })
+}
+
+fn format_duration_unit(
+    slots: &[(String, Value)],
+    style: &str,
+    slot: &str,
+    unit: &str,
+    value: &str,
+) -> String {
+    let display = slot_value(slots, slot).unwrap_or(style);
+    crate::intl::number_format::format_unit(value, Some(unit), display)
 }
 
 include!("duration_tail.rs");
