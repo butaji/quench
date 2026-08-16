@@ -16,6 +16,15 @@ pub trait Host: 'static {
         let _ = (capability, arguments);
         Err(VmError::NotCallable)
     }
+
+    fn construct_with_new_target(
+        &self,
+        capability: HostCapabilityRef,
+        arguments: &[Value],
+        _new_target: &Value,
+    ) -> Result<Value, VmError> {
+        self.construct(capability, arguments)
+    }
 }
 pub(crate) fn with_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> Option<T> {
     realm::with_realm(realm, callback)
@@ -127,14 +136,15 @@ impl VmContext {
         self.host.clone()
     }
 
-    pub(crate) fn construct_host(
+    pub(crate) fn construct_host_with_new_target(
         &self,
         capability: HostCapabilityRef,
         arguments: &[Value],
+        new_target: &Value,
     ) -> Option<Result<Value, VmError>> {
-        self.host
-            .as_ref()
-            .map(|host| host.construct(capability, arguments))
+        self.host.as_ref().map(|host| {
+            host.construct_with_new_target(capability, arguments, new_target)
+        })
     }
 
     pub fn with_host_capability(
