@@ -51,6 +51,8 @@ impl CapabilityName {
     const BufferWriteBigInt64LE: u16 = 2053;
     const BufferWriteBigUInt64BE: u16 = 2054;
     const VmRunInNewContext: u16 = 2055;
+    const CryptoRandomBytes: u16 = 2056;
+    const CryptoRandomFillSync: u16 = 2057;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -590,6 +592,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferWriteBigInt64LE) => buffer_bigint(receiver, arguments, false, true),
             HostCapabilityKind::Custom(CapabilityName::BufferWriteBigUInt64BE) => buffer_bigint(receiver, arguments, true, false),
             HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext) => vm_run_in_new_context(arguments),
+            HostCapabilityKind::Custom(CapabilityName::CryptoRandomBytes) => crypto_random_bytes(arguments),
+            HostCapabilityKind::Custom(CapabilityName::CryptoRandomFillSync) => crypto_random_fill(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -2980,10 +2984,11 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(module);
         }
         if name == "node:crypto" || name == "crypto" {
-            return Ok(Value::object(vec![(
-                "createHash".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash)),
-            )]));
+            return Ok(Value::object(vec![
+                ("createHash".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash))),
+                ("randomBytes".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoRandomBytes))),
+                ("randomFillSync".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoRandomFillSync))),
+            ]));
         }
         if name == "node:child_process" || name == "child_process" {
             return Ok(Value::object(vec![
@@ -4305,6 +4310,18 @@ fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
         if let Value::Number(value) = value { return Ok(Value::Number(value + amount)); }
     }
     Err(VmError::EvalError("unsupported vm expression".into()))
+}
+
+fn crypto_random_bytes(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Number(size)) = arguments.first() else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "size must be a number"))); };
+    if *size < 0.0 { return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "size out of range"))); }
+    Ok(quench_runtime::host_api::bytes(&vec![0; *size as usize]))
+}
+
+fn crypto_random_fill(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Uint8Array(view)) = arguments.first() else { return Err(VmError::NotCallable); };
+    view.buffer.bytes.borrow_mut()[view.byte_offset..view.byte_offset + view.length].fill(0);
+    Ok(arguments.first().cloned().unwrap_or(Value::Undefined))
 }
 
 fn events_module() -> Value {
