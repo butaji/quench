@@ -15,6 +15,7 @@ use quench_runtime::{
 
 thread_local! {
     static NODE_PROCESS_ENV: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_PROCESS_TITLE: RefCell<String> = RefCell::new("quench-node".into());
     static NODE_PATH_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_UTIL_TYPES: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_PROCESS_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
@@ -5995,6 +5996,14 @@ fn process_module() -> Value {
             Value::String(std::env::args().next().unwrap_or_default()),
         ),
         ("argv0".into(), Value::String("node".into())),
+        (
+            "title".into(),
+            Value::String(
+                NODE_PROCESS_TITLE
+                    .with(|title| title.borrow().clone())
+                    .into(),
+            ),
+        ),
         ("Symbol.toStringTag".into(), Value::String("process".into())),
         ("pid".into(), Value::Number(std::process::id() as f64)),
         (
@@ -10251,6 +10260,15 @@ impl JsRuntime for QuenchRuntime {
         path: Option<&Path>,
         _host: &dyn NodeHost,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(title) = source.lines().find_map(|line| {
+            line.trim().strip_prefix("// Flags:").and_then(|flags| {
+                flags
+                    .split_whitespace()
+                    .find_map(|flag| flag.strip_prefix("--title="))
+            })
+        }) {
+            NODE_PROCESS_TITLE.with(|current| current.replace(title.to_owned()));
+        }
         let source_with_globals = format!("var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; globalThis.global = globalThis;\n{source}");
         let program =
             match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
