@@ -16,6 +16,7 @@ use quench_runtime::{
 thread_local! {
     static NODE_PROCESS_ENV: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_PATH_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_UTIL_TYPES: RefCell<Option<Value>> = const { RefCell::new(None) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
 }
 
@@ -3439,6 +3440,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "util" || name == "node:util" {
             return Ok(util_module());
         }
+        if name == "util/types" || name == "node:util/types" {
+            return Ok(NODE_UTIL_TYPES.with(|module| {
+                module
+                    .borrow_mut()
+                    .get_or_insert_with(|| quench_runtime::host_api::object(vec![]))
+                    .clone()
+            }));
+        }
         if name == "vm" || name == "node:vm" {
             return Ok(quench_runtime::host_api::object(vec![
                 ("runInNewContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext))),
@@ -5273,6 +5282,12 @@ fn util_module() -> Value {
         "defaultOptions",
         default_options,
     );
+    let types = NODE_UTIL_TYPES.with(|module| {
+        module
+            .borrow_mut()
+            .get_or_insert_with(|| quench_runtime::host_api::object(vec![]))
+            .clone()
+    });
     quench_runtime::host_api::object(vec![
         (
             "format".into(),
@@ -5290,7 +5305,7 @@ fn util_module() -> Value {
             "promisify".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::UtilPromisify)),
         ),
-        ("types".into(), quench_runtime::host_api::object(vec![])),
+        ("types".into(), types),
         ("TextEncoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor))),
         ("TextDecoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor))),
     ])
