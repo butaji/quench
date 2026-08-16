@@ -46,6 +46,18 @@ pub(crate) fn object_property(
     receiver: &Value,
     key: &str,
 ) -> Value {
+    let is_global = realm::id_for_global(properties).is_some()
+        || GLOBAL_OBJECT.with(|global| {
+            global
+                .borrow()
+                .as_ref()
+                .is_some_and(|candidate| Rc::ptr_eq(candidate, properties))
+        });
+    if is_global {
+        if let Some(value) = crate::vm::current_context_or_default().host_value(key) {
+            return value;
+        }
+    }
     if let Some(value) = direct_object_property(properties, key) {
         return value;
     }
