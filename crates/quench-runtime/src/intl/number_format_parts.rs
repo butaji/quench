@@ -50,7 +50,7 @@ pub(crate) fn numeric_parts(text: &str, locale: &str) -> Vec<Value> {
         },
     };
     let mut parts = sign.map_or_else(Vec::new, |(kind, value)| vec![part(kind, value)]);
-    if body == "∞" || !body.chars().any(|character| character.is_ascii_digit()) {
+    if body == "∞" || !body.chars().any(|character| character.is_numeric()) {
         parts.push(part(if body == "∞" { "infinity" } else { "nan" }, body));
         return parts;
     }
@@ -83,7 +83,7 @@ fn decimal_numeric_parts(text: &str, locale: &str) -> Vec<Value> {
     let decimal = if locale.starts_with("de") { ',' } else { '.' };
     let grouping = if decimal == ',' { '.' } else { ',' };
     let split = text.find(|character: char| {
-        !character.is_ascii_digit() && character != decimal && character != grouping
+        !character.is_numeric() && character != decimal && character != grouping
     });
     let (numeric, suffix) =
         split.map_or((text, None), |index| (&text[..index], Some(&text[index..])));
