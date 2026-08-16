@@ -227,8 +227,36 @@ fn provider_has_collation(locale: &str, collation: &str) -> bool {
 }
 
 fn set_extension(locale: &str, key: &str, value: &str) -> String {
-    let locale = remove_unsupported_extension(locale, key);
-    format!("{locale}-u-{key}-{value}")
+    let mut parts: Vec<&str> = locale.split('-').collect();
+    let Some(index) = parts.iter().position(|part| part.eq_ignore_ascii_case("u")) else {
+        return format!("{locale}-u-{key}-{value}");
+    };
+    let end = parts
+        .iter()
+        .enumerate()
+        .skip(index + 1)
+        .find_map(|(position, part)| (part.len() == 1).then_some(position))
+        .unwrap_or(parts.len());
+    let mut extension = parts[index + 1..end].to_vec();
+    while extension.first().is_some_and(|part| part.len() != 2) {
+        extension.remove(0);
+    }
+    if let Some(key_index) = extension
+        .iter()
+        .position(|part| part.eq_ignore_ascii_case(key))
+    {
+        let value_end = extension
+            .iter()
+            .enumerate()
+            .skip(key_index + 1)
+            .find_map(|(position, part)| (part.len() == 2).then_some(position))
+            .unwrap_or(extension.len());
+        extension.splice(key_index..value_end, [key, value]);
+    } else {
+        extension.extend([key, value]);
+    }
+    parts.splice(index + 1..end, extension);
+    parts.join("-")
 }
 
 fn option_value(properties: &Value, name: &str) -> Result<Value, VmError> {
