@@ -185,6 +185,11 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    if matches!(arguments.get(1), Some(Value::Null)) {
+        return Err(crate::value::error::throw_type_error(
+            "options must not be null",
+        ));
+    }
     validate_options(arguments.get(1))?;
     let options = NumberOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
