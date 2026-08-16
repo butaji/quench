@@ -529,6 +529,9 @@ fn function_metadata(
     }
 }
 fn declaration_slot(name: &str, next_slot: &mut u16, locals: &mut HashMap<String, u16>) -> u16 {
+    if let Some(slot) = locals.get(&format!("\0annex-b-outer:{name}")) {
+        return *slot;
+    }
     if let Some(slot) = locals.get(name) {
         return *slot;
     }
