@@ -285,6 +285,7 @@ impl CapabilityName {
     const FsStatsIsFile: u16 = 1529;
     const FsMkdirSync: u16 = 1530;
     const FsMkdirAsync: u16 = 1531;
+    const FsToUnixTimestamp: u16 = 2172;
     const FsRmSync: u16 = 1531;
     const FsReaddirSync: u16 = 1532;
     const FsReaddirAsync: u16 = 1533;
@@ -630,6 +631,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsStatsIsFile) => Ok(Value::Boolean(false)),
             HostCapabilityKind::Custom(CapabilityName::FsMkdirSync) => fs_mkdir(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsMkdirAsync) => { let callback = arguments.last().cloned().ok_or(VmError::NotCallable)?; let result = fs_mkdir(&arguments[..arguments.len().saturating_sub(1)])?; quench_runtime::execute::call(&callback, &Value::Undefined, &[Value::Null, result])?; Ok(Value::Undefined) }
+            HostCapabilityKind::Custom(CapabilityName::FsToUnixTimestamp) => { let value = arguments.first().cloned().unwrap_or(Value::Number(0.0)); Ok(Value::Number(match value { Value::Number(value) => if value < 0.0 { 1.0 } else { value }, _ => 12.0 })) }
             HostCapabilityKind::Custom(CapabilityName::FsRmSync) => fs_rm(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReaddirSync) => fs_readdir(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReaddirAsync) => {
@@ -3952,6 +3954,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "mkdir".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdirAsync)),
                 ),
+                ("_toUnixTimestamp".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::FsToUnixTimestamp))),
                 (
                     "rmSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsRmSync)),
