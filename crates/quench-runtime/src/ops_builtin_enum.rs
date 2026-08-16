@@ -144,6 +144,7 @@ pub enum Builtin {
     TemporalPlainDateDaysInMonthGetter,
     TemporalPlainDateDaysInYearGetter,
     TemporalPlainDateDaysInWeekGetter,
+    TemporalPlainDateMonthsInYearGetter,
     TemporalPlainDateInLeapYearGetter,
     TemporalPlainDateEraGetter, TemporalPlainDateEraYearGetter,
     TemporalPlainDateCalendarIdGetter,
