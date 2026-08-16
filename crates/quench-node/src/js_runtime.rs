@@ -4756,7 +4756,7 @@ fn format_string(value: &Value, separators: bool) -> String {
     match value {
         Value::Number(_) => format_number(value, separators),
         Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
-        Value::Array(_) => format_compact_array(value),
+        Value::Array(_) => format_array_string(value),
         Value::Object(_) | Value::ObjectAlias(_) => {
             if let Ok(method) = quench_runtime::execute::get_property_result(value, "Symbol.toPrimitive") {
                 if let Ok(result) = quench_runtime::execute::call(
@@ -4835,6 +4835,36 @@ fn format_compact_array(value: &Value) -> String {
         }
     }
     format!("[ {} ]", values.join(", "))
+}
+
+fn format_array_string(value: &Value) -> String {
+    let length = array_length(value);
+    let name = quench_runtime::execute::call(
+        &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf),
+        &Value::Undefined,
+        &[value.clone()],
+    ).ok()
+    .and_then(|prototype| quench_runtime::execute::get_property_result(&prototype, "constructor").ok())
+    .and_then(|constructor| quench_runtime::execute::get_property_result(&constructor, "name").ok())
+    .and_then(|name| match name { Value::String(name) => Some(name), _ => None })
+    .unwrap_or_else(|| "Array".into());
+    if name == "Array" {
+        return format_compact_array(value);
+    }
+    let keys = quench_runtime::execute::call(&Value::Builtin(quench_runtime::ops::Builtin::ObjectKeys), &Value::Undefined, &[value.clone()]).ok();
+    let mut extras = Vec::new();
+    let key_count = keys.as_ref().and_then(|keys| quench_runtime::execute::get_property_result(keys, "length").ok()).and_then(|value| match value { Value::Number(value) => Some(value as usize), _ => None }).unwrap_or(0);
+    for index in 0..key_count {
+        let Some(key) = keys.as_ref().and_then(|keys| quench_runtime::execute::get_property_result(keys, &index.to_string()).ok()).and_then(|value| match value { Value::String(value) => Some(value), _ => None }) else { continue };
+        if key.parse::<usize>().is_err() {
+            if let Ok(property) = quench_runtime::execute::get_property_result(value, &key) {
+                extras.push(format!("{}: {}", key, format_compact_value(&property)));
+            }
+        }
+    }
+    let holes = if length == 0 { String::new() } else { format!("<{} empty items>", length) };
+    let body = [Some(holes), (!extras.is_empty()).then(|| extras.join(", "))].into_iter().flatten().collect::<Vec<_>>().join(", ");
+    format!("{name}({length}) [ {body} ]")
 }
 
 fn format_object_string(value: &Value) -> String {
