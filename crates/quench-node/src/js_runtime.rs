@@ -4092,7 +4092,9 @@ fn util_format_with_options(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn numeric_separator(value: &Value) -> Option<bool> {
-    let function = quench_runtime::execute::get_property_result(value, "format").unwrap_or_else(|_| value.clone());
+    let function = quench_runtime::execute::get_property_result(value, "inspect")
+        .or_else(|_| quench_runtime::execute::get_property_result(value, "format"))
+        .unwrap_or_else(|_| value.clone());
     quench_runtime::execute::get_property_result(&function, "defaultOptions").ok()
         .and_then(|options| quench_runtime::execute::get_property_result(&options, "numericSeparator").ok())
         .and_then(|value| matches!(value, Value::Boolean(true)).then_some(true))
@@ -4120,10 +4122,10 @@ fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, V
                 if specifier == '%' { output.push('%'); continue; }
                 if let Some(value) = remaining.next() {
                     output.push_str(&match specifier {
-                        's' => format_string(value),
+                        's' => format_string(value, separators.unwrap_or(false)),
                         'd' => format_decimal(value, separators.unwrap_or(false)),
                         'f' => format_number(value, separators.unwrap_or(false)),
-                        'i' => format_integer(value),
+                        'i' => format_integer(value, separators.unwrap_or(false)),
                         'j' => "undefined".into(),
                         _ => format!("%{specifier}"),
                     });
@@ -4138,8 +4140,10 @@ fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, V
     Ok(Value::String(output.into()))
 }
 
-fn format_string(value: &Value) -> String {
+fn format_string(value: &Value, separators: bool) -> String {
     match value {
+        Value::Number(_) => format_number(value, separators),
+        Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
         Value::Object(_) | Value::ObjectAlias(_) => {
             if matches!(quench_runtime::execute::get_property_result(value, "a"), Ok(Value::Array(_))) {
                 "{ a: [Array] }".into()
@@ -4187,12 +4191,12 @@ fn separator_string(value: &str, enabled: bool) -> String {
     format!("{sign}{output}")
 }
 
-fn format_integer(value: &Value) -> String {
+fn format_integer(value: &Value, separators: bool) -> String {
     match value {
-        Value::BigInt(value) => format!("{value}n"),
+        Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
         Value::Number(value) if value.is_nan() => "NaN".into(),
-        Value::Number(value) => (*value as i64).to_string(),
-        Value::String(value) => value.parse::<f64>().map(|value| (value as i64).to_string()).unwrap_or_else(|_| "NaN".into()),
+        Value::Number(value) => separator_string(&(*value as i64).to_string(), separators),
+        Value::String(value) => value.parse::<f64>().map(|value| separator_string(&(value as i64).to_string(), separators)).unwrap_or_else(|_| "NaN".into()),
         _ => "NaN".into(),
     }
 }
