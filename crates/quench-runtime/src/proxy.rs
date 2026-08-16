@@ -479,7 +479,11 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
         Value::Proxy(proxy) => &proxy.target,
         target => target,
     };
-    crate::own_keys::all(target)
+    if matches!(target, Value::Proxy(_)) {
+        proxy_own_keys(target)
+    } else {
+        crate::own_keys::all(target)
+    }
 }
 
 fn validate_own_keys_result(value: &Value) -> Result<(), VmError> {
