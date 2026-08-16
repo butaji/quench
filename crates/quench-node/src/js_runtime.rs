@@ -45,6 +45,8 @@ thread_local! {
     static NODE_DH_PRIVATE_SET: Cell<bool> = const { Cell::new(false) };
     static NODE_DH_PRIVATE_KEY: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_DH_PUBLIC_KEY: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_DH_GROUP_CONSTRUCTOR: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_DH_GENERATED_KEY: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
 // Capability numbers are an internal NodeHost registry. Keep them named so
@@ -2207,7 +2209,18 @@ impl Host for QuenchNodeHost {
                         "value is out of range",
                     )));
                 }
-                let group = self.dh_object();
+                let mut group = self.dh_object();
+                if arguments.len() == 1 && matches!(arguments.first(), Some(Value::String(_))) {
+                    if let Some(constructor) =
+                        NODE_DH_GROUP_CONSTRUCTOR.with(|value| value.borrow().clone())
+                    {
+                        group = quench_runtime::execute::set_property(
+                            group,
+                            "constructor",
+                            constructor,
+                        );
+                    }
+                }
                 if arguments.len() == 1 && matches!(arguments.first(), Some(Value::String(_))) {
                     let mut group = group;
                     for name in ["setPrivateKey", "setPublicKey"] {
@@ -2281,6 +2294,7 @@ impl Host for QuenchNodeHost {
                     "\0dhPrivateKey",
                     value,
                 );
+                NODE_DH_GENERATED_KEY.with(|stored| stored.replace(None));
                 let receiver = quench_runtime::execute::set_property(
                     receiver,
                     "\0dhGeneratedKey",
@@ -2331,23 +2345,19 @@ impl Host for QuenchNodeHost {
                     Value::Boolean(true),
                 );
                 quench_runtime::execute::replace_value(&receiver, &updated);
-                if let Ok(existing) =
-                    quench_runtime::execute::get_property_result(&receiver, "\0dhGeneratedKey")
+                if let Some(existing) = NODE_DH_GENERATED_KEY.with(|stored| stored.borrow().clone())
                 {
-                    if !matches!(existing, Value::Undefined) {
-                        return Ok(existing);
-                    }
+                    return Ok(existing);
                 }
-                let private = matches!(
-                    quench_runtime::execute::get_property_result(&receiver, "\0dhPrivateKey"),
-                    Ok(value) if !matches!(value, Value::Undefined)
-                );
-                let key = node_buffer(if private { &[1; 128] } else { &[0; 128] });
+                let private = NODE_DH_PRIVATE_SET.with(|value| value.get());
+                let key =
+                    quench_runtime::host_api::bytes(if private { &[1; 128] } else { &[0; 128] });
                 let updated = quench_runtime::execute::set_property(
                     receiver.clone(),
                     "\0dhGeneratedKey",
                     key.clone(),
                 );
+                NODE_DH_GENERATED_KEY.with(|stored| stored.replace(Some(key.clone())));
                 quench_runtime::execute::replace_value(&receiver, &updated);
                 Ok(key)
             }
@@ -6718,7 +6728,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "Verify".into(),
                     Value::Builtin(quench_runtime::ops::Builtin::Object),
                 ),
-                ("DiffieHellmanGroup".into(), dh_constructor()),
+                ("DiffieHellmanGroup".into(), dh_group_constructor()),
                 ("DiffieHellman".into(), dh_constructor()),
                 ("ECDH".into(), ecdh_constructor()),
                 (
@@ -11914,6 +11924,12 @@ fn dh_constructor() -> Value {
         )),
     )
     .expect("callable hasInstance");
+    constructor
+}
+
+fn dh_group_constructor() -> Value {
+    let constructor = dh_constructor();
+    NODE_DH_GROUP_CONSTRUCTOR.with(|value| value.replace(Some(constructor.clone())));
     constructor
 }
 
