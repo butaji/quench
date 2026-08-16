@@ -50,6 +50,7 @@ pub(crate) struct RawOptions {
     unit: Option<String>,
     unit_display: String,
     grouping: String,
+    grouping_explicit: bool,
     minimum_fraction_digits: f64,
     minimum_integer_digits: f64,
     maximum_fraction_digits: f64,
@@ -101,6 +102,7 @@ impl RawOptions {
             unit: None,
             unit_display: "short".to_string(),
             grouping: "auto".to_string(),
+            grouping_explicit: false,
             minimum_fraction_digits: -1.0,
             minimum_integer_digits: 1.0,
             maximum_fraction_digits: -1.0,
@@ -120,6 +122,14 @@ impl RawOptions {
             for key in OPTION_KEYS {
                 let value = crate::execute::get_property_result(options, key)?;
                 if !matches!(value, Value::Undefined) {
+                    if *key == "useGrouping" {
+                        let (grouping, enabled, min2) = normalize_grouping(&value)?;
+                        raw.grouping = grouping;
+                        raw.grouping_explicit = true;
+                        raw.use_grouping = enabled;
+                        raw.grouping_min2 = min2;
+                        continue;
+                    }
                     let text = if matches!(
                         *key,
                         "roundingMode" | "roundingPriority" | "trailingZeroDisplay"
@@ -194,11 +204,7 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
         "minimumFractionDigits" => raw.minimum_fraction_digits = value.parse().unwrap_or(0.0),
         "minimumIntegerDigits" => raw.minimum_integer_digits = value.parse().unwrap_or(1.0),
         "maximumFractionDigits" => raw.maximum_fraction_digits = value.parse().unwrap_or(3.0),
-        "useGrouping" => {
-            raw.grouping = value.to_string();
-            raw.use_grouping = grouping_enabled(value);
-            raw.grouping_min2 = value == "min2";
-        }
+        "useGrouping" => raw.grouping = value.to_string(),
         "notation" => raw.notation = value.to_string(),
         "compactDisplay" => raw.compact_display = value.to_string(),
         "roundingMode" => raw.rounding_mode = value.to_string(),
@@ -466,6 +472,12 @@ fn number_options(
         .as_ref()
         .filter(|_| raw.style == "currency")
         .cloned();
+    let compact_grouping_default = raw.notation == "compact" && !raw.grouping_explicit;
+    let grouping = if compact_grouping_default {
+        "min2".to_string()
+    } else {
+        raw.grouping.clone()
+    };
     NumberOptions {
         locale,
         numbering_system,
@@ -475,12 +487,12 @@ fn number_options(
         currency_sign: raw.currency_sign,
         unit: raw.unit,
         unit_display: raw.unit_display,
-        grouping: raw.grouping,
+        grouping,
         minimum_integer_digits: raw.minimum_integer_digits.max(1.0) as u32,
         minimum_fraction_digits: minimum_fraction_digits as u32,
         maximum_fraction_digits: maximum_fraction_digits as u32,
         use_grouping: raw.use_grouping,
-        grouping_min2: raw.grouping_min2,
+        grouping_min2: raw.grouping_min2 || compact_grouping_default,
         notation: raw.notation,
         compact_display: raw.compact_display,
         rounding_mode: raw.rounding_mode,
@@ -585,8 +597,24 @@ fn validate_significant_digits(raw: &RawOptions) -> Result<(), VmError> {
     Ok(())
 }
 
-fn grouping_enabled(value: &str) -> bool {
-    matches!(value, "true" | "always" | "auto" | "min2")
+fn normalize_grouping(value: &Value) -> Result<(String, bool, bool), VmError> {
+    if !crate::execute::is_truthy(value) {
+        return Ok(("false".to_string(), false, false));
+    }
+    if matches!(value, Value::Boolean(true)) {
+        return Ok(("always".to_string(), true, false));
+    }
+    let text = crate::conversion::to_string(value)?;
+    let grouping = match text.as_str() {
+        "true" | "false" => "auto",
+        "auto" | "always" | "min2" => text.as_str(),
+        _ => {
+            return Err(crate::value::error::throw_range_error(
+                "invalid useGrouping",
+            ));
+        }
+    };
+    Ok((grouping.to_string(), true, grouping == "min2"))
 }
 
 fn fraction_digits(style: &str, currency: Option<&str>, notation: &str, requested: f64) -> u32 {
