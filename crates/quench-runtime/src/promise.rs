@@ -408,7 +408,11 @@ pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
     };
     let resolve = bound_settler(Builtin::PromiseResolve, promise_data);
     let reject = bound_settler(Builtin::PromiseReject, promise_data);
-    crate::functions::execute_target(executor, &Value::Undefined, &[resolve, reject])?;
+    if let Err(VmError::Thrown(reason)) =
+        crate::functions::execute_target(executor, &Value::Undefined, &[resolve, reject])
+    {
+        reject_promise(promise_data, reason);
+    }
     Ok(promise)
 }
 
