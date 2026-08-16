@@ -136,7 +136,9 @@ fn maximize(tag: &str) -> String {
         parts.first().copied().unwrap_or("und")
     };
     let (default_script, default_region) = likely_subtags(language);
-    let default_region = if language == "zh" && script == Some("Hant") {
+    let default_region = if language == "en" && script == Some("Shaw") {
+        "GB"
+    } else if language == "zh" && script == Some("Hant") {
         "TW"
     } else {
         default_region
@@ -166,6 +168,7 @@ fn append_extensions(result: &mut String, parts: &[&str], extension: &str) {
 fn undefined_language(script: Option<&str>, region: Option<&str>) -> &'static str {
     match (script, region) {
         (Some("Thai"), _) => "th",
+        (Some("Cyrl"), Some("RO")) => "bg",
         (_, Some("419")) => "es",
         (_, Some("150")) => "en",
         (_, Some("AT")) => "de",
@@ -185,6 +188,11 @@ fn minimize(tag: &str) -> String {
     let language = parts.first().copied().unwrap_or("und");
     let (default_script, default_region) = likely_subtags(language);
     let script = parts.get(1).copied().unwrap_or(default_script);
+    let default_region = if language == "en" && script == "Shaw" {
+        "GB"
+    } else {
+        default_region
+    };
     let region = parts.get(2).copied().unwrap_or(default_region);
     if language == "zh" && script == "Hant" && region == "TW" {
         return format!("{language}-{region}") + &extension;
@@ -211,6 +219,7 @@ fn likely_subtags(language: &str) -> (&'static str, &'static str) {
         "aa" => ("Latn", "ET"),
         "aae" => ("Latn", "IT"),
         "ar" => ("Arab", "EG"),
+        "bg" => ("Cyrl", "BG"),
         "de" => ("Latn", "DE"),
         "en" => ("Latn", "US"),
         "es" => ("Latn", "ES"),
