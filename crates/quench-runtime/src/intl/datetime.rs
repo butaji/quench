@@ -347,7 +347,13 @@ impl DateTimeOptions {
             props.push((key.clone(), Value::String(value.clone())));
         }
         if has_hour {
-            if let Some(hour12) = self.hour12 {
+            let hour12 = self.hour12.or_else(|| {
+                self.components
+                    .iter()
+                    .find(|(key, _)| key == "hourCycle")
+                    .map(|(_, value)| matches!(value.as_str(), "h11" | "h12"))
+            });
+            if let Some(hour12) = hour12 {
                 props.push(("hour12".to_string(), Value::Boolean(hour12)));
             }
         }
