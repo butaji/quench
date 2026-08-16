@@ -1825,6 +1825,7 @@ impl QuenchNodeHost {
             .get(1)
             .map(safe_value_string)
             .unwrap_or_else(|| "r".into());
+        if let Some(mode) = arguments.get(2) { if !matches!(mode, Value::Number(_)) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "mode is invalid"))); } }
         if flags.starts_with('w') || flags.starts_with('a') {
             if flags.starts_with('w') {
                 std::fs::OpenOptions::new()
