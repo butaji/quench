@@ -240,6 +240,16 @@ fn intrinsic_getter_extended(builtin: Builtin, key: &str) -> Option<Builtin> {
 fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     Some(match (builtin, key) {
+        (TemporalDurationPrototype, "years") => TemporalDurationYearsGetter,
+        (TemporalDurationPrototype, "months") => TemporalDurationMonthsGetter,
+        (TemporalDurationPrototype, "weeks") => TemporalDurationWeeksGetter,
+        (TemporalDurationPrototype, "days") => TemporalDurationDaysGetter,
+        (TemporalDurationPrototype, "hours") => TemporalDurationHoursGetter,
+        (TemporalDurationPrototype, "minutes") => TemporalDurationMinutesGetter,
+        (TemporalDurationPrototype, "seconds") => TemporalDurationSecondsGetter,
+        (TemporalDurationPrototype, "milliseconds") => TemporalDurationMillisecondsGetter,
+        (TemporalDurationPrototype, "microseconds") => TemporalDurationMicrosecondsGetter,
+        (TemporalDurationPrototype, "nanoseconds") => TemporalDurationNanosecondsGetter,
         (IntlDateTimeFormatPrototype, "format") => IntlDateTimeFormatFormatGetter,
         (IntlCollatorPrototype, "compare") => IntlCollatorCompareGetter,
         (IntlLocalePrototype, "baseName") => IntlLocaleBaseNameGetter,
