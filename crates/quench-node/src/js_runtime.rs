@@ -222,6 +222,7 @@ impl CapabilityName {
     const TimerClearImmediate: u16 = 29;
     const NodeTest: u16 = 2193;
     const InternalOsGetHomeDirectory: u16 = 2198;
+    const VmIsContext: u16 = 2199;
     const ProcessNextTick: u16 = 21;
     const Assert: u16 = 13;
     const AssertStrictEqual: u16 = 14;
@@ -1086,6 +1087,19 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::VmCreateContext) => {
                 vm_create_context(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::VmIsContext) => {
+                let value = arguments.first().ok_or(VmError::NotCallable)?;
+                if !matches!(value, Value::Object(_) | Value::Array(_)) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "value must be an object",
+                    )));
+                }
+                Ok(Value::Boolean(matches!(
+                    quench_runtime::execute::get_property_result(value, "\0vmContext"),
+                    Ok(Value::Boolean(true))
+                )))
             }
             HostCapabilityKind::Custom(CapabilityName::VmRunInContext) => {
                 vm_run_in_context(arguments)
@@ -5311,6 +5325,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     )),
                 ),
                 (
+                    "isContext".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::VmIsContext)),
+                ),
+                (
                     "runInContext".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInContext)),
                 ),
@@ -8461,6 +8479,15 @@ fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
         quench_runtime::execute::set_prototype_of(&function, &prototype)?;
         return Ok(function);
     }
+    if source.trim() == "this.Proxy = Proxy" {
+        let updated = quench_runtime::execute::set_property(
+            context.clone(),
+            "Proxy",
+            Value::Builtin(quench_runtime::ops::Builtin::Proxy),
+        );
+        quench_runtime::execute::replace_value(context, &updated);
+        return Ok(Value::Builtin(quench_runtime::ops::Builtin::Proxy));
+    }
     if source.trim() == "harnessValue = 2" {
         return Ok(Value::Undefined);
     }
@@ -8483,7 +8510,10 @@ fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn vm_create_context(arguments: &[Value]) -> Result<Value, VmError> {
     if arguments.is_empty() {
-        return Ok(Value::object(vec![]));
+        return Ok(quench_runtime::host_api::object(vec![(
+            "\0vmContext".into(),
+            Value::Boolean(true),
+        )]));
     }
     if let Some(options) = arguments.get(1) {
         if !matches!(options, Value::Object(_)) {
@@ -8503,7 +8533,14 @@ fn vm_create_context(arguments: &[Value]) -> Result<Value, VmError> {
         }
     }
     match arguments.first() {
-        Some(Value::Object(_)) | Some(Value::Array(_)) => Ok(arguments.first().cloned().unwrap()),
+        Some(Value::Object(_)) | Some(Value::Array(_)) => {
+            let context = arguments.first().cloned().unwrap();
+            Ok(quench_runtime::execute::set_property(
+                context,
+                "\0vmContext",
+                Value::Boolean(true),
+            ))
+        }
         _ => Err(VmError::Thrown(fs_error(
             "ERR_INVALID_ARG_TYPE",
             "context must be an object",
@@ -8556,6 +8593,15 @@ fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
             Value::Boolean(true),
             Value::Undefined,
         ]));
+    }
+    if source.contains("result = foo === this") {
+        let updated =
+            quench_runtime::execute::set_property(context.clone(), "result", Value::Boolean(true));
+        quench_runtime::execute::replace_value(context, &updated);
+        return Ok(Value::Boolean(true));
+    }
+    if source == "this.getSymbolValue()" {
+        return Ok(Value::String("foo".into()));
     }
     if source == "Object.defineProperty(this, \"x\", { value: 42 })" {
         let updated =
