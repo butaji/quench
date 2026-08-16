@@ -15,16 +15,69 @@ use quench_runtime::{
 
 // Capability numbers are an internal NodeHost registry. Keep them named so
 // the runtime boundary carries intent instead of opaque numeric protocol IDs.
-const CAP_REQUIRE: u16 = 1;
-const CAP_PATH_BASENAME: u16 = 2;
-const CAP_CONSOLE_LOG: u16 = 4;
-const CAP_CWD: u16 = 6;
-const CAP_READ_FILE_SYNC: u16 = 7;
-const CAP_CREATE_HASH: u16 = 8;
-const CAP_BUFFER: u16 = 10;
-const CAP_URL: u16 = 40;
-const CAP_EVENT_EMITTER: u16 = 70;
-const CAP_QUEUE_MICROTASK: u16 = 22;
+struct CapabilityName;
+#[allow(non_upper_case_globals)]
+impl CapabilityName {
+    const Require: u16 = 1;
+    const PathBasename: u16 = 2;
+    const ConsoleLog: u16 = 4;
+    const Cwd: u16 = 6;
+    const ReadFileSync: u16 = 7;
+    const CreateHash: u16 = 8;
+    const Stream: u16 = 10;
+    const QueueMicrotask: u16 = 22;
+    const Url: u16 = 40;
+    const EventEmitter: u16 = 70;
+    const BufferByteLength: u16 = 9;
+    const BufferFrom: u16 = 30;
+    const BufferAlloc: u16 = 31;
+    const BufferIsBuffer: u16 = 32;
+    const UtilFormat: u16 = 80;
+    const UtilInspect: u16 = 81;
+    const OsPlatform: u16 = 82;
+    const OsArch: u16 = 83;
+    const OsTmpdir: u16 = 84;
+    const OsHomedir: u16 = 85;
+    const OsCpus: u16 = 86;
+    const OsFreemem: u16 = 87;
+    const OsTotalmem: u16 = 88;
+    const OsType: u16 = 89;
+    const QuerystringParse: u16 = 90;
+    const QuerystringEscape: u16 = 91;
+    const EventsGetMax: u16 = 94;
+    const EventsSetMax: u16 = 95;
+    const OsRelease: u16 = 96;
+    const OsEndianness: u16 = 97;
+    const OsLoadavg: u16 = 98;
+    const OsNetworkInterfaces: u16 = 99;
+    const ModuleIsBuiltin: u16 = 101;
+    const ModuleCreateRequire: u16 = 102;
+    const ModuleFindSourceMap: u16 = 103;
+    const ModuleSyncBuiltinExports: u16 = 104;
+    const OsUserInfo: u16 = 1000;
+    const TimerImmediate: u16 = 27;
+    const Timer: u16 = 28;
+    const TimerClearImmediate: u16 = 29;
+    const ProcessNextTick: u16 = 21;
+    const Assert: u16 = 13;
+    const AssertStrictEqual: u16 = 14;
+    const AssertDeepStrictEqual: u16 = 15;
+    const AssertOk: u16 = 16;
+    const AssertThrows: u16 = 17;
+    const AssertDoesNotThrow: u16 = 18;
+    const AssertIfError: u16 = 19;
+    const AssertMatch: u16 = 20;
+    const AssertNotStrictEqual: u16 = 24;
+    const AssertNotDeepStrictEqual: u16 = 25;
+    const AssertError: u16 = 26;
+    const HttpServer: u16 = 11;
+    const HttpGet: u16 = 12;
+    const HttpRequestOn: u16 = 401;
+    const HttpRequestEnd: u16 = 402;
+    const HttpRequestWrite: u16 = 403;
+    const Console: u16 = 3;
+    const TimerValidation: u16 = 5;
+}
 
 pub(crate) struct FilesystemNodeHost {
     resolver: Resolver,
@@ -149,43 +202,43 @@ impl Host for QuenchNodeHost {
         arguments: &[Value],
     ) -> Result<Value, VmError> {
         match capability.kind {
-            HostCapabilityKind::Custom(CAP_REQUIRE) => require_module(arguments),
-            HostCapabilityKind::Custom(CAP_EVENT_EMITTER) => self.construct(capability, arguments),
-            HostCapabilityKind::Custom(CAP_PATH_BASENAME) => basename(arguments),
-            HostCapabilityKind::Custom(CAP_CONSOLE_LOG) => console_log(arguments),
-            HostCapabilityKind::Custom(CAP_CWD) => current_directory(arguments),
-            HostCapabilityKind::Custom(CAP_READ_FILE_SYNC) => read_file_sync(arguments),
-            HostCapabilityKind::Custom(CAP_CREATE_HASH) => self.create_hash(arguments),
-            HostCapabilityKind::Custom(CAP_QUEUE_MICROTASK) => next_tick(arguments),
-            HostCapabilityKind::Custom(9) => buffer_byte_length(arguments),
-            HostCapabilityKind::Custom(30) => buffer_from(arguments),
-            HostCapabilityKind::Custom(31) => buffer_alloc(arguments),
-            HostCapabilityKind::Custom(32) => buffer_is_buffer(arguments),
-            HostCapabilityKind::Custom(80) => util_format(arguments),
-            HostCapabilityKind::Custom(81) => util_inspect(arguments),
-            HostCapabilityKind::Custom(101) => module_is_builtin(arguments),
-            HostCapabilityKind::Custom(102..=104) => Ok(Value::Undefined),
-            HostCapabilityKind::Custom(82) => os_platform(),
-            HostCapabilityKind::Custom(83) => os_arch(),
-            HostCapabilityKind::Custom(84) => os_tmpdir(),
-            HostCapabilityKind::Custom(85) => os_homedir(),
-            HostCapabilityKind::Custom(86..=89)
-            | HostCapabilityKind::Custom(96..=99)
-            | HostCapabilityKind::Custom(1000) => os_extra(capability.kind),
-            HostCapabilityKind::Custom(94) => events_get_max(arguments),
-            HostCapabilityKind::Custom(95) => events_set_max(arguments),
+            HostCapabilityKind::Custom(CapabilityName::Require) => require_module(arguments),
+            HostCapabilityKind::Custom(CapabilityName::EventEmitter) => self.construct(capability, arguments),
+            HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
+            HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ReadFileSync) => read_file_sync(arguments),
+            HostCapabilityKind::Custom(CapabilityName::CreateHash) => self.create_hash(arguments),
+            HostCapabilityKind::Custom(CapabilityName::QueueMicrotask) => next_tick(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferByteLength) => buffer_byte_length(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferFrom) => buffer_from(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferAlloc) => buffer_alloc(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferIsBuffer) => buffer_is_buffer(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilFormat) => util_format(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilInspect) => util_inspect(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin) => module_is_builtin(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ModuleCreateRequire..=CapabilityName::ModuleSyncBuiltinExports) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::OsPlatform) => os_platform(),
+            HostCapabilityKind::Custom(CapabilityName::OsArch) => os_arch(),
+            HostCapabilityKind::Custom(CapabilityName::OsTmpdir) => os_tmpdir(),
+            HostCapabilityKind::Custom(CapabilityName::OsHomedir) => os_homedir(),
+            HostCapabilityKind::Custom(CapabilityName::OsCpus..=CapabilityName::OsType)
+            | HostCapabilityKind::Custom(CapabilityName::OsRelease..=CapabilityName::OsNetworkInterfaces)
+            | HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => os_extra(capability.kind),
+            HostCapabilityKind::Custom(CapabilityName::EventsGetMax) => events_get_max(arguments),
+            HostCapabilityKind::Custom(CapabilityName::EventsSetMax) => events_set_max(arguments),
             HostCapabilityKind::Custom(id) if (900..1000).contains(&id) => {
                 events_instance_call(id, arguments)
             }
-            HostCapabilityKind::Custom(90) => querystring_parse(arguments),
-            HostCapabilityKind::Custom(91) => querystring_escape(arguments),
+            HostCapabilityKind::Custom(CapabilityName::QuerystringParse) => querystring_parse(arguments),
+            HostCapabilityKind::Custom(CapabilityName::QuerystringEscape) => querystring_escape(arguments),
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
-            HostCapabilityKind::Custom(21) => next_tick(arguments),
-            HostCapabilityKind::Custom(27 | 28 | 29) => timer_call(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessNextTick) => next_tick(arguments),
+            HostCapabilityKind::Custom(CapabilityName::TimerImmediate | CapabilityName::Timer | CapabilityName::TimerClearImmediate) => timer_call(arguments),
             HostCapabilityKind::Custom(id) if (13..=20).contains(&id) => {
                 assertion_call(id, arguments)
             }
-            HostCapabilityKind::Custom(11 | 12) => self.http_call(capability.kind, arguments),
+            HostCapabilityKind::Custom(CapabilityName::HttpServer | CapabilityName::HttpGet) => self.http_call(capability.kind, arguments),
             HostCapabilityKind::Custom(id) if (400..600).contains(&id) => {
                 self.http_call(capability.kind, arguments)
             }
@@ -202,7 +255,7 @@ impl Host for QuenchNodeHost {
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
-        if capability.kind == HostCapabilityKind::Custom(CAP_URL) {
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::Url) {
             let input = match arguments.first() {
                 Some(Value::String(value)) => value.as_str(),
                 _ => return Err(VmError::EvalError("URL expects a string".into())),
@@ -219,7 +272,7 @@ impl Host for QuenchNodeHost {
             self.urls.borrow_mut().insert(id, parsed.to_string());
             return Ok(url_object(&parsed, id));
         }
-        if capability.kind == HostCapabilityKind::Custom(CAP_EVENT_EMITTER) {
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::EventEmitter) {
             let id = self.next_event.get();
             self.next_event.set(id.saturating_add(10));
             self.event_max.borrow_mut().insert(id, 10.0);
@@ -249,7 +302,7 @@ impl Host for QuenchNodeHost {
             );
             return Ok(emitter);
         }
-        if capability.kind != HostCapabilityKind::Custom(CAP_BUFFER) {
+        if capability.kind != HostCapabilityKind::Custom(CapabilityName::Stream) {
             return Err(VmError::NotCallable);
         }
         let id = self.next_stream.get();
@@ -371,24 +424,24 @@ impl QuenchNodeHost {
 
     fn http_call(&self, kind: HostCapabilityKind, arguments: &[Value]) -> Result<Value, VmError> {
         match kind {
-            HostCapabilityKind::Custom(11) => {
+            HostCapabilityKind::Custom(CapabilityName::HttpServer) => {
                 self.http.borrow_mut().server_callback = arguments.first().cloned();
                 Ok(Value::object(vec![
                     (
                         "listen".into(),
-                        capability_function(HostCapabilityKind::Custom(401)),
+                        capability_function(HostCapabilityKind::Custom(CapabilityName::HttpRequestOn)),
                     ),
                     (
                         "address".into(),
-                        capability_function(HostCapabilityKind::Custom(402)),
+                        capability_function(HostCapabilityKind::Custom(CapabilityName::HttpRequestEnd)),
                     ),
                     (
                         "close".into(),
-                        capability_function(HostCapabilityKind::Custom(403)),
+                        capability_function(HostCapabilityKind::Custom(CapabilityName::HttpRequestWrite)),
                     ),
                 ]))
             }
-            HostCapabilityKind::Custom(12) => {
+            HostCapabilityKind::Custom(CapabilityName::HttpGet) => {
                 let url = arguments
                     .first()
                     .and_then(|v| match v {
@@ -430,16 +483,16 @@ impl QuenchNodeHost {
                 }
                 Ok(Value::Undefined)
             }
-            HostCapabilityKind::Custom(401) => {
+            HostCapabilityKind::Custom(CapabilityName::HttpRequestOn) => {
                 if let Some(callback) = arguments.last() {
                     quench_runtime::execute::call(callback, &Value::Undefined, &[])?;
                 }
                 Ok(Value::Undefined)
             }
-            HostCapabilityKind::Custom(402) => {
+            HostCapabilityKind::Custom(CapabilityName::HttpRequestEnd) => {
                 Ok(Value::object(vec![("port".into(), Value::Number(43123.0))]))
             }
-            HostCapabilityKind::Custom(403) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::HttpRequestWrite) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(id) if (500..600).contains(&id) => {
                 match id % 10 {
                     4 => {
@@ -619,37 +672,37 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "node:fs" || name == "fs" {
             return Ok(Value::object(vec![(
                 "readFileSync".into(),
-                capability_function(HostCapabilityKind::Custom(CAP_READ_FILE_SYNC)),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ReadFileSync)),
             )]));
         }
         if name == "node:crypto" || name == "crypto" {
             return Ok(Value::object(vec![(
                 "createHash".into(),
-                capability_function(HostCapabilityKind::Custom(CAP_CREATE_HASH)),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash)),
             )]));
         }
         if name == "node:stream" || name == "stream" {
             return Ok(Value::object(vec![(
                 "Transform".into(),
-                capability_function(HostCapabilityKind::Custom(CAP_BUFFER)),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::Stream)),
             )]));
         }
         if name == "node:http" || name == "http" {
             return Ok(Value::object(vec![
                 (
                     "createServer".into(),
-                    capability_function(HostCapabilityKind::Custom(11)),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::HttpServer)),
                 ),
                 (
                     "get".into(),
-                    capability_function(HostCapabilityKind::Custom(12)),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::HttpGet)),
                 ),
             ]));
         }
         if name == "url" || name == "node:url" {
             return Ok(quench_runtime::host_api::object(vec![(
                 "URL".into(),
-                capability_function(HostCapabilityKind::Custom(CAP_URL)),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
             )]));
         }
         if name == "util" || name == "node:util" {
@@ -668,41 +721,41 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             return Ok(quench_runtime::host_api::object(vec![
                 (
                     "parse".into(),
-                    capability_function(HostCapabilityKind::Custom(90)),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::QuerystringParse)),
                 ),
                 (
                     "decode".into(),
-                    capability_function(HostCapabilityKind::Custom(90)),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::QuerystringParse)),
                 ),
                 (
                     "escape".into(),
-                    capability_function(HostCapabilityKind::Custom(91)),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::QuerystringEscape)),
                 ),
                 (
                     "unescape".into(),
-                    capability_function(HostCapabilityKind::Custom(91)),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::QuerystringEscape)),
                 ),
             ]));
         }
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
     }
-    let basename = capability_function(HostCapabilityKind::Custom(CAP_PATH_BASENAME));
+    let basename = capability_function(HostCapabilityKind::Custom(CapabilityName::PathBasename));
     Ok(Value::object(vec![("basename".into(), basename)]))
 }
 
 fn assert_module() -> Value {
-    let mut module = capability_function(HostCapabilityKind::Custom(13));
+    let mut module = capability_function(HostCapabilityKind::Custom(CapabilityName::Assert));
     for (name, id) in [
-        ("strictEqual", 14),
-        ("deepStrictEqual", 15),
-        ("ok", 16),
-        ("throws", 17),
-        ("doesNotThrow", 18),
-        ("ifError", 19),
-        ("match", 20),
-        ("notStrictEqual", 24),
-        ("notDeepStrictEqual", 25),
-        ("AssertionError", 26),
+        ("strictEqual", CapabilityName::AssertStrictEqual),
+        ("deepStrictEqual", CapabilityName::AssertDeepStrictEqual),
+        ("ok", CapabilityName::AssertOk),
+        ("throws", CapabilityName::AssertThrows),
+        ("doesNotThrow", CapabilityName::AssertDoesNotThrow),
+        ("ifError", CapabilityName::AssertIfError),
+        ("match", CapabilityName::AssertMatch),
+        ("notStrictEqual", CapabilityName::AssertNotStrictEqual),
+        ("notDeepStrictEqual", CapabilityName::AssertNotDeepStrictEqual),
+        ("AssertionError", CapabilityName::AssertError),
     ] {
         module = quench_runtime::execute::set_property(
             module,
@@ -737,11 +790,11 @@ fn process_module() -> Value {
         ("arch".into(), Value::String(std::env::consts::ARCH.into())),
         (
             "cwd".into(),
-            capability_function(HostCapabilityKind::Custom(CAP_CWD)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::Cwd)),
         ),
         (
             "nextTick".into(),
-            capability_function(HostCapabilityKind::Custom(21)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessNextTick)),
         ),
     ])
 }
@@ -804,12 +857,12 @@ fn url_object(url: &url::Url, id: u16) -> Value {
 }
 
 fn buffer_module() -> Value {
-    let mut buffer = capability_function(HostCapabilityKind::Custom(30));
+    let mut buffer = capability_function(HostCapabilityKind::Custom(CapabilityName::BufferFrom));
     for (name, kind) in [
-        ("from", HostCapabilityKind::Custom(30)),
-        ("alloc", HostCapabilityKind::Custom(31)),
-        ("isBuffer", HostCapabilityKind::Custom(32)),
-        ("byteLength", HostCapabilityKind::Custom(9)),
+        ("from", HostCapabilityKind::Custom(CapabilityName::BufferFrom)),
+        ("alloc", HostCapabilityKind::Custom(CapabilityName::BufferAlloc)),
+        ("isBuffer", HostCapabilityKind::Custom(CapabilityName::BufferIsBuffer)),
+        ("byteLength", HostCapabilityKind::Custom(CapabilityName::BufferByteLength)),
     ] {
         buffer = quench_runtime::execute::set_property(buffer, name, capability_function(kind));
     }
@@ -847,34 +900,34 @@ fn util_module() -> Value {
     quench_runtime::host_api::object(vec![
         (
             "format".into(),
-            capability_function(HostCapabilityKind::Custom(80)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilFormat)),
         ),
         (
             "inspect".into(),
-            capability_function(HostCapabilityKind::Custom(81)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilInspect)),
         ),
         ("types".into(), quench_runtime::host_api::object(vec![])),
     ])
 }
 
 fn events_module() -> Value {
-    let mut emitter = capability_function(HostCapabilityKind::Custom(CAP_EVENT_EMITTER));
+    let mut emitter = capability_function(HostCapabilityKind::Custom(CapabilityName::EventEmitter));
     emitter =
         quench_runtime::execute::set_property(emitter, "captureRejections", Value::Boolean(false));
     quench_runtime::host_api::object(vec![
         ("EventEmitter".into(), emitter),
         (
             "EventEmitterAsyncResource".into(),
-            capability_function(HostCapabilityKind::Custom(CAP_EVENT_EMITTER)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::EventEmitter)),
         ),
         ("defaultMaxListeners".into(), Value::Number(10.0)),
         (
             "getMaxListeners".into(),
-            capability_function(HostCapabilityKind::Custom(94)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::EventsGetMax)),
         ),
         (
             "setMaxListeners".into(),
-            capability_function(HostCapabilityKind::Custom(95)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::EventsSetMax)),
         ),
     ])
 }
@@ -925,19 +978,19 @@ fn os_module() -> Value {
     quench_runtime::host_api::object(vec![
         (
             "platform".into(),
-            capability_function(HostCapabilityKind::Custom(82)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsPlatform)),
         ),
         (
             "arch".into(),
-            capability_function(HostCapabilityKind::Custom(83)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsArch)),
         ),
         (
             "tmpdir".into(),
-            capability_function(HostCapabilityKind::Custom(84)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsTmpdir)),
         ),
         (
             "homedir".into(),
-            capability_function(HostCapabilityKind::Custom(85)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsHomedir)),
         ),
         ("EOL".into(), Value::String("\n".into())),
         (
@@ -946,39 +999,39 @@ fn os_module() -> Value {
         ),
         (
             "cpus".into(),
-            capability_function(HostCapabilityKind::Custom(86)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsCpus)),
         ),
         (
             "freemem".into(),
-            capability_function(HostCapabilityKind::Custom(87)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsFreemem)),
         ),
         (
             "totalmem".into(),
-            capability_function(HostCapabilityKind::Custom(88)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsTotalmem)),
         ),
         (
             "type".into(),
-            capability_function(HostCapabilityKind::Custom(89)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsType)),
         ),
         (
             "release".into(),
-            capability_function(HostCapabilityKind::Custom(96)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsRelease)),
         ),
         (
             "endianness".into(),
-            capability_function(HostCapabilityKind::Custom(97)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsEndianness)),
         ),
         (
             "loadavg".into(),
-            capability_function(HostCapabilityKind::Custom(98)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsLoadavg)),
         ),
         (
             "networkInterfaces".into(),
-            capability_function(HostCapabilityKind::Custom(99)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsNetworkInterfaces)),
         ),
         (
             "userInfo".into(),
-            capability_function(HostCapabilityKind::Custom(1000)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsUserInfo)),
         ),
     ])
 }
@@ -1015,19 +1068,19 @@ fn module_api() -> Value {
         ),
         (
             "isBuiltin".into(),
-            capability_function(HostCapabilityKind::Custom(101)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin)),
         ),
         (
             "createRequire".into(),
-            capability_function(HostCapabilityKind::Custom(102)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleCreateRequire)),
         ),
         (
             "findSourceMap".into(),
-            capability_function(HostCapabilityKind::Custom(103)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleFindSourceMap)),
         ),
         (
             "syncBuiltinESMExports".into(),
-            capability_function(HostCapabilityKind::Custom(104)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleSyncBuiltinExports)),
         ),
     ])
 }
@@ -1056,18 +1109,18 @@ fn module_is_builtin(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn os_extra(kind: HostCapabilityKind) -> Result<Value, VmError> {
     match kind {
-        HostCapabilityKind::Custom(86) => Ok(quench_runtime::host_api::array(vec![])),
-        HostCapabilityKind::Custom(87) | HostCapabilityKind::Custom(88) => Ok(Value::Number(0.0)),
-        HostCapabilityKind::Custom(89) => Ok(Value::String("Darwin".into())),
-        HostCapabilityKind::Custom(96) => Ok(Value::String("unknown".into())),
-        HostCapabilityKind::Custom(97) => Ok(Value::String("LE".into())),
-        HostCapabilityKind::Custom(98) => Ok(quench_runtime::host_api::array(vec![
+        HostCapabilityKind::Custom(CapabilityName::OsCpus) => Ok(quench_runtime::host_api::array(vec![])),
+        HostCapabilityKind::Custom(CapabilityName::OsFreemem) | HostCapabilityKind::Custom(CapabilityName::OsTotalmem) => Ok(Value::Number(0.0)),
+        HostCapabilityKind::Custom(CapabilityName::OsType) => Ok(Value::String("Darwin".into())),
+        HostCapabilityKind::Custom(CapabilityName::OsRelease) => Ok(Value::String("unknown".into())),
+        HostCapabilityKind::Custom(CapabilityName::OsEndianness) => Ok(Value::String("LE".into())),
+        HostCapabilityKind::Custom(CapabilityName::OsLoadavg) => Ok(quench_runtime::host_api::array(vec![
             Value::Number(0.0),
             Value::Number(0.0),
             Value::Number(0.0),
         ])),
-        HostCapabilityKind::Custom(99) => Ok(quench_runtime::host_api::object(vec![])),
-        HostCapabilityKind::Custom(1000) => Ok(quench_runtime::host_api::object(vec![])),
+        HostCapabilityKind::Custom(CapabilityName::OsNetworkInterfaces) => Ok(quench_runtime::host_api::object(vec![])),
+        HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => Ok(quench_runtime::host_api::object(vec![])),
         _ => Err(VmError::NotCallable),
     }
 }
@@ -1227,22 +1280,22 @@ impl JsRuntime for QuenchRuntime {
             .map_err(|errors| errors.join("\n"))?;
         let capability = HostCapabilityRef {
             realm: RealmId::ROOT,
-            kind: HostCapabilityKind::Custom(CAP_REQUIRE),
+            kind: HostCapabilityKind::Custom(CapabilityName::Require),
         };
         let context = VmContext::for_realm(
             RealmId::ROOT,
             vec![
-                HostCapabilityKind::Custom(CAP_REQUIRE),
-                HostCapabilityKind::Custom(CAP_PATH_BASENAME),
-                HostCapabilityKind::Custom(3),
-                HostCapabilityKind::Custom(CAP_CONSOLE_LOG),
-                HostCapabilityKind::Custom(5),
-                HostCapabilityKind::Custom(CAP_CWD),
-                HostCapabilityKind::Custom(CAP_READ_FILE_SYNC),
-                HostCapabilityKind::Custom(CAP_CREATE_HASH),
-                HostCapabilityKind::Custom(CAP_QUEUE_MICROTASK),
-                HostCapabilityKind::Custom(9),
-                HostCapabilityKind::Custom(CAP_BUFFER),
+                HostCapabilityKind::Custom(CapabilityName::Require),
+                HostCapabilityKind::Custom(CapabilityName::PathBasename),
+                HostCapabilityKind::Custom(CapabilityName::Console),
+                HostCapabilityKind::Custom(CapabilityName::ConsoleLog),
+                HostCapabilityKind::Custom(CapabilityName::TimerValidation),
+                HostCapabilityKind::Custom(CapabilityName::Cwd),
+                HostCapabilityKind::Custom(CapabilityName::ReadFileSync),
+                HostCapabilityKind::Custom(CapabilityName::CreateHash),
+                HostCapabilityKind::Custom(CapabilityName::QueueMicrotask),
+                HostCapabilityKind::Custom(CapabilityName::BufferByteLength),
+                HostCapabilityKind::Custom(CapabilityName::Stream),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
@@ -1251,7 +1304,7 @@ impl JsRuntime for QuenchRuntime {
             "console",
             HostCapabilityRef {
                 realm: RealmId::ROOT,
-                kind: HostCapabilityKind::Custom(3),
+                kind: HostCapabilityKind::Custom(CapabilityName::Console),
             },
         )
         .with_host_value("process", process_module())
@@ -1271,26 +1324,26 @@ impl JsRuntime for QuenchRuntime {
                     .into_owned(),
             ),
         )
-        .with_host_value("URL", capability_function(HostCapabilityKind::Custom(CAP_URL)))
+        .with_host_value("URL", capability_function(HostCapabilityKind::Custom(CapabilityName::Url)))
         .with_host_value(
             "setImmediate",
-            capability_function(HostCapabilityKind::Custom(27)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::TimerImmediate)),
         )
         .with_host_value(
             "setTimeout",
-            capability_function(HostCapabilityKind::Custom(28)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::Timer)),
         )
         .with_host_value(
             "setInterval",
-            capability_function(HostCapabilityKind::Custom(28)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::Timer)),
         )
         .with_host_value(
             "clearImmediate",
-            capability_function(HostCapabilityKind::Custom(29)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::TimerClearImmediate)),
         )
         .with_host_value(
             "queueMicrotask",
-            capability_function(HostCapabilityKind::Custom(CAP_QUEUE_MICROTASK)),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::QueueMicrotask)),
         )
         .with_host_value("Buffer", buffer_module());
         quench_runtime::execute::execute_with_context(program.ops(), &context)
