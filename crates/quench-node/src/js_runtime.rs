@@ -2178,10 +2178,11 @@ impl JsRuntime for QuenchRuntime {
         path: Option<&Path>,
         _host: &dyn NodeHost,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let source_with_globals = format!("globalThis.global = globalThis;\n{source}");
         let program =
             match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
-                true => quench_runtime::reduce::reduce_module_source(source),
-                false => quench_runtime::reduce::reduce_source(source),
+                true => quench_runtime::reduce::reduce_module_source(&source_with_globals),
+                false => quench_runtime::reduce::reduce_source(&source_with_globals),
             }
             .map_err(|errors| errors.join("\n"))?;
         let capability = HostCapabilityRef {
