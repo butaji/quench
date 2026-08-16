@@ -102,6 +102,11 @@ impl CapabilityName {
     const HttpIncomingOnce: u16 = 2156;
     const HttpIncomingEmit: u16 = 2157;
     const StreamAddAbortSignal: u16 = 2158;
+    const WorkerConstructor: u16 = 2159;
+    const WorkerOn: u16 = 2160;
+    const WorkerOnce: u16 = 2161;
+    const WorkerPostMessage: u16 = 2162;
+    const WorkerTerminate: u16 = 2163;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -1009,6 +1014,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::HttpIncomingOnce) => { let receiver = receiver.cloned().ok_or(VmError::NotCallable)?; let updated = quench_runtime::execute::set_property(receiver.clone(), "\0onceEnd", arguments.get(1).cloned().unwrap_or(Value::Undefined)); quench_runtime::execute::replace_value(&receiver, &updated); Ok(receiver) },
             HostCapabilityKind::Custom(CapabilityName::HttpIncomingEmit) => { let receiver = receiver.cloned().ok_or(VmError::NotCallable)?; if matches!(arguments.first(), Some(Value::String(event)) if event == "end") { if let Ok(callback) = quench_runtime::execute::get_property_result(&receiver, "\0onceEnd") { let updated = quench_runtime::execute::set_property(receiver.clone(), "\0onceEnd", Value::Undefined); quench_runtime::execute::replace_value(&receiver, &updated); if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) { quench_runtime::execute::call(&callback, &receiver, &[])?; } } } Ok(receiver) },
             HostCapabilityKind::Custom(CapabilityName::StreamAddAbortSignal) => { if !matches!(arguments.first(), Some(Value::Object(_))) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "signal must be an AbortSignal"))); } Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined)) },
+            HostCapabilityKind::Custom(CapabilityName::WorkerOn | CapabilityName::WorkerOnce | CapabilityName::WorkerPostMessage | CapabilityName::WorkerTerminate) => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
@@ -1273,6 +1279,14 @@ impl Host for QuenchNodeHost {
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor) {
             return text_decoder_constructor();
+        }
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::WorkerConstructor) {
+            return Ok(quench_runtime::host_api::object(vec![
+                ("on".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerOn))),
+                ("once".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerOnce))),
+                ("postMessage".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerPostMessage))),
+                ("terminate".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerTerminate))),
+            ]));
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::VmScript) {
             let source = arguments.first().map(safe_value_string).unwrap_or_default();
@@ -3559,6 +3573,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     }
     if name == "timers/promises" || name == "node:timers/promises" {
         return Ok(timers_promises_module());
+    }
+    if name == "worker_threads" || name == "node:worker_threads" {
+        return Ok(quench_runtime::host_api::object(vec![("Worker".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerConstructor)))]));
     }
     if name == "timers" || name == "node:timers" {
         return Ok(quench_runtime::host_api::object(vec![("promises".into(), timers_promises_module())]));
