@@ -25,6 +25,16 @@ fn run_generator_steps(
     resume: crate::completion::Completion,
     context: &VmContext,
 ) -> Result<GeneratorStep, VmError> {
+    if !matches!(resume, crate::completion::Completion::Normal)
+        && !matches!(ops.get(pc), Some(Op::YieldStar { .. }))
+    {
+        crate::vm::flush_global_declaration_batch(registers);
+        return Ok(GeneratorStep {
+            completion: resume,
+            pc,
+            suspension: None,
+        });
+    }
     for (offset, op) in ops[pc..].iter().enumerate() {
         if matches!(op, Op::YieldStar { .. }) {
             let maybe = run_yield_star_step(registers, op, &resume, pc + offset)?;
@@ -39,7 +49,11 @@ fn run_generator_steps(
         }
     }
     crate::vm::flush_global_declaration_batch(registers);
-    Ok(GeneratorStep { completion: crate::completion::Completion::Normal, pc: ops.len(), suspension: None })
+    Ok(GeneratorStep {
+        completion: crate::completion::Completion::Normal,
+        pc: ops.len(),
+        suspension: None,
+    })
 }
 
 fn run_yield_star_step(
@@ -52,11 +66,22 @@ fn run_yield_star_step(
     if let Some(completion) = completion {
         crate::vm::flush_global_declaration_batch(registers);
         let offset = usize::from(!completion.is_suspension());
-        let suspension = matches!(completion, crate::completion::Completion::Yield(_)).then(|| match op {
-            Op::YieldStar { dst, iterator, .. } => crate::continuation::SuspensionPoint::YieldStar { pc: next, dst: *dst, iterator: *iterator },
-            _ => crate::continuation::SuspensionPoint::Yield { pc: next, src: 0 },
-        });
-        return Ok(Some(GeneratorStep { completion, pc: next + offset, suspension }));
+        let suspension =
+            matches!(completion, crate::completion::Completion::Yield(_)).then(|| match op {
+                Op::YieldStar { dst, iterator, .. } => {
+                    crate::continuation::SuspensionPoint::YieldStar {
+                        pc: next,
+                        dst: *dst,
+                        iterator: *iterator,
+                    }
+                }
+                _ => crate::continuation::SuspensionPoint::Yield { pc: next, src: 0 },
+            });
+        return Ok(Some(GeneratorStep {
+            completion,
+            pc: next + offset,
+            suspension,
+        }));
     }
     Ok(None)
 }
@@ -77,10 +102,7 @@ fn run_generator_op(
         },
         Ok(result) => result,
     };
-    if matches!(
-        result,
-        Some(crate::completion::Completion::Normal) | None
-    ) {
+    if matches!(result, Some(crate::completion::Completion::Normal) | None) {
         return Ok(None);
     }
     if let Some(completion) = result {
@@ -88,7 +110,11 @@ fn run_generator_op(
         let suspension = matches!(completion, crate::completion::Completion::Yield(_))
             .then(|| direct_suspension(op, next))
             .flatten();
-        return Ok(Some(GeneratorStep { completion, pc: next + 1, suspension }));
+        return Ok(Some(GeneratorStep {
+            completion,
+            pc: next + 1,
+            suspension,
+        }));
     }
     Ok(None)
 }
