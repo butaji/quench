@@ -5,9 +5,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let values = (0..10)
         .map(|index| number(arguments.get(index)))
         .collect::<Result<Vec<_>, _>>()?;
-    let values = values
+    let values: [f64; 10] = values
         .try_into()
-        .map(crate::temporal::duration_arithmetic::normalize_for_construct)
         .map_err(|_| crate::value::error::throw_range_error("Invalid duration fields"))?;
     validate_range(&values)?;
     let sign = values
