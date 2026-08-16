@@ -10,6 +10,15 @@ pub(crate) fn format_unit(text: &str, unit: Option<&str>, display: &str) -> Stri
         (Some("kilometer-per-hour"), "long") => "kilometers per hour",
         (Some("kilometer-per-hour"), "narrow") => "km/h",
         (Some("kilometer-per-hour"), _) => "km/h",
+        (Some("second"), "long") => "seconds",
+        (Some("second"), "narrow") => "s",
+        (Some("second"), _) => "sec",
+        (Some("millisecond"), "long") => "milliseconds",
+        (Some("millisecond"), _) => "ms",
+        (Some("microsecond"), "long") => "microseconds",
+        (Some("microsecond"), _) => "μs",
+        (Some("nanosecond"), "long") => "nanoseconds",
+        (Some("nanosecond"), _) => "ns",
         _ => "",
     };
     if suffix.is_empty() {
@@ -224,6 +233,18 @@ fn unit_suffix(unit: Option<&str>, display: &str, locale: &str) -> String {
         (Some("meter"), _) => "m".to_string(),
         (Some("kilometer"), "long") => "kilometers".to_string(),
         (Some("kilometer"), _) => "km".to_string(),
+        (Some("second"), "long") => "seconds".to_string(),
+        (Some("second"), "narrow") => "s".to_string(),
+        (Some("second"), _) => "sec".to_string(),
+        (Some("millisecond"), "long") => "milliseconds".to_string(),
+        (Some("millisecond"), "narrow") => "ms".to_string(),
+        (Some("millisecond"), _) => "ms".to_string(),
+        (Some("microsecond"), "long") => "microseconds".to_string(),
+        (Some("microsecond"), "narrow") => "μs".to_string(),
+        (Some("microsecond"), _) => "μs".to_string(),
+        (Some("nanosecond"), "long") => "nanoseconds".to_string(),
+        (Some("nanosecond"), "narrow") => "ns".to_string(),
+        (Some("nanosecond"), _) => "ns".to_string(),
         (Some("kilometer-per-hour"), "long") if locale.starts_with("de") => {
             "Kilometer pro Stunde".to_string()
         }
