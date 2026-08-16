@@ -2743,7 +2743,13 @@ fn fs_stat_async(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn fs_mkdir(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
-    std::fs::create_dir_all(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    let options = arguments.get(1);
+    let recursive = options.is_some_and(|value| matches!(quench_runtime::execute::get_property_result(value, "recursive"), Ok(Value::Boolean(true))));
+    if let Some(options) = options { if matches!(quench_runtime::execute::get_property_result(options, "recursive"), Ok(Value::String(_))) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "recursive must be a boolean"))); } }
+    let mode = options.and_then(|value| match value { Value::Number(mode) => Some(*mode as u32), _ => quench_runtime::execute::get_property_result(value, "mode").ok().and_then(|value| match value { Value::Number(mode) => Some(mode as u32), _ => None }) }).unwrap_or(0o777) & 0o777;
+    if recursive { let parent = Path::new(path).parent().map(Path::to_path_buf); std::fs::create_dir_all(path).map_err(|error| VmError::EvalError(error.to_string()))?; #[cfg(unix)] { let _ = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode)); } return Ok(parent.map(|path| Value::String(path.to_string_lossy().into())).unwrap_or(Value::Undefined)); }
+    std::fs::create_dir(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    #[cfg(unix)] { let _ = std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode)); }
     Ok(Value::Undefined)
 }
 
