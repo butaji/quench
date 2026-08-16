@@ -15,6 +15,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let granularity = segmenter_granularity(arguments.get(1))?;
     Ok(make_object(vec![
         (
+            "\0prototype".to_string(),
+            Value::Builtin(crate::ops::Builtin::IntlSegmenterPrototype),
+        ),
+        (
             "segment".to_string(),
             Value::Builtin(crate::ops::Builtin::IntlSegmenterSegment),
         ),
