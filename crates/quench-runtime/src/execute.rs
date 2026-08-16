@@ -38,13 +38,25 @@ pub fn set_callable_property(
 ) -> Result<(), VmError> {
     match target {
         crate::value::Value::Function(function) => {
-            function.properties.borrow_mut().retain(|(name, _)| name != key);
-            function.properties.borrow_mut().push((key.to_owned(), value));
+            function
+                .properties
+                .borrow_mut()
+                .retain(|(name, _)| name != key);
+            function
+                .properties
+                .borrow_mut()
+                .push((key.to_owned(), value));
             Ok(())
         }
         crate::value::Value::BoundFunction(function) => {
-            function.properties.borrow_mut().retain(|(name, _)| name != key);
-            function.properties.borrow_mut().push((key.to_owned(), value));
+            function
+                .properties
+                .borrow_mut()
+                .retain(|(name, _)| name != key);
+            function
+                .properties
+                .borrow_mut()
+                .push((key.to_owned(), value));
             Ok(())
         }
         _ => Err(VmError::NotCallable),
