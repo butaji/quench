@@ -117,6 +117,8 @@ fn compile_arguments(arguments: &[Value]) -> Result<(String, String), VmError> {
     }
     let pattern = if pattern_is_regexp {
         internal_regexp_string(pattern_value, "source")?
+    } else if matches!(pattern_value, Value::Undefined) {
+        String::new()
     } else {
         crate::conversion::to_string(pattern_value)?
     };
