@@ -64,6 +64,16 @@ pub(crate) fn supported_numbering_systems() -> Vec<Value> {
     strings(NUMBERING_SYSTEMS)
 }
 
+pub(crate) fn valid_numbering_system_syntax(value: &str) -> bool {
+    !value.is_empty()
+        && value.split('-').all(|part| {
+            (3..=8).contains(&part.len())
+                && part
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric())
+        })
+}
+
 pub(crate) const NUMBERING_SYSTEMS: &[&str] = &[
     "adlm", "ahom", "arab", "arabext", "bali", "beng", "bhks", "brah", "cakm", "cham", "deva",
     "diak", "fullwide", "gara", "gong", "gonm", "gujr", "gukh", "guru", "hanidec", "hmng", "hmnp",
