@@ -98,6 +98,13 @@ fn prototype_property_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlListFormatPrototype, "resolvedOptions") => {
             Builtin::IntlListFormatResolvedOptions
         }
+        (Builtin::IntlDurationFormatPrototype, "format") => Builtin::IntlDurationFormatFormat,
+        (Builtin::IntlDurationFormatPrototype, "formatToParts") => {
+            Builtin::IntlDurationFormatFormatToParts
+        }
+        (Builtin::IntlDurationFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlDurationFormatResolvedOptions
+        }
         (Builtin::IntlDisplayNamesPrototype, "of") => Builtin::IntlDisplayNamesOf,
         (Builtin::IntlDisplayNamesPrototype, "resolvedOptions") => {
             Builtin::IntlDisplayNamesResolvedOptions
