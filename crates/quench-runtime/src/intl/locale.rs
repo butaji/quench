@@ -95,7 +95,7 @@ fn valid_language_subtag(language: &str) -> bool {
 
 fn locale_tag(value: &Value) -> Result<String, VmError> {
     match value {
-        Value::String(_) => crate::conversion::to_string(value),
+        Value::String(_) | Value::StringUnits(_) => crate::conversion::to_string(value),
         Value::Object(_) => crate::conversion::to_string(value),
         _ => Err(runtime_error("TypeError: locale tag must be a string")),
     }
