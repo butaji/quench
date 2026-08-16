@@ -35,6 +35,7 @@ impl CapabilityName {
     const EventEmitter: u16 = 70;
     const BufferByteLength: u16 = 9;
     const BufferFrom: u16 = 30;
+    const BufferHasInstance: u16 = 1326;
     const BufferAlloc: u16 = 31;
     const BufferIsBuffer: u16 = 32;
     const UtilFormat: u16 = 80;
@@ -723,6 +724,7 @@ impl Host for QuenchNodeHost {
                 buffer_byte_length(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferFrom) => buffer_from(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferHasInstance) => Ok(Value::Boolean(matches!(arguments.first(), Some(Value::Uint8Array(_))))),
             HostCapabilityKind::Custom(CapabilityName::BufferAlloc) => buffer_alloc(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsBuffer) => {
                 buffer_is_buffer(arguments)
@@ -3832,6 +3834,11 @@ fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn buffer_module() -> Value {
     let mut buffer = capability_function(HostCapabilityKind::Custom(CapabilityName::BufferFrom));
+    buffer = quench_runtime::execute::set_property(
+        buffer,
+        "Symbol.hasInstance",
+        capability_function(HostCapabilityKind::Custom(CapabilityName::BufferHasInstance)),
+    );
     for (name, kind) in [
         (
             "from",
