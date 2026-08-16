@@ -195,13 +195,12 @@ fn bigint_to_locale_string(
             "Invalid BigInt receiver",
         ));
     };
-    let locales = crate::intl::resolve_locales(arguments)?;
-    crate::intl::number::validate_options(arguments.get(1))?;
-    Ok(Value::String(crate::intl::tolocale::format_bigint(
-        &value,
-        &locales,
-        arguments.get(1),
-    )))
+    let formatter = crate::intl::number::construct(arguments)?;
+    crate::intl::number::prototype_method(
+        crate::ops::Builtin::IntlNumberFormatFormat,
+        &[Value::BigInt(value)],
+        Some(&formatter),
+    )
 }
 
 fn execute_simple_regexp(

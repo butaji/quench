@@ -10,6 +10,14 @@ pub(crate) fn prototype_method(
     let options = NumberOptions::from_slots(&slots)?;
     match builtin {
         crate::ops::Builtin::IntlNumberFormatFormat => {
+            if let Some(Value::BigInt(value)) = arguments.first() {
+                let format_options = crate::intl::make_object(slots.clone());
+                return Ok(Value::String(crate::intl::tolocale::format_bigint(
+                    value,
+                    &[options.locale.clone()],
+                    Some(&format_options),
+                )));
+            }
             if let Some(Value::String(value)) = arguments.first() {
                 if options.maximum_fraction_digits >= 20 && is_decimal_literal(value) {
                     return Ok(Value::String(format_decimal_literal(
