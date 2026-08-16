@@ -649,7 +649,41 @@ fn canonicalize_subtags(
             Subtag::Extension => return Err(runtime_error("RangeError: invalid language tag")),
         }
     }
-    Ok(out)
+    Ok(canonicalize_grandfathered(out))
+}
+
+fn canonicalize_grandfathered(mut parts: Vec<String>) -> Vec<String> {
+    let Some((language, variant)) = (match parts.first().map(String::as_str) {
+        Some("art") => Some(("jbo", "lojban")),
+        Some("cel") => Some(("xtg", "gaulish")),
+        Some("zh") => None,
+        _ => return parts,
+    }) else {
+        return canonicalize_zh_grandfathered(parts);
+    };
+    let Some(index) = parts.iter().position(|part| part == variant) else {
+        return parts;
+    };
+    parts[0] = language.to_string();
+    parts.remove(index);
+    parts
+}
+
+fn canonicalize_zh_grandfathered(mut parts: Vec<String>) -> Vec<String> {
+    let Some(index) = parts
+        .iter()
+        .position(|part| matches!(part.as_str(), "guoyu" | "hakka" | "xiang"))
+    else {
+        return parts;
+    };
+    let language = match parts[index].as_str() {
+        "guoyu" => "zh",
+        "hakka" => "hak",
+        _ => "hsn",
+    };
+    parts[0] = language.to_string();
+    parts.remove(index);
+    parts
 }
 
 fn is_variant_shape(part: &str) -> bool {
