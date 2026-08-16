@@ -2178,7 +2178,7 @@ impl Host for QuenchNodeHost {
             ) => {
                 if let Some(Value::String(group)) = arguments.first() {
                     if arguments.len() == 1
-                        && !matches!(group.as_str(), "modp1" | "modp5" | "modp14")
+                        && !matches!(group.as_str(), "modp1" | "modp5" | "modp14" | "modp18")
                     {
                         return Err(VmError::Thrown(fs_error(
                             "ERR_CRYPTO_UNKNOWN_DH_GROUP",
