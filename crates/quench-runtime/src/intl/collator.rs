@@ -10,7 +10,10 @@ use super::{
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
     let mut locale = locales.first().cloned().unwrap_or_else(default_locale);
-    let options = parse_options(arguments.get(1), locale.starts_with("th"))?;
+    let mut options = parse_options(arguments.get(1), locale.starts_with("th"))?;
+    if locale_has_true_kn(&locale) && numeric_option_absent(arguments.get(1)) {
+        options.numeric = true;
+    }
     for key in ["co", "ka", "kb", "kc", "kh", "kk", "kr", "ks", "vt"] {
         locale = remove_unsupported_extension(&locale, key);
     }
@@ -21,6 +24,28 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         locale = remove_conflicting_extension(&locale, "kn", "true");
     }
     Ok(collator_object(locale, options))
+}
+
+fn locale_has_true_kn(locale: &str) -> bool {
+    let parts: Vec<&str> = locale.split('-').collect();
+    parts
+        .iter()
+        .position(|part| part.eq_ignore_ascii_case("kn"))
+        .is_some_and(|index| {
+            parts
+                .get(index + 1)
+                .is_none_or(|value| value.len() == 2 || value.eq_ignore_ascii_case("true"))
+        })
+}
+
+fn numeric_option_absent(value: Option<&Value>) -> bool {
+    let Some(Value::Object(properties)) = value else {
+        return true;
+    };
+    properties
+        .iter()
+        .find(|(name, _)| name == "numeric")
+        .is_none_or(|(_, value)| matches!(value, Value::Undefined))
 }
 
 fn collator_object(locale: String, options: CollatorOptions) -> Value {
@@ -141,6 +166,14 @@ fn remove_conflicting_extension(locale: &str, key: &str, value: &str) -> String 
     };
     let extension_value = parts.get(index + 1).copied().unwrap_or("true");
     if extension_value.eq_ignore_ascii_case(value) {
+        if value == "true" && parts.get(index + 1).is_some() {
+            return parts[..=index]
+                .iter()
+                .chain(parts.get(index + 2..).unwrap_or_default().iter())
+                .copied()
+                .collect::<Vec<_>>()
+                .join("-");
+        }
         return locale.to_string();
     }
     let result = parts[..index]
