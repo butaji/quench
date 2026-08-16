@@ -68,7 +68,19 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
         return Some(Value::Undefined);
     }
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
-        return Some(property_value(value));
+        let value = property_value(value);
+        if key == "format"
+            && matches!(
+                value,
+                Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatFormat)
+            )
+        {
+            return Some(crate::vm::bind_receiver_property(
+                value,
+                &Value::Object(properties.clone()),
+            ));
+        }
+        return Some(value);
     }
     if let Some(value) = global_object_property(properties, key) {
         return Some(value);
