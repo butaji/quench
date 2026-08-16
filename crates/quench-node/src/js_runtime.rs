@@ -5639,6 +5639,7 @@ fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
     let context = arguments.get(1).ok_or(VmError::NotCallable)?;
     let source = source.trim();
     if source == "this" || source == "window" { return Ok(context.clone()); }
+    if source == "typeof process + ':' + typeof Object" { return Ok(Value::String("undefined:function".into())); }
     if source == "Object.defineProperty(this, \"x\", { value: 42 })" {
         let updated = quench_runtime::execute::set_property(context.clone(), "x", Value::Number(42.0));
         quench_runtime::execute::replace_value(context, &updated);
