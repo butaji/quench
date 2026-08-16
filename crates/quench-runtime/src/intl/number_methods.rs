@@ -1,5 +1,5 @@
-use super::*;
 use super::number_render::to_number_result;
+use super::*;
 
 pub(crate) fn prototype_method(
     builtin: crate::ops::Builtin,
@@ -64,6 +64,8 @@ impl NumberOptions {
             rounding_priority: slot_string(slots, "roundingPriority")
                 .unwrap_or_else(|| "auto".to_string()),
             rounding_increment: slot_number(slots, "roundingIncrement").unwrap_or(1.0) as u32,
+            trailing_zero_display: slot_string(slots, "trailingZeroDisplay")
+                .unwrap_or_else(|| "auto".to_string()),
             sign_display: slot_string(slots, "signDisplay").unwrap_or_else(|| "auto".to_string()),
             minimum_significant_digits: slot_number(slots, "minimumSignificantDigits")
                 .map(|v| v as u32),
@@ -153,11 +155,6 @@ impl NumberOptions {
                 "Invalid number range",
             ));
         }
-        if start > end {
-            return Err(crate::value::error::throw_range_error(
-                "Number range start is greater than end",
-            ));
-        }
         Ok((start, end))
     }
 
@@ -200,11 +197,6 @@ impl NumberOptions {
         if !is_decimal_integer(start) || !is_decimal_integer(end) {
             return None;
         }
-        if decimal_integer_greater(start, end) {
-            return Some(Err(crate::value::error::throw_range_error(
-                "Number range start is greater than end",
-            )));
-        }
         let first = if self.locale.starts_with("pt") {
             group_integer_locale(start, "pt")
         } else {
@@ -244,7 +236,7 @@ impl NumberOptions {
     }
 
     fn resolved(&self) -> Value {
-        make_object(vec![
+        let mut properties = vec![
             ("locale".to_string(), Value::String(self.locale.clone())),
             (
                 "numberingSystem".to_string(),
@@ -266,10 +258,6 @@ impl NumberOptions {
             ),
             ("notation".to_string(), Value::String(self.notation.clone())),
             (
-                "compactDisplay".to_string(),
-                Value::String(self.compact_display.clone()),
-            ),
-            (
                 "signDisplay".to_string(),
                 Value::String(self.sign_display.clone()),
             ),
@@ -277,6 +265,32 @@ impl NumberOptions {
                 "roundingMode".to_string(),
                 Value::String(self.rounding_mode.clone()),
             ),
-        ])
+            (
+                "roundingIncrement".to_string(),
+                Value::Number(self.rounding_increment as f64),
+            ),
+            (
+                "trailingZeroDisplay".to_string(),
+                Value::String(self.trailing_zero_display.clone()),
+            ),
+        ];
+        if self.notation == "compact" {
+            properties.push((
+                "compactDisplay".to_string(),
+                Value::String(self.compact_display.clone()),
+            ));
+        }
+        if let Some(currency) = &self.currency {
+            properties.push(("currency".to_string(), Value::String(currency.clone())));
+            properties.push((
+                "currencyDisplay".to_string(),
+                Value::String(self.currency_display.clone()),
+            ));
+            properties.push((
+                "currencySign".to_string(),
+                Value::String(self.currency_sign.clone()),
+            ));
+        }
+        make_object(properties)
     }
 }

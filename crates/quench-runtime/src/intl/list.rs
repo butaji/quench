@@ -38,16 +38,20 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
                 ("type".to_string(), Value::String(list_type)),
             ]),
         ),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(crate::ops::Builtin::IntlListFormatPrototype),
+        ),
     ]))
 }
 
 fn parse_options(value: Option<&Value>) -> Result<(String, String), VmError> {
     let mut style = "long".to_string();
     let mut list_type = "conjunction".to_string();
-    let Some(options) = value else {
+    let Some(options) = value.filter(|value| !matches!(value, Value::Undefined)) else {
         return Ok((style, list_type));
     };
-    if matches!(options, Value::Null) {
+    if !crate::value::is_object(options) {
         return Err(crate::value::error::throw_type_error(
             "Cannot convert null or undefined to object",
         ));
@@ -113,6 +117,9 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
 }
 
 fn iterable_items(value: Option<&Value>) -> Result<Vec<String>, VmError> {
+    if matches!(value, None | Some(Value::Undefined)) {
+        return Ok(Vec::new());
+    }
     let value = value.unwrap_or(&Value::Undefined);
     let iterator = crate::collections::iterator::open(value.clone())?;
     let mut items = Vec::new();

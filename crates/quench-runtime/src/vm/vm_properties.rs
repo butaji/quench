@@ -45,7 +45,14 @@ fn get_property_value(value: &Value, key: &str) -> Value {
             )
         }
         Builtin(builtin) => bind_callable_property(value, *builtin, key),
-        Array(values) => crate::arrays::property(values, key),
+        Array(values) => {
+            let property = crate::arrays::property(values, key);
+            if key == "toLocaleString" {
+                crate::vm::bind_receiver_property(property, value)
+            } else {
+                property
+            }
+        }
         ArrayBuffer(buffer) => array_buffer_property(buffer, key),
         _ => get_property_value_typed_tail(value, key),
     }
@@ -248,6 +255,7 @@ fn generator_property(value: &Value, key: &str) -> Value {
         }
         "toArray" => crate::ops::Builtin::IteratorToArray,
         "map" => crate::ops::Builtin::IteratorMap,
+        "some" => crate::ops::Builtin::IteratorSome,
         _ => return Value::Undefined,
     };
     bind_method(value, Value::Builtin(builtin))
@@ -537,7 +545,7 @@ fn is_intl_number_format_property(property: &Value) -> bool {
     )
 }
 
-fn bind_receiver_property(property: Value, receiver: &Value) -> Value {
+pub(crate) fn bind_receiver_property(property: Value, receiver: &Value) -> Value {
     match property {
         Value::Builtin(builtin)
             if !is_accessor_builtin(builtin)
