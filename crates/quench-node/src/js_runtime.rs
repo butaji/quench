@@ -177,6 +177,8 @@ impl CapabilityName {
     const CryptoShakeBytes: u16 = 2206;
     const CryptoHashDigest: u16 = 2209;
     const CryptoHashUpdate: u16 = 2210;
+    const DgramSetRecvBufferSize: u16 = 2211;
+    const DgramSetSendBufferSize: u16 = 2212;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
     const TextEncoderConstructor: u16 = 2060;
@@ -1315,6 +1317,12 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::DgramConnectSync) => {
                 self.dgram_call(CapabilityName::DgramConnectSync, receiver, arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::DgramSetRecvBufferSize) => {
+                self.dgram_call(CapabilityName::DgramSetRecvBufferSize, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::DgramSetSendBufferSize) => {
+                self.dgram_call(CapabilityName::DgramSetSendBufferSize, receiver, arguments)
+            }
             HostCapabilityKind::Custom(
                 CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes,
             ) => Ok(fulfilled(quench_runtime::host_api::bytes(b"hello"))),
@@ -2410,6 +2418,18 @@ impl QuenchNodeHost {
                     CapabilityName::DgramGetSendBufferSize,
                 )),
             ),
+            (
+                "setRecvBufferSize".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramSetRecvBufferSize,
+                )),
+            ),
+            (
+                "setSendBufferSize".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramSetSendBufferSize,
+                )),
+            ),
             ("type".into(), Value::String("udp4".into())),
             ("\0dgramId".into(), Value::Number(id as f64)),
             (
@@ -2582,9 +2602,43 @@ impl QuenchNodeHost {
                     Err(VmError::EvalError("setTTL EBADF".into()))
                 }
             }
-            CapabilityName::DgramGetRecvBufferSize => Ok(Value::Number(10000.0)),
-            CapabilityName::DgramGetSendBufferSize => Ok(Value::Number(15000.0)),
+            CapabilityName::DgramSetRecvBufferSize | CapabilityName::DgramSetSendBufferSize => {
+                if state.0 {
+                    Ok(Value::Undefined)
+                } else {
+                    Err(VmError::Thrown(fs_error(
+                        "ERR_SOCKET_BUFFER_SIZE",
+                        "Socket is not bound",
+                    )))
+                }
+            }
+            CapabilityName::DgramGetRecvBufferSize => {
+                if state.0 {
+                    Ok(Value::Number(20000.0))
+                } else {
+                    Err(VmError::Thrown(fs_error(
+                        "ERR_SOCKET_BUFFER_SIZE",
+                        "Socket is not bound",
+                    )))
+                }
+            }
+            CapabilityName::DgramGetSendBufferSize => {
+                if state.0 {
+                    Ok(Value::Number(20000.0))
+                } else {
+                    Err(VmError::Thrown(fs_error(
+                        "ERR_SOCKET_BUFFER_SIZE",
+                        "Socket is not bound",
+                    )))
+                }
+            }
             CapabilityName::DgramSend => {
+                if arguments.first().is_none() {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "message must be a string or a Uint8Array",
+                    )));
+                }
                 let callback = arguments.last().cloned();
                 let total = arguments
                     .first()
