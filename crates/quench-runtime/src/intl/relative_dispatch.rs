@@ -36,11 +36,12 @@ fn relative_parts(
     style: &str,
     numeric: &str,
     locale: &str,
+    numbering_system: &str,
 ) -> Result<Value, VmError> {
     if !value.is_finite() {
         return Err(runtime_error("RangeError: value must be finite"));
     }
-    parts_value(value, unit, style, numeric, locale)
+    parts_value(value, unit, style, numeric, locale, numbering_system)
 }
 
 fn relative_resolved_options(
