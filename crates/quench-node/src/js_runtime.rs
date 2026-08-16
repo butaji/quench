@@ -792,7 +792,20 @@ impl Host for QuenchNodeHost {
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::Url) {
             if arguments.is_empty() {
-                return Ok(Value::object(vec![]));
+                return Ok(Value::object(vec![
+                    ("protocol".into(), Value::Null),
+                    ("slashes".into(), Value::Null),
+                    ("auth".into(), Value::Null),
+                    ("host".into(), Value::Null),
+                    ("port".into(), Value::Null),
+                    ("hostname".into(), Value::Null),
+                    ("hash".into(), Value::Null),
+                    ("search".into(), Value::Null),
+                    ("query".into(), Value::Null),
+                    ("pathname".into(), Value::Null),
+                    ("path".into(), Value::Null),
+                    ("href".into(), Value::Null),
+                ]));
             }
             let input = match arguments.first() {
                 Some(Value::String(value)) => value.as_str(),
@@ -3564,18 +3577,21 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let normalized = value.trim().replace("http:\\\\\\\\", "http://").replace('\\', "/");
     let parsed = url::Url::parse(&normalized).map_err(|error| VmError::EvalError(error.to_string()))?;
-    let mut result = url_object(&parsed, 0);
-    result = quench_runtime::execute::set_property(result, "slashes", Value::Boolean(true));
-    result = quench_runtime::execute::set_property(
-        result,
-        "auth",
-        Value::String(if parsed.username().is_empty() { String::new() } else { format!("{}:{}", parsed.username(), parsed.password().unwrap_or("")) }.into()),
-    );
-    result = quench_runtime::execute::set_property(result, "port", parsed.port().map(|port| Value::String(port.to_string().into())).unwrap_or(Value::Null));
-    for name in ["hash", "search", "query"] {
-        result = quench_runtime::execute::set_property(result, name, Value::Null);
-    }
-    Ok(result)
+    let pathname = if parsed.path().is_empty() { "/" } else { parsed.path() };
+    Ok(Value::object(vec![
+        ("protocol".into(), Value::String(format!("{}:", parsed.scheme()).into())),
+        ("slashes".into(), Value::Boolean(true)),
+        ("auth".into(), Value::String(if parsed.username().is_empty() { String::new() } else { format!("{}:{}", parsed.username(), parsed.password().unwrap_or("")) }.into())),
+        ("host".into(), Value::String(parsed.host_str().unwrap_or_default().into())),
+        ("port".into(), parsed.port().map(|port| Value::String(port.to_string().into())).unwrap_or(Value::Null)),
+        ("hostname".into(), Value::String(parsed.host_str().unwrap_or_default().into())),
+        ("hash".into(), Value::Null),
+        ("search".into(), Value::Null),
+        ("query".into(), Value::Null),
+        ("pathname".into(), Value::String(pathname.into())),
+        ("path".into(), Value::String(pathname.into())),
+        ("href".into(), Value::String(parsed.to_string().into())),
+    ]))
 }
 
 fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
