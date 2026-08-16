@@ -102,7 +102,7 @@ fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::IntlDurationFormat => "DurationFormat",
         Builtin::IntlListFormat => "ListFormat",
         Builtin::IntlLocale => "Intl.Locale",
-        Builtin::IntlNumberFormat => "Intl.NumberFormat",
+        Builtin::IntlNumberFormat => "NumberFormat",
         Builtin::IntlPluralRules => "Intl.PluralRules",
         Builtin::IntlRelativeTimeFormat => "Intl.RelativeTimeFormat",
         Builtin::IntlSegmenter => "Intl.Segmenter",
