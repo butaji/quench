@@ -131,7 +131,13 @@ impl DateTimeOptions {
                 let value = super::locale::calendar_option(&text)?;
                 self.calendar = super::locale::calendar_alias(&value);
             }
-            "numberingSystem" => self.numbering_system = text.to_ascii_lowercase(),
+            "numberingSystem" => {
+                let value = text.to_ascii_lowercase();
+                if !super::supported_values::NUMBERING_SYSTEMS.contains(&value.as_str()) {
+                    return Err(runtime_error("RangeError: invalid numberingSystem"));
+                }
+                self.numbering_system = value;
+            }
             "fractionalSecondDigits" => {
                 let digits = conversion::to_number(value)?;
                 if !digits.is_finite()
