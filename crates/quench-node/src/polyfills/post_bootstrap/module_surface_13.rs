@@ -86,7 +86,6 @@ const __quenchCryptoClassPrototypes = (result) => {
       __quenchCryptoHashAlgorithm(args[0]),
       ...args.slice(1)
     );
-    __nodeCryptoSetPrototype(value, result.Hash);
     return value;
   };
   const createHmac = result.createHmac;
