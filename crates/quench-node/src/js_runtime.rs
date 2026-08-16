@@ -121,6 +121,7 @@ impl CapabilityName {
     const CommonMustSucceed: u16 = 1701;
     const CommonMustNotCall: u16 = 1702;
     const CommonGetArrayBufferViews: u16 = 1703;
+    const CommonCanSymlink: u16 = 1704;
     const CommonWrapperFirst: u16 = 1800;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
@@ -407,6 +408,9 @@ impl Host for QuenchNodeHost {
                     value.clone(),
                     value,
                 ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CommonCanSymlink) => {
+                Ok(Value::Boolean(true))
             }
             HostCapabilityKind::Custom(CapabilityName::FsWriteAsync) => fs_write_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReadAsync) => fs_read_async(arguments),
@@ -1797,8 +1801,17 @@ fn fs_lstat_async(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn fs_symlink(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = path_arg(arguments, 0)?;
-    let link = path_arg(arguments, 1)?;
+    if let Some(value) = arguments.get(2) {
+        if !matches!(value, Value::String(kind) if kind == "file" || kind == "dir" || kind == "junction")
+        {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_VALUE",
+                "invalid symlink type",
+            )));
+        }
+    }
+    let target = path_arg(arguments, 0).map_err(invalid_path_error)?;
+    let link = path_arg(arguments, 1).map_err(invalid_path_error)?;
     std::os::unix::fs::symlink(target, link)
         .map_err(|error| VmError::EvalError(error.to_string()))?;
     Ok(Value::Undefined)
@@ -2468,6 +2481,21 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::EvalError("require expects a module name".into()));
     };
     if name != "node:path" && name != "path" {
+        if name == "../common/fixtures" || name.ends_with("/common/fixtures") {
+            return Ok(Value::object(vec![(
+                "fixturesDir".into(),
+                Value::String(
+                    std::env::current_dir()
+                        .map(|path| {
+                            path.join("tests/node/test/fixtures")
+                                .to_string_lossy()
+                                .into_owned()
+                        })
+                        .unwrap_or_else(|_| "tests/node/test/fixtures".into())
+                        .into(),
+                ),
+            )]));
+        }
         if name == "internal/fs/utils" || name == "node:internal/fs/utils" {
             return Ok(Value::object(vec![(
                 "stringToFlags".into(),
@@ -2496,6 +2524,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "getArrayBufferViews".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CommonGetArrayBufferViews,
+                    )),
+                ),
+                (
+                    "canCreateSymLink".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonCanSymlink,
                     )),
                 ),
             ]));
