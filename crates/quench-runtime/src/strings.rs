@@ -87,6 +87,7 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "big" => Some(crate::ops::Builtin::StringBig),
         "bold" => Some(crate::ops::Builtin::StringBold),
         "fixed" => Some(crate::ops::Builtin::StringFixed),
+        "fontcolor" => Some(crate::ops::Builtin::StringFontcolor),
         "italics" => Some(crate::ops::Builtin::StringItalics),
         "strike" => Some(crate::ops::Builtin::StringStrike),
         "small" => Some(crate::ops::Builtin::StringSmall),
@@ -164,6 +165,9 @@ fn execute_builtin_tail(
         crate::ops::Builtin::StringBig => html_wrapper(receiver, "big"),
         crate::ops::Builtin::StringBold => html_wrapper(receiver, "b"),
         crate::ops::Builtin::StringFixed => html_wrapper(receiver, "tt"),
+        crate::ops::Builtin::StringFontcolor => {
+            html_attribute_wrapper(receiver, arguments, "font", "color")
+        }
         crate::ops::Builtin::StringItalics => html_wrapper(receiver, "i"),
         crate::ops::Builtin::StringStrike => html_wrapper(receiver, "strike"),
         crate::ops::Builtin::StringSmall => html_wrapper(receiver, "small"),
@@ -194,15 +198,26 @@ fn html_wrapper(receiver: Option<&Value>, tag: &str) -> Result<Value, crate::exe
 }
 
 fn anchor(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    html_attribute_wrapper(receiver, arguments, "a", "name")
+}
+
+fn html_attribute_wrapper(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    tag: &str,
+    attribute: &str,
+) -> Result<Value, crate::execute::VmError> {
     let text = string_receiver(receiver)?;
     let name = arguments
         .first()
         .map(crate::conversion::to_string)
         .transpose()?;
-    let attribute = name.map_or_else(String::new, |value| {
-        format!(" name=\"{}\"", value.replace('"', "&quot;"))
+    let attribute_value = name.map_or_else(String::new, |value| {
+        format!(" {attribute}=\"{}\"", value.replace('"', "&quot;"))
     });
-    Ok(Value::String(format!("<a{attribute}>{text}</a>")))
+    Ok(Value::String(format!(
+        "<{tag}{attribute_value}>{text}</{tag}>"
+    )))
 }
 
 fn at(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
