@@ -203,6 +203,8 @@ impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         let raw = RawOptions::from_value(options)?;
         validate_rounding_mode(&raw.rounding_mode)?;
+        validate_rounding_increment(raw.rounding_increment)?;
+        validate_increment_conflicts(&raw)?;
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),
@@ -215,6 +217,11 @@ impl NumberOptions {
             minimum_fraction_digits,
         );
         let minimum_fraction_digits = minimum_fraction_digits.min(maximum_fraction_digits);
+        if raw.rounding_increment != 1.0 && minimum_fraction_digits != maximum_fraction_digits {
+            return Err(crate::value::error::throw_range_error(
+                "roundingIncrement requires equal fraction digits",
+            ));
+        }
         if raw.style == "unit" && !valid_unit(raw.unit.as_deref()) {
             return Err(crate::value::error::throw_range_error("invalid unit"));
         }
@@ -305,6 +312,31 @@ fn validate_rounding_mode(value: &str) -> Result<(), VmError> {
     valid
         .then_some(())
         .ok_or_else(|| crate::value::error::throw_range_error("invalid roundingMode"))
+}
+
+fn validate_rounding_increment(value: f64) -> Result<(), VmError> {
+    let valid = matches!(
+        value as u32,
+        1 | 2 | 5 | 10 | 20 | 25 | 50 | 100 | 200 | 250 | 500 | 1000 | 2000 | 2500 | 5000
+    ) && value.fract() == 0.0
+        && value >= 1.0
+        && value <= 5000.0;
+    valid
+        .then_some(())
+        .ok_or_else(|| crate::value::error::throw_range_error("invalid roundingIncrement"))
+}
+
+fn validate_increment_conflicts(raw: &RawOptions) -> Result<(), VmError> {
+    if raw.rounding_increment != 1.0
+        && (raw.rounding_priority != "auto"
+            || raw.minimum_significant_digits >= 0.0
+            || raw.maximum_significant_digits >= 0.0)
+    {
+        return Err(crate::value::error::throw_type_error(
+            "roundingIncrement conflicts with rounding options",
+        ));
+    }
+    Ok(())
 }
 
 fn number_options(
