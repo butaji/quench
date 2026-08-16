@@ -206,10 +206,7 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "region" => validate_region(&text)?,
             "variants" => {
                 let value = option_value(&text, key)?;
-                locale.variants = value
-                    .split('-')
-                    .map(|variant| variant.to_ascii_lowercase())
-                    .collect();
+                locale.variants = variants_option(&value)?;
             }
             _ => {}
         }
@@ -227,6 +224,24 @@ fn validate_region(value: &str) -> Result<(), VmError> {
     valid
         .then_some(())
         .ok_or_else(|| runtime_error("RangeError: invalid region"))
+}
+
+fn variants_option(value: &str) -> Result<Vec<String>, VmError> {
+    let mut variants = value
+        .split('-')
+        .map(|variant| variant.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    if variants.iter().any(|variant| {
+        !((5..=8).contains(&variant.len()) && variant.chars().all(|c| c.is_ascii_alphanumeric())
+            || variant.len() == 4 && variant.chars().next().is_some_and(|c| c.is_ascii_digit()))
+    }) {
+        return Err(runtime_error("RangeError: invalid variants"));
+    }
+    variants.sort();
+    if variants.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(runtime_error("RangeError: invalid variants"));
+    }
+    Ok(variants)
 }
 
 fn option_value(value: &str, name: &str) -> Result<String, VmError> {
