@@ -208,6 +208,7 @@ fn own_property_names_tail(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
         Builtin::IntlDisplayNamesPrototype => &["Symbol.toStringTag"],
         Builtin::IntlListFormatPrototype => &["Symbol.toStringTag"],
+        Builtin::IntlNumberFormatPrototype => &["Symbol.toStringTag"],
         Builtin::IntlLocalePrototype => &["Symbol.toStringTag"],
         Builtin::IntlPluralRulesPrototype => &["Symbol.toStringTag"],
         Builtin::IntlRelativeTimeFormatPrototype => &["Symbol.toStringTag"],

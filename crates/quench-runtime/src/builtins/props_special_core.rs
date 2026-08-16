@@ -30,6 +30,9 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         (IntlListFormatPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.ListFormat".into()))
         }
+        (IntlNumberFormatPrototype, "Symbol.toStringTag") => {
+            Some(Value::String("Intl.NumberFormat".into()))
+        }
         (IntlLocalePrototype, "Symbol.toStringTag") => Some(Value::String("Intl.Locale".into())),
         (IntlPluralRulesPrototype, "Symbol.toStringTag") => {
             Some(Value::String("Intl.PluralRules".into()))
