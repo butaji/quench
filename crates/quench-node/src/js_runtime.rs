@@ -3204,7 +3204,12 @@ fn buffer_alloc(arguments: &[Value]) -> Result<Value, VmError> {
     if !length.is_finite() || *length < 0.0 {
         return Err(VmError::EvalError("invalid buffer length".into()));
     }
-    Ok(node_buffer(&vec![0; *length as usize]))
+    let fill = match arguments.get(1) {
+        Some(Value::Number(value)) => *value as u8,
+        Some(Value::String(value)) => value.as_bytes().first().copied().unwrap_or(0),
+        _ => 0,
+    };
+    Ok(node_buffer(&vec![fill; *length as usize]))
 }
 
 fn node_buffer(bytes: &[u8]) -> Value {
