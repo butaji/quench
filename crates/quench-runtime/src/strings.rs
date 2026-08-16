@@ -147,7 +147,7 @@ pub(crate) fn execute_builtin(
         crate::ops::Builtin::StringStartsWith => starts_with(receiver, arguments),
         crate::ops::Builtin::StringEndsWith => ends_with(receiver, arguments),
         crate::ops::Builtin::StringAt => at(receiver, arguments),
-        crate::ops::Builtin::StringRepeat => Ok(repeat(receiver, arguments)),
+        crate::ops::Builtin::StringRepeat => repeat(receiver, arguments),
         crate::ops::Builtin::StringTrim => trim(receiver),
         crate::ops::Builtin::StringToLowerCase => to_lower_case(receiver),
         crate::ops::Builtin::StringToUpperCase => to_upper_case(receiver),
@@ -316,12 +316,13 @@ fn string_receiver(receiver: Option<&Value>) -> Result<String, crate::execute::V
     crate::conversion::to_string(value)
 }
 
-pub(crate) fn repeat(receiver: Option<&Value>, arguments: &[Value]) -> Value {
-    let Some(Value::String(value)) = receiver else {
-        return Value::String(String::new());
-    };
+pub(crate) fn repeat(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let value = string_receiver(receiver)?;
     let count = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    Value::String(value.repeat(count))
+    Ok(Value::String(value.repeat(count)))
 }
 
 pub(crate) fn to_lower_case(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
