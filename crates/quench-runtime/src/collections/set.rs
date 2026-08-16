@@ -277,8 +277,15 @@ pub(crate) fn set_for_each(
         ));
     };
     let Some(callback) = arguments.first() else {
-        return Ok(Value::Undefined);
+        return Err(crate::value::error::throw_type_error(
+            "Set callback must be callable",
+        ));
     };
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::value::error::throw_type_error(
+            "Set callback must be callable",
+        ));
+    }
     let this_arg = arguments.get(1).cloned().unwrap_or(Value::Undefined);
     let set = receiver.cloned().unwrap_or(Value::Undefined);
     let mut index = 0;
