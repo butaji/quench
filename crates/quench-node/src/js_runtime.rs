@@ -82,7 +82,7 @@ impl CapabilityName {
     const QuerystringEscape: u16 = 91;
     const QuerystringStringify: u16 = 92;
     const QuerystringUnescapeBuffer: u16 = 93;
-    const QuerystringUnescape: u16 = 2072;
+    const QuerystringUnescape: u16 = 1590;
     const EventsGetMax: u16 = 94;
     const EventsSetMax: u16 = 95;
     const OsRelease: u16 = 96;
