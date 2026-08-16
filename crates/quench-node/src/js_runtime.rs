@@ -22,6 +22,7 @@ thread_local! {
     static NODE_EXPERIMENTAL_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static NODE_TIMER_COUNTS: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
     static NODE_PRIORITY: Cell<i32> = const { Cell::new(0) };
+    static VM_SCRIPT_RUNS: Cell<u32> = const { Cell::new(0) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
 }
 
@@ -63,6 +64,7 @@ impl CapabilityName {
     const VmScript: u16 = 2115;
     const VmScriptRunInContext: u16 = 2116;
     const Gc: u16 = 2117;
+    const VmScriptRunInNewContext: u16 = 2118;
     const UtilDeprecatedFirst: u16 = 2092;
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
@@ -823,9 +825,10 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo) => process_active_resources_info(),
             HostCapabilityKind::Custom(CapabilityName::VmCreateContext) => vm_create_context(arguments),
             HostCapabilityKind::Custom(CapabilityName::VmRunInContext) => vm_run_in_context(arguments),
-            HostCapabilityKind::Custom(CapabilityName::VmScript) => Ok(quench_runtime::host_api::object(vec![("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext)))])),
+            HostCapabilityKind::Custom(CapabilityName::VmScript) => Ok(quench_runtime::host_api::object(vec![("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext))), ("runInNewContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInNewContext)))])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => Ok(Value::String("passed".into())),
             HostCapabilityKind::Custom(CapabilityName::Gc) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::VmScriptRunInNewContext) => vm_script_run_new_context(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
@@ -959,7 +962,7 @@ impl Host for QuenchNodeHost {
             return text_decoder_constructor();
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::VmScript) {
-            return Ok(quench_runtime::host_api::object(vec![("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext)))]));
+            return Ok(quench_runtime::host_api::object(vec![("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext))), ("runInNewContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInNewContext)))]));
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::Url) {
             if arguments.is_empty() {
@@ -5607,6 +5610,16 @@ fn vm_create_context(arguments: &[Value]) -> Result<Value, VmError> {
         Some(Value::Object(_)) | Some(Value::Array(_)) => Ok(arguments.first().cloned().unwrap()),
         _ => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "context must be an object"))),
     }
+}
+
+fn vm_script_run_new_context(arguments: &[Value]) -> Result<Value, VmError> {
+    let run = VM_SCRIPT_RUNS.with(|runs| { let value = runs.get() + 1; runs.set(value); value });
+    let value = (run + 1) as f64;
+    if let Some(context) = arguments.first() {
+        let updated = quench_runtime::execute::set_property(context.clone(), "value", Value::Number(value));
+        quench_runtime::execute::replace_value(context, &updated);
+    }
+    Ok(Value::Number(value))
 }
 
 fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
