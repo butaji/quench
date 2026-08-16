@@ -231,7 +231,7 @@ fn supported_values_of(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 /// Resolve the `locales` argument to a canonical list of BCP-47 tags.
-fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
+pub(crate) fn resolve_locales(arguments: &[Value]) -> Result<Vec<String>, VmError> {
     let Some(locales) = arguments.first() else {
         return Ok(vec![default_locale()]);
     };
