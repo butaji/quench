@@ -29,6 +29,7 @@ pub(crate) fn execute(
             crate::intl::duration::format_temporal_duration(receiver, arguments),
         ),
         crate::ops::Builtin::TemporalDurationToJSON => Some(duration_format::to_json(receiver)),
+        crate::ops::Builtin::TemporalDurationToString => Some(duration_format::to_string(receiver)),
         _ => access_execute(builtin, receiver),
     }
 }
