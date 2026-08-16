@@ -55,6 +55,10 @@ impl CapabilityName {
     const CryptoRandomFillSync: u16 = 2057;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
+    const TextEncoderConstructor: u16 = 2060;
+    const TextEncoderEncode: u16 = 2061;
+    const TextDecoderConstructor: u16 = 2062;
+    const TextDecoderDecode: u16 = 2063;
     const UtilPromisify: u16 = 1950;
     const UtilPromisifiedFirst: u16 = 2000;
     const UtilResolverFirst: u16 = 2100;
@@ -598,6 +602,10 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CryptoRandomFillSync) => crypto_random_fill(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsAscii) => buffer_is_ascii(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8) => buffer_is_utf8(arguments),
+            HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor) => text_encoder_constructor(),
+            HostCapabilityKind::Custom(CapabilityName::TextEncoderEncode) => text_encoder_encode(receiver, arguments),
+            HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor) => text_decoder_constructor(),
+            HostCapabilityKind::Custom(CapabilityName::TextDecoderDecode) => text_decoder_decode(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -746,6 +754,12 @@ impl Host for QuenchNodeHost {
         capability: HostCapabilityRef,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor) {
+            return text_encoder_constructor();
+        }
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor) {
+            return text_decoder_constructor();
+        }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::Url) {
             let input = match arguments.first() {
                 Some(Value::String(value)) => value.as_str(),
@@ -4281,6 +4295,27 @@ fn buffer_is_utf8(arguments: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Boolean(std::str::from_utf8(&string_or_bytes(arguments.first())?).is_ok()))
 }
 
+fn text_encoder_constructor() -> Result<Value, VmError> {
+    Ok(quench_runtime::host_api::object(vec![
+        ("encode".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextEncoderEncode))),
+    ]))
+}
+
+fn text_encoder_encode(_receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(value)) = arguments.first() else { return Ok(quench_runtime::host_api::bytes(&[])); };
+    Ok(quench_runtime::host_api::bytes(value.as_bytes()))
+}
+
+fn text_decoder_constructor() -> Result<Value, VmError> {
+    Ok(quench_runtime::host_api::object(vec![
+        ("decode".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextDecoderDecode))),
+    ]))
+}
+
+fn text_decoder_decode(arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::String(String::from_utf8_lossy(&string_or_bytes(arguments.first())?).into()))
+}
+
 fn util_module() -> Value {
     let default_options = quench_runtime::host_api::object(vec![("numericSeparator".into(), Value::Boolean(false))]);
     let format = quench_runtime::execute::set_property(
@@ -4311,6 +4346,8 @@ fn util_module() -> Value {
             capability_function(HostCapabilityKind::Custom(CapabilityName::UtilPromisify)),
         ),
         ("types".into(), quench_runtime::host_api::object(vec![])),
+        ("TextEncoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor))),
+        ("TextDecoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor))),
     ])
 }
 
