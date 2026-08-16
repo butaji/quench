@@ -1133,6 +1133,10 @@ impl Host for QuenchNodeHost {
                     ),
                     ("\0cipherEncoding".into(), Value::Undefined),
                     (
+                        "\0cipherAuthentication".into(),
+                        Value::Boolean(algorithm.contains("chacha20-poly1305")),
+                    ),
+                    (
                         "setAAD".into(),
                         capability_function(HostCapabilityKind::Custom(
                             CapabilityName::CryptoCipherSetAad,
@@ -1252,7 +1256,16 @@ impl Host for QuenchNodeHost {
                         Ok(Value::Boolean(true))
                     )
                 });
-                if invalid {
+                let authentication_failure = receiver.is_some_and(|value| {
+                    matches!(
+                        quench_runtime::execute::get_property_result(
+                            value,
+                            "\0cipherAuthentication"
+                        ),
+                        Ok(Value::Boolean(true))
+                    )
+                });
+                if invalid || authentication_failure {
                     Err(VmError::Thrown(fs_error(
                         "ERR_INVALID_ARG_VALUE",
                         "encoding is invalid",
