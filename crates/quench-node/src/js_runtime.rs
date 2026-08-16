@@ -20,6 +20,8 @@ use quench_runtime::{
 };
 
 thread_local! {
+    static NODE_TMPDIR: RefCell<Option<String>> = const { RefCell::new(None) };
+    static NODE_COPY_SEQUENCE: Cell<u32> = const { Cell::new(0) };
     static NODE_PROCESS_ENV: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_PROCESS_TITLE: RefCell<String> = RefCell::new("quench-node".into());
     static NODE_PATH_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
@@ -66,6 +68,7 @@ include!("js_runtime_dispatch_misc_d.rs");
 include!("js_runtime_dispatch_misc_c.rs");
 include!("js_runtime_dispatch_misc_b.rs");
 include!("js_runtime_dispatch_misc_a.rs");
+include!("js_runtime_dispatch_tmpdir.rs");
 include!("js_runtime_dispatch_url.rs");
 include!("js_runtime_dispatch_crypto_c.rs");
 include!("js_runtime_dispatch_crypto_b.rs");
@@ -110,6 +113,18 @@ fn is_util_resolver(id: u16) -> bool {
 fn is_util_promisified(id: u16) -> bool {
     (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilDeprecatedFirst).contains(&id)
         && !matches!(id, CapabilityName::ProcessOn | CapabilityName::ProcessEmit)
+}
+
+fn tmpdir_base() -> String {
+    if let Some(base) = NODE_TMPDIR.with(|current| current.borrow().clone()) {
+        return base;
+    }
+    let base = std::env::temp_dir()
+        .join(format!("quench-node-{}", std::process::id()))
+        .to_string_lossy()
+        .into_owned();
+    NODE_TMPDIR.with(|current| *current.borrow_mut() = Some(base.clone()));
+    base
 }
 
 include!("js_runtime_host_impl.rs");

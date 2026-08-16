@@ -5,29 +5,8 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = require_early_module(name)? {
         return Ok(value);
     }
-    if name.ends_with("/common/fixtures") || name.ends_with("/common/fixtures.js") {
-        return Ok(quench_runtime::host_api::object(vec![
-            (
-                "readKey".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::FixtureReadKey)),
-            ),
-            (
-                "path".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::FixturePath)),
-            ),
-        ]));
-    }
-    if name.contains("common/tmpdir") {
-        return Ok(quench_runtime::host_api::object(vec![
-            (
-                "refresh".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::TmpdirRefresh)),
-            ),
-            (
-                "fileURL".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::TmpdirFileUrl)),
-            ),
-        ]));
+    if let Some(value) = require_common_module(name) {
+        return Ok(value);
     }
     if name == "internal/fs/utils" {
         return Ok(quench_runtime::host_api::object(vec![
@@ -263,6 +242,13 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "skip".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CommonSkip)),
                 ),
+                ("isInsideDirWithUnusualChars".into(), Value::Boolean(false)),
+                (
+                    "mustNotMutateObjectDeep".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonMustNotMutateObjectDeep,
+                    )),
+                ),
             ]));
         }
         if name.starts_with("../common/") {
@@ -281,6 +267,13 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("fixturesDir".into(), Value::Undefined),
                 ("path".into(), Value::Undefined),
                 ("refresh".into(), Value::Undefined),
+                ("isInsideDirWithUnusualChars".into(), Value::Boolean(false)),
+                (
+                    "mustNotMutateObjectDeep".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonMustNotMutateObjectDeep,
+                    )),
+                ),
             ]));
         }
         if name == "assert"

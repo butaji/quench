@@ -37,6 +37,52 @@ fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
     }
 }
 
+fn assert_dir_equivalent(dir1: &str, dir2: &str) -> Result<(), VmError> {
+    let mut entries = Vec::new();
+    collect_entries(dir1, &mut entries)?;
+    let entries2 = collect_entries_tree(dir2)?;
+    let unequal = entries.len() != entries2.len()
+        || !entries.iter().all(|(name, kind, data)| {
+            entries2
+                .iter()
+                .any(|(n, k, d)| n == name && k == kind && d == data)
+        });
+    if unequal {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_ASSERTION",
+            "directories are not equivalent",
+        )));
+    }
+    Ok(())
+}
+
+fn collect_entries(dir: &str, out: &mut Vec<(String, String, String)>) -> Result<(), VmError> {
+    for entry in std::fs::read_dir(dir).map_err(|e| VmError::EvalError(e.to_string()))? {
+        let entry = entry.map_err(|e| VmError::EvalError(e.to_string()))?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if path.is_dir() {
+            collect_entries(&path.to_string_lossy(), out)?;
+        } else if path.is_file() {
+            let data = std::fs::read(&path).map_err(|e| VmError::EvalError(e.to_string()))?;
+            out.push(("file".into(), name, data_to_hex(&data)));
+        } else {
+            out.push(("link".into(), name, String::new()));
+        }
+    }
+    Ok(())
+}
+
+fn collect_entries_tree(dir: &str) -> Result<Vec<(String, String, String)>, VmError> {
+    let mut out = Vec::new();
+    collect_entries(dir, &mut out)?;
+    Ok(out)
+}
+
+fn data_to_hex(data: &[u8]) -> String {
+    data.iter().map(|b| format!("{b:02x}")).collect::<String>()
+}
+
 fn copy_tree(src: &str, dest: &str, force: bool) -> std::io::Result<()> {
     let metadata = std::fs::metadata(src)?;
     if metadata.is_dir() {
