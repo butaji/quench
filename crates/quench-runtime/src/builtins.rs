@@ -109,6 +109,32 @@ pub(crate) fn generator_prototype() -> Value {
                 ("configurable".to_string(), Value::Boolean(true)),
             ],
         );
+        for (key, method) in [
+            ("next", Builtin::GeneratorNext),
+            ("return", Builtin::GeneratorReturn),
+            ("throw", Builtin::GeneratorThrow),
+        ] {
+            store_descriptor_metadata(
+                &mut value,
+                key,
+                &[
+                    ("value".to_string(), Value::Builtin(method)),
+                    ("writable".to_string(), Value::Boolean(true)),
+                    ("enumerable".to_string(), Value::Boolean(false)),
+                    ("configurable".to_string(), Value::Boolean(true)),
+                ],
+            );
+        }
+        store_descriptor_metadata(
+            &mut value,
+            "Symbol.toStringTag",
+            &[
+                ("value".to_string(), Value::String("Generator".to_string())),
+                ("writable".to_string(), Value::Boolean(false)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ],
+        );
         cell.borrow_mut().insert(realm, value.clone());
         value
     })

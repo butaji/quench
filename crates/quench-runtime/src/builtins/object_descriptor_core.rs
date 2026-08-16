@@ -213,7 +213,7 @@ fn intrinsic_getter(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::DataViewPrototype, "buffer") => Builtin::DataViewBufferGetter,
         (Builtin::DataViewPrototype, "byteLength") => Builtin::DataViewByteLengthGetter,
         (Builtin::DataViewPrototype, "byteOffset") => Builtin::DataViewByteOffsetGetter,
-        (Builtin::TypedArray, "byteLength") => Builtin::DataViewByteLengthGetter,
+        (Builtin::TypedArray, "byteLength") => Builtin::TypedArrayByteLengthGetter,
         _ => return intrinsic_getter_extended(builtin, key),
     };
     Some(getter)

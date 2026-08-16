@@ -36,6 +36,7 @@ pub(crate) struct NumberOptions {
     pub minimum_significant_digits: Option<u32>,
     pub maximum_significant_digits: Option<u32>,
     pub rounding_priority: String,
+    pub trailing_zero_display: String,
 }
 
 pub(crate) struct RawOptions {
@@ -58,10 +59,35 @@ pub(crate) struct RawOptions {
     minimum_significant_digits: f64,
     maximum_significant_digits: f64,
     rounding_priority: String,
+    trailing_zero_display: String,
 }
 
+const OPTION_KEYS: &[&str] = &[
+    "localeMatcher",
+    "numberingSystem",
+    "style",
+    "currency",
+    "currencyDisplay",
+    "currencySign",
+    "unit",
+    "unitDisplay",
+    "notation",
+    "minimumIntegerDigits",
+    "minimumFractionDigits",
+    "maximumFractionDigits",
+    "minimumSignificantDigits",
+    "maximumSignificantDigits",
+    "roundingIncrement",
+    "roundingMode",
+    "roundingPriority",
+    "trailingZeroDisplay",
+    "compactDisplay",
+    "useGrouping",
+    "signDisplay",
+];
+
 impl RawOptions {
-    fn from_value(options: Option<&Value>) -> Self {
+    fn from_value(options: Option<&Value>) -> Result<Self, VmError> {
         let mut raw = RawOptions {
             style: "decimal".to_string(),
             currency: None,
@@ -82,17 +108,45 @@ impl RawOptions {
             minimum_significant_digits: -1.0,
             maximum_significant_digits: -1.0,
             rounding_priority: "auto".to_string(),
+            trailing_zero_display: "auto".to_string(),
         };
-        if let Some(Value::Object(properties)) = options {
-            for (key, value) in properties.iter() {
-                if matches!(value, Value::Undefined) {
-                    continue;
+        if let Some(options) = options.filter(|value| crate::value::is_object(value)) {
+            for key in OPTION_KEYS {
+                let value = crate::execute::get_property_result(options, key)?;
+                if !matches!(value, Value::Undefined) {
+                    let text = if matches!(*key, "roundingMode" | "trailingZeroDisplay") {
+                        crate::conversion::to_string(&value)?
+                    } else if *key == "roundingIncrement" {
+                        crate::conversion::to_number(&value)?.to_string()
+                    } else {
+                        to_string_value(&value)
+                    };
+                    if matches!(*key, "minimumFractionDigits" | "maximumFractionDigits") {
+                        let digits = text.parse::<f64>().unwrap_or(f64::NAN);
+                        if !digits.is_finite()
+                            || digits.fract() != 0.0
+                            || !(0.0..=100.0).contains(&digits)
+                        {
+                            return Err(crate::value::error::throw_range_error(
+                                "fraction digits out of range",
+                            ));
+                        }
+                    }
+                    if *key == "numberingSystem" {
+                        let _ = super::locale::calendar_option(&text)?;
+                    }
+                    if *key == "trailingZeroDisplay"
+                        && !matches!(text.as_str(), "auto" | "stripIfInteger")
+                    {
+                        return Err(crate::value::error::throw_range_error(
+                            "invalid trailingZeroDisplay",
+                        ));
+                    }
+                    apply_option(&mut raw, key, &text);
                 }
-                let value = to_string_value(value);
-                apply_option(&mut raw, key, &value);
             }
         }
-        raw
+        Ok(raw)
     }
 }
 
@@ -123,14 +177,15 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
             raw.maximum_significant_digits = value.parse().unwrap_or(-1.0)
         }
         "roundingPriority" => raw.rounding_priority = value.to_string(),
+        "trailingZeroDisplay" => raw.trailing_zero_display = value.to_string(),
         _ => {}
     }
 }
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    validate_options(arguments.get(1))?;
     let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    validate_options(arguments.get(1))?;
     let options = NumberOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
 }
@@ -171,7 +226,9 @@ pub(crate) fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
 
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
-        let raw = RawOptions::from_value(options);
+        let raw = RawOptions::from_value(options)?;
+        validate_rounding_mode(&raw.rounding_mode)?;
+        validate_rounding_increment(&raw)?;
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),
@@ -258,6 +315,59 @@ impl NumberOptions {
     }
 }
 
+fn validate_rounding_mode(value: &str) -> Result<(), VmError> {
+    let valid = matches!(
+        value,
+        "ceil"
+            | "floor"
+            | "expand"
+            | "trunc"
+            | "halfCeil"
+            | "halfFloor"
+            | "halfExpand"
+            | "halfTrunc"
+            | "halfEven"
+    );
+    valid
+        .then_some(())
+        .ok_or_else(|| crate::value::error::throw_range_error("invalid roundingMode"))
+}
+
+fn validate_rounding_increment(raw: &RawOptions) -> Result<(), VmError> {
+    if raw.rounding_increment != 1.0
+        && (!raw.rounding_increment.is_finite()
+            || raw.rounding_increment.fract() != 0.0
+            || !matches!(
+                raw.rounding_increment as u32,
+                1 | 2 | 5 | 10 | 20 | 25 | 50 | 100 | 200 | 250 | 500 | 1000 | 2000 | 2500 | 5000
+            ))
+    {
+        return Err(crate::value::error::throw_range_error(
+            "invalid roundingIncrement",
+        ));
+    }
+    if raw.rounding_increment == 1.0 {
+        return Ok(());
+    }
+    if raw.minimum_fraction_digits >= 0.0
+        && raw.maximum_fraction_digits >= 0.0
+        && raw.minimum_fraction_digits != raw.maximum_fraction_digits
+    {
+        return Err(crate::value::error::throw_range_error(
+            "roundingIncrement requires equal fraction digits",
+        ));
+    }
+    if raw.rounding_priority != "auto"
+        || raw.minimum_significant_digits >= 0.0
+        || raw.maximum_significant_digits >= 0.0
+    {
+        return Err(crate::value::error::throw_type_error(
+            "roundingIncrement requires fraction-digit rounding",
+        ));
+    }
+    Ok(())
+}
+
 fn number_options(
     locale: String,
     raw: RawOptions,
@@ -286,6 +396,7 @@ fn number_options(
         maximum_significant_digits: significant_digits(raw.maximum_significant_digits)
             .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
         rounding_priority: raw.rounding_priority,
+        trailing_zero_display: raw.trailing_zero_display,
     }
 }
 
@@ -295,10 +406,6 @@ fn slot_base(number: &NumberOptions) -> Vec<(String, Value)> {
         (
             "notation".to_string(),
             Value::String(number.notation.clone()),
-        ),
-        (
-            "compactDisplay".to_string(),
-            Value::String(number.compact_display.clone()),
         ),
         (
             "signDisplay".to_string(),
@@ -316,7 +423,17 @@ fn slot_base(number: &NumberOptions) -> Vec<(String, Value)> {
             "roundingIncrement".to_string(),
             Value::Number(number.rounding_increment as f64),
         ),
+        (
+            "trailingZeroDisplay".to_string(),
+            Value::String(number.trailing_zero_display.clone()),
+        ),
     ]);
+    if number.notation == "compact" {
+        properties.push((
+            "compactDisplay".to_string(),
+            Value::String(number.compact_display.clone()),
+        ));
+    }
     properties
 }
 
@@ -425,12 +542,6 @@ fn strip_currency_suffix(text: &str) -> String {
 
 fn is_decimal_integer(value: &str) -> bool {
     !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
-}
-
-fn decimal_integer_greater(first: &str, second: &str) -> bool {
-    let first = first.trim_start_matches('0');
-    let second = second.trim_start_matches('0');
-    first.len() > second.len() || (first.len() == second.len() && first > second)
 }
 
 fn strip_positive_sign(text: &str) -> String {

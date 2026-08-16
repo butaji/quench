@@ -98,6 +98,17 @@ fn reduce_static_if(
             reduce_declaration(declaration, ops, facts, next_register, next_slot, locals)?;
             Ok(None)
         }
+        Statement::FunctionDeclaration(function) => {
+            crate::reduce::reduce_function_declaration(
+                function,
+                ops,
+                facts,
+                next_register,
+                next_slot,
+                locals,
+            )?;
+            Ok(None)
+        }
         _ => Err(vec!["Unsupported conditional statement".to_string()]),
     }
 }

@@ -402,6 +402,11 @@ fn date_get_year(receiver: Option<&Value>) -> Value {
 }
 
 fn date_set_year(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+    let raw_year = helpers::to_number(arguments.first().unwrap_or(&Value::Undefined));
+    if raw_year.is_nan() {
+        store_time(receiver.unwrap_or(&Value::Undefined), f64::NAN);
+        return Value::Number(f64::NAN);
+    }
     let year = helpers::to_int32(arguments.first().unwrap_or(&Value::Undefined));
     let year = if (0.0..=99.0).contains(&year) {
         year + 1900.0

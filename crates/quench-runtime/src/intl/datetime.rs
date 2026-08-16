@@ -6,7 +6,7 @@ use crate::{conversion, execute::VmError, value::Value};
 
 use super::{
     default_locale, make_array, make_object, resolve_locales, runtime_error, slot_number,
-    slot_string, to_string_value, SLOT,
+    slot_string, supported_values::NUMBERING_SYSTEMS, SLOT,
 };
 
 /// Allowed values for each string-valued date/time component option.
@@ -50,6 +50,29 @@ const EXPLICIT_COMPONENTS: &[&str] = &[
     "timeZoneName",
 ];
 
+const OPTION_KEYS: &[&str] = &[
+    "localeMatcher",
+    "calendar",
+    "numberingSystem",
+    "hour12",
+    "hourCycle",
+    "timeZone",
+    "weekday",
+    "era",
+    "year",
+    "month",
+    "day",
+    "dayPeriod",
+    "hour",
+    "minute",
+    "second",
+    "fractionalSecondDigits",
+    "timeZoneName",
+    "formatMatcher",
+    "dateStyle",
+    "timeStyle",
+];
+
 pub(crate) struct DateTimeOptions {
     locale: String,
     calendar: String,
@@ -62,13 +85,47 @@ pub(crate) struct DateTimeOptions {
 
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let locales = resolve_locales(arguments)?;
-    let locale = locales.first().cloned().unwrap_or_else(default_locale);
+    let locale = sanitize_locale(&locales.first().cloned().unwrap_or_else(default_locale));
     let options = DateTimeOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
 }
 
+fn sanitize_locale(locale: &str) -> String {
+    let Some((base, extension)) = locale.split_once("-u-") else {
+        return locale.to_string();
+    };
+    let parts: Vec<&str> = extension.split('-').collect();
+    let mut kept = Vec::new();
+    let mut index = 0;
+    while index + 1 < parts.len() {
+        let key = parts[index];
+        let value = parts[index + 1];
+        if (key == "ca" && available_calendar(value))
+            || key == "hc"
+            || (key == "nu" && NUMBERING_SYSTEMS.contains(&value))
+        {
+            kept.extend([key, value]);
+        }
+        index += 2;
+    }
+    if kept.is_empty() {
+        base.to_string()
+    } else {
+        format!("{base}-u-{}", kept.join("-"))
+    }
+}
+
+fn available_calendar(calendar: &str) -> bool {
+    super::supported_values::supported_calendars()
+        .iter()
+        .any(|value| matches!(value, Value::String(value) if value == calendar))
+}
+
 impl DateTimeOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
+        if matches!(options, Some(Value::Null)) {
+            return Err(runtime_error("TypeError: Cannot convert null to object"));
+        }
         let mut formatter = DateTimeOptions {
             locale,
             calendar: "gregory".to_string(),
@@ -78,10 +135,9 @@ impl DateTimeOptions {
             fractional_second_digits: None,
             hour12: None,
         };
-        if let Some(Value::Object(properties)) = options {
-            let object = Value::Object(properties.clone());
-            for (key, _) in properties.iter() {
-                let value = crate::execute::get_property_result(&object, key)?;
+        if let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) {
+            for key in OPTION_KEYS {
+                let value = crate::execute::get_property_result(options, key)?;
                 formatter.apply(key, &value)?;
             }
         }
@@ -95,7 +151,33 @@ impl DateTimeOptions {
         if matches!(value, Value::Undefined) {
             return Ok(());
         }
-        let text = to_string_value(value);
+        let recognized = COMPONENT_VALUES.iter().any(|(name, _)| *name == key)
+            || matches!(
+                key,
+                "localeMatcher"
+                    | "formatMatcher"
+                    | "hour12"
+                    | "timeZone"
+                    | "calendar"
+                    | "numberingSystem"
+                    | "fractionalSecondDigits"
+            );
+        if !recognized {
+            return Ok(());
+        }
+        if key == "hour12" {
+            self.hour12 = Some(crate::execute::is_truthy(value));
+            return Ok(());
+        }
+        if key == "fractionalSecondDigits" {
+            let digits = conversion::to_number(value)?;
+            if !digits.is_finite() || !(1.0..=3.0).contains(&digits) {
+                return Err(runtime_error("RangeError: invalid fractionalSecondDigits"));
+            }
+            self.fractional_second_digits = Some(digits.floor() as u32);
+            return Ok(());
+        }
+        let text = conversion::to_string(value)?;
         if let Some((name, allowed)) = COMPONENT_VALUES.iter().find(|(name, _)| *name == key) {
             if let Some(valid) = valid_component(&text, allowed) {
                 self.set_component(name, valid);
@@ -105,21 +187,39 @@ impl DateTimeOptions {
             return Ok(());
         }
         match key {
-            "hour12" => self.hour12 = Some(text == "true"),
+            "localeMatcher" if matches!(value, Value::Null) => {
+                return Err(runtime_error("TypeError: localeMatcher"));
+            }
+            "formatMatcher" if !matches!(text.as_str(), "basic" | "best fit") => {
+                return Err(runtime_error("RangeError: invalid formatMatcher"));
+            }
             "timeZone" => {
                 if text.starts_with(['+', '-']) && normalize_offset(&text).is_none() {
                     return Err(runtime_error("RangeError: invalid time zone"));
                 }
+                if !text.eq_ignore_ascii_case("utc")
+                    && normalize_offset(&text).is_none()
+                    && text.parse::<chrono_tz::Tz>().is_err()
+                {
+                    return Err(runtime_error("RangeError: invalid time zone"));
+                }
                 self.time_zone = canonicalize_time_zone(&text);
             }
-            "calendar" => self.calendar = text.to_ascii_lowercase(),
-            "numberingSystem" => self.numbering_system = text.to_ascii_lowercase(),
-            "fractionalSecondDigits" => {
-                let digits = conversion::to_number(value)?;
-                if !digits.is_finite() || digits.fract() != 0.0 || !(1.0..=9.0).contains(&digits) {
-                    return Err(runtime_error("RangeError: invalid fractionalSecondDigits"));
+            "calendar" => {
+                let value = super::locale::calendar_option(&text)?;
+                let value = super::locale::calendar_alias(&value);
+                self.calendar = if available_calendar(&value) {
+                    value
+                } else {
+                    "gregory".to_string()
+                };
+            }
+            "numberingSystem" => {
+                let value = text.to_ascii_lowercase();
+                if !super::supported_values::NUMBERING_SYSTEMS.contains(&value.as_str()) {
+                    return Err(runtime_error("RangeError: invalid numberingSystem"));
                 }
-                self.fractional_second_digits = Some(digits as u32);
+                self.numbering_system = value;
             }
             _ => {}
         }
@@ -200,6 +300,10 @@ impl DateTimeOptions {
             (
                 "resolvedOptions".to_string(),
                 Value::Builtin(crate::ops::Builtin::IntlDateTimeFormatResolvedOptions),
+            ),
+            (
+                "\0prototype".to_string(),
+                crate::vm::realm_intrinsic(crate::ops::Builtin::IntlDateTimeFormatPrototype),
             ),
             (SLOT.to_string(), self.slot()),
         ];
