@@ -131,6 +131,7 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
                     &*data.state.borrow(),
                     IteratorState::Protocol { .. }
                         | IteratorState::Mapped { .. }
+                        | IteratorState::Concat { .. }
                         | IteratorState::Zip { .. }
                 )
         )
