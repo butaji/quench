@@ -145,6 +145,7 @@ pub enum Builtin {
     TemporalPlainDateInLeapYearGetter,
     TemporalPlainDateEraGetter, TemporalPlainDateEraYearGetter,
     TemporalPlainDateCalendarIdGetter,
+    TemporalPlainDateWeekOfYearGetter,
     AbstractModuleSource,
     AbstractModuleSourcePrototype, AbstractModuleSourceToStringTagGetter, ShadowRealm,
     ShadowRealmPrototype, ShadowRealmEvaluate,
