@@ -80,6 +80,17 @@ fn direct_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
                 &Value::Object(properties.clone()),
             ));
         }
+        if key == "segment"
+            && matches!(
+                value,
+                Value::Builtin(crate::ops::Builtin::IntlSegmenterSegment)
+            )
+        {
+            return Some(crate::vm::bind_receiver_property(
+                value,
+                &Value::Object(properties.clone()),
+            ));
+        }
         return Some(value);
     }
     if let Some(value) = global_object_property(properties, key) {
