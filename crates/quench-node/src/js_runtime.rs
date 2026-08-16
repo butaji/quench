@@ -100,6 +100,7 @@ impl CapabilityName {
     const StreamPipeline: u16 = 2155;
     const HttpIncomingOnce: u16 = 2156;
     const HttpIncomingEmit: u16 = 2157;
+    const StreamAddAbortSignal: u16 = 2158;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
@@ -1006,6 +1007,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::StreamPipeline) => { if arguments.is_empty() { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "streams must be provided"))); } if arguments.len() < 2 { return Err(VmError::Thrown(fs_error("ERR_MISSING_ARGS", "streams must be provided"))); } if arguments.len() == 2 && matches!(arguments.last(), Some(Value::Function(_) | Value::BoundFunction(_))) { return Err(VmError::Thrown(fs_error("ERR_MISSING_ARGS", "streams must be provided"))); } Ok(arguments.get(arguments.len().saturating_sub(2)).cloned().unwrap_or(Value::Undefined)) },
             HostCapabilityKind::Custom(CapabilityName::HttpIncomingOnce) => { let receiver = receiver.cloned().ok_or(VmError::NotCallable)?; let updated = quench_runtime::execute::set_property(receiver.clone(), "\0onceEnd", arguments.get(1).cloned().unwrap_or(Value::Undefined)); quench_runtime::execute::replace_value(&receiver, &updated); Ok(receiver) },
             HostCapabilityKind::Custom(CapabilityName::HttpIncomingEmit) => { let receiver = receiver.cloned().ok_or(VmError::NotCallable)?; if matches!(arguments.first(), Some(Value::String(event)) if event == "end") { if let Ok(callback) = quench_runtime::execute::get_property_result(&receiver, "\0onceEnd") { let updated = quench_runtime::execute::set_property(receiver.clone(), "\0onceEnd", Value::Undefined); quench_runtime::execute::replace_value(&receiver, &updated); if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) { quench_runtime::execute::call(&callback, &receiver, &[])?; } } } Ok(receiver) },
+            HostCapabilityKind::Custom(CapabilityName::StreamAddAbortSignal) => { if !matches!(arguments.first(), Some(Value::Object(_))) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "signal must be an AbortSignal"))); } Ok(arguments.get(1).cloned().unwrap_or(Value::Undefined)) },
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
@@ -4115,6 +4117,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
                 ("promises".into(), promises),
                 ("pipeline".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamPipeline))),
+                ("addAbortSignal".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamAddAbortSignal))),
             ]));
         }
         if name == "node:http" || name == "http" {
@@ -8949,7 +8952,7 @@ impl JsRuntime for QuenchRuntime {
         path: Option<&Path>,
         _host: &dyn NodeHost,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let source_with_globals = format!("var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var fetch = function() {{ return Promise.resolve(undefined); }}; globalThis.global = globalThis;\n{source}");
+        let source_with_globals = format!("var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }}; globalThis.global = globalThis;\n{source}");
         let program =
             match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
                 true => quench_runtime::reduce::reduce_module_source(&source_with_globals),
