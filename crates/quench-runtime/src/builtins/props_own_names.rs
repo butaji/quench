@@ -206,6 +206,12 @@ fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str]
 
 fn own_property_names_tail(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
+        Builtin::IntlCollatorPrototype => &[
+            "constructor",
+            "compare",
+            "resolvedOptions",
+            "Symbol.toStringTag",
+        ],
         Builtin::IntlDisplayNamesPrototype => &["Symbol.toStringTag"],
         Builtin::IntlListFormatPrototype => &["Symbol.toStringTag"],
         Builtin::IntlNumberFormatPrototype => &["Symbol.toStringTag"],
