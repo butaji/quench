@@ -99,7 +99,7 @@ fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::IntlCollator => "Intl.Collator",
         Builtin::IntlDateTimeFormat => "DateTimeFormat",
         Builtin::IntlDisplayNames => "Intl.DisplayNames",
-        Builtin::IntlDurationFormat => "Intl.DurationFormat",
+        Builtin::IntlDurationFormat => "DurationFormat",
         Builtin::IntlListFormat => "ListFormat",
         Builtin::IntlLocale => "Intl.Locale",
         Builtin::IntlNumberFormat => "Intl.NumberFormat",
@@ -352,7 +352,8 @@ fn intl_constructor_length(builtin: Builtin) -> Option<f64> {
         | Builtin::IntlListFormat
         | Builtin::IntlRelativeTimeFormat => 0.0,
         Builtin::IntlDateTimeFormat => 0.0,
-        Builtin::IntlDisplayNames | Builtin::IntlDurationFormat | Builtin::IntlNumberFormat => 2.0,
+        Builtin::IntlDisplayNames | Builtin::IntlNumberFormat => 2.0,
+        Builtin::IntlDurationFormat => 0.0,
         Builtin::IntlSegmenter => 0.0,
         Builtin::IntlLocale => 1.0,
         _ => return None,
