@@ -365,8 +365,8 @@ fn format_duration_shape(
     microseconds: i64,
     nanoseconds: i64,
 ) -> Result<String, VmError> {
-    if slot_value(slots, "minutes") == Some("numeric")
-        && slot_value(slots, "seconds") == Some("numeric")
+    if matches!(slot_value(slots, "minutes"), Some("numeric" | "2-digit"))
+        && matches!(slot_value(slots, "seconds"), Some("numeric" | "2-digit"))
     {
         return Ok(format_clock_duration(days, hours, minutes, seconds));
     }
