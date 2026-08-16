@@ -4650,7 +4650,13 @@ fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result
         .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
         .unwrap_or_else(|| "utf8".into());
     let (text, pending) = if encoding == "utf16le" || encoding == "ucs2" {
-        let complete = bytes.len() / 2 * 2;
+        let mut complete = bytes.len() / 2 * 2;
+        if complete >= 2 {
+            let last = u16::from_le_bytes([bytes[complete - 2], bytes[complete - 1]]);
+            if (0xd800..=0xdbff).contains(&last) {
+                complete -= 2;
+            }
+        }
         let text = String::from_utf16_lossy(&bytes[..complete].chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>());
         (text, bytes[complete..].to_vec())
     } else if encoding == "latin1" || encoding == "ascii" {
