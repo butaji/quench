@@ -60,6 +60,11 @@ fn from_string(text: &str) -> Result<Value, VmError> {
     if negative {
         values.iter_mut().for_each(|value| *value = -*value);
     }
+    values.iter_mut().for_each(|value| {
+        if *value == 0.0 {
+            *value = 0.0;
+        }
+    });
     construct(&values.into_iter().map(Value::Number).collect::<Vec<_>>())
 }
 
