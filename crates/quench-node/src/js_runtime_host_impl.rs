@@ -1,3 +1,17 @@
+fn query_pairs(input: &str) -> Vec<(String, String)> {
+    input
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| match pair.find('=') {
+            Some(index) => (
+                pair[..index].to_string(),
+                pair[index + 1..].to_string(),
+            ),
+            None => (pair.to_string(), String::new()),
+        })
+        .collect()
+}
+
 impl Host for QuenchNodeHost {
     fn call(
         &self,
@@ -122,9 +136,17 @@ impl Host for QuenchNodeHost {
             let id = self.next_url.get();
             self.next_url.set(id.saturating_add(1));
             self.urls.borrow_mut().insert(id, parsed.to_string());
+            let pairs = parsed
+                .query()
+                .map(|query| query_pairs(query))
+                .unwrap_or_default();
+            self.params_state.borrow_mut().insert(id, pairs);
             let object = url_object(&parsed, id)?;
             self.url_objects.borrow_mut().insert(id, object.clone());
             return Ok(object);
+        }
+        if capability.kind == HostCapabilityKind::Custom(CapabilityName::UrlSearchParams) {
+            return url_search_params_construct(self, arguments);
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::EventEmitter) {
             let id = self.next_event.get();
