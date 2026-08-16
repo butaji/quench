@@ -81,9 +81,13 @@ pub(crate) fn prototype_method(
             let locale = slot_string(&slots, "locale").unwrap_or_else(default_locale);
             let granularity =
                 slot_string(&slots, "granularity").unwrap_or_else(|| "grapheme".to_string());
-            let text =
-                crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
-            Ok(segment(&text, &granularity, &locale))
+            let primitive = crate::conversion::to_primitive(
+                arguments.first().unwrap_or(&Value::Undefined),
+                "string",
+            )?;
+            let text = crate::conversion::to_string(&primitive)?;
+            let units = crate::strings::units_of(&primitive);
+            Ok(segment(&text, &granularity, &locale, units.as_deref()))
         }
         crate::ops::Builtin::IntlSegmenterSegmentsIterator => segments_iterator(receiver),
         crate::ops::Builtin::IntlSegmenterSegmentsContaining => {
@@ -107,13 +111,14 @@ fn receiver_slots(receiver: Option<&Value>) -> Result<Vec<(String, Value)>, VmEr
     super::intl_slots(receiver)
 }
 
-fn segment(text: &str, granularity: &str, locale: &str) -> Value {
+fn segment(text: &str, granularity: &str, locale: &str, units: Option<&[u16]>) -> Value {
     let _ = locale;
     let segments = match granularity {
         "word" => word_segments(text),
         "sentence" => sentence_segments(text),
         _ => grapheme_segments(text),
     };
+    let segments = restore_raw_units(segments, units);
     make_object(vec![
         ("__segments".to_string(), Value::array(segments)),
         (
@@ -125,6 +130,46 @@ fn segment(text: &str, granularity: &str, locale: &str) -> Value {
             Value::Builtin(crate::ops::Builtin::IntlSegmenterSegmentsContaining),
         ),
     ])
+}
+
+fn restore_raw_units(segments: Vec<Value>, units: Option<&[u16]>) -> Vec<Value> {
+    let Some(units) = units.filter(|units| !crate::strings::units_well_formed(units)) else {
+        return segments;
+    };
+    let input = crate::strings::from_units(units.to_vec());
+    let source = segments.clone();
+    segments
+        .into_iter()
+        .enumerate()
+        .map(|(index, value)| restore_segment(value, index, &source, &input, units))
+        .collect()
+}
+
+fn restore_segment(
+    value: Value,
+    index: usize,
+    source: &[Value],
+    input: &Value,
+    units: &[u16],
+) -> Value {
+    let Value::Object(object) = value else {
+        return value;
+    };
+    let start = segment_index(&Value::Object(object.clone()));
+    let end = source
+        .get(index + 1)
+        .map_or(units.len(), |value| segment_index(value));
+    let segment = crate::strings::from_units(units[start..end].to_vec());
+    let properties = object
+        .properties
+        .iter()
+        .map(|(name, value)| match name.as_str() {
+            "segment" => (name.clone(), segment.clone()),
+            "input" => (name.clone(), input.clone()),
+            _ => (name.clone(), value.clone()),
+        })
+        .collect();
+    make_object(properties)
 }
 
 fn grapheme_segments(text: &str) -> Vec<Value> {
@@ -305,10 +350,7 @@ fn segments_containing(receiver: Option<&Value>, arguments: &[Value]) -> Result<
 fn segment_input_length(value: Option<&Value>) -> usize {
     value
         .and_then(|value| crate::execute::get_property_result(value, "input").ok())
-        .and_then(|value| match value {
-            Value::String(text) => Some(text.encode_utf16().count()),
-            _ => None,
-        })
+        .and_then(|value| crate::strings::units_of(&value).map(|units| units.len()))
         .unwrap_or(0)
 }
 
