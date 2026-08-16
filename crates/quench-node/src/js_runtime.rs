@@ -62,6 +62,7 @@ impl CapabilityName {
     const StringDecoderConstructor: u16 = 2076;
     const StringDecoderWrite: u16 = 2077;
     const StringDecoderEnd: u16 = 2078;
+    const StringDecoderText: u16 = 2079;
     const VmRunInNewContext: u16 = 2055;
     const CryptoRandomBytes: u16 = 2056;
     const CryptoRandomFillSync: u16 = 2057;
@@ -659,6 +660,9 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::StringDecoderEnd) => {
                 string_decoder_end(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::StringDecoderText) => {
+                string_decoder_text(receiver, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext) => vm_run_in_new_context(arguments),
             HostCapabilityKind::Custom(CapabilityName::CryptoRandomBytes) => crypto_random_bytes(arguments),
@@ -4581,6 +4585,10 @@ fn string_decoder_object(encoding: &str) -> Value {
             "end".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderEnd)),
         ),
+        (
+            "text".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderText)),
+        ),
     ])
 }
 
@@ -4588,14 +4596,11 @@ fn string_decoder_constructor(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let encoding = arguments
-        .first()
-        .and_then(|value| match value {
-            Value::String(value) => Some(value.as_str()),
-            Value::Undefined => None,
-            _ => None,
-        })
-        .unwrap_or("utf8");
+    let encoding = match arguments.first() {
+        None | Some(Value::Undefined) => "utf8".to_owned(),
+        Some(Value::String(value)) => value.clone(),
+        Some(value) => safe_value_string(value),
+    };
     let normalized = encoding.to_ascii_lowercase().replace('-', "");
     if !matches!(normalized.as_str(), "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii") {
         return Err(VmError::Thrown(fs_error(
@@ -4605,7 +4610,7 @@ fn string_decoder_constructor(
     }
     let object = string_decoder_object(&normalized);
     if let Some(receiver) = receiver {
-        for key in ["encoding", "_pending", "lastNeed", "lastTotal", "lastChar", "write", "end"] {
+        for key in ["encoding", "_pending", "lastNeed", "lastTotal", "lastChar", "write", "end", "text"] {
             if let Ok(value) = quench_runtime::execute::get_property_result(&object, key) {
                 let _ = quench_runtime::execute::set_property(receiver.clone(), key, value);
             }
@@ -4616,10 +4621,17 @@ fn string_decoder_constructor(
 }
 
 fn string_decoder_bytes(value: &Value) -> Result<Vec<u8>, VmError> {
-    string_or_bytes(Some(value)).map_err(|_| VmError::Thrown(fs_error(
-        "ERR_INVALID_ARG_TYPE",
-        "The \"buf\" argument must be an instance of Buffer, TypedArray, or DataView.",
-    )))
+    let bytes = match value {
+        Value::Uint16Array(view) => view.buffer.bytes.borrow()
+            [view.byte_offset..view.byte_offset + view.length * 2].to_vec(),
+        Value::Uint32Array(view) => view.buffer.bytes.borrow()
+            [view.byte_offset..view.byte_offset + view.length * 4].to_vec(),
+        _ => string_or_bytes(Some(value)).map_err(|_| VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "The \"buf\" argument must be an instance of Buffer, TypedArray, or DataView.",
+        )))?,
+    };
+    Ok(bytes)
 }
 
 fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -4676,6 +4688,19 @@ fn string_decoder_end(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
     let _ = quench_runtime::execute::set_property(receiver.clone(), "_pending", quench_runtime::host_api::array(Vec::new()));
     let prefix = match prefix { Value::String(value) => value, _ => String::new() };
     Ok(Value::String(format!("{prefix}{tail}").into()))
+}
+
+fn string_decoder_text(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let input = arguments.first().ok_or(VmError::NotCallable)?;
+    let offset = arguments.get(1).and_then(|value| match value {
+        Value::Number(value) => Some((*value).max(0.0) as usize),
+        _ => None,
+    }).unwrap_or(0);
+    let bytes = string_decoder_bytes(input)?;
+    if offset >= bytes.len() {
+        return Ok(Value::String("".into()));
+    }
+    string_decoder_write(receiver, &[node_buffer(&bytes[offset..])])
 }
 
 fn buffer_numeric(
