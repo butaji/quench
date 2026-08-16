@@ -41,6 +41,7 @@ impl CapabilityName {
     const BufferToJson: u16 = 2043;
     const BufferOf: u16 = 2044;
     const BufferAllocUnsafeSlow: u16 = 2045;
+    const BufferAllocUnsafe: u16 = 2064;
     const BufferIsEncoding: u16 = 2046;
     const BufferSwap16: u16 = 2047;
     const BufferSwap32: u16 = 2048;
@@ -588,6 +589,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferToJson) => buffer_to_json(receiver),
             HostCapabilityKind::Custom(CapabilityName::BufferOf) => buffer_of(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow) => buffer_alloc_unsafe(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafe) => buffer_alloc_unsafe(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding) => buffer_is_encoding(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferSwap16) => buffer_swap(receiver, 2),
             HostCapabilityKind::Custom(CapabilityName::BufferSwap32) => buffer_swap(receiver, 4),
@@ -3478,6 +3480,7 @@ fn buffer_module() -> Value {
         ),
         ("of", HostCapabilityKind::Custom(CapabilityName::BufferOf)),
         ("allocUnsafeSlow", HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow)),
+        ("allocUnsafe", HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafe)),
         ("isEncoding", HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding)),
         ("copyBytesFrom", HostCapabilityKind::Custom(CapabilityName::BufferCopyBytesFrom)),
         ("readBigInt64LE", HostCapabilityKind::Custom(CapabilityName::BufferReadBigInt64LE)),
@@ -3607,7 +3610,7 @@ fn buffer_alloc_unsafe(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::Number(length)) = arguments.first() else {
         return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "size must be a number")));
     };
-    if !length.is_finite() || *length < 0.0 || length.fract() != 0.0 {
+    if !length.is_finite() || *length < 0.0 {
         return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "size out of range")));
     }
     Ok(node_buffer(&vec![0; *length as usize]))
@@ -3770,9 +3773,9 @@ fn node_buffer(bytes: &[u8]) -> Value {
 
 fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let mut bytes = string_or_bytes(receiver)?;
-    let start = arguments.get(1).and_then(|value| match value { Value::Number(value) if *value >= 0.0 => Some(*value as usize), _ => None }).unwrap_or(0).min(bytes.len());
-    let end = arguments.get(2).and_then(|value| match value { Value::Number(value) if *value >= 0.0 => Some(*value as usize), _ => None }).unwrap_or(bytes.len()).min(bytes.len()).max(start);
-    bytes = bytes[start..end].to_vec();
+    let start = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some(if *value < 0.0 { bytes.len().saturating_sub((-*value) as usize) } else { *value as usize }), _ => None }).unwrap_or(0).min(bytes.len());
+    let end = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some(if *value < 0.0 { bytes.len().saturating_sub((-*value) as usize) } else { *value as usize }), _ => None }).unwrap_or(bytes.len()).min(bytes.len());
+    bytes = if end >= start { bytes[start..end].to_vec() } else { Vec::new() };
     if matches!(arguments.first(), Some(Value::String(value)) if value.eq_ignore_ascii_case("hex")) {
         return Ok(Value::String(
             bytes
@@ -3893,7 +3896,13 @@ fn buffer_equals(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
 
 fn buffer_compare(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let (left, right) = if matches!(receiver, Some(Value::Uint8Array(_))) {
-        (string_or_bytes(receiver)?, string_or_bytes(arguments.first())?)
+        let left = string_or_bytes(receiver)?;
+        let right_full = string_or_bytes(arguments.first())?;
+        let target_start = match arguments.get(1) { Some(Value::Number(value)) => *value as usize, Some(_) => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "targetStart must be a number"))), None => 0 };
+        let target_end = match arguments.get(2) { Some(Value::Number(value)) => *value as usize, Some(_) => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "targetEnd must be a number"))), None => right_full.len() };
+        let source_start = match arguments.get(3) { Some(Value::Number(value)) => *value as usize, Some(_) => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "sourceStart must be a number"))), None => 0 };
+        let source_end = match arguments.get(4) { Some(Value::Number(value)) => *value as usize, Some(_) => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "sourceEnd must be a number"))), None => left.len() };
+        (left[source_start.min(left.len())..source_end.min(left.len())].to_vec(), right_full[target_start.min(right_full.len())..target_end.min(right_full.len())].to_vec())
     } else {
         (string_or_bytes(arguments.first())?, string_or_bytes(arguments.get(1))?)
     };
