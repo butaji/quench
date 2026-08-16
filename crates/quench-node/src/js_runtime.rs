@@ -4616,12 +4616,13 @@ fn string_decoder_constructor(
     }
     let object = string_decoder_object(&normalized);
     if let Some(receiver) = receiver {
+        quench_runtime::execute::replace_value(receiver, &object);
         for key in ["encoding", "_pending", "lastNeed", "lastTotal", "lastChar", "write", "end", "text"] {
             if let Ok(value) = quench_runtime::execute::get_property_result(&object, key) {
                 let _ = quench_runtime::execute::set_property(receiver.clone(), key, value);
             }
         }
-        return Ok(receiver.clone());
+        return Ok(object);
     }
     Ok(object)
 }
