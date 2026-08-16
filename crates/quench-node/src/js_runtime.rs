@@ -63,6 +63,7 @@ impl CapabilityName {
     const StringDecoderWrite: u16 = 2077;
     const StringDecoderEnd: u16 = 2078;
     const StringDecoderText: u16 = 2079;
+    const StringDecoderCall: u16 = 2080;
     const VmRunInNewContext: u16 = 2055;
     const CryptoRandomBytes: u16 = 2056;
     const CryptoRandomFillSync: u16 = 2057;
@@ -663,6 +664,10 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::StringDecoderText) => {
                 string_decoder_text(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::StringDecoderCall) => {
+                let target = arguments.first().ok_or(VmError::NotCallable)?;
+                string_decoder_constructor(Some(target), &arguments[1..])
             }
             HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext) => vm_run_in_new_context(arguments),
             HostCapabilityKind::Custom(CapabilityName::CryptoRandomBytes) => crypto_random_bytes(arguments),
@@ -4560,12 +4565,13 @@ fn buffer_bigint(receiver: Option<&Value>, arguments: &[Value], unsigned: bool, 
 }
 
 fn string_decoder_module() -> Value {
-    quench_runtime::host_api::object(vec![
-        (
-            "StringDecoder".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderConstructor)),
-        ),
-    ])
+    let constructor = capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderConstructor));
+    let constructor = quench_runtime::execute::set_property(
+        constructor,
+        "call",
+        capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderCall)),
+    );
+    quench_runtime::host_api::object(vec![("StringDecoder".into(), constructor)])
 }
 
 fn string_decoder_object(encoding: &str) -> Value {
@@ -6103,7 +6109,7 @@ fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
             }
         }
         14 => {
-            if arguments.first() == arguments.get(1) {
+            if arguments.first().zip(arguments.get(1)).is_some_and(|(actual, expected)| assertion_strict_equal(actual, expected)) {
                 Ok(Value::Undefined)
             } else {
                 failed("values are not equal")
@@ -6176,6 +6182,25 @@ fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
         }
         35 => Ok(Value::Undefined),
         _ => Err(VmError::NotCallable),
+    }
+}
+
+fn assertion_strict_equal(actual: &Value, expected: &Value) -> bool {
+    match (actual, expected) {
+        (Value::Number(actual), Value::Number(expected)) => {
+            actual == expected && actual.is_sign_negative() == expected.is_sign_negative()
+                || actual.is_nan() && expected.is_nan()
+        }
+        (Value::String(_) | Value::StringUnits(_), Value::String(_) | Value::StringUnits(_)) => {
+            let stringify = |value: &Value| {
+                quench_runtime::execute::get_property_result(value, "toString")
+                    .ok()
+                    .and_then(|method| quench_runtime::execute::call(&method, value, &[]).ok())
+                    .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
+            };
+            stringify(actual) == stringify(expected)
+        }
+        _ => actual == expected,
     }
 }
 
