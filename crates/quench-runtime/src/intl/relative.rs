@@ -469,6 +469,9 @@ pub(crate) fn prototype_method(
         }
         crate::ops::Builtin::IntlRelativeTimeFormatFormatToParts => {
             let value = super::tolocale::value::to_number_result(arguments.first())?;
+            if !value.is_finite() {
+                return Err(runtime_error("RangeError: value must be finite"));
+            }
             let unit = crate::conversion::to_string(
                 arguments.get(1).map_or(&Value::Undefined, |value| value),
             )?;
