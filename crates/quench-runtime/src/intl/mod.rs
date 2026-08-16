@@ -600,7 +600,7 @@ fn canonicalize_subtags(
                 script_done = true;
             }
             Subtag::Region => {
-                out.push(part.to_ascii_uppercase());
+                out.push(canonical_region(part, &out));
                 region_done = true;
             }
             Subtag::Variant => {
@@ -611,6 +611,22 @@ fn canonicalize_subtags(
         }
     }
     Ok(out)
+}
+
+fn canonical_region(part: &str, emitted: &[String]) -> String {
+    let region = part.to_ascii_uppercase();
+    match region.as_str() {
+        "CS" => "RS".to_string(),
+        "NT" => "SA".to_string(),
+        "SU" | "810"
+            if emitted.first().is_some_and(|language| language == "hy")
+                || emitted.iter().any(|subtag| subtag == "Armn") =>
+        {
+            "AM".to_string()
+        }
+        "SU" | "810" => "RU".to_string(),
+        _ => region,
+    }
 }
 
 fn validate_unicode_extension_keys(parts: &[&str]) -> Result<(), VmError> {
