@@ -32,6 +32,7 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
         "Symbol.iterator" => Some(Value::Builtin(Builtin::IteratorSelf)),
         "Symbol.toStringTag" => Some(Value::String("Iterator".into())),
         "constructor" => Some(Value::Builtin(Builtin::Iterator)),
+        "filter" => Some(Value::Builtin(Builtin::IteratorFilter)),
         _ => None,
     }
 }
@@ -267,6 +268,9 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
         .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "fill").then_some(Builtin::TypedArrayFill)
         })
+        .or_else(|| {
+            (is_typed_array_prototype(builtin) && key == "indexOf").then_some(Builtin::ArrayIndexOf)
+        })
         .or_else(|| uint8_array_base64_method(builtin, key))
 }
 fn uint8_array_base64_method(builtin: Builtin, key: &str) -> Option<Builtin> {
@@ -460,6 +464,9 @@ fn builtin_method3_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (NumberPrototype, "constructor") => Some(Number),
         (ObjectPrototype, "constructor") => Some(Object),
         (ObjectPrototype, "toLocaleString") => Some(ObjectPrototypeToString),
+        (TemporalDurationPrototype, "toJSON") => Some(TemporalDurationToJSON),
+        (TemporalPlainDatePrototype, "toString") => Some(TemporalPlainDateToString),
+        (TemporalPlainDatePrototype, "toJSON") => Some(TemporalPlainDateToJSON),
         (Symbol, "prototype") => Some(SymbolPrototype),
         (SymbolPrototype, "toString") => Some(SymbolToString),
         (SymbolPrototype, "valueOf") => Some(SymbolValueOf),

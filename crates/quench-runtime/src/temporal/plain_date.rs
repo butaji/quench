@@ -58,6 +58,7 @@ pub(crate) fn execute(
             "Temporal.PlainDate requires new",
         ))),
         crate::ops::Builtin::TemporalPlainDateFrom => Some(from(arguments.first())),
+        crate::ops::Builtin::TemporalPlainDateCompare => Some(compare(arguments)),
         crate::ops::Builtin::TemporalPlainDateWithCalendar => {
             Some(with_calendar(receiver, arguments.first()))
         }
@@ -73,6 +74,11 @@ pub(crate) fn execute(
         }
         crate::ops::Builtin::TemporalPlainDateDaysInYearGetter => Some(days_in_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateDaysInWeekGetter => Some(days_in_week(receiver)),
+        crate::ops::Builtin::TemporalPlainDateMonthsInYearGetter => Some(months_in_year(receiver)),
+        crate::ops::Builtin::TemporalPlainDateToString => {
+            Some(to_string(receiver, arguments.first()))
+        }
+        crate::ops::Builtin::TemporalPlainDateToJSON => Some(to_json(receiver)),
         crate::ops::Builtin::TemporalPlainDateInLeapYearGetter => Some(in_leap_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraGetter => Some(era(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era(receiver)),
@@ -87,6 +93,26 @@ pub(crate) fn execute(
     }
 }
 
+fn compare(arguments: &[Value]) -> Result<Value, VmError> {
+    let left = from(arguments.first())?;
+    let right = from(arguments.get(1))?;
+    let (Value::Object(left), Value::Object(right)) = (left, right) else {
+        return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
+    };
+    let left_fields = date_fields(&left);
+    let right_fields = date_fields(&right);
+    let ordering = left_fields.cmp(&right_fields);
+    Ok(Value::Number(match ordering {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Equal => 0.0,
+        std::cmp::Ordering::Greater => 1.0,
+    }))
+}
+
+fn date_fields(object: &crate::value::ObjectData) -> [i64; 3] {
+    ["year", "month", "day"].map(|name| number_field(field(object, name)) as i64)
+}
+
 fn day_of_week(receiver: Option<&Value>) -> Result<Value, VmError> {
     let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
         return Err(invalid_receiver());
@@ -97,11 +123,21 @@ fn day_of_week(receiver: Option<&Value>) -> Result<Value, VmError> {
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
-    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
-    Ok(Value::Number(f64::from(
-        date.weekday().number_from_monday(),
-    )))
+    Ok(Value::Number(f64::from(proleptic_weekday(
+        year, month, day,
+    ))))
+}
+
+fn proleptic_weekday(year: i32, month: u32, day: u32) -> u32 {
+    let year = i64::from(year) - i64::from(month <= 2);
+    let era = (if year >= 0 { year } else { year - 399 }) / 400;
+    let year_of_era = year - era * 400;
+    let month = i64::from(month);
+    let month_index = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_index + 2) / 5 + i64::from(day) - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    (days.rem_euclid(7) as u32 + 3) % 7 + 1
 }
 
 fn day_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -114,9 +150,14 @@ fn day_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
     let year = number_field(field(object, "year")) as i32;
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
-    let date = chrono::NaiveDate::from_ymd_opt(year, month, day)
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid PlainDate"))?;
-    Ok(Value::Number(f64::from(date.ordinal())))
+    Ok(Value::Number(f64::from(ordinal_day(year, month, day))))
+}
+
+fn ordinal_day(year: i32, month: u32, day: u32) -> u32 {
+    (1..month)
+        .map(|value| days_in_month(f64::from(year), f64::from(value)) as u32)
+        .sum::<u32>()
+        + day
 }
 
 fn days_in_month_getter(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -154,6 +195,79 @@ fn days_in_week(receiver: Option<&Value>) -> Result<Value, VmError> {
         return Err(invalid_receiver());
     }
     Ok(Value::Number(7.0))
+}
+
+fn months_in_year(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(Value::Number(12.0))
+}
+
+fn to_json(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let day = number_field(field(object, "day")) as u32;
+    Ok(Value::String(format!(
+        "{}-{month:02}-{day:02}",
+        format_year(year)
+    )))
+}
+
+fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    let year = number_field(field(object, "year")) as i32;
+    let month = number_field(field(object, "month")) as u32;
+    let day = number_field(field(object, "day")) as u32;
+    let calendar_name = calendar_name_option(options)?;
+    let mut result = format!("{}-{month:02}-{day:02}", format_year(year));
+    if calendar_name == "always" {
+        result.push_str("[u-ca=iso8601]");
+    } else if calendar_name == "critical" {
+        result.push_str("[!u-ca=iso8601]");
+    }
+    Ok(Value::String(result))
+}
+
+fn calendar_name_option(options: Option<&Value>) -> Result<String, VmError> {
+    let Some(options) = options.filter(|value| !matches!(value, Value::Undefined)) else {
+        return Ok("auto".into());
+    };
+    let object = crate::construct::to_object(options)?;
+    let value = crate::execute::get_property_result(&object, "calendarName")?;
+    if matches!(value, Value::Undefined) {
+        return Ok("auto".into());
+    }
+    let value = crate::conversion::to_string(&value)?;
+    if matches!(value.as_str(), "auto" | "always" | "never" | "critical") {
+        Ok(value)
+    } else {
+        Err(crate::value::error::throw_range_error(
+            "Invalid calendarName",
+        ))
+    }
+}
+
+fn format_year(year: i32) -> String {
+    match year {
+        year if year < 0 => format!("-{0:06}", year.unsigned_abs()),
+        0..=9999 => format!("{year:04}"),
+        _ => format!("+{year:06}"),
+    }
 }
 
 fn in_leap_year(receiver: Option<&Value>) -> Result<Value, VmError> {

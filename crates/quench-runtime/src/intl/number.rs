@@ -50,6 +50,7 @@ pub(crate) struct RawOptions {
     unit: Option<String>,
     unit_display: String,
     grouping: String,
+    grouping_explicit: bool,
     minimum_fraction_digits: f64,
     minimum_integer_digits: f64,
     maximum_fraction_digits: f64,
@@ -101,6 +102,7 @@ impl RawOptions {
             unit: None,
             unit_display: "short".to_string(),
             grouping: "auto".to_string(),
+            grouping_explicit: false,
             minimum_fraction_digits: -1.0,
             minimum_integer_digits: 1.0,
             maximum_fraction_digits: -1.0,
@@ -120,11 +122,25 @@ impl RawOptions {
             for key in OPTION_KEYS {
                 let value = crate::execute::get_property_result(options, key)?;
                 if !matches!(value, Value::Undefined) {
-                    let text = if matches!(*key, "roundingMode" | "trailingZeroDisplay") {
+                    if *key == "useGrouping" {
+                        let (grouping, enabled, min2) = normalize_grouping(&value)?;
+                        raw.grouping = grouping;
+                        raw.grouping_explicit = true;
+                        raw.use_grouping = enabled;
+                        raw.grouping_min2 = min2;
+                        continue;
+                    }
+                    let text = if matches!(
+                        *key,
+                        "roundingMode" | "roundingPriority" | "trailingZeroDisplay"
+                    ) {
                         crate::conversion::to_string(&value)?
                     } else if *key == "roundingIncrement" {
                         crate::conversion::to_number(&value)?.to_string()
-                    } else if matches!(*key, "currency" | "currencyDisplay" | "unitDisplay") {
+                    } else if matches!(
+                        *key,
+                        "style" | "currency" | "currencyDisplay" | "unitDisplay"
+                    ) {
                         crate::conversion::to_string(&value)?
                     } else {
                         to_string_value(&value)
@@ -140,11 +156,34 @@ impl RawOptions {
                             ));
                         }
                     }
+                    if *key == "style"
+                        && !matches!(text.as_str(), "decimal" | "currency" | "percent" | "unit")
+                    {
+                        return Err(runtime_error("RangeError: style"));
+                    }
+                    if *key == "localeMatcher" && text == "null" {
+                        return Err(runtime_error("TypeError: localeMatcher"));
+                    }
+                    if *key == "currency"
+                        && (text.len() != 3
+                            || !text
+                                .chars()
+                                .all(|character| character.is_ascii_alphabetic()))
+                    {
+                        return Err(runtime_error("RangeError: currency"));
+                    }
                     if *key == "trailingZeroDisplay"
                         && !matches!(text.as_str(), "auto" | "stripIfInteger")
                     {
                         return Err(crate::value::error::throw_range_error(
                             "invalid trailingZeroDisplay",
+                        ));
+                    }
+                    if *key == "roundingPriority"
+                        && !matches!(text.as_str(), "auto" | "morePrecision" | "lessPrecision")
+                    {
+                        return Err(crate::value::error::throw_range_error(
+                            "invalid roundingPriority",
                         ));
                     }
                     if *key == "numberingSystem" && !valid_numbering_system_syntax(&text) {
@@ -155,6 +194,9 @@ impl RawOptions {
                     apply_option(&mut raw, key, &text);
                 }
             }
+        }
+        if raw.style == "currency" && raw.currency.is_none() {
+            return Err(runtime_error("TypeError: currency"));
         }
         Ok(raw)
     }
@@ -184,11 +226,7 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
         "minimumFractionDigits" => raw.minimum_fraction_digits = value.parse().unwrap_or(0.0),
         "minimumIntegerDigits" => raw.minimum_integer_digits = value.parse().unwrap_or(1.0),
         "maximumFractionDigits" => raw.maximum_fraction_digits = value.parse().unwrap_or(3.0),
-        "useGrouping" => {
-            raw.grouping = value.to_string();
-            raw.use_grouping = grouping_enabled(value);
-            raw.grouping_min2 = value == "min2";
-        }
+        "useGrouping" => raw.grouping = value.to_string(),
         "notation" => raw.notation = value.to_string(),
         "compactDisplay" => raw.compact_display = value.to_string(),
         "roundingMode" => raw.rounding_mode = value.to_string(),
@@ -214,40 +252,8 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             "options must not be null",
         ));
     }
-    validate_options(arguments.get(1))?;
     let options = NumberOptions::from_options(locale, arguments.get(1))?;
     Ok(options.build_object())
-}
-
-pub(crate) fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
-    let Some(value @ Value::Object(_)) = options else {
-        return Ok(());
-    };
-    let property = |key: &str| crate::vm::get_property_result(value, key);
-    let style = property("style")?;
-    let style = crate::conversion::to_string(&style)?;
-    if !matches!(
-        style.as_str(),
-        "undefined" | "decimal" | "currency" | "percent" | "unit"
-    ) {
-        return Err(runtime_error("RangeError: style"));
-    }
-    let matcher = property("localeMatcher")?;
-    if crate::conversion::to_string(&matcher)? == "null" {
-        return Err(runtime_error("TypeError: localeMatcher"));
-    }
-    let currency = property("currency")?;
-    let currency_is_undefined = matches!(currency, Value::Undefined);
-    let currency = crate::conversion::to_string(&currency)?;
-    if style == "currency" && currency_is_undefined {
-        return Err(runtime_error("TypeError: currency"));
-    }
-    if !currency_is_undefined
-        && (currency.len() != 3 || !currency.chars().all(|c| c.is_ascii_alphabetic()))
-    {
-        return Err(runtime_error("RangeError: currency"));
-    }
-    Ok(())
 }
 
 impl NumberOptions {
@@ -257,6 +263,7 @@ impl NumberOptions {
         validate_significant_digits(&raw)?;
         validate_rounding_mode(&raw.rounding_mode)?;
         validate_rounding_increment(&raw)?;
+        validate_trailing_zero_display(&raw.trailing_zero_display)?;
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),
@@ -456,6 +463,12 @@ fn number_options(
         .as_ref()
         .filter(|_| raw.style == "currency")
         .cloned();
+    let compact_grouping_default = raw.notation == "compact" && !raw.grouping_explicit;
+    let grouping = if compact_grouping_default {
+        "min2".to_string()
+    } else {
+        raw.grouping.clone()
+    };
     NumberOptions {
         locale,
         numbering_system,
@@ -465,12 +478,12 @@ fn number_options(
         currency_sign: raw.currency_sign,
         unit: raw.unit,
         unit_display: raw.unit_display,
-        grouping: raw.grouping,
+        grouping,
         minimum_integer_digits: raw.minimum_integer_digits.max(1.0) as u32,
         minimum_fraction_digits: minimum_fraction_digits as u32,
         maximum_fraction_digits: maximum_fraction_digits as u32,
         use_grouping: raw.use_grouping,
-        grouping_min2: raw.grouping_min2,
+        grouping_min2: raw.grouping_min2 || compact_grouping_default,
         notation: raw.notation,
         compact_display: raw.compact_display,
         rounding_mode: raw.rounding_mode,

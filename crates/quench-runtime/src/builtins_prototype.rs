@@ -104,6 +104,7 @@ fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
             | Builtin::AggregateErrorPrototype
             | Builtin::SuppressedErrorPrototype
             | Builtin::IntlCollatorPrototype
+            | Builtin::IntlLocalePrototype
             | Builtin::IntlPluralRulesPrototype,
         )) => "Object",
         Some(Value::Builtin(_)) => "Function",
@@ -158,11 +159,31 @@ pub(crate) fn function_prototype_to_string(receiver: Option<&Value>) -> Value {
             "function {}() {{ [native code] }}",
             builtin_name(*builtin)
         )),
-        Some(Value::Function(_)) | Some(Value::BoundFunction(_)) => {
-            Value::String("function () {{ [native code] }}".to_string())
+        Some(Value::Function(function)) => {
+            dynamic_function_source(function).map_or_else(native_function_source, Value::String)
         }
+        Some(Value::BoundFunction(_)) => native_function_source(),
         _ => Value::String(String::new()),
     }
+}
+
+fn dynamic_function_source(function: &crate::value::FunctionValue) -> Option<String> {
+    function
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find_map(|(key, value)| {
+            (key == "\0dynamic_source").then(|| match value {
+                Value::String(source) => Some(source.clone()),
+                _ => None,
+            })
+        })
+        .flatten()
+}
+
+fn native_function_source() -> Value {
+    Value::String("function () {{ [native code] }}".to_string())
 }
 
 pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {

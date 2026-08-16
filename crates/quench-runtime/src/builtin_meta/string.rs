@@ -4,6 +4,17 @@ use crate::ops::Builtin;
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::StringAnchor => Some("String.prototype.anchor"),
+        Builtin::StringBig => Some("String.prototype.big"),
+        Builtin::StringBlink => Some("String.prototype.blink"),
+        Builtin::StringBold => Some("String.prototype.bold"),
+        Builtin::StringFixed => Some("String.prototype.fixed"),
+        Builtin::StringFontcolor => Some("String.prototype.fontcolor"),
+        Builtin::StringFontsize => Some("String.prototype.fontsize"),
+        Builtin::StringItalics => Some("String.prototype.italics"),
+        Builtin::StringLink => Some("String.prototype.link"),
+        Builtin::StringStrike => Some("String.prototype.strike"),
+        Builtin::StringSmall => Some("String.prototype.small"),
         Builtin::StringIterator => Some("[Symbol.iterator]"),
         Builtin::StringIteratorNext => Some("StringIterator.prototype.next"),
         Builtin::StringFromCharCode => Some("String.fromCharCode"),
@@ -20,6 +31,7 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::StringTrim => Some("String.prototype.trim"),
         Builtin::StringToLowerCase => Some("String.prototype.toLowerCase"),
         Builtin::StringToUpperCase => Some("String.prototype.toUpperCase"),
+        Builtin::StringNormalize => Some("String.prototype.normalize"),
         Builtin::StringCharAt => Some("String.prototype.charAt"),
         Builtin::StringCharCodeAt => Some("String.prototype.charCodeAt"),
         Builtin::StringIndexOf => Some("String.prototype.indexOf"),
@@ -54,6 +66,17 @@ const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
+        Builtin::StringAnchor => Some(1.0),
+        Builtin::StringBig => Some(0.0),
+        Builtin::StringBlink => Some(0.0),
+        Builtin::StringBold => Some(0.0),
+        Builtin::StringFixed => Some(0.0),
+        Builtin::StringFontcolor => Some(1.0),
+        Builtin::StringFontsize => Some(1.0),
+        Builtin::StringItalics => Some(0.0),
+        Builtin::StringLink => Some(1.0),
+        Builtin::StringStrike => Some(0.0),
+        Builtin::StringSmall => Some(0.0),
         Builtin::StringIterator => Some(0.0),
         Builtin::StringIteratorNext => Some(0.0),
         Builtin::StringFromCharCode => Some(1.0),
@@ -64,6 +87,7 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         | Builtin::StringTrim
         | Builtin::StringToLowerCase
         | Builtin::StringToUpperCase
+        | Builtin::StringNormalize
         | Builtin::StringTrimStart
         | Builtin::StringTrimEnd
         | Builtin::StringToString
@@ -100,6 +124,17 @@ const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
 
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
     match b {
+        Builtin::StringAnchor => Some("anchor"),
+        Builtin::StringBig => Some("big"),
+        Builtin::StringBlink => Some("blink"),
+        Builtin::StringBold => Some("bold"),
+        Builtin::StringFixed => Some("fixed"),
+        Builtin::StringFontcolor => Some("fontcolor"),
+        Builtin::StringFontsize => Some("fontsize"),
+        Builtin::StringItalics => Some("italics"),
+        Builtin::StringLink => Some("link"),
+        Builtin::StringStrike => Some("strike"),
+        Builtin::StringSmall => Some("small"),
         Builtin::StringIteratorNext => Some("next"),
         Builtin::StringFromCharCode => Some("fromCharCode"),
         Builtin::StringFromCodePoint => Some("fromCodePoint"),
@@ -143,6 +178,7 @@ const fn short_name_tail(builtin: Builtin) -> Option<&'static str> {
         Builtin::StringMatchAll => Some("matchAll"),
         Builtin::StringToLocaleLowerCase => Some("toLocaleLowerCase"),
         Builtin::StringToLocaleUpperCase => Some("toLocaleUpperCase"),
+        Builtin::StringNormalize => Some("normalize"),
         _ => None,
     }
 }

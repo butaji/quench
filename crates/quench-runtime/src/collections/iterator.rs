@@ -159,6 +159,7 @@ fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError
         IteratorState::RegExpString { .. } => Ok(None),
         IteratorState::Protocol { iterator, .. } => Ok(Some(iterator.clone())),
         IteratorState::Mapped { iterator, .. } => Ok(Some(iterator.clone())),
+        IteratorState::Filtered { iterator, .. } => Ok(Some(iterator.clone())),
         IteratorState::Concat { current, done, .. } if !*done => Ok(current.clone()),
         IteratorState::Concat { .. } => Ok(None),
         IteratorState::Zip { .. } => Ok(None),
@@ -315,8 +316,18 @@ where
 {
     let iterator = open(value)?;
     loop {
-        let Some(item) = step_value(&iterator)? else {
-            return Ok(());
+        let item = match step_value(&iterator) {
+            Ok(Some(item)) => item,
+            Ok(None) => return Ok(()),
+            Err(error) => {
+                if let crate::execute::VmError::Thrown(reason) = &error {
+                    let _ = close(
+                        iterator.clone(),
+                        crate::completion::Completion::Throw(reason.clone()),
+                    );
+                }
+                return Err(error);
+            }
         };
         if let Err(error) = callback(item) {
             if let crate::execute::VmError::Thrown(reason) = &error {
@@ -396,6 +407,7 @@ pub(super) fn mark_done(data: &IteratorData) {
         | IteratorState::Protocol { done, .. }
         | IteratorState::RegExpString { done, .. } => *done = true,
         IteratorState::Mapped { done, .. } => *done = true,
+        IteratorState::Filtered { done, .. } => *done = true,
         IteratorState::Concat { done, .. } => *done = true,
         IteratorState::Zip { done, .. } => *done = true,
     }

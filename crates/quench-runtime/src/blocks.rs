@@ -36,6 +36,15 @@ fn reduce_body(
     block_locals.retain(|name, _| !name.starts_with("\0lexical-predeclared:"));
     let mut last = None;
     for statement in &block.body {
+        if let oxc::ast::ast::Statement::FunctionDeclaration(function) = statement {
+            if function.id.as_ref().is_some_and(|identifier| {
+                facts
+                    .eval_var_barrier
+                    .contains(&identifier.name.to_string())
+            }) {
+                continue;
+            }
+        }
         if let Some(value) = reduce_statement(
             statement,
             ops,

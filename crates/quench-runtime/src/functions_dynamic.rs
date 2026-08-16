@@ -1,6 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use oxc::{allocator::Allocator, ast::visit::Visit, parser::Parser, span::SourceType};
+use oxc::{
+    allocator::Allocator,
+    ast::{
+        ast::{Class, PrivateFieldExpression, PrivateInExpression},
+        visit::{walk, Visit},
+    },
+    parser::Parser,
+    span::SourceType,
+};
 
 use crate::{
     conversion::to_string, execute::VmError, facts::ProgramDb, ops::FunctionKind, value::Value,
@@ -53,12 +61,25 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     if matches!(kind, FunctionKind::Generator) && has_yield_expression(&function.params) {
         return Err(syntax_error("Invalid generator parameters"));
     }
+    let strictness = crate::reduce_support::function_strictness(body, false);
+    if matches!(strictness, crate::ops::FunctionStrictness::Strict)
+        && has_duplicate_parameter_names(&function.params)
+    {
+        return Err(syntax_error("Duplicate function parameter name"));
+    }
+    if matches!(strictness, crate::ops::FunctionStrictness::Strict)
+        && has_strict_parameter_name(&function.params)
+    {
+        return Err(syntax_error("Invalid strict function parameter"));
+    }
     let (parameters, count) = crate::functions::function_parameters(function)
         .map_err(|_| syntax_error("Invalid function parameters"))?;
-    let strictness = crate::reduce_support::function_strictness(body, false);
     if matches!(strictness, crate::ops::FunctionStrictness::Strict) && contains_with_statement(body)
     {
         return Err(syntax_error("Invalid strict function body"));
+    }
+    if has_invalid_private_identifier(body) {
+        return Err(syntax_error("Invalid private identifier"));
     }
     let mut facts = ProgramDb {
         strict: matches!(strictness, crate::ops::FunctionStrictness::Strict),
@@ -81,8 +102,37 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     let length = crate::function_parameters::expected_argument_count(&function.params);
     let value = dynamic_value(ops, count, length, strictness, kind, is_async);
     crate::builtins::set_function_name(&value, "anonymous")?;
-    mark_dynamic(&value);
+    mark_dynamic(&value, source);
     Ok(value)
+}
+
+fn has_duplicate_parameter_names(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    let mut seen = HashSet::new();
+    let names = parameters
+        .items
+        .iter()
+        .flat_map(|item| crate::binding_patterns::names(&item.pattern))
+        .chain(
+            parameters
+                .rest
+                .iter()
+                .flat_map(|rest| crate::binding_patterns::names(&rest.argument)),
+        );
+    names.into_iter().any(|name| !seen.insert(name))
+}
+
+fn has_strict_parameter_name(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
+    parameters
+        .items
+        .iter()
+        .flat_map(|item| crate::binding_patterns::names(&item.pattern))
+        .chain(
+            parameters
+                .rest
+                .iter()
+                .flat_map(|rest| crate::binding_patterns::names(&rest.argument)),
+        )
+        .any(|name| matches!(name.as_str(), "eval" | "arguments"))
 }
 
 fn contains_with_statement(body: &oxc::ast::ast::FunctionBody<'_>) -> bool {
@@ -99,6 +149,38 @@ fn contains_with_statement(body: &oxc::ast::ast::FunctionBody<'_>) -> bool {
     let mut validator = Validator { found: false };
     validator.visit_function_body(body);
     validator.found
+}
+
+fn has_invalid_private_identifier(body: &oxc::ast::ast::FunctionBody<'_>) -> bool {
+    struct Validator {
+        class_depth: u16,
+        invalid: bool,
+    }
+
+    impl<'a> Visit<'a> for Validator {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            self.class_depth = self.class_depth.saturating_add(1);
+            walk::walk_class(self, class);
+            self.class_depth = self.class_depth.saturating_sub(1);
+        }
+
+        fn visit_private_field_expression(&mut self, expression: &PrivateFieldExpression<'a>) {
+            self.invalid |= self.class_depth == 0;
+            walk::walk_private_field_expression(self, expression);
+        }
+
+        fn visit_private_in_expression(&mut self, expression: &PrivateInExpression<'a>) {
+            self.invalid |= self.class_depth == 0;
+            walk::walk_private_in_expression(self, expression);
+        }
+    }
+
+    let mut validator = Validator {
+        class_depth: 0,
+        invalid: false,
+    };
+    validator.visit_function_body(body);
+    validator.invalid
 }
 
 fn forbidden_parameter_expression(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
@@ -214,12 +296,14 @@ fn normalize_annex_b_comments(source: &str) -> String {
         .join("\n")
 }
 
-fn mark_dynamic(value: &Value) {
+fn mark_dynamic(value: &Value, source: &str) {
     if let Value::Function(function) = value {
-        function
-            .properties
-            .borrow_mut()
-            .push(("\0dynamic_function".to_string(), Value::Boolean(true)));
+        let mut properties = function.properties.borrow_mut();
+        properties.push(("\0dynamic_function".to_string(), Value::Boolean(true)));
+        properties.push((
+            "\0dynamic_source".to_string(),
+            Value::String(source.to_string()),
+        ));
     }
 }
 

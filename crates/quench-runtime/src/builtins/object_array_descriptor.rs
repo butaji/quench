@@ -38,7 +38,19 @@ fn refresh_array_descriptor(
     key: &str,
     mut descriptor: Value,
 ) -> Value {
-    let (Ok(index), Value::Object(properties)) = (key.parse::<usize>(), &mut descriptor) else {
+    let Value::Object(properties) = &mut descriptor else {
+        return descriptor;
+    };
+    if key == "length" {
+        if let Some((_, current)) = Rc::make_mut(properties)
+            .iter_mut()
+            .find(|(name, _)| name == "value")
+        {
+            *current = Value::Number(values.logical_len() as f64);
+        }
+        return descriptor;
+    }
+    let Ok(index) = key.parse::<usize>() else {
         return descriptor;
     };
     let Some(value) = values.get_index(index) else {
@@ -69,7 +81,9 @@ fn strict_arguments_thrower(values: &crate::value::ArrayData) -> Value {
     });
     realm
         .and_then(|realm| {
-            crate::vm::with_realm(realm, || crate::vm::realm_intrinsic(Builtin::ThrowTypeError))
+            crate::vm::with_realm(realm, || {
+                crate::vm::realm_intrinsic(Builtin::ThrowTypeError)
+            })
         })
         .unwrap_or_else(|| crate::vm::realm_intrinsic(Builtin::ThrowTypeError))
 }

@@ -22,6 +22,12 @@ pub enum IteratorState {
         index: usize,
         done: bool,
     },
+    Filtered {
+        iterator: Value,
+        predicate: Value,
+        index: usize,
+        done: bool,
+    },
     Native {
         values: Vec<Value>,
         receiver: Option<Rc<crate::value::ArrayData>>,

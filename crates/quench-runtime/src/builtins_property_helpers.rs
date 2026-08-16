@@ -68,6 +68,11 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
     let Some(descriptor) = arguments.get(2) else {
         return Ok(target.clone());
     };
+    if !crate::value::is_object(descriptor) {
+        return Err(crate::value::error::throw_type_error(
+            "Property descriptor must be an object",
+        ));
+    }
     let descriptor = descriptor_fields(descriptor)?;
     let result = define_own_property(target, &key, &descriptor)?;
     crate::locals::replace_value(target, &result);
@@ -88,7 +93,12 @@ pub(crate) fn define_own_property(
         ));
     }
     validate_redefinition(&current, descriptor)?;
+    validate_array_length_descriptor(target, key, descriptor)?;
+    validate_array_index_length(target, key)?;
     let descriptor = complete_descriptor(descriptor, &current);
+    if let Some(result) = prepare_array_length_definition(target, key, &descriptor)? {
+        return Ok(result);
+    }
     let value = descriptor
         .iter()
         .rev()
@@ -99,6 +109,8 @@ pub(crate) fn define_own_property(
         .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
     let mut result = if accessor {
         define_accessor_placeholder(target.clone(), key)
+    } else if let Some(updated) = crate::typed_array_ops::set_property(target, key, &value) {
+        updated?
     } else {
         define_property_value(target.clone(), key, value)
     };

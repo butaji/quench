@@ -34,6 +34,7 @@ pub(crate) fn format_temporal_duration(
             "Temporal.Duration.prototype.toLocaleString called on incompatible receiver",
         )
     })?;
+    crate::temporal::duration::validate_receiver(duration)?;
     let formatter = construct(&[
         arguments.first().cloned().unwrap_or(Value::Undefined),
         arguments.get(1).cloned().unwrap_or(Value::Undefined),
@@ -299,19 +300,11 @@ fn method(
 
 fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<String, VmError> {
     let value = value.unwrap_or(&Value::Undefined);
-    let Value::Object(properties) = value else {
-        return Err(match value {
-            value if crate::conversion::is_symbol(value) => {
-                crate::value::error::throw_type_error("Duration must be an object")
-            }
-            Value::String(_) => runtime_error("RangeError: invalid duration string"),
-            _ => crate::value::error::throw_type_error("Duration must be an object"),
-        });
-    };
-    validate_duration_fields(properties)?;
+    let properties = duration_properties(value)?;
+    validate_duration_fields(&properties)?;
     let [_, _, _, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] =
-        duration_values(properties);
-    validate_duration(properties)?;
+        duration_values(&properties);
+    validate_duration(&properties)?;
     format_duration_values(
         slots,
         days,
@@ -322,6 +315,28 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
         microseconds,
         nanoseconds,
     )
+}
+
+fn duration_properties(value: &Value) -> Result<Vec<(String, Value)>, VmError> {
+    match value {
+        Value::Object(object) => Ok(object.properties.clone()),
+        Value::ObjectAlias(alias) => alias
+            .0
+            .borrow()
+            .upgrade()
+            .map(|object| object.properties.clone())
+            .ok_or_else(|| crate::value::error::throw_type_error("Duration must be an object")),
+        value if crate::conversion::is_symbol(value) => Err(crate::value::error::throw_type_error(
+            "Duration must be an object",
+        )),
+        Value::String(text) => {
+            let parsed = crate::temporal::duration::parse_string(text)?;
+            duration_properties(&parsed)
+        }
+        _ => Err(crate::value::error::throw_type_error(
+            "Duration must be an object",
+        )),
+    }
 }
 
 fn format_duration_values(
@@ -368,8 +383,8 @@ fn format_duration_shape(
     microseconds: i64,
     nanoseconds: i64,
 ) -> Result<String, VmError> {
-    if slot_value(slots, "minutes") == Some("numeric")
-        && slot_value(slots, "seconds") == Some("numeric")
+    if matches!(slot_value(slots, "minutes"), Some("numeric" | "2-digit"))
+        && matches!(slot_value(slots, "seconds"), Some("numeric" | "2-digit"))
     {
         return Ok(format_clock_duration(days, hours, minutes, seconds));
     }

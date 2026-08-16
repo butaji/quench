@@ -14,6 +14,7 @@ const TEMPORAL_DURATION_PROTOTYPE_NAMES: &[&str] = &[
     "sign",
     "blank",
     "abs",
+    "add",
     "toString",
     "toJSON",
     "valueOf",
@@ -124,7 +125,7 @@ fn own_property_names_temporal(builtin: Builtin) -> &'static [&'static str] {
         Builtin::Temporal => &["Duration", "PlainDate", "Symbol.toStringTag"],
         Builtin::TemporalDuration => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalDurationPrototype => TEMPORAL_DURATION_PROTOTYPE_NAMES,
-        Builtin::TemporalPlainDate => &["length", "name", "prototype", "from"],
+        Builtin::TemporalPlainDate => &["length", "name", "prototype", "from", "compare"],
         Builtin::TemporalPlainDatePrototype => TEMPORAL_PLAIN_DATE_PROTOTYPE_NAMES,
         _ => &[],
     }

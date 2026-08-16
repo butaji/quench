@@ -69,10 +69,7 @@ fn object_inherited_property_result(
     if matches!(prototype, Value::Null) {
         return Some(Ok(Value::Undefined));
     }
-    match get_property_with_receiver(prototype, key, receiver) {
-        Ok(Value::Undefined) => None,
-        result => Some(result),
-    }
+    Some(get_property_with_receiver(prototype, key, receiver))
 }
 
 fn finish_property_access(value: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
@@ -149,6 +146,13 @@ fn array_property_result(
     };
     if array_has_own_property(values, key) {
         return None;
+    }
+    if values.is_arguments() {
+        return Some(get_property_with_receiver(
+            &Value::Builtin(crate::ops::Builtin::ObjectPrototype),
+            key,
+            receiver,
+        ));
     }
     crate::arrays::prototype_override_getter(key).map(|getter| match getter {
         Value::Undefined => Ok(Value::Undefined),

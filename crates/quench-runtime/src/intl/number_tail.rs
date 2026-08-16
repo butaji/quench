@@ -88,8 +88,30 @@ fn validate_significant_digits(raw: &RawOptions) -> Result<(), VmError> {
     Ok(())
 }
 
-fn grouping_enabled(value: &str) -> bool {
-    matches!(value, "true" | "always" | "auto" | "min2")
+fn validate_trailing_zero_display(value: &str) -> Result<(), VmError> {
+    matches!(value, "auto" | "stripIfInteger")
+        .then_some(())
+        .ok_or_else(|| crate::value::error::throw_range_error("invalid trailingZeroDisplay"))
+}
+
+fn normalize_grouping(value: &Value) -> Result<(String, bool, bool), VmError> {
+    if !crate::execute::is_truthy(value) {
+        return Ok(("false".to_string(), false, false));
+    }
+    if matches!(value, Value::Boolean(true)) {
+        return Ok(("always".to_string(), true, false));
+    }
+    let text = crate::conversion::to_string(value)?;
+    let grouping = match text.as_str() {
+        "true" | "false" => "auto",
+        "auto" | "always" | "min2" => text.as_str(),
+        _ => {
+            return Err(crate::value::error::throw_range_error(
+                "invalid useGrouping",
+            ));
+        }
+    };
+    Ok((grouping.to_string(), true, grouping == "min2"))
 }
 
 fn fraction_digits(style: &str, currency: Option<&str>, notation: &str, requested: f64) -> u32 {
@@ -173,4 +195,3 @@ fn is_decimal_integer(value: &str) -> bool {
 fn strip_positive_sign(text: &str) -> String {
     text.strip_prefix('+').unwrap_or(text).to_string()
 }
-
