@@ -78,6 +78,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateDayGetter => Some(day(receiver)),
         crate::ops::Builtin::TemporalPlainDateYearGetter => Some(year(receiver)),
         crate::ops::Builtin::TemporalPlainDateMonthCodeGetter => Some(month_code(receiver)),
+        crate::ops::Builtin::TemporalPlainDateMonthGetter => Some(month(receiver)),
         _ => None,
     }
 }
@@ -241,6 +242,16 @@ fn month_code(receiver: Option<&Value>) -> Result<Value, VmError> {
     }
     let month = number_field(field(object, "month")) as u32;
     Ok(Value::String(format!("M{month:02}")))
+}
+
+fn month(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
+        return Err(invalid_receiver());
+    };
+    if !has_date_fields(object) {
+        return Err(invalid_receiver());
+    }
+    Ok(field(object, "month"))
 }
 fn with_calendar(receiver: Option<&Value>, calendar: Option<&Value>) -> Result<Value, VmError> {
     let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
