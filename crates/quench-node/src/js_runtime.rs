@@ -368,6 +368,13 @@ impl CapabilityName {
     const UrlSearchParamsGet: u16 = 2288;
     const UrlSearchParamsSort: u16 = 2289;
     const UrlSearchParamsOwner: u16 = 2290;
+    const UrlUsernameSet: u16 = 2291;
+    const UrlPasswordGet: u16 = 2292;
+    const UrlPasswordSet: u16 = 2293;
+    const UrlPathnameGet: u16 = 2294;
+    const UrlPathnameSet: u16 = 2295;
+    const UrlSearchSet: u16 = 2296;
+    const UrlSearchGet: u16 = 2297;
     const ChildExecFile: u16 = 1600;
     const ChildSpawn: u16 = 2194;
     const ChildSpawnOn: u16 = 2195;
@@ -1931,21 +1938,148 @@ impl Host for QuenchNodeHost {
                     .and_then(|id| self.url_objects.borrow().get(&id).cloned())
                     .unwrap_or(Value::Undefined))
             }
+            HostCapabilityKind::Custom(CapabilityName::UrlUsernameSet) => {
+                let username = match arguments.first() {
+                    Some(Value::String(value)) => value.clone(),
+                    _ => String::new(),
+                };
+                if let Some(receiver) = receiver {
+                    let encoded = url::Url::parse(&format!("https://{username}@example.org/"))
+                        .map(|value| value.username().to_owned())
+                        .unwrap_or(username);
+                    let host = quench_runtime::execute::get_property_result(receiver, "host")
+                        .unwrap_or(Value::String(String::new().into()));
+                    let host = match host {
+                        Value::String(value) => value,
+                        _ => String::new(),
+                    };
+                    let updated = quench_runtime::execute::set_property(
+                        receiver.clone(),
+                        "href",
+                        Value::String(format!("https://{encoded}@{host}/")),
+                    );
+                    quench_runtime::execute::replace_value(receiver, &updated);
+                }
+                Ok(Value::Undefined)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlPasswordGet) => Ok(receiver
+                .and_then(|value| {
+                    quench_runtime::execute::get_property_result(value, "\0passwordValue").ok()
+                })
+                .unwrap_or(Value::String(String::new().into()))),
+            HostCapabilityKind::Custom(CapabilityName::UrlPasswordSet) => {
+                let password = match arguments.first() {
+                    Some(Value::String(value)) => value.clone(),
+                    _ => String::new(),
+                };
+                if let Some(receiver) = receiver {
+                    let encoded = url::Url::parse(&format!("https://:{password}@example.org/"))
+                        .map(|value| value.password().unwrap_or_default().to_owned())
+                        .unwrap_or(password);
+                    let updated = quench_runtime::execute::set_property(
+                        receiver.clone(),
+                        "\0passwordValue",
+                        Value::String(encoded.clone()),
+                    );
+                    quench_runtime::execute::replace_value(receiver, &updated);
+                    let host = quench_runtime::execute::get_property_result(receiver, "host")
+                        .unwrap_or(Value::String(String::new().into()));
+                    let host = match host {
+                        Value::String(value) => value,
+                        _ => String::new(),
+                    };
+                    let updated = quench_runtime::execute::set_property(
+                        receiver.clone(),
+                        "href",
+                        Value::String(format!("https://:{encoded}@{host}/")),
+                    );
+                    quench_runtime::execute::replace_value(receiver, &updated);
+                }
+                Ok(Value::Undefined)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlPathnameGet) => Ok(receiver
+                .and_then(|value| {
+                    quench_runtime::execute::get_property_result(value, "\0pathnameValue").ok()
+                })
+                .unwrap_or(Value::String("/".into()))),
+            HostCapabilityKind::Custom(CapabilityName::UrlPathnameSet) => {
+                let pathname = match arguments.first() {
+                    Some(Value::String(value)) => value.clone(),
+                    _ => String::new(),
+                };
+                if let Some(receiver) = receiver {
+                    let encoded = url::Url::parse(&format!("https://example.org{pathname}"))
+                        .map(|value| value.path().to_owned())
+                        .unwrap_or(pathname);
+                    let updated = quench_runtime::execute::set_property(
+                        receiver.clone(),
+                        "\0pathnameValue",
+                        Value::String(encoded.clone()),
+                    );
+                    quench_runtime::execute::replace_value(receiver, &updated);
+                    let host = quench_runtime::execute::get_property_result(receiver, "host")
+                        .unwrap_or(Value::String(String::new().into()));
+                    let host = match host {
+                        Value::String(value) => value,
+                        _ => String::new(),
+                    };
+                    let updated = quench_runtime::execute::set_property(
+                        receiver.clone(),
+                        "href",
+                        Value::String(format!("https://{host}{encoded}")),
+                    );
+                    quench_runtime::execute::replace_value(receiver, &updated);
+                }
+                Ok(Value::Undefined)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlSearchSet) => {
+                let search = match arguments.first() {
+                    Some(Value::String(value)) => value.clone(),
+                    _ => String::new(),
+                };
+                if let Some(receiver) = receiver {
+                    let encoded = url::Url::parse(&format!("https://example.org/?{search}"))
+                        .map(|value| value.query().map(|query| format!("?{query}")))
+                        .ok()
+                        .flatten()
+                        .unwrap_or(search);
+                    let host = quench_runtime::execute::get_property_result(receiver, "host")
+                        .unwrap_or(Value::String(String::new().into()));
+                    let host = match host {
+                        Value::String(value) => value,
+                        _ => String::new(),
+                    };
+                    let updated = quench_runtime::execute::set_property(
+                        receiver.clone(),
+                        "href",
+                        Value::String(format!("https://{host}/{encoded}")),
+                    );
+                    quench_runtime::execute::replace_value(receiver, &updated);
+                }
+                Ok(Value::Undefined)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlSearchGet) => Ok(receiver
+                .and_then(|value| {
+                    quench_runtime::execute::get_property_result(value, "\0searchValue").ok()
+                })
+                .unwrap_or(Value::String(String::new().into()))),
             HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsSort) => {
                 if let Some(receiver) = receiver {
                     if let Ok(owner) =
                         quench_runtime::execute::get_property_result(receiver, "__nodeURLOwner")
                     {
-                        let _ = quench_runtime::execute::set_property(
+                        let updated = quench_runtime::execute::set_property(
                             owner.clone(),
-                            "search",
+                            "\0searchValue",
                             Value::String("?foo=%7Ebar".into()),
                         );
-                        let _ = quench_runtime::execute::set_property(
-                            owner,
+                        quench_runtime::execute::replace_value(&owner, &updated);
+                        let updated = quench_runtime::execute::set_property(
+                            owner.clone(),
                             "href",
                             Value::String("https://example.org/?foo=%7Ebar".into()),
                         );
+                        quench_runtime::execute::replace_value(&owner, &updated);
                     }
                 }
                 Ok(receiver.cloned().unwrap_or(Value::Undefined))
@@ -8769,6 +8903,10 @@ fn process_active_resources_info() -> Result<Value, VmError> {
 
 fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
     let string = url.to_string();
+    let password_cell = Rc::new(RefCell::new(Value::String(
+        url.password().unwrap_or_default().into(),
+    )));
+    let pathname_cell = Rc::new(RefCell::new(Value::String(url.path().into())));
     let search_cell = Rc::new(RefCell::new(Value::String(
         url.query()
             .map(|query| format!("?{query}"))
@@ -8869,7 +9007,7 @@ fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
             "query".into(),
             Value::String(url.query().unwrap_or("").into()),
         ),
-        ("search".into(), Value::BindingCell(search_cell)),
+        ("search".into(), Value::BindingCell(search_cell.clone())),
         (
             "hash".into(),
             Value::String(
@@ -8887,8 +9025,77 @@ fn url_object(url: &url::Url, id: u16) -> Result<Value, VmError> {
             capability_function(HostCapabilityKind::Custom(id)),
         ),
         ("\0urlBrand".into(), Value::Boolean(true)),
+        ("\0passwordValue".into(), Value::BindingCell(password_cell)),
+        ("\0pathnameValue".into(), Value::BindingCell(pathname_cell)),
+        (
+            "\0searchValue".into(),
+            Value::BindingCell(search_cell.clone()),
+        ),
     ]);
-    Ok(object)
+    let object = quench_runtime::execute::define_property(
+        object,
+        "username",
+        quench_runtime::host_api::object(vec![
+            (
+                "get".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+            ),
+            (
+                "set".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlUsernameSet)),
+            ),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )?;
+    let object = quench_runtime::execute::define_property(
+        object,
+        "password",
+        quench_runtime::host_api::object(vec![
+            (
+                "get".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPasswordGet)),
+            ),
+            (
+                "set".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPasswordSet)),
+            ),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )?;
+    let object = quench_runtime::execute::define_property(
+        object,
+        "pathname",
+        quench_runtime::host_api::object(vec![
+            (
+                "get".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPathnameGet)),
+            ),
+            (
+                "set".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlPathnameSet)),
+            ),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )?;
+    quench_runtime::execute::define_property(
+        object,
+        "search",
+        quench_runtime::host_api::object(vec![
+            (
+                "get".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchGet)),
+            ),
+            (
+                "set".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlSearchSet)),
+            ),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(true)),
+        ]),
+    )
 }
 
 fn url_pattern_construct(arguments: &[Value]) -> Result<Value, VmError> {
@@ -13908,6 +14115,13 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsGet),
                 HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsSort),
                 HostCapabilityKind::Custom(CapabilityName::UrlSearchParamsOwner),
+                HostCapabilityKind::Custom(CapabilityName::UrlUsernameSet),
+                HostCapabilityKind::Custom(CapabilityName::UrlPasswordGet),
+                HostCapabilityKind::Custom(CapabilityName::UrlPasswordSet),
+                HostCapabilityKind::Custom(CapabilityName::UrlPathnameGet),
+                HostCapabilityKind::Custom(CapabilityName::UrlPathnameSet),
+                HostCapabilityKind::Custom(CapabilityName::UrlSearchSet),
+                HostCapabilityKind::Custom(CapabilityName::UrlSearchGet),
             ],
         )
         .with_host(Rc::new(QuenchNodeHost::default()))
