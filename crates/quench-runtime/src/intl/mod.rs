@@ -149,8 +149,8 @@ fn list_supported_locales_of(arguments: &[Value]) -> Result<Value, VmError> {
     ))
 }
 
-fn supported_segmenter_locale(locale: &str) -> bool {
-    ["de", "en", "sr", "zh"]
+pub(crate) fn supported_segmenter_locale(locale: &str) -> bool {
+    ["ar", "de", "en", "fr", "sr", "zh"]
         .iter()
         .any(|language| locale == *language || locale.starts_with(&format!("{language}-")))
 }
