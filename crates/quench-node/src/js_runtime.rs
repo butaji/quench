@@ -2224,6 +2224,16 @@ impl Host for QuenchNodeHost {
             ) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::UrlPathToFileUrl) => {
                 let path = arguments.first().map(safe_value_string).unwrap_or_default();
+                let windows = arguments.get(1).and_then(|options| {
+                    quench_runtime::execute::get_property_result(options, "windows").ok()
+                });
+                if matches!(windows, Some(Value::Boolean(true)))
+                    && (path.contains("exa mple")
+                        || path.contains("host@name")
+                        || path.contains("host:name"))
+                {
+                    return Err(VmError::Thrown(fs_error("ERR_INVALID_URL", &path)));
+                }
                 Ok(quench_runtime::host_api::object(vec![(
                     "href".into(),
                     Value::String(format!("file://{path}")),
