@@ -21,6 +21,14 @@ pub fn set_property(
     crate::builtins::set_property(target, key, value)
 }
 
+/// Set an object's prototype through the runtime's ordinary object semantics.
+pub fn set_prototype_of(
+    target: &crate::value::Value,
+    prototype: &crate::value::Value,
+) -> Result<crate::value::Value, VmError> {
+    crate::builtins::object::set_prototype_of(&[target.clone(), prototype.clone()])
+}
+
 /// Publish a host-side replacement for an identity-bearing JavaScript value.
 /// Hosts use this when a callback mutates an object through a receiver but
 /// the value representation requires replacement rather than interior
