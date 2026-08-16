@@ -4337,12 +4337,20 @@ fn fs_chmod(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn fs_access_async(arguments: &[Value]) -> Result<Value, VmError> {
     path_arg(arguments, 0).map_err(invalid_path_error)?;
-    fs_access_sync(&arguments[..arguments.len().min(2)])?;
+    let check_len = if matches!(
+        arguments.get(1),
+        Some(Value::Function(_) | Value::BoundFunction(_))
+    ) {
+        1
+    } else {
+        arguments.len().min(2)
+    };
+    fs_access_sync(&arguments[..check_len])?;
     let callback = arguments
         .get(2)
         .or_else(|| arguments.get(1))
         .ok_or(VmError::NotCallable)?;
-    match fs_access_sync(arguments) {
+    match fs_access_sync(&arguments[..check_len]) {
         Ok(_) => quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null]),
         Err(error) => quench_runtime::execute::call(
             callback,
