@@ -162,7 +162,13 @@ fn plural_categories(locale: &str, plural_type: &str) -> Value {
     } else if locale.starts_with("ru") || locale.starts_with("uk") {
         vec!["one", "few", "many", "other"]
     } else if locale.starts_with("fr") {
-        vec!["one", "other"]
+        vec!["one", "many", "other"]
+    } else if locale.starts_with("gv") {
+        vec!["one", "two", "few", "many", "other"]
+    } else if locale.starts_with("sl") {
+        vec!["one", "two", "few", "other"]
+    } else if locale.starts_with("ko") {
+        vec!["other"]
     } else {
         vec!["one", "other"]
     };
