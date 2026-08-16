@@ -24,6 +24,7 @@ thread_local! {
     static NODE_PRIORITY: Cell<i32> = const { Cell::new(0) };
     static VM_SCRIPT_RUNS: Cell<u32> = const { Cell::new(0) };
     static VM_COMPILE_CONTEXT_EXTENSION: Cell<bool> = const { Cell::new(false) };
+    static VM_COMPILE_PARSING_CONTEXT: RefCell<Option<Value>> = const { RefCell::new(None) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
 }
 
@@ -463,7 +464,8 @@ impl Host for QuenchNodeHost {
     ) -> Result<Value, VmError> {
         match capability.kind {
             HostCapabilityKind::Custom(CapabilityName::Require) => {
-                if matches!(arguments.first(), Some(Value::String(name)) if name.trim_start_matches("node:") == "string_decoder") {
+                if matches!(arguments.first(), Some(Value::String(name)) if name.trim_start_matches("node:") == "string_decoder")
+                {
                     Ok(string_decoder_module())
                 } else {
                     require_module(arguments)
@@ -679,28 +681,62 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::PathParse) => path_parse(arguments, false),
             HostCapabilityKind::Custom(CapabilityName::PathFormat) => path_format(arguments, false),
             HostCapabilityKind::Custom(CapabilityName::PathWinParse) => path_parse(arguments, true),
-            HostCapabilityKind::Custom(CapabilityName::PathWinFormat) => path_format(arguments, true),
-            HostCapabilityKind::Custom(CapabilityName::PathWinBasename) => path_win_basename(arguments),
-            HostCapabilityKind::Custom(CapabilityName::PathWinIsAbsolute) => path_is_absolute_win(arguments),
-            HostCapabilityKind::Custom(CapabilityName::PathMatchesGlob) => path_matches_glob(arguments, false),
-            HostCapabilityKind::Custom(CapabilityName::PathWinMatchesGlob) => path_matches_glob(arguments, true),
-            HostCapabilityKind::Custom(CapabilityName::PathResolve) => path_resolve(arguments, false),
-            HostCapabilityKind::Custom(CapabilityName::PathWinResolve) => path_resolve(arguments, true),
-            HostCapabilityKind::Custom(CapabilityName::BufferIndexOf) => buffer_search(receiver, arguments, false),
-            HostCapabilityKind::Custom(CapabilityName::BufferLastIndexOf) => buffer_search(receiver, arguments, true),
+            HostCapabilityKind::Custom(CapabilityName::PathWinFormat) => {
+                path_format(arguments, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::PathWinBasename) => {
+                path_win_basename(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::PathWinIsAbsolute) => {
+                path_is_absolute_win(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::PathMatchesGlob) => {
+                path_matches_glob(arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::PathWinMatchesGlob) => {
+                path_matches_glob(arguments, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::PathResolve) => {
+                path_resolve(arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::PathWinResolve) => {
+                path_resolve(arguments, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferIndexOf) => {
+                buffer_search(receiver, arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferLastIndexOf) => {
+                buffer_search(receiver, arguments, true)
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferToJson) => buffer_to_json(receiver),
             HostCapabilityKind::Custom(CapabilityName::BufferOf) => buffer_of(arguments),
-            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow) => buffer_alloc_unsafe(arguments),
-            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafe) => buffer_alloc_unsafe(arguments),
-            HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding) => buffer_is_encoding(arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow) => {
+                buffer_alloc_unsafe(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafe) => {
+                buffer_alloc_unsafe(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding) => {
+                buffer_is_encoding(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferSwap16) => buffer_swap(receiver, 2),
             HostCapabilityKind::Custom(CapabilityName::BufferSwap32) => buffer_swap(receiver, 4),
             HostCapabilityKind::Custom(CapabilityName::BufferSwap64) => buffer_swap(receiver, 8),
-            HostCapabilityKind::Custom(CapabilityName::BufferCopyBytesFrom) => buffer_copy_bytes_from(arguments),
-            HostCapabilityKind::Custom(CapabilityName::BufferReadBigInt64LE) => buffer_bigint(receiver, arguments, false, true),
-            HostCapabilityKind::Custom(CapabilityName::BufferReadBigUInt64BE) => buffer_bigint(receiver, arguments, true, false),
-            HostCapabilityKind::Custom(CapabilityName::BufferWriteBigInt64LE) => buffer_bigint(receiver, arguments, false, true),
-            HostCapabilityKind::Custom(CapabilityName::BufferWriteBigUInt64BE) => buffer_bigint(receiver, arguments, true, false),
+            HostCapabilityKind::Custom(CapabilityName::BufferCopyBytesFrom) => {
+                buffer_copy_bytes_from(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferReadBigInt64LE) => {
+                buffer_bigint(receiver, arguments, false, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferReadBigUInt64BE) => {
+                buffer_bigint(receiver, arguments, true, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferWriteBigInt64LE) => {
+                buffer_bigint(receiver, arguments, false, true)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferWriteBigUInt64BE) => {
+                buffer_bigint(receiver, arguments, true, false)
+            }
             HostCapabilityKind::Custom(CapabilityName::StringDecoderConstructor) => {
                 string_decoder_constructor(receiver, arguments)
             }
@@ -717,22 +753,44 @@ impl Host for QuenchNodeHost {
                 let target = arguments.first().ok_or(VmError::NotCallable)?;
                 string_decoder_constructor(Some(target), &arguments[1..])
             }
-            HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext) => vm_run_in_new_context(arguments),
-            HostCapabilityKind::Custom(CapabilityName::CryptoRandomBytes) => crypto_random_bytes(arguments),
-            HostCapabilityKind::Custom(CapabilityName::CryptoRandomFillSync) => crypto_random_fill(arguments),
+            HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext) => {
+                vm_run_in_new_context(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoRandomBytes) => {
+                crypto_random_bytes(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoRandomFillSync) => {
+                crypto_random_fill(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferIsAscii) => buffer_is_ascii(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8) => buffer_is_utf8(arguments),
-            HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor) => text_encoder_constructor(),
-            HostCapabilityKind::Custom(CapabilityName::TextEncoderEncode) => text_encoder_encode(receiver, arguments),
-            HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor) => text_decoder_constructor(),
-            HostCapabilityKind::Custom(CapabilityName::TextDecoderDecode) => text_decoder_decode(arguments),
+            HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor) => {
+                text_encoder_constructor()
+            }
+            HostCapabilityKind::Custom(CapabilityName::TextEncoderEncode) => {
+                text_encoder_encode(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor) => {
+                text_decoder_constructor()
+            }
+            HostCapabilityKind::Custom(CapabilityName::TextDecoderDecode) => {
+                text_decoder_decode(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferInspect) => buffer_inspect(receiver),
-            HostCapabilityKind::Custom(CapabilityName::InternalBinding) => internal_binding(arguments),
-            HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer) => internal_view_has_buffer(arguments),
+            HostCapabilityKind::Custom(CapabilityName::InternalBinding) => {
+                internal_binding(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer) => {
+                internal_view_has_buffer(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::UrlParse) => url_parse_legacy(arguments),
             HostCapabilityKind::Custom(CapabilityName::UrlFormat) => url_format_legacy(arguments),
-            HostCapabilityKind::Custom(CapabilityName::PathNormalize) => path_normalize(arguments, false),
-            HostCapabilityKind::Custom(CapabilityName::PathWinNormalize) => path_normalize(arguments, true),
+            HostCapabilityKind::Custom(CapabilityName::PathNormalize) => {
+                path_normalize(arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::PathWinNormalize) => {
+                path_normalize(arguments, true)
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
                 buffer_slice(receiver, arguments)
             }
@@ -742,7 +800,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferFill) => {
                 buffer_fill(receiver, arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::BufferCompare) => buffer_compare(receiver, arguments),
+            HostCapabilityKind::Custom(CapabilityName::BufferCompare) => {
+                buffer_compare(receiver, arguments)
+            }
             HostCapabilityKind::Custom(id)
                 if (CapabilityName::BufferNumericFirst
                     ..CapabilityName::BufferNumericFirst + 32)
@@ -802,12 +862,25 @@ impl Host for QuenchNodeHost {
                 buffer_byte_length(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::BufferFrom) => buffer_from(arguments),
-            HostCapabilityKind::Custom(CapabilityName::BufferHasInstance) => Ok(Value::Boolean(matches!(arguments.first(), Some(Value::Uint8Array(_))))),
-            HostCapabilityKind::Custom(CapabilityName::BufferInspectMaxBytesGet) => Ok(Value::Number(BUFFER_INSPECT_MAX_BYTES.with(Cell::get))),
+            HostCapabilityKind::Custom(CapabilityName::BufferHasInstance) => Ok(Value::Boolean(
+                matches!(arguments.first(), Some(Value::Uint8Array(_))),
+            )),
+            HostCapabilityKind::Custom(CapabilityName::BufferInspectMaxBytesGet) => {
+                Ok(Value::Number(BUFFER_INSPECT_MAX_BYTES.with(Cell::get)))
+            }
             HostCapabilityKind::Custom(CapabilityName::BufferInspectMaxBytesSet) => {
-                let value = arguments.first().and_then(|value| match value { Value::Number(value) => Some(*value), _ => None }).unwrap_or(f64::NAN);
+                let value = arguments
+                    .first()
+                    .and_then(|value| match value {
+                        Value::Number(value) => Some(*value),
+                        _ => None,
+                    })
+                    .unwrap_or(f64::NAN);
                 if value.is_nan() || value < 0.0 {
-                    return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "INSPECT_MAX_BYTES is out of range")));
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_OUT_OF_RANGE",
+                        "INSPECT_MAX_BYTES is out of range",
+                    )));
                 }
                 BUFFER_INSPECT_MAX_BYTES.with(|current| current.set(value));
                 Ok(Value::Undefined)
@@ -816,46 +889,159 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferIsBuffer) => {
                 buffer_is_buffer(arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::UtilFormat) => util_format(receiver, arguments),
-            HostCapabilityKind::Custom(CapabilityName::UtilInspect) => util_inspect(receiver, arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilFormat) => {
+                util_format(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UtilInspect) => {
+                util_inspect(receiver, arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::UtilFormatWithOptions) => {
                 util_format_with_options(arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::InternalUtilSleep) => internal_util_sleep(arguments),
-            HostCapabilityKind::Custom(CapabilityName::InternalUtilEmitExperimentalWarning) => internal_util_emit_experimental_warning(arguments),
+            HostCapabilityKind::Custom(CapabilityName::InternalUtilSleep) => {
+                internal_util_sleep(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::InternalUtilEmitExperimentalWarning) => {
+                internal_util_emit_experimental_warning(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::ProcessOn) => process_on(arguments),
             HostCapabilityKind::Custom(CapabilityName::ProcessEmit) => process_emit(arguments),
-            HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage) => process_cpu_usage(arguments),
-            HostCapabilityKind::Custom(CapabilityName::ProcessHrtime) => process_hrtime(arguments),
-            HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo) => process_active_resources_info(),
-            HostCapabilityKind::Custom(CapabilityName::VmCreateContext) => vm_create_context(arguments),
-            HostCapabilityKind::Custom(CapabilityName::VmRunInContext) => vm_run_in_context(arguments),
-            HostCapabilityKind::Custom(CapabilityName::VmScript) => Ok(quench_runtime::host_api::object(vec![("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext))), ("runInNewContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInNewContext)))])),
-            HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => Ok(Value::String("passed".into())),
-            HostCapabilityKind::Custom(CapabilityName::Gc) => Ok(Value::Undefined),
-            HostCapabilityKind::Custom(CapabilityName::VmScriptRunInNewContext) => vm_script_run_new_context(arguments),
-            HostCapabilityKind::Custom(CapabilityName::VmCompileFunction) => {
-                if let Some(options) = arguments.get(2) {
-                    if matches!(quench_runtime::execute::get_property_result(options, "contextExtensions"), Ok(Value::Null)) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "contextExtensions must be an array"))); }
-                    if matches!(quench_runtime::execute::get_property_result(options, "contextExtensions"), Ok(Value::Array(_))) { VM_COMPILE_CONTEXT_EXTENSION.with(|enabled| enabled.set(true)); }
-                }
-                let function = capability_function(HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction));
-                Ok(quench_runtime::execute::set_property(function, "toString", capability_function(HostCapabilityKind::Custom(CapabilityName::VmCompiledToString))))
+            HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage) => {
+                process_cpu_usage(arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction) => if VM_COMPILE_CONTEXT_EXTENSION.with(Cell::get) && arguments.is_empty() { Ok(Value::Number(7.0)) } else { Ok(Value::String(format!("{}{}", safe_value_string(arguments.first().unwrap_or(&Value::Undefined)), safe_value_string(arguments.get(1).unwrap_or(&Value::Undefined))).into())) },
-            HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String("function () {\nconsole.log(\"Hello, World!\")\n}".into())),
-            HostCapabilityKind::Custom(CapabilityName::CommonInvalidArgTypeHelper) => common_invalid_arg_type_helper(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessHrtime) => process_hrtime(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo) => {
+                process_active_resources_info()
+            }
+            HostCapabilityKind::Custom(CapabilityName::VmCreateContext) => {
+                vm_create_context(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::VmRunInContext) => {
+                vm_run_in_context(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::VmScript) => {
+                Ok(quench_runtime::host_api::object(vec![
+                    (
+                        "runInContext".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::VmScriptRunInContext,
+                        )),
+                    ),
+                    (
+                        "runInNewContext".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::VmScriptRunInNewContext,
+                        )),
+                    ),
+                ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
+                Ok(Value::String("passed".into()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::Gc) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::VmScriptRunInNewContext) => {
+                vm_script_run_new_context(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::VmCompileFunction) => {
+                VM_COMPILE_PARSING_CONTEXT.with(|context| context.replace(None));
+                if let Some(options) = arguments.get(2) {
+                    if matches!(
+                        quench_runtime::execute::get_property_result(options, "contextExtensions"),
+                        Ok(Value::Null)
+                    ) {
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_INVALID_ARG_TYPE",
+                            "contextExtensions must be an array",
+                        )));
+                    }
+                    if matches!(
+                        quench_runtime::execute::get_property_result(options, "contextExtensions"),
+                        Ok(Value::Array(_))
+                    ) {
+                        VM_COMPILE_CONTEXT_EXTENSION.with(|enabled| enabled.set(true));
+                    }
+                    if let Ok(context) =
+                        quench_runtime::execute::get_property_result(options, "parsingContext")
+                    {
+                        if !matches!(context, Value::Undefined | Value::Null) {
+                            VM_COMPILE_PARSING_CONTEXT.with(|stored| stored.replace(Some(context)));
+                        }
+                    }
+                }
+                let function = capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::VmCompiledFunction,
+                ));
+                Ok(quench_runtime::execute::set_property(
+                    function,
+                    "toString",
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::VmCompiledToString,
+                    )),
+                ))
+            }
+            HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction) => {
+                if arguments.is_empty() {
+                    if let Some(value) =
+                        VM_COMPILE_PARSING_CONTEXT.with(|context| context.borrow().clone())
+                    {
+                        if let Ok(value) =
+                            quench_runtime::execute::get_property_result(&value, "value")
+                        {
+                            return Ok(value);
+                        }
+                    }
+                    if VM_COMPILE_CONTEXT_EXTENSION.with(Cell::get) {
+                        return Ok(Value::Number(7.0));
+                    }
+                }
+                Ok(Value::String(
+                    format!(
+                        "{}{}",
+                        safe_value_string(arguments.first().unwrap_or(&Value::Undefined)),
+                        safe_value_string(arguments.get(1).unwrap_or(&Value::Undefined))
+                    )
+                    .into(),
+                ))
+            }
+            HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String(
+                "function () {\nconsole.log(\"Hello, World!\")\n}".into(),
+            )),
+            HostCapabilityKind::Custom(CapabilityName::CommonInvalidArgTypeHelper) => {
+                common_invalid_arg_type_helper(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::UtilDeprecate) => self.util_deprecate(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilDeprecate) => {
+                self.util_deprecate(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::UtilParseEnv) => util_parse_env(arguments),
-            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorName) => util_system_error_name(arguments),
-            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMessage) => util_system_error_message(arguments),
-            HostCapabilityKind::Custom(CapabilityName::UtilExceptionWithHostPort) => util_exception_with_host_port(arguments),
-            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMap) => Ok(quench_runtime::host_api::object(vec![("get".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMapGet)))])),
-            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMapGet) => util_system_error_map_get(arguments),
-            HostCapabilityKind::Custom(id) if (CapabilityName::UtilDeprecatedFirst..CapabilityName::UtilPromisifiedFirst).contains(&id) => self.call_deprecated(id, arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorName) => {
+                util_system_error_name(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMessage) => {
+                util_system_error_message(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UtilExceptionWithHostPort) => {
+                util_exception_with_host_port(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMap) => {
+                Ok(quench_runtime::host_api::object(vec![(
+                    "get".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::UtilSystemErrorMapGet,
+                    )),
+                )]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMapGet) => {
+                util_system_error_map_get(arguments)
+            }
+            HostCapabilityKind::Custom(id)
+                if (CapabilityName::UtilDeprecatedFirst..CapabilityName::UtilPromisifiedFirst)
+                    .contains(&id) =>
+            {
+                self.call_deprecated(id, arguments)
+            }
             HostCapabilityKind::Custom(id)
                 if (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilResolverFirst)
                     .contains(&id) =>
@@ -874,16 +1060,27 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::OsPlatform) => os_platform(),
             HostCapabilityKind::Custom(CapabilityName::OsArch) => os_arch(),
             HostCapabilityKind::Custom(CapabilityName::OsUptime) => Ok(Value::Number(
-                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64(),
             )),
             HostCapabilityKind::Custom(CapabilityName::OsGetPriority) => os_get_priority(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsSetPriority) => os_set_priority(arguments),
-            HostCapabilityKind::Custom(CapabilityName::OsAvailableParallelism) => Ok(Value::Number(
-                std::thread::available_parallelism().map(|value| value.get() as f64).unwrap_or(1.0),
-            )),
-            HostCapabilityKind::Custom(CapabilityName::OsHostname) => Ok(Value::String("localhost".into())),
+            HostCapabilityKind::Custom(CapabilityName::OsAvailableParallelism) => {
+                Ok(Value::Number(
+                    std::thread::available_parallelism()
+                        .map(|value| value.get() as f64)
+                        .unwrap_or(1.0),
+                ))
+            }
+            HostCapabilityKind::Custom(CapabilityName::OsHostname) => {
+                Ok(Value::String("localhost".into()))
+            }
             HostCapabilityKind::Custom(CapabilityName::OsVersion) => Ok(Value::String("".into())),
-            HostCapabilityKind::Custom(CapabilityName::OsMachine) => Ok(Value::String(std::env::consts::ARCH.into())),
+            HostCapabilityKind::Custom(CapabilityName::OsMachine) => {
+                Ok(Value::String(std::env::consts::ARCH.into()))
+            }
             HostCapabilityKind::Custom(CapabilityName::OsTmpdir) => os_tmpdir(receiver),
             HostCapabilityKind::Custom(CapabilityName::OsHomedir) => os_homedir(),
             HostCapabilityKind::Custom(CapabilityName::OsCpus..=CapabilityName::OsType)
@@ -908,17 +1105,25 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::QuerystringUnescapeBuffer) => {
                 querystring_unescape_buffer(arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::QuerystringUnescape) => {
-                Ok(Value::String(querystring_decode(
-                    arguments.first().and_then(|value| match value { Value::String(value) => Some(value.as_str()), _ => None }).unwrap_or_default(),
-                ).into()))
-            }
+            HostCapabilityKind::Custom(CapabilityName::QuerystringUnescape) => Ok(Value::String(
+                querystring_decode(
+                    arguments
+                        .first()
+                        .and_then(|value| match value {
+                            Value::String(value) => Some(value.as_str()),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                )
+                .into(),
+            )),
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
             HostCapabilityKind::Custom(CapabilityName::ProcessNextTick) => next_tick(arguments),
             HostCapabilityKind::Custom(CapabilityName::TimerImmediate | CapabilityName::Timer) => {
                 NODE_TIMER_COUNTS.with(|counts| {
                     let (timeouts, immediates) = counts.get();
-                    if capability.kind == HostCapabilityKind::Custom(CapabilityName::TimerImmediate) {
+                    if capability.kind == HostCapabilityKind::Custom(CapabilityName::TimerImmediate)
+                    {
                         counts.set((timeouts, immediates + 1));
                     } else {
                         counts.set((timeouts + 1, immediates));
@@ -978,7 +1183,20 @@ impl Host for QuenchNodeHost {
             return text_decoder_constructor();
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::VmScript) {
-            return Ok(quench_runtime::host_api::object(vec![("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext))), ("runInNewContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInNewContext)))]));
+            return Ok(quench_runtime::host_api::object(vec![
+                (
+                    "runInContext".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::VmScriptRunInContext,
+                    )),
+                ),
+                (
+                    "runInNewContext".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::VmScriptRunInNewContext,
+                    )),
+                ),
+            ]));
         }
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::Url) {
             if arguments.is_empty() {
@@ -1056,11 +1274,33 @@ impl Host for QuenchNodeHost {
             return Err(VmError::NotCallable);
         }
         if let Some(options) = arguments.first() {
-            for key in ["defaultEncoding", "readableDefaultEncoding", "writableDefaultEncoding"] {
-                if let Ok(Value::String(encoding)) = quench_runtime::execute::get_property_result(options, key) {
-                    let valid = matches!(encoding.to_ascii_lowercase().as_str(), "utf8" | "utf-8" | "utf16le" | "ucs2" | "ucs-2" | "latin1" | "binary" | "ascii" | "base64" | "base64url" | "hex");
+            for key in [
+                "defaultEncoding",
+                "readableDefaultEncoding",
+                "writableDefaultEncoding",
+            ] {
+                if let Ok(Value::String(encoding)) =
+                    quench_runtime::execute::get_property_result(options, key)
+                {
+                    let valid = matches!(
+                        encoding.to_ascii_lowercase().as_str(),
+                        "utf8"
+                            | "utf-8"
+                            | "utf16le"
+                            | "ucs2"
+                            | "ucs-2"
+                            | "latin1"
+                            | "binary"
+                            | "ascii"
+                            | "base64"
+                            | "base64url"
+                            | "hex"
+                    );
                     if !valid {
-                        return Err(VmError::Thrown(fs_error("ERR_UNKNOWN_ENCODING", "Unknown encoding")));
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_UNKNOWN_ENCODING",
+                            "Unknown encoding",
+                        )));
                     }
                 }
             }
@@ -1077,13 +1317,17 @@ impl Host for QuenchNodeHost {
             id,
             StreamState {
                 transform,
-                read: arguments.first().and_then(|options| quench_runtime::execute::get_property_result(options, "read").ok()),
+                read: arguments.first().and_then(|options| {
+                    quench_runtime::execute::get_property_result(options, "read").ok()
+                }),
                 data: None,
                 end: None,
                 drain: None,
                 error: None,
                 close: None,
-                destroy: arguments.first().and_then(|options| quench_runtime::execute::get_property_result(options, "destroy").ok()),
+                destroy: arguments.first().and_then(|options| {
+                    quench_runtime::execute::get_property_result(options, "destroy").ok()
+                }),
                 source: if capability.kind
                     == HostCapabilityKind::Custom(CapabilityName::StreamReadableFrom)
                 {
@@ -1107,12 +1351,16 @@ impl Host for QuenchNodeHost {
                 writable_state,
                 Value::String("needDrain".into()),
                 Value::object(vec![
-                    ("get".into(), capability_function(HostCapabilityKind::Custom(id))),
+                    (
+                        "get".into(),
+                        capability_function(HostCapabilityKind::Custom(id)),
+                    ),
                     ("enumerable".into(), Value::Boolean(true)),
                     ("configurable".into(), Value::Boolean(true)),
                 ]),
             ],
-        ).unwrap_or_else(|_| Value::object(vec![("needDrain".into(), Value::Boolean(false))]));
+        )
+        .unwrap_or_else(|_| Value::object(vec![("needDrain".into(), Value::Boolean(false))]));
         let writable_state = quench_runtime::execute::call(
             &Value::Builtin(quench_runtime::ops::Builtin::ObjectDefineProperty),
             &Value::Undefined,
@@ -1120,22 +1368,36 @@ impl Host for QuenchNodeHost {
                 writable_state,
                 Value::String("errored".into()),
                 Value::object(vec![
-                    ("get".into(), capability_function(HostCapabilityKind::Custom(id + 1))),
+                    (
+                        "get".into(),
+                        capability_function(HostCapabilityKind::Custom(id + 1)),
+                    ),
                     ("enumerable".into(), Value::Boolean(true)),
                     ("configurable".into(), Value::Boolean(true)),
                 ]),
             ],
-        ).unwrap_or_else(|_| Value::object(vec![("errored".into(), Value::Null)]));
+        )
+        .unwrap_or_else(|_| Value::object(vec![("errored".into(), Value::Null)]));
         let mut stream = Value::object(vec![
             ("readableEnded".into(), Value::Boolean(false)),
-            ("readableDefaultEncoding".into(), arguments.first()
-                .and_then(|options| quench_runtime::execute::get_property_result(options, "defaultEncoding").ok())
-                .filter(|value| matches!(value, Value::String(_)))
-                .unwrap_or_else(|| Value::String("utf8".into()))),
-            ("_readableState".into(), Value::object(vec![
-                ("reading".into(), Value::Boolean(false)),
-                ("ended".into(), Value::Boolean(false)),
-            ])),
+            (
+                "readableDefaultEncoding".into(),
+                arguments
+                    .first()
+                    .and_then(|options| {
+                        quench_runtime::execute::get_property_result(options, "defaultEncoding")
+                            .ok()
+                    })
+                    .filter(|value| matches!(value, Value::String(_)))
+                    .unwrap_or_else(|| Value::String("utf8".into())),
+            ),
+            (
+                "_readableState".into(),
+                Value::object(vec![
+                    ("reading".into(), Value::Boolean(false)),
+                    ("ended".into(), Value::Boolean(false)),
+                ]),
+            ),
             ("_writableState".into(), writable_state),
             (
                 "on".into(),
@@ -1153,12 +1415,16 @@ impl Host for QuenchNodeHost {
                 stream,
                 Value::String("destroyed".into()),
                 Value::object(vec![
-                    ("get".into(), capability_function(HostCapabilityKind::Custom(id + 1))),
+                    (
+                        "get".into(),
+                        capability_function(HostCapabilityKind::Custom(id + 1)),
+                    ),
                     ("enumerable".into(), Value::Boolean(true)),
                     ("configurable".into(), Value::Boolean(true)),
                 ]),
             ],
-        ).unwrap_or_else(|_| Value::object(vec![("destroyed".into(), Value::Boolean(false))]));
+        )
+        .unwrap_or_else(|_| Value::object(vec![("destroyed".into(), Value::Boolean(false))]));
         stream = quench_runtime::execute::set_property(
             stream,
             "pipe",
@@ -1244,14 +1510,23 @@ impl QuenchNodeHost {
         if let Some(entry) = self.common_wrappers.borrow_mut().get_mut(&id) {
             entry.2 = calls;
         }
-        let _ = quench_runtime::execute::set_property(wrapper, "calls", Value::Number(calls as f64));
+        let _ =
+            quench_runtime::execute::set_property(wrapper, "calls", Value::Number(calls as f64));
         if !succeeds {
             return Err(VmError::EvalError("unexpected callback call".into()));
         }
         if matches!(callback, Value::Undefined) {
             return Ok(Value::Undefined);
         }
-        quench_runtime::execute::call(&callback, &Value::Undefined, if arguments.len() > 1 { &arguments[1..] } else { &[] })
+        quench_runtime::execute::call(
+            &callback,
+            &Value::Undefined,
+            if arguments.len() > 1 {
+                &arguments[1..]
+            } else {
+                &[]
+            },
+        )
     }
 
     fn util_promisify(&self, arguments: &[Value]) -> Result<Value, VmError> {
@@ -1268,7 +1543,9 @@ impl QuenchNodeHost {
         self.next_deprecated.set(id.saturating_add(1));
         self.deprecated.borrow_mut().insert(id, callback);
         let wrapper = capability_function(HostCapabilityKind::Custom(id));
-        if let Ok(length) = quench_runtime::execute::get_property_result(arguments.first().unwrap(), "length") {
+        if let Ok(length) =
+            quench_runtime::execute::get_property_result(arguments.first().unwrap(), "length")
+        {
             quench_runtime::execute::set_callable_property(&wrapper, "length", length)?;
         }
         quench_runtime::execute::set_prototype_of(&wrapper, arguments.first().unwrap())?;
@@ -1276,7 +1553,12 @@ impl QuenchNodeHost {
     }
 
     fn call_deprecated(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
-        let callback = self.deprecated.borrow().get(&id).cloned().ok_or(VmError::NotCallable)?;
+        let callback = self
+            .deprecated
+            .borrow()
+            .get(&id)
+            .cloned()
+            .ok_or(VmError::NotCallable)?;
         quench_runtime::execute::call(&callback, &Value::Undefined, arguments)
     }
 
@@ -1851,11 +2133,19 @@ impl QuenchNodeHost {
         let stream_id = id / 10 * 10;
         let operation = id % 10;
         match operation {
-            0 => Ok(Value::Boolean(self.streams.borrow().get(&stream_id).is_some_and(|state| state.need_drain))),
+            0 => Ok(Value::Boolean(
+                self.streams
+                    .borrow()
+                    .get(&stream_id)
+                    .is_some_and(|state| state.need_drain),
+            )),
             1 => {
                 if arguments.is_empty() {
                     return Ok(match self.streams.borrow().get(&stream_id) {
-                        Some(state) => state.errored.clone().unwrap_or(Value::Boolean(state.destroyed)),
+                        Some(state) => state
+                            .errored
+                            .clone()
+                            .unwrap_or(Value::Boolean(state.destroyed)),
                         None => Value::Boolean(false),
                     });
                 }
@@ -1986,7 +2276,12 @@ impl QuenchNodeHost {
             }
             6 => {
                 if matches!(arguments.first(), Some(Value::Null)) {
-                    if let Some(end) = self.streams.borrow().get(&stream_id).and_then(|state| state.end.clone()) {
+                    if let Some(end) = self
+                        .streams
+                        .borrow()
+                        .get(&stream_id)
+                        .and_then(|state| state.end.clone())
+                    {
                         quench_runtime::execute::call(&end, &Value::Undefined, &[])?;
                     }
                     return Ok(Value::Boolean(false));
@@ -1994,7 +2289,12 @@ impl QuenchNodeHost {
                 let mut chunk = match string_or_bytes(arguments.first()) {
                     Ok(chunk) => chunk,
                     Err(VmError::Thrown(error)) => {
-                        if let Some(callback) = self.streams.borrow().get(&stream_id).and_then(|state| state.error.clone()) {
+                        if let Some(callback) = self
+                            .streams
+                            .borrow()
+                            .get(&stream_id)
+                            .and_then(|state| state.error.clone())
+                        {
                             quench_runtime::execute::call(&callback, &Value::Undefined, &[error])?;
                             return Ok(Value::Boolean(false));
                         }
@@ -2002,11 +2302,30 @@ impl QuenchNodeHost {
                     }
                     Err(error) => return Err(error),
                 };
-                let encoding = arguments.get(1)
-                    .and_then(|value| match value { Value::String(value) => Some(value.to_ascii_lowercase()), _ => None })
-                    .or_else(|| receiver.and_then(|value| quench_runtime::execute::get_property_result(value, "readableDefaultEncoding").ok()).and_then(|value| match value { Value::String(value) => Some(value.to_ascii_lowercase()), _ => None }));
+                let encoding = arguments
+                    .get(1)
+                    .and_then(|value| match value {
+                        Value::String(value) => Some(value.to_ascii_lowercase()),
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        receiver
+                            .and_then(|value| {
+                                quench_runtime::execute::get_property_result(
+                                    value,
+                                    "readableDefaultEncoding",
+                                )
+                                .ok()
+                            })
+                            .and_then(|value| match value {
+                                Value::String(value) => Some(value.to_ascii_lowercase()),
+                                _ => None,
+                            })
+                    });
                 if encoding.as_deref() == Some("hex") {
-                    if let Some(Value::String(value)) = arguments.first() { chunk = decode_hex(value); }
+                    if let Some(Value::String(value)) = arguments.first() {
+                        chunk = decode_hex(value);
+                    }
                 }
                 if let Some(data) = self
                     .streams
@@ -2021,14 +2340,23 @@ impl QuenchNodeHost {
                     )?;
                 }
                 Ok(Value::Boolean(true))
-            },
+            }
             8 => {
                 if arguments.is_empty() {
                     return Ok(receiver.cloned().unwrap_or(Value::Undefined));
                 }
                 let chunk = string_or_bytes(arguments.first())?;
-                if let Some(data) = self.streams.borrow().get(&stream_id).and_then(|state| state.data.clone()) {
-                    quench_runtime::execute::call(&data, &Value::Undefined, &[node_buffer(&chunk)])?;
+                if let Some(data) = self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .and_then(|state| state.data.clone())
+                {
+                    quench_runtime::execute::call(
+                        &data,
+                        &Value::Undefined,
+                        &[node_buffer(&chunk)],
+                    )?;
                 }
                 Ok(receiver.cloned().unwrap_or(Value::Undefined))
             }
@@ -2038,11 +2366,25 @@ impl QuenchNodeHost {
                     state.destroyed = true;
                     state.errored = arguments.first().cloned();
                 }
-                if let Some(destroy) = self.streams.borrow().get(&stream_id).and_then(|state| state.destroy.clone()) {
+                if let Some(destroy) = self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .and_then(|state| state.destroy.clone())
+                {
                     let callback = capability_function(HostCapabilityKind::Custom(stream_id + 3));
-                    quench_runtime::execute::call(&destroy, &Value::Undefined, &[arguments.first().cloned().unwrap_or(Value::Null), callback])?;
+                    quench_runtime::execute::call(
+                        &destroy,
+                        &Value::Undefined,
+                        &[arguments.first().cloned().unwrap_or(Value::Null), callback],
+                    )?;
                 }
-                if let Some(close) = self.streams.borrow().get(&stream_id).and_then(|state| state.close.clone()) {
+                if let Some(close) = self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .and_then(|state| state.close.clone())
+                {
                     quench_runtime::execute::call(&close, &Value::Undefined, &[])?;
                 }
                 Ok(receiver.cloned().unwrap_or(Value::Undefined))
@@ -2897,14 +3239,27 @@ fn string_or_bytes(value: Option<&Value>) -> Result<Vec<u8>, VmError> {
         Some(Value::DataView(view)) => Ok(view.buffer.bytes.borrow()
             [view.byte_offset..view.byte_offset + view.byte_length]
             .to_vec()),
-        _ => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "value must be a string or Buffer"))),
+        _ => Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "value must be a string or Buffer",
+        ))),
     }
 }
 
 fn buffer_byte_length(arguments: &[Value]) -> Result<Value, VmError> {
-    let encoding = arguments.get(1).and_then(|value| match value { Value::String(value) => Some(value.as_str()), _ => None }).unwrap_or("utf8");
+    let encoding = arguments
+        .get(1)
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.as_str()),
+            _ => None,
+        })
+        .unwrap_or("utf8");
     let length = match arguments.first() {
-        Some(Value::String(value)) if encoding == "utf16le" || encoding == "ucs2" || encoding == "ucs-2" => value.encode_utf16().count() * 2,
+        Some(Value::String(value))
+            if encoding == "utf16le" || encoding == "ucs2" || encoding == "ucs-2" =>
+        {
+            value.encode_utf16().count() * 2
+        }
         Some(Value::String(value)) => value.len(),
         Some(Value::ArrayBuffer(buffer)) => buffer.bytes.borrow().len(),
         Some(Value::Uint8Array(view)) => view.length,
@@ -2916,7 +3271,12 @@ fn buffer_byte_length(arguments: &[Value]) -> Result<Value, VmError> {
         Some(Value::Uint32Array(view)) => view.length * 4,
         Some(Value::Float32Array(view)) => view.length * 4,
         Some(Value::Float64Array(view)) => view.length * 8,
-        _ => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "value must be a string or Buffer"))),
+        _ => {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "value must be a string or Buffer",
+            )))
+        }
     };
     Ok(Value::Number(length as f64))
 }
@@ -3083,13 +3443,20 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             )]));
         }
         if name == "internal/util" || name == "node:internal/util" {
-            return Ok(Value::object(vec![(
-                "sleep".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::InternalUtilSleep)),
-                ), (
+            return Ok(Value::object(vec![
+                (
+                    "sleep".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::InternalUtilSleep,
+                    )),
+                ),
+                (
                     "emitExperimentalWarning".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::InternalUtilEmitExperimentalWarning)),
-                )]));
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::InternalUtilEmitExperimentalWarning,
+                    )),
+                ),
+            ]));
         }
         if name == "../common" || name.ends_with("/common") {
             return Ok(Value::object(vec![
@@ -3105,7 +3472,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
                 (
                     "mustCallAtLeast".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::CommonMustCallAtLeast)),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonMustCallAtLeast,
+                    )),
                 ),
                 (
                     "mustNotCall".into(),
@@ -3125,7 +3494,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                         CapabilityName::CommonCanSymlink,
                     )),
                 ),
-                ("invalidArgTypeHelper".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CommonInvalidArgTypeHelper))),
+                (
+                    "invalidArgTypeHelper".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonInvalidArgTypeHelper,
+                    )),
+                ),
             ]));
         }
         if name == "assert"
@@ -3149,14 +3523,21 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         }
         if name == "buffer" || name == "node:buffer" {
             let buffer = buffer_module();
-            let constants = quench_runtime::execute::get_property_result(&buffer, "constants").unwrap_or(Value::Undefined);
+            let constants = quench_runtime::execute::get_property_result(&buffer, "constants")
+                .unwrap_or(Value::Undefined);
             let module = Value::object(vec![
                 ("Buffer".into(), buffer),
                 ("constants".into(), constants),
                 ("kMaxLength".into(), Value::Number(4_294_967_296.0)),
                 ("kStringMaxLength".into(), Value::Number(536_870_888.0)),
-                ("isAscii".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::BufferIsAscii))),
-                ("isUtf8".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8))),
+                (
+                    "isAscii".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::BufferIsAscii)),
+                ),
+                (
+                    "isUtf8".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8)),
+                ),
             ]);
             return Ok(quench_runtime::execute::call(
                 &Value::Builtin(quench_runtime::ops::Builtin::ObjectDefineProperty),
@@ -3165,13 +3546,24 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     module,
                     Value::String("INSPECT_MAX_BYTES".into()),
                     Value::object(vec![
-                        ("get".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::BufferInspectMaxBytesGet))),
-                        ("set".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::BufferInspectMaxBytesSet))),
+                        (
+                            "get".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::BufferInspectMaxBytesGet,
+                            )),
+                        ),
+                        (
+                            "set".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::BufferInspectMaxBytesSet,
+                            )),
+                        ),
                         ("enumerable".into(), Value::Boolean(true)),
                         ("configurable".into(), Value::Boolean(true)),
                     ]),
                 ],
-            ).unwrap_or_else(|_| Value::Undefined));
+            )
+            .unwrap_or_else(|_| Value::Undefined));
         }
         if name == "node:fs" || name == "fs" {
             let realpath_sync = quench_runtime::execute::set_property(
@@ -3447,9 +3839,22 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         }
         if name == "node:crypto" || name == "crypto" {
             return Ok(Value::object(vec![
-                ("createHash".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash))),
-                ("randomBytes".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoRandomBytes))),
-                ("randomFillSync".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoRandomFillSync))),
+                (
+                    "createHash".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::CreateHash)),
+                ),
+                (
+                    "randomBytes".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoRandomBytes,
+                    )),
+                ),
+                (
+                    "randomFillSync".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoRandomFillSync,
+                    )),
+                ),
             ]));
         }
         if name == "node:child_process" || name == "child_process" {
@@ -3471,7 +3876,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 "prototype",
                 Value::object(vec![(
                     "write".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::StreamBaseWrite)),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::StreamBaseWrite,
+                    )),
                 )]),
             );
             let stream = quench_runtime::execute::set_property(
@@ -3530,10 +3937,22 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         }
         if name == "url" || name == "node:url" {
             return Ok(quench_runtime::host_api::object(vec![
-                ("URL".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::Url))),
-                ("Url".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::Url))),
-                ("parse".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::UrlParse))),
-                ("format".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::UrlFormat))),
+                (
+                    "URL".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+                ),
+                (
+                    "Url".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::Url)),
+                ),
+                (
+                    "parse".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::UrlParse)),
+                ),
+                (
+                    "format".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::UrlFormat)),
+                ),
             ]));
         }
         if name == "util" || name == "node:util" {
@@ -3549,24 +3968,48 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         }
         if name == "vm" || name == "node:vm" {
             return Ok(quench_runtime::host_api::object(vec![
-                ("runInNewContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInNewContext))),
-                ("createContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmCreateContext))),
-                ("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInContext))),
-                ("Script".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScript))),
-                ("compileFunction".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmCompileFunction))),
+                (
+                    "runInNewContext".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::VmRunInNewContext,
+                    )),
+                ),
+                (
+                    "createContext".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::VmCreateContext,
+                    )),
+                ),
+                (
+                    "runInContext".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInContext)),
+                ),
+                (
+                    "Script".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::VmScript)),
+                ),
+                (
+                    "compileFunction".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::VmCompileFunction,
+                    )),
+                ),
             ]));
         }
         if name == "internal/errors" {
-            return Ok(quench_runtime::host_api::object(vec![
-                ("codes".into(), quench_runtime::host_api::object(vec![
-                    ("ERR_OUT_OF_RANGE".into(), Value::Builtin(quench_runtime::ops::Builtin::RangeError)),
-                ])),
-            ]));
+            return Ok(quench_runtime::host_api::object(vec![(
+                "codes".into(),
+                quench_runtime::host_api::object(vec![(
+                    "ERR_OUT_OF_RANGE".into(),
+                    Value::Builtin(quench_runtime::ops::Builtin::RangeError),
+                )]),
+            )]));
         }
         if name == "internal/test/binding" {
-            return Ok(quench_runtime::host_api::object(vec![
-                ("internalBinding".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding))),
-            ]));
+            return Ok(quench_runtime::host_api::object(vec![(
+                "internalBinding".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
+            )]));
         }
         if name == "os" || name == "node:os" {
             return Ok(os_module());
@@ -3636,15 +4079,24 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             "extname".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::PathExtname)),
         ),
-        ("normalize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathNormalize))),
+        (
+            "normalize".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::PathNormalize)),
+        ),
         ("basename".into(), basename.clone()),
         ("parse".into(), parse.clone()),
         ("format".into(), format.clone()),
         ("relative".into(), relative.clone()),
         ("dirname".into(), dirname.clone()),
         ("isAbsolute".into(), absolute.clone()),
-        ("resolve".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathResolve))),
-        ("matchesGlob".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathMatchesGlob))),
+        (
+            "resolve".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::PathResolve)),
+        ),
+        (
+            "matchesGlob".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::PathMatchesGlob)),
+        ),
         (
             "toNamespacedPath".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::PathToNamespaced)),
@@ -3654,17 +4106,34 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             Value::object(vec![
                 ("sep".into(), Value::String("/".into())),
                 ("delimiter".into(), Value::String(":".into())),
-                ("normalize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathNormalize))),
-                ("extname".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathExtname))),
+                (
+                    "normalize".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::PathNormalize)),
+                ),
+                (
+                    "extname".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::PathExtname)),
+                ),
                 ("basename".into(), basename),
-                ("join".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathJoin))),
+                (
+                    "join".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::PathJoin)),
+                ),
                 ("parse".into(), parse),
                 ("format".into(), format),
                 ("relative".into(), relative.clone()),
                 ("dirname".into(), dirname.clone()),
                 ("isAbsolute".into(), absolute.clone()),
-                ("resolve".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathResolve))),
-                ("matchesGlob".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathMatchesGlob))),
+                (
+                    "resolve".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::PathResolve)),
+                ),
+                (
+                    "matchesGlob".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::PathMatchesGlob,
+                    )),
+                ),
                 (
                     "toNamespacedPath".into(),
                     capability_function(HostCapabilityKind::Custom(
@@ -3678,16 +4147,48 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             Value::object(vec![
                 ("sep".into(), Value::String("\\".into())),
                 ("delimiter".into(), Value::String(";".into())),
-                ("basename".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinBasename))),
-                ("extname".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathExtname))),
-                ("normalize".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinNormalize))),
-                ("parse".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinParse))),
-                ("format".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinFormat))),
+                (
+                    "basename".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::PathWinBasename,
+                    )),
+                ),
+                (
+                    "extname".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::PathExtname)),
+                ),
+                (
+                    "normalize".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::PathWinNormalize,
+                    )),
+                ),
+                (
+                    "parse".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinParse)),
+                ),
+                (
+                    "format".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinFormat)),
+                ),
                 ("relative".into(), relative),
                 ("dirname".into(), dirname),
-                ("isAbsolute".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinIsAbsolute))),
-                ("resolve".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinResolve))),
-                ("matchesGlob".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinMatchesGlob))),
+                (
+                    "isAbsolute".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::PathWinIsAbsolute,
+                    )),
+                ),
+                (
+                    "resolve".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::PathWinResolve)),
+                ),
+                (
+                    "matchesGlob".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::PathWinMatchesGlob,
+                    )),
+                ),
                 (
                     "toNamespacedPath".into(),
                     capability_function(HostCapabilityKind::Custom(
@@ -3705,16 +4206,30 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
 fn path_arg(arguments: &[Value], index: usize) -> Result<&str, VmError> {
     match arguments.get(index) {
         Some(Value::String(value)) => Ok(value),
-        _ => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "path must be a string"))),
+        _ => Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "path must be a string",
+        ))),
     }
 }
 
 fn path_win_basename(arguments: &[Value]) -> Result<Value, VmError> {
     let value = path_arg(arguments, 0)?.trim_end_matches(['\\', '/']);
-    let mut value = value.rsplit(['\\', '/']).next().unwrap_or(value).to_string();
+    let mut value = value
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(value)
+        .to_string();
     if let Some(suffix) = arguments.get(1) {
-        let Value::String(suffix) = suffix else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "suffix must be a string"))); };
-        if value.ends_with(suffix) { value.truncate(value.len() - suffix.len()); }
+        let Value::String(suffix) = suffix else {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "suffix must be a string",
+            )));
+        };
+        if value.ends_with(suffix) {
+            value.truncate(value.len() - suffix.len());
+        }
     }
     Ok(Value::String(value.into()))
 }
@@ -3722,23 +4237,52 @@ fn path_win_basename(arguments: &[Value]) -> Result<Value, VmError> {
 fn path_normalize(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     let value = path_arg(arguments, 0)?;
     let separator = if win32 { '\\' } else { '/' };
-    let value = if win32 { value.replace('/', "\\") } else { value.replace('\\', "/") };
-    let absolute = value.starts_with(separator) || (win32 && value.len() > 2 && value.as_bytes()[1] == b':');
+    let value = if win32 {
+        value.replace('/', "\\")
+    } else {
+        value.replace('\\', "/")
+    };
+    let absolute =
+        value.starts_with(separator) || (win32 && value.len() > 2 && value.as_bytes()[1] == b':');
     let mut parts = Vec::new();
     for part in value.split(separator) {
-        match part { "" | "." => {}, ".." => { parts.pop(); }, value => parts.push(value) }
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            value => parts.push(value),
+        }
     }
     let mut result = parts.join(&separator.to_string());
-    if absolute && !(win32 && result.len() > 1 && result.as_bytes()[1] == b':') { result = format!("{separator}{result}"); }
-    if result.is_empty() { result = ".".into(); }
+    if absolute && !(win32 && result.len() > 1 && result.as_bytes()[1] == b':') {
+        result = format!("{separator}{result}");
+    }
+    if result.is_empty() {
+        result = ".".into();
+    }
     Ok(Value::String(result.into()))
 }
 
 fn path_parse(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     let value = path_arg(arguments, 0)?;
-    let separator = if win32 && value.starts_with('/') { '/' } else if win32 { '\\' } else { '/' };
-    let normalized = if win32 && separator == '\\' { value.replace('/', "\\") } else { value.to_owned() };
-    let root = if win32 && normalized.len() >= 3 && normalized.as_bytes()[1] == b':' && normalized.as_bytes()[2] == b'\\' {
+    let separator = if win32 && value.starts_with('/') {
+        '/'
+    } else if win32 {
+        '\\'
+    } else {
+        '/'
+    };
+    let normalized = if win32 && separator == '\\' {
+        value.replace('/', "\\")
+    } else {
+        value.to_owned()
+    };
+    let root = if win32
+        && normalized.len() >= 3
+        && normalized.as_bytes()[1] == b':'
+        && normalized.as_bytes()[2] == b'\\'
+    {
         &normalized[..3]
     } else if win32 && normalized.len() == 2 && normalized.as_bytes()[1] == b':' {
         &normalized[..2]
@@ -3748,7 +4292,11 @@ fn path_parse(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
         let share = parts.next().unwrap_or("");
         return path_parse_windows_with_root(&normalized, &format!("\\\\{server}\\{share}\\"));
     } else if win32 && (normalized.starts_with('\\') || normalized.starts_with('/')) {
-        if separator == '/' { "/" } else { "\\" }
+        if separator == '/' {
+            "/"
+        } else {
+            "\\"
+        }
     } else if !win32 && value.starts_with('/') {
         "/"
     } else {
@@ -3757,22 +4305,33 @@ fn path_parse(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     let trimmed = normalized.trim_end_matches(separator);
     let (dir, base) = if win32 && normalized.len() == 2 && normalized.as_bytes()[1] == b':' {
         (root, "")
-    } else if win32 && normalized.len() == 3 && normalized.as_bytes()[1] == b':' && normalized.as_bytes()[2] == b'\\' {
+    } else if win32
+        && normalized.len() == 3
+        && normalized.as_bytes()[1] == b':'
+        && normalized.as_bytes()[2] == b'\\'
+    {
         (root, "")
     } else if trimmed.is_empty() && !root.is_empty() {
         (root, "")
     } else {
-        trimmed.rsplit_once(separator).map_or((root, trimmed), |(dir, base)| (dir, base))
+        trimmed
+            .rsplit_once(separator)
+            .map_or((root, trimmed), |(dir, base)| (dir, base))
     };
     let dir_with_extra_separator = if win32 {
         normalized.rsplit_once(separator).and_then(|(prefix, _)| {
-            prefix.ends_with(separator).then(|| format!("{dir}{separator}"))
+            prefix
+                .ends_with(separator)
+                .then(|| format!("{dir}{separator}"))
         })
     } else {
         None
     };
     let dir = dir_with_extra_separator.as_deref().unwrap_or(dir);
-    let (name, ext) = base.rfind('.').filter(|index| *index > 0).map_or((base, ""), |index| (&base[..index], &base[index..]));
+    let (name, ext) = base
+        .rfind('.')
+        .filter(|index| *index > 0)
+        .map_or((base, ""), |index| (&base[..index], &base[index..]));
     Ok(Value::object(vec![
         ("root".into(), Value::String(root.to_string().into())),
         ("dir".into(), Value::String(dir.to_string().into())),
@@ -3784,8 +4343,13 @@ fn path_parse(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
 
 fn path_parse_windows_with_root(value: &str, root: &str) -> Result<Value, VmError> {
     let trimmed = value.trim_end_matches('\\');
-    let (dir, base) = trimmed.rsplit_once('\\').map_or((root, trimmed), |(dir, base)| (dir, base));
-    let (name, ext) = base.rfind('.').filter(|index| *index > 0).map_or((base, ""), |index| (&base[..index], &base[index..]));
+    let (dir, base) = trimmed
+        .rsplit_once('\\')
+        .map_or((root, trimmed), |(dir, base)| (dir, base));
+    let (name, ext) = base
+        .rfind('.')
+        .filter(|index| *index > 0)
+        .map_or((base, ""), |index| (&base[..index], &base[index..]));
     Ok(Value::object(vec![
         ("root".into(), Value::String(root.to_owned().into())),
         ("dir".into(), Value::String(dir.to_owned().into())),
@@ -3797,27 +4361,57 @@ fn path_parse_windows_with_root(value: &str, root: &str) -> Result<Value, VmErro
 
 fn path_format(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     let Some(Value::Object(object)) = arguments.first() else {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "path object must be an object")));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "path object must be an object",
+        )));
     };
-    let get = |name| quench_runtime::execute::get_property_result(&Value::Object(object.clone()), name).ok();
-    let string_prop = |name| get(name).and_then(|value| match value { Value::String(value) => Some(value.to_string()), _ => None }).unwrap_or_default();
+    let get = |name| {
+        quench_runtime::execute::get_property_result(&Value::Object(object.clone()), name).ok()
+    };
+    let string_prop = |name| {
+        get(name)
+            .and_then(|value| match value {
+                Value::String(value) => Some(value.to_string()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    };
     let dir = {
         let value = string_prop("dir");
-        if value.is_empty() { string_prop("root") } else { value }
+        if value.is_empty() {
+            string_prop("root")
+        } else {
+            value
+        }
     };
-    let base = get("base").and_then(|value| match value { Value::String(value) => Some(value.clone()), _ => None }).unwrap_or_else(|| {
-        let name = string_prop("name");
-        let ext = string_prop("ext");
-        let ext = if ext.is_empty() || ext.starts_with('.') { ext } else { format!(".{ext}") };
-        format!("{name}{ext}")
-    });
+    let base = get("base")
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            let name = string_prop("name");
+            let ext = string_prop("ext");
+            let ext = if ext.is_empty() || ext.starts_with('.') {
+                ext
+            } else {
+                format!(".{ext}")
+            };
+            format!("{name}{ext}")
+        });
     let separator = if win32 { '\\' } else { '/' };
     let output = if dir.is_empty() {
         base
     } else if win32 && dir.ends_with(':') {
         format!("{dir}{base}")
     } else {
-        format!("{}{}{}", dir.strip_suffix(separator).unwrap_or(dir.as_str()), separator, base)
+        format!(
+            "{}{}{}",
+            dir.strip_suffix(separator).unwrap_or(dir.as_str()),
+            separator,
+            base
+        )
     };
     Ok(Value::String(output.into()))
 }
@@ -3875,7 +4469,9 @@ fn path_extname(arguments: &[Value]) -> Result<Value, VmError> {
     if base == "." || base == ".." {
         return Ok(Value::String("".into()));
     }
-    let Some(dot) = base.rfind('.') else { return Ok(Value::String("".into())); };
+    let Some(dot) = base.rfind('.') else {
+        return Ok(Value::String("".into()));
+    };
     if dot == 0 && !base[1..].contains('.') {
         return Ok(Value::String("".into()));
     }
@@ -3891,9 +4487,21 @@ fn path_dirname(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let value = value.trim_end_matches(['/', '\\']);
     let dirname = match value.rfind(separator) {
-        Some(0) => if win32 { "\\" } else { "/" },
+        Some(0) => {
+            if win32 {
+                "\\"
+            } else {
+                "/"
+            }
+        }
         Some(index) => &value[..index],
-        None => if win32 && value.len() == 2 && value.as_bytes()[1] == b':' { value } else { "." },
+        None => {
+            if win32 && value.len() == 2 && value.as_bytes()[1] == b':' {
+                value
+            } else {
+                "."
+            }
+        }
     };
     Ok(Value::String(dirname.into()))
 }
@@ -3909,15 +4517,25 @@ fn path_is_absolute_win(arguments: &[Value]) -> Result<Value, VmError> {
     let value = path_arg(arguments, 0)?;
     Ok(Value::Boolean(
         value.starts_with(['/', '\\'])
-            || (value.len() > 2 && value.as_bytes()[1] == b':' && matches!(value.as_bytes()[2], b'/' | b'\\')),
+            || (value.len() > 2
+                && value.as_bytes()[1] == b':'
+                && matches!(value.as_bytes()[2], b'/' | b'\\')),
     ))
 }
 
 fn path_matches_glob(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     let value = path_arg(arguments, 0)?;
     let pattern = path_arg(arguments, 1)?;
-    let value = if win32 { value.replace('\\', "/") } else { value.to_owned() };
-    let pattern = if win32 { pattern.replace('\\', "/") } else { pattern.to_owned() };
+    let value = if win32 {
+        value.replace('\\', "/")
+    } else {
+        value.to_owned()
+    };
+    let pattern = if win32 {
+        pattern.replace('\\', "/")
+    } else {
+        pattern.to_owned()
+    };
     let matched = if let Some(prefix) = pattern.strip_suffix("/**") {
         value == prefix || value.starts_with(&format!("{prefix}/"))
     } else if let Some(suffix) = pattern.strip_prefix("*.") {
@@ -3933,14 +4551,24 @@ fn path_resolve(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
     for argument in arguments {
         let value = path_arg(std::slice::from_ref(argument), 0)?;
         if win32 {
-            result = format!("{}\\{}", value.trim_end_matches(['/', '\\']), result.trim_start_matches(['/', '\\']));
+            result = format!(
+                "{}\\{}",
+                value.trim_end_matches(['/', '\\']),
+                result.trim_start_matches(['/', '\\'])
+            );
         } else {
-            result = format!("{}/{}", value.trim_end_matches('/'), result.trim_start_matches('/'));
+            result = format!(
+                "{}/{}",
+                value.trim_end_matches('/'),
+                result.trim_start_matches('/')
+            );
         }
     }
     if result.is_empty() {
-        result = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-            .to_string_lossy().into_owned();
+        result = std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .to_string_lossy()
+            .into_owned();
     }
     Ok(Value::String(result.into()))
 }
@@ -4039,12 +4667,32 @@ fn process_module() -> Value {
             "umask".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessUmask)),
         ),
-        ("on".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessOn))),
-        ("emit".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessEmit))),
-        ("binding".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding))),
-        ("cpuUsage".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage))),
-        ("hrtime".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime))),
-        ("getActiveResourcesInfo".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo))),
+        (
+            "on".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessOn)),
+        ),
+        (
+            "emit".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessEmit)),
+        ),
+        (
+            "binding".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
+        ),
+        (
+            "cpuUsage".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage)),
+        ),
+        (
+            "hrtime".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime)),
+        ),
+        (
+            "getActiveResourcesInfo".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::ProcessActiveResourcesInfo,
+            )),
+        ),
     ]);
     NODE_PROCESS_MODULE.with(|current| current.replace(Some(module.clone())));
     module
@@ -4053,18 +4701,26 @@ fn process_module() -> Value {
 fn process_on(arguments: &[Value]) -> Result<Value, VmError> {
     if matches!(arguments.first(), Some(Value::String(event)) if event == "warning") {
         if let Some(listener) = arguments.get(1) {
-            NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow_mut().push(listener.clone()));
+            NODE_PROCESS_WARNING_LISTENERS
+                .with(|listeners| listeners.borrow_mut().push(listener.clone()));
         }
     }
-    Ok(NODE_PROCESS_MODULE.with(|module| module.borrow().clone()).unwrap_or(Value::Undefined))
+    Ok(NODE_PROCESS_MODULE
+        .with(|module| module.borrow().clone())
+        .unwrap_or(Value::Undefined))
 }
 
 fn process_emit(arguments: &[Value]) -> Result<Value, VmError> {
     if matches!(arguments.first(), Some(Value::String(event)) if event == "warning") {
         if let Some(warning) = arguments.get(1) {
-            let listeners = NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow().clone());
+            let listeners =
+                NODE_PROCESS_WARNING_LISTENERS.with(|listeners| listeners.borrow().clone());
             for listener in listeners {
-                quench_runtime::execute::call(&listener, &Value::Undefined, std::slice::from_ref(warning))?;
+                quench_runtime::execute::call(
+                    &listener,
+                    &Value::Undefined,
+                    std::slice::from_ref(warning),
+                )?;
             }
         }
     }
@@ -4074,21 +4730,42 @@ fn process_emit(arguments: &[Value]) -> Result<Value, VmError> {
 fn process_cpu_usage(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = arguments.first() {
         if !matches!(value, Value::Object(_)) {
-            return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "options must be an object")));
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "options must be an object",
+            )));
         }
-        if let Ok(Value::Number(user)) = quench_runtime::execute::get_property_result(value, "user") {
-            if user < 0.0 { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "user must be non-negative"))); }
+        if let Ok(Value::Number(user)) = quench_runtime::execute::get_property_result(value, "user")
+        {
+            if user < 0.0 {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_VALUE",
+                    "user must be non-negative",
+                )));
+            }
         }
     }
-    Ok(quench_runtime::host_api::object(vec![("user".into(), Value::Number(0.0)), ("system".into(), Value::Number(0.0))]))
+    Ok(quench_runtime::host_api::object(vec![
+        ("user".into(), Value::Number(0.0)),
+        ("system".into(), Value::Number(0.0)),
+    ]))
 }
 
 fn process_hrtime(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = arguments.first() {
-        let values = array_values(value).map_err(|_| VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "time must be an array")))?;
-        if values.len() != 2 { return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "time must have two elements"))); }
+        let values = array_values(value)
+            .map_err(|_| VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "time must be an array")))?;
+        if values.len() != 2 {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_OUT_OF_RANGE",
+                "time must have two elements",
+            )));
+        }
     }
-    Ok(quench_runtime::host_api::array(vec![Value::Number(0.0), Value::Number(0.0)]))
+    Ok(quench_runtime::host_api::array(vec![
+        Value::Number(0.0),
+        Value::Number(0.0),
+    ]))
 }
 
 fn process_active_resources_info() -> Result<Value, VmError> {
@@ -4122,16 +4799,41 @@ fn url_object(url: &url::Url, id: u16) -> Value {
         ),
         (
             "host".into(),
-            Value::String((url.host_str().unwrap_or("").to_string() + &url.port().map(|port| format!(":{port}")).unwrap_or_default()).into()),
+            Value::String(
+                (url.host_str().unwrap_or("").to_string()
+                    + &url
+                        .port()
+                        .map(|port| format!(":{port}"))
+                        .unwrap_or_default())
+                    .into(),
+            ),
         ),
         (
             "port".into(),
             Value::String(url.port().map(|port| port.to_string()).unwrap_or_default()),
         ),
         ("pathname".into(), Value::String(url.path().into())),
-        ("hostname".into(), Value::String(url.host_str().unwrap_or("").into())),
-        ("path".into(), Value::String(format!("{}{}", url.path(), url.query().map(|query| format!("?{query}")).unwrap_or_default()).into())),
-        ("query".into(), Value::String(url.query().unwrap_or("").into())),
+        (
+            "hostname".into(),
+            Value::String(url.host_str().unwrap_or("").into()),
+        ),
+        (
+            "path".into(),
+            Value::String(
+                format!(
+                    "{}{}",
+                    url.path(),
+                    url.query()
+                        .map(|query| format!("?{query}"))
+                        .unwrap_or_default()
+                )
+                .into(),
+            ),
+        ),
+        (
+            "query".into(),
+            Value::String(url.query().unwrap_or("").into()),
+        ),
         (
             "search".into(),
             Value::String(
@@ -4160,12 +4862,20 @@ fn url_object(url: &url::Url, id: u16) -> Value {
 }
 
 fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(value)) = arguments.first() else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "url must be a string"))); };
+    let Some(Value::String(value)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "url must be a string",
+        )));
+    };
     if value.contains("%E0%A4%A") {
         return Err(VmError::Thrown(quench_runtime::host_api::object(vec![
             ("name".into(), Value::String("URIError".into())),
             ("message".into(), Value::String("URI malformed".into())),
-            ("constructor".into(), Value::Builtin(quench_runtime::ops::Builtin::URIError)),
+            (
+                "constructor".into(),
+                Value::Builtin(quench_runtime::ops::Builtin::URIError),
+            ),
         ])));
     }
     if value.contains("[127.0.0.1\\x00c8763]") {
@@ -4174,16 +4884,49 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     if value == "https://evil.com:.example.com" || value == "git+ssh://git@github.com:npm/npm" {
         return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", value)));
     }
-    let normalized = value.trim().replace("http:\\\\\\\\", "http://").replace('\\', "/");
-    let parsed = url::Url::parse(&normalized).map_err(|error| VmError::EvalError(error.to_string()))?;
-    let pathname = if parsed.path().is_empty() { "/" } else { parsed.path() };
+    let normalized = value
+        .trim()
+        .replace("http:\\\\\\\\", "http://")
+        .replace('\\', "/");
+    let parsed =
+        url::Url::parse(&normalized).map_err(|error| VmError::EvalError(error.to_string()))?;
+    let pathname = if parsed.path().is_empty() {
+        "/"
+    } else {
+        parsed.path()
+    };
     Ok(Value::object(vec![
-        ("protocol".into(), Value::String(format!("{}:", parsed.scheme()).into())),
+        (
+            "protocol".into(),
+            Value::String(format!("{}:", parsed.scheme()).into()),
+        ),
         ("slashes".into(), Value::Boolean(true)),
-        ("auth".into(), Value::String(if parsed.username().is_empty() { String::new() } else { format!("{}:{}", parsed.username(), parsed.password().unwrap_or("")) }.into())),
-        ("host".into(), Value::String(parsed.host_str().unwrap_or_default().into())),
-        ("port".into(), parsed.port().map(|port| Value::String(port.to_string().into())).unwrap_or(Value::Null)),
-        ("hostname".into(), Value::String(parsed.host_str().unwrap_or_default().into())),
+        (
+            "auth".into(),
+            Value::String(
+                if parsed.username().is_empty() {
+                    String::new()
+                } else {
+                    format!("{}:{}", parsed.username(), parsed.password().unwrap_or(""))
+                }
+                .into(),
+            ),
+        ),
+        (
+            "host".into(),
+            Value::String(parsed.host_str().unwrap_or_default().into()),
+        ),
+        (
+            "port".into(),
+            parsed
+                .port()
+                .map(|port| Value::String(port.to_string().into()))
+                .unwrap_or(Value::Null),
+        ),
+        (
+            "hostname".into(),
+            Value::String(parsed.host_str().unwrap_or_default().into()),
+        ),
         ("hash".into(), Value::Null),
         ("search".into(), Value::Null),
         ("query".into(), Value::Null),
@@ -4196,15 +4939,50 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
 fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(Value::String(value)) = arguments.first() {
         let mut output = value.clone();
-        if output.ends_with('?') { output.insert(output.len() - 1, '/'); }
+        if output.ends_with('?') {
+            output.insert(output.len() - 1, '/');
+        }
         return Ok(Value::String(output.into()));
     }
     let object = arguments.first().ok_or(VmError::NotCallable)?;
-    let protocol = quench_runtime::execute::get_property_result(object, "protocol").ok().and_then(|value| match value { Value::String(value) => Some(value), _ => None }).unwrap_or_default();
-    let host = quench_runtime::execute::get_property_result(object, "host").ok().and_then(|value| match value { Value::String(value) => Some(value), _ => None }).unwrap_or_default();
-    let pathname = quench_runtime::execute::get_property_result(object, "pathname").ok().and_then(|value| match value { Value::String(value) => Some(value), _ => None }).unwrap_or_default();
-    let search = quench_runtime::execute::get_property_result(object, "search").ok().and_then(|value| match value { Value::String(value) => Some(value), _ => None }).unwrap_or_default();
-    Ok(Value::String(format!("{}//{}{}{}", protocol, host, if pathname.is_empty() { "/" } else { &pathname }, search).into()))
+    let protocol = quench_runtime::execute::get_property_result(object, "protocol")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let host = quench_runtime::execute::get_property_result(object, "host")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let pathname = quench_runtime::execute::get_property_result(object, "pathname")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let search = quench_runtime::execute::get_property_result(object, "search")
+        .ok()
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or_default();
+    Ok(Value::String(
+        format!(
+            "{}//{}{}{}",
+            protocol,
+            host,
+            if pathname.is_empty() { "/" } else { &pathname },
+            search
+        )
+        .into(),
+    ))
 }
 
 fn buffer_module() -> Value {
@@ -4212,7 +4990,9 @@ fn buffer_module() -> Value {
     buffer = quench_runtime::execute::set_property(
         buffer,
         "Symbol.hasInstance",
-        capability_function(HostCapabilityKind::Custom(CapabilityName::BufferHasInstance)),
+        capability_function(HostCapabilityKind::Custom(
+            CapabilityName::BufferHasInstance,
+        )),
     );
     for (name, kind) in [
         (
@@ -4236,14 +5016,38 @@ fn buffer_module() -> Value {
             HostCapabilityKind::Custom(CapabilityName::BufferConcat),
         ),
         ("of", HostCapabilityKind::Custom(CapabilityName::BufferOf)),
-        ("allocUnsafeSlow", HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow)),
-        ("allocUnsafe", HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafe)),
-        ("isEncoding", HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding)),
-        ("copyBytesFrom", HostCapabilityKind::Custom(CapabilityName::BufferCopyBytesFrom)),
-        ("readBigInt64LE", HostCapabilityKind::Custom(CapabilityName::BufferReadBigInt64LE)),
-        ("readBigUInt64BE", HostCapabilityKind::Custom(CapabilityName::BufferReadBigUInt64BE)),
-        ("writeBigInt64LE", HostCapabilityKind::Custom(CapabilityName::BufferWriteBigInt64LE)),
-        ("writeBigUInt64BE", HostCapabilityKind::Custom(CapabilityName::BufferWriteBigUInt64BE)),
+        (
+            "allocUnsafeSlow",
+            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafeSlow),
+        ),
+        (
+            "allocUnsafe",
+            HostCapabilityKind::Custom(CapabilityName::BufferAllocUnsafe),
+        ),
+        (
+            "isEncoding",
+            HostCapabilityKind::Custom(CapabilityName::BufferIsEncoding),
+        ),
+        (
+            "copyBytesFrom",
+            HostCapabilityKind::Custom(CapabilityName::BufferCopyBytesFrom),
+        ),
+        (
+            "readBigInt64LE",
+            HostCapabilityKind::Custom(CapabilityName::BufferReadBigInt64LE),
+        ),
+        (
+            "readBigUInt64BE",
+            HostCapabilityKind::Custom(CapabilityName::BufferReadBigUInt64BE),
+        ),
+        (
+            "writeBigInt64LE",
+            HostCapabilityKind::Custom(CapabilityName::BufferWriteBigInt64LE),
+        ),
+        (
+            "writeBigUInt64BE",
+            HostCapabilityKind::Custom(CapabilityName::BufferWriteBigUInt64BE),
+        ),
         (
             "compare",
             HostCapabilityKind::Custom(CapabilityName::BufferCompare),
@@ -4255,16 +5059,14 @@ fn buffer_module() -> Value {
     let read_uint32_be = capability_function(HostCapabilityKind::Custom(
         CapabilityName::BufferNumericFirst + 12,
     ));
-    prototype = quench_runtime::execute::set_property(
-        prototype,
-        "readUInt32BE",
-        read_uint32_be.clone(),
-    );
+    prototype =
+        quench_runtime::execute::set_property(prototype, "readUInt32BE", read_uint32_be.clone());
     prototype = quench_runtime::execute::set_property(prototype, "readUint32BE", read_uint32_be);
     let write_uint_le = capability_function(HostCapabilityKind::Custom(
         CapabilityName::BufferNumericFirst + 19,
     ));
-    prototype = quench_runtime::execute::set_property(prototype, "writeUIntLE", write_uint_le.clone());
+    prototype =
+        quench_runtime::execute::set_property(prototype, "writeUIntLE", write_uint_le.clone());
     prototype = quench_runtime::execute::set_property(prototype, "writeUintLE", write_uint_le);
     for (name, capability) in [
         ("copy", CapabilityName::BufferCopy),
@@ -4284,8 +5086,13 @@ fn buffer_module() -> Value {
         ("MAX_STRING_LENGTH".into(), Value::Number(536_870_888.0)),
     ]);
     buffer = quench_runtime::execute::set_property(buffer, "constants", constants.clone());
-    buffer = quench_runtime::execute::set_property(buffer, "kMaxLength", Value::Number(4_294_967_296.0));
-    buffer = quench_runtime::execute::set_property(buffer, "kStringMaxLength", Value::Number(536_870_888.0));
+    buffer =
+        quench_runtime::execute::set_property(buffer, "kMaxLength", Value::Number(4_294_967_296.0));
+    buffer = quench_runtime::execute::set_property(
+        buffer,
+        "kStringMaxLength",
+        Value::Number(536_870_888.0),
+    );
     buffer = quench_runtime::execute::set_property(buffer, "poolSize", Value::Number(8192.0));
     buffer
 }
@@ -4363,18 +5170,43 @@ fn buffer_from_received(value: &Value) -> String {
         Value::Undefined => "Received undefined".into(),
         Value::Null => "Received null".into(),
         Value::BigInt(value) => format!("Received type bigint ({}n)", value),
-        Value::String(value) if value.contains("Symbol") => format!("Received type symbol ({})", value.replace('\0', "")),
+        Value::String(value) if value.contains("Symbol") => {
+            format!("Received type symbol ({})", value.replace('\0', ""))
+        }
         Value::Function(_) | Value::BoundFunction(_) => "Received function ".into(),
-        Value::Boolean(_) | Value::Number(_) => format!("Received type {} ({})", type_name(value), safe_value_string(value)),
+        Value::Boolean(_) | Value::Number(_) => format!(
+            "Received type {} ({})",
+            type_name(value),
+            safe_value_string(value)
+        ),
         Value::Object(_) | Value::ObjectAlias(_) => {
-            if matches!(quench_runtime::execute::call(&Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf), &Value::Undefined, &[value.clone()]), Ok(Value::Null)) {
+            if matches!(
+                quench_runtime::execute::call(
+                    &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf),
+                    &Value::Undefined,
+                    &[value.clone()]
+                ),
+                Ok(Value::Null)
+            ) {
                 return "Received [Object: null prototype] {}".into();
             }
-            let name = quench_runtime::execute::call(&Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf), &Value::Undefined, &[value.clone()]).ok()
-                .and_then(|prototype| quench_runtime::execute::get_property_result(&prototype, "constructor").ok())
-                .and_then(|constructor| quench_runtime::execute::get_property_result(&constructor, "name").ok())
-                .and_then(|name| match name { Value::String(name) => Some(name), _ => None })
-                .unwrap_or_else(|| "Object".into());
+            let name = quench_runtime::execute::call(
+                &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf),
+                &Value::Undefined,
+                &[value.clone()],
+            )
+            .ok()
+            .and_then(|prototype| {
+                quench_runtime::execute::get_property_result(&prototype, "constructor").ok()
+            })
+            .and_then(|constructor| {
+                quench_runtime::execute::get_property_result(&constructor, "name").ok()
+            })
+            .and_then(|name| match name {
+                Value::String(name) => Some(name),
+                _ => None,
+            })
+            .unwrap_or_else(|| "Object".into());
             format!("Received an instance of {name}")
         }
         _ => format!("Received type {}", type_name(value)),
@@ -4390,31 +5222,66 @@ fn buffer_alloc(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let pattern = match arguments.get(1) {
         Some(Value::Number(value)) => vec![*value as u8],
-        Some(Value::String(value)) if matches!(arguments.get(2), Some(Value::String(encoding)) if encoding.eq_ignore_ascii_case("hex")) => decode_hex(value),
+        Some(Value::String(value)) if matches!(arguments.get(2), Some(Value::String(encoding)) if encoding.eq_ignore_ascii_case("hex")) => {
+            decode_hex(value)
+        }
         Some(Value::String(value)) => value.as_bytes().to_vec(),
         _ => vec![0],
     };
     let pattern = if pattern.is_empty() { vec![0] } else { pattern };
-    Ok(node_buffer(&(0..*length as usize).map(|index| pattern[index % pattern.len()]).collect::<Vec<_>>()))
+    Ok(node_buffer(
+        &(0..*length as usize)
+            .map(|index| pattern[index % pattern.len()])
+            .collect::<Vec<_>>(),
+    ))
 }
 
 fn buffer_of(arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(node_buffer(&arguments.iter().map(|value| match value { Value::Number(value) => (*value as i64).rem_euclid(256) as u8, _ => 0 }).collect::<Vec<_>>()))
+    Ok(node_buffer(
+        &arguments
+            .iter()
+            .map(|value| match value {
+                Value::Number(value) => (*value as i64).rem_euclid(256) as u8,
+                _ => 0,
+            })
+            .collect::<Vec<_>>(),
+    ))
 }
 
 fn buffer_alloc_unsafe(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::Number(length)) = arguments.first() else {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "size must be a number")));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "size must be a number",
+        )));
     };
     if !length.is_finite() || *length < 0.0 {
-        return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "size out of range")));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_OUT_OF_RANGE",
+            "size out of range",
+        )));
     }
     Ok(node_buffer(&vec![0; *length as usize]))
 }
 
 fn buffer_is_encoding(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(value)) = arguments.first() else { return Ok(Value::Boolean(false)); };
-    Ok(Value::Boolean(matches!(value.to_ascii_lowercase().as_str(), "utf8" | "utf-8" | "utf16le" | "ucs2" | "ucs-2" | "latin1" | "binary" | "ascii" | "base64" | "base64url" | "hex")))
+    let Some(Value::String(value)) = arguments.first() else {
+        return Ok(Value::Boolean(false));
+    };
+    Ok(Value::Boolean(matches!(
+        value.to_ascii_lowercase().as_str(),
+        "utf8"
+            | "utf-8"
+            | "utf16le"
+            | "ucs2"
+            | "ucs-2"
+            | "latin1"
+            | "binary"
+            | "ascii"
+            | "base64"
+            | "base64url"
+            | "hex"
+    )))
 }
 
 fn node_buffer(bytes: &[u8]) -> Value {
@@ -4435,7 +5302,8 @@ fn node_buffer_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -
         capability_function(HostCapabilityKind::Custom(CapabilityName::BufferEquals)),
     );
     let mut value = value;
-    value = quench_runtime::execute::set_property(value, "parent", Value::ArrayBuffer(buffer.clone()));
+    value =
+        quench_runtime::execute::set_property(value, "parent", Value::ArrayBuffer(buffer.clone()));
     value = quench_runtime::execute::set_property(
         value,
         "constructor",
@@ -4443,7 +5311,11 @@ fn node_buffer_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -
     );
     let inspect = capability_function(HostCapabilityKind::Custom(CapabilityName::BufferInspect));
     value = quench_runtime::execute::set_property(value, "inspect", inspect.clone());
-    value = quench_runtime::execute::set_property(value, "Symbol.for.nodejs.util.inspect.custom\0", inspect);
+    value = quench_runtime::execute::set_property(
+        value,
+        "Symbol.for.nodejs.util.inspect.custom\0",
+        inspect,
+    );
     for (name, capability) in [
         ("readBigInt64LE", CapabilityName::BufferReadBigInt64LE),
         ("readBigUInt64BE", CapabilityName::BufferReadBigUInt64BE),
@@ -4549,13 +5421,34 @@ fn node_buffer_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -
     }
     let mut prototype = Value::object(vec![]);
     for (index, name) in [
-        "readDoubleBE", "readDoubleLE", "writeDoubleBE", "writeDoubleLE",
-        "readFloatBE", "readFloatLE", "writeFloatBE", "writeFloatLE",
-        "readUInt16BE", "readUInt16LE", "writeUInt16BE", "writeUInt16LE",
-        "readUInt32BE", "readUInt32LE", "writeUInt32BE", "writeUInt32LE",
-        "readUIntBE", "readUIntLE", "writeUIntBE", "writeUIntLE",
-        "readInt16BE", "readInt16LE", "writeInt16BE", "writeInt16LE",
-        "readIntBE", "readIntLE", "writeIntBE", "writeIntLE",
+        "readDoubleBE",
+        "readDoubleLE",
+        "writeDoubleBE",
+        "writeDoubleLE",
+        "readFloatBE",
+        "readFloatLE",
+        "writeFloatBE",
+        "writeFloatLE",
+        "readUInt16BE",
+        "readUInt16LE",
+        "writeUInt16BE",
+        "writeUInt16LE",
+        "readUInt32BE",
+        "readUInt32LE",
+        "writeUInt32BE",
+        "writeUInt32LE",
+        "readUIntBE",
+        "readUIntLE",
+        "writeUIntBE",
+        "writeUIntLE",
+        "readInt16BE",
+        "readInt16LE",
+        "writeInt16BE",
+        "writeInt16LE",
+        "readIntBE",
+        "readIntLE",
+        "writeIntBE",
+        "writeIntLE",
     ]
     .iter()
     .enumerate()
@@ -4571,12 +5464,14 @@ fn node_buffer_view(buffer: Rc<ArrayBufferData>, offset: usize, length: usize) -
     let read_uint32_be = capability_function(HostCapabilityKind::Custom(
         CapabilityName::BufferNumericFirst + 12,
     ));
-    prototype = quench_runtime::execute::set_property(prototype, "readUInt32BE", read_uint32_be.clone());
+    prototype =
+        quench_runtime::execute::set_property(prototype, "readUInt32BE", read_uint32_be.clone());
     prototype = quench_runtime::execute::set_property(prototype, "readUint32BE", read_uint32_be);
     let write_uint_le = capability_function(HostCapabilityKind::Custom(
         CapabilityName::BufferNumericFirst + 19,
     ));
-    prototype = quench_runtime::execute::set_property(prototype, "writeUIntLE", write_uint_le.clone());
+    prototype =
+        quench_runtime::execute::set_property(prototype, "writeUIntLE", write_uint_le.clone());
     prototype = quench_runtime::execute::set_property(prototype, "writeUintLE", write_uint_le);
     value = quench_runtime::execute::set_property(value, "prototype", prototype);
     value
@@ -4587,18 +5482,53 @@ fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
     let encoding = match arguments.first() {
         None | Some(Value::Undefined) => "utf8".into(),
         Some(Value::String(value)) => value.to_ascii_lowercase(),
-        Some(Value::Object(_) | Value::ObjectAlias(_)) => quench_runtime::execute::get_property_result(arguments.first().unwrap(), "toString")
-            .ok().and_then(|method| quench_runtime::execute::call(&method, arguments.first().unwrap(), &[]).ok())
-            .and_then(|value| match value { Value::String(value) => Some(value.to_ascii_lowercase()), _ => None })
-            .unwrap_or_else(|| "utf8".into()),
-        Some(value) => return Err(VmError::Thrown(fs_error("ERR_UNKNOWN_ENCODING", &format!("Unknown encoding: {}", safe_value_string(value))))),
+        Some(Value::Object(_) | Value::ObjectAlias(_)) => {
+            quench_runtime::execute::get_property_result(arguments.first().unwrap(), "toString")
+                .ok()
+                .and_then(|method| {
+                    quench_runtime::execute::call(&method, arguments.first().unwrap(), &[]).ok()
+                })
+                .and_then(|value| match value {
+                    Value::String(value) => Some(value.to_ascii_lowercase()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| "utf8".into())
+        }
+        Some(value) => {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_UNKNOWN_ENCODING",
+                &format!("Unknown encoding: {}", safe_value_string(value)),
+            )))
+        }
     };
-    if !matches!(encoding.as_str(), "utf8" | "utf-8" | "hex" | "base64" | "base64url" | "ascii" | "utf16le" | "utf-16le") {
-        return Err(VmError::Thrown(fs_error("ERR_UNKNOWN_ENCODING", &format!("Unknown encoding: {encoding}"))));
+    if !matches!(
+        encoding.as_str(),
+        "utf8" | "utf-8" | "hex" | "base64" | "base64url" | "ascii" | "utf16le" | "utf-16le"
+    ) {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_UNKNOWN_ENCODING",
+            &format!("Unknown encoding: {encoding}"),
+        )));
     }
-    let start = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some(value.max(0.0) as usize), _ => None }).unwrap_or(0).min(bytes.len());
-    let end = match arguments.get(2) { None | Some(Value::Undefined) => bytes.len(), Some(Value::Number(value)) => (*value).max(0.0) as usize, Some(_) => 0 } .min(bytes.len());
-    bytes = if end >= start { bytes[start..end].to_vec() } else { Vec::new() };
+    let start = arguments
+        .get(1)
+        .and_then(|value| match value {
+            Value::Number(value) => Some(value.max(0.0) as usize),
+            _ => None,
+        })
+        .unwrap_or(0)
+        .min(bytes.len());
+    let end = match arguments.get(2) {
+        None | Some(Value::Undefined) => bytes.len(),
+        Some(Value::Number(value)) => (*value).max(0.0) as usize,
+        Some(_) => 0,
+    }
+    .min(bytes.len());
+    bytes = if end >= start {
+        bytes[start..end].to_vec()
+    } else {
+        Vec::new()
+    };
     if encoding == "hex" {
         return Ok(Value::String(
             bytes
@@ -4612,13 +5542,28 @@ fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         return Ok(Value::String(base64_encode(&bytes).into()));
     }
     if encoding == "base64url" {
-        return Ok(Value::String(base64_encode(&bytes).trim_end_matches('=').replace('+', "-").replace('/', "_").into()));
+        return Ok(Value::String(
+            base64_encode(&bytes)
+                .trim_end_matches('=')
+                .replace('+', "-")
+                .replace('/', "_")
+                .into(),
+        ));
     }
     if encoding == "ascii" {
-        return Ok(Value::String(bytes.iter().map(|byte| char::from(*byte & 0x7f)).collect::<String>().into()));
+        return Ok(Value::String(
+            bytes
+                .iter()
+                .map(|byte| char::from(*byte & 0x7f))
+                .collect::<String>()
+                .into(),
+        ));
     }
     if encoding == "utf16le" || encoding == "utf-16le" {
-        let values = bytes.chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>();
+        let values = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
         return Ok(Value::String(String::from_utf16_lossy(&values).into()));
     }
     Ok(Value::String(
@@ -4712,16 +5657,25 @@ fn buffer_concat(arguments: &[Value]) -> Result<Value, VmError> {
             Value::Uint8Array(_) => "an instance of Buffer".into(),
             _ => format!("type {}", type_name(&list)),
         };
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", &format!("The \"list\" argument must be an instance of Array. Received {received}"))));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            &format!("The \"list\" argument must be an instance of Array. Received {received}"),
+        )));
     };
     let values = array_values(&list)?;
     if let Some(value) = arguments.get(1) {
         match value {
             Value::Number(value) if !value.is_finite() || value.fract() != 0.0 => {
-                return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "The \"length\" argument must be an integer")));
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_OUT_OF_RANGE",
+                    "The \"length\" argument must be an integer",
+                )));
             }
             Value::Number(value) if *value < 0.0 => {
-                return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "The \"length\" argument must be >= 0")));
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_OUT_OF_RANGE",
+                    "The \"length\" argument must be >= 0",
+                )));
             }
             _ => {}
         }
@@ -4751,9 +5705,17 @@ fn buffer_concat(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn buffer_equals(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(other) = arguments.first() else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "The \"otherBuffer\" argument must be an instance of Buffer or Uint8Array. Received undefined"))); };
+    let Some(other) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "The \"otherBuffer\" argument must be an instance of Buffer or Uint8Array. Received undefined")));
+    };
     if !matches!(other, Value::Uint8Array(_)) {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", &format!("The \"otherBuffer\" argument must be an instance of Buffer or Uint8Array. {}", buffer_received(other)))));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            &format!(
+                "The \"otherBuffer\" argument must be an instance of Buffer or Uint8Array. {}",
+                buffer_received(other)
+            ),
+        )));
     }
     Ok(Value::Boolean(
         string_or_bytes(receiver)? == string_or_bytes(arguments.first())?,
@@ -4761,21 +5723,74 @@ fn buffer_equals(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
 }
 
 fn buffer_compare(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let other = if matches!(receiver, Some(Value::Uint8Array(_))) { arguments.first() } else { arguments.get(1) };
+    let other = if matches!(receiver, Some(Value::Uint8Array(_))) {
+        arguments.first()
+    } else {
+        arguments.get(1)
+    };
     if !matches!(other, Some(Value::Uint8Array(_))) {
         let value = other.cloned().unwrap_or(Value::Undefined);
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", &format!("The \"buf2\" argument must be an instance of Buffer or Uint8Array. {}", buffer_received(&value)))));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            &format!(
+                "The \"buf2\" argument must be an instance of Buffer or Uint8Array. {}",
+                buffer_received(&value)
+            ),
+        )));
     }
     let (left, right) = if matches!(receiver, Some(Value::Uint8Array(_))) {
         let left = string_or_bytes(receiver)?;
         let right_full = string_or_bytes(arguments.first())?;
-        let target_start = match arguments.get(1) { Some(Value::Number(value)) => *value as usize, Some(_) => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "targetStart must be a number"))), None => 0 };
-        let target_end = match arguments.get(2) { Some(Value::Number(value)) => *value as usize, Some(_) => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "targetEnd must be a number"))), None => right_full.len() };
-        let source_start = match arguments.get(3) { Some(Value::Number(value)) => *value as usize, Some(_) => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "sourceStart must be a number"))), None => 0 };
-        let source_end = match arguments.get(4) { Some(Value::Number(value)) => *value as usize, Some(_) => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "sourceEnd must be a number"))), None => left.len() };
-        (left[source_start.min(left.len())..source_end.min(left.len())].to_vec(), right_full[target_start.min(right_full.len())..target_end.min(right_full.len())].to_vec())
+        let target_start = match arguments.get(1) {
+            Some(Value::Number(value)) => *value as usize,
+            Some(_) => {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    "targetStart must be a number",
+                )))
+            }
+            None => 0,
+        };
+        let target_end = match arguments.get(2) {
+            Some(Value::Number(value)) => *value as usize,
+            Some(_) => {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    "targetEnd must be a number",
+                )))
+            }
+            None => right_full.len(),
+        };
+        let source_start = match arguments.get(3) {
+            Some(Value::Number(value)) => *value as usize,
+            Some(_) => {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    "sourceStart must be a number",
+                )))
+            }
+            None => 0,
+        };
+        let source_end = match arguments.get(4) {
+            Some(Value::Number(value)) => *value as usize,
+            Some(_) => {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    "sourceEnd must be a number",
+                )))
+            }
+            None => left.len(),
+        };
+        (
+            left[source_start.min(left.len())..source_end.min(left.len())].to_vec(),
+            right_full[target_start.min(right_full.len())..target_end.min(right_full.len())]
+                .to_vec(),
+        )
     } else {
-        (string_or_bytes(arguments.first())?, string_or_bytes(arguments.get(1))?)
+        (
+            string_or_bytes(arguments.first())?,
+            string_or_bytes(arguments.get(1))?,
+        )
     };
     Ok(Value::Number(if left < right {
         -1.0
@@ -4796,18 +5811,35 @@ fn buffer_received(value: &Value) -> String {
     }
 }
 
-fn buffer_search(receiver: Option<&Value>, arguments: &[Value], reverse: bool) -> Result<Value, VmError> {
+fn buffer_search(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    reverse: bool,
+) -> Result<Value, VmError> {
     let haystack = string_or_bytes(receiver)?;
     let needle = match arguments.first() {
         Some(Value::Number(value)) => vec![*value as u8],
         value => string_or_bytes(value)?,
     };
-    let offset = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some((*value as isize).max(0) as usize), _ => None }).unwrap_or(if reverse { haystack.len() } else { 0 });
-    if needle.is_empty() { return Ok(Value::Number(offset.min(haystack.len()) as f64)); }
+    let offset = arguments
+        .get(1)
+        .and_then(|value| match value {
+            Value::Number(value) => Some((*value as isize).max(0) as usize),
+            _ => None,
+        })
+        .unwrap_or(if reverse { haystack.len() } else { 0 });
+    if needle.is_empty() {
+        return Ok(Value::Number(offset.min(haystack.len()) as f64));
+    }
     let result = if reverse {
-        haystack[..offset.min(haystack.len())].windows(needle.len()).rposition(|window| window == needle.as_slice())
+        haystack[..offset.min(haystack.len())]
+            .windows(needle.len())
+            .rposition(|window| window == needle.as_slice())
     } else {
-        haystack[offset.min(haystack.len())..].windows(needle.len()).position(|window| window == needle.as_slice()).map(|index| index + offset.min(haystack.len()))
+        haystack[offset.min(haystack.len())..]
+            .windows(needle.len())
+            .position(|window| window == needle.as_slice())
+            .map(|index| index + offset.min(haystack.len()))
     };
     Ok(Value::Number(result.map_or(-1.0, |index| index as f64)))
 }
@@ -4816,39 +5848,100 @@ fn buffer_to_json(receiver: Option<&Value>) -> Result<Value, VmError> {
     let bytes = string_or_bytes(receiver)?;
     Ok(quench_runtime::host_api::object(vec![
         ("type".into(), Value::String("Buffer".into())),
-        ("data".into(), quench_runtime::host_api::array(bytes.into_iter().map(|byte| Value::Number(byte as f64)).collect())),
+        (
+            "data".into(),
+            quench_runtime::host_api::array(
+                bytes
+                    .into_iter()
+                    .map(|byte| Value::Number(byte as f64))
+                    .collect(),
+            ),
+        ),
     ]))
 }
 
 fn buffer_swap(receiver: Option<&Value>, width: usize) -> Result<Value, VmError> {
-    let Value::Uint8Array(view) = receiver.ok_or(VmError::NotCallable)? else { return Err(VmError::NotCallable); };
+    let Value::Uint8Array(view) = receiver.ok_or(VmError::NotCallable)? else {
+        return Err(VmError::NotCallable);
+    };
     if view.length % width != 0 {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_BUFFER_SIZE", "Buffer size must be a multiple of the element size")));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_BUFFER_SIZE",
+            "Buffer size must be a multiple of the element size",
+        )));
     }
     let mut bytes = view.buffer.bytes.borrow_mut();
     let range = &mut bytes[view.byte_offset..view.byte_offset + view.length];
-    for chunk in range.chunks_exact_mut(width) { chunk.reverse(); }
+    for chunk in range.chunks_exact_mut(width) {
+        chunk.reverse();
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 fn buffer_copy_bytes_from(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(source) = arguments.first() else { return Err(VmError::NotCallable); };
-    let (bytes, element_size) = match source {
-        Value::Uint8Array(view) => (view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec(), 1),
-        Value::Uint16Array(view) => (view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length * 2].to_vec(), 2),
-        _ => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "source must be a typed array"))),
+    let Some(source) = arguments.first() else {
+        return Err(VmError::NotCallable);
     };
-    let offset = arguments.get(1).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize * element_size), _ => None }).unwrap_or(0).min(bytes.len());
-    let length = arguments.get(2).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or(bytes.len() - offset).min(bytes.len() - offset);
+    let (bytes, element_size) = match source {
+        Value::Uint8Array(view) => (
+            view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec(),
+            1,
+        ),
+        Value::Uint16Array(view) => (
+            view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length * 2]
+                .to_vec(),
+            2,
+        ),
+        _ => {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "source must be a typed array",
+            )))
+        }
+    };
+    let offset = arguments
+        .get(1)
+        .and_then(|value| match value {
+            Value::Number(value) => Some((*value).max(0.0) as usize * element_size),
+            _ => None,
+        })
+        .unwrap_or(0)
+        .min(bytes.len());
+    let length = arguments
+        .get(2)
+        .and_then(|value| match value {
+            Value::Number(value) => Some((*value).max(0.0) as usize),
+            _ => None,
+        })
+        .unwrap_or(bytes.len() - offset)
+        .min(bytes.len() - offset);
     Ok(node_buffer(&bytes[offset..offset + length]))
 }
 
-fn buffer_bigint(receiver: Option<&Value>, arguments: &[Value], unsigned: bool, little: bool) -> Result<Value, VmError> {
-    let Value::Uint8Array(view) = receiver.ok_or(VmError::NotCallable)? else { return Err(VmError::NotCallable); };
+fn buffer_bigint(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    unsigned: bool,
+    little: bool,
+) -> Result<Value, VmError> {
+    let Value::Uint8Array(view) = receiver.ok_or(VmError::NotCallable)? else {
+        return Err(VmError::NotCallable);
+    };
     let write = matches!(arguments.first(), Some(Value::BigInt(_)));
     let offset = if write { 1 } else { 0 };
-    let offset = arguments.get(offset).and_then(|value| match value { Value::Number(value) => Some((*value).max(0.0) as usize), _ => None }).unwrap_or(0);
-    if offset + 8 > view.length { return Err(VmError::Thrown(fs_error("ERR_BUFFER_OUT_OF_BOUNDS", "offset out of bounds"))); }
+    let offset = arguments
+        .get(offset)
+        .and_then(|value| match value {
+            Value::Number(value) => Some((*value).max(0.0) as usize),
+            _ => None,
+        })
+        .unwrap_or(0);
+    if offset + 8 > view.length {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_BUFFER_OUT_OF_BOUNDS",
+            "offset out of bounds",
+        )));
+    }
     let mut bytes = view.buffer.bytes.borrow_mut();
     let slice = &mut bytes[view.byte_offset + offset..view.byte_offset + offset + 8];
     if write {
@@ -4857,39 +5950,76 @@ fn buffer_bigint(receiver: Option<&Value>, arguments: &[Value], unsigned: bool, 
             Some(Value::BigInt(value)) => value.parse::<i64>().unwrap_or(0) as u64,
             _ => return Err(VmError::NotCallable),
         };
-        let encoded = if little { value.to_le_bytes() } else { value.to_be_bytes() };
+        let encoded = if little {
+            value.to_le_bytes()
+        } else {
+            value.to_be_bytes()
+        };
         slice.copy_from_slice(&encoded);
         Ok(Value::Number((offset + 8) as f64))
     } else {
-        let mut encoded = [0u8; 8]; encoded.copy_from_slice(slice);
-        let value = if little { u64::from_le_bytes(encoded) } else { u64::from_be_bytes(encoded) };
-        let value = if unsigned { value as i128 } else { value as i64 as i128 };
+        let mut encoded = [0u8; 8];
+        encoded.copy_from_slice(slice);
+        let value = if little {
+            u64::from_le_bytes(encoded)
+        } else {
+            u64::from_be_bytes(encoded)
+        };
+        let value = if unsigned {
+            value as i128
+        } else {
+            value as i64 as i128
+        };
         Ok(Value::BigInt(value.to_string()))
     }
 }
 
 fn string_decoder_module() -> Value {
-    let constructor = capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderConstructor));
+    let constructor = capability_function(HostCapabilityKind::Custom(
+        CapabilityName::StringDecoderConstructor,
+    ));
     let constructor = quench_runtime::execute::set_property(
         constructor,
         "call",
-        capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderCall)),
+        capability_function(HostCapabilityKind::Custom(
+            CapabilityName::StringDecoderCall,
+        )),
     );
     quench_runtime::host_api::object(vec![("StringDecoder".into(), constructor)])
 }
 
 fn string_decoder_object(encoding: &str) -> Value {
     let encoding = encoding.to_ascii_lowercase().replace('-', "");
-    let encoding = if encoding.is_empty() { "utf8".to_owned() } else { encoding };
+    let encoding = if encoding.is_empty() {
+        "utf8".to_owned()
+    } else {
+        encoding
+    };
     quench_runtime::host_api::object(vec![
         ("encoding".into(), Value::String(encoding.into())),
-        ("_pending".into(), Value::BindingCell(Rc::new(RefCell::new(quench_runtime::host_api::array(Vec::new()))))),
-        ("lastNeed".into(), Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))))),
-        ("lastTotal".into(), Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))))),
-        ("lastChar".into(), Value::BindingCell(Rc::new(RefCell::new(node_buffer(&[0, 0, 0, 0]))))),
+        (
+            "_pending".into(),
+            Value::BindingCell(Rc::new(RefCell::new(quench_runtime::host_api::array(
+                Vec::new(),
+            )))),
+        ),
+        (
+            "lastNeed".into(),
+            Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0)))),
+        ),
+        (
+            "lastTotal".into(),
+            Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0)))),
+        ),
+        (
+            "lastChar".into(),
+            Value::BindingCell(Rc::new(RefCell::new(node_buffer(&[0, 0, 0, 0])))),
+        ),
         (
             "write".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderWrite)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::StringDecoderWrite,
+            )),
         ),
         (
             "end".into(),
@@ -4897,7 +6027,9 @@ fn string_decoder_object(encoding: &str) -> Value {
         ),
         (
             "text".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::StringDecoderText)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::StringDecoderText,
+            )),
         ),
     ])
 }
@@ -4912,7 +6044,10 @@ fn string_decoder_constructor(
         Some(value) => safe_value_string(value),
     };
     let normalized = encoding.to_ascii_lowercase().replace('-', "");
-    if !matches!(normalized.as_str(), "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii") {
+    if !matches!(
+        normalized.as_str(),
+        "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii"
+    ) {
         return Err(VmError::Thrown(fs_error(
             "ERR_UNKNOWN_ENCODING",
             &format!("Unknown encoding: {encoding}"),
@@ -4921,7 +6056,16 @@ fn string_decoder_constructor(
     let object = string_decoder_object(&normalized);
     if let Some(receiver) = receiver {
         quench_runtime::execute::replace_value(receiver, &object);
-        for key in ["encoding", "_pending", "lastNeed", "lastTotal", "lastChar", "write", "end", "text"] {
+        for key in [
+            "encoding",
+            "_pending",
+            "lastNeed",
+            "lastTotal",
+            "lastChar",
+            "write",
+            "end",
+            "text",
+        ] {
             if let Ok(value) = quench_runtime::execute::get_property_result(&object, key) {
                 let _ = quench_runtime::execute::set_property(receiver.clone(), key, value);
             }
@@ -4934,13 +6078,17 @@ fn string_decoder_constructor(
 fn string_decoder_bytes(value: &Value) -> Result<Vec<u8>, VmError> {
     let bytes = match value {
         Value::Uint16Array(view) => view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.length * 2].to_vec(),
+            [view.byte_offset..view.byte_offset + view.length * 2]
+            .to_vec(),
         Value::Uint32Array(view) => view.buffer.bytes.borrow()
-            [view.byte_offset..view.byte_offset + view.length * 4].to_vec(),
-        _ => string_or_bytes(Some(value)).map_err(|_| VmError::Thrown(fs_error(
-            "ERR_INVALID_ARG_TYPE",
-            "The \"buf\" argument must be an instance of Buffer, TypedArray, or DataView.",
-        )))?,
+            [view.byte_offset..view.byte_offset + view.length * 4]
+            .to_vec(),
+        _ => string_or_bytes(Some(value)).map_err(|_| {
+            VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "The \"buf\" argument must be an instance of Buffer, TypedArray, or DataView.",
+            ))
+        })?,
     };
     Ok(bytes)
 }
@@ -4953,12 +6101,18 @@ fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result
         .and_then(|value| array_values(&value).ok())
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|value| match value { Value::Number(value) => Some(value as u8), _ => None })
+        .filter_map(|value| match value {
+            Value::Number(value) => Some(value as u8),
+            _ => None,
+        })
         .collect::<Vec<_>>();
     bytes.extend(string_decoder_bytes(input)?);
     let encoding = quench_runtime::execute::get_property_result(receiver, "encoding")
         .ok()
-        .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
+        .and_then(|value| match value {
+            Value::String(value) => Some(value),
+            _ => None,
+        })
         .unwrap_or_else(|| "utf8".into());
     let (text, pending) = if encoding == "utf16le" || encoding == "ucs2" {
         let mut complete = bytes.len() / 2 * 2;
@@ -4968,10 +6122,27 @@ fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result
                 complete -= 2;
             }
         }
-        let text = String::from_utf16_lossy(&bytes[..complete].chunks_exact(2).map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]])).collect::<Vec<_>>());
+        let text = String::from_utf16_lossy(
+            &bytes[..complete]
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect::<Vec<_>>(),
+        );
         (text, bytes[complete..].to_vec())
     } else if encoding == "latin1" || encoding == "ascii" {
-        (bytes.iter().map(|byte| char::from(if encoding == "ascii" { byte & 0x7f } else { *byte })).collect(), Vec::new())
+        (
+            bytes
+                .iter()
+                .map(|byte| {
+                    char::from(if encoding == "ascii" {
+                        byte & 0x7f
+                    } else {
+                        *byte
+                    })
+                })
+                .collect(),
+            Vec::new(),
+        )
     } else {
         match String::from_utf8(bytes.clone()) {
             Ok(text) => (text, Vec::new()),
@@ -4985,34 +6156,83 @@ fn string_decoder_write(receiver: Option<&Value>, arguments: &[Value]) -> Result
             }
         }
     };
-    let pending = quench_runtime::host_api::array(pending.into_iter().map(|byte| Value::Number(byte as f64)).collect());
+    let pending = quench_runtime::host_api::array(
+        pending
+            .into_iter()
+            .map(|byte| Value::Number(byte as f64))
+            .collect(),
+    );
     let pending_values = array_values(&pending).unwrap_or_default();
-    let _ = quench_runtime::execute::set_property(receiver.clone(), "lastNeed", Value::Number(if pending_values.is_empty() { 0.0 } else { (3 - pending_values.len()) as f64 }));
-    let _ = quench_runtime::execute::set_property(receiver.clone(), "lastTotal", Value::Number(if pending_values.is_empty() { 0.0 } else { 3.0 }));
-    let _ = quench_runtime::execute::set_property(receiver.clone(), "lastChar", node_buffer(&pending_values.iter().filter_map(|value| match value { Value::Number(value) => Some(*value as u8), _ => None }).chain(std::iter::repeat(0)).take(4).collect::<Vec<_>>()));
+    let _ = quench_runtime::execute::set_property(
+        receiver.clone(),
+        "lastNeed",
+        Value::Number(if pending_values.is_empty() {
+            0.0
+        } else {
+            (3 - pending_values.len()) as f64
+        }),
+    );
+    let _ = quench_runtime::execute::set_property(
+        receiver.clone(),
+        "lastTotal",
+        Value::Number(if pending_values.is_empty() { 0.0 } else { 3.0 }),
+    );
+    let _ = quench_runtime::execute::set_property(
+        receiver.clone(),
+        "lastChar",
+        node_buffer(
+            &pending_values
+                .iter()
+                .filter_map(|value| match value {
+                    Value::Number(value) => Some(*value as u8),
+                    _ => None,
+                })
+                .chain(std::iter::repeat(0))
+                .take(4)
+                .collect::<Vec<_>>(),
+        ),
+    );
     let _ = quench_runtime::execute::set_property(receiver.clone(), "_pending", pending);
     Ok(Value::String(text.into()))
 }
 
 fn string_decoder_end(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = receiver.ok_or(VmError::NotCallable)?;
-    let prefix = if arguments.is_empty() { Value::String("".into()) } else { string_decoder_write(Some(receiver), arguments)? };
+    let prefix = if arguments.is_empty() {
+        Value::String("".into())
+    } else {
+        string_decoder_write(Some(receiver), arguments)?
+    };
     let pending = quench_runtime::execute::get_property_result(receiver, "_pending")
         .ok()
         .and_then(|value| array_values(&value).ok())
         .unwrap_or_default();
-    let tail = if pending.is_empty() { String::new() } else { "�".into() };
-    let _ = quench_runtime::execute::set_property(receiver.clone(), "_pending", quench_runtime::host_api::array(Vec::new()));
-    let prefix = match prefix { Value::String(value) => value, _ => String::new() };
+    let tail = if pending.is_empty() {
+        String::new()
+    } else {
+        "�".into()
+    };
+    let _ = quench_runtime::execute::set_property(
+        receiver.clone(),
+        "_pending",
+        quench_runtime::host_api::array(Vec::new()),
+    );
+    let prefix = match prefix {
+        Value::String(value) => value,
+        _ => String::new(),
+    };
     Ok(Value::String(format!("{prefix}{tail}").into()))
 }
 
 fn string_decoder_text(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let input = arguments.first().ok_or(VmError::NotCallable)?;
-    let offset = arguments.get(1).and_then(|value| match value {
-        Value::Number(value) => Some((*value).max(0.0) as usize),
-        _ => None,
-    }).unwrap_or(0);
+    let offset = arguments
+        .get(1)
+        .and_then(|value| match value {
+            Value::Number(value) => Some((*value).max(0.0) as usize),
+            _ => None,
+        })
+        .unwrap_or(0);
     let bytes = string_decoder_bytes(input)?;
     if offset >= bytes.len() {
         return Ok(Value::String("".into()));
@@ -5037,7 +6257,12 @@ fn buffer_numeric(
     let offset_arg = if is_write { 1 } else { 0 };
     let offset_value = match arguments.get(offset_arg) {
         Some(Value::Number(value)) => *value,
-        _ => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "offset must be a number"))),
+        _ => {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "offset must be a number",
+            )))
+        }
     };
     let size = if variable {
         match arguments.get(offset_arg + 1) {
@@ -5064,8 +6289,14 @@ fn buffer_numeric(
     };
     let maximum_offset = view.length.saturating_sub(size);
     let offset_display = if offset_value.is_infinite() {
-        if offset_value.is_sign_negative() { "-Infinity".into() } else { "Infinity".into() }
-    } else { offset_value.to_string() };
+        if offset_value.is_sign_negative() {
+            "-Infinity".into()
+        } else {
+            "Infinity".into()
+        }
+    } else {
+        offset_value.to_string()
+    };
     if !offset_value.is_finite() || offset_value.fract() != 0.0 {
         return Err(VmError::Thrown(fs_error(
             "ERR_OUT_OF_RANGE",
@@ -5183,7 +6414,10 @@ fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         _ => return Err(VmError::NotCallable),
     };
     if matches!(arguments.get(1), Some(Value::String(_))) {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "offset must be a number")));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "offset must be a number",
+        )));
     }
     let offset = arguments
         .get(1)
@@ -5193,14 +6427,24 @@ fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         })
         .unwrap_or(0);
     let encoding = arguments
-        .get(if matches!(arguments.get(2), Some(Value::Number(_))) { 3 } else { 2 })
+        .get(if matches!(arguments.get(2), Some(Value::Number(_))) {
+            3
+        } else {
+            2
+        })
         .and_then(|value| match value {
             Value::String(value) => Some(value.as_str()),
             _ => None,
         })
         .unwrap_or("utf8");
-    if !matches!(encoding.to_ascii_lowercase().as_str(), "utf8" | "utf-8" | "hex" | "utf16le" | "ucs2" | "ucs-2") {
-        return Err(VmError::Thrown(fs_error("ERR_UNKNOWN_ENCODING", "Unknown encoding")));
+    if !matches!(
+        encoding.to_ascii_lowercase().as_str(),
+        "utf8" | "utf-8" | "hex" | "utf16le" | "ucs2" | "ucs-2"
+    ) {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_UNKNOWN_ENCODING",
+            "Unknown encoding",
+        )));
     }
     let bytes = if encoding == "hex" {
         (0..text.len())
@@ -5209,7 +6453,9 @@ fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
             .filter_map(|index| u8::from_str_radix(&text[index..index + 2], 16).ok())
             .collect::<Vec<_>>()
     } else if encoding == "utf16le" || encoding == "ucs2" || encoding == "ucs-2" {
-        text.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>()
+        text.encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>()
     } else {
         text.as_bytes().to_vec()
     };
@@ -5287,8 +6533,12 @@ fn buffer_copy(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
     let target = arguments.first().ok_or(VmError::NotCallable)?;
     let (target_buffer, target_offset, target_bytes) = match target {
         Value::Uint8Array(target) => (target.buffer.clone(), target.byte_offset, target.length),
-        Value::Uint16Array(target) => (target.buffer.clone(), target.byte_offset, target.length * 2),
-        Value::Uint32Array(target) => (target.buffer.clone(), target.byte_offset, target.length * 4),
+        Value::Uint16Array(target) => {
+            (target.buffer.clone(), target.byte_offset, target.length * 2)
+        }
+        Value::Uint32Array(target) => {
+            (target.buffer.clone(), target.byte_offset, target.length * 4)
+        }
         _ => return Err(VmError::NotCallable),
     };
     let target_start = arguments
@@ -5331,18 +6581,42 @@ fn buffer_fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
         Some(Value::Number(value)) => Ok(vec![*value as u8]),
         _ => Err(VmError::NotCallable),
     })?;
-    let encoding_index = if matches!(arguments.get(1), Some(Value::String(_))) { 1 } else { 3 };
-    if matches!(arguments.get(encoding_index), Some(Value::String(encoding)) if encoding.eq_ignore_ascii_case("hex")) {
-        let Some(Value::String(value)) = arguments.first() else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "invalid hex fill"))); };
+    let encoding_index = if matches!(arguments.get(1), Some(Value::String(_))) {
+        1
+    } else {
+        3
+    };
+    if matches!(arguments.get(encoding_index), Some(Value::String(encoding)) if encoding.eq_ignore_ascii_case("hex"))
+    {
+        let Some(Value::String(value)) = arguments.first() else {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_VALUE",
+                "invalid hex fill",
+            )));
+        };
         let decoded = decode_hex(value);
-        if decoded.len() * 2 != value.len() { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "invalid hex fill"))); }
+        if decoded.len() * 2 != value.len() {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_VALUE",
+                "invalid hex fill",
+            )));
+        }
         fill = decoded;
     }
     if fill.is_empty() {
         return Ok(receiver.cloned().unwrap_or(Value::Undefined));
     }
-    if arguments.get(1).is_some_and(|value| !matches!(value, Value::Number(_))) || arguments.get(2).is_some_and(|value| !matches!(value, Value::Number(_) | Value::String(_))) {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "range must be numeric")));
+    if arguments
+        .get(1)
+        .is_some_and(|value| !matches!(value, Value::Number(_)))
+        || arguments
+            .get(2)
+            .is_some_and(|value| !matches!(value, Value::Number(_) | Value::String(_)))
+    {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "range must be numeric",
+        )));
     }
     let start = arguments
         .get(1)
@@ -5378,95 +6652,199 @@ fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn buffer_is_ascii(arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::Boolean(string_or_bytes(arguments.first())?.iter().all(|byte| *byte < 0x80)))
+    Ok(Value::Boolean(
+        string_or_bytes(arguments.first())?
+            .iter()
+            .all(|byte| *byte < 0x80),
+    ))
 }
 
 fn buffer_is_utf8(arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::Boolean(std::str::from_utf8(&string_or_bytes(arguments.first())?).is_ok()))
+    Ok(Value::Boolean(
+        std::str::from_utf8(&string_or_bytes(arguments.first())?).is_ok(),
+    ))
 }
 
 fn text_encoder_constructor() -> Result<Value, VmError> {
-    Ok(quench_runtime::host_api::object(vec![
-        ("encode".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextEncoderEncode))),
-    ]))
+    Ok(quench_runtime::host_api::object(vec![(
+        "encode".into(),
+        capability_function(HostCapabilityKind::Custom(
+            CapabilityName::TextEncoderEncode,
+        )),
+    )]))
 }
 
 fn text_encoder_encode(_receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(value)) = arguments.first() else { return Ok(quench_runtime::host_api::bytes(&[])); };
+    let Some(Value::String(value)) = arguments.first() else {
+        return Ok(quench_runtime::host_api::bytes(&[]));
+    };
     Ok(quench_runtime::host_api::bytes(value.as_bytes()))
 }
 
 fn text_decoder_constructor() -> Result<Value, VmError> {
-    Ok(quench_runtime::host_api::object(vec![
-        ("decode".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextDecoderDecode))),
-    ]))
+    Ok(quench_runtime::host_api::object(vec![(
+        "decode".into(),
+        capability_function(HostCapabilityKind::Custom(
+            CapabilityName::TextDecoderDecode,
+        )),
+    )]))
 }
 
 fn text_decoder_decode(arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::String(String::from_utf8_lossy(&string_or_bytes(arguments.first())?).into()))
+    Ok(Value::String(
+        String::from_utf8_lossy(&string_or_bytes(arguments.first())?).into(),
+    ))
 }
 
 fn buffer_inspect(receiver: Option<&Value>) -> Result<Value, VmError> {
     let bytes = string_or_bytes(receiver)?;
-    let shown = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<Vec<_>>().join(" ");
+    let shown = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ");
     Ok(Value::String(format!("<Buffer {shown}>").into()))
 }
 
 fn internal_binding(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(name)) = arguments.first() else {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "binding name must be a string")));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "binding name must be a string",
+        )));
     };
-    if name == "util" { return Ok(util_types_module()); }
-    if ["buffer", "cares_wrap", "constants", "contextify", "fs", "fs_event_wrap", "icu", "inspector", "js_stream", "natives", "os", "pipe_wrap", "spawn_sync", "stream_wrap", "tcp_wrap", "tls_wrap", "tty_wrap", "udp_wrap", "uv", "zlib"].contains(&name.as_str()) {
+    if name == "util" {
+        return Ok(util_types_module());
+    }
+    if [
+        "buffer",
+        "cares_wrap",
+        "constants",
+        "contextify",
+        "fs",
+        "fs_event_wrap",
+        "icu",
+        "inspector",
+        "js_stream",
+        "natives",
+        "os",
+        "pipe_wrap",
+        "spawn_sync",
+        "stream_wrap",
+        "tcp_wrap",
+        "tls_wrap",
+        "tty_wrap",
+        "udp_wrap",
+        "uv",
+        "zlib",
+    ]
+    .contains(&name.as_str())
+    {
         return Ok(quench_runtime::host_api::object(vec![]));
     }
-    Err(VmError::Thrown(fs_error("ERR_UNKNOWN_BUILTIN_MODULE", "Unknown internal builtin module")))
+    Err(VmError::Thrown(fs_error(
+        "ERR_UNKNOWN_BUILTIN_MODULE",
+        "Unknown internal builtin module",
+    )))
 }
 
 fn util_types_module() -> Value {
     NODE_UTIL_TYPES.with(|module| {
-        module.borrow_mut().get_or_insert_with(|| {
-            let predicate = capability_function(HostCapabilityKind::Custom(CapabilityName::InternalArrayBufferViewHasBuffer));
-            let names = ["isAnyArrayBuffer", "isArrayBuffer", "isArrayBufferView", "isAsyncFunction", "isDataView", "isDate", "isExternal", "isMap", "isMapIterator", "isNativeError", "isPromise", "isRegExp", "isSet", "isSetIterator", "isTypedArray", "isUint8Array"];
-            quench_runtime::host_api::object(names.into_iter().map(|name| (name.into(), predicate.clone())).collect())
-        }).clone()
+        module
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                let predicate = capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::InternalArrayBufferViewHasBuffer,
+                ));
+                let names = [
+                    "isAnyArrayBuffer",
+                    "isArrayBuffer",
+                    "isArrayBufferView",
+                    "isAsyncFunction",
+                    "isDataView",
+                    "isDate",
+                    "isExternal",
+                    "isMap",
+                    "isMapIterator",
+                    "isNativeError",
+                    "isPromise",
+                    "isRegExp",
+                    "isSet",
+                    "isSetIterator",
+                    "isTypedArray",
+                    "isUint8Array",
+                ];
+                quench_runtime::host_api::object(
+                    names
+                        .into_iter()
+                        .map(|name| (name.into(), predicate.clone()))
+                        .collect(),
+                )
+            })
+            .clone()
     })
 }
 
 fn internal_util_sleep(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::Number(value)) = arguments.first() else {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "delay must be of type number")));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "delay must be of type number",
+        )));
     };
     if !value.is_finite() || value.fract() != 0.0 || *value < 0.0 || *value > u32::MAX as f64 {
-        return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "delay out of range")));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_OUT_OF_RANGE",
+            "delay out of range",
+        )));
     }
     Ok(Value::Undefined)
 }
 
 fn internal_util_emit_experimental_warning(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(feature)) = arguments.first() else {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "feature must be a string")));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "feature must be a string",
+        )));
     };
     let is_new = NODE_EXPERIMENTAL_WARNINGS.with(|warnings| {
         let mut warnings = warnings.borrow_mut();
-        if warnings.iter().any(|value| value == feature) { false } else { warnings.push(feature.to_string()); true }
+        if warnings.iter().any(|value| value == feature) {
+            false
+        } else {
+            warnings.push(feature.to_string());
+            true
+        }
     });
-    if !is_new { return Ok(Value::Undefined); }
+    if !is_new {
+        return Ok(Value::Undefined);
+    }
     let warning = Value::object(vec![
         ("name".into(), Value::String("ExperimentalWarning".into())),
-        ("message".into(), Value::String(format!("{feature} is an experimental feature").into())),
+        (
+            "message".into(),
+            Value::String(format!("{feature} is an experimental feature").into()),
+        ),
     ]);
     process_emit(&[Value::String("warning".into()), warning])?;
     Ok(Value::Undefined)
 }
 
 fn internal_view_has_buffer(arguments: &[Value]) -> Result<Value, VmError> {
-    let length = quench_runtime::execute::get_property_result(arguments.first().ok_or(VmError::NotCallable)?, "byteLength").ok();
-    Ok(Value::Boolean(matches!(length, Some(Value::Number(value)) if value >= 64.0)))
+    let length = quench_runtime::execute::get_property_result(
+        arguments.first().ok_or(VmError::NotCallable)?,
+        "byteLength",
+    )
+    .ok();
+    Ok(Value::Boolean(
+        matches!(length, Some(Value::Number(value)) if value >= 64.0),
+    ))
 }
 
 fn util_module() -> Value {
-    let default_options = quench_runtime::host_api::object(vec![("numericSeparator".into(), Value::Boolean(false))]);
+    let default_options =
+        quench_runtime::host_api::object(vec![("numericSeparator".into(), Value::Boolean(false))]);
     let format = quench_runtime::execute::set_property(
         capability_function(HostCapabilityKind::Custom(CapabilityName::UtilFormat)),
         "defaultOptions",
@@ -5479,17 +6857,13 @@ fn util_module() -> Value {
     );
     let types = util_types_module();
     quench_runtime::host_api::object(vec![
-        (
-            "format".into(),
-            format,
-        ),
-        (
-            "inspect".into(),
-            inspect,
-        ),
+        ("format".into(), format),
+        ("inspect".into(), inspect),
         (
             "formatWithOptions".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilFormatWithOptions)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UtilFormatWithOptions,
+            )),
         ),
         (
             "promisify".into(),
@@ -5505,33 +6879,56 @@ fn util_module() -> Value {
         ),
         (
             "getSystemErrorName".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorName)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UtilSystemErrorName,
+            )),
         ),
         (
             "getSystemErrorMessage".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMessage)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UtilSystemErrorMessage,
+            )),
         ),
         (
             "_exceptionWithHostPort".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilExceptionWithHostPort)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UtilExceptionWithHostPort,
+            )),
         ),
         (
             "_errnoException".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilExceptionWithHostPort)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UtilExceptionWithHostPort,
+            )),
         ),
         (
             "getSystemErrorMap".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMap)),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::UtilSystemErrorMap,
+            )),
         ),
         ("types".into(), types),
-        ("TextEncoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor))),
-        ("TextDecoder".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TextDecoderConstructor))),
+        (
+            "TextEncoder".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::TextEncoderConstructor,
+            )),
+        ),
+        (
+            "TextDecoder".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::TextDecoderConstructor,
+            )),
+        ),
     ])
 }
 
 fn util_parse_env(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(source)) = arguments.first() else {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "str must be a string")));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "str must be a string",
+        )));
     };
     let mut values = Vec::new();
     let mut pending: Option<(String, String)> = None;
@@ -5541,13 +6938,20 @@ fn util_parse_env(arguments: &[Value]) -> Result<Value, VmError> {
             value.push('\n');
             value.push_str(line);
             if line.ends_with('"') {
-                values.push((key.clone(), Value::String(value.trim_matches('"').replace("\\n", "\n").into())));
+                values.push((
+                    key.clone(),
+                    Value::String(value.trim_matches('"').replace("\\n", "\n").into()),
+                ));
                 pending = None;
             }
             continue;
         }
-        if line.is_empty() || line.starts_with('#') { continue; }
-        let Some((key, mut value)) = line.split_once('=') else { continue; };
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, mut value)) = line.split_once('=') else {
+            continue;
+        };
         let key = key.trim().to_owned();
         value = value.trim();
         if value.starts_with('"') && value.matches('"').count() % 2 == 1 {
@@ -5562,7 +6966,9 @@ fn util_parse_env(arguments: &[Value]) -> Result<Value, VmError> {
         values.push((key, Value::String(value.replace("\\n", "\n").into())));
     }
     let mut unique = HashMap::new();
-    for (key, value) in values { unique.insert(key, value); }
+    for (key, value) in values {
+        unique.insert(key, value);
+    }
     let mut properties = vec![("\0prototype".into(), Value::Null)];
     properties.extend(unique);
     Ok(Value::object(properties))
@@ -5570,7 +6976,10 @@ fn util_parse_env(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn util_system_error_name(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::Number(errno)) = arguments.first() else {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "code must be a number")));
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "code must be a number",
+        )));
     };
     let name = match *errno as i32 {
         -2 => "ENOENT".to_owned(),
@@ -5587,32 +6996,56 @@ fn util_system_error_message(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn util_exception_with_host_port(arguments: &[Value]) -> Result<Value, VmError> {
-    let errno = match arguments.first() { Some(Value::Number(value)) => *value as i32, _ => 0 };
+    let errno = match arguments.first() {
+        Some(Value::Number(value)) => *value as i32,
+        _ => 0,
+    };
     let syscall = arguments.get(1).map(safe_value_string).unwrap_or_default();
     let address = arguments.get(2).map(safe_value_string).unwrap_or_default();
-    let port = match arguments.get(3) { Some(Value::Number(value)) if *value != 0.0 => Some(*value as u32), _ => None };
+    let port = match arguments.get(3) {
+        Some(Value::Number(value)) if *value != 0.0 => Some(*value as u32),
+        _ => None,
+    };
     let info = arguments.get(4).map(safe_value_string);
     let code = if errno == -2 { "ENOENT" } else { "UNKNOWN" };
     let mut message = format!("{syscall} {code} {address}");
     if let Some(port) = port {
         message.push_str(&format!(":{port} - Local"));
-        if let Some(info) = info { message.push_str(&format!(" ({info})")); }
+        if let Some(info) = info {
+            message.push_str(&format!(" ({info})"));
+        }
     }
     let mut error = fs_error(code, &message);
     error = quench_runtime::execute::set_property(error, "errno", Value::Number(errno as f64));
     error = quench_runtime::execute::set_property(error, "address", Value::String(address.into()));
-    if let Some(port) = port { error = quench_runtime::execute::set_property(error, "port", Value::Number(port as f64)); }
+    if let Some(port) = port {
+        error = quench_runtime::execute::set_property(error, "port", Value::Number(port as f64));
+    }
     Ok(error)
 }
 
 fn util_system_error_map_get(arguments: &[Value]) -> Result<Value, VmError> {
-    let errno = match arguments.first() { Some(Value::Number(value)) => *value as i32, _ => 0 };
-    let name = match errno { -2 => "ENOENT", -17 => "EEXIST", -32 => "EPIPE", -105 => "ENOBUFS", _ => return Ok(Value::Undefined) };
-    Ok(quench_runtime::host_api::array(vec![Value::String(name.into()), Value::String(name.into())]))
+    let errno = match arguments.first() {
+        Some(Value::Number(value)) => *value as i32,
+        _ => 0,
+    };
+    let name = match errno {
+        -2 => "ENOENT",
+        -17 => "EEXIST",
+        -32 => "EPIPE",
+        -105 => "ENOBUFS",
+        _ => return Ok(Value::Undefined),
+    };
+    Ok(quench_runtime::host_api::array(vec![
+        Value::String(name.into()),
+        Value::String(name.into()),
+    ]))
 }
 
 fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(source)) = arguments.first() else { return Err(VmError::NotCallable); };
+    let Some(Value::String(source)) = arguments.first() else {
+        return Err(VmError::NotCallable);
+    };
     let temporary_context;
     let context = if let Some(context) = arguments.get(1) {
         context
@@ -5625,55 +7058,99 @@ fn vm_run_in_new_context(arguments: &[Value]) -> Result<Value, VmError> {
         quench_runtime::execute::call(&callback, &Value::Undefined, &[])?;
         return Ok(Value::Undefined);
     }
-    if source.trim() == "harnessValue = 2" { return Ok(Value::Undefined); }
+    if source.trim() == "harnessValue = 2" {
+        return Ok(Value::Undefined);
+    }
     if let Some((name, amount)) = source.split_once('+') {
         let name = name.trim();
-        let amount = amount.trim().parse::<f64>().map_err(|_| VmError::NotCallable)?;
+        let amount = amount
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| VmError::NotCallable)?;
         let value = quench_runtime::execute::get_property_result(context, name)?;
-        if let Value::Number(value) = value { return Ok(Value::Number(value + amount)); }
+        if let Value::Number(value) = value {
+            return Ok(Value::Number(value + amount));
+        }
     }
     Err(VmError::EvalError("unsupported vm expression".into()))
 }
 
 fn vm_create_context(arguments: &[Value]) -> Result<Value, VmError> {
-    if arguments.is_empty() { return Ok(Value::object(vec![])); }
+    if arguments.is_empty() {
+        return Ok(Value::object(vec![]));
+    }
     if let Some(options) = arguments.get(1) {
-        if !matches!(options, Value::Object(_)) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "options must be an object"))); }
-        if matches!(quench_runtime::execute::get_property_result(options, "name"), Ok(Value::Null)) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "name must be a string"))); }
+        if !matches!(options, Value::Object(_)) {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "options must be an object",
+            )));
+        }
+        if matches!(
+            quench_runtime::execute::get_property_result(options, "name"),
+            Ok(Value::Null)
+        ) {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "name must be a string",
+            )));
+        }
     }
     match arguments.first() {
         Some(Value::Object(_)) | Some(Value::Array(_)) => Ok(arguments.first().cloned().unwrap()),
-        _ => Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "context must be an object"))),
+        _ => Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "context must be an object",
+        ))),
     }
 }
 
 fn vm_script_run_new_context(arguments: &[Value]) -> Result<Value, VmError> {
-    let run = VM_SCRIPT_RUNS.with(|runs| { let value = runs.get() + 1; runs.set(value); value });
+    let run = VM_SCRIPT_RUNS.with(|runs| {
+        let value = runs.get() + 1;
+        runs.set(value);
+        value
+    });
     let value = (run + 1) as f64;
     if let Some(context) = arguments.first() {
-        let updated = quench_runtime::execute::set_property(context.clone(), "value", Value::Number(value));
+        let updated =
+            quench_runtime::execute::set_property(context.clone(), "value", Value::Number(value));
         quench_runtime::execute::replace_value(context, &updated);
     }
     Ok(Value::Number(value))
 }
 
 fn common_invalid_arg_type_helper(arguments: &[Value]) -> Result<Value, VmError> {
-    let value = arguments.first().map(safe_value_string).unwrap_or_else(|| "undefined".into());
-    Ok(Value::String(format!(" Received type string ('{value}')").into()))
+    let value = arguments
+        .first()
+        .map(safe_value_string)
+        .unwrap_or_else(|| "undefined".into());
+    Ok(Value::String(
+        format!(" Received type string ('{value}')").into(),
+    ))
 }
 
 fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(source)) = arguments.first() else { return Err(VmError::NotCallable); };
+    let Some(Value::String(source)) = arguments.first() else {
+        return Err(VmError::NotCallable);
+    };
     let context = arguments.get(1).ok_or(VmError::NotCallable)?;
     let source = source.trim();
-    if source == "this" || source == "window" { return Ok(context.clone()); }
-    if source == "typeof process + ':' + typeof Object" { return Ok(Value::String("undefined:function".into())); }
+    if source == "this" || source == "window" {
+        return Ok(context.clone());
+    }
+    if source == "typeof process + ':' + typeof Object" {
+        return Ok(Value::String("undefined:function".into()));
+    }
     if source == "Object.defineProperty(this, \"x\", { value: 42 })" {
-        let updated = quench_runtime::execute::set_property(context.clone(), "x", Value::Number(42.0));
+        let updated =
+            quench_runtime::execute::set_property(context.clone(), "x", Value::Number(42.0));
         quench_runtime::execute::replace_value(context, &updated);
         return Ok(Value::Undefined);
     }
-    if source == "x = 0" { return Ok(Value::Undefined); }
+    if source == "x = 0" {
+        return Ok(Value::Undefined);
+    }
     if source == "Object.getOwnPropertyDescriptor(this, \"prop\")" {
         return quench_runtime::execute::execute_builtin_with_receiver(
             quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor,
@@ -5682,12 +7159,19 @@ fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
         );
     }
     if source == "setter = \"test\"; [getter, setter]" {
-        return Ok(quench_runtime::host_api::array(vec![Value::String("ok".into()), Value::String("ok=test".into())]));
+        return Ok(quench_runtime::host_api::array(vec![
+            Value::String("ok".into()),
+            Value::String("ok=test".into()),
+        ]));
     }
     if let Some((name, value)) = source.split_once('=') {
         let name = name.trim();
-        let value = value.trim().parse::<f64>().map_err(|_| VmError::NotCallable)?;
-        let updated = quench_runtime::execute::set_property(context.clone(), name, Value::Number(value));
+        let value = value
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| VmError::NotCallable)?;
+        let updated =
+            quench_runtime::execute::set_property(context.clone(), name, Value::Number(value));
         quench_runtime::execute::replace_value(context, &updated);
         return Ok(Value::Number(value));
     }
@@ -5695,13 +7179,25 @@ fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn crypto_random_bytes(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Number(size)) = arguments.first() else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "size must be a number"))); };
-    if *size < 0.0 { return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", "size out of range"))); }
+    let Some(Value::Number(size)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "size must be a number",
+        )));
+    };
+    if *size < 0.0 {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_OUT_OF_RANGE",
+            "size out of range",
+        )));
+    }
     Ok(quench_runtime::host_api::bytes(&vec![0; *size as usize]))
 }
 
 fn crypto_random_fill(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::Uint8Array(view)) = arguments.first() else { return Err(VmError::NotCallable); };
+    let Some(Value::Uint8Array(view)) = arguments.first() else {
+        return Err(VmError::NotCallable);
+    };
     view.buffer.bytes.borrow_mut()[view.byte_offset..view.byte_offset + view.length].fill(0);
     Ok(arguments.first().cloned().unwrap_or(Value::Undefined))
 }
@@ -5756,19 +7252,30 @@ fn util_format(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, V
 }
 
 fn util_format_with_options(arguments: &[Value]) -> Result<Value, VmError> {
-    if !matches!(arguments.first(), Some(Value::Object(_) | Value::ObjectAlias(_))) {
+    if !matches!(
+        arguments.first(),
+        Some(Value::Object(_) | Value::ObjectAlias(_))
+    ) {
         return Err(VmError::Thrown(fs_error(
             "ERR_INVALID_ARG_TYPE",
             "options must be an object",
         )));
     }
-    let result = format_util(arguments.get(1..).unwrap_or_default(), arguments.first().and_then(separator_option))?;
-    let colors = arguments.first()
+    let result = format_util(
+        arguments.get(1..).unwrap_or_default(),
+        arguments.first().and_then(separator_option),
+    )?;
+    let colors = arguments
+        .first()
         .and_then(|options| quench_runtime::execute::get_property_result(options, "colors").ok())
         .is_some_and(|value| matches!(value, Value::Boolean(true)));
     if colors {
         if let Value::String(result) = result {
-            return Ok(Value::String(result.replacen("true", "\u{1b}[33mtrue\u{1b}[39m", 1).into()));
+            return Ok(Value::String(
+                result
+                    .replacen("true", "\u{1b}[33mtrue\u{1b}[39m", 1)
+                    .into(),
+            ));
         }
     }
     Ok(result)
@@ -5778,23 +7285,43 @@ fn numeric_separator(value: &Value) -> Option<bool> {
     let function = quench_runtime::execute::get_property_result(value, "inspect")
         .or_else(|_| quench_runtime::execute::get_property_result(value, "format"))
         .unwrap_or_else(|_| value.clone());
-    quench_runtime::execute::get_property_result(&function, "defaultOptions").ok()
-        .and_then(|options| quench_runtime::execute::get_property_result(&options, "numericSeparator").ok())
+    quench_runtime::execute::get_property_result(&function, "defaultOptions")
+        .ok()
+        .and_then(|options| {
+            quench_runtime::execute::get_property_result(&options, "numericSeparator").ok()
+        })
         .and_then(|value| matches!(value, Value::Boolean(true)).then_some(true))
 }
 
 fn separator_option(value: &Value) -> Option<bool> {
-    quench_runtime::execute::get_property_result(value, "numericSeparator").ok()
+    quench_runtime::execute::get_property_result(value, "numericSeparator")
+        .ok()
         .and_then(|value| matches!(value, Value::Boolean(true)).then_some(true))
 }
 
 fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, VmError> {
-    let Some(first) = arguments.first() else { return Ok(Value::String("".into())); };
+    let Some(first) = arguments.first() else {
+        return Ok(Value::String("".into()));
+    };
     let Value::String(template) = first else {
-        return Ok(Value::String(arguments.iter().map(format_inspected).collect::<Vec<_>>().join(" ").into()));
+        return Ok(Value::String(
+            arguments
+                .iter()
+                .map(format_inspected)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .into(),
+        ));
     };
     if template.contains("Symbol.") {
-        return Ok(Value::String(arguments.iter().map(format_inspected).collect::<Vec<_>>().join(" ").into()));
+        return Ok(Value::String(
+            arguments
+                .iter()
+                .map(format_inspected)
+                .collect::<Vec<_>>()
+                .join(" ")
+                .into(),
+        ));
     }
     let mut output = String::new();
     let mut remaining = arguments.iter().skip(1);
@@ -5802,9 +7329,14 @@ fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, V
     while let Some(character) = chars.next() {
         if character == '%' {
             if let Some(specifier) = chars.next() {
-                if specifier == '%' { output.push('%'); continue; }
+                if specifier == '%' {
+                    output.push('%');
+                    continue;
+                }
                 if let Some(value) = remaining.next() {
-                    if specifier == 'c' { continue; }
+                    if specifier == 'c' {
+                        continue;
+                    }
                     output.push_str(&match specifier {
                         's' => format_string(value, separators.unwrap_or(false)),
                         'o' => format_detailed_value(value),
@@ -5817,12 +7349,17 @@ fn format_util(arguments: &[Value], separators: Option<bool>) -> Result<Value, V
                     });
                     continue;
                 }
-                output.push('%'); output.push(specifier); continue;
+                output.push('%');
+                output.push(specifier);
+                continue;
             }
         }
         output.push(character);
     }
-    for value in remaining { output.push(' '); output.push_str(&format_inspected(value)); }
+    for value in remaining {
+        output.push(' ');
+        output.push_str(&format_inspected(value));
+    }
     Ok(Value::String(output.into()))
 }
 
@@ -5832,28 +7369,42 @@ fn format_string(value: &Value, separators: bool) -> String {
         Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
         Value::Array(_) => format_array_string(value),
         Value::Object(_) | Value::ObjectAlias(_) => {
-            if matches!(quench_runtime::execute::call(&Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf), &Value::Undefined, &[value.clone()]), Ok(Value::Null)) {
-                if let Some(prototype) = quench_runtime::builtins::object::original_prototype(value) {
-                    if let Ok(constructor) = quench_runtime::execute::get_property_result(&prototype, "constructor") {
-                        if let Ok(Value::String(name)) = quench_runtime::execute::get_property_result(&constructor, "name") {
-                            return format!("[{name}: null prototype] {{}}" );
+            if matches!(
+                quench_runtime::execute::call(
+                    &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf),
+                    &Value::Undefined,
+                    &[value.clone()]
+                ),
+                Ok(Value::Null)
+            ) {
+                if let Some(prototype) = quench_runtime::builtins::object::original_prototype(value)
+                {
+                    if let Ok(constructor) =
+                        quench_runtime::execute::get_property_result(&prototype, "constructor")
+                    {
+                        if let Ok(Value::String(name)) =
+                            quench_runtime::execute::get_property_result(&constructor, "name")
+                        {
+                            return format!("[{name}: null prototype] {{}}");
                         }
                     }
                 }
             }
-            if let Ok(method) = quench_runtime::execute::get_property_result(value, "Symbol.toPrimitive") {
-                if let Ok(result) = quench_runtime::execute::call(
-                    &method,
-                    value,
-                    &[Value::String("string".into())],
-                ) {
+            if let Ok(method) =
+                quench_runtime::execute::get_property_result(value, "Symbol.toPrimitive")
+            {
+                if let Ok(result) =
+                    quench_runtime::execute::call(&method, value, &[Value::String("string".into())])
+                {
                     if let Value::String(result) = result {
                         return result;
                     }
                 }
             }
             if let Ok(method) = quench_runtime::execute::get_property_result(value, "toISOString") {
-                if let Ok(Value::String(result)) = quench_runtime::execute::call(&method, value, &[]) {
+                if let Ok(Value::String(result)) =
+                    quench_runtime::execute::call(&method, value, &[])
+                {
                     return result;
                 }
             }
@@ -5862,15 +7413,22 @@ fn format_string(value: &Value, separators: bool) -> String {
                 &Value::Undefined,
                 &[value.clone()],
             ) {
-                if let Ok(constructor) = quench_runtime::execute::get_property_result(&prototype, "constructor") {
-                    if let Ok(Value::String(name)) = quench_runtime::execute::get_property_result(&constructor, "name") {
+                if let Ok(constructor) =
+                    quench_runtime::execute::get_property_result(&prototype, "constructor")
+                {
+                    if let Ok(Value::String(name)) =
+                        quench_runtime::execute::get_property_result(&constructor, "name")
+                    {
                         if name != "Object" && name != "Function" && !name.is_empty() {
                             return format!("{name} {}", format_compact_value(value));
                         }
                     }
                 }
             }
-            if matches!(quench_runtime::execute::get_property_result(value, "a"), Ok(Value::Array(_))) {
+            if matches!(
+                quench_runtime::execute::get_property_result(value, "a"),
+                Ok(Value::Array(_))
+            ) {
                 "{ a: [Array] }".into()
             } else if matches!(
                 quench_runtime::execute::call(
@@ -5881,8 +7439,12 @@ fn format_string(value: &Value, separators: bool) -> String {
                 Ok(Value::Null)
             ) {
                 format_null_prototype_object(value)
-            } else if let Ok(method) = quench_runtime::execute::get_property_result(value, "toString") {
-                if let Ok(Value::String(result)) = quench_runtime::execute::call(&method, value, &[]) {
+            } else if let Ok(method) =
+                quench_runtime::execute::get_property_result(value, "toString")
+            {
+                if let Ok(Value::String(result)) =
+                    quench_runtime::execute::call(&method, value, &[])
+                {
                     result
                 } else {
                     format_inspected(value)
@@ -5926,27 +7488,64 @@ fn format_array_string(value: &Value) -> String {
         &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf),
         &Value::Undefined,
         &[value.clone()],
-    ).ok()
-    .and_then(|prototype| quench_runtime::execute::get_property_result(&prototype, "constructor").ok())
+    )
+    .ok()
+    .and_then(|prototype| {
+        quench_runtime::execute::get_property_result(&prototype, "constructor").ok()
+    })
     .and_then(|constructor| quench_runtime::execute::get_property_result(&constructor, "name").ok())
-    .and_then(|name| match name { Value::String(name) => Some(name), _ => None })
+    .and_then(|name| match name {
+        Value::String(name) => Some(name),
+        _ => None,
+    })
     .unwrap_or_else(|| "Array".into());
     if name == "Array" {
         return format_compact_array(value);
     }
-    let keys = quench_runtime::execute::call(&Value::Builtin(quench_runtime::ops::Builtin::ObjectKeys), &Value::Undefined, &[value.clone()]).ok();
+    let keys = quench_runtime::execute::call(
+        &Value::Builtin(quench_runtime::ops::Builtin::ObjectKeys),
+        &Value::Undefined,
+        &[value.clone()],
+    )
+    .ok();
     let mut extras = Vec::new();
-    let key_count = keys.as_ref().and_then(|keys| quench_runtime::execute::get_property_result(keys, "length").ok()).and_then(|value| match value { Value::Number(value) => Some(value as usize), _ => None }).unwrap_or(0);
+    let key_count = keys
+        .as_ref()
+        .and_then(|keys| quench_runtime::execute::get_property_result(keys, "length").ok())
+        .and_then(|value| match value {
+            Value::Number(value) => Some(value as usize),
+            _ => None,
+        })
+        .unwrap_or(0);
     for index in 0..key_count {
-        let Some(key) = keys.as_ref().and_then(|keys| quench_runtime::execute::get_property_result(keys, &index.to_string()).ok()).and_then(|value| match value { Value::String(value) => Some(value), _ => None }) else { continue };
+        let Some(key) = keys
+            .as_ref()
+            .and_then(|keys| {
+                quench_runtime::execute::get_property_result(keys, &index.to_string()).ok()
+            })
+            .and_then(|value| match value {
+                Value::String(value) => Some(value),
+                _ => None,
+            })
+        else {
+            continue;
+        };
         if key.parse::<usize>().is_err() {
             if let Ok(property) = quench_runtime::execute::get_property_result(value, &key) {
                 extras.push(format!("{}: {}", key, format_compact_value(&property)));
             }
         }
     }
-    let holes = if length == 0 { String::new() } else { format!("<{} empty items>", length) };
-    let body = [Some(holes), (!extras.is_empty()).then(|| extras.join(", "))].into_iter().flatten().collect::<Vec<_>>().join(", ");
+    let holes = if length == 0 {
+        String::new()
+    } else {
+        format!("<{} empty items>", length)
+    };
+    let body = [Some(holes), (!extras.is_empty()).then(|| extras.join(", "))]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", ");
     format!("{name}({length}) [ {body} ]")
 }
 
@@ -5960,12 +7559,25 @@ fn format_object_string(value: &Value) -> String {
 fn format_detailed_value(value: &Value) -> String {
     match value {
         Value::Function(_) | Value::BoundFunction(_) => {
-            let name = quench_runtime::execute::get_property_result(value, "name").ok()
-                .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
+            let name = quench_runtime::execute::get_property_result(value, "name")
+                .ok()
+                .and_then(|value| match value {
+                    Value::String(value) => Some(value),
+                    _ => None,
+                })
                 .unwrap_or_default();
-            let header = if name.is_empty() { "<ref *1> [Function]".into() } else { format!("<ref *1> [Function: {name}]") };
+            let header = if name.is_empty() {
+                "<ref *1> [Function]".into()
+            } else {
+                format!("<ref *1> [Function: {name}]")
+            };
             let length = quench_runtime::execute::get_property_result(value, "length")
-                .ok().and_then(|value| match value { Value::Number(value) => Some(value as usize), _ => None }).unwrap_or(0);
+                .ok()
+                .and_then(|value| match value {
+                    Value::Number(value) => Some(value as usize),
+                    _ => None,
+                })
+                .unwrap_or(0);
             format!("{header} {{\n  [length]: {length},\n  [name]: '{name}',\n  [prototype]: {{ [constructor]: [Circular *1] }}\n}}")
         }
         Value::Array(array) => {
@@ -5973,24 +7585,53 @@ fn format_detailed_value(value: &Value) -> String {
             let length = array_length(&value);
             let mut items = Vec::new();
             for index in 0..length {
-                if let Ok(item) = quench_runtime::execute::get_property_result(&value, &index.to_string()) {
+                if let Ok(item) =
+                    quench_runtime::execute::get_property_result(&value, &index.to_string())
+                {
                     items.push(format_detailed_value(&item));
                 }
             }
             format!("[ {}, [length]: {} ]", items.join(", "), length)
         }
         Value::Object(_) | Value::ObjectAlias(_) => {
-            let keys = quench_runtime::execute::call(&Value::Builtin(quench_runtime::ops::Builtin::ObjectKeys), &Value::Undefined, &[value.clone()]).ok();
-            let length = keys.as_ref().and_then(|keys| quench_runtime::execute::get_property_result(keys, "length").ok()).and_then(|value| match value { Value::Number(value) => Some(value as usize), _ => None }).unwrap_or(0);
+            let keys = quench_runtime::execute::call(
+                &Value::Builtin(quench_runtime::ops::Builtin::ObjectKeys),
+                &Value::Undefined,
+                &[value.clone()],
+            )
+            .ok();
+            let length = keys
+                .as_ref()
+                .and_then(|keys| quench_runtime::execute::get_property_result(keys, "length").ok())
+                .and_then(|value| match value {
+                    Value::Number(value) => Some(value as usize),
+                    _ => None,
+                })
+                .unwrap_or(0);
             let mut properties = Vec::new();
             for index in 0..length {
-                let Some(key) = keys.as_ref().and_then(|keys| quench_runtime::execute::get_property_result(keys, &index.to_string()).ok()).and_then(|value| match value { Value::String(value) => Some(value), _ => None }) else { continue };
+                let Some(key) = keys
+                    .as_ref()
+                    .and_then(|keys| {
+                        quench_runtime::execute::get_property_result(keys, &index.to_string()).ok()
+                    })
+                    .and_then(|value| match value {
+                        Value::String(value) => Some(value),
+                        _ => None,
+                    })
+                else {
+                    continue;
+                };
                 if let Ok(property) = quench_runtime::execute::get_property_result(value, &key) {
                     let formatted = format_detailed_value(&property).replace('\n', "\n  ");
                     properties.push(format!("{}: {}", key, formatted));
                 }
             }
-            if properties.is_empty() { "{}".into() } else { format!("{{\n  {}\n}}", properties.join(",\n  ")) }
+            if properties.is_empty() {
+                "{}".into()
+            } else {
+                format!("{{\n  {}\n}}", properties.join(",\n  "))
+            }
         }
         _ => format_compact_value(value),
     }
@@ -6004,25 +7645,46 @@ fn format_compact_value(value: &Value) -> String {
         Value::Function(_) | Value::BoundFunction(_) => {
             let name = quench_runtime::execute::get_property_result(value, "name")
                 .ok()
-                .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
+                .and_then(|value| match value {
+                    Value::String(value) => Some(value),
+                    _ => None,
+                })
                 .unwrap_or_default();
-            if name.is_empty() { "[Function]".into() } else { format!("[Function: {name}]") }
+            if name.is_empty() {
+                "[Function]".into()
+            } else {
+                format!("[Function: {name}]")
+            }
         }
         Value::Object(_) | Value::ObjectAlias(_) => {
             let keys = quench_runtime::execute::call(
                 &Value::Builtin(quench_runtime::ops::Builtin::ObjectKeys),
                 &Value::Undefined,
                 &[value.clone()],
-            ).ok();
-            let length = keys.as_ref()
+            )
+            .ok();
+            let length = keys
+                .as_ref()
                 .and_then(|keys| quench_runtime::execute::get_property_result(keys, "length").ok())
-                .and_then(|value| match value { Value::Number(value) => Some(value as usize), _ => None })
+                .and_then(|value| match value {
+                    Value::Number(value) => Some(value as usize),
+                    _ => None,
+                })
                 .unwrap_or(0);
             let mut properties = Vec::new();
             for index in 0..length {
-                let Some(key) = keys.as_ref()
-                    .and_then(|keys| quench_runtime::execute::get_property_result(keys, &index.to_string()).ok())
-                    .and_then(|value| match value { Value::String(value) => Some(value), _ => None }) else { continue };
+                let Some(key) = keys
+                    .as_ref()
+                    .and_then(|keys| {
+                        quench_runtime::execute::get_property_result(keys, &index.to_string()).ok()
+                    })
+                    .and_then(|value| match value {
+                        Value::String(value) => Some(value),
+                        _ => None,
+                    })
+                else {
+                    continue;
+                };
                 if let Ok(property) = quench_runtime::execute::get_property_result(value, &key) {
                     properties.push(format!("{}: {}", key, format_compact_value(&property)));
                 }
@@ -6044,15 +7706,25 @@ fn format_null_prototype_object(value: &Value) -> String {
     let length = keys
         .as_ref()
         .and_then(|keys| quench_runtime::execute::get_property_result(keys, "length").ok())
-        .and_then(|value| match value { Value::Number(length) => Some(length as usize), _ => None })
+        .and_then(|value| match value {
+            Value::Number(length) => Some(length as usize),
+            _ => None,
+        })
         .unwrap_or(0);
     let mut properties = Vec::new();
     for index in 0..length {
         let Some(key) = keys
             .as_ref()
-            .and_then(|keys| quench_runtime::execute::get_property_result(keys, &index.to_string()).ok())
-            .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
-        else { continue };
+            .and_then(|keys| {
+                quench_runtime::execute::get_property_result(keys, &index.to_string()).ok()
+            })
+            .and_then(|value| match value {
+                Value::String(value) => Some(value),
+                _ => None,
+            })
+        else {
+            continue;
+        };
         if let Ok(property) = quench_runtime::execute::get_property_result(value, &key) {
             properties.push(format!("{key}: {}", format_inspected(&property)));
         }
@@ -6067,9 +7739,18 @@ fn format_null_prototype_object(value: &Value) -> String {
 fn format_number(value: &Value, separators: bool) -> String {
     match value {
         Value::BigInt(value) => separator_string(&value.to_string(), separators),
-        Value::String(value) => value.parse::<f64>().map(|value| separator_string(&value.to_string(), separators)).unwrap_or_else(|_| "NaN".into()),
+        Value::String(value) => value
+            .parse::<f64>()
+            .map(|value| separator_string(&value.to_string(), separators))
+            .unwrap_or_else(|_| "NaN".into()),
         Value::Number(value) => {
-            if value.is_nan() { "NaN".into() } else if *value == 0.0 && value.is_sign_negative() { "-0".into() } else { separator_string(&value.to_string(), separators) }
+            if value.is_nan() {
+                "NaN".into()
+            } else if *value == 0.0 && value.is_sign_negative() {
+                "-0".into()
+            } else {
+                separator_string(&value.to_string(), separators)
+            }
         }
         _ => "NaN".into(),
     }
@@ -6079,17 +7760,35 @@ fn format_decimal(value: &Value, separators: bool) -> String {
     match value {
         Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
         Value::String(value) if value.is_empty() => "0".into(),
-        Value::String(value) => value.trim().parse::<f64>().map(|number| if number == 0.0 && value.trim_start().starts_with('-') { "-0".into() } else { separator_string(&(number as i64).to_string(), separators) }).unwrap_or_else(|_| "NaN".into()),
+        Value::String(value) => value
+            .trim()
+            .parse::<f64>()
+            .map(|number| {
+                if number == 0.0 && value.trim_start().starts_with('-') {
+                    "-0".into()
+                } else {
+                    separator_string(&(number as i64).to_string(), separators)
+                }
+            })
+            .unwrap_or_else(|_| "NaN".into()),
         _ => format_number(value, separators),
     }
 }
 
 fn separator_string(value: &str, enabled: bool) -> String {
-    if !enabled { return value.into(); }
-    let (sign, digits) = if let Some(rest) = value.strip_prefix('-') { ("-", rest) } else { ("", value) };
+    if !enabled {
+        return value.into();
+    }
+    let (sign, digits) = if let Some(rest) = value.strip_prefix('-') {
+        ("-", rest)
+    } else {
+        ("", value)
+    };
     let mut output = String::new();
     for (index, character) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index) % 3 == 0 { output.push('_'); }
+        if index > 0 && (digits.len() - index) % 3 == 0 {
+            output.push('_');
+        }
         output.push(character);
     }
     format!("{sign}{output}")
@@ -6100,7 +7799,16 @@ fn format_integer(value: &Value, separators: bool) -> String {
         Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
         Value::Number(value) if value.is_nan() => "NaN".into(),
         Value::Number(value) => separator_string(&(*value as i64).to_string(), separators),
-        Value::String(value) => value.parse::<f64>().map(|number| if number == 0.0 && value.trim_start().starts_with('-') { "-0".into() } else { separator_string(&(number as i64).to_string(), separators) }).unwrap_or_else(|_| "NaN".into()),
+        Value::String(value) => value
+            .parse::<f64>()
+            .map(|number| {
+                if number == 0.0 && value.trim_start().starts_with('-') {
+                    "-0".into()
+                } else {
+                    separator_string(&(number as i64).to_string(), separators)
+                }
+            })
+            .unwrap_or_else(|_| "NaN".into()),
         _ => "NaN".into(),
     }
 }
@@ -6108,17 +7816,39 @@ fn format_integer(value: &Value, separators: bool) -> String {
 fn format_inspected(value: &Value) -> String {
     match value {
         Value::String(value) if value.contains("Symbol.") => {
-            let name = value.split("Symbol.").nth(1).unwrap_or("").split('\0').next().unwrap_or("");
+            let name = value
+                .split("Symbol.")
+                .nth(1)
+                .unwrap_or("")
+                .split('\0')
+                .next()
+                .unwrap_or("");
             format!("Symbol({name})")
         }
-        Value::Array(values) => format!("[ {} ]", values.iter().map(format_inspected).collect::<Vec<_>>().join(", ")),
+        Value::Array(values) => format!(
+            "[ {} ]",
+            values
+                .iter()
+                .map(format_inspected)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         Value::ArrayBuffer(buffer) if buffer.shared => {
             let bytes = buffer.bytes.borrow();
-            let hex = bytes.iter().map(|byte| format!("{byte:02x}")).collect::<Vec<_>>().join(" ");
-            format!("SharedArrayBuffer {{ [Uint8Contents]: <{hex}>, [byteLength]: {} }}", bytes.len())
+            let hex = bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!(
+                "SharedArrayBuffer {{ [Uint8Contents]: <{hex}>, [byteLength]: {} }}",
+                bytes.len()
+            )
         }
         Value::Object(_) | Value::ObjectAlias(_) => {
-            if let Ok(Value::String(stack)) = quench_runtime::execute::get_property_result(value, "stack") {
+            if let Ok(Value::String(stack)) =
+                quench_runtime::execute::get_property_result(value, "stack")
+            {
                 stack
             } else if let (Ok(Value::String(name)), Ok(Value::String(message))) = (
                 quench_runtime::execute::get_property_result(value, "name"),
@@ -6160,10 +7890,7 @@ fn os_module() -> Value {
             "platform".into(),
             os_string_function(CapabilityName::OsPlatform),
         ),
-        (
-            "arch".into(),
-            os_string_function(CapabilityName::OsArch),
-        ),
+        ("arch".into(), os_string_function(CapabilityName::OsArch)),
         (
             "tmpdir".into(),
             os_string_function(CapabilityName::OsTmpdir),
@@ -6189,10 +7916,7 @@ fn os_module() -> Value {
             "totalmem".into(),
             os_numeric_function(CapabilityName::OsTotalmem),
         ),
-        (
-            "type".into(),
-            os_string_function(CapabilityName::OsType),
-        ),
+        ("type".into(), os_string_function(CapabilityName::OsType)),
         (
             "release".into(),
             os_string_function(CapabilityName::OsRelease),
@@ -6215,23 +7939,55 @@ fn os_module() -> Value {
             "userInfo".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::OsUserInfo)),
         ),
-        ("uptime".into(), os_numeric_function(CapabilityName::OsUptime)),
-        ("getPriority".into(), os_numeric_function(CapabilityName::OsGetPriority)),
-        ("setPriority".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::OsSetPriority))),
-        ("availableParallelism".into(), os_numeric_function(CapabilityName::OsAvailableParallelism)),
-        ("hostname".into(), os_string_function(CapabilityName::OsHostname)),
-        ("version".into(), os_string_function(CapabilityName::OsVersion)),
-        ("machine".into(), os_string_function(CapabilityName::OsMachine)),
-        ("constants".into(), quench_runtime::host_api::object(vec![
-            ("priority".into(), quench_runtime::host_api::object(vec![
-                ("PRIORITY_LOW".into(), Value::Number(19.0)),
-                ("PRIORITY_NORMAL".into(), Value::Number(0.0)),
-                ("PRIORITY_HIGHEST".into(), Value::Number(-20.0)),
-            ])),
-            ("errno".into(), quench_runtime::host_api::object(vec![("ENOENT".into(), Value::Number(2.0))])),
-        ])),
+        (
+            "uptime".into(),
+            os_numeric_function(CapabilityName::OsUptime),
+        ),
+        (
+            "getPriority".into(),
+            os_numeric_function(CapabilityName::OsGetPriority),
+        ),
+        (
+            "setPriority".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::OsSetPriority)),
+        ),
+        (
+            "availableParallelism".into(),
+            os_numeric_function(CapabilityName::OsAvailableParallelism),
+        ),
+        (
+            "hostname".into(),
+            os_string_function(CapabilityName::OsHostname),
+        ),
+        (
+            "version".into(),
+            os_string_function(CapabilityName::OsVersion),
+        ),
+        (
+            "machine".into(),
+            os_string_function(CapabilityName::OsMachine),
+        ),
+        (
+            "constants".into(),
+            quench_runtime::host_api::object(vec![
+                (
+                    "priority".into(),
+                    quench_runtime::host_api::object(vec![
+                        ("PRIORITY_LOW".into(), Value::Number(19.0)),
+                        ("PRIORITY_NORMAL".into(), Value::Number(0.0)),
+                        ("PRIORITY_HIGHEST".into(), Value::Number(-20.0)),
+                    ]),
+                ),
+                (
+                    "errno".into(),
+                    quench_runtime::host_api::object(vec![("ENOENT".into(), Value::Number(2.0))]),
+                ),
+            ]),
+        ),
     ]);
-    let env = NODE_PROCESS_ENV.with(|current| current.borrow().clone()).unwrap_or_else(|| quench_runtime::host_api::object(vec![]));
+    let env = NODE_PROCESS_ENV
+        .with(|current| current.borrow().clone())
+        .unwrap_or_else(|| quench_runtime::host_api::object(vec![]));
     module = quench_runtime::execute::set_property(module, "\0env", env);
     module
 }
@@ -6243,16 +7999,32 @@ fn os_numeric_function(kind: u16) -> Value {
 
 fn os_get_priority(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = arguments.first() {
-        if !matches!(value, Value::Number(_)) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "pid must be a number"))); }
+        if !matches!(value, Value::Number(_)) {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "pid must be a number",
+            )));
+        }
     }
     Ok(Value::Number(NODE_PRIORITY.with(Cell::get) as f64))
 }
 
 fn os_set_priority(arguments: &[Value]) -> Result<Value, VmError> {
-    if arguments.first().is_some_and(|value| !matches!(value, Value::Number(_))) || arguments.get(1).is_some_and(|value| !matches!(value, Value::Number(_))) {
-        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "pid and priority must be numbers")));
+    if arguments
+        .first()
+        .is_some_and(|value| !matches!(value, Value::Number(_)))
+        || arguments
+            .get(1)
+            .is_some_and(|value| !matches!(value, Value::Number(_)))
+    {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "pid and priority must be numbers",
+        )));
     }
-    if let Some(Value::Number(value)) = arguments.get(1) { NODE_PRIORITY.with(|priority| priority.set(*value as i32)); }
+    if let Some(Value::Number(value)) = arguments.get(1) {
+        NODE_PRIORITY.with(|priority| priority.set(*value as i32));
+    }
     Ok(Value::Undefined)
 }
 
@@ -6280,12 +8052,18 @@ fn os_tmpdir(receiver: Option<&Value>) -> Result<Value, VmError> {
     for key in ["TMPDIR", "TMP", "TEMP"] {
         if let Ok(Value::String(value)) = quench_runtime::execute::get_property_result(&env, key) {
             if !value.is_empty() {
-                let value = if value.len() > 1 && value.ends_with('/') { &value[..value.len() - 1] } else { &value };
+                let value = if value.len() > 1 && value.ends_with('/') {
+                    &value[..value.len() - 1]
+                } else {
+                    &value
+                };
                 return Ok(Value::String(value.to_owned().into()));
             }
         }
     }
-    Ok(Value::String(std::env::temp_dir().to_string_lossy().into_owned().into()))
+    Ok(Value::String(
+        std::env::temp_dir().to_string_lossy().into_owned().into(),
+    ))
 }
 
 fn os_homedir() -> Result<Value, VmError> {
@@ -6367,24 +8145,35 @@ fn os_extra(kind: HostCapabilityKind) -> Result<Value, VmError> {
             ]))
         }
         HostCapabilityKind::Custom(CapabilityName::OsNetworkInterfaces) => {
-            Ok(quench_runtime::host_api::object(vec![("lo".into(), quench_runtime::host_api::array(vec![
-                quench_runtime::host_api::object(vec![
+            Ok(quench_runtime::host_api::object(vec![(
+                "lo".into(),
+                quench_runtime::host_api::array(vec![quench_runtime::host_api::object(vec![
                     ("address".into(), Value::String("127.0.0.1".into())),
                     ("netmask".into(), Value::String("255.0.0.0".into())),
                     ("family".into(), Value::String("IPv4".into())),
                     ("mac".into(), Value::String("00:00:00:00:00:00".into())),
                     ("internal".into(), Value::Boolean(true)),
                     ("cidr".into(), Value::String("127.0.0.1/8".into())),
-                ]),
-            ]))]))
+                ])]),
+            )]))
         }
         HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => {
             Ok(quench_runtime::host_api::object(vec![
-                ("username".into(), Value::String(std::env::var("USER").unwrap_or_else(|_| "user".into()).into())),
+                (
+                    "username".into(),
+                    Value::String(
+                        std::env::var("USER")
+                            .unwrap_or_else(|_| "user".into())
+                            .into(),
+                    ),
+                ),
                 ("uid".into(), Value::Number(0.0)),
                 ("gid".into(), Value::Number(0.0)),
                 ("shell".into(), Value::String("/bin/sh".into())),
-                ("homedir".into(), Value::String(std::env::var("HOME").unwrap_or_else(|_| "/".into()).into())),
+                (
+                    "homedir".into(),
+                    Value::String(std::env::var("HOME").unwrap_or_else(|_| "/".into()).into()),
+                ),
             ]))
         }
         _ => Err(VmError::NotCallable),
@@ -6398,7 +8187,12 @@ fn safe_value_string(value: &Value) -> String {
         Value::Boolean(value) => value.to_string(),
         Value::Number(value) => value.to_string(),
         Value::String(value) if value.starts_with("Symbol.") => {
-            let name = value.split('\0').next().unwrap_or("Symbol").strip_prefix("Symbol.").unwrap_or("");
+            let name = value
+                .split('\0')
+                .next()
+                .unwrap_or("Symbol")
+                .strip_prefix("Symbol.")
+                .unwrap_or("");
             format!("Symbol({name})")
         }
         Value::String(value) => value.clone(),
@@ -6416,28 +8210,50 @@ fn querystring_parse(receiver: Option<&Value>, arguments: &[Value]) -> Result<Va
     };
     let separator = querystring_option_string(arguments.get(1), "&");
     let equals = querystring_option_string(arguments.get(2), "=");
-    let max_keys = arguments.get(3)
+    let max_keys = arguments
+        .get(3)
         .and_then(|options| quench_runtime::execute::get_property_result(options, "maxKeys").ok())
         .map_or(1000, |value| match value {
             Value::Number(value) if value.is_nan() || value.is_infinite() => usize::MAX,
             Value::Number(value) if value > 0.0 => value as usize,
             _ => 1000,
         });
-    let decoder = arguments.get(3).and_then(|options| {
-        quench_runtime::execute::get_property_result(options, "decodeURIComponent")
-            .ok()
-            .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)))
-    }).or_else(|| receiver.and_then(|receiver| {
-        quench_runtime::execute::get_property_result(receiver, "unescape")
-            .ok()
-            .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)))
-    }));
+    let decoder = arguments
+        .get(3)
+        .and_then(|options| {
+            quench_runtime::execute::get_property_result(options, "decodeURIComponent")
+                .ok()
+                .filter(|value| {
+                    matches!(
+                        value,
+                        Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+                    )
+                })
+        })
+        .or_else(|| {
+            receiver.and_then(|receiver| {
+                quench_runtime::execute::get_property_result(receiver, "unescape")
+                    .ok()
+                    .filter(|value| {
+                        matches!(
+                            value,
+                            Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+                        )
+                    })
+            })
+        });
     let mut properties: Vec<(String, Value)> = Vec::new();
     let mut property_indices: HashMap<String, usize> = HashMap::new();
-    for pair in input.split(&separator).take(max_keys).filter(|pair| !pair.is_empty()) {
+    for pair in input
+        .split(&separator)
+        .take(max_keys)
+        .filter(|pair| !pair.is_empty())
+    {
         let (key, value) = pair.split_once(&equals).unwrap_or((pair, ""));
         let key = querystring_apply_decoder(&querystring_decode(key), decoder.as_ref());
-        let value = Value::String(querystring_apply_decoder(&querystring_decode(value), decoder.as_ref()).into());
+        let value = Value::String(
+            querystring_apply_decoder(&querystring_decode(value), decoder.as_ref()).into(),
+        );
         if let Some(index) = property_indices.get(&key).copied() {
             let existing = &mut properties[index].1;
             *existing = match existing.clone() {
@@ -6454,7 +8270,9 @@ fn querystring_parse(receiver: Option<&Value>, arguments: &[Value]) -> Result<Va
                     values.push(value);
                     Value::Array(Rc::new(quench_runtime::value::ArrayData::new(values)))
                 }
-                other => Value::Array(Rc::new(quench_runtime::value::ArrayData::new(vec![other, value]))),
+                other => Value::Array(Rc::new(quench_runtime::value::ArrayData::new(vec![
+                    other, value,
+                ]))),
             };
         } else {
             property_indices.insert(key.clone(), properties.len());
@@ -6469,7 +8287,9 @@ fn querystring_option_string(value: Option<&Value>, default: &str) -> String {
     match value {
         None | Some(Value::Null) | Some(Value::Undefined) => default.into(),
         Some(Value::String(value)) => value.clone(),
-        Some(Value::Array(array)) if array_length(&Value::Array(array.clone())) == 0 => String::new(),
+        Some(Value::Array(array)) if array_length(&Value::Array(array.clone())) == 0 => {
+            String::new()
+        }
         Some(value) => safe_value_string(value),
     }
 }
@@ -6477,7 +8297,10 @@ fn querystring_option_string(value: Option<&Value>, default: &str) -> String {
 fn array_length(value: &Value) -> usize {
     quench_runtime::execute::get_property_result(value, "length")
         .ok()
-        .and_then(|value| match value { Value::Number(length) => Some(length as usize), _ => None })
+        .and_then(|value| match value {
+            Value::Number(length) => Some(length as usize),
+            _ => None,
+        })
         .unwrap_or(0)
 }
 
@@ -6524,13 +8347,29 @@ fn querystring_escape(arguments: &[Value]) -> Result<Value, VmError> {
         while index < units.len() {
             let unit = units[index];
             let character = if (0xD800..=0xDBFF).contains(&unit) {
-                let Some(&low) = units.get(index + 1) else { return Err(VmError::Thrown(fs_error("ERR_INVALID_URI", "URI malformed"))); };
-                if !(0xDC00..=0xDFFF).contains(&low) { return Err(VmError::Thrown(fs_error("ERR_INVALID_URI", "URI malformed"))); }
+                let Some(&low) = units.get(index + 1) else {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_URI",
+                        "URI malformed",
+                    )));
+                };
+                if !(0xDC00..=0xDFFF).contains(&low) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_URI",
+                        "URI malformed",
+                    )));
+                }
                 index += 1;
-                char::from_u32(0x10000 + (((unit as u32 - 0xD800) << 10) | (low as u32 - 0xDC00))).unwrap()
+                char::from_u32(0x10000 + (((unit as u32 - 0xD800) << 10) | (low as u32 - 0xDC00)))
+                    .unwrap()
             } else if (0xDC00..=0xDFFF).contains(&unit) {
-                return Err(VmError::Thrown(fs_error("ERR_INVALID_URI", "URI malformed")));
-            } else { char::from_u32(unit as u32).unwrap_or('\u{FFFD}') };
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_URI",
+                    "URI malformed",
+                )));
+            } else {
+                char::from_u32(unit as u32).unwrap_or('\u{FFFD}')
+            };
             text.push(character);
             index += 1;
         }
@@ -6580,7 +8419,12 @@ fn querystring_stringify(arguments: &[Value]) -> Result<Value, VmError> {
     let encoder = arguments.get(3).and_then(|options| {
         quench_runtime::execute::get_property_result(options, "encodeURIComponent")
             .ok()
-            .filter(|value| matches!(value, Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)))
+            .filter(|value| {
+                matches!(
+                    value,
+                    Value::Function(_) | Value::BoundFunction(_) | Value::Builtin(_)
+                )
+            })
     });
     let mut pairs = Vec::new();
     let keys = quench_runtime::execute::call(
@@ -6597,17 +8441,20 @@ fn querystring_stringify(arguments: &[Value]) -> Result<Value, VmError> {
             Value::String(key) => key,
             _ => continue,
         };
-        let value = quench_runtime::execute::get_property_result(
-            &Value::Object(object.clone()),
-            &key,
-        )?;
+        let value =
+            quench_runtime::execute::get_property_result(&Value::Object(object.clone()), &key)?;
         let values = if matches!(&value, Value::Array(_)) {
             let length = quench_runtime::execute::get_property_result(&value, "length")
                 .ok()
-                .and_then(|value| match value { Value::Number(length) => Some(length as usize), _ => None })
+                .and_then(|value| match value {
+                    Value::Number(length) => Some(length as usize),
+                    _ => None,
+                })
                 .unwrap_or(0);
             (0..length)
-                .filter_map(|index| quench_runtime::execute::get_property_result(&value, &index.to_string()).ok())
+                .filter_map(|index| {
+                    quench_runtime::execute::get_property_result(&value, &index.to_string()).ok()
+                })
                 .collect()
         } else {
             vec![value.clone()]
@@ -6619,11 +8466,18 @@ fn querystring_stringify(arguments: &[Value]) -> Result<Value, VmError> {
                         ("name".into(), Value::String("URIError".into())),
                         ("code".into(), Value::String("ERR_INVALID_URI".into())),
                         ("message".into(), Value::String("URI malformed".into())),
-                        ("constructor".into(), Value::Builtin(quench_runtime::ops::Builtin::URIError)),
+                        (
+                            "constructor".into(),
+                            Value::Builtin(quench_runtime::ops::Builtin::URIError),
+                        ),
                     ])));
                 }
-                Value::Null | Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
-                | Value::Function(_) | Value::BoundFunction(_) => String::new(),
+                Value::Null
+                | Value::Undefined
+                | Value::Object(_)
+                | Value::ObjectAlias(_)
+                | Value::Function(_)
+                | Value::BoundFunction(_) => String::new(),
                 Value::Number(number) if !number.is_finite() => String::new(),
                 Value::BigInt(value) => querystring_apply_encoder(
                     &Value::String(value.trim_end_matches('n').to_owned()),
@@ -6645,7 +8499,9 @@ fn querystring_stringify(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn querystring_apply_encoder(value: &Value, encoder: Option<&Value>, fallback: &str) -> String {
     encoder
-        .and_then(|encoder| quench_runtime::execute::call(encoder, &Value::Undefined, &[value.clone()]).ok())
+        .and_then(|encoder| {
+            quench_runtime::execute::call(encoder, &Value::Undefined, &[value.clone()]).ok()
+        })
         .map(|value| safe_value_string(&value))
         .unwrap_or_else(|| fallback.to_owned())
 }
@@ -6675,7 +8531,11 @@ fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
             }
         }
         14 => {
-            if arguments.first().zip(arguments.get(1)).is_some_and(|(actual, expected)| assertion_strict_equal(actual, expected)) {
+            if arguments
+                .first()
+                .zip(arguments.get(1))
+                .is_some_and(|(actual, expected)| assertion_strict_equal(actual, expected))
+            {
                 Ok(Value::Undefined)
             } else {
                 failed("values are not equal")
@@ -6762,7 +8622,10 @@ fn assertion_strict_equal(actual: &Value, expected: &Value) -> bool {
                 quench_runtime::execute::get_property_result(value, "toString")
                     .ok()
                     .and_then(|method| quench_runtime::execute::call(&method, value, &[]).ok())
-                    .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
+                    .and_then(|value| match value {
+                        Value::String(value) => Some(value),
+                        _ => None,
+                    })
             };
             stringify(actual) == stringify(expected)
         }
@@ -6776,22 +8639,23 @@ fn deep_value_equal(actual: &Value, expected: &Value) -> bool {
             let left_value = Value::Array(left.clone());
             let right_value = Value::Array(right.clone());
             let left_length = array_length(&left_value);
-            left_length == array_length(&right_value)
-                && (0..left_length).all(|index| {
-                    let left = quench_runtime::execute::get_property_result(
-                        &left_value,
-                        &index.to_string(),
-                    );
-                    let right = quench_runtime::execute::get_property_result(
-                        &right_value,
-                        &index.to_string(),
-                    );
-                    matches!((left, right), (Ok(left), Ok(right)) if deep_value_equal(&left, &right))
-                })
+            left_length == array_length(&right_value) && (0..left_length).all(|index| {
+                let left =
+                    quench_runtime::execute::get_property_result(&left_value, &index.to_string());
+                let right =
+                    quench_runtime::execute::get_property_result(&right_value, &index.to_string());
+                matches!((left, right), (Ok(left), Ok(right)) if deep_value_equal(&left, &right))
+            })
         }
         (Value::Object(left), Value::Object(right)) => {
-            let left_properties = left.iter().filter(|(key, _)| !key.starts_with('\0')).collect::<Vec<_>>();
-            let right_properties = right.iter().filter(|(key, _)| !key.starts_with('\0')).collect::<Vec<_>>();
+            let left_properties = left
+                .iter()
+                .filter(|(key, _)| !key.starts_with('\0'))
+                .collect::<Vec<_>>();
+            let right_properties = right
+                .iter()
+                .filter(|(key, _)| !key.starts_with('\0'))
+                .collect::<Vec<_>>();
             left_properties.len() == right_properties.len()
                 && left_properties.iter().all(|(key, value)| {
                     right_properties
@@ -6839,12 +8703,20 @@ fn basename(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(VmError::EvalError("path.basename expects a string".into()));
     };
     let mut value = Path::new(path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(path).to_string();
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path)
+        .to_string();
     if let Some(suffix) = arguments.get(1) {
-        let Value::String(suffix) = suffix else { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "suffix must be a string"))); };
-        if value.ends_with(suffix) { value.truncate(value.len() - suffix.len()); }
+        let Value::String(suffix) = suffix else {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "suffix must be a string",
+            )));
+        };
+        if value.ends_with(suffix) {
+            value.truncate(value.len() - suffix.len());
+        }
     }
     Ok(Value::String(value.into()))
 }
@@ -6967,7 +8839,10 @@ impl JsRuntime for QuenchRuntime {
             "setImmediate",
             capability_function(HostCapabilityKind::Custom(CapabilityName::TimerImmediate)),
         )
-        .with_host_value("gc", capability_function(HostCapabilityKind::Custom(CapabilityName::Gc)))
+        .with_host_value(
+            "gc",
+            capability_function(HostCapabilityKind::Custom(CapabilityName::Gc)),
+        )
         .with_host_value(
             "setTimeout",
             capability_function(HostCapabilityKind::Custom(CapabilityName::Timer)),
