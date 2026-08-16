@@ -57,6 +57,9 @@ pub(crate) fn execute(
 }
 
 fn from(value: Option<&Value>) -> Result<Value, VmError> {
+    if let Some(value) = value.filter(|value| crate::value::is_object(value)) {
+        return from_property_bag(value);
+    }
     let Some(Value::String(text)) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
@@ -121,6 +124,13 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     }
     let (year, month, day) = parse_date_parts(&parts)?;
     checked_date_object(year, month, day)
+}
+
+fn from_property_bag(value: &Value) -> Result<Value, VmError> {
+    let year = crate::execute::get_property_result(value, "year")?;
+    let month = crate::execute::get_property_result(value, "month")?;
+    let day = crate::execute::get_property_result(value, "day")?;
+    construct(&[year, month, day])
 }
 
 fn has_uppercase_annotation_key(text: &str) -> bool {
