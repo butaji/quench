@@ -295,7 +295,7 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let tag = tag.trim();
     match tag.to_ascii_lowercase().as_str() {
         "cel-gaulish" => return Ok("xtg".to_string()),
-        "zh-min" | "i-default" => {
+        "en-gb-oed" | "zh-min" | "i-default" => {
             return Err(runtime_error("RangeError: invalid language tag"));
         }
         _ => {}
