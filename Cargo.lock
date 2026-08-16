@@ -1383,6 +1383,7 @@ dependencies = [
  "regress",
  "serde_json",
  "unicode-normalization",
+ "unicode-segmentation",
 ]
 
 [[package]]

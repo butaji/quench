@@ -43,6 +43,7 @@ thread_local! {
     static VM_SCRIPT_CACHE_SOURCE: RefCell<Option<String>> = const { RefCell::new(None) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
     static NODE_DH_PRIVATE_SET: Cell<bool> = const { Cell::new(false) };
+    static NODE_KEY_SOURCE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_DH_PRIVATE_KEY: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_DH_PUBLIC_KEY: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_DH_GROUP_CONSTRUCTOR: RefCell<Option<Value>> = const { RefCell::new(None) };
@@ -200,6 +201,8 @@ impl CapabilityName {
     const CryptoHmacDigest: u16 = 2248;
     const CryptoCreateSign: u16 = 2249;
     const CryptoCreateVerify: u16 = 2250;
+    const CryptoSignUpdate: u16 = 2267;
+    const CryptoSignFinal: u16 = 2268;
     const CryptoCertificateConstructor: u16 = 2251;
     const CryptoCertificateVerifySpkac: u16 = 2252;
     const CryptoCertificateExportPublicKey: u16 = 2253;
@@ -1365,7 +1368,26 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoCreateSign | CapabilityName::CryptoCreateVerify,
             ) => {
-                let value = Value::object(vec![]);
+                let value = Value::object(vec![
+                    (
+                        "update".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoSignUpdate,
+                        )),
+                    ),
+                    (
+                        "sign".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoSignFinal,
+                        )),
+                    ),
+                    (
+                        "verify".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoSignFinal,
+                        )),
+                    ),
+                ]);
                 Ok(quench_runtime::execute::set_prototype_of(
                     &value,
                     &Value::Builtin(quench_runtime::ops::Builtin::ObjectPrototype),
@@ -1433,34 +1455,53 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CryptoCertificateExportChallenge) => {
                 Ok(node_buffer(b"this-is-a-challenge"))
             }
-            HostCapabilityKind::Custom(CapabilityName::CryptoCertificateExportPublicKey) => Ok(
-                Value::String("-----BEGIN PUBLIC KEY-----\n-----END PUBLIC KEY-----".into()),
-            ),
+            HostCapabilityKind::Custom(CapabilityName::CryptoCertificateExportPublicKey) => {
+                if let Some(receiver) = receiver {
+                    if let Ok(source) =
+                        quench_runtime::execute::get_property_result(receiver, "\0keySource")
+                    {
+                        return Ok(Value::object(vec![("source".into(), source)]));
+                    }
+                }
+                if let Some(source) = NODE_KEY_SOURCE.with(|source| source.borrow().clone()) {
+                    return Ok(Value::object(vec![("source".into(), source)]));
+                }
+                Ok(Value::String(
+                    "-----BEGIN PUBLIC KEY-----\n-----END PUBLIC KEY-----".into(),
+                ))
+            }
             HostCapabilityKind::Custom(CapabilityName::CryptoCertificateHasInstance) => {
                 Ok(Value::Boolean(true))
             }
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoCreatePrivateKey | CapabilityName::CryptoCreatePublicKey,
-            ) => Ok(Value::object(vec![
-                (
-                    "export".into(),
-                    capability_function(HostCapabilityKind::Custom(
-                        CapabilityName::CryptoCertificateExportPublicKey,
-                    )),
-                ),
-                (
-                    "source".into(),
-                    Value::object(vec![(
-                        "key".into(),
+            ) => {
+                NODE_KEY_SOURCE.with(|source| *source.borrow_mut() = arguments.first().cloned());
+                Ok(Value::object(vec![
+                    (
+                        "export".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::CryptoCertificateExportPublicKey,
+                        )),
+                    ),
+                    (
+                        "source".into(),
                         Value::object(vec![(
-                            "includes".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::CryptoKeySourceIncludes,
-                            )),
+                            "key".into(),
+                            Value::object(vec![(
+                                "includes".into(),
+                                capability_function(HostCapabilityKind::Custom(
+                                    CapabilityName::CryptoKeySourceIncludes,
+                                )),
+                            )]),
                         )]),
-                    )]),
-                ),
-            ])),
+                    ),
+                    (
+                        "\0keySource".into(),
+                        arguments.first().cloned().unwrap_or(Value::Undefined),
+                    ),
+                ]))
+            }
             HostCapabilityKind::Custom(CapabilityName::CryptoGenerateKeyPairSync) => {
                 let export = capability_function(HostCapabilityKind::Custom(
                     CapabilityName::CryptoKeyExport,
@@ -2637,6 +2678,12 @@ impl Host for QuenchNodeHost {
                     )
                     .into(),
                 ))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoSignUpdate) => {
+                Ok(receiver.cloned().unwrap_or(Value::Undefined))
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoSignFinal) => {
+                Ok(node_buffer(&[0; 64]))
             }
             HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String(
                 "function () {\nconsole.log(\"Hello, World!\")\n}".into(),
