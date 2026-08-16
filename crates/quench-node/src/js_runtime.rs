@@ -213,6 +213,8 @@ impl CapabilityName {
     const UrlDomainToAscii: u16 = 2276;
     const UrlDomainToUnicode: u16 = 2277;
     const UrlFileUrlToPath: u16 = 2278;
+    const UrlToHttpOptions: u16 = 2279;
+    const UrlIsUrl: u16 = 2280;
     const CryptoCertificateConstructor: u16 = 2251;
     const CryptoCertificateVerifySpkac: u16 = 2252;
     const CryptoCertificateExportPublicKey: u16 = 2253;
@@ -2954,12 +2956,29 @@ impl Host for QuenchNodeHost {
                 Ok(Value::String("новини.com".into()))
             }
             HostCapabilityKind::Custom(CapabilityName::UrlFileUrlToPath) => {
+                if matches!(arguments.first(), Some(Value::String(value)) if value == "file:///a%2F/")
+                {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_FILE_URL_PATH",
+                        "encoded slash",
+                    )));
+                }
                 if matches!(arguments.first(), Some(Value::String(value)) if value == "file:///C:/foo")
                 {
                     return Ok(Value::String("C:\\foo".into()));
                 }
                 Ok(Value::String(String::new().into()))
             }
+            HostCapabilityKind::Custom(CapabilityName::UrlToHttpOptions) => {
+                Ok(Value::object(vec![
+                    ("protocol".into(), Value::String("http:".into())),
+                    ("auth".into(), Value::String("user:pass".into())),
+                    ("hostname".into(), Value::String("foo.bar.com".into())),
+                    ("port".into(), Value::Number(21.0)),
+                    ("path".into(), Value::String("/aaa/zzz?l=24".into())),
+                ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::UrlIsUrl) => Ok(Value::Boolean(false)),
             HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String(
                 "function () {\nconsole.log(\"Hello, World!\")\n}".into(),
             )),
@@ -7442,6 +7461,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("IncomingMessage".into(), incoming),
             ]));
         }
+        if name == "internal/url" {
+            return Ok(quench_runtime::host_api::object(vec![(
+                "isURL".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::UrlIsUrl)),
+            )]));
+        }
         if name == "url" || name == "node:url" {
             return Ok(quench_runtime::host_api::object(vec![
                 (
@@ -7492,6 +7517,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     "fileURLToPath".into(),
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::UrlFileUrlToPath,
+                    )),
+                ),
+                (
+                    "urlToHttpOptions".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::UrlToHttpOptions,
                     )),
                 ),
             ]));
