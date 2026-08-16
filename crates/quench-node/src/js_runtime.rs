@@ -974,7 +974,7 @@ impl Host for QuenchNodeHost {
         stream = quench_runtime::execute::set_property(
             stream,
             "unshift",
-            capability_function(HostCapabilityKind::Custom(id + 11)),
+            capability_function(HostCapabilityKind::Custom(id + 8)),
         );
         stream = quench_runtime::execute::set_property(
             stream,
@@ -1770,14 +1770,17 @@ impl QuenchNodeHost {
                 }
                 Ok(Value::Boolean(true))
             },
-            11 => {
+            8 => {
+                if arguments.is_empty() {
+                    return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+                }
                 let chunk = string_or_bytes(arguments.first())?;
                 if let Some(data) = self.streams.borrow().get(&stream_id).and_then(|state| state.data.clone()) {
                     quench_runtime::execute::call(&data, &Value::Undefined, &[node_buffer(&chunk)])?;
                 }
                 Ok(receiver.cloned().unwrap_or(Value::Undefined))
             }
-            7..=8 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
+            7 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
             9 => {
                 if let Some(callback) = arguments.get(1).or_else(|| arguments.first()) {
                     if matches!(
