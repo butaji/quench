@@ -23,10 +23,6 @@ pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     }
     Value::Undefined
 }
-
-pub(crate) fn number_constant(key: &str) -> Option<Value> {
-    props_number::constant(key)
-}
 include!("props_special_core.rs");
 fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin != Builtin::IteratorPrototype {
@@ -500,71 +496,5 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
         _ => None,
     }
 }
-pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
-    if _builtin == Builtin::FunctionPrototype && key == "Symbol.hasInstance" {
-        return false;
-    }
-    if _builtin == Builtin::Number && props_number::constant(key).is_some() {
-        return false;
-    }
-    if matches!(
-        (_builtin, key),
-        (Builtin::ThrowTypeError, "length" | "name")
-    ) {
-        return false;
-    }
-    if key == "prototype" {
-        return false;
-    }
-    if crate::builtins::object::is_well_known_symbol_property(_builtin, key) {
-        return false;
-    }
-    if matches!(
-        (_builtin, key),
-        (
-            Builtin::Math,
-            "E" | "LN2" | "LN10" | "LOG2E" | "LOG10E" | "PI" | "SQRT1_2" | "SQRT2"
-        )
-    ) {
-        return false;
-    }
-    true
-}
-fn builtin_length(builtin: Builtin) -> f64 {
-    use Builtin::*;
-    if let Some(length) = data_view_length(builtin) {
-        return length;
-    }
-    if let Some(length) = crate::builtin_meta::constructor_length(builtin) {
-        return length;
-    }
-    if let Some(length) = crate::builtin_meta::methods::function_length(builtin) {
-        return length;
-    }
-    match builtin {
-        Escape | Unescape | EncodeURI | EncodeURIComponent | DecodeURI | DecodeURIComponent
-        | DateSetYear | GeneratorNext | GeneratorReturn | GeneratorThrow | AsyncGeneratorNext
-        | AsyncGeneratorReturn | AsyncGeneratorThrow => 1.0,
-        ArrayBuffer => 1.0,
-        Object => 1.0,
-        ObjectCreate => 2.0,
-        Float64Array => 3.0,
-        Float32Array => 3.0,
-        Int8Array => 3.0,
-        Int16Array => 3.0,
-        Uint16Array => 3.0,
-        Int32Array => 3.0,
-        Uint8Array => 3.0,
-        Uint32Array => 3.0,
-        Uint8ClampedArray => 3.0,
-        BigInt64Array | BigUint64Array => 3.0,
-        MapEntries | MapKeys | MapValues => 0.0,
-        DataView => 1.0,
-        DateNow => 0.0,
-        RegExp => 2.0,
-        DateParse => 1.0,
-        DateUTC => 7.0,
-        _ => 0.0,
-    }
-}
+include!("props_metadata.rs");
 include!("props_builtin_names.rs");
