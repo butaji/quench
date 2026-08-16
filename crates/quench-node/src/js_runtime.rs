@@ -840,6 +840,15 @@ impl Host for QuenchNodeHost {
     ) -> Result<Value, VmError> {
         if capability.kind == HostCapabilityKind::Custom(CapabilityName::BufferFrom) {
             if matches!(arguments.first(), Some(Value::Number(_))) {
+                if arguments.len() > 1 {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        &format!(
+                            "The \"string\" argument must be of type string. Received type number ({})",
+                            safe_value_string(arguments.first().unwrap()),
+                        ),
+                    )));
+                }
                 return buffer_alloc(arguments);
             }
             return buffer_from(arguments);
