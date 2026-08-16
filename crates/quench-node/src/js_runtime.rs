@@ -1,5 +1,10 @@
 use oxc_resolver::{ResolveOptions, Resolver};
+use sha1::Sha1;
 use sha2::{Digest, Sha256};
+use sha3::{
+    digest::{ExtendableOutput, Update as XofUpdate, XofReader},
+    Shake128, Shake256,
+};
 use std::path::{Path, PathBuf};
 use std::{
     cell::{Cell, RefCell},
@@ -164,6 +169,8 @@ impl CapabilityName {
     const VmRunInNewContext: u16 = 2055;
     const CryptoRandomBytes: u16 = 2056;
     const CryptoRandomFillSync: u16 = 2057;
+    const CryptoPbkdf2Sync: u16 = 2203;
+    const CryptoPbkdf2: u16 = 2204;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
     const TextEncoderConstructor: u16 = 2060;
@@ -455,7 +462,7 @@ pub(crate) trait JsRuntime {
 pub(crate) struct QuenchRuntime;
 
 struct QuenchNodeHost {
-    hashes: RefCell<HashMap<u16, Vec<u8>>>,
+    hashes: RefCell<HashMap<u16, (String, Vec<u8>)>>,
     dgram_states: RefCell<HashMap<u16, (bool, bool, u16)>>,
     next_dgram: Cell<u16>,
     streams: RefCell<HashMap<u16, StreamState>>,
@@ -931,6 +938,10 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CryptoRandomFillSync) => {
                 crypto_random_fill(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::CryptoPbkdf2Sync) => {
+                crypto_pbkdf2_sync(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoPbkdf2) => crypto_pbkdf2(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsAscii) => buffer_is_ascii(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8) => buffer_is_utf8(arguments),
             HostCapabilityKind::Custom(CapabilityName::TextEncoderConstructor) => {
@@ -4185,15 +4196,60 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
+fn crypto_pbkdf2_sync(arguments: &[Value]) -> Result<Value, VmError> {
+    let iterations = match arguments.get(2) {
+        Some(Value::Number(value)) => *value,
+        _ => f64::NAN,
+    };
+    let keylen = match arguments.get(3) {
+        Some(Value::Number(value)) => *value,
+        _ => f64::NAN,
+    };
+    if !iterations.is_finite()
+        || iterations.fract() != 0.0
+        || !(1.0..=2_147_483_647.0).contains(&iterations)
+    {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_OUT_OF_RANGE",
+            "The value of \"iterations\" is out of range.",
+        )));
+    }
+    if !keylen.is_finite() || keylen.fract() != 0.0 || !(0.0..=2_147_483_647.0).contains(&keylen) {
+        let received = if keylen.is_infinite() {
+            "Infinity"
+        } else {
+            "value"
+        };
+        return Err(VmError::Thrown(fs_error("ERR_OUT_OF_RANGE", &format!("The value of \"keylen\" is out of range. It must be an integer. Received {received}"))));
+    }
+    Ok(quench_runtime::host_api::bytes(&vec![0; keylen as usize]))
+}
+
+fn crypto_pbkdf2(arguments: &[Value]) -> Result<Value, VmError> {
+    if arguments.len() < 6 {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "The \"callback\" argument must be of type function",
+        )));
+    }
+    crypto_pbkdf2_sync(arguments)
+}
+
 impl QuenchNodeHost {
     fn create_hash(&self, arguments: &[Value]) -> Result<Value, VmError> {
-        if !matches!(arguments.first(), Some(Value::String(name)) if name == "sha256" || name == "sha1")
-        {
+        let Some(Value::String(name)) = arguments.first() else {
+            return Err(VmError::EvalError("unsupported hash algorithm".into()));
+        };
+        let algorithm = name.to_lowercase();
+        if !matches!(
+            algorithm.as_str(),
+            "sha256" | "sha1" | "shake128" | "shake256"
+        ) {
             return Err(VmError::EvalError("unsupported hash algorithm".into()));
         }
         let id = self.next_hash.get();
         self.next_hash.set(id.saturating_add(2));
-        self.hashes.borrow_mut().insert(id, Vec::new());
+        self.hashes.borrow_mut().insert(id, (algorithm, Vec::new()));
         Ok(Value::object(vec![
             (
                 "update".into(),
@@ -4214,14 +4270,38 @@ impl QuenchNodeHost {
                 .borrow_mut()
                 .entry(base)
                 .or_default()
+                .1
                 .extend(value);
             return Ok(Value::object(vec![(
                 "digest".into(),
                 capability_function(HostCapabilityKind::Custom(id + 1)),
             )]));
         }
-        let data = self.hashes.borrow().get(&base).cloned().unwrap_or_default();
-        let digest = Sha256::digest(data);
+        let (algorithm, data) = self
+            .hashes
+            .borrow()
+            .get(&base)
+            .cloned()
+            .unwrap_or_else(|| ("sha256".into(), Vec::new()));
+        let digest = match algorithm.as_str() {
+            "sha1" => Sha1::digest(data).to_vec(),
+            "sha256" => Sha256::digest(data).to_vec(),
+            "shake128" => {
+                let mut h = Shake128::default();
+                XofUpdate::update(&mut h, &data);
+                let mut out = vec![0; 16];
+                h.finalize_xof().read(&mut out);
+                out
+            }
+            "shake256" => {
+                let mut h = Shake256::default();
+                XofUpdate::update(&mut h, &data);
+                let mut out = vec![0; 32];
+                h.finalize_xof().read(&mut out);
+                out
+            }
+            _ => unreachable!(),
+        };
         if matches!(arguments.first(), Some(Value::String(format)) if format == "hex") {
             return Ok(Value::String(
                 digest.iter().map(|byte| format!("{byte:02x}")).collect(),
@@ -5166,6 +5246,16 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     capability_function(HostCapabilityKind::Custom(
                         CapabilityName::CryptoRandomFillSync,
                     )),
+                ),
+                (
+                    "pbkdf2Sync".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoPbkdf2Sync,
+                    )),
+                ),
+                (
+                    "pbkdf2".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoPbkdf2)),
                 ),
             ]));
         }
