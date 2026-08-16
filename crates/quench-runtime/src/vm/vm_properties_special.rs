@@ -385,6 +385,9 @@ fn uint16_array_property(view: &crate::value::Uint16ArrayData, key: &str) -> Val
     }
 }
 fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value {
+    if let Some(value) = view.meta.property(key) {
+        return value;
+    }
     if let Some(value) = typed_index(key, |index| view.get(index).map(f64::from)) {
         return value;
     }
