@@ -65,6 +65,7 @@ pub struct VmContext {
     realm: RealmId,
     capabilities: Vec<HostCapabilityRef>,
     host_bindings: Vec<(String, HostCapabilityRef)>,
+    host_values: Vec<(String, Value)>,
 }
 impl Default for VmContext {
     fn default() -> Self {
@@ -74,6 +75,7 @@ impl Default for VmContext {
             realm: RealmId::ROOT,
             capabilities: Vec::new(),
             host_bindings: Vec::new(),
+            host_values: Vec::new(),
         }
     }
 }
@@ -126,6 +128,18 @@ impl VmContext {
     ) -> Self {
         self.host_bindings.push((name.into(), value));
         self
+    }
+
+    pub fn with_host_value(mut self, name: impl Into<String>, value: Value) -> Self {
+        self.host_values.push((name.into(), value));
+        self
+    }
+
+    pub(crate) fn host_value(&self, name: &str) -> Option<Value> {
+        self.host_values
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == name).then_some(value.clone()))
     }
 
     pub(crate) fn host_binding(&self, name: &str) -> Option<HostCapabilityRef> {

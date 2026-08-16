@@ -348,6 +348,7 @@ fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
                 )
             })
             .collect(),
+        host_values: parent.host_values.clone(),
     }
 }
 
