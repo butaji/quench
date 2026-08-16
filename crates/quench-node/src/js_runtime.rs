@@ -181,6 +181,13 @@ impl CapabilityName {
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
     const DgramOn: u16 = 2214;
+    const DgramSetMulticastLoopback: u16 = 2215;
+    const DgramSetMulticastInterface: u16 = 2216;
+    const DgramSetMulticastTtl: u16 = 2217;
+    const DgramAddMembership: u16 = 2218;
+    const DgramDropMembership: u16 = 2219;
+    const DgramGetSendQueueSize: u16 = 2220;
+    const DgramGetSendQueueCount: u16 = 2221;
     const BufferIsAscii: u16 = 2058;
     const BufferIsUtf8: u16 = 2059;
     const TextEncoderConstructor: u16 = 2060;
@@ -1333,6 +1340,33 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::DgramOn) => {
                 self.dgram_call(CapabilityName::DgramOn, receiver, arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::DgramSetMulticastLoopback) => self
+                .dgram_call(
+                    CapabilityName::DgramSetMulticastLoopback,
+                    receiver,
+                    arguments,
+                ),
+            HostCapabilityKind::Custom(CapabilityName::DgramSetMulticastInterface) => self
+                .dgram_call(
+                    CapabilityName::DgramSetMulticastInterface,
+                    receiver,
+                    arguments,
+                ),
+            HostCapabilityKind::Custom(CapabilityName::DgramSetMulticastTtl) => {
+                self.dgram_call(CapabilityName::DgramSetMulticastTtl, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::DgramAddMembership) => {
+                self.dgram_call(CapabilityName::DgramAddMembership, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::DgramDropMembership) => {
+                self.dgram_call(CapabilityName::DgramDropMembership, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::DgramGetSendQueueSize) => {
+                self.dgram_call(CapabilityName::DgramGetSendQueueSize, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::DgramGetSendQueueCount) => {
+                self.dgram_call(CapabilityName::DgramGetSendQueueCount, receiver, arguments)
+            }
             HostCapabilityKind::Custom(
                 CapabilityName::StreamConsumerBuffer | CapabilityName::StreamConsumerBytes,
             ) => Ok(fulfilled(quench_runtime::host_api::bytes(b"hello"))),
@@ -2448,6 +2482,48 @@ impl QuenchNodeHost {
                 "on".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::DgramOn)),
             ),
+            (
+                "setMulticastLoopback".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramSetMulticastLoopback,
+                )),
+            ),
+            (
+                "setMulticastInterface".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramSetMulticastInterface,
+                )),
+            ),
+            (
+                "setMulticastTTL".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramSetMulticastTtl,
+                )),
+            ),
+            (
+                "addMembership".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramAddMembership,
+                )),
+            ),
+            (
+                "dropMembership".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramDropMembership,
+                )),
+            ),
+            (
+                "getSendQueueSize".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramGetSendQueueSize,
+                )),
+            ),
+            (
+                "getSendQueueCount".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::DgramGetSendQueueCount,
+                )),
+            ),
             ("type".into(), Value::String("udp4".into())),
             ("\0dgramId".into(), Value::Number(id as f64)),
             (
@@ -2488,6 +2564,55 @@ impl QuenchNodeHost {
                     self.dgram_listeners.borrow_mut().insert(id, callback);
                 }
                 Ok(receiver.cloned().unwrap_or(Value::Undefined))
+            }
+            CapabilityName::DgramSetMulticastLoopback => {
+                if !state.0 {
+                    return Err(VmError::EvalError("setMulticastLoopback EBADF".into()));
+                }
+                Ok(arguments.first().cloned().unwrap_or(Value::Number(0.0)))
+            }
+            CapabilityName::DgramSetMulticastInterface => {
+                if !state.0 {
+                    return Err(VmError::EvalError("setMulticastInterface EBADF".into()));
+                }
+                if !matches!(arguments.first(), Some(Value::String(_))) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_TYPE",
+                        "address must be a string",
+                    )));
+                }
+                Ok(receiver.cloned().unwrap_or(Value::Undefined))
+            }
+            CapabilityName::DgramSetMulticastTtl => {
+                if !state.0 {
+                    return Err(VmError::EvalError("setMulticastTTL EBADF".into()));
+                }
+                let ttl = arguments
+                    .first()
+                    .and_then(|value| match value {
+                        Value::Number(value) => Some(*value),
+                        _ => None,
+                    })
+                    .unwrap_or(0.0);
+                if !(1.0..256.0).contains(&ttl) {
+                    return Err(VmError::EvalError("setMulticastTTL EINVAL".into()));
+                }
+                Ok(Value::Number(ttl))
+            }
+            CapabilityName::DgramAddMembership | CapabilityName::DgramDropMembership => {
+                if arguments.first().is_none() {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_MISSING_ARGS",
+                        "Missing address",
+                    )));
+                }
+                if !state.0 {
+                    return Err(VmError::EvalError("Socket is not bound".into()));
+                }
+                Ok(Value::Undefined)
+            }
+            CapabilityName::DgramGetSendQueueSize | CapabilityName::DgramGetSendQueueCount => {
+                Ok(Value::Number(0.0))
             }
             CapabilityName::DgramBindSync => {
                 state.0 = true;
