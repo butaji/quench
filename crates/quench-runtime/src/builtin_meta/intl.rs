@@ -132,12 +132,11 @@ const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
         | Builtin::IntlDateTimeFormatResolvedOptions
         | Builtin::IntlCollatorCompare
         | Builtin::IntlCollatorResolvedOptions
-        | Builtin::IntlSegmenterSegment
         | Builtin::IntlSegmenterSegmentsIterator
-        | Builtin::IntlSegmenterSegmentsContaining
         | Builtin::IntlSegmenterResolvedOptions
         | Builtin::IntlDisplayNamesOf
         | Builtin::IntlDisplayNamesResolvedOptions => Some(0.0),
+        Builtin::IntlSegmenterSegment | Builtin::IntlSegmenterSegmentsContaining => Some(1.0),
         Builtin::IntlNumberFormatFormatToParts => Some(1.0),
         Builtin::IntlPluralRulesSelect => Some(1.0),
         Builtin::IntlNumberFormatFormatRange
