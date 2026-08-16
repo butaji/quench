@@ -45,6 +45,10 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
             "resolvedOptions".to_string(),
             Value::Builtin(crate::ops::Builtin::IntlPluralRulesResolvedOptions),
         ),
+        (
+            "\0prototype".to_string(),
+            crate::vm::realm_intrinsic(crate::ops::Builtin::IntlPluralRulesPrototype),
+        ),
         (SLOT.to_string(), make_object(slots)),
     ]))
 }
