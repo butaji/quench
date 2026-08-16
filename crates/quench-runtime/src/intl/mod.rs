@@ -378,16 +378,31 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
+    let mut parts: Vec<&str> = parts.collect();
     let mut out = Vec::new();
     let mut script_done = false;
     if language.eq_ignore_ascii_case("sh") {
         out.push("sr".to_string());
-        out.push("Latn".to_string());
-        script_done = true;
+        if !parts.first().is_some_and(|part| {
+            part.len() == 4
+                && part
+                    .chars()
+                    .all(|character| character.is_ascii_alphabetic())
+        }) {
+            out.push("Latn".to_string());
+            script_done = true;
+        }
+    } else if language.eq_ignore_ascii_case("cnr") {
+        out.push("sr".to_string());
+        if !parts.first().is_some_and(|part| {
+            (part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic()))
+                || (part.len() == 3 && part.chars().all(|c| c.is_ascii_digit()))
+        }) {
+            out.push("ME".to_string());
+        }
     } else {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
-    let mut parts: Vec<&str> = parts.collect();
     apply_armenian_variant_alias(&mut out, &mut parts);
     validate_transformed_extensions(&parts)?;
     Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
