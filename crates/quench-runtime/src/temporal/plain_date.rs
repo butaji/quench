@@ -129,8 +129,36 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
 fn from_property_bag(value: &Value) -> Result<Value, VmError> {
     let year = crate::execute::get_property_result(value, "year")?;
     let month = crate::execute::get_property_result(value, "month")?;
+    let month_code = crate::execute::get_property_result(value, "monthCode")?;
     let day = crate::execute::get_property_result(value, "day")?;
-    construct(&[year, month, day])
+    let calendar = crate::execute::get_property_result(value, "calendar")?;
+    let calendar = match calendar {
+        Value::Undefined => calendar,
+        Value::String(_) | Value::StringUnits(_) => {
+            Value::String(crate::conversion::to_string(&calendar)?)
+        }
+        _ => return Err(crate::value::error::throw_type_error("Invalid calendar")),
+    };
+    let month = if matches!(month, Value::Undefined) {
+        month_from_code(month_code)?
+    } else {
+        month
+    };
+    construct(&[year, month, day, calendar])
+}
+
+fn month_from_code(value: Value) -> Result<Value, VmError> {
+    if !matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        return Err(crate::value::error::throw_type_error("Invalid monthCode"));
+    }
+    let text = crate::conversion::to_string(&value)?;
+    let month = text
+        .strip_prefix('M')
+        .filter(|value| value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|value| value.parse::<u8>().ok())
+        .filter(|month| (1..=12).contains(month))
+        .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
+    Ok(Value::Number(f64::from(month)))
 }
 
 fn has_uppercase_annotation_key(text: &str) -> bool {
