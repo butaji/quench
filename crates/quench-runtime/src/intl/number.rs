@@ -24,6 +24,7 @@ pub(crate) struct NumberOptions {
     pub currency_sign: String,
     pub unit: Option<String>,
     pub unit_display: String,
+    pub grouping: String,
     pub minimum_integer_digits: u32,
     pub minimum_fraction_digits: u32,
     pub maximum_fraction_digits: u32,
@@ -48,6 +49,7 @@ pub(crate) struct RawOptions {
     currency_sign: String,
     unit: Option<String>,
     unit_display: String,
+    grouping: String,
     minimum_fraction_digits: f64,
     minimum_integer_digits: f64,
     maximum_fraction_digits: f64,
@@ -98,6 +100,7 @@ impl RawOptions {
             currency_sign: "standard".to_string(),
             unit: None,
             unit_display: "short".to_string(),
+            grouping: "auto".to_string(),
             minimum_fraction_digits: -1.0,
             minimum_integer_digits: 1.0,
             maximum_fraction_digits: -1.0,
@@ -174,6 +177,7 @@ fn apply_option(raw: &mut RawOptions, key: &str, value: &str) {
         "minimumIntegerDigits" => raw.minimum_integer_digits = value.parse().unwrap_or(1.0),
         "maximumFractionDigits" => raw.maximum_fraction_digits = value.parse().unwrap_or(3.0),
         "useGrouping" => {
+            raw.grouping = value.to_string();
             raw.use_grouping = grouping_enabled(value);
             raw.grouping_min2 = value == "min2";
         }
@@ -424,6 +428,7 @@ fn number_options(
         currency_sign: raw.currency_sign,
         unit: raw.unit,
         unit_display: raw.unit_display,
+        grouping: raw.grouping,
         minimum_integer_digits: raw.minimum_integer_digits.max(1.0) as u32,
         minimum_fraction_digits: minimum_fraction_digits as u32,
         maximum_fraction_digits: maximum_fraction_digits as u32,
@@ -490,7 +495,7 @@ fn slot_primary(number: &NumberOptions) -> Vec<(String, Value)> {
         ("style".to_string(), Value::String(number.style.clone())),
         (
             "useGrouping".to_string(),
-            Value::Boolean(number.use_grouping),
+            Value::String(number.grouping.clone()),
         ),
         (
             "groupingMin2".to_string(),
