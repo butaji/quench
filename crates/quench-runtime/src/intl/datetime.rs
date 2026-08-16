@@ -474,6 +474,9 @@ fn prototype_result(
 
 fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value, VmError> {
     let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    if let Some(value) = hour_day_period_format(slots, number) {
+        return Ok(Value::String(value));
+    }
     if let Some(value) = day_period_format(slots, number) {
         return Ok(Value::String(value));
     }
@@ -488,6 +491,9 @@ fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value
 
 fn parts_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value, VmError> {
     let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    if let Some(value) = hour_day_period_parts(slots, number) {
+        return Ok(make_array(value));
+    }
     if let Some(value) = day_period_parts(slots, number) {
         return Ok(make_array(value));
     }
@@ -536,12 +542,34 @@ fn range_parts(start: &str, end: &str) -> Vec<Value> {
 
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
     let style = slot_string(slots, "dayPeriod")?;
-    let hour = DateTime::<Utc>::from_timestamp((number / 1_000.0).trunc() as i64, 0)?.hour();
+    let hour = crate::date::local_components(number)?.3;
     Some(match style.as_str() {
-        "narrow" => day_period_name(hour, false),
-        "short" => day_period_name(hour, true),
-        _ => day_period_name(hour, true),
+        "narrow" if hour == 12 => "n".to_string(),
+        "narrow" => day_period_name(hour),
+        "short" => day_period_name(hour),
+        _ => day_period_name(hour),
     })
+}
+
+fn hour_day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
+    slot_string(slots, "hour")?;
+    let period = day_period_format(slots, number)?;
+    let hour = crate::date::local_components(number)?.3;
+    let display_hour = match hour % 12 {
+        0 => 12,
+        value => value,
+    };
+    Some(format!("{display_hour} {period}"))
+}
+
+fn hour_day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
+    let value = hour_day_period_format(slots, number)?;
+    let (hour, period) = value.split_once(' ')?;
+    Some(vec![
+        typed_part("hour", hour.to_string()),
+        literal_part(" "),
+        typed_part("dayPeriod", period.to_string()),
+    ])
 }
 
 fn day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>> {
@@ -552,20 +580,16 @@ fn day_period_parts(slots: &[(String, Value)], number: f64) -> Option<Vec<Value>
     ])])
 }
 
-fn day_period_name(hour: u32, with_prefix: bool) -> String {
+fn day_period_name(hour: u32) -> String {
     let name = match hour {
-        0..=5 => "night",
+        0..=5 => "at night",
         6..=11 => "in the morning",
         12 => "noon",
         13..=17 => "in the afternoon",
         18..=20 => "in the evening",
         _ => "at night",
     };
-    if with_prefix {
-        name.to_string()
-    } else {
-        name.replace("in the ", "").replace("at ", "")
-    }
+    name.to_string()
 }
 
 fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
