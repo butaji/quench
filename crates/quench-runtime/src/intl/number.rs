@@ -111,7 +111,12 @@ impl RawOptions {
             for key in OPTION_KEYS {
                 let value = crate::execute::get_property_result(options, key)?;
                 if !matches!(value, Value::Undefined) {
-                    apply_option(&mut raw, key, &to_string_value(&value));
+                    let text = if *key == "roundingMode" {
+                        crate::conversion::to_string(&value)?
+                    } else {
+                        to_string_value(&value)
+                    };
+                    apply_option(&mut raw, key, &text);
                 }
             }
         }
@@ -194,6 +199,7 @@ pub(crate) fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
 impl NumberOptions {
     fn from_options(locale: String, options: Option<&Value>) -> Result<Self, VmError> {
         let raw = RawOptions::from_value(options)?;
+        validate_rounding_mode(&raw.rounding_mode)?;
         let minimum_fraction_digits = fraction_digits(
             raw.style.as_str(),
             raw.currency.as_deref(),
@@ -278,6 +284,24 @@ impl NumberOptions {
         }
         make_object(properties)
     }
+}
+
+fn validate_rounding_mode(value: &str) -> Result<(), VmError> {
+    let valid = matches!(
+        value,
+        "ceil"
+            | "floor"
+            | "expand"
+            | "trunc"
+            | "halfCeil"
+            | "halfFloor"
+            | "halfExpand"
+            | "halfTrunc"
+            | "halfEven"
+    );
+    valid
+        .then_some(())
+        .ok_or_else(|| crate::value::error::throw_range_error("invalid roundingMode"))
 }
 
 fn number_options(
