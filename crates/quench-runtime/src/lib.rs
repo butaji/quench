@@ -49,6 +49,7 @@ mod generator;
 mod global_environment;
 mod globals;
 pub mod heap;
+pub mod host_api;
 mod identifiers;
 pub mod identity;
 mod intl;

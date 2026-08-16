@@ -254,10 +254,6 @@ pub struct ObjectData {
 }
 
 impl ObjectData {
-    pub fn from_properties(properties: ObjectProperties) -> Self {
-        Self::with_private_slots(properties, Rc::new(RefCell::new(Vec::new())))
-    }
-
     pub(crate) fn new(properties: ObjectProperties) -> Self {
         Self::with_private_slots(properties, Rc::new(RefCell::new(Vec::new())))
     }
@@ -494,7 +490,7 @@ pub struct BoundFunctionValue {
     pub properties: RefCell<Vec<(String, Value)>>,
 }
 impl BoundFunctionValue {
-    pub fn new(realm: crate::ops::RealmId, target: Value, receiver: Value) -> Self {
+    pub(crate) fn new(realm: crate::ops::RealmId, target: Value, receiver: Value) -> Self {
         Self {
             realm,
             target,
