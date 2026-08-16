@@ -2,6 +2,10 @@ use chrono::Datelike;
 
 use crate::{execute::VmError, value::Value};
 
+#[path = "plain_date_tail.rs"]
+mod plain_date_tail;
+use plain_date_tail::{date_object, number};
+
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
     let month = number(arguments.get(1))?;
@@ -491,26 +495,4 @@ fn checked_date_object(year: i32, month: i32, day: i32) -> Result<Value, VmError
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
     Ok(date_object(year, month, day))
-}
-
-fn number(value: Option<&Value>) -> Result<f64, VmError> {
-    let value = crate::conversion::to_number(value.unwrap_or(&Value::Undefined))?;
-    if !value.is_finite() {
-        return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
-    }
-    Ok(value.trunc())
-}
-
-fn date_object(year: f64, month: f64, day: f64) -> Value {
-    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![
-        ("year".into(), Value::Number(year)),
-        ("month".into(), Value::Number(month)),
-        ("monthCode".into(), Value::String(format!("M{month:02.0}"))),
-        ("day".into(), Value::Number(day)),
-        ("calendarId".into(), Value::String("iso8601".into())),
-        (
-            "\0prototype".into(),
-            Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype),
-        ),
-    ])))
 }
