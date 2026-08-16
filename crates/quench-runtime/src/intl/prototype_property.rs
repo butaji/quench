@@ -71,6 +71,15 @@ fn prototype_property_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (Builtin::IntlPluralRulesPrototype, "resolvedOptions") => {
             Builtin::IntlPluralRulesResolvedOptions
         }
+        (Builtin::IntlRelativeTimeFormatPrototype, "format") => {
+            Builtin::IntlRelativeTimeFormatFormat
+        }
+        (Builtin::IntlRelativeTimeFormatPrototype, "formatToParts") => {
+            Builtin::IntlRelativeTimeFormatFormatToParts
+        }
+        (Builtin::IntlRelativeTimeFormatPrototype, "resolvedOptions") => {
+            Builtin::IntlRelativeTimeFormatResolvedOptions
+        }
         _ => return None,
     })
 }
