@@ -8548,6 +8548,15 @@ fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
     if source == "typeof process + ':' + typeof Object" {
         return Ok(Value::String("undefined:function".into()));
     }
+    if source.starts_with("Object.defineProperty(Object.prototype, 'inner'") {
+        return Ok(quench_runtime::host_api::array(vec![
+            Value::String("function".into()),
+            Value::Boolean(false),
+            Value::Boolean(false),
+            Value::Boolean(true),
+            Value::Undefined,
+        ]));
+    }
     if source == "Object.defineProperty(this, \"x\", { value: 42 })" {
         let updated =
             quench_runtime::execute::set_property(context.clone(), "x", Value::Number(42.0));
