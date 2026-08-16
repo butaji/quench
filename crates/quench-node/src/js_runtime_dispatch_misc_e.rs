@@ -420,6 +420,13 @@ impl QuenchNodeHost {
             {
                 self.call_deprecated(id, arguments)
             }
+            HostCapabilityKind::Custom(
+                CapabilityName::CryptoHashOn
+                | CapabilityName::CryptoHashWrite
+                | CapabilityName::CryptoHashEnd
+                | CapabilityName::CryptoHashUpdate
+                | CapabilityName::CryptoHashDigest,
+            ) => Err(VmError::EvalError(DISPATCH_UNHANDLED.into())),
             HostCapabilityKind::Custom(id) if id >= CapabilityName::UtilResolverFirst => {
                 self.resolve_promisified(id, arguments)
             }
