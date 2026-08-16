@@ -4758,6 +4758,15 @@ fn format_string(value: &Value, separators: bool) -> String {
         Value::BigInt(value) => format!("{}n", separator_string(&value.to_string(), separators)),
         Value::Array(_) => format_array_string(value),
         Value::Object(_) | Value::ObjectAlias(_) => {
+            if matches!(quench_runtime::execute::call(&Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf), &Value::Undefined, &[value.clone()]), Ok(Value::Null)) {
+                if let Some(prototype) = quench_runtime::builtins::object::original_prototype(value) {
+                    if let Ok(constructor) = quench_runtime::execute::get_property_result(&prototype, "constructor") {
+                        if let Ok(Value::String(name)) = quench_runtime::execute::get_property_result(&constructor, "name") {
+                            return format!("[{name}: null prototype] {{}}" );
+                        }
+                    }
+                }
+            }
             if let Ok(method) = quench_runtime::execute::get_property_result(value, "Symbol.toPrimitive") {
                 if let Ok(result) = quench_runtime::execute::call(
                     &method,
