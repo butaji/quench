@@ -159,6 +159,12 @@ impl CapabilityName {
     const StreamIterIdentity: u16 = 1578;
     const ZlibIterCompress: u16 = 1579;
     const ZlibIterDecompress: u16 = 1580;
+    const BufferWrite: u16 = 1581;
+    const BufferIncludes: u16 = 1582;
+    const BufferSlice: u16 = 1583;
+    const BufferCopy: u16 = 1584;
+    const BufferFill: u16 = 1585;
+    const BufferCompare: u16 = 1586;
     const FsFsyncSync: u16 = 1546;
     const FsFdatasyncSync: u16 = 1547;
     const FsFsyncAsync: u16 = 1548;
@@ -536,6 +542,22 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::BufferEquals) => {
                 buffer_equals(receiver, arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::BufferWrite) => {
+                buffer_write(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferIncludes) => {
+                buffer_includes(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferSlice) => {
+                buffer_slice(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferCopy) => {
+                buffer_copy(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferFill) => {
+                buffer_fill(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::BufferCompare) => buffer_compare(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsWriteSyncFd) => {
                 self.fs_write_fd(arguments)
             }
@@ -3293,6 +3315,10 @@ fn buffer_module() -> Value {
             "concat",
             HostCapabilityKind::Custom(CapabilityName::BufferConcat),
         ),
+        (
+            "compare",
+            HostCapabilityKind::Custom(CapabilityName::BufferCompare),
+        ),
     ] {
         buffer = quench_runtime::execute::set_property(buffer, name, capability_function(kind));
     }
@@ -3301,9 +3327,23 @@ fn buffer_module() -> Value {
 
 fn buffer_from(arguments: &[Value]) -> Result<Value, VmError> {
     match arguments.first() {
+        Some(Value::String(value)) if matches!(arguments.get(1), Some(Value::String(encoding)) if encoding == "hex") =>
+        {
+            let bytes = decode_hex(value);
+            Ok(node_buffer(&bytes))
+        }
         Some(Value::String(value)) => Ok(node_buffer(value.as_bytes())),
         Some(Value::Uint8Array(view)) => Ok(node_buffer(
             &view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length],
+        )),
+        Some(Value::Array(_)) => Ok(node_buffer(
+            &array_values(arguments.first().unwrap())?
+                .into_iter()
+                .filter_map(|value| match value {
+                    Value::Number(value) => Some(value as u8),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
         )),
         _ => Err(VmError::EvalError(
             "Buffer.from expects bytes or a string".into(),
@@ -3332,11 +3372,27 @@ fn node_buffer(bytes: &[u8]) -> Value {
         "toString",
         capability_function(HostCapabilityKind::Custom(CapabilityName::BufferToString)),
     );
-    quench_runtime::execute::set_property(
+    let value = quench_runtime::execute::set_property(
         value,
         "equals",
         capability_function(HostCapabilityKind::Custom(CapabilityName::BufferEquals)),
-    )
+    );
+    let mut value = value;
+    for (name, capability) in [
+        ("write", CapabilityName::BufferWrite),
+        ("includes", CapabilityName::BufferIncludes),
+        ("slice", CapabilityName::BufferSlice),
+        ("subarray", CapabilityName::BufferSlice),
+        ("copy", CapabilityName::BufferCopy),
+        ("fill", CapabilityName::BufferFill),
+    ] {
+        value = quench_runtime::execute::set_property(
+            value,
+            name,
+            capability_function(HostCapabilityKind::Custom(capability)),
+        );
+    }
+    value
 }
 
 fn buffer_to_string(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -3421,6 +3477,101 @@ fn buffer_equals(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
     Ok(Value::Boolean(
         string_or_bytes(receiver)? == string_or_bytes(arguments.first())?,
     ))
+}
+
+fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Value::Uint8Array(view) = receiver.ok_or(VmError::NotCallable)? else {
+        return Err(VmError::NotCallable);
+    };
+    let text = match arguments.first() {
+        Some(Value::String(value)) => value,
+        _ => return Err(VmError::NotCallable),
+    };
+    let offset = arguments
+        .get(1)
+        .and_then(|value| match value {
+            Value::Number(value) => Some(*value as usize),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let encoding = arguments
+        .get(2)
+        .and_then(|value| match value {
+            Value::String(value) => Some(value.as_str()),
+            _ => None,
+        })
+        .unwrap_or("utf8");
+    let bytes = if encoding == "hex" {
+        (0..text.len())
+            .step_by(2)
+            .take_while(|index| *index + 1 < text.len())
+            .filter_map(|index| u8::from_str_radix(&text[index..index + 2], 16).ok())
+            .collect::<Vec<_>>()
+    } else {
+        text.as_bytes().to_vec()
+    };
+    let count = bytes.len().min(view.length.saturating_sub(offset));
+    view.buffer.bytes.borrow_mut()[view.byte_offset + offset..view.byte_offset + offset + count]
+        .copy_from_slice(&bytes[..count]);
+    Ok(Value::Number(count as f64))
+}
+
+fn buffer_includes(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let haystack = string_or_bytes(receiver)?;
+    let needle = string_or_bytes(arguments.first()).or_else(|_| match arguments.first() {
+        Some(Value::Number(value)) => Ok(vec![*value as u8]),
+        _ => Err(VmError::NotCallable),
+    })?;
+    Ok(Value::Boolean(
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle),
+    ))
+}
+
+fn buffer_slice(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let bytes = string_or_bytes(receiver)?;
+    let start = arguments
+        .first()
+        .and_then(|value| match value {
+            Value::Number(value) => Some((*value as isize).max(0) as usize),
+            _ => None,
+        })
+        .unwrap_or(0)
+        .min(bytes.len());
+    let end = arguments
+        .get(1)
+        .and_then(|value| match value {
+            Value::Number(value) => Some((*value as isize).max(0) as usize),
+            _ => None,
+        })
+        .unwrap_or(bytes.len())
+        .min(bytes.len());
+    Ok(node_buffer(&bytes[start.min(end)..end]))
+}
+
+fn buffer_copy(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let source = string_or_bytes(receiver)?;
+    let Value::Uint8Array(target) = arguments.first().ok_or(VmError::NotCallable)? else {
+        return Err(VmError::NotCallable);
+    };
+    let count = source.len().min(target.length);
+    target.buffer.bytes.borrow_mut()[target.byte_offset..target.byte_offset + count]
+        .copy_from_slice(&source[..count]);
+    Ok(Value::Number(count as f64))
+}
+
+fn buffer_fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let Value::Uint8Array(view) = receiver.ok_or(VmError::NotCallable)? else {
+        return Err(VmError::NotCallable);
+    };
+    let fill = string_or_bytes(arguments.first()).or_else(|_| match arguments.first() {
+        Some(Value::Number(value)) => Ok(vec![*value as u8]),
+        _ => Err(VmError::NotCallable),
+    })?;
+    let value = fill.first().copied().unwrap_or(0);
+    view.buffer.bytes.borrow_mut()[view.byte_offset..view.byte_offset + view.length].fill(value);
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 fn buffer_is_buffer(arguments: &[Value]) -> Result<Value, VmError> {
