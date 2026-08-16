@@ -70,6 +70,8 @@ impl CapabilityName {
     const Gc: u16 = 2117;
     const VmScriptRunInNewContext: u16 = 2118;
     const VmScriptCreateCachedData: u16 = 2123;
+    const NetGetDefaultAutoSelectFamily: u16 = 2126;
+    const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const UtilGetCallSites: u16 = 2124;
     const VmCompileFunction: u16 = 2119;
     const VmCompiledFunction: u16 = 2120;
@@ -944,6 +946,8 @@ impl Host for QuenchNodeHost {
                 ]))
             }
             HostCapabilityKind::Custom(CapabilityName::VmScriptCreateCachedData) => Ok(VM_SCRIPT_CACHE_SOURCE.with(|stored| quench_runtime::host_api::bytes(stored.borrow().as_deref().unwrap_or_default().as_bytes()))),
+            HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamily) => Ok(Value::Boolean(false)),
+            HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout) => Ok(Value::Number(2500.0)),
             HostCapabilityKind::Custom(CapabilityName::UtilGetCallSites) => Ok(quench_runtime::host_api::array(vec![])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => {
                 Ok(Value::String("passed".into()))
@@ -3424,6 +3428,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     if name == "path/win32" || name == "node:path/win32" {
         let path = require_module(&[Value::String("path".into())])?;
         return quench_runtime::execute::get_property_result(&path, "win32");
+    }
+    if name == "net" || name == "node:net" {
+        return Ok(quench_runtime::host_api::object(vec![
+            ("getDefaultAutoSelectFamily".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamily))),
+            ("getDefaultAutoSelectFamilyAttemptTimeout".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout))),
+        ]));
     }
     if name == "path" || name == "node:path" {
         if let Some(path) = NODE_PATH_MODULE.with(|module| module.borrow().clone()) {
