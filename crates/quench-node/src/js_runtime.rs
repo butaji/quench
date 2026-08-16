@@ -143,6 +143,8 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(32) => buffer_is_buffer(arguments),
             HostCapabilityKind::Custom(80) => util_format(arguments),
             HostCapabilityKind::Custom(81) => util_inspect(arguments),
+            HostCapabilityKind::Custom(101) => module_is_builtin(arguments),
+            HostCapabilityKind::Custom(102..=104) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(82) => os_platform(),
             HostCapabilityKind::Custom(83) => os_arch(),
             HostCapabilityKind::Custom(84) => os_tmpdir(),
@@ -636,6 +638,9 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "os" || name == "node:os" {
             return Ok(os_module());
         }
+        if name == "module" || name == "node:module" {
+            return Ok(module_api());
+        }
         if name == "events" || name == "node:events" {
             return Ok(events_module());
         }
@@ -980,6 +985,53 @@ fn os_homedir() -> Result<Value, VmError> {
     Ok(Value::String(
         std::env::var("HOME").unwrap_or_else(|_| "/".into()),
     ))
+}
+
+fn module_api() -> Value {
+    quench_runtime::host_api::object(vec![
+        (
+            "builtinModules".into(),
+            quench_runtime::host_api::array(vec![Value::String("fs".into())]),
+        ),
+        (
+            "isBuiltin".into(),
+            capability_function(HostCapabilityKind::Custom(101)),
+        ),
+        (
+            "createRequire".into(),
+            capability_function(HostCapabilityKind::Custom(102)),
+        ),
+        (
+            "findSourceMap".into(),
+            capability_function(HostCapabilityKind::Custom(103)),
+        ),
+        (
+            "syncBuiltinESMExports".into(),
+            capability_function(HostCapabilityKind::Custom(104)),
+        ),
+    ])
+}
+
+fn module_is_builtin(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(name)) = arguments.first() else {
+        return Ok(Value::Boolean(false));
+    };
+    Ok(Value::Boolean(matches!(
+        name.as_str(),
+        "assert"
+            | "buffer"
+            | "crypto"
+            | "events"
+            | "fs"
+            | "http"
+            | "module"
+            | "net"
+            | "os"
+            | "path"
+            | "stream"
+            | "url"
+            | "util"
+    )))
 }
 
 fn os_extra(kind: HostCapabilityKind) -> Result<Value, VmError> {
