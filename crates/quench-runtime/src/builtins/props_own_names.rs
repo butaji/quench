@@ -14,6 +14,7 @@ const TEMPORAL_DURATION_PROTOTYPE_NAMES: &[&str] = &[
     "sign",
     "blank",
     "abs",
+    "add",
     "toString",
     "toJSON",
     "valueOf",
