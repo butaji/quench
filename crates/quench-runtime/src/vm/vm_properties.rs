@@ -290,7 +290,7 @@ fn function_inherited_property(
     properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then(|| property_value(value)))
+        .find_map(|(name, value)| (name == "\0function_prototype" || name == "\0prototype").then(|| property_value(value)))
         .map_or_else(
             || function_prototype_property(function, key),
             |prototype| get_property(&prototype, key),
