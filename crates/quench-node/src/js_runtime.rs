@@ -4652,6 +4652,15 @@ fn format_string(value: &Value, separators: bool) -> String {
         Value::Object(_) | Value::ObjectAlias(_) => {
             if matches!(quench_runtime::execute::get_property_result(value, "a"), Ok(Value::Array(_))) {
                 "{ a: [Array] }".into()
+            } else if matches!(
+                quench_runtime::execute::call(
+                    &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf),
+                    &Value::Undefined,
+                    &[value.clone()],
+                ),
+                Ok(Value::Null)
+            ) {
+                format_null_prototype_object(value)
             } else if let Ok(method) = quench_runtime::execute::get_property_result(value, "toString") {
                 if let Ok(Value::String(result)) = quench_runtime::execute::call(&method, value, &[]) {
                     result
@@ -4663,6 +4672,36 @@ fn format_string(value: &Value, separators: bool) -> String {
             }
         }
         _ => safe_value_string(value),
+    }
+}
+
+fn format_null_prototype_object(value: &Value) -> String {
+    let keys = quench_runtime::execute::call(
+        &Value::Builtin(quench_runtime::ops::Builtin::ObjectKeys),
+        &Value::Undefined,
+        &[value.clone()],
+    )
+    .ok();
+    let length = keys
+        .as_ref()
+        .and_then(|keys| quench_runtime::execute::get_property_result(keys, "length").ok())
+        .and_then(|value| match value { Value::Number(length) => Some(length as usize), _ => None })
+        .unwrap_or(0);
+    let mut properties = Vec::new();
+    for index in 0..length {
+        let Some(key) = keys
+            .as_ref()
+            .and_then(|keys| quench_runtime::execute::get_property_result(keys, &index.to_string()).ok())
+            .and_then(|value| match value { Value::String(value) => Some(value), _ => None })
+        else { continue };
+        if let Ok(property) = quench_runtime::execute::get_property_result(value, &key) {
+            properties.push(format!("{key}: {}", format_inspected(&property)));
+        }
+    }
+    if properties.is_empty() {
+        "[Object: null prototype] {}".into()
+    } else {
+        format!("[Object: null prototype] {{ {} }}", properties.join(", "))
     }
 }
 
