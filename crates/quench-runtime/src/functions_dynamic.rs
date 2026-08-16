@@ -1,6 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use oxc::{allocator::Allocator, ast::visit::Visit, parser::Parser, span::SourceType};
+use oxc::{
+    allocator::Allocator,
+    ast::{
+        ast::{Class, PrivateFieldExpression, PrivateInExpression},
+        visit::{walk, Visit},
+    },
+    parser::Parser,
+    span::SourceType,
+};
 
 use crate::{
     conversion::to_string, execute::VmError, facts::ProgramDb, ops::FunctionKind, value::Value,
@@ -65,6 +73,9 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     {
         return Err(syntax_error("Invalid strict function body"));
     }
+    if has_invalid_private_identifier(body) {
+        return Err(syntax_error("Invalid private identifier"));
+    }
     let mut facts = ProgramDb {
         strict: matches!(strictness, crate::ops::FunctionStrictness::Strict),
         ..ProgramDb::default()
@@ -119,6 +130,38 @@ fn contains_with_statement(body: &oxc::ast::ast::FunctionBody<'_>) -> bool {
     let mut validator = Validator { found: false };
     validator.visit_function_body(body);
     validator.found
+}
+
+fn has_invalid_private_identifier(body: &oxc::ast::ast::FunctionBody<'_>) -> bool {
+    struct Validator {
+        class_depth: u16,
+        invalid: bool,
+    }
+
+    impl<'a> Visit<'a> for Validator {
+        fn visit_class(&mut self, class: &Class<'a>) {
+            self.class_depth = self.class_depth.saturating_add(1);
+            walk::walk_class(self, class);
+            self.class_depth = self.class_depth.saturating_sub(1);
+        }
+
+        fn visit_private_field_expression(&mut self, expression: &PrivateFieldExpression<'a>) {
+            self.invalid |= self.class_depth == 0;
+            walk::walk_private_field_expression(self, expression);
+        }
+
+        fn visit_private_in_expression(&mut self, expression: &PrivateInExpression<'a>) {
+            self.invalid |= self.class_depth == 0;
+            walk::walk_private_in_expression(self, expression);
+        }
+    }
+
+    let mut validator = Validator {
+        class_depth: 0,
+        invalid: false,
+    };
+    validator.visit_function_body(body);
+    validator.invalid
 }
 
 fn forbidden_parameter_expression(parameters: &oxc::ast::ast::FormalParameters<'_>) -> bool {
