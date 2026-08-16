@@ -8,7 +8,7 @@ pub(crate) fn dispatch(
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::IntlRelativeTimeFormat => Some(construct(arguments)),
+        crate::ops::Builtin::IntlRelativeTimeFormat => Some(construct_if_new(arguments, receiver)),
         crate::ops::Builtin::IntlRelativeTimeFormatSupportedLocalesOf => {
             Some(super::supported_locales_of(arguments))
         }
@@ -19,6 +19,15 @@ pub(crate) fn dispatch(
         }
         _ => None,
     }
+}
+
+fn construct_if_new(arguments: &[Value], receiver: Option<&Value>) -> Result<Value, VmError> {
+    if receiver.is_some() {
+        return Err(runtime_error(
+            "TypeError: Intl.RelativeTimeFormat requires 'new'",
+        ));
+    }
+    construct(arguments)
 }
 
 fn relative_parts(

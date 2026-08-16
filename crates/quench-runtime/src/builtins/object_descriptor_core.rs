@@ -240,6 +240,8 @@ fn intrinsic_getter_extended(builtin: Builtin, key: &str) -> Option<Builtin> {
 fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
     use Builtin::*;
     Some(match (builtin, key) {
+        (IntlDateTimeFormatPrototype, "format") => IntlDateTimeFormatFormatGetter,
+        (IntlCollatorPrototype, "compare") => IntlCollatorCompareGetter,
         (IntlLocalePrototype, "baseName") => IntlLocaleBaseNameGetter,
         (IntlLocalePrototype, "calendar") => IntlLocaleCalendarGetter,
         (IntlLocalePrototype, "caseFirst") => IntlLocaleCaseFirstGetter,

@@ -94,12 +94,9 @@ pub(crate) fn load_store(builtin: Builtin, arguments: &[Value]) -> Result<Value,
     }
     let index = atomic_index(arguments.get(1))?;
     if builtin == Builtin::AtomicsLoad {
-        return view
-            .get(index)
-            .map(|value| Value::Number(value as f64))
-            .ok_or_else(|| {
-                crate::value::error::throw_range_error("Atomics index is out of range")
-            });
+        return view.get_number(index).map(Value::Number).ok_or_else(|| {
+            crate::value::error::throw_range_error("Atomics index is out of range")
+        });
     }
     let value = atomic_value(arguments.get(2))?;
     if !view.set(index, value) {
@@ -333,6 +330,13 @@ impl AtomicView<'_> {
             Self::Uint8(v) => v.get(index).map(i32::from),
             Self::Uint16(v) => v.get(index).map(i32::from),
             Self::Uint32(v) => v.get(index).map(|x| x as i32),
+        }
+    }
+
+    fn get_number(&self, index: usize) -> Option<f64> {
+        match self {
+            Self::Uint32(v) => v.get(index).map(|value| value as f64),
+            _ => self.get(index).map(|value| value as f64),
         }
     }
     fn set(&self, index: usize, value: i32) -> bool {
