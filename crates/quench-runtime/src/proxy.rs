@@ -396,11 +396,13 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "ownKeys") {
-            return call_trap(
+            let result = call_trap(
                 &trap,
                 std::slice::from_ref(&proxy.target),
                 Some(&proxy.handler),
-            );
+            )?;
+            validate_own_keys_result(&result)?;
+            return Ok(result);
         }
     }
     let target = match target {
@@ -408,6 +410,29 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
         target => target,
     };
     crate::own_keys::all(target)
+}
+
+fn validate_own_keys_result(value: &Value) -> Result<(), VmError> {
+    let Value::Array(keys) = value else {
+        return Err(crate::value::error::throw_type_error(
+            "Proxy ownKeys trap must return an object",
+        ));
+    };
+    let mut seen = Vec::new();
+    for key in keys.snapshot() {
+        let Value::String(key) = key else {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy ownKeys trap returned a non-property key",
+            ));
+        };
+        if seen.contains(&key) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy ownKeys trap returned duplicate keys",
+            ));
+        }
+        seen.push(key);
+    }
+    Ok(())
 }
 
 pub fn builtin(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
