@@ -394,7 +394,9 @@ fn format_duration_shape(
     if matches!(slot_value(slots, "minutes"), Some("numeric" | "2-digit"))
         && matches!(slot_value(slots, "seconds"), Some("numeric" | "2-digit"))
     {
-        return Ok(format_clock_duration(days, hours, minutes, seconds));
+        return Ok(format_mixed_numeric_duration(
+            slots, style, days, hours, minutes, seconds,
+        ));
     }
     if style == "digital" {
         return Ok(format_digital_duration(
@@ -451,18 +453,36 @@ fn duration_values(properties: &[(String, Value)]) -> [i64; 10] {
     ]
 }
 
-fn format_clock_duration(days: i64, hours: i64, minutes: i64, seconds: i64) -> String {
-    let clock = format!("{minutes}:{seconds:02}");
-    let time = if hours == 0 {
-        clock
-    } else {
-        format!("{hours} hr, {clock}")
-    };
-    if days == 0 {
-        time
-    } else {
-        format!("{days} day, {time}")
+fn format_mixed_numeric_duration(
+    slots: &[(String, Value)],
+    style: &str,
+    days: i64,
+    hours: i64,
+    minutes: i64,
+    seconds: i64,
+) -> String {
+    let locale = slot_string(slots, "locale").unwrap_or_else(default_locale);
+    let mut items = Vec::new();
+    if days != 0 {
+        items.push(format_duration_unit(
+            slots,
+            style,
+            "days",
+            "day",
+            &days.to_string(),
+        ));
     }
+    if hours != 0 {
+        items.push(format_duration_unit(
+            slots,
+            style,
+            "hours",
+            "hour",
+            &hours.to_string(),
+        ));
+    }
+    items.push(format!("{minutes}:{seconds:02}"));
+    crate::intl::list::format_list(&items, &locale, style, "unit")
 }
 
 fn format_digital_duration(
