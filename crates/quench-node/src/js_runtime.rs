@@ -4774,6 +4774,19 @@ fn format_string(value: &Value, separators: bool) -> String {
                     return result;
                 }
             }
+            if let Ok(prototype) = quench_runtime::execute::call(
+                &Value::Builtin(quench_runtime::ops::Builtin::ObjectGetPrototypeOf),
+                &Value::Undefined,
+                &[value.clone()],
+            ) {
+                if let Ok(constructor) = quench_runtime::execute::get_property_result(&prototype, "constructor") {
+                    if let Ok(Value::String(name)) = quench_runtime::execute::get_property_result(&constructor, "name") {
+                        if name != "Object" && name != "Function" && !name.is_empty() {
+                            return format!("{name} {}", format_compact_value(value));
+                        }
+                    }
+                }
+            }
             if matches!(quench_runtime::execute::get_property_result(value, "a"), Ok(Value::Array(_))) {
                 "{ a: [Array] }".into()
             } else if matches!(
@@ -4988,13 +5001,13 @@ fn format_inspected(value: &Value) -> String {
             format!("SharedArrayBuffer {{ [Uint8Contents]: <{hex}>, [byteLength]: {} }}", bytes.len())
         }
         Value::Object(_) | Value::ObjectAlias(_) => {
-            if let (Ok(Value::String(name)), Ok(Value::String(message))) = (
+            if let Ok(Value::String(stack)) = quench_runtime::execute::get_property_result(value, "stack") {
+                stack
+            } else if let (Ok(Value::String(name)), Ok(Value::String(message))) = (
                 quench_runtime::execute::get_property_result(value, "name"),
                 quench_runtime::execute::get_property_result(value, "message"),
             ) {
                 format!("[{name}: {message}]")
-            } else if let Ok(Value::String(stack)) = quench_runtime::execute::get_property_result(value, "stack") {
-                stack
             } else if let Ok(value) = quench_runtime::execute::get_property_result(value, "foo") {
                 format!("{{ foo: {} }}", format_inspected(&value))
             } else {
