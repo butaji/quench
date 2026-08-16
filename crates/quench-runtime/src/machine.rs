@@ -460,6 +460,13 @@ impl Machine {
         };
         frame.advance_resume(resume, yield_dst)
     }
+
+    pub(crate) fn set_try_finally_resume(&mut self, resume: CodeRange, yield_dst: u16) -> bool {
+        let Some(frame) = self.frames.frames.last_mut() else {
+            return false;
+        };
+        frame.set_finally_resume(resume, yield_dst)
+    }
 }
 
 #[cfg(test)]
