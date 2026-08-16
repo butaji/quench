@@ -614,6 +614,7 @@ pub(crate) fn define_own_property(
         ));
     }
     validate_redefinition(&current, descriptor)?;
+    validate_array_length_descriptor(target, key, descriptor)?;
     let descriptor = complete_descriptor(descriptor, &current);
     let value = descriptor
         .iter()
