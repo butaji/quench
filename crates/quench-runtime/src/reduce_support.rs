@@ -189,6 +189,15 @@ fn nested_var_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
             .iter()
             .flat_map(|case| annex_b_function_names(&case.consequent))
             .collect(),
+        oxc::ast::ast::Statement::LabeledStatement(statement) => {
+            annex_b_function_names(std::slice::from_ref(&statement.body))
+        }
+        oxc::ast::ast::Statement::WhileStatement(statement) => {
+            annex_b_function_names(std::slice::from_ref(&statement.body))
+        }
+        oxc::ast::ast::Statement::DoWhileStatement(statement) => {
+            annex_b_function_names(std::slice::from_ref(&statement.body))
+        }
         _ => declared_names(statement),
     }
 }

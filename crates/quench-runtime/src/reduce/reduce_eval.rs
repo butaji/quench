@@ -259,6 +259,24 @@ fn reserve_annex_b_statement(
                 reserve_annex_b_bindings(&case.consequent, locals, next_slot, collisions);
             }
         }
+        Statement::LabeledStatement(statement) => reserve_annex_b_bindings(
+            std::slice::from_ref(&statement.body),
+            locals,
+            next_slot,
+            collisions,
+        ),
+        Statement::WhileStatement(statement) => reserve_annex_b_bindings(
+            std::slice::from_ref(&statement.body),
+            locals,
+            next_slot,
+            collisions,
+        ),
+        Statement::DoWhileStatement(statement) => reserve_annex_b_bindings(
+            std::slice::from_ref(&statement.body),
+            locals,
+            next_slot,
+            collisions,
+        ),
         Statement::TryStatement(statement) => {
             reserve_annex_b_try(statement, locals, next_slot, collisions)
         }
