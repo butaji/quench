@@ -156,6 +156,7 @@ const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
 const fn intl_short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IntlCollator => Some("Collator"),
+        Builtin::IntlPluralRules => Some("PluralRules"),
         Builtin::IntlSupportedValuesOf => Some("supportedValuesOf"),
         Builtin::IntlDisplayNames => Some("DisplayNames"),
         Builtin::IntlLocale => Some("Locale"),
