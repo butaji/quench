@@ -15,13 +15,8 @@ pub(super) fn to_locale_string(
     if is_invalid_date(receiver) {
         return Ok(Value::String("Invalid Date".into()));
     }
-    let mut formatter_arguments = arguments.to_vec();
-    if formatter_arguments.len() < 2 {
-        formatter_arguments.push(Value::Object(std::rc::Rc::new(
-            crate::value::ObjectData::new(default_options(kind)),
-        )));
-    }
-    let formatter = crate::intl::datetime::construct(&formatter_arguments)?;
+    let formatter =
+        crate::intl::datetime::construct_with_defaults(arguments, Some(default_components(kind)))?;
     crate::intl::datetime::prototype_method(
         Builtin::IntlDateTimeFormatFormat,
         &[receiver.cloned().unwrap_or(Value::Undefined)],
@@ -41,14 +36,10 @@ fn is_invalid_date(receiver: Option<&Value>) -> bool {
         && crate::date::extract_time(receiver).is_nan()
 }
 
-fn default_options(kind: DateLocaleKind) -> Vec<(String, Value)> {
-    let names = match kind {
-        DateLocaleKind::String => ["year", "month", "day", "hour", "minute", "second"].as_slice(),
-        DateLocaleKind::Date => ["year", "month", "day"].as_slice(),
-        DateLocaleKind::Time => ["hour", "minute", "second"].as_slice(),
-    };
-    names
-        .iter()
-        .map(|name| (name.to_string(), Value::String("numeric".into())))
-        .collect()
+fn default_components(kind: DateLocaleKind) -> &'static [&'static str] {
+    match kind {
+        DateLocaleKind::String => &["year", "month", "day", "hour", "minute", "second"],
+        DateLocaleKind::Date => &["year", "month", "day"],
+        DateLocaleKind::Time => &["hour", "minute", "second"],
+    }
 }
