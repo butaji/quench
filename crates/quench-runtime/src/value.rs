@@ -421,23 +421,6 @@ pub enum Value {
     Undefined,
 }
 
-pub(crate) fn is_object(value: &Value) -> bool {
-    if let Value::BindingCell(cell) = value {
-        return is_object(&cell.borrow());
-    }
-    !matches!(
-        value,
-        Value::Number(_)
-            | Value::Boolean(_)
-            | Value::String(_)
-            | Value::StringUnits(_)
-            | Value::BigInt(_)
-            | Value::Null
-            | Value::Undefined
-            | Value::HostCapability(_)
-    )
-}
-
 include!("value_array_data.rs");
 
 #[derive(Debug, Clone, PartialEq)]
@@ -501,15 +484,5 @@ pub struct BoundFunctionValue {
     pub arguments: Vec<Value>,
     pub properties: RefCell<Vec<(String, Value)>>,
 }
-impl BoundFunctionValue {
-    pub(crate) fn new(realm: crate::ops::RealmId, target: Value, receiver: Value) -> Self {
-        Self {
-            realm,
-            target,
-            receiver,
-            arguments: Vec::new(),
-            properties: RefCell::new(Vec::new()),
-        }
-    }
-}
 include!("value_constant.rs");
+include!("value_helpers.rs");
