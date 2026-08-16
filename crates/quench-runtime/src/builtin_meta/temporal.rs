@@ -12,6 +12,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDate => Some("Temporal.PlainDate"),
         Builtin::TemporalPlainDateFrom => Some("Temporal.PlainDate.from"),
         Builtin::TemporalPlainDateWithCalendar => Some("Temporal.PlainDate.prototype.withCalendar"),
+        Builtin::TemporalPlainDateDayOfWeekGetter => Some("get dayOfWeek"),
         Builtin::TemporalPlainDateValueOf => Some("Temporal.PlainDate.prototype.valueOf"),
         _ => None,
     }
@@ -27,6 +28,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalPlainDate => Some("PlainDate"),
         Builtin::TemporalPlainDateFrom => Some("from"),
         Builtin::TemporalPlainDateWithCalendar => Some("withCalendar"),
+        Builtin::TemporalPlainDateDayOfWeekGetter => Some("dayOfWeek"),
         Builtin::TemporalPlainDateValueOf => Some("valueOf"),
         _ => None,
     }
@@ -41,6 +43,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalDurationToLocaleString => Some(0.0),
         Builtin::TemporalPlainDateFrom => Some(1.0),
         Builtin::TemporalPlainDateWithCalendar => Some(1.0),
+        Builtin::TemporalPlainDateDayOfWeekGetter => Some(0.0),
         Builtin::TemporalPlainDateValueOf => Some(0.0),
         _ => None,
     }
