@@ -13,6 +13,10 @@ use quench_runtime::{
     vm::{Host, VmContext, VmError},
 };
 
+thread_local! {
+    static NODE_PROCESS_ENV: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
 // Capability numbers are an internal NodeHost registry. Keep them named so
 // the runtime boundary carries intent instead of opaque numeric protocol IDs.
 struct CapabilityName;
@@ -735,7 +739,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::OsAvailableParallelism) => Ok(Value::Number(
                 std::thread::available_parallelism().map(|value| value.get() as f64).unwrap_or(1.0),
             )),
-            HostCapabilityKind::Custom(CapabilityName::OsTmpdir) => os_tmpdir(),
+            HostCapabilityKind::Custom(CapabilityName::OsTmpdir) => os_tmpdir(receiver),
             HostCapabilityKind::Custom(CapabilityName::OsHomedir) => os_homedir(),
             HostCapabilityKind::Custom(CapabilityName::OsCpus..=CapabilityName::OsType)
             | HostCapabilityKind::Custom(
@@ -3480,6 +3484,7 @@ fn process_module() -> Value {
             .map(|(key, value)| (key, Value::String(value.into())))
             .collect(),
     );
+    NODE_PROCESS_ENV.with(|current| *current.borrow_mut() = Some(env.clone()));
     quench_runtime::host_api::object(vec![
         ("env".into(), env),
         (
@@ -4871,7 +4876,7 @@ fn util_inspect(_receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
 }
 
 fn os_module() -> Value {
-    let module = quench_runtime::host_api::object(vec![
+    let mut module = quench_runtime::host_api::object(vec![
         (
             "platform".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::OsPlatform)),
@@ -4939,6 +4944,8 @@ fn os_module() -> Value {
             ("priority".into(), quench_runtime::host_api::object(vec![("PRIORITY_LOW".into(), Value::Number(0.0))])),
         ])),
     ]);
+    let env = NODE_PROCESS_ENV.with(|current| current.borrow().clone()).unwrap_or_else(|| quench_runtime::host_api::object(vec![]));
+    module = quench_runtime::execute::set_property(module, "\0env", env);
     module
 }
 
@@ -4959,10 +4966,19 @@ fn os_arch() -> Result<Value, VmError> {
     Ok(Value::String(std::env::consts::ARCH.into()))
 }
 
-fn os_tmpdir() -> Result<Value, VmError> {
-    Ok(Value::String(
-        std::env::temp_dir().to_string_lossy().into_owned(),
-    ))
+fn os_tmpdir(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let env = receiver
+        .and_then(|receiver| quench_runtime::execute::get_property_result(receiver, "\0env").ok())
+        .unwrap_or(Value::Undefined);
+    for key in ["TMPDIR", "TMP", "TEMP"] {
+        if let Ok(Value::String(value)) = quench_runtime::execute::get_property_result(&env, key) {
+            if !value.is_empty() {
+                let value = if value.len() > 1 && value.ends_with('/') { &value[..value.len() - 1] } else { &value };
+                return Ok(Value::String(value.to_owned().into()));
+            }
+        }
+    }
+    Ok(Value::String(std::env::temp_dir().to_string_lossy().into_owned().into()))
 }
 
 fn os_homedir() -> Result<Value, VmError> {
