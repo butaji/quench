@@ -345,23 +345,12 @@ impl DateTimeOptions {
                 Value::String(self.time_zone.clone()),
             ),
         ];
-        let has_hour = self.contains("hour");
+        self.push_hour_properties(&mut props);
         for (key, value) in &self.components {
-            if key == "hourCycle" && !has_hour {
+            if key == "hourCycle" {
                 continue;
             }
             props.push((key.clone(), Value::String(value.clone())));
-        }
-        if has_hour {
-            let hour12 = self.hour12.or_else(|| {
-                self.components
-                    .iter()
-                    .find(|(key, _)| key == "hourCycle")
-                    .map(|(_, value)| matches!(value.as_str(), "h11" | "h12"))
-            });
-            if let Some(hour12) = hour12 {
-                props.push(("hour12".to_string(), Value::Boolean(hour12)));
-            }
         }
         if let Some(digits) = self.fractional_second_digits {
             props.push((
@@ -370,6 +359,23 @@ impl DateTimeOptions {
             ));
         }
         props
+    }
+
+    fn push_hour_properties(&self, props: &mut Vec<(String, Value)>) {
+        if !self.contains("hour") {
+            return;
+        }
+        if let Some((_, value)) = self.components.iter().find(|(key, _)| key == "hourCycle") {
+            props.push(("hourCycle".to_string(), Value::String(value.clone())));
+        }
+        if let Some(hour12) = self.hour12.or_else(|| {
+            self.components
+                .iter()
+                .find(|(key, _)| key == "hourCycle")
+                .map(|(_, value)| matches!(value.as_str(), "h11" | "h12"))
+        }) {
+            props.push(("hour12".to_string(), Value::Boolean(hour12)));
+        }
     }
 }
 
