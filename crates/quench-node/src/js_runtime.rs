@@ -94,7 +94,7 @@ impl JsRuntime for QuickJsRuntime {
         path: Option<&Path>,
         _host: &dyn NodeHost,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        crate::run_source_with_runtime_at_path(source, &self.runtime, path)?;
+        crate::quickjs_backend::execute_source(source, &self.runtime, path)?;
         while self.has_pending_jobs() {
             self.poll_jobs()?;
         }
