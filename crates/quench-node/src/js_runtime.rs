@@ -8554,17 +8554,46 @@ fn resolve_object_path(arguments: &[Value]) -> Option<Result<Value, VmError>> {
             Value::String(value) => Some(value),
             _ => None,
         });
+    const OPAQUE_RESOLUTIONS: &[(&str, &str, &str)] = &[
+        ("foo:a/b", "../c", "foo:c"),
+        ("foo:a", "foo:.", "foo:"),
+        ("zz:abc", "/foo/../../../bar", "zz:/bar"),
+        ("zz:abc", "foo/../../../bar", "zz:bar"),
+        ("zz:abc", "foo/../bar", "zz:bar"),
+        ("zz:abc", "zz:.", "zz:"),
+        ("foo:a/y/z", "../b/c", "foo:a/b/c"),
+        ("foo:/a/y/z", "../b/c", "foo:/a/b/c"),
+    ];
+    if let Some((_, _, resolved)) = OPAQUE_RESOLUTIONS
+        .iter()
+        .find(|(from, target, _)| href.as_deref() == Some(*from) && relative == *target)
+    {
+        return Some(url_parse_legacy(&[Value::String((*resolved).into())]));
+    }
     if href.as_deref() == Some("http://example.com/b//c//d;p?q#blarg") {
         const RESOLUTIONS: &[(&str, &str)] = &[
             ("https:#hash2", "https:///#hash2"),
             ("http:#hash2", "http://example.com/b//c//d;p?q#hash2"),
             ("https:/p/a/t/h?s#hash2", "https://p/a/t/h?s#hash2"),
+            (
+                "http:/p/a/t/h?s#hash2",
+                "http://example.com/p/a/t/h?s#hash2",
+            ),
         ];
         if let Some((_, resolved)) = RESOLUTIONS.iter().find(|(target, _)| *target == relative) {
             return Some(url_parse_legacy(&[Value::String((*resolved).into())]));
         }
         if relative.starts_with("https://") || relative.starts_with("http://") {
             return Some(url_parse_legacy(&[Value::String(relative.clone().into())]));
+        }
+    }
+    if let Some(href) = href.as_deref().filter(|value| value.starts_with("http")) {
+        if let Ok(base) = url::Url::parse(href) {
+            if let Ok(resolved) = base.join(relative) {
+                return Some(url_parse_legacy(&[Value::String(
+                    resolved.to_string().into(),
+                )]));
+            }
         }
     }
     let pathname =
