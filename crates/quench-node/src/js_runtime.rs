@@ -34,6 +34,9 @@ impl CapabilityName {
     const BufferIsBuffer: u16 = 32;
     const UtilFormat: u16 = 80;
     const UtilInspect: u16 = 81;
+    const UtilPromisify: u16 = 1950;
+    const UtilPromisifiedFirst: u16 = 2000;
+    const UtilResolverFirst: u16 = 2100;
     const OsPlatform: u16 = 82;
     const OsArch: u16 = 83;
     const OsTmpdir: u16 = 84;
@@ -266,6 +269,10 @@ struct QuenchNodeHost {
     next_directory: Cell<u16>,
     common_wrappers: RefCell<HashMap<u16, (Value, bool)>>,
     next_common_wrapper: Cell<u16>,
+    promisified: RefCell<HashMap<u16, Value>>,
+    next_promisified: Cell<u16>,
+    pending_promises: RefCell<HashMap<u16, Rc<quench_runtime::value::PromiseData>>>,
+    next_promise: Cell<u16>,
 }
 
 struct StreamState {
@@ -307,6 +314,10 @@ impl Default for QuenchNodeHost {
             next_directory: Cell::new(1),
             common_wrappers: RefCell::new(HashMap::new()),
             next_common_wrapper: Cell::new(CapabilityName::CommonWrapperFirst),
+            promisified: RefCell::new(HashMap::new()),
+            next_promisified: Cell::new(CapabilityName::UtilPromisifiedFirst),
+            pending_promises: RefCell::new(HashMap::new()),
+            next_promise: Cell::new(CapabilityName::UtilResolverFirst),
         }
     }
 }
@@ -524,6 +535,18 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::UtilFormat) => util_format(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilInspect) => util_inspect(arguments),
+            HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
+                self.util_promisify(arguments)
+            }
+            HostCapabilityKind::Custom(id)
+                if (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilResolverFirst)
+                    .contains(&id) =>
+            {
+                self.call_promisified(id, arguments)
+            }
+            HostCapabilityKind::Custom(id) if id >= CapabilityName::UtilResolverFirst => {
+                self.resolve_promisified(id, arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin) => {
                 module_is_builtin(arguments)
             }
@@ -749,6 +772,62 @@ impl QuenchNodeHost {
             return Ok(Value::Undefined);
         }
         quench_runtime::execute::call(&callback, &Value::Undefined, &arguments[1..])
+    }
+
+    fn util_promisify(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let callback = arguments.first().cloned().ok_or(VmError::NotCallable)?;
+        let id = self.next_promisified.get();
+        self.next_promisified.set(id.saturating_add(1));
+        self.promisified.borrow_mut().insert(id, callback);
+        Ok(capability_function(HostCapabilityKind::Custom(id)))
+    }
+
+    fn call_promisified(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
+        let callback = self
+            .promisified
+            .borrow()
+            .get(&id)
+            .cloned()
+            .ok_or(VmError::NotCallable)?;
+        let promise_id = self.next_promise.get();
+        self.next_promise.set(promise_id.saturating_add(1));
+        let promise = Rc::new(quench_runtime::value::PromiseData::new(
+            quench_runtime::value::PromiseState::Pending,
+        ));
+        self.pending_promises
+            .borrow_mut()
+            .insert(promise_id, promise.clone());
+        let mut call_arguments = arguments.to_vec();
+        call_arguments.push(capability_function(HostCapabilityKind::Custom(promise_id)));
+        quench_runtime::execute::call(&callback, &Value::Undefined, &call_arguments)?;
+        Ok(Value::Promise(promise))
+    }
+
+    fn resolve_promisified(&self, id: u16, arguments: &[Value]) -> Result<Value, VmError> {
+        let promise = self
+            .pending_promises
+            .borrow_mut()
+            .remove(&id)
+            .ok_or(VmError::NotCallable)?;
+        let error = arguments.first().cloned().unwrap_or(Value::Null);
+        let result = if !matches!(error, Value::Null | Value::Undefined) {
+            quench_runtime::value::PromiseState::Rejected(error)
+        } else if arguments.len() <= 2 {
+            quench_runtime::value::PromiseState::Fulfilled(
+                arguments.get(1).cloned().unwrap_or(Value::Undefined),
+            )
+        } else {
+            quench_runtime::value::PromiseState::Fulfilled(quench_runtime::host_api::array(
+                arguments[1..].to_vec(),
+            ))
+        };
+        promise.state.replace(result.clone());
+        promise.result.replace(match result {
+            quench_runtime::value::PromiseState::Fulfilled(value)
+            | quench_runtime::value::PromiseState::Rejected(value) => Some(value),
+            _ => None,
+        });
+        Ok(Value::Undefined)
     }
 
     fn fs_open(&self, arguments: &[Value]) -> Result<Value, VmError> {
@@ -2938,6 +3017,10 @@ fn util_module() -> Value {
         (
             "inspect".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::UtilInspect)),
+        ),
+        (
+            "promisify".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::UtilPromisify)),
         ),
         ("types".into(), quench_runtime::host_api::object(vec![])),
     ])
