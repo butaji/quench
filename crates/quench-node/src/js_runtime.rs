@@ -62,6 +62,7 @@ impl CapabilityName {
     const VmRunInContext: u16 = 2114;
     const VmScript: u16 = 2115;
     const VmScriptRunInContext: u16 = 2116;
+    const Gc: u16 = 2117;
     const UtilDeprecatedFirst: u16 = 2092;
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
@@ -824,6 +825,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::VmRunInContext) => vm_run_in_context(arguments),
             HostCapabilityKind::Custom(CapabilityName::VmScript) => Ok(quench_runtime::host_api::object(vec![("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext)))])),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => Ok(Value::String("passed".into())),
+            HostCapabilityKind::Custom(CapabilityName::Gc) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
@@ -6911,6 +6913,7 @@ impl JsRuntime for QuenchRuntime {
             "setImmediate",
             capability_function(HostCapabilityKind::Custom(CapabilityName::TimerImmediate)),
         )
+        .with_host_value("gc", capability_function(HostCapabilityKind::Custom(CapabilityName::Gc)))
         .with_host_value(
             "setTimeout",
             capability_function(HostCapabilityKind::Custom(CapabilityName::Timer)),
