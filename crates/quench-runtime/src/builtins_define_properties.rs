@@ -16,16 +16,18 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
         return Ok(target);
     };
     keys.iter().try_fold(target, |target, key| {
-            let key = crate::conversion::to_property_key(key)?;
-            let descriptor = crate::execute::get_property_result(&properties, &key)?;
-            let Some(descriptor) = descriptor_object(descriptor) else {
-                return Err(crate::value::error::throw_type_error(
-                    "Property descriptor must be an object",
-                ));
-            };
-            let descriptor = descriptor_fields(&descriptor)?;
-            define_own_property(&target, &key, &descriptor)
-        })
+        let key = crate::conversion::to_property_key(key)?;
+        let descriptor = crate::execute::get_property_result(&properties, &key)?;
+        let Some(descriptor) = descriptor_object(descriptor) else {
+            return Err(crate::value::error::throw_type_error(
+                "Property descriptor must be an object",
+            ));
+        };
+        let descriptor = descriptor_fields(&descriptor)?;
+        let result = define_own_property(&target, &key, &descriptor)?;
+        crate::locals::replace_value(&target, &result);
+        Ok(result)
+    })
 }
 
 fn descriptor_object(value: Value) -> Option<Value> {
@@ -36,7 +38,14 @@ pub(crate) fn descriptor_fields(
     descriptor: &Value,
 ) -> Result<Vec<(String, Value)>, crate::execute::VmError> {
     let mut fields = Vec::new();
-    for field in ["get", "set", "value", "writable", "enumerable", "configurable"] {
+    for field in [
+        "get",
+        "set",
+        "value",
+        "writable",
+        "enumerable",
+        "configurable",
+    ] {
         if !crate::with_scope::has_property(descriptor, field)? {
             continue;
         }
@@ -52,9 +61,7 @@ pub(crate) fn descriptor_fields(
     Ok(fields)
 }
 
-fn validate_accessor_fields(
-    fields: &[(String, Value)],
-) -> Result<(), crate::execute::VmError> {
+fn validate_accessor_fields(fields: &[(String, Value)]) -> Result<(), crate::execute::VmError> {
     for name in ["get", "set"] {
         let Some((_, value)) = fields.iter().find(|(field, _)| field == name) else {
             continue;
