@@ -224,10 +224,6 @@ pub(crate) fn validate_options(options: Option<&Value>) -> Result<(), VmError> {
     {
         return Err(runtime_error("RangeError: currency"));
     }
-    let significant = property("maximumSignificantDigits")?;
-    if crate::conversion::to_string(&significant)? == "-Infinity" {
-        return Err(runtime_error("RangeError: maximumSignificantDigits"));
-    }
     Ok(())
 }
 
@@ -508,7 +504,9 @@ fn validate_significant_digits(raw: &RawOptions) -> Result<(), VmError> {
         raw.minimum_significant_digits,
         raw.maximum_significant_digits,
     ] {
-        if value >= 0.0 && (value.fract() != 0.0 || !(1.0..=21.0).contains(&value)) {
+        if value != -1.0
+            && (!value.is_finite() || value.fract() != 0.0 || !(1.0..=21.0).contains(&value))
+        {
             return Err(crate::value::error::throw_range_error(
                 "invalid significant digits",
             ));
