@@ -2,6 +2,10 @@ use std::path::Path;
 
 pub(crate) trait JsRuntime {
     fn execute(&self, source: &str, path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn poll_jobs(&self) -> Result<bool, Box<dyn std::error::Error>>;
+
+    fn has_pending_jobs(&self) -> bool;
 }
 
 pub(crate) struct QuenchRuntime;
@@ -17,6 +21,14 @@ impl JsRuntime for QuenchRuntime {
         quench_runtime::execute::run_vm(program.ops())
             .map(|_| ())
             .map_err(|error| error.render().into())
+    }
+
+    fn poll_jobs(&self) -> Result<bool, Box<dyn std::error::Error>> {
+        Ok(false)
+    }
+
+    fn has_pending_jobs(&self) -> bool {
+        false
     }
 }
 
@@ -34,6 +46,20 @@ impl QuickJsRuntime {
 
 impl JsRuntime for QuickJsRuntime {
     fn execute(&self, source: &str, path: Option<&Path>) -> Result<(), Box<dyn std::error::Error>> {
-        crate::run_source_with_runtime_at_path(source, &self.runtime, path)
+        crate::run_source_with_runtime_at_path(source, &self.runtime, path)?;
+        while self.has_pending_jobs() {
+            self.poll_jobs()?;
+        }
+        Ok(())
+    }
+
+    fn poll_jobs(&self) -> Result<bool, Box<dyn std::error::Error>> {
+        self.runtime
+            .execute_pending_job()
+            .map_err(|error| format!("QuickJS job failed: {error:?}").into())
+    }
+
+    fn has_pending_jobs(&self) -> bool {
+        self.runtime.is_job_pending()
     }
 }
