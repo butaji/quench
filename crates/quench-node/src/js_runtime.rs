@@ -3125,9 +3125,7 @@ fn value_to_string(value: &Value) -> String {
 
 impl QuenchNodeHost {
     fn create_hash(&self, arguments: &[Value]) -> Result<Value, VmError> {
-        if !matches!(arguments.first(), Some(Value::String(name)) if name == "sha256") {
-            return Err(VmError::EvalError("only sha256 is supported".into()));
-        }
+        if !matches!(arguments.first(), Some(Value::String(name)) if name == "sha256") { return Err(VmError::EvalError("only sha256 is supported".into())); }
         let id = self.next_hash.get();
         self.next_hash.set(id.saturating_add(2));
         self.hashes.borrow_mut().insert(id, Vec::new());
@@ -4983,6 +4981,12 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
 fn url_format_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(Value::String(value)) = arguments.first() {
         let mut output = value.clone();
+        if let Some(authority_end) = output.find("//").and_then(|start| output[start + 2..].find(['?', '#']).map(|offset| start + 2 + offset)) {
+            let authority = &output[..authority_end];
+            if !authority.ends_with('/') {
+                output.insert(authority_end, '/');
+            }
+        }
         if output.ends_with('?') {
             output.insert(output.len() - 1, '/');
         }
