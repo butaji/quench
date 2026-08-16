@@ -4025,6 +4025,9 @@ fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         Some(Value::String(value)) => value,
         _ => return Err(VmError::NotCallable),
     };
+    if matches!(arguments.get(1), Some(Value::String(_))) {
+        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "offset must be a number")));
+    }
     let offset = arguments
         .get(1)
         .and_then(|value| match value {
@@ -4033,12 +4036,15 @@ fn buffer_write(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, 
         })
         .unwrap_or(0);
     let encoding = arguments
-        .get(2)
+        .get(if matches!(arguments.get(2), Some(Value::Number(_))) { 3 } else { 2 })
         .and_then(|value| match value {
             Value::String(value) => Some(value.as_str()),
             _ => None,
         })
         .unwrap_or("utf8");
+    if !matches!(encoding.to_ascii_lowercase().as_str(), "utf8" | "utf-8" | "hex" | "utf16le" | "ucs2" | "ucs-2") {
+        return Err(VmError::Thrown(fs_error("ERR_UNKNOWN_ENCODING", "Unknown encoding")));
+    }
     let bytes = if encoding == "hex" {
         (0..text.len())
             .step_by(2)
