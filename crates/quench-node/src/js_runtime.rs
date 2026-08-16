@@ -112,6 +112,9 @@ impl CapabilityName {
     const FsReadAsync: u16 = 1521;
     const FsWritePromise: u16 = 1522;
     const FsReadPromise: u16 = 1523;
+    const FsOpenAsync: u16 = 1524;
+    const CommonMustSucceed: u16 = 1701;
+    const CommonMustNotCall: u16 = 1702;
     const PathRelative: u16 = 1300;
     const PathDirname: u16 = 1301;
     const PathIsAbsolute: u16 = 1302;
@@ -312,12 +315,19 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CommonMustCall) => {
                 arguments.first().cloned().ok_or(VmError::NotCallable)
             }
+            HostCapabilityKind::Custom(CapabilityName::CommonMustSucceed)
+            | HostCapabilityKind::Custom(CapabilityName::CommonMustNotCall) => {
+                arguments.first().cloned().ok_or(VmError::NotCallable)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsWriteAsync) => fs_write_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReadAsync) => fs_read_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsWritePromise) => {
                 fs_write_promise(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::FsReadPromise) => fs_read_promise(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsOpenAsync) => {
+                self.fs_open_async(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::PathBasename) => basename(arguments),
             HostCapabilityKind::Custom(CapabilityName::ConsoleLog) => console_log(arguments),
             HostCapabilityKind::Custom(CapabilityName::Cwd) => current_directory(arguments),
@@ -597,6 +607,13 @@ impl QuenchNodeHost {
         };
         self.fd_paths.borrow_mut().remove(&(*fd as i32));
         self.fd_modes.borrow_mut().remove(&(*fd as i32));
+        Ok(Value::Undefined)
+    }
+
+    fn fs_open_async(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let callback = arguments.last().ok_or(VmError::NotCallable)?;
+        let fd = self.fs_open(&arguments[..arguments.len().saturating_sub(1)])?;
+        quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null, fd])?;
         Ok(Value::Undefined)
     }
 
@@ -1332,10 +1349,24 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     };
     if name != "node:path" && name != "path" {
         if name == "../common" || name.ends_with("/common") {
-            return Ok(Value::object(vec![(
-                "mustCall".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::CommonMustCall)),
-            )]));
+            return Ok(Value::object(vec![
+                (
+                    "mustCall".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::CommonMustCall)),
+                ),
+                (
+                    "mustSucceed".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonMustSucceed,
+                    )),
+                ),
+                (
+                    "mustNotCall".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CommonMustNotCall,
+                    )),
+                ),
+            ]));
         }
         if name == "assert"
             || name == "node:assert"
@@ -1446,6 +1477,10 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "readFile".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadAsync)),
+                ),
+                (
+                    "open".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpenAsync)),
                 ),
                 (
                     "promises".into(),
@@ -2370,10 +2405,13 @@ impl JsRuntime for QuenchRuntime {
                 HostCapabilityKind::Custom(CapabilityName::ChildEmit),
                 HostCapabilityKind::Custom(CapabilityName::ChildSend),
                 HostCapabilityKind::Custom(CapabilityName::CommonMustCall),
+                HostCapabilityKind::Custom(CapabilityName::CommonMustSucceed),
+                HostCapabilityKind::Custom(CapabilityName::CommonMustNotCall),
                 HostCapabilityKind::Custom(CapabilityName::FsWriteAsync),
                 HostCapabilityKind::Custom(CapabilityName::FsReadAsync),
                 HostCapabilityKind::Custom(CapabilityName::FsWritePromise),
                 HostCapabilityKind::Custom(CapabilityName::FsReadPromise),
+                HostCapabilityKind::Custom(CapabilityName::FsOpenAsync),
                 HostCapabilityKind::Custom(CapabilityName::PathRelative),
                 HostCapabilityKind::Custom(CapabilityName::PathDirname),
                 HostCapabilityKind::Custom(CapabilityName::PathIsAbsolute),
