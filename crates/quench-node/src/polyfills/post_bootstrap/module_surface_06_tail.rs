@@ -19,6 +19,22 @@ pub const JS: &str = quench_js_check::checked_js!(r#"if (globalThis.require) {
     return result;
   };
 }
+if (!globalThis.URLSearchParams) {
+  const formEncode = (value) =>
+    encodeURIComponent(Array.from(String(value), (part) => {
+      const code = part.codePointAt(0);
+      return code >= 0xd800 && code <= 0xdfff ? "\ufffd" : part;
+    }).join(""));
+  globalThis.URLSearchParams = class URLSearchParams {
+    constructor() { this._pairs = []; }
+    append(name, value) { this._pairs.push([name, value]); }
+    toString() {
+      return this._pairs
+        .map(([name, value]) => `${formEncode(name)}=${formEncode(value)}`)
+        .join("&");
+    }
+  };
+}
 delete globalThis.__quenchURLPatternFactory;
 delete globalThis.__quenchURLInstallCanParse;
 delete globalThis.__quenchURLInstallToString;
