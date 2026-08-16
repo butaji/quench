@@ -198,8 +198,8 @@ impl DateTimeOptions {
             return Ok(());
         }
         match key {
-            "localeMatcher" if matches!(value, Value::Null) => {
-                return Err(runtime_error("TypeError: localeMatcher"));
+            "localeMatcher" if !matches!(text.as_str(), "lookup" | "best fit") => {
+                return Err(runtime_error("RangeError: invalid localeMatcher"));
             }
             "formatMatcher" if !matches!(text.as_str(), "basic" | "best fit") => {
                 return Err(runtime_error("RangeError: invalid formatMatcher"));
