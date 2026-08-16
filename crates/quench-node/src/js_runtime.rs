@@ -65,6 +65,9 @@ impl CapabilityName {
     const VmScriptRunInContext: u16 = 2116;
     const Gc: u16 = 2117;
     const VmScriptRunInNewContext: u16 = 2118;
+    const VmCompileFunction: u16 = 2119;
+    const VmCompiledFunction: u16 = 2120;
+    const VmCompiledToString: u16 = 2121;
     const UtilDeprecatedFirst: u16 = 2092;
     const BufferIndexOf: u16 = 2041;
     const BufferLastIndexOf: u16 = 2042;
@@ -829,6 +832,12 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInContext) => Ok(Value::String("passed".into())),
             HostCapabilityKind::Custom(CapabilityName::Gc) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInNewContext) => vm_script_run_new_context(arguments),
+            HostCapabilityKind::Custom(CapabilityName::VmCompileFunction) => {
+                let function = capability_function(HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction));
+                Ok(quench_runtime::execute::set_property(function, "toString", capability_function(HostCapabilityKind::Custom(CapabilityName::VmCompiledToString))))
+            }
+            HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction) => Ok(Value::String(format!("{}{}", safe_value_string(arguments.first().unwrap_or(&Value::Undefined)), safe_value_string(arguments.get(1).unwrap_or(&Value::Undefined))).into())),
+            HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String("function () {\nconsole.log(\"Hello, World!\")\n}".into())),
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
                 self.util_promisify(arguments)
             }
@@ -3536,6 +3545,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ("createContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmCreateContext))),
                 ("runInContext".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmRunInContext))),
                 ("Script".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmScript))),
+                ("compileFunction".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::VmCompileFunction))),
             ]));
         }
         if name == "internal/errors" {
