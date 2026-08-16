@@ -3,7 +3,16 @@ pub(crate) fn execute_host_capability(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(Value::HostCapability(capability)) = receiver else {
+    execute_host_capability_with_receiver(kind, receiver, receiver, arguments)
+}
+
+pub(crate) fn execute_host_capability_with_receiver(
+    kind: HostCapabilityKind,
+    capability_receiver: Option<&Value>,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::HostCapability(capability)) = capability_receiver else {
         return Err(VmError::NotCallable);
     };
     let descriptor = HostCapabilityRef {

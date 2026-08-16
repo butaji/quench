@@ -280,6 +280,19 @@ pub(crate) fn execute_target(
             execute_in_function_realm(function, receiver, arguments)
         }
         crate::value::Value::BoundFunction(bound)
+            if matches!(bound.target, crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(_))) =>
+        {
+            let crate::value::Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
+                unreachable!()
+            };
+            crate::vm::execute_host_capability_with_receiver(
+                kind,
+                Some(&bound.receiver),
+                Some(receiver),
+                arguments,
+            )
+        }
+        crate::value::Value::BoundFunction(bound)
             if crate::vm::is_intrinsic_bound(bound)
                 && matches!(bound.target, crate::value::Value::Builtin(_)) =>
         {
