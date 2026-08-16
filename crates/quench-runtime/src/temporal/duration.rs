@@ -71,6 +71,15 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalDurationNanosecondsGetter => {
             Some(field_getter(receiver, "nanoseconds"))
         }
+        crate::ops::Builtin::TemporalDurationSignGetter => Some(field_getter(receiver, "sign")),
+        crate::ops::Builtin::TemporalDurationBlankGetter => {
+            Some(boolean_field_getter(receiver, "blank"))
+        }
+        crate::ops::Builtin::TemporalDurationValueOf => {
+            Some(Err(crate::value::error::throw_type_error(
+                "Temporal.Duration.prototype.valueOf is not allowed",
+            )))
+        }
         _ => None,
     }
 }
@@ -81,6 +90,14 @@ fn field_getter(receiver: Option<&Value>, field: &str) -> Result<Value, VmError>
         .iter()
         .find(|(key, _)| key == field)
         .map_or(Value::Number(0.0), |(_, value)| value.clone()))
+}
+
+fn boolean_field_getter(receiver: Option<&Value>, field: &str) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    Ok(object
+        .iter()
+        .find(|(key, _)| key == field)
+        .map_or(Value::Boolean(false), |(_, value)| value.clone()))
 }
 
 fn abs(receiver: Option<&Value>) -> Result<Value, VmError> {

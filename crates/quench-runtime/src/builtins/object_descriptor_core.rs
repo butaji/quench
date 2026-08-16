@@ -250,6 +250,8 @@ fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (TemporalDurationPrototype, "milliseconds") => TemporalDurationMillisecondsGetter,
         (TemporalDurationPrototype, "microseconds") => TemporalDurationMicrosecondsGetter,
         (TemporalDurationPrototype, "nanoseconds") => TemporalDurationNanosecondsGetter,
+        (TemporalDurationPrototype, "sign") => TemporalDurationSignGetter,
+        (TemporalDurationPrototype, "blank") => TemporalDurationBlankGetter,
         (TemporalPlainDatePrototype, "dayOfWeek") => TemporalPlainDateDayOfWeekGetter,
         (TemporalPlainDatePrototype, "dayOfYear") => TemporalPlainDateDayOfYearGetter,
         (TemporalPlainDatePrototype, "daysInMonth") => TemporalPlainDateDaysInMonthGetter,
