@@ -178,6 +178,9 @@ impl CapabilityName {
     const CryptoShakeBytes: u16 = 2206;
     const CryptoHashDigest: u16 = 2209;
     const CryptoHashUpdate: u16 = 2210;
+    const CryptoHashOn: u16 = 2233;
+    const CryptoHashWrite: u16 = 2234;
+    const CryptoHashEnd: u16 = 2235;
     const DgramSetRecvBufferSize: u16 = 2211;
     const DgramSetSendBufferSize: u16 = 2212;
     const DgramOnce: u16 = 2213;
@@ -1004,6 +1007,52 @@ impl Host for QuenchNodeHost {
                 })
                 .ok_or(VmError::NotCallable)?;
                 self.hash_call(id, receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoHashOn) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                let event = match arguments.first() {
+                    Some(Value::String(value)) => value,
+                    _ => return Ok(receiver.clone()),
+                };
+                let listener = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+                let key = format!("\0hashListener:{event}");
+                let updated =
+                    quench_runtime::execute::set_property(receiver.clone(), &key, listener);
+                quench_runtime::execute::replace_value(receiver, &updated);
+                Ok(receiver.clone())
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoHashWrite) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                let id = hash_id(receiver)?;
+                self.hash_call(id, Some(receiver), arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::CryptoHashEnd) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                let id = hash_id(receiver)?;
+                if !arguments.is_empty() {
+                    self.hash_call(id, Some(receiver), arguments)?;
+                }
+                let output =
+                    self.hash_call(id + 1, Some(receiver), &[Value::String("hex".into())])?;
+                for event in ["data", "end"] {
+                    let key = format!("\0hashListener:{event}");
+                    if let Ok(listener) =
+                        quench_runtime::execute::get_property_result(receiver, &key)
+                    {
+                        if event == "data" {
+                            let data = match &output {
+                                Value::String(value) => {
+                                    quench_runtime::host_api::bytes(&decode_hex(value))
+                                }
+                                _ => output.clone(),
+                            };
+                            quench_runtime::execute::call(&listener, receiver, &[data])?;
+                        } else {
+                            quench_runtime::execute::call(&listener, receiver, &[])?;
+                        }
+                    }
+                }
+                Ok(receiver.clone())
             }
             HostCapabilityKind::Custom(CapabilityName::BufferIsAscii) => buffer_is_ascii(arguments),
             HostCapabilityKind::Custom(CapabilityName::BufferIsUtf8) => buffer_is_utf8(arguments),
@@ -4786,7 +4835,29 @@ impl QuenchNodeHost {
         let id = self.next_hash.get();
         self.next_hash.set(id.saturating_add(2));
         self.hashes.borrow_mut().insert(id, (algorithm, Vec::new()));
+        let default_encoding = arguments
+            .get(1)
+            .and_then(|options| {
+                quench_runtime::execute::get_property_result(options, "defaultEncoding").ok()
+            })
+            .unwrap_or_else(|| Value::String("utf8".into()));
         let hash = Value::object(vec![
+            (
+                "_writableState".into(),
+                Value::object(vec![("defaultEncoding".into(), default_encoding)]),
+            ),
+            (
+                "on".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoHashOn)),
+            ),
+            (
+                "write".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoHashWrite)),
+            ),
+            (
+                "end".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoHashEnd)),
+            ),
             (
                 "update".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoHashUpdate)),
@@ -4870,6 +4941,16 @@ impl QuenchNodeHost {
         }
         Ok(Value::String(String::from_utf8_lossy(&digest).into_owned()))
     }
+}
+
+fn hash_id(value: &Value) -> Result<u16, VmError> {
+    quench_runtime::execute::get_property_result(value, "\0hashId")
+        .ok()
+        .and_then(|value| match value {
+            Value::Number(value) => Some(value as u16),
+            _ => None,
+        })
+        .ok_or(VmError::NotCallable)
 }
 
 fn console_log(arguments: &[Value]) -> Result<Value, VmError> {
