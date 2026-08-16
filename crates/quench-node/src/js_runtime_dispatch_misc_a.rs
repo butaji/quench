@@ -325,18 +325,6 @@ impl QuenchNodeHost {
                     Value::String(format!("file://{}", encode_file_path(&path))),
                 )]))
             }
-            HostCapabilityKind::Custom(CapabilityName::TmpdirRefresh) => Ok(Value::Undefined),
-            HostCapabilityKind::Custom(CapabilityName::TmpdirFileUrl) => {
-                let name = arguments.first().map(safe_value_string).unwrap_or_default();
-                Ok(quench_runtime::host_api::object(vec![(
-                    "href".into(),
-                    Value::String(format!(
-                        "file://{}/{}",
-                        std::env::temp_dir().display(),
-                        name
-                    )),
-                )]))
-            }
             HostCapabilityKind::Custom(CapabilityName::FsValidateRmOptions) => {
                 let options = arguments.get(1);
                 let retry_delay = options.and_then(|value| {
