@@ -124,6 +124,10 @@ impl CapabilityName {
     const PathWinToNamespaced: u16 = 1304;
     const PathJoin: u16 = 1305;
     const PathExtname: u16 = 1306;
+    const FsStatAsync: u16 = 1526;
+    const FsLstatAsync: u16 = 1527;
+    const FsStatsIsDirectory: u16 = 1528;
+    const FsStatsIsFile: u16 = 1529;
 }
 
 pub(crate) struct FilesystemNodeHost {
@@ -339,6 +343,12 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsCloseAsync) => {
                 self.fs_close_async(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::FsStatAsync)
+            | HostCapabilityKind::Custom(CapabilityName::FsLstatAsync) => fs_stat_async(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsStatsIsDirectory) => {
+                Ok(Value::Boolean(true))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsStatsIsFile) => Ok(Value::Boolean(false)),
             HostCapabilityKind::Custom(id)
                 if (CapabilityName::CommonWrapperFirst
                     ..(CapabilityName::CommonWrapperFirst + 100))
@@ -596,6 +606,9 @@ impl QuenchNodeHost {
         if !succeeds {
             return Err(VmError::EvalError("unexpected callback call".into()));
         }
+        if matches!(callback, Value::Undefined) {
+            return Ok(Value::Undefined);
+        }
         quench_runtime::execute::call(&callback, &Value::Undefined, &arguments[1..])
     }
 
@@ -708,10 +721,7 @@ impl QuenchNodeHost {
             .get(&(*fd as i32))
             .copied()
             .ok_or(VmError::NotCallable)?;
-        Ok(Value::object(vec![(
-            "mode".into(),
-            Value::Number(mode as f64),
-        )]))
+        Ok(fs_stats(mode))
     }
 
     fn url_call(&self, id: u16) -> Result<Value, VmError> {
@@ -970,6 +980,35 @@ impl QuenchNodeHost {
             _ => Err(VmError::NotCallable),
         }
     }
+}
+
+fn fs_stats(mode: u32) -> Value {
+    Value::object(vec![
+        ("mode".into(), Value::Number(mode as f64)),
+        ("mtime".into(), quench_runtime::date::instance(0.0)),
+        (
+            "isDirectory".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::FsStatsIsDirectory,
+            )),
+        ),
+        (
+            "isFile".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsStatsIsFile)),
+        ),
+    ])
+}
+
+fn fs_stat_async(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(arguments, 0)?;
+    let metadata =
+        std::fs::metadata(path).map_err(|error| VmError::EvalError(error.to_string()))?;
+    let mode = if metadata.is_dir() { 0o40000 } else { 0o100000 };
+    let stats = fs_stats(mode);
+    if let Some(callback) = arguments.last() {
+        quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null, stats])?;
+    }
+    Ok(Value::Undefined)
 }
 
 fn fs_error(code: &str, message: &str) -> Value {
@@ -1508,6 +1547,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 (
                     "fstatSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsFstatSync)),
+                ),
+                (
+                    "stat".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsStatAsync)),
+                ),
+                (
+                    "lstat".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsLstatAsync)),
                 ),
                 (
                     "chmodSync".into(),
