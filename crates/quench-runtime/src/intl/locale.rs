@@ -61,14 +61,26 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(runtime_error("RangeError: Locale requires a tag"));
     };
     let tag = locale_tag(tag_arg)?;
-    let canonical = canonicalize(&tag)?;
+    let options = arguments.get(1);
+    let has_options = options.is_some_and(|value| !matches!(value, Value::Undefined));
+    let grandfathered = matches!(
+        tag.to_ascii_lowercase().as_str(),
+        "art-lojban" | "cel-gaulish"
+    );
+    let canonical = if grandfathered && has_options {
+        tag.clone()
+    } else {
+        canonicalize(&tag)?
+    };
     let language = canonical.split('-').next().unwrap_or_default();
     if !valid_language_subtag(language) {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
     let locale = parse_canonical(&canonical);
-    let options = arguments.get(1);
-    let locale = apply_options(locale, options)?;
+    let mut locale = apply_options(locale, options)?;
+    if grandfathered && has_options {
+        locale.variants.clear();
+    }
     Ok(build_object(locale))
 }
 
@@ -311,10 +323,9 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "Cannot convert null or undefined to object",
         ));
     }
-    let Some(Value::Object(properties)) = options else {
+    let Some(options) = options.filter(|value| crate::value::is_object(value)) else {
         return Ok(locale);
     };
-    let object = Value::Object(properties.clone());
     for key in [
         "language",
         "script",
@@ -328,7 +339,7 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
         "numeric",
         "numberingSystem",
     ] {
-        let value = crate::execute::get_property_result(&object, key)?;
+        let value = crate::execute::get_property_result(options, key)?;
         if matches!(value, Value::Undefined) {
             continue;
         }
