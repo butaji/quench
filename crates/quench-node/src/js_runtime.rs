@@ -307,4 +307,5 @@ include!("js_runtime_internal_binding.rs");
 include!("js_runtime_vm_helpers.rs");
 
 include!("js_runtime_helpers_tail.rs");
+include!("js_runtime_esm_imports.rs");
 include!("js_runtime_adapters.rs");
