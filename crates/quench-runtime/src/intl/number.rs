@@ -139,7 +139,7 @@ impl RawOptions {
                         crate::conversion::to_number(&value)?.to_string()
                     } else if matches!(
                         *key,
-                        "style" | "currency" | "currencyDisplay" | "unitDisplay"
+                        "localeMatcher" | "style" | "currency" | "currencyDisplay" | "unitDisplay"
                     ) {
                         crate::conversion::to_string(&value)?
                     } else {
@@ -161,8 +161,8 @@ impl RawOptions {
                     {
                         return Err(runtime_error("RangeError: style"));
                     }
-                    if *key == "localeMatcher" && text == "null" {
-                        return Err(runtime_error("TypeError: localeMatcher"));
+                    if *key == "localeMatcher" && !matches!(text.as_str(), "lookup" | "best fit") {
+                        return Err(runtime_error("RangeError: localeMatcher"));
                     }
                     if *key == "currency"
                         && (text.len() != 3
