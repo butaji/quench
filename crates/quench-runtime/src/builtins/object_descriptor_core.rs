@@ -258,6 +258,7 @@ fn intrinsic_getter_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
         (TemporalPlainDatePrototype, "inLeapYear") => TemporalPlainDateInLeapYearGetter,
         (TemporalPlainDatePrototype, "era") => TemporalPlainDateEraGetter,
         (TemporalPlainDatePrototype, "eraYear") => TemporalPlainDateEraYearGetter,
+        (TemporalPlainDatePrototype, "calendarId") => TemporalPlainDateCalendarIdGetter,
         (IntlDateTimeFormatPrototype, "format") => IntlDateTimeFormatFormatGetter,
         (IntlNumberFormatPrototype, "format") => IntlNumberFormatFormat,
         (IntlCollatorPrototype, "compare") => IntlCollatorCompareGetter,
