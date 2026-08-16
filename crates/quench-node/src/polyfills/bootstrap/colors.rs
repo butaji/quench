@@ -220,26 +220,8 @@ const __nodeQuerystringExports = {
 let __nodeQuerystringInstance;
 globalThis.__nodeQuerystringInitialized = false;
 globalThis.__nodeUrlInitialized = false;
-globalThis.__nodeQuerystring = new Proxy(
-  {},
-  {
-    get: (_, key) => {
-      globalThis.__nodeQuerystringInitialized = true;
-      __nodeQuerystringInstance ||= __nodeQuerystringExports;
-      return __nodeQuerystringInstance[key];
-    },
-    ownKeys: () => Reflect.ownKeys(__nodeQuerystringExports),
-    getOwnPropertyDescriptor: (_, key) => ({
-      enumerable: true,
-      configurable: true,
-      value: __nodeQuerystringExports[key]
-    }),
-    set: (_, key, value) => {
-      __nodeQuerystringExports[key] = value;
-      return true;
-    }
-  }
-);
+globalThis.__nodeQuerystring = __nodeQuerystringExports;
+globalThis.__nodeQuerystringInitialized = true;
 class NodeURLSearchParams {
   constructor(init = "") {
     this._pairs = [];

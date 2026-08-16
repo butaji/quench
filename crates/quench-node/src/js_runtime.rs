@@ -80,6 +80,7 @@ impl CapabilityName {
     const OsType: u16 = 89;
     const QuerystringParse: u16 = 90;
     const QuerystringEscape: u16 = 91;
+    const QuerystringStringify: u16 = 92;
     const EventsGetMax: u16 = 94;
     const EventsSetMax: u16 = 95;
     const OsRelease: u16 = 96;
@@ -737,6 +738,9 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::QuerystringEscape) => {
                 querystring_escape(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::QuerystringStringify) => {
+                querystring_stringify(arguments)
             }
             HostCapabilityKind::Custom(id) if (600..700).contains(&id) => self.url_call(id),
             HostCapabilityKind::Custom(CapabilityName::ProcessNextTick) => next_tick(arguments),
@@ -3144,6 +3148,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                         CapabilityName::QuerystringEscape,
                     )),
                 ),
+                (
+                    "stringify".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::QuerystringStringify,
+                    )),
+                ),
             ]));
         }
         return Err(VmError::EvalError(format!("Cannot find module '{name}'")));
@@ -4904,21 +4914,150 @@ fn querystring_parse(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(input)) = arguments.first() else {
         return Ok(quench_runtime::host_api::object(vec![]));
     };
-    let mut properties = Vec::new();
+    let mut properties: Vec<(String, Value)> = Vec::new();
     for pair in input.split('&').filter(|pair| !pair.is_empty()) {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        properties.push((
-            key.replace('+', " "),
-            Value::String(value.replace('+', " ")),
-        ));
+        let key = querystring_decode(key);
+        let value = Value::String(querystring_decode(value).into());
+        if let Some((_, existing)) = properties.iter_mut().find(|(name, _)| *name == key) {
+            *existing = match existing.clone() {
+                Value::Array(array) => {
+                    let mut values = Vec::new();
+                    for index in 0..array_length(&Value::Array(array.clone())) {
+                        if let Ok(value) = quench_runtime::execute::get_property_result(
+                            &Value::Array(array.clone()),
+                            &index.to_string(),
+                        ) {
+                            values.push(value);
+                        }
+                    }
+                    values.push(value);
+                    Value::Array(Rc::new(quench_runtime::value::ArrayData::new(values)))
+                }
+                other => Value::Array(Rc::new(quench_runtime::value::ArrayData::new(vec![other, value]))),
+            };
+        } else {
+            properties.push((key, value));
+        }
     }
-    Ok(quench_runtime::host_api::object(properties))
+    let mut result = quench_runtime::execute::call(
+        &Value::Builtin(quench_runtime::ops::Builtin::ObjectCreate),
+        &Value::Undefined,
+        &[Value::Null],
+    )?;
+    for (key, value) in properties {
+        result = quench_runtime::execute::set_property(result, &key, value);
+    }
+    Ok(result)
+}
+
+fn array_length(value: &Value) -> usize {
+    quench_runtime::execute::get_property_result(value, "length")
+        .ok()
+        .and_then(|value| match value { Value::Number(length) => Some(length as usize), _ => None })
+        .unwrap_or(0)
+}
+
+fn querystring_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'+' {
+            output.push(b' ');
+        } else if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hex = |byte: u8| match byte {
+                b'0'..=b'9' => Some(byte - b'0'),
+                b'a'..=b'f' => Some(byte - b'a' + 10),
+                b'A'..=b'F' => Some(byte - b'A' + 10),
+                _ => None,
+            };
+            if let (Some(high), Some(low)) = (hex(bytes[index + 1]), hex(bytes[index + 2])) {
+                output.push(high * 16 + low);
+                index += 2;
+            } else {
+                output.push(b'%');
+            }
+        } else {
+            output.push(bytes[index]);
+        }
+        index += 1;
+    }
+    String::from_utf8_lossy(&output).into_owned()
 }
 
 fn querystring_escape(arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::String(
-        arguments.first().map(safe_value_string).unwrap_or_default(),
-    ))
+    Ok(Value::String(querystring_encode(
+        &arguments.first().map(safe_value_string).unwrap_or_default(),
+    ).into()))
+}
+
+fn querystring_encode(value: &str) -> String {
+    let mut output = String::new();
+    for byte in value.as_bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~!*'()".contains(byte) {
+            output.push(*byte as char);
+        } else {
+            output.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    output
+}
+
+fn querystring_stringify(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::Object(object)) = arguments.first() else {
+        return Ok(Value::String(String::new().into()));
+    };
+    let separator = match arguments.get(1) {
+        Some(Value::String(value)) => value.as_str(),
+        _ => "&",
+    };
+    let equals = match arguments.get(2) {
+        Some(Value::String(value)) => value.as_str(),
+        _ => "=",
+    };
+    let mut pairs = Vec::new();
+    let keys = quench_runtime::execute::call(
+        &Value::Builtin(quench_runtime::ops::Builtin::ObjectKeys),
+        &Value::Undefined,
+        &[Value::Object(object.clone())],
+    )?;
+    let key_count = match quench_runtime::execute::get_property_result(&keys, "length")? {
+        Value::Number(length) => length as usize,
+        _ => 0,
+    };
+    for index in 0..key_count {
+        let key = match quench_runtime::execute::get_property_result(&keys, &index.to_string())? {
+            Value::String(key) => key,
+            _ => continue,
+        };
+        let value = quench_runtime::execute::get_property_result(
+            &Value::Object(object.clone()),
+            &key,
+        )?;
+        let values = if matches!(&value, Value::Array(_)) {
+            let length = quench_runtime::execute::get_property_result(&value, "length")
+                .ok()
+                .and_then(|value| match value { Value::Number(length) => Some(length as usize), _ => None })
+                .unwrap_or(0);
+            (0..length)
+                .filter_map(|index| quench_runtime::execute::get_property_result(&value, &index.to_string()).ok())
+                .collect()
+        } else {
+            vec![value.clone()]
+        };
+        for value in values {
+            let rendered = match value {
+                Value::Null | Value::Undefined | Value::Object(_) | Value::ObjectAlias(_)
+                | Value::Function(_) | Value::BoundFunction(_) => String::new(),
+                Value::Number(number) if !number.is_finite() => String::new(),
+                Value::BigInt(value) => querystring_encode(value.trim_end_matches('n')),
+                other => querystring_encode(&safe_value_string(&other)),
+            };
+            pairs.push(format!("{}{}{}", querystring_encode(&key), equals, rendered));
+        }
+    }
+    Ok(Value::String(pairs.join(separator).into()))
 }
 
 fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
@@ -4931,8 +5070,19 @@ fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
                 failed("expected a truthy value")
             }
         }
-        14 | 15 => {
+        14 => {
             if arguments.first() == arguments.get(1) {
+                Ok(Value::Undefined)
+            } else {
+                failed("values are not equal")
+            }
+        }
+        15 => {
+            if arguments
+                .first()
+                .zip(arguments.get(1))
+                .is_some_and(|(actual, expected)| deep_value_equal(actual, expected))
+            {
                 Ok(Value::Undefined)
             } else {
                 failed("values are not equal")
@@ -4994,6 +5144,40 @@ fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
         }
         35 => Ok(Value::Undefined),
         _ => Err(VmError::NotCallable),
+    }
+}
+
+fn deep_value_equal(actual: &Value, expected: &Value) -> bool {
+    match (actual, expected) {
+        (Value::Array(left), Value::Array(right)) => {
+            let left_value = Value::Array(left.clone());
+            let right_value = Value::Array(right.clone());
+            let left_length = array_length(&left_value);
+            left_length == array_length(&right_value)
+                && (0..left_length).all(|index| {
+                    let left = quench_runtime::execute::get_property_result(
+                        &left_value,
+                        &index.to_string(),
+                    );
+                    let right = quench_runtime::execute::get_property_result(
+                        &right_value,
+                        &index.to_string(),
+                    );
+                    matches!((left, right), (Ok(left), Ok(right)) if deep_value_equal(&left, &right))
+                })
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            let left_properties = left.iter().filter(|(key, _)| !key.starts_with('\0')).collect::<Vec<_>>();
+            let right_properties = right.iter().filter(|(key, _)| !key.starts_with('\0')).collect::<Vec<_>>();
+            left_properties.len() == right_properties.len()
+                && left_properties.iter().all(|(key, value)| {
+                    right_properties
+                        .iter()
+                        .find(|(other_key, _)| other_key == key)
+                        .is_some_and(|(_, other)| deep_value_equal(value, other))
+                })
+        }
+        _ => actual == expected,
     }
 }
 
