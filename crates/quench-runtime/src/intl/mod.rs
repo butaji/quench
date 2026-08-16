@@ -387,9 +387,26 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     } else {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
-    let parts: Vec<&str> = parts.collect();
+    let mut parts: Vec<&str> = parts.collect();
+    apply_armenian_variant_alias(&mut out, &mut parts);
     validate_transformed_extensions(&parts)?;
     Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
+}
+
+fn apply_armenian_variant_alias(out: &mut Vec<String>, parts: &mut Vec<&str>) {
+    if out.first().map(String::as_str) != Some("hy") {
+        return;
+    }
+    match parts.first().copied() {
+        Some("arevela") => {
+            let _ = parts.remove(0);
+        }
+        Some("arevmda") => {
+            out[0] = "hyw".to_string();
+            let _ = parts.remove(0);
+        }
+        _ => {}
+    }
 }
 
 fn validate_transformed_extensions(parts: &[&str]) -> Result<(), VmError> {
@@ -640,6 +657,9 @@ fn classify_subtag(part: &str, script_done: bool, region_done: bool, variant_don
 
 fn language_alias(language: String) -> String {
     match language.as_str() {
+        "aar" => "aa".to_string(),
+        "ces" => "cs".to_string(),
+        "heb" => "he".to_string(),
         "iw" => "he".to_string(),
         "in" => "id".to_string(),
         "ji" => "yi".to_string(),
