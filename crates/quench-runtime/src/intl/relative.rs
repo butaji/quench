@@ -145,7 +145,7 @@ fn set_numbering_system(formatter: &mut RelativeOptions, text: String) -> Result
     if !valid_numbering_system(&text) {
         return Err(runtime_error("RangeError: invalid numberingSystem"));
     }
-    if matches!(text.as_str(), "arab" | "latn") {
+    if super::number::supports_digit_system(&text) {
         formatter.numbering_system = text;
     }
     Ok(())
