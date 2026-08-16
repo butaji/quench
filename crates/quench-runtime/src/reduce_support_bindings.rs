@@ -126,6 +126,32 @@ fn declared_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
     names
 }
 
+pub(crate) fn annex_b_function_names(statements: &[oxc::ast::ast::Statement<'_>]) -> Vec<String> {
+    statements
+        .iter()
+        .flat_map(annex_b_function_names_in)
+        .collect()
+}
+
+fn annex_b_function_names_in(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
+    match statement {
+        oxc::ast::ast::Statement::FunctionDeclaration(function) => function
+            .id
+            .as_ref()
+            .map(|identifier| vec![identifier.name.to_string()])
+            .unwrap_or_default(),
+        oxc::ast::ast::Statement::BlockStatement(block) => annex_b_function_names(&block.body),
+        oxc::ast::ast::Statement::IfStatement(statement) => {
+            let mut names = annex_b_function_names(std::slice::from_ref(&statement.consequent));
+            if let Some(alternate) = &statement.alternate {
+                names.extend(annex_b_function_names(std::slice::from_ref(alternate)));
+            }
+            names
+        }
+        _ => Vec::new(),
+    }
+}
+
 pub(crate) fn declared_names_in(statements: &[oxc::ast::ast::Statement<'_>]) -> Vec<String> {
     let mut names = Vec::new();
     collect_statement_names(statements, &mut names);
