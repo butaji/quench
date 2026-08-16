@@ -24,6 +24,7 @@ thread_local! {
     static NODE_STREAM_PROMISES: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_TIMERS_PROMISES: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_TIMER_COUNTS: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
+    static NODE_ASSERT_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_PRIORITY: Cell<i32> = const { Cell::new(0) };
     static VM_SCRIPT_RUNS: Cell<u32> = const { Cell::new(0) };
     static VM_COMPILE_CONTEXT_EXTENSION: Cell<bool> = const { Cell::new(false) };
@@ -217,6 +218,7 @@ impl CapabilityName {
     const TimerImmediate: u16 = 27;
     const Timer: u16 = 28;
     const TimerClearImmediate: u16 = 29;
+    const NodeTest: u16 = 2193;
     const ProcessNextTick: u16 = 21;
     const Assert: u16 = 13;
     const AssertStrictEqual: u16 = 14;
@@ -997,6 +999,13 @@ impl Host for QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::InternalUtilEmitExperimentalWarning) => {
                 internal_util_emit_experimental_warning(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::NodeTest) => {
+                let callback = arguments.get(1).ok_or(VmError::NotCallable)?;
+                let context =
+                    quench_runtime::host_api::object(vec![("assert".into(), assert_module())]);
+                quench_runtime::execute::call(callback, &Value::Undefined, &[context])?;
+                Ok(Value::Undefined)
             }
             HostCapabilityKind::Custom(CapabilityName::ProcessOn) => process_on(arguments),
             HostCapabilityKind::Custom(CapabilityName::ProcessEmit) => process_emit(arguments),
@@ -4968,6 +4977,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 ),
             ]));
         }
+        if name == "node:test" {
+            return Ok(quench_runtime::host_api::object(vec![(
+                "test".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::NodeTest)),
+            )]));
+        }
         if name == "node:child_process" || name == "child_process" {
             return Ok(Value::object(vec![
                 (
@@ -5766,6 +5781,9 @@ fn path_win_to_namespaced(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn assert_module() -> Value {
+    if let Some(module) = NODE_ASSERT_MODULE.with(|stored| stored.borrow().clone()) {
+        return module;
+    }
     let mut module = capability_function(HostCapabilityKind::Custom(CapabilityName::Assert));
     for (name, id) in [
         ("strictEqual", CapabilityName::AssertStrictEqual),
@@ -5791,6 +5809,7 @@ fn assert_module() -> Value {
             capability_function(HostCapabilityKind::Custom(id)),
         );
     }
+    NODE_ASSERT_MODULE.with(|stored| stored.replace(Some(module.clone())));
     module
 }
 
