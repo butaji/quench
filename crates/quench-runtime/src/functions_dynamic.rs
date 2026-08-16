@@ -201,9 +201,10 @@ fn normalize_annex_b_comments(source: &str) -> String {
     let source = source.strip_prefix("<!--").unwrap_or(source);
     source
         .lines()
-        .map(|line| {
+        .enumerate()
+        .map(|(line_number, line)| {
             let trimmed = line.trim_start();
-            if trimmed.starts_with("-->") {
+            if line_number > 0 && trimmed.starts_with("-->") {
                 &line[..line.len() - trimmed.len()]
             } else {
                 line
