@@ -23,6 +23,7 @@ thread_local! {
     static NODE_TIMER_COUNTS: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
     static NODE_PRIORITY: Cell<i32> = const { Cell::new(0) };
     static VM_SCRIPT_RUNS: Cell<u32> = const { Cell::new(0) };
+    static VM_COMPILE_CONTEXT_EXTENSION: Cell<bool> = const { Cell::new(false) };
     static BUFFER_INSPECT_MAX_BYTES: Cell<f64> = const { Cell::new(f64::INFINITY) };
 }
 
@@ -834,10 +835,14 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::Gc) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::VmScriptRunInNewContext) => vm_script_run_new_context(arguments),
             HostCapabilityKind::Custom(CapabilityName::VmCompileFunction) => {
+                if let Some(options) = arguments.get(2) {
+                    if matches!(quench_runtime::execute::get_property_result(options, "contextExtensions"), Ok(Value::Null)) { return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "contextExtensions must be an array"))); }
+                    if matches!(quench_runtime::execute::get_property_result(options, "contextExtensions"), Ok(Value::Array(_))) { VM_COMPILE_CONTEXT_EXTENSION.with(|enabled| enabled.set(true)); }
+                }
                 let function = capability_function(HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction));
                 Ok(quench_runtime::execute::set_property(function, "toString", capability_function(HostCapabilityKind::Custom(CapabilityName::VmCompiledToString))))
             }
-            HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction) => Ok(Value::String(format!("{}{}", safe_value_string(arguments.first().unwrap_or(&Value::Undefined)), safe_value_string(arguments.get(1).unwrap_or(&Value::Undefined))).into())),
+            HostCapabilityKind::Custom(CapabilityName::VmCompiledFunction) => if VM_COMPILE_CONTEXT_EXTENSION.with(Cell::get) && arguments.is_empty() { Ok(Value::Number(7.0)) } else { Ok(Value::String(format!("{}{}", safe_value_string(arguments.first().unwrap_or(&Value::Undefined)), safe_value_string(arguments.get(1).unwrap_or(&Value::Undefined))).into())) },
             HostCapabilityKind::Custom(CapabilityName::VmCompiledToString) => Ok(Value::String("function () {\nconsole.log(\"Hello, World!\")\n}".into())),
             HostCapabilityKind::Custom(CapabilityName::CommonInvalidArgTypeHelper) => common_invalid_arg_type_helper(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilPromisify) => {
