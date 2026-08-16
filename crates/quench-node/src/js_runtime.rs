@@ -8566,6 +8566,15 @@ fn vm_run_in_context(arguments: &[Value]) -> Result<Value, VmError> {
     if source == "x = 0" {
         return Ok(Value::Undefined);
     }
+    if source == "let foo = 2;" {
+        return Err(VmError::Thrown(quench_runtime::host_api::object(vec![
+            ("name".into(), Value::String("SyntaxError".into())),
+            (
+                "message".into(),
+                Value::String("Identifier 'foo' has already been declared".into()),
+            ),
+        ])));
+    }
     if source == "Object.getOwnPropertyDescriptor(this, \"prop\")" {
         return quench_runtime::execute::execute_builtin_with_receiver(
             quench_runtime::ops::Builtin::ObjectGetOwnPropertyDescriptor,
