@@ -22,6 +22,7 @@ thread_local! {
     static NODE_EXPERIMENTAL_WARNINGS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static NODE_DNS_SERVERS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static NODE_STREAM_PROMISES: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_TIMERS_PROMISES: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_TIMER_COUNTS: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
     static NODE_PRIORITY: Cell<i32> = const { Cell::new(0) };
     static VM_SCRIPT_RUNS: Cell<u32> = const { Cell::new(0) };
@@ -3556,6 +3557,12 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     if name == "dgram" || name == "node:dgram" {
         return Ok(quench_runtime::host_api::object(vec![("createSocket".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramCreateSocket)))]));
     }
+    if name == "timers/promises" || name == "node:timers/promises" {
+        return Ok(timers_promises_module());
+    }
+    if name == "timers" || name == "node:timers" {
+        return Ok(quench_runtime::host_api::object(vec![("promises".into(), timers_promises_module())]));
+    }
     if name == "net" || name == "node:net" {
         return Ok(quench_runtime::host_api::object(vec![
             ("getDefaultAutoSelectFamily".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::NetGetDefaultAutoSelectFamily))),
@@ -7061,6 +7068,14 @@ fn stream_promises_module() -> Value {
             ("pipeline".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamPipeline))),
             ("finished".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::StreamFinished))),
         ])); }
+        module.as_ref().unwrap().clone()
+    })
+}
+
+fn timers_promises_module() -> Value {
+    NODE_TIMERS_PROMISES.with(|module| {
+        let mut module = module.borrow_mut();
+        if module.is_none() { *module = Some(quench_runtime::host_api::object(vec![])); }
         module.as_ref().unwrap().clone()
     })
 }
