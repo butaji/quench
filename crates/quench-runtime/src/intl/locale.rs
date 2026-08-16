@@ -200,9 +200,10 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
             "language" if text.contains('-') => {
                 return Err(runtime_error("RangeError: invalid language"));
             }
-            "language" | "region" | "script" => {
+            "language" | "script" => {
                 let _ = option_value(&text, key)?;
             }
+            "region" => validate_region(&text)?,
             "variants" => {
                 let value = option_value(&text, key)?;
                 locale.variants = value
@@ -218,6 +219,14 @@ fn apply_options(mut locale: Locale, options: Option<&Value>) -> Result<Locale, 
         locale.variants.clear();
     }
     Ok(locale)
+}
+
+fn validate_region(value: &str) -> Result<(), VmError> {
+    let valid = (value.len() == 2 && value.chars().all(|c| c.is_ascii_alphabetic()))
+        || (value.len() == 3 && value.chars().all(|c| c.is_ascii_digit()));
+    valid
+        .then_some(())
+        .ok_or_else(|| runtime_error("RangeError: invalid region"))
 }
 
 fn option_value(value: &str, name: &str) -> Result<String, VmError> {
