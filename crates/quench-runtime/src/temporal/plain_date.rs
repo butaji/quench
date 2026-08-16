@@ -516,6 +516,15 @@ fn from_property_bag(value: &Value) -> Result<Value, VmError> {
     validate_gregory_era(&calendar, &era, &era_year)?;
     let year = resolve_gregory_year(year, &calendar, &era, &era_year)?;
     validate_required_fields(&year, &month, &month_code, &day)?;
+    if !matches!(month, Value::Undefined) && !matches!(month_code, Value::Undefined) {
+        let month_from_code = month_from_code(month_code.clone())?;
+        if crate::conversion::to_number(&month)? != crate::conversion::to_number(&month_from_code)?
+        {
+            return Err(crate::value::error::throw_range_error(
+                "month and monthCode conflict",
+            ));
+        }
+    }
     let month = if matches!(month, Value::Undefined) {
         month_from_code(month_code)?
     } else {
