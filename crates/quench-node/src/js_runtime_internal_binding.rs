@@ -389,14 +389,21 @@ fn util_system_error_map_get(arguments: &[Value]) -> Result<Value, VmError> {
     ]))
 }
 
-fn timers_promises_set_timeout(_arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(timer_promise_settled())
+fn timers_promises_set_timeout(arguments: &[Value]) -> Result<Value, VmError> {
+    // Signature: setTimeout(delay, value, options). Resolve with `value` so
+    // `await setTimeout(0, "ok") === "ok"` holds.
+    Ok(timer_promise_settled_with(
+        arguments.get(1).cloned().unwrap_or(Value::Undefined),
+    ))
 }
-fn timers_promises_set_immediate(_arguments: &[Value]) -> Result<Value, VmError> {
-    Ok(timer_promise_settled())
+fn timers_promises_set_immediate(arguments: &[Value]) -> Result<Value, VmError> {
+    // Signature: setImmediate(value, options).
+    Ok(timer_promise_settled_with(
+        arguments.first().cloned().unwrap_or(Value::Undefined),
+    ))
 }
-fn timer_promise_settled() -> Value {
+fn timer_promise_settled_with(value: Value) -> Value {
     Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
-        quench_runtime::value::PromiseState::Fulfilled(Value::Undefined),
+        quench_runtime::value::PromiseState::Fulfilled(value),
     )))
 }
