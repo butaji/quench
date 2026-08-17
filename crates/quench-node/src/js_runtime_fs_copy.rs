@@ -15,26 +15,39 @@ fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
         }
         _ => (false, true),
     };
-    let run = || -> Result<(), String> {
+    if metadata_is_dir(&src) && std::path::Path::new(&dest).is_file() {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_FS_CP_DIR_TO_NON_DIR",
+            &format!(
+                "Cannot overwrite non-directory '{}' with a directory '{}'",
+                dest, src
+            ),
+        )));
+    }
+    let run = || -> Result<(), VmError> {
         let metadata =
-            std::fs::metadata(&src).map_err(|error| format!("ENOENT: {error}"))?;
+            std::fs::metadata(&src).map_err(|error| VmError::EvalError(error.to_string()))?;
         if metadata.is_dir() && !recursive {
-            return Err(
-                "ERR_FS_CP_EINVAL: The \"recursive\" option is mandatory when using cp with directories"
-                    .into(),
-            );
+            return Err(VmError::Thrown(fs_error(
+                "ERR_FS_CP_EINVAL",
+                "The \"recursive\" option is mandatory when using cp with directories",
+            )));
         }
-        copy_tree(&src, &dest, force).map_err(|error| error.to_string())
+        copy_tree(&src, &dest, force).map_err(|error| VmError::EvalError(error.to_string()))
     };
     if asynchronous {
         match run() {
             Ok(()) => Ok(fulfilled(Value::Undefined)),
-            Err(message) => Err(VmError::EvalError(message)),
+            Err(error) => Err(error),
         }
     } else {
-        run().map_err(VmError::EvalError)?;
+        run()?;
         Ok(Value::Undefined)
     }
+}
+
+fn metadata_is_dir(path: &str) -> bool {
+    std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false)
 }
 
 fn assert_dir_equivalent(dir1: &str, dir2: &str) -> Result<(), VmError> {
