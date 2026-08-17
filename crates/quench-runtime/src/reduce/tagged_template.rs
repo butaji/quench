@@ -33,6 +33,7 @@ pub(super) fn reduce(
     ops.push(Op::Call {
         dst,
         callee,
+        receiver: None,
         args,
         spreads,
     });

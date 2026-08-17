@@ -196,11 +196,12 @@ fn run_call(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     if let Op::Call {
         dst,
         callee,
+        receiver,
         args,
         spreads,
     } = op
     {
-        vm_ops::execute_call(registers, *dst, *callee, args, spreads)?;
+        vm_ops::execute_call(registers, *dst, *callee, *receiver, args, spreads)?;
     }
     Ok(())
 }

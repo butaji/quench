@@ -38,13 +38,14 @@ fn promote_tail_call(ops: &mut Vec<Op>, returned: u16) -> bool {
     let Some(Op::Call {
         dst,
         callee,
+        receiver,
         args,
         spreads,
     }) = ops.last()
     else {
         return false;
     };
-    if *dst != returned {
+    if *dst != returned || receiver.is_some() {
         return false;
     }
     let tail_call = Op::TailCall {
