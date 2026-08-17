@@ -173,3 +173,54 @@ fn fs_realpath_async(arguments: &[Value]) -> Result<Value, VmError> {
 fn fs_mkdtemp_async(arguments: &[Value]) -> Result<Value, VmError> {
     fs_async_wrapper(arguments, |real| fs_mkdtemp(real), true)
 }
+
+fn utimes_system_time(value: Option<&Value>) -> Result<std::time::SystemTime, VmError> {
+    let Some(value) = value else {
+        return Ok(std::time::SystemTime::now());
+    };
+    let seconds = match value {
+        Value::Number(seconds_value) => Some(*seconds_value),
+        Value::String(text) if text == "now" || text == "Reflect" => {
+            let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            else {
+                return Ok(std::time::SystemTime::now());
+            };
+            Some(now.as_secs() as f64 + f64::from(now.subsec_nanos()) / 1e9)
+        }
+        _ => quench_runtime::execute::get_property_result(value, "timeValue")
+            .ok()
+            .and_then(|millis| match millis {
+                Value::Number(millis) => Some(millis / 1000.0),
+                _ => None,
+            }),
+    }
+    .ok_or_else(|| {
+        VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "atime/mtime must be a number, Date, or exactly 'now'/'Reflect'",
+        ))
+    })?;
+    Ok(std::time::UNIX_EPOCH + std::time::Duration::from_secs_f64(seconds))
+}
+
+fn fs_utimes(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
+    let path = path_value(arguments, 0).map_err(|_| {
+        VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "path must be a string or URL"))
+    })?;
+    let atime = utimes_system_time(arguments.get(1))?;
+    let mtime = utimes_system_time(arguments.get(2))?;
+    let times = std::fs::FileTimes::new()
+        .set_accessed(atime)
+        .set_modified(mtime);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .and_then(|file| file.set_times(times))
+        .map_err(|error| VmError::EvalError(error.to_string()))?;
+    if asynchronous {
+        if let Some(callback) = arguments.get(3) {
+            quench_runtime::execute::call(callback, &Value::Undefined, &[Value::Null])?;
+        }
+    }
+    Ok(Value::Undefined)
+}

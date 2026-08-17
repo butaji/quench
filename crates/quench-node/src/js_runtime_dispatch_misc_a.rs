@@ -303,11 +303,14 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::DgramDrainCallbacks) => {
                 drain_scheduled_callbacks().and_then(|_| drain_dgram_callbacks())
             }
+            HostCapabilityKind::Custom(CapabilityName::FsUtimesSync) => {
+                fs_utimes(arguments, false)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsUtimesAsync) => {
+                fs_utimes(arguments, true)
+            }
             HostCapabilityKind::Custom(
-                CapabilityName::FsUtimesSync
-                | CapabilityName::FsLutimesSync
-                | CapabilityName::FsUtimesAsync
-                | CapabilityName::FsLutimesAsync,
+                CapabilityName::FsLutimesSync | CapabilityName::FsLutimesAsync,
             ) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::UrlPathToFileUrl) => {
                 let path = arguments.first().map(safe_value_string).unwrap_or_default();
