@@ -229,6 +229,7 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsStatSync) => fs_stat_sync(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsLstatSync) => fs_lstat_sync(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsSymlinkSync) => fs_symlink(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsReadlinkSync) => fs_readlink(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsStringToFlags) => {
                 string_to_flags(arguments)
             }
