@@ -7,11 +7,6 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     if builtin_error_instance(&value, &constructor) {
         return Ok(true);
     }
-    if let Some(handler) = has_instance_handler(&constructor)? {
-        let arguments = [value.clone()];
-        let result = crate::functions::execute_target(&handler, &constructor, &arguments)?;
-        return Ok(is_truthy(&result));
-    }
     if !instanceof_callable(&constructor) {
         return Err(type_error("Right-hand side of instanceof is not callable"));
     }
@@ -20,6 +15,11 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     }
     if let Some(result) = builtin_instanceof(&value, &constructor) {
         return Ok(result);
+    }
+    if let Some(handler) = has_instance_handler(&constructor)? {
+        let arguments = [value.clone()];
+        let result = crate::functions::execute_target(&handler, &constructor, &arguments)?;
+        return Ok(is_truthy(&result));
     }
     ordinary_instanceof(&value, &constructor)
 }
@@ -83,7 +83,15 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         (Value::Array(values), Builtin::Array) if !values.is_arguments() => true,
         (Value::BigInt64Array(_), Builtin::BigInt64Array)
         | (Value::BigUint64Array(_), Builtin::BigUint64Array)
+        | (Value::Float32Array(_), Builtin::Float32Array)
+        | (Value::Float64Array(_), Builtin::Float64Array)
+        | (Value::Int8Array(_), Builtin::Int8Array)
+        | (Value::Int16Array(_), Builtin::Int16Array)
+        | (Value::Int32Array(_), Builtin::Int32Array)
         | (Value::Uint8Array(_), Builtin::Uint8Array)
+        | (Value::Uint8ClampedArray(_), Builtin::Uint8ClampedArray)
+        | (Value::Uint16Array(_), Builtin::Uint16Array)
+        | (Value::Uint32Array(_), Builtin::Uint32Array)
         | (Value::Promise(_), Builtin::Promise) => true,
         (Value::Object(properties), Builtin::Date)
             if properties.iter().any(|(name, _)| name == "timeValue") =>
