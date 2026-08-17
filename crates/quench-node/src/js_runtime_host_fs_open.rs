@@ -1,7 +1,7 @@
 impl QuenchNodeHost {
     fn fs_open(&self, arguments: &[Value]) -> Result<Value, VmError> {
-        let path = path_arg(arguments, 0).map_err(|_| {
-            VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "path must be a string"))
+        let path = path_value(arguments, 0).map_err(|_| {
+            VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "path must be a string or URL"))
         })?;
         let flags = arguments
             .get(1)
@@ -21,15 +21,15 @@ impl QuenchNodeHost {
                     .create(true)
                     .write(true)
                     .truncate(true)
-                    .open(path)
+                    .open(&path)
             } else {
                 std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)
-                    .open(path)
+                    .open(&path)
             }
         } else {
-            std::fs::File::open(path)
+            std::fs::File::open(&path)
         }
         .map_err(|error| {
             let code = if error.kind() == std::io::ErrorKind::NotFound {
@@ -41,7 +41,7 @@ impl QuenchNodeHost {
         })?;
         if let Some(mode) = arguments.get(2).and_then(file_mode) {
             #[cfg(unix)]
-            std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(mode))
+            std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(mode))
                 .map_err(|error| VmError::EvalError(error.to_string()))?;
         }
         let fd = self.next_fd.get();
