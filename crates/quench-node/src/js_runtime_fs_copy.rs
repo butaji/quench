@@ -86,14 +86,7 @@ fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
             }
         }
         if let Some(options) = arguments.get(2) {
-            if !matches!(
-                options,
-                Value::Object(_)
-                    | Value::Function(_)
-                    | Value::BoundFunction(_)
-                    | Value::HostCapability(_)
-                    | Value::Proxy(_)
-            ) {
+            if !matches!(options, Value::Object(_) | Value::Proxy(_)) {
                 return Err(VmError::Thrown(fs_error(
                     "ERR_INVALID_ARG_TYPE",
                     "The \"options\" argument must be of type object",
