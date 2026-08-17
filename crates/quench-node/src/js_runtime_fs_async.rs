@@ -313,3 +313,28 @@ fn fs_lstat_promise(arguments: &[Value]) -> Result<Value, VmError> {
 fn fs_truncate_promise(arguments: &[Value]) -> Result<Value, VmError> {
     fs_settle_sync(|| fs_truncate_sync(arguments).map(|_| Value::Undefined))
 }
+
+fn fs_copy_file_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    let src = match path_value(arguments, 0) {
+        Ok(path) => path,
+        Err(_) => {
+            return reject_fs_error(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "src must be a string or URL",
+            )))
+        }
+    };
+    let dest = match path_value(arguments, 1) {
+        Ok(path) => path,
+        Err(_) => {
+            return reject_fs_error(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "dest must be a string or URL",
+            )))
+        }
+    };
+    match std::fs::copy(&src, &dest) {
+        Ok(_) => Ok(fulfilled(Value::Undefined)),
+        Err(error) => reject_fs_error(VmError::EvalError(error.to_string())),
+    }
+}
