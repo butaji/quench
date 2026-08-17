@@ -222,6 +222,7 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsSymlink) => fs_symlink_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReadlink) => fs_readlink_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsRealpath) => fs_realpath_async(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsMkdtempAsync) => fs_mkdtemp_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsCpSync) => fs_cp(arguments, false),
             HostCapabilityKind::Custom(CapabilityName::FsCp) => fs_cp(arguments, true),
             HostCapabilityKind::Custom(CapabilityName::FsReaddirSync) => fs_readdir(arguments),
