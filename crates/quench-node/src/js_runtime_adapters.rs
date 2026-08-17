@@ -148,6 +148,8 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
                 HostCapabilityKind::Custom(CapabilityName::TmpdirResolve),
                 HostCapabilityKind::Custom(CapabilityName::CommonFsNextdir),
                 HostCapabilityKind::Custom(CapabilityName::CommonFsAssertDirEquivalent),
+                HostCapabilityKind::Custom(CapabilityName::CommonFsCollectEntries),
+                HostCapabilityKind::Custom(CapabilityName::CommonFsEntryIsDirectory),
                 HostCapabilityKind::Custom(CapabilityName::CommonMustNotMutateObjectDeep),
                 HostCapabilityKind::Custom(CapabilityName::FsMkdtemp),
                 HostCapabilityKind::Custom(CapabilityName::FsAccessSync),

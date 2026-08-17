@@ -16,7 +16,7 @@ pub(crate) fn require_common_module(name: &str) -> Option<Value> {
             ),
         ]));
     }
-    if name.ends_with("/common/fs") || name == "../common/fs" {
+    if name.ends_with("/common/fs") || name.ends_with("/common/fs.js") || name == "../common/fs" {
         return Some(quench_runtime::host_api::object(vec![
             (
                 "nextdir".into(),
@@ -26,6 +26,12 @@ pub(crate) fn require_common_module(name: &str) -> Option<Value> {
                 "assertDirEquivalent".into(),
                 capability_function(HostCapabilityKind::Custom(
                     CapabilityName::CommonFsAssertDirEquivalent,
+                )),
+            ),
+            (
+                "collectEntries".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CommonFsCollectEntries,
                 )),
             ),
         ]));
