@@ -46,9 +46,13 @@ impl QuenchNodeHost {
         let id = self.next_promisified.get();
         self.next_promisified.set(id.saturating_add(1));
         self.promisified.borrow_mut().insert(id, callback);
-        let wrapper = capability_function(HostCapabilityKind::Custom(id));
-        let updated =
-            quench_runtime::execute::set_prototype_of(&wrapper, arguments.first().unwrap())?;
+        let original = arguments.first().unwrap();
+        let original_name = quench_runtime::execute::get_property_result(original, "name").ok();
+        let mut wrapper = capability_function(HostCapabilityKind::Custom(id));
+        if let Some(name) = original_name {
+            wrapper = quench_runtime::execute::set_property(wrapper, "name", name);
+        }
+        let updated = quench_runtime::execute::set_prototype_of(&wrapper, original)?;
         quench_runtime::execute::replace_value(&wrapper, &updated);
         Ok(updated)
     }
