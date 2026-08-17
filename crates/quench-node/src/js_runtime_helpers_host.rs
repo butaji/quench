@@ -1,4 +1,5 @@
 include!("js_runtime_fs_a.rs");
+include!("js_runtime_fs_stats.rs");
 include!("js_runtime_fs_copy.rs");
 include!("js_runtime_fs_async.rs");
 
