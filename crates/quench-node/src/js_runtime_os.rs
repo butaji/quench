@@ -228,7 +228,19 @@ fn module_api() -> Value {
     quench_runtime::host_api::object(vec![
         (
             "builtinModules".into(),
-            quench_runtime::host_api::array(vec![Value::String("fs".into())]),
+            quench_runtime::host_api::array(
+                [
+                    "assert", "assert/strict", "buffer", "child_process", "cluster", "console",
+                    "constants", "crypto", "dgram", "dns", "domain", "events", "fs",
+                    "fs/promises", "http", "http2", "https", "module", "net", "os", "path",
+                    "perf_hooks", "process", "punycode", "querystring", "readline", "stream",
+                    "string_decoder", "timers", "timers/promises", "tls", "trace_events", "tty",
+                    "url", "util", "v8", "vm", "worker_threads", "zlib", "test",
+                ]
+                .iter()
+                .map(|name| Value::String((*name).into()))
+                .collect(),
+            ),
         ),
         (
             "isBuiltin".into(),
