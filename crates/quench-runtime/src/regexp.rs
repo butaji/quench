@@ -1,33 +1,17 @@
 include!("regexp_validation.rs");
 include!("regexp_named_groups.rs");
+include!("regexp_surrogates.rs");
 
 pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
     validate_literal_ranges(pattern)?;
     validate_flags(flags)?;
+    let rewritten = split_surrogate_classes(pattern);
     let reg_flags: Flags = flags.into();
-    catch_unwind(AssertUnwindSafe(|| Regex::with_flags(pattern, reg_flags)))
-        .map_err(|_| "invalid regular expression".to_string())?
-        .map_err(|e| e.to_string())
-}
-
-pub(crate) fn canonical_flags(flags: &str) -> String {
-    ['d', 'g', 'i', 'm', 's', 'u', 'v', 'y']
-        .into_iter()
-        .filter(|flag| flags.contains(*flag))
-        .collect()
-}
-
-fn validate_flags(flags: &str) -> Result<(), String> {
-    let mut seen = std::collections::HashSet::new();
-    for flag in flags.chars() {
-        if !matches!(flag, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y') || !seen.insert(flag) {
-            return Err("invalid regular expression flags".to_string());
-        }
-    }
-    if seen.contains(&'u') && seen.contains(&'v') {
-        return Err("invalid regular expression flags".to_string());
-    }
-    Ok(())
+    catch_unwind(AssertUnwindSafe(|| {
+        Regex::with_flags(&rewritten, reg_flags)
+    }))
+    .map_err(|_| "invalid regular expression".to_string())?
+    .map_err(|e| e.to_string())
 }
 
 pub fn validate_unicode(pattern: &str, flags: &str) -> Result<(), String> {
@@ -202,15 +186,19 @@ pub(crate) fn legacy_getter(receiver: Option<&Value>) -> Result<Value, VmError> 
 
 fn escape(arguments: &[Value]) -> Result<Value, VmError> {
     let value = arguments.first().unwrap_or(&Value::Undefined);
-    if let Value::StringUnits(units) = value {
-        return Ok(Value::String(escape_units(units)));
+    match value {
+        Value::StringUnits(units) => Ok(Value::String(escape_units(units))),
+        Value::String(text) => {
+            let mut escaped = String::new();
+            for (index, ch) in text.chars().enumerate() {
+                escape_character(&mut escaped, ch, index == 0);
+            }
+            Ok(Value::String(escaped))
+        }
+        _ => Err(crate::value::error::throw_type_error(
+            "RegExp.escape requires a string value",
+        )),
     }
-    let text = crate::conversion::to_string(value)?;
-    let mut escaped = String::new();
-    for (index, ch) in text.chars().enumerate() {
-        escape_character(&mut escaped, ch, index == 0);
-    }
-    Ok(Value::String(escaped))
 }
 
 fn escape_units(units: &[u16]) -> String {
@@ -457,10 +445,7 @@ fn prepare_search<'a>(s: &'a str, flags: &str, last_index: usize) -> (usize, &'a
 fn extract_source(receiver: &Value) -> String {
     crate::execute::get_property_result(receiver, "source")
         .ok()
-        .and_then(|value| match value {
-            Value::String(source) => Some(source),
-            _ => None,
-        })
+        .and_then(|value| crate::strings::source_text(&value))
         .unwrap_or_default()
 }
 

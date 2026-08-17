@@ -451,3 +451,23 @@ fn match_all_start(receiver: &Value, input: &str) -> Result<usize, VmError> {
     let index = to_length(index).min(crate::strings::utf16_len(input));
     Ok(crate::strings::utf16_byte_index(input, index))
 }
+
+pub(crate) fn canonical_flags(flags: &str) -> String {
+    ['d', 'g', 'i', 'm', 's', 'u', 'v', 'y']
+        .into_iter()
+        .filter(|flag| flags.contains(*flag))
+        .collect()
+}
+
+fn validate_flags(flags: &str) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+    for flag in flags.chars() {
+        if !matches!(flag, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y') || !seen.insert(flag) {
+            return Err("invalid regular expression flags".to_string());
+        }
+    }
+    if seen.contains(&'u') && seen.contains(&'v') {
+        return Err("invalid regular expression flags".to_string());
+    }
+    Ok(())
+}
