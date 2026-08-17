@@ -37,6 +37,18 @@ pub fn drain_microtasks() {
     }
 }
 
+/// Repeatedly drain microtasks until none remain, so promise `.then`/`.catch`
+/// reactions and synchronously-settling chains run to completion.
+pub fn drain_microtasks_all() {
+    loop {
+        let pending = MICROTASK_QUEUE.with(|queue| queue.borrow().len());
+        if pending == 0 {
+            break;
+        }
+        drain_microtasks();
+    }
+}
+
 fn process_promise(promise: &Rc<PromiseData>) {
     let state = promise.state.borrow().clone();
     let then_actions = std::mem::take(&mut *promise.then_actions.borrow_mut());
