@@ -1,48 +1,104 @@
+fn cp_error_value(error: VmError) -> Result<Value, VmError> {
+    match error {
+        VmError::Thrown(value) => Ok(value),
+        VmError::EvalError(message) => Ok(quench_runtime::host_api::object(vec![
+            ("message".into(), Value::String(message)),
+            ("name".into(), Value::String("Error".into())),
+        ])),
+        other => Err(other),
+    }
+}
+
+fn rejected(value: Value) -> Value {
+    let promise = Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Pending,
+    ));
+    promise.state.replace(quench_runtime::value::PromiseState::Rejected(
+        value.clone(),
+    ));
+    promise.result.replace(Some(value));
+    Value::Promise(promise)
+}
+
 fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
-    let src = path_arg(arguments, 0)?;
-    let dest = path_arg(arguments, 1)?;
-    let (recursive, force) = match arguments.get(2) {
+    let src = path_value(arguments, 0)?;
+    let dest = path_value(arguments, 1)?;
+    let (recursive, force, error_on_exist) = match arguments.get(2) {
         Some(Value::Object(options)) => {
             let options = Value::Object(options.clone());
-            let recursive =
-                quench_runtime::execute::get_property_result(&options, "recursive")
-                    .map(|v| matches!(v, Value::Boolean(true)))
-                    .unwrap_or(false);
+            let recursive = quench_runtime::execute::get_property_result(&options, "recursive")
+                .map(|v| matches!(v, Value::Boolean(true)))
+                .unwrap_or(false);
             let force = quench_runtime::execute::get_property_result(&options, "force")
                 .map(|v| !matches!(v, Value::Boolean(false)))
                 .unwrap_or(true);
-            (recursive, force)
+            let error_on_exist =
+                quench_runtime::execute::get_property_result(&options, "errorOnExist")
+                    .map(|v| matches!(v, Value::Boolean(true)))
+                    .unwrap_or(false);
+            (recursive, force, error_on_exist)
         }
-        _ => (false, true),
+        _ => (false, true, false),
     };
-    if metadata_is_dir(&src) && std::path::Path::new(&dest).is_file() {
-        return Err(VmError::Thrown(fs_error(
-            "ERR_FS_CP_DIR_TO_NON_DIR",
-            &format!(
-                "Cannot overwrite non-directory '{}' with a directory '{}'",
-                dest, src
-            ),
-        )));
+    if let Some(Value::Object(options)) = arguments.get(2) {
+        let options = Value::Object(options.clone());
+        if let Ok(Value::Number(mode)) =
+            quench_runtime::execute::get_property_result(&options, "mode")
+        {
+            if !(0.0..=65535.0).contains(&mode) {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_OUT_OF_RANGE",
+                    "The value of \"mode\" is out of range",
+                )));
+            }
+        }
+    }
+    if let Some(options) = arguments.get(2) {
+        if !matches!(
+            options,
+            Value::Object(_)
+                | Value::Function(_)
+                | Value::BoundFunction(_)
+                | Value::HostCapability(_)
+                | Value::Proxy(_)
+        ) {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                "The \"options\" argument must be of type object",
+            )));
+        }
     }
     let run = || -> Result<(), VmError> {
         let metadata =
             std::fs::metadata(&src).map_err(|error| VmError::EvalError(error.to_string()))?;
+        if metadata_is_dir(&src) && std::path::Path::new(&dest).is_file() {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_FS_CP_DIR_TO_NON_DIR",
+                &format!(
+                    "Cannot overwrite non-directory '{}' with a directory '{}'",
+                    dest, src
+                ),
+            )));
+        }
+        if error_on_exist && std::path::Path::new(&dest).exists() {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_FS_CP_EEXIST",
+                &format!("Cannot copy '{}' to already existing '{}'", src, dest),
+            )));
+        }
         if metadata.is_dir() && !recursive {
             return Err(VmError::Thrown(fs_error(
-                "ERR_FS_CP_EINVAL",
+                "ERR_FS_EISDIR",
                 "The \"recursive\" option is mandatory when using cp with directories",
             )));
         }
-        copy_tree(&src, &dest, force).map_err(|error| VmError::EvalError(error.to_string()))
+        copy_tree(&src, &dest, force)
     };
-    if asynchronous {
-        match run() {
-            Ok(()) => Ok(fulfilled(Value::Undefined)),
-            Err(error) => Err(error),
-        }
-    } else {
-        run()?;
-        Ok(Value::Undefined)
+    match run() {
+        Ok(()) if asynchronous => Ok(fulfilled(Value::Undefined)),
+        Ok(()) => Ok(Value::Undefined),
+        Err(error) if asynchronous => Ok(rejected(cp_error_value(error)?)),
+        Err(error) => Err(error),
     }
 }
 
@@ -96,14 +152,15 @@ fn data_to_hex(data: &[u8]) -> String {
     data.iter().map(|b| format!("{b:02x}")).collect::<String>()
 }
 
-fn copy_tree(src: &str, dest: &str, force: bool) -> std::io::Result<()> {
-    let metadata = std::fs::metadata(src)?;
+fn copy_tree(src: &str, dest: &str, force: bool) -> Result<(), VmError> {
+    let to_err = |error: std::io::Error| VmError::EvalError(error.to_string());
+    let metadata = std::fs::metadata(src).map_err(&to_err)?;
     if metadata.is_dir() {
         if !std::path::Path::new(dest).exists() {
-            std::fs::create_dir_all(dest)?;
+            std::fs::create_dir_all(dest).map_err(&to_err)?;
         }
-        for entry in std::fs::read_dir(src)? {
-            let entry = entry?;
+        for entry in std::fs::read_dir(src).map_err(&to_err)? {
+            let entry = entry.map_err(&to_err)?;
             let from = entry.path();
             let to = std::path::Path::new(dest).join(entry.file_name());
             copy_tree(&from.to_string_lossy(), &to.to_string_lossy(), force)?;
@@ -114,9 +171,9 @@ fn copy_tree(src: &str, dest: &str, force: bool) -> std::io::Result<()> {
             return Ok(());
         }
         if let Some(parent) = std::path::Path::new(dest).parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent).map_err(&to_err)?;
         }
-        std::fs::copy(src, dest).map(|_| ())
+        std::fs::copy(src, dest).map(|_| ()).map_err(&to_err)
     } else {
         Ok(())
     }
