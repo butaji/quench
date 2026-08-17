@@ -76,42 +76,6 @@ include!("js_runtime_dispatch_crypto_a.rs");
 include!("js_runtime_dispatch_buffer.rs");
 include!("js_runtime_dispatch_core.rs");
 
-fn is_util_resolver(id: u16) -> bool {
-    id >= CapabilityName::UtilResolverFirst
-        && !matches!(
-            id,
-            CapabilityName::CryptoHashOn
-                | CapabilityName::CryptoHashWrite
-                | CapabilityName::CryptoHashEnd
-                | CapabilityName::CryptoHashUpdate
-                | CapabilityName::CryptoHashDigest
-                | CapabilityName::DgramDrainCallbacks
-                | CapabilityName::UtilIsDate
-                | CapabilityName::TmpdirRefresh
-                | CapabilityName::TmpdirFileUrl
-                | CapabilityName::FixtureReadKey
-                | CapabilityName::FixturePath
-                | CapabilityName::UrlSearchParamsGetAll
-                | CapabilityName::UrlSearchParamsSet
-                | CapabilityName::UrlSearchParamsToString
-                | CapabilityName::UrlSearchParams
-                | CapabilityName::UrlSearchParamsGet
-                | CapabilityName::UrlSearchParamsSort
-                | CapabilityName::UrlSearchParamsOwner
-                | CapabilityName::UrlHrefSet
-                | CapabilityName::UrlUsernameSet
-                | CapabilityName::UrlPasswordGet
-                | CapabilityName::UrlPasswordSet
-                | CapabilityName::UrlPathnameGet
-                | CapabilityName::UrlPathnameSet
-                | CapabilityName::UrlSearchSet
-                | CapabilityName::UrlSearchGet
-                | CapabilityName::UrlHashSet
-                | CapabilityName::UrlHrefGet
-                | CapabilityName::UrlProtocolSet
-        )
-}
-
 fn is_util_promisified(id: u16) -> bool {
     (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilDeprecatedFirst).contains(&id)
         && !matches!(id, CapabilityName::ProcessOn | CapabilityName::ProcessEmit)
@@ -127,6 +91,20 @@ fn tmpdir_base() -> String {
         .into_owned();
     NODE_TMPDIR.with(|current| *current.borrow_mut() = Some(base.clone()));
     base
+}
+
+fn fixtures_base() -> String {
+    if let Ok(dir) = std::env::current_dir() {
+        let mut probe = Some(dir.as_path());
+        while let Some(path) = probe {
+            let candidate = path.join("tests/node/test/fixtures");
+            if candidate.is_dir() {
+                return candidate.to_string_lossy().into_owned();
+            }
+            probe = path.parent();
+        }
+    }
+    "tests/node/test/fixtures".into()
 }
 
 include!("js_runtime_host_impl.rs");
