@@ -71,35 +71,35 @@ fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
         }
         _ => None,
     };
-    if let Some(Value::Object(options)) = arguments.get(2) {
-        let options = Value::Object(options.clone());
-        if let Ok(Value::Number(mode)) =
-            quench_runtime::execute::get_property_result(&options, "mode")
-        {
-            if !(0.0..=65535.0).contains(&mode) {
+    let run = || -> Result<(), VmError> {
+        if let Some(Value::Object(options)) = arguments.get(2) {
+            let options = Value::Object(options.clone());
+            if let Ok(Value::Number(mode)) =
+                quench_runtime::execute::get_property_result(&options, "mode")
+            {
+                if !(0.0..=65535.0).contains(&mode) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_OUT_OF_RANGE",
+                        "The value of \"mode\" is out of range",
+                    )));
+                }
+            }
+        }
+        if let Some(options) = arguments.get(2) {
+            if !matches!(
+                options,
+                Value::Object(_)
+                    | Value::Function(_)
+                    | Value::BoundFunction(_)
+                    | Value::HostCapability(_)
+                    | Value::Proxy(_)
+            ) {
                 return Err(VmError::Thrown(fs_error(
-                    "ERR_OUT_OF_RANGE",
-                    "The value of \"mode\" is out of range",
+                    "ERR_INVALID_ARG_TYPE",
+                    "The \"options\" argument must be of type object",
                 )));
             }
         }
-    }
-    if let Some(options) = arguments.get(2) {
-        if !matches!(
-            options,
-            Value::Object(_)
-                | Value::Function(_)
-                | Value::BoundFunction(_)
-                | Value::HostCapability(_)
-                | Value::Proxy(_)
-        ) {
-            return Err(VmError::Thrown(fs_error(
-                "ERR_INVALID_ARG_TYPE",
-                "The \"options\" argument must be of type object",
-            )));
-        }
-    }
-    let run = || -> Result<(), VmError> {
         if let Some(filter) = &filter {
             let keep =
                 quench_runtime::execute::call(filter, &Value::Undefined, &[Value::String(src.clone().into())])?;
