@@ -182,7 +182,8 @@ impl QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FixturePath) => Ok(Value::String(
                 format!(
-                    "/tests/node/test/fixtures/{}",
+                    "{}/{}",
+                    fixtures_base(),
                     safe_value_string(arguments.first().unwrap_or(&Value::Undefined))
                 )
                 .into(),

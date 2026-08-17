@@ -156,16 +156,7 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
         if name == "../common/fixtures" || name.ends_with("/common/fixtures") {
             return Ok(Value::object(vec![(
                 "fixturesDir".into(),
-                Value::String(
-                    std::env::current_dir()
-                        .map(|path| {
-                            path.join("tests/node/test/fixtures")
-                                .to_string_lossy()
-                                .into_owned()
-                        })
-                        .unwrap_or_else(|_| "tests/node/test/fixtures".into())
-                        .into(),
-                ),
+                Value::String(fixtures_base().into()),
             )]));
         }
         if name == "internal/fs/utils" || name == "node:internal/fs/utils" {
