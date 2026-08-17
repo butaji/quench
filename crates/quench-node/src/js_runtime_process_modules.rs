@@ -216,3 +216,106 @@ fn process_active_resources_info() -> Result<Value, VmError> {
     resources.extend((0..immediates).map(|_| Value::String("Immediate".into())));
     Ok(quench_runtime::host_api::array(resources))
 }
+
+fn determine_specific_type(arguments: &[Value]) -> Result<Value, VmError> {
+    let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+    Ok(Value::String(specific_type_of(&value).into()))
+}
+
+fn err_type_truncate(value: &str) -> String {
+    if value.chars().count() > 28 {
+        let mut prefix: String = value.chars().take(25).collect();
+        prefix.push_str("...");
+        prefix
+    } else {
+        value.to_owned()
+    }
+}
+
+fn err_type_quoted(value: &str) -> String {
+    let truncated = err_type_truncate(value);
+    if truncated.contains('\'') {
+        format!("\"{truncated}\"")
+    } else {
+        format!("'{truncated}'")
+    }
+}
+
+fn typed_array_name(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Int8Array(_) => Some("Int8Array"),
+        Value::Int16Array(_) => Some("Int16Array"),
+        Value::Int32Array(_) => Some("Int32Array"),
+        Value::Float32Array(_) => Some("Float32Array"),
+        Value::Float64Array(_) => Some("Float64Array"),
+        Value::BigInt64Array(_) => Some("BigInt64Array"),
+        Value::BigUint64Array(_) => Some("BigUint64Array"),
+        Value::Uint8Array(_) => Some("Uint8Array"),
+        Value::Uint8ClampedArray(_) => Some("Uint8ClampedArray"),
+        Value::Uint16Array(_) => Some("Uint16Array"),
+        Value::Uint32Array(_) => Some("Uint32Array"),
+        _ => None,
+    }
+}
+
+fn specific_type_of(value: &Value) -> String {
+    match value {
+        Value::Undefined => "undefined".into(),
+        Value::Null => "null".into(),
+        Value::Boolean(value) => format!("type boolean ({value})"),
+        Value::Number(value) => {
+            let rendered = if value.is_nan() {
+                "NaN".to_owned()
+            } else if value.is_infinite() && *value > 0.0 {
+                "Infinity".to_owned()
+            } else if value.is_infinite() {
+                "-Infinity".to_owned()
+            } else {
+                value.to_string()
+            };
+            format!("type number ({rendered})")
+        }
+        Value::BigInt(value) => format!("type bigint ({value}n)"),
+        Value::String(value) => {
+            if let Some(name) = value.strip_prefix("Symbol.") {
+                let name = name.split('\0').next().unwrap_or("Symbol");
+                return format!("type symbol (Symbol({name}))");
+            }
+            format!("type string ({})", err_type_quoted(value))
+        }
+        Value::Array(_) => "an instance of Array".into(),
+        Value::Map(map) if map.is_weak() => "an instance of WeakMap".into(),
+        Value::Map(_) => "an instance of Map".into(),
+        Value::Set(set) if set.is_weak() => "an instance of WeakSet".into(),
+        Value::Set(_) => "an instance of Set".into(),
+        Value::Promise(_) => "an instance of Promise".into(),
+        Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_) => {
+            let name = quench_runtime::execute::get_property_result(value, "name")
+                .ok()
+                .and_then(|value| match value {
+                    Value::String(name) => Some(name),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            format!("function {name}")
+        }
+        _ => {
+            if let Some(name) = typed_array_name(value) {
+                return format!("an instance of {name}");
+            }
+            if matches!(
+                quench_runtime::execute::get_property_result(value, "timeValue"),
+                Ok(Value::Number(_))
+            ) {
+                return "an instance of Date".into();
+            }
+            if matches!(
+                quench_runtime::execute::get_property_result(value, "constructor"),
+                Ok(Value::Undefined)
+            ) {
+                return "[Object: null prototype] {}".into();
+            }
+            "an instance of Object".into()
+        }
+    }
+}
