@@ -416,22 +416,24 @@ fn host_context() -> &'static VmContext {
     }
     CONTEXT.with(|context| {
         *context.get_or_init(|| {
-            Box::leak(Box::new(VmContext::for_realm(
-            RealmId::ROOT,
-            vec![
-                HostCapabilityKind::GetGlobal,
-                HostCapabilityKind::CreateRealm,
-                HostCapabilityKind::EvalScript,
-                HostCapabilityKind::DetachArrayBuffer,
-            ],
-        )
-        .with_host_capability(
-            "$262",
-            HostCapabilityRef {
-                realm: RealmId::ROOT,
-                kind: HostCapabilityKind::GetGlobal,
-            },
-            )))
+            Box::leak(Box::new(
+                VmContext::for_realm(
+                    RealmId::ROOT,
+                    vec![
+                        HostCapabilityKind::GetGlobal,
+                        HostCapabilityKind::CreateRealm,
+                        HostCapabilityKind::EvalScript,
+                        HostCapabilityKind::DetachArrayBuffer,
+                    ],
+                )
+                .with_host_capability(
+                    "$262",
+                    HostCapabilityRef {
+                        realm: RealmId::ROOT,
+                        kind: HostCapabilityKind::GetGlobal,
+                    },
+                ),
+            ))
         })
     })
 }
