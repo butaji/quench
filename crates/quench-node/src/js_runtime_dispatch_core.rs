@@ -191,6 +191,25 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsStatPromise) => {
                 fs_stat_promise(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::FsMkdirPromise) => {
+                fs_mkdir_promise(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsRmPromise) => fs_rm_promise(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsRenamePromise) => {
+                fs_rename_promise(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsAccessPromise) => {
+                fs_access_promise(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsChmodPromise) => {
+                fs_chmod_promise(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsReadlinkPromise) => {
+                fs_readlink_promise(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsRealpathPromise) => {
+                fs_realpath_promise(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsUtimesPromise) => {
                 fs_utimes_promise(arguments)
             }
