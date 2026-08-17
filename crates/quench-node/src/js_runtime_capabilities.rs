@@ -282,6 +282,9 @@ impl CapabilityName {
     const AssertEqual: u16 = 33;
     const AssertNotEqual: u16 = 34;
     const AssertMatchValue: u16 = 35;
+    const AssertFail: u16 = 36;
+    const AssertDoesNotMatch: u16 = 37;
+    const AssertNotDeepEqual: u16 = 38;
     const HttpServer: u16 = 11;
     const HttpGet: u16 = 12;
     const HttpRequestOn: u16 = 401;
