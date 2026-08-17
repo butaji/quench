@@ -9,6 +9,7 @@ pub const fn fn_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalDurationSubtract => Some("Temporal.Duration.prototype.subtract"),
         Builtin::TemporalDurationAbs => Some("Temporal.Duration.prototype.abs"),
         Builtin::TemporalDurationNegated => Some("Temporal.Duration.prototype.negated"),
+        Builtin::TemporalDurationRound => Some("Temporal.Duration.prototype.round"),
         Builtin::TemporalDurationToLocaleString => {
             Some("Temporal.Duration.prototype.toLocaleString")
         }
@@ -53,6 +54,7 @@ pub const fn short_name(builtin: Builtin) -> Option<&'static str> {
         Builtin::TemporalDurationSubtract => Some("subtract"),
         Builtin::TemporalDurationAbs => Some("abs"),
         Builtin::TemporalDurationNegated => Some("negated"),
+        Builtin::TemporalDurationRound => Some("round"),
         Builtin::TemporalDurationToLocaleString => Some("toLocaleString"),
         Builtin::TemporalDurationToString => Some("toString"),
         Builtin::TemporalDurationToJSON => Some("toJSON"),
@@ -95,6 +97,7 @@ pub const fn fn_len(builtin: Builtin) -> Option<f64> {
         Builtin::TemporalDurationSubtract => Some(1.0),
         Builtin::TemporalDurationAbs => Some(0.0),
         Builtin::TemporalDurationNegated => Some(0.0),
+        Builtin::TemporalDurationRound => Some(1.0),
         Builtin::TemporalDurationToLocaleString => Some(0.0),
         Builtin::TemporalDurationToString => Some(0.0),
         Builtin::TemporalDurationToJSON => Some(0.0),
