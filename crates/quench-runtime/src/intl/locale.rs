@@ -357,7 +357,6 @@ pub(crate) fn calendar_alias(value: &str) -> String {
 
 include!("locale_options.rs");
 
-
 fn build_object(locale: Locale) -> Value {
     let mut properties = base_properties(&locale);
     properties.extend(method_properties());
