@@ -129,6 +129,30 @@ impl QuenchNodeHost {
                     CapabilityName::FsFileHandleClose,
                 )),
             ),
+            (
+                "readFile".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::FsFileHandleReadFile,
+                )),
+            ),
+            (
+                "read".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::FsFileHandleRead,
+                )),
+            ),
+            (
+                "write".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::FsFileHandleWrite,
+                )),
+            ),
+            (
+                "stat".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::FsFileHandleStat,
+                )),
+            ),
         ]);
         Ok(fulfilled(handle))
     }
@@ -149,5 +173,102 @@ impl QuenchNodeHost {
             .ok_or(VmError::NotCallable)?;
         self.fs_close(&[Value::Number(fd as f64)])?;
         Ok(fulfilled(Value::Undefined))
+    }
+}
+
+impl QuenchNodeHost {
+    fn fs_filehandle_fd(&self, receiver: Option<&Value>) -> Result<i32, VmError> {
+        let Value::Object(object) = receiver.ok_or(VmError::NotCallable)? else {
+            return Err(VmError::NotCallable);
+        };
+        object
+            .iter()
+            .find_map(|(key, value)| {
+                (key == "\0fd").then(|| match value {
+                    Value::Number(fd) => Some(*fd as i32),
+                    _ => None,
+                })
+            })
+            .flatten()
+            .ok_or(VmError::NotCallable)
+    }
+
+    fn fs_filehandle_read_file(
+        &self,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        let fd = self.fs_filehandle_fd(receiver)?;
+        let path = self
+            .fd_paths
+            .borrow()
+            .get(&fd)
+            .cloned()
+            .ok_or_else(|| VmError::Thrown(fs_error("EBADF", "bad file descriptor")))?;
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let value = if arguments
+                    .iter()
+                    .any(|value| matches!(value, Value::String(encoding) if encoding == "utf8"))
+                {
+                    Value::String(String::from_utf8_lossy(&bytes).into_owned())
+                } else {
+                    quench_runtime::host_api::bytes(&bytes)
+                };
+                Ok(fulfilled(value))
+            }
+            Err(error) => reject_fs_error(VmError::EvalError(error.to_string())),
+        }
+    }
+
+    fn fs_filehandle_stat(
+        &self,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        let fd = self.fs_filehandle_fd(receiver)?;
+        let path = self
+            .fd_paths
+            .borrow()
+            .get(&fd)
+            .cloned()
+            .ok_or_else(|| VmError::Thrown(fs_error("EBADF", "bad file descriptor")))?;
+        match std::fs::metadata(&path) {
+            Ok(metadata) => Ok(fulfilled(fs_stats_full(
+                &metadata,
+                stat_bigint_requested(arguments),
+            ))),
+            Err(error) => reject_fs_error(VmError::EvalError(error.to_string())),
+        }
+    }
+
+    fn fs_filehandle_read(
+        &self,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        let fd = self.fs_filehandle_fd(receiver)?;
+        let mut full = arguments.to_vec();
+        full.insert(0, Value::Number(fd as f64));
+        let bytes_read = self.fs_read_fd(&full, false)?;
+        Ok(fulfilled(Value::object(vec![
+            ("bytesRead".into(), bytes_read),
+            ("buffer".into(), arguments.get(0).cloned().unwrap_or(Value::Undefined)),
+        ])))
+    }
+
+    fn fs_filehandle_write(
+        &self,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        let fd = self.fs_filehandle_fd(receiver)?;
+        let mut full = arguments.to_vec();
+        full.insert(0, Value::Number(fd as f64));
+        let written = self.fs_write_fd(&full)?;
+        Ok(fulfilled(Value::object(vec![
+            ("bytesWritten".into(), written),
+            ("buffer".into(), arguments.get(0).cloned().unwrap_or(Value::Undefined)),
+        ])))
     }
 }
