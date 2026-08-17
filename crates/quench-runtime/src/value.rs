@@ -198,6 +198,9 @@ pub struct MapData {
 }
 
 impl MapData {
+    pub fn is_weak(&self) -> bool {
+        self.weak
+    }
     pub(crate) fn prototype(&self) -> Option<Value> {
         self.prototype.borrow().clone()
     }
@@ -215,6 +218,9 @@ pub struct SetData {
 }
 
 impl SetData {
+    pub fn is_weak(&self) -> bool {
+        self.weak
+    }
     pub(crate) fn prototype(&self) -> Option<Value> {
         self.prototype.borrow().clone()
     }
