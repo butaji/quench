@@ -26,6 +26,7 @@ pub(crate) fn execute(
         )),
         crate::ops::Builtin::TemporalDurationAbs => Some(abs(receiver)),
         crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
+        crate::ops::Builtin::TemporalDurationRound => Some(round(receiver, arguments)),
         crate::ops::Builtin::TemporalDurationToLocaleString => Some(
             crate::intl::duration::format_temporal_duration(receiver, arguments),
         ),
@@ -105,6 +106,50 @@ fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
         })
         .collect::<Vec<_>>();
     construct(&arguments)
+}
+
+fn round(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    let unit = round_unit(arguments.first())?;
+    let mut fields = duration_fields(object, false);
+    let first = unit_index(unit)?;
+    for field in fields.iter_mut().skip(first + 1) {
+        *field = Value::Number(0.0);
+    }
+    construct(&fields)
+}
+
+fn round_unit(value: Option<&Value>) -> Result<&str, VmError> {
+    match value {
+        Some(Value::String(unit)) => Ok(unit.as_str()),
+        Some(Value::Object(object)) => object
+            .iter()
+            .find(|(key, _)| key == "smallestUnit")
+            .and_then(|(_, value)| match value {
+                Value::String(unit) => Some(unit.as_str()),
+                _ => None,
+            })
+            .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit")),
+        _ => Err(crate::value::error::throw_range_error(
+            "Invalid smallestUnit",
+        )),
+    }
+}
+
+fn unit_index(unit: &str) -> Result<usize, VmError> {
+    [
+        ("day", 3),
+        ("hour", 4),
+        ("minute", 5),
+        ("second", 6),
+        ("millisecond", 7),
+        ("microsecond", 8),
+        ("nanosecond", 9),
+    ]
+    .iter()
+    .find(|(candidate, _)| *candidate == unit)
+    .map(|(_, index)| *index)
+    .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit"))
 }
 
 pub(super) fn duration_field(object: &crate::value::ObjectData, name: &str) -> i128 {
