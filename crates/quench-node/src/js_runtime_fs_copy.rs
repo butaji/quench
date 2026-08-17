@@ -100,8 +100,21 @@ fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
         }
     }
     let run = || -> Result<(), VmError> {
-        let metadata =
-            std::fs::metadata(&src).map_err(|error| VmError::EvalError(error.to_string()))?;
+        if let Some(filter) = &filter {
+            let keep =
+                quench_runtime::execute::call(filter, &Value::Undefined, &[Value::String(src.clone().into())])?;
+            if !matches!(keep, Value::Boolean(_)) {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_RETURN_VALUE",
+                    "The filter function must return a boolean",
+                )));
+            }
+            if !matches!(keep, Value::Boolean(true)) {
+                // The source is filtered out; skip the copy entirely (validation too).
+                return Ok(());
+            }
+        }
+        let metadata = std::fs::metadata(&src).map_err(|error| VmError::EvalError(error.to_string()))?;
         if metadata_is_dir(&src) && std::path::Path::new(&dest).is_file() {
             return Err(VmError::Thrown(fs_error(
                 "ERR_FS_CP_DIR_TO_NON_DIR",
@@ -252,6 +265,12 @@ fn copy_tree(
             if let Some(filter) = filter {
                 let keep =
                     quench_runtime::execute::call(filter, &Value::Undefined, &[Value::String(from_str.clone().into())])?;
+                if !matches!(keep, Value::Boolean(_)) {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_RETURN_VALUE",
+                        "The filter function must return a boolean",
+                    )));
+                }
                 if !matches!(keep, Value::Boolean(true)) {
                     continue;
                 }
