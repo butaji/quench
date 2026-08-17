@@ -30,7 +30,8 @@ fn initialize_instance_field(
     };
     match &field.key {
         crate::value::InstanceFieldKey::Private(id) => {
-            let name = function.private_environment.resolve(*id).ok_or_else(|| {
+            eprintln!("DBG cif:33 resolve");
+let name = function.private_environment.resolve(*id).ok_or_else(|| {
                 crate::value::error::throw_type_error(
                     "Private field access on an object without the required brand",
                 )

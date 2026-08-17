@@ -57,6 +57,7 @@ impl StatementReducer {
             &mut self.next_slot,
             &mut self.ops,
             global_script,
+            facts.strict,
         );
         if global_script {
             instantiate_global_script_functions(statements, facts, self)?;
