@@ -30,12 +30,46 @@ pub(crate) fn reduce_call(
     let callee = reduce_expression(&call.callee, ops, facts, next, locals)?;
     let (args, spreads) = reduce_call_arguments(call, ops, facts, next, locals)?;
     let dst = take_register(next);
+    let receiver = private_call_receiver(&call.callee, ops, facts, next, locals);
     ops.push(Op::Call {
         dst,
         callee,
+        receiver,
         args,
         spreads,
     });
+    Some(dst)
+}
+
+/// When the callee is a private field expression (e.g. `this.#m()`),
+/// the call must preserve the enclosing `this` so the private method
+/// receives the correct receiver. Emit a load of `this` into a fresh
+/// register and return its register index.
+fn private_call_receiver(
+    callee: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    if !matches!(callee, Expression::PrivateFieldExpression(_)) {
+        return None;
+    }
+    let dst = take_register(next);
+    if locals.contains_key("\0module_this") {
+        ops.push(Op::Const {
+            dst,
+            value: crate::ops::Constant::Undefined,
+        });
+    } else if let Some(&slot) = locals.get("this").or_else(|| locals.get("\0script_this")) {
+        ops.push(Op::LoadLocal { dst, slot });
+    } else {
+        ops.push(Op::Const {
+            dst,
+            value: crate::ops::Constant::Undefined,
+        });
+    }
+    let _ = facts;
     Some(dst)
 }
 

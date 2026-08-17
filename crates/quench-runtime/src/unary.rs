@@ -76,6 +76,7 @@ fn reduce_delete_super(ops: &mut Vec<Op>, next: &mut u16) -> u16 {
     ops.push(Op::Call {
         dst: error,
         callee: constructor,
+        receiver: None,
         args: Vec::new(),
         spreads: Vec::new(),
     });
