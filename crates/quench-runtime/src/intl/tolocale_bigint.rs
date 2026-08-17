@@ -19,7 +19,14 @@ fn add_fraction_and_style(mut formatted: String, locales: &[String], options: Op
 fn add_minimum_fraction(formatted: &mut String, locales: &[String], options: Option<&Value>) {
     let Some(digits) = options.and_then(|value| option_string(value, "minimumFractionDigits")).and_then(|value| value.parse::<usize>().ok()) else { return; };
     if digits == 0 { return; }
-    let separator = locales.first().is_some_and(|locale| locale.starts_with("de")).then_some(',').unwrap_or('.');
+    let separator = if locales
+        .first()
+        .is_some_and(|locale| locale.starts_with("de"))
+    {
+        ','
+    } else {
+        '.'
+    };
     formatted.push(separator); formatted.extend(std::iter::repeat('0').take(digits));
 }
 fn option_string(value: &Value, key: &str) -> Option<String> {

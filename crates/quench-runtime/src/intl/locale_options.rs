@@ -130,7 +130,7 @@ fn sync_unicode_extensions(locale: &mut Locale) {
     sort_unicode_extensions(&mut locale.unicode_extensions);
 }
 
-fn sort_unicode_extensions(extensions: &mut Vec<UnicodeExtension>) {
+fn sort_unicode_extensions(extensions: &mut [UnicodeExtension]) {
     let attributes = extensions
         .iter_mut()
         .flat_map(|extension| std::mem::take(&mut extension.attributes))

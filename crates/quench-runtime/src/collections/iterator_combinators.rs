@@ -101,9 +101,11 @@ pub(crate) fn from(arguments: &[Value]) -> Result<Value, crate::execute::VmError
     let method = crate::execute::get_property_result(&value, "Symbol.iterator")?;
     if matches!(method, Value::Null | Value::Undefined) {
         let next = crate::execute::get_property_result(&value, "next")?;
-        let next = crate::conversion::is_callable(&next)
-            .then_some(next)
-            .unwrap_or(Value::Undefined);
+        let next = if crate::conversion::is_callable(&next) {
+            next
+        } else {
+            Value::Undefined
+        };
         return Ok(make_protocol_with_next(value, next));
     }
     open(value)
