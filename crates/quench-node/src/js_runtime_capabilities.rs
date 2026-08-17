@@ -39,13 +39,13 @@ impl CapabilityName {
     const ProcessPermissionHas: u16 = 2114;
     const UtilIsDate: u16 = 2130;
     const VmCreateContext: u16 = 2113;
-    const VmRunInContext: u16 = 2114;
+    const VmRunInContext: u16 = 1361;
     const VmScript: u16 = 2115;
     const VmScriptRunInContext: u16 = 2116;
     const Gc: u16 = 2117;
     const VmScriptRunInNewContext: u16 = 2118;
     const VmScriptCreateCachedData: u16 = 2123;
-    const FixtureReadKey: u16 = 2130;
+    const FixtureReadKey: u16 = 1360;
     const FixturePath: u16 = 2131;
     const DnsSetServers: u16 = 2132;
     const DnsGetServers: u16 = 2133;
