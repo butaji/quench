@@ -22,6 +22,8 @@ fn assert_module() -> Value {
         ("fail", CapabilityName::AssertFail),
         ("doesNotMatch", CapabilityName::AssertDoesNotMatch),
         ("notDeepEqual", CapabilityName::AssertNotDeepEqual),
+        ("rejects", CapabilityName::AssertRejects),
+        ("doesNotReject", CapabilityName::AssertDoesNotReject),
         ("AssertionError", CapabilityName::AssertError),
     ] {
         module = quench_runtime::execute::set_property(

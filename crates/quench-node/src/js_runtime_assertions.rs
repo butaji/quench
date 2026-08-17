@@ -190,3 +190,68 @@ fn deep_value_equal(actual: &Value, expected: &Value) -> bool {
         _ => actual == expected,
     }
 }
+
+fn assertion_error_value(message: &str) -> Value {
+    Value::object(vec![
+        ("name".into(), Value::String("AssertionError".into())),
+        ("message".into(), Value::String(message.into())),
+        ("code".into(), Value::String("ERR_ASSERTION".into())),
+    ])
+}
+
+fn rejection_matches(reason: &Value, expected: Option<&Value>) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+    let Value::Object(object) = expected else {
+        return true;
+    };
+    object
+        .iter()
+        .filter(|(key, _)| !key.starts_with('\0'))
+        .all(|(key, wanted)| {
+            let wanted = safe_value_string(wanted);
+            quench_runtime::execute::get_property_result(reason, &key)
+                .map(|received| safe_value_string(&received) == wanted)
+                .unwrap_or(false)
+        })
+}
+
+fn assert_rejects_call(arguments: &[Value], expect_reject: bool) -> Result<Value, VmError> {
+    let Some(first) = arguments.first().cloned() else {
+        return Ok(rejected(assertion_error_value("promiseFn is required")));
+    };
+    let input = if matches!(
+        first,
+        Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_)
+    ) {
+        quench_runtime::execute::call(&first, &Value::Undefined, &[]).unwrap_or(Value::Undefined)
+    } else {
+        first
+    };
+    let Value::Promise(promise) = input else {
+        return Ok(rejected(assertion_error_value(
+            "Expected instance of Promise",
+        )));
+    };
+    let state = promise.state.borrow().clone();
+    match state {
+        quench_runtime::value::PromiseState::Rejected(reason) => {
+            if expect_reject == rejection_matches(&reason, arguments.get(1)) {
+                Ok(fulfilled(Value::Undefined))
+            } else {
+                Ok(rejected(assertion_error_value("The input did not match")))
+            }
+        }
+        quench_runtime::value::PromiseState::Fulfilled(_) => {
+            if expect_reject {
+                Ok(rejected(assertion_error_value("Missing expected rejection")))
+            } else {
+                Ok(fulfilled(Value::Undefined))
+            }
+        }
+        quench_runtime::value::PromiseState::Pending => Err(VmError::EvalError(
+            "assert.rejects: promise is pending (resolved asynchronously)".into(),
+        )),
+    }
+}
