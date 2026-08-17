@@ -38,6 +38,9 @@ pub fn delegate_next(
             IteratorState::Protocol { .. } => None,
             IteratorState::Mapped { .. } => None,
             IteratorState::Filtered { .. } => None,
+            IteratorState::FlatMapped { .. } => None,
+            IteratorState::Dropped { .. } => None,
+            IteratorState::Take { .. } => None,
             IteratorState::Concat { .. } => None,
             IteratorState::Zip { .. } => None,
         }
@@ -124,6 +127,9 @@ fn delegation_target(
         | IteratorState::RegExpString { .. } => None,
         IteratorState::Mapped { .. } => None,
         IteratorState::Filtered { .. } => None,
+        IteratorState::FlatMapped { .. } => None,
+        IteratorState::Dropped { .. } => None,
+        IteratorState::Take { .. } => None,
         IteratorState::Concat { .. } => None,
         IteratorState::Zip { .. } => None,
     };

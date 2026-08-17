@@ -125,6 +125,24 @@ fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == IteratorPrototype && key == "filter" {
         return Some(Value::Builtin(IteratorFilter));
     }
+    if builtin == IteratorPrototype && key == "flatMap" {
+        return Some(Value::Builtin(IteratorFlatMap));
+    }
+    if builtin == IteratorPrototype && key == "drop" {
+        return Some(Value::Builtin(IteratorDrop));
+    }
+    if builtin == IteratorPrototype && key == "take" {
+        return Some(Value::Builtin(IteratorTake));
+    }
+    if builtin == IteratorPrototype && key == "reduce" {
+        return Some(Value::Builtin(IteratorReduce));
+    }
+    if builtin == IteratorPrototype && key == "find" {
+        return Some(Value::Builtin(IteratorFind));
+    }
+    if builtin == IteratorPrototype && key == "forEach" {
+        return Some(Value::Builtin(IteratorForEach));
+    }
     if builtin == IteratorPrototype && key == "some" {
         return Some(Value::Builtin(IteratorSome));
     }

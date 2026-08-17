@@ -255,6 +255,13 @@ fn generator_property(value: &Value, key: &str) -> Value {
         }
         "toArray" => crate::ops::Builtin::IteratorToArray,
         "map" => crate::ops::Builtin::IteratorMap,
+        "filter" => crate::ops::Builtin::IteratorFilter,
+        "flatMap" => crate::ops::Builtin::IteratorFlatMap,
+        "drop" => crate::ops::Builtin::IteratorDrop,
+        "take" => crate::ops::Builtin::IteratorTake,
+        "reduce" => crate::ops::Builtin::IteratorReduce,
+        "find" => crate::ops::Builtin::IteratorFind,
+        "forEach" => crate::ops::Builtin::IteratorForEach,
         "some" => crate::ops::Builtin::IteratorSome,
         "every" => crate::ops::Builtin::IteratorEvery,
         _ => {

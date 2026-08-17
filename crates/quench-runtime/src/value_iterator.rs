@@ -22,11 +22,27 @@ pub enum IteratorState {
         index: usize,
         done: bool,
     },
+    FlatMapped {
+        inner: Value,
+        mapper: Value,
+        index: usize,
+        current: Option<Value>,
+        done: bool,
+    },
     Filtered {
         iterator: Value,
         predicate: Value,
         index: usize,
         done: bool,
+    },
+    Dropped {
+        inner: Value,
+        skipped: usize,
+        done: bool,
+    },
+    Take {
+        inner: Value,
+        remaining: u64,
     },
     Native {
         values: Vec<Value>,

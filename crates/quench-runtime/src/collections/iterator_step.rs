@@ -141,6 +141,21 @@ fn step_target_state(
             index,
             done,
         } => StepTarget::Value(filtered_step(iterator, predicate, index, done)?),
+        IteratorState::FlatMapped {
+            inner,
+            mapper,
+            index,
+            current,
+            done,
+        } => StepTarget::Value(flat_mapped_step(inner, mapper, index, current, done)?),
+        IteratorState::Dropped {
+            inner,
+            skipped,
+            done,
+        } => StepTarget::Value(dropped_step(inner, skipped, done)?),
+        IteratorState::Take { inner, remaining } => {
+            StepTarget::Value(take_step(inner, remaining)?)
+        }
         IteratorState::Zip {
             iterators,
             mode,
@@ -306,6 +321,108 @@ fn filtered_step(
             return Ok(Some(value));
         }
     }
+}
+
+fn flat_mapped_step(
+    inner: &Value,
+    mapper: &Value,
+    index: &mut usize,
+    current: &mut Option<Value>,
+    done: &mut bool,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    if *done {
+        return Ok(None);
+    }
+    loop {
+        if let Some(iter) = current.clone() {
+            match super::step_value(&iter) {
+                Ok(Some(value)) => return Ok(Some(value)),
+                Ok(None) => {
+                    *current = None;
+                }
+                Err(error) => {
+                    *done = true;
+                    return Err(error);
+                }
+            }
+        }
+        let value = match super::step_value(inner) {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                *done = true;
+                return Ok(None);
+            }
+            Err(error) => {
+                *done = true;
+                return Err(error);
+            }
+        };
+        let result = match crate::functions::execute_target(
+            mapper,
+            &Value::Undefined,
+            &[value, Value::Number(*index as f64), inner.clone()],
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                *done = true;
+                return Err(error);
+            }
+        };
+        *index += 1;
+        if let Some(iter) = open_iterator(result)? {
+            *current = Some(iter);
+        }
+    }
+}
+
+fn dropped_step(
+    inner: &Value,
+    skipped: &mut usize,
+    done: &mut bool,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    if *done {
+        return Ok(None);
+    }
+    let value = match super::step_value(inner) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            *done = true;
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    *skipped += 1;
+    Ok(Some(value))
+}
+
+fn take_step(
+    inner: &Value,
+    remaining: &mut u64,
+) -> Result<Option<Value>, crate::execute::VmError> {
+    if *remaining == 0 {
+        return Ok(None);
+    }
+    let value = match super::step_value(inner) {
+        Ok(Some(value)) => value,
+        Ok(None) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    *remaining -= 1;
+    Ok(Some(value))
+}
+
+fn open_iterator(value: Value) -> Result<Option<Value>, crate::execute::VmError> {
+    if matches!(value, Value::Undefined | Value::Null) {
+        return Ok(None);
+    }
+    if !crate::value::is_object(&value) {
+        return Ok(None);
+    }
+    if matches!(value, Value::Iterator(_) | Value::Generator(_)) {
+        return Ok(Some(value));
+    }
+    let iter = super::open(value)?;
+    Ok(Some(iter))
 }
 
 fn close_mapped_error(iterator: &Value, error: crate::execute::VmError) -> crate::execute::VmError {

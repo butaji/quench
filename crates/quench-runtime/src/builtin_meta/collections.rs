@@ -15,7 +15,8 @@ pub fn collections_property(builtin: Builtin, key: &str) -> Option<Value> {
         return set_property(key);
     }
     match (builtin, key) {
-        (SetIteratorPrototype | MapIteratorPrototype, k) => iterator_prototype_property(builtin, k),
+        (SetIteratorPrototype | MapIteratorPrototype, k) => iterator_prototype_property_callable(builtin, k),
+        (IteratorPrototype, k) => iterator_prototype_property_callable(builtin, k),
         (WeakMapPrototype, "set") => Some(Value::Builtin(WeakMapSet)),
         (WeakMapPrototype, "get") => Some(Value::Builtin(WeakMapGet)),
         (WeakMapPrototype, "has") => Some(Value::Builtin(WeakMapHas)),
@@ -52,12 +53,30 @@ fn set_property(key: &str) -> Option<Value> {
     }
 }
 
-fn iterator_prototype_property(builtin: Builtin, key: &str) -> Option<Value> {
+pub(crate) fn iterator_prototype_property_callable(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
     let (next, tag) = match builtin {
         SetIteratorPrototype => (SetIteratorNext, "Set Iterator"),
         MapIteratorPrototype => (MapIteratorNext, "Map Iterator"),
-        _ => return None,
+        _ => {
+            if builtin != IteratorPrototype {
+                return None;
+            }
+            return match key {
+                "map" => Some(Value::Builtin(IteratorMap)),
+                "filter" => Some(Value::Builtin(IteratorFilter)),
+                "take" => Some(Value::Builtin(IteratorTake)),
+                "drop" => Some(Value::Builtin(IteratorDrop)),
+                "flatMap" => Some(Value::Builtin(IteratorFlatMap)),
+                "reduce" => Some(Value::Builtin(IteratorReduce)),
+                "toArray" => Some(Value::Builtin(IteratorToArray)),
+                "forEach" => Some(Value::Builtin(IteratorForEach)),
+                "every" => Some(Value::Builtin(IteratorEvery)),
+                "find" => Some(Value::Builtin(IteratorFind)),
+                "some" => Some(Value::Builtin(IteratorSome)),
+                _ => None,
+            };
+        }
     };
     match key {
         "next" => Some(Value::Builtin(next)),
@@ -113,6 +132,12 @@ pub const fn fn_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorMap => Some("Iterator.prototype.map"),
         Builtin::IteratorFilter => Some("Iterator.prototype.filter"),
         Builtin::IteratorEvery => Some("Iterator.prototype.every"),
+        Builtin::IteratorFlatMap => Some("Iterator.prototype.flatMap"),
+        Builtin::IteratorDrop => Some("Iterator.prototype.drop"),
+        Builtin::IteratorTake => Some("Iterator.prototype.take"),
+        Builtin::IteratorReduce => Some("Iterator.prototype.reduce"),
+        Builtin::IteratorFind => Some("Iterator.prototype.find"),
+        Builtin::IteratorForEach => Some("Iterator.prototype.forEach"),
         Builtin::IteratorSelf => Some("Iterator.prototype[Symbol.iterator]"),
         Builtin::IteratorNext => Some("ArrayIteratorPrototype.prototype.next"),
         Builtin::AsyncIteratorSelf => Some("[Symbol.asyncIterator]"),
@@ -180,6 +205,12 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
         Builtin::IteratorMap => Some(1.0),
         Builtin::IteratorFilter => Some(1.0),
         Builtin::IteratorEvery => Some(1.0),
+        Builtin::IteratorFlatMap => Some(1.0),
+        Builtin::IteratorDrop => Some(1.0),
+        Builtin::IteratorTake => Some(1.0),
+        Builtin::IteratorReduce => Some(1.0),
+        Builtin::IteratorFind => Some(1.0),
+        Builtin::IteratorForEach => Some(1.0),
         Builtin::IteratorNext | Builtin::SetIteratorNext | Builtin::MapIteratorNext => Some(0.0),
         Builtin::AsyncGeneratorNext => Some(1.0),
         Builtin::AsyncGeneratorReturn | Builtin::AsyncGeneratorThrow => Some(1.0),
@@ -229,6 +260,12 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IteratorMap => Some("map"),
         Builtin::IteratorFilter => Some("filter"),
         Builtin::IteratorEvery => Some("every"),
+        Builtin::IteratorFlatMap => Some("flatMap"),
+        Builtin::IteratorDrop => Some("drop"),
+        Builtin::IteratorTake => Some("take"),
+        Builtin::IteratorReduce => Some("reduce"),
+        Builtin::IteratorFind => Some("find"),
+        Builtin::IteratorForEach => Some("forEach"),
         Builtin::IteratorSelf => Some("[Symbol.iterator]"),
         Builtin::AsyncIteratorSelf => Some("[Symbol.asyncIterator]"),
         Builtin::AsyncIteratorDispose => Some("[Symbol.asyncDispose]"),
