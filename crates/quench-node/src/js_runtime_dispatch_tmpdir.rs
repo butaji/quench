@@ -2,7 +2,7 @@ impl QuenchNodeHost {
     fn dispatch_tmpdir(
         &self,
         capability: HostCapabilityRef,
-        _receiver: Option<&Value>,
+        receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Option<Result<Value, VmError>> {
         let result = (|| -> Result<Value, VmError> {
@@ -42,6 +42,12 @@ impl QuenchNodeHost {
                 }
                 HostCapabilityKind::Custom(CapabilityName::CommonMustNotMutateObjectDeep) => {
                     Ok(arguments.first().cloned().unwrap_or(Value::Undefined))
+                }
+                HostCapabilityKind::Custom(CapabilityName::CommonFsCollectEntries) => {
+                    common_fs_collect_entries(arguments)
+                }
+                HostCapabilityKind::Custom(CapabilityName::CommonFsEntryIsDirectory) => {
+                    common_fs_entry_is_directory(receiver)
                 }
                 _ => Err(VmError::EvalError(DISPATCH_UNHANDLED.into())),
             }

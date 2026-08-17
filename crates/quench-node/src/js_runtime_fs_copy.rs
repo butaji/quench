@@ -54,6 +54,23 @@ fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
         }
         _ => (false, true, false, false, false),
     };
+    let filter = match arguments.get(2) {
+        Some(Value::Object(options)) => {
+            let options = Value::Object(options.clone());
+            quench_runtime::execute::get_property_result(&options, "filter")
+                .ok()
+                .filter(|v| {
+                    matches!(
+                        v,
+                        Value::Function(_)
+                            | Value::BoundFunction(_)
+                            | Value::HostCapability(_)
+                            | Value::Proxy(_)
+                    )
+                })
+        }
+        _ => None,
+    };
     if let Some(Value::Object(options)) = arguments.get(2) {
         let options = Value::Object(options.clone());
         if let Ok(Value::Number(mode)) =
@@ -106,7 +123,7 @@ fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
                 "The \"recursive\" option is mandatory when using cp with directories",
             )));
         }
-        copy_tree(&src, &dest, force, verbatim, dereference)
+        copy_tree(&src, &dest, force, verbatim, dereference, filter.as_ref())
     };
     match run() {
         Ok(()) if asynchronous => Ok(fulfilled(Value::Undefined)),
@@ -172,6 +189,7 @@ fn copy_tree(
     force: bool,
     verbatim: bool,
     dereference: bool,
+    filter: Option<&Value>,
 ) -> Result<(), VmError> {
     let to_err = |error: std::io::Error| VmError::EvalError(error.to_string());
     let sym_metadata = std::fs::symlink_metadata(src).map_err(&to_err)?;
@@ -201,13 +219,22 @@ fn copy_tree(
         for entry in std::fs::read_dir(src).map_err(&to_err)? {
             let entry = entry.map_err(&to_err)?;
             let from = entry.path();
+            let from_str = from.to_string_lossy().into_owned();
+            if let Some(filter) = filter {
+                let keep =
+                    quench_runtime::execute::call(filter, &Value::Undefined, &[Value::String(from_str.clone().into())])?;
+                if !matches!(keep, Value::Boolean(true)) {
+                    continue;
+                }
+            }
             let to = std::path::Path::new(dest).join(entry.file_name());
             copy_tree(
-                &from.to_string_lossy(),
+                &from_str,
                 &to.to_string_lossy(),
                 force,
                 verbatim,
                 dereference,
+                filter,
             )?;
         }
         Ok(())
@@ -241,6 +268,7 @@ fn copy_tree_followed(src: &str, dest: &str, force: bool) -> Result<(), VmError>
                 force,
                 false,
                 false,
+                None,
             )?;
         }
         Ok(())
@@ -271,4 +299,56 @@ fn copy_tree_resolved(src: &str, dest: &str, force: bool) -> Result<(), VmError>
     }
     std::os::unix::fs::symlink(resolved, dest).map_err(&to_err)?;
     Ok(())
+}
+fn collect_entries_dirent(dir: &str, mut out: Value) -> Result<Value, VmError> {
+    let mut length = quench_runtime::execute::get_property_result(&out, "length")
+        .ok()
+        .and_then(|v| match v {
+            Value::Number(number) => Some(number as usize),
+            _ => None,
+        })
+        .unwrap_or(0);
+    for entry in std::fs::read_dir(dir).map_err(|e| VmError::EvalError(e.to_string()))? {
+        let entry = entry.map_err(|e| VmError::EvalError(e.to_string()))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let is_dir = entry
+            .file_type()
+            .map(|kind| kind.is_dir())
+            .map_err(|e| VmError::EvalError(e.to_string()))?;
+        let item = quench_runtime::host_api::object(vec![
+            ("name".into(), Value::String(name.clone().into())),
+            ("\0isDir".into(), Value::Boolean(is_dir)),
+            (
+                "isDirectory".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::CommonFsEntryIsDirectory,
+                )),
+            ),
+        ]);
+        let index = length.to_string();
+        let updated = quench_runtime::execute::set_property(out.clone(), &index, item);
+        quench_runtime::execute::replace_value(&out, &updated);
+        out = updated;
+        length += 1;
+        if is_dir {
+            let full = format!("{}/{}", dir.trim_end_matches('/'), name);
+            out = collect_entries_dirent(&full, out)?;
+        }
+    }
+    Ok(out)
+}
+
+fn common_fs_collect_entries(arguments: &[Value]) -> Result<Value, VmError> {
+    let dir = arguments.first().map(safe_value_string).unwrap_or_default();
+    let out = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    collect_entries_dirent(&dir, out)?;
+    Ok(Value::Undefined)
+}
+
+fn common_fs_entry_is_directory(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let is_dir = receiver
+        .and_then(|value| quench_runtime::execute::get_property_result(value, "\0isDir").ok())
+        .map(|value| matches!(value, Value::Boolean(true)))
+        .unwrap_or(false);
+    Ok(Value::Boolean(is_dir))
 }
