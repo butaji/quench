@@ -332,6 +332,18 @@ fn require_fs_module(name: &str) -> Option<Value> {
                             )),
                         ),
                         (
+                            "stat".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::FsStatPromise,
+                            )),
+                        ),
+                        (
+                            "utimes".into(),
+                            capability_function(HostCapabilityKind::Custom(
+                                CapabilityName::FsUtimesPromise,
+                            )),
+                        ),
+                        (
                             "opendir".into(),
                             capability_function(HostCapabilityKind::Custom(
                                 CapabilityName::FsOpendirPromise,

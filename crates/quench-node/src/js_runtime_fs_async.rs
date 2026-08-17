@@ -224,3 +224,36 @@ fn fs_utimes(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> 
     }
     Ok(Value::Undefined)
 }
+
+fn reject_fs_error(error: VmError) -> Result<Value, VmError> {
+    let value = match error {
+        VmError::Thrown(value) => value,
+        VmError::EvalError(message) => Value::object(vec![
+            ("message".into(), Value::String(message)),
+            ("name".into(), Value::String("Error".into())),
+        ]),
+        other => return Err(other),
+    };
+    Ok(rejected(value))
+}
+
+fn fs_stat_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = match path_arg(arguments, 0) {
+        Ok(path) => path.to_owned(),
+        Err(error) => return reject_fs_error(error),
+    };
+    match std::fs::metadata(&path) {
+        Ok(metadata) => Ok(fulfilled(fs_stats_full(
+            &metadata,
+            stat_bigint_requested(arguments),
+        ))),
+        Err(error) => reject_fs_error(VmError::EvalError(error.to_string())),
+    }
+}
+
+fn fs_utimes_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    match fs_utimes(arguments, false) {
+        Ok(_) => Ok(fulfilled(Value::Undefined)),
+        Err(error) => reject_fs_error(error),
+    }
+}
