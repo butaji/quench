@@ -111,12 +111,30 @@ fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
 fn round(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
     let unit = round_unit(arguments.first())?;
+    validate_rounding_increment(arguments.first())?;
     let mut fields = duration_fields(object, false);
     let first = unit_index(unit)?;
     for field in fields.iter_mut().skip(first + 1) {
         *field = Value::Number(0.0);
     }
     construct(&fields)
+}
+
+fn validate_rounding_increment(value: Option<&Value>) -> Result<(), VmError> {
+    let Some(Value::Object(object)) = value else {
+        return Ok(());
+    };
+    let Some((_, Value::Number(increment))) =
+        object.iter().find(|(key, _)| key == "roundingIncrement")
+    else {
+        return Ok(());
+    };
+    if increment.is_nan() {
+        return Err(crate::value::error::throw_range_error(
+            "Invalid roundingIncrement",
+        ));
+    }
+    Ok(())
 }
 
 fn round_unit(value: Option<&Value>) -> Result<&str, VmError> {
