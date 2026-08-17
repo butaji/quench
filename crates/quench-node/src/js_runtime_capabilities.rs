@@ -229,6 +229,9 @@ impl CapabilityName {
     const FsChmodPromise: u16 = 2317;
     const FsReadlinkPromise: u16 = 2318;
     const FsRealpathPromise: u16 = 2319;
+    const FsSymlinkPromise: u16 = 2320;
+    const FsMkdtempPromise: u16 = 2321;
+    const FsLstatPromise: u16 = 2322;
     const TmpdirRefresh: u16 = 2228;
     const TmpdirFileUrl: u16 = 2229;
     const BufferIsAscii: u16 = 2058;
