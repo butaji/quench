@@ -84,6 +84,23 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
     if matches!(left, Value::String(_) | Value::StringUnits(_))
         && matches!(right, Value::String(_) | Value::StringUnits(_))
     {
+        // Compare the underlying strings directly without going through
+        // to_string, which would throw on Symbol primitives. Two
+        // distinct StringValues that both happen to wrap symbols must
+        // compare by their inner String, not by ToString.
+        let left_str = match left {
+            Value::String(text) => Some(text.as_str()),
+            Value::StringUnits(_) => None,
+            _ => None,
+        };
+        let right_str = match right {
+            Value::String(text) => Some(text.as_str()),
+            Value::StringUnits(_) => None,
+            _ => None,
+        };
+        if let (Some(l), Some(r)) = (left_str, right_str) {
+            return l == r;
+        }
         return crate::conversion::to_string(left)
             .ok()
             .zip(crate::conversion::to_string(right).ok())
