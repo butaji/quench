@@ -112,9 +112,13 @@ fn round(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError
     let object = duration_receiver(receiver)?;
     let options = arguments.first();
     let unit = round_unit(options)?;
+    let largest = largest_unit(options);
     validate_rounding_increment(arguments.first())?;
     let mut fields = duration_fields(object, false);
     let first = unit_index(unit)?;
+    if largest == Some(2) {
+        promote_days_to_weeks(&mut fields);
+    }
     if has_largest_unit(options) {
         balance_time_fields(&mut fields, first);
     }
@@ -124,6 +128,30 @@ fn round(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError
         }
     }
     construct(&fields)
+}
+
+fn largest_unit(value: Option<&Value>) -> Option<usize> {
+    let Some(Value::Object(object)) = value else {
+        return None;
+    };
+    object
+        .iter()
+        .find(|(key, _)| key == "largestUnit")
+        .and_then(|(_, value)| match value {
+            Value::String(unit) => unit_index(unit).ok(),
+            _ => None,
+        })
+}
+
+fn promote_days_to_weeks(fields: &mut [Value]) {
+    let days = number_field(&fields[3]);
+    let hours = number_field(&fields[4]);
+    let extra_days = hours.signum() * ((hours.abs() + 23) / 24);
+    let days = days + extra_days;
+    let weeks = if days >= 0 { (days + 6) / 7 } else { days / 7 };
+    fields[2] = Value::Number(weeks as f64);
+    fields[3] = Value::Number(0.0);
+    fields[4] = Value::Number(0.0);
 }
 
 fn has_largest_unit(value: Option<&Value>) -> bool {
@@ -191,6 +219,7 @@ fn round_unit(value: Option<&Value>) -> Result<&str, VmError> {
 fn unit_index(unit: &str) -> Result<usize, VmError> {
     let unit = unit.strip_suffix('s').unwrap_or(unit);
     [
+        ("week", 2),
         ("day", 3),
         ("hour", 4),
         ("minute", 5),
