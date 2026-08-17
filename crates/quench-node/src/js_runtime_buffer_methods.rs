@@ -308,6 +308,19 @@ fn buffer_compare(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
                 .to_vec(),
         )
     } else {
+        // Static Buffer.compare(buf, buf2): both arguments must be Buffer or
+        // Uint8Array instances. The second is validated above; require the
+        // first here so `Buffer.compare('abc', buffer)` throws too.
+        if !matches!(arguments.first(), Some(Value::Uint8Array(_))) {
+            let value = arguments.first().cloned().unwrap_or(Value::Undefined);
+            return Err(VmError::Thrown(fs_error(
+                "ERR_INVALID_ARG_TYPE",
+                &format!(
+                    "The \"buf\" argument must be an instance of Buffer or Uint8Array. {}",
+                    buffer_received(&value)
+                ),
+            )));
+        }
         (
             string_or_bytes(arguments.first())?,
             string_or_bytes(arguments.get(1))?,
