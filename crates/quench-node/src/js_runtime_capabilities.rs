@@ -318,6 +318,8 @@ impl CapabilityName {
     const ErrorsDetermineSpecificType: u16 = 2342;
     const ProcessGetBuiltinModule: u16 = 2343;
     const ModuleRequireCall: u16 = 2344;
+    const TimersPromisesSetTimeout: u16 = 2346;
+    const TimersPromisesSetImmediate: u16 = 2347;
     const HttpServer: u16 = 11;
     const HttpGet: u16 = 12;
     const HttpRequestOn: u16 = 401;
