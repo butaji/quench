@@ -140,8 +140,21 @@ fn split_import_body(body: &str) -> Option<(String, String)> {
                 _ => {}
             },
         }
-        if !in_brace && !in_paren && in_string.is_none() && (c == b',' || c == b';') {
+        if !in_brace && !in_paren && in_string.is_none() && c == b';' {
             break;
+        }
+        if !in_brace && !in_paren && in_string.is_none() && c == b',' {
+            // A top-level comma splits a combined `default, { named }` or
+            // `default, * as ns` binding list. Only treat it as a statement
+            // delimiter when the following token is not the start of a
+            // named/namespace clause.
+            let mut ahead = i + 1;
+            while ahead < len && bytes[ahead].is_ascii_whitespace() {
+                ahead += 1;
+            }
+            if ahead >= len || (bytes[ahead] != b'{' && bytes[ahead] != b'*') {
+                break;
+            }
         }
         i += 1;
     }
@@ -189,7 +202,58 @@ fn convert_import_spec(spec: &str) -> Option<String> {
         let local = rest.trim();
         return Some(format!("const {local} = require(\"{module}\");"));
     }
+    // Combined `default, { named }` / `default, * as ns` form. A bare default
+    // import interop-bound to a CJS module is the module object itself, so the
+    // default binding and the destructured names both come from require; the
+    // module cache keeps both references pointing at the same object.
+    if let Some(comma) = top_level_comma(left) {
+        let default_part = left[..comma].trim();
+        let rest_part = left[comma + 1..].trim();
+        let default_binding = default_part
+            .strip_prefix("default as ")
+            .map(str::trim)
+            .unwrap_or(default_part);
+        // Destructure/alias the named or namespace bindings from the SAME
+        // require result so `Readable === stream.Readable` holds (require is
+        // not guaranteed to return a unique object per call). The default
+        // binding is the module object itself, matching CJS ESM interop.
+        let mut out = format!("const {default_binding} = require(\"{module}\");\n");
+        if let Some(inner) = rest_part.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+            let names = parse_import_names(inner);
+            out.push_str(&format!("const {{ {names} }} = {default_binding};"));
+        } else if let Some(namespace) = rest_part.strip_prefix("* as ") {
+            let local = namespace.trim();
+            out.push_str(&format!("const {local} = {default_binding};"));
+        } else {
+            return None;
+        }
+        return Some(out);
+    }
     Some(format!("const {left} = require(\"{module}\");"))
+}
+
+/// First comma outside of brace/bracket/paren depth and string literals, or
+/// `None` when the binding list has no top-level separator.
+fn top_level_comma(input: &str) -> Option<usize> {
+    let mut depth: i32 = 0;
+    let mut in_string: Option<char> = None;
+    for (index, ch) in input.char_indices() {
+        match in_string {
+            Some(quote) => {
+                if ch == quote {
+                    in_string = None;
+                }
+            }
+            None => match ch {
+                '{' | '[' | '(' => depth += 1,
+                '}' | ']' | ')' => depth -= 1,
+                '"' | '\'' | '`' => in_string = Some(ch),
+                ',' if depth == 0 => return Some(index),
+                _ => {}
+            },
+        }
+    }
+    None
 }
 
 fn parse_import_names(inner: &str) -> String {
