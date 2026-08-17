@@ -39,6 +39,13 @@ pub(crate) fn reduce(
     {
         return result;
     }
+    // Per ES §13.16, the `debugger` keyword is a no-op statement in
+    // production; it doesn't evaluate to anything and doesn't affect the
+    // surrounding scope. A host environment may invoke a debugger here,
+    // but for test262 conformance the statement can simply be dropped.
+    if matches!(statement, Statement::DebuggerStatement(_)) {
+        return Ok(None);
+    }
     helpers::unsupported_statement(statement)
 }
 
