@@ -9,12 +9,19 @@ pub fn execute_call(
     registers: &mut Vec<Value>,
     dst: u16,
     callee: u16,
+    receiver: Option<u16>,
     args: &[u16],
     spreads: &[bool],
 ) -> Result<(), VmError> {
     let arguments = collect_call_arguments(registers, args, spreads)?;
     let callee_value = super::read_register(registers, callee)?;
-    let value = invoke_callee(&callee_value, &arguments)?;
+    let value = match receiver {
+        Some(receiver) => {
+            let this_value = super::read_register(registers, receiver)?;
+            invoke_with_receiver(&callee_value, &this_value, &arguments)?
+        }
+        None => invoke_callee(&callee_value, &arguments)?,
+    };
     propagate_object_mutation(registers, &callee_value, args, &arguments, &value);
     super::write_value(registers, dst, value);
     Ok(())
