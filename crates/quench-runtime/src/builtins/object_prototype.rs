@@ -7,6 +7,26 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
 }
 
 fn prototype_for_value(value: &Value) -> Value {
+    if let Value::Function(function) = value {
+        if let Some((_, prototype)) = function
+            .properties
+            .borrow()
+            .iter()
+            .find(|(key, _)| key == "\0function_prototype")
+        {
+            return prototype.clone();
+        }
+    }
+    if let Value::BoundFunction(function) = value {
+        if let Some((_, prototype)) = function
+            .properties
+            .borrow()
+            .iter()
+            .find(|(key, _)| key == "\0function_prototype")
+        {
+            return prototype.clone();
+        }
+    }
     if let Some(prototype) = slot_prototype(value) {
         return prototype;
     }
@@ -117,7 +137,7 @@ fn prototype_for_value_tail(value: &Value) -> Value {
         Value::Generator(generator) => generator_prototype(generator),
         Value::Iterator(_) => crate::collections::iterator::prototype_of(value),
         Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Array(_) => Value::Builtin(Builtin::ArrayPrototype),
+        Value::Array(values) => values.prototype().unwrap_or(Value::Builtin(Builtin::ArrayPrototype)),
         Value::String(value) if crate::conversion::is_symbol_string(value) => {
             Value::Builtin(Builtin::SymbolPrototype)
         }

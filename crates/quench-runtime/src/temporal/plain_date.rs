@@ -2,11 +2,25 @@ use chrono::Datelike;
 
 use crate::{execute::VmError, value::Value};
 
+#[path = "plain_date_tail.rs"]
+mod plain_date_tail;
+use plain_date_tail::{date_object, number};
+
 pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     let year = number(arguments.first())?;
     let month = number(arguments.get(1))?;
     let day = number(arguments.get(2))?;
-    validate_calendar(arguments.get(3))?;
+    if let Some(calendar) = arguments.get(3) {
+        if !matches!(calendar, Value::Undefined | Value::String(_)) {
+            return Err(crate::value::error::throw_type_error("Invalid calendar"));
+        }
+        if matches!(calendar, Value::String(value) if crate::conversion::is_symbol_string(value)) {
+            return Err(crate::value::error::throw_type_error("Invalid calendar"));
+        }
+        if matches!(calendar, Value::String(value) if !value.eq_ignore_ascii_case("iso8601")) {
+            return Err(crate::value::error::throw_range_error("Invalid calendar"));
+        }
+    }
     if !(-271_821.0..=275_760.0).contains(&year)
         || !(1.0..=12.0).contains(&month)
         || !(1.0..=days_in_month(year, month)).contains(&day)
@@ -18,11 +32,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     {
         return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
     }
-    let calendar = match arguments.get(3) {
-        Some(Value::String(name)) => Value::String(name.clone()),
-        _ => Value::String("iso8601".into()),
-    };
-    Ok(date_object_with_calendar(year, month, day, calendar))
+    Ok(date_object(year, month, day))
 }
 
 fn days_in_month(year: f64, month: f64) -> f64 {
@@ -71,7 +81,7 @@ pub(crate) fn execute(
         crate::ops::Builtin::TemporalPlainDateToJSON => Some(to_json(receiver)),
         crate::ops::Builtin::TemporalPlainDateInLeapYearGetter => Some(in_leap_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateEraGetter => Some(era(receiver)),
-        crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era_year(receiver)),
+        crate::ops::Builtin::TemporalPlainDateEraYearGetter => Some(era(receiver)),
         crate::ops::Builtin::TemporalPlainDateCalendarIdGetter => Some(calendar_id(receiver)),
         crate::ops::Builtin::TemporalPlainDateWeekOfYearGetter => Some(week_of_year(receiver)),
         crate::ops::Builtin::TemporalPlainDateYearOfWeekGetter => Some(year_of_week(receiver)),
@@ -224,17 +234,11 @@ fn to_string(receiver: Option<&Value>, options: Option<&Value>) -> Result<Value,
     let month = number_field(field(object, "month")) as u32;
     let day = number_field(field(object, "day")) as u32;
     let calendar_name = calendar_name_option(options)?;
-    let calendar = match field(object, "calendarId") {
-        Value::String(name) => name,
-        _ => "iso8601".into(),
-    };
     let mut result = format!("{}-{month:02}-{day:02}", format_year(year));
-    if calendar_name == "always"
-        || calendar_name == "critical"
-        || calendar_name == "auto" && calendar != "iso8601"
-    {
-        let prefix = if calendar_name == "critical" { "!" } else { "" };
-        result.push_str(&format!("[{}u-ca={calendar}]", prefix));
+    if calendar_name == "always" {
+        result.push_str("[u-ca=iso8601]");
+    } else if calendar_name == "critical" {
+        result.push_str("[!u-ca=iso8601]");
     }
     Ok(Value::String(result))
 }
@@ -284,17 +288,7 @@ fn era(receiver: Option<&Value>) -> Result<Value, VmError> {
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
-    Ok(field(object, "era"))
-}
-
-fn era_year(receiver: Option<&Value>) -> Result<Value, VmError> {
-    let Value::Object(object) = receiver.ok_or_else(invalid_receiver)? else {
-        return Err(invalid_receiver());
-    };
-    if !has_date_fields(object) {
-        return Err(invalid_receiver());
-    }
-    Ok(field(object, "eraYear"))
+    Ok(Value::Undefined)
 }
 
 fn calendar_id(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -304,10 +298,7 @@ fn calendar_id(receiver: Option<&Value>) -> Result<Value, VmError> {
     if !has_date_fields(object) {
         return Err(invalid_receiver());
     }
-    Ok(match field(object, "calendarId") {
-        Value::String(name) => Value::String(name),
-        _ => Value::String("iso8601".to_owned()),
-    })
+    Ok(Value::String("iso8601".to_owned()))
 }
 
 fn week_of_year(receiver: Option<&Value>) -> Result<Value, VmError> {
@@ -427,321 +418,4 @@ fn number_field(value: Value) -> f64 {
     }
 }
 
-fn from(value: Option<&Value>) -> Result<Value, VmError> {
-    if let Some(value) = value.filter(|value| crate::value::is_object(value)) {
-        return from_property_bag(value);
-    }
-    let Some(Value::String(text)) = value else {
-        return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
-    };
-    if has_utc_designator(text) {
-        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
-    }
-    if has_excess_fraction(text) {
-        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
-    }
-    let calendar_count = text.matches("[u-ca=").count();
-    if has_uppercase_annotation_key(text) {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid annotation key",
-        ));
-    }
-    if has_invalid_calendar_annotation(text) {
-        return Err(crate::value::error::throw_range_error("Invalid calendar"));
-    }
-    if has_multiple_time_zones(text) {
-        return Err(crate::value::error::throw_range_error(
-            "Multiple time zones",
-        ));
-    }
-    if has_unknown_critical_annotation(text) {
-        return Err(crate::value::error::throw_range_error(
-            "Unknown critical annotation",
-        ));
-    }
-    if text.contains("[!u-ca=") && calendar_count > 0 {
-        return Err(crate::value::error::throw_range_error("Multiple calendars"));
-    }
-    let date = date_part(text);
-    let parts = date.split('-').collect::<Vec<_>>();
-    if parts.len() == 1 && date.len() == 8 {
-        let year = date[..4]
-            .parse()
-            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        let month = date[4..6]
-            .parse()
-            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        let day = date[6..]
-            .parse()
-            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        return checked_date_object(year, month, day);
-    }
-    if parts.len() == 1 && date.len() == 11 && matches!(date.as_bytes()[0], b'+' | b'-') {
-        let year = date[1..7]
-            .parse::<i32>()
-            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        let year = if date.as_bytes()[0] == b'-' {
-            -year
-        } else {
-            year
-        };
-        let month = date[7..9]
-            .parse()
-            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        let day = date[9..]
-            .parse()
-            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        return checked_date_object(year, month, day);
-    }
-    let (year, month, day) = parse_date_parts(&parts)?;
-    checked_date_object(year, month, day)
-}
-
-fn from_property_bag(value: &Value) -> Result<Value, VmError> {
-    let year = crate::execute::get_property_result(value, "year")?;
-    let month = crate::execute::get_property_result(value, "month")?;
-    let month_code = crate::execute::get_property_result(value, "monthCode")?;
-    let day = crate::execute::get_property_result(value, "day")?;
-    let calendar = crate::execute::get_property_result(value, "calendar")?;
-    let calendar = match calendar {
-        Value::Undefined => calendar,
-        Value::String(_) | Value::StringUnits(_) => {
-            Value::String(crate::conversion::to_string(&calendar)?)
-        }
-        _ => return Err(crate::value::error::throw_type_error("Invalid calendar")),
-    };
-    validate_calendar(Some(&calendar))?;
-    let era = crate::execute::get_property_result(value, "era")?;
-    let era_year = crate::execute::get_property_result(value, "eraYear")?;
-    validate_gregory_era(&calendar, &era, &era_year)?;
-    let year = resolve_gregory_year(year, &calendar, &era, &era_year)?;
-    validate_required_fields(&year, &month, &month_code, &day)?;
-    if !matches!(month, Value::Undefined) && !matches!(month_code, Value::Undefined) {
-        let month_from_code = month_from_code(month_code.clone())?;
-        if crate::conversion::to_number(&month)? != crate::conversion::to_number(&month_from_code)?
-        {
-            return Err(crate::value::error::throw_range_error(
-                "month and monthCode conflict",
-            ));
-        }
-    }
-    let month = if matches!(month, Value::Undefined) {
-        month_from_code(month_code)?
-    } else {
-        month
-    };
-    construct(&[year, month, day, calendar])
-}
-
-fn resolve_gregory_year(
-    year: Value,
-    calendar: &Value,
-    era: &Value,
-    era_year: &Value,
-) -> Result<Value, VmError> {
-    if !matches!(year, Value::Undefined)
-        || !matches!(calendar, Value::String(value) if value.eq_ignore_ascii_case("gregory"))
-    {
-        return Ok(year);
-    }
-    let Value::String(era) = era else {
-        return Ok(year);
-    };
-    let era_year = crate::conversion::to_number(era_year)?;
-    Ok(Value::Number(if matches!(era.as_str(), "bce" | "bc") {
-        1.0 - era_year
-    } else {
-        era_year
-    }))
-}
-
-fn validate_calendar(calendar: Option<&Value>) -> Result<(), VmError> {
-    let Some(calendar) = calendar else {
-        return Ok(());
-    };
-    if !matches!(calendar, Value::Undefined | Value::String(_)) {
-        return Err(crate::value::error::throw_type_error("Invalid calendar"));
-    }
-    if matches!(calendar, Value::String(value) if crate::conversion::is_symbol_string(value)) {
-        return Err(crate::value::error::throw_type_error("Invalid calendar"));
-    }
-    if matches!(calendar, Value::String(value) if !matches!(value.to_ascii_lowercase().as_str(), "iso8601" | "gregory"))
-    {
-        return Err(crate::value::error::throw_range_error("Invalid calendar"));
-    }
-    Ok(())
-}
-
-fn validate_gregory_era(calendar: &Value, era: &Value, era_year: &Value) -> Result<(), VmError> {
-    if !matches!(calendar, Value::String(value) if value.eq_ignore_ascii_case("gregory")) {
-        return Ok(());
-    }
-    if matches!(era, Value::Undefined) != matches!(era_year, Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(
-            "era and eraYear must be provided together",
-        ));
-    }
-    let valid = matches!(era, Value::Undefined)
-        || matches!(era, Value::String(value) if matches!(value.as_str(), "ce" | "bce" | "ad" | "bc"));
-    if !valid {
-        return Err(crate::value::error::throw_range_error("Invalid era"));
-    }
-    Ok(())
-}
-
-fn validate_required_fields(
-    year: &Value,
-    month: &Value,
-    month_code: &Value,
-    day: &Value,
-) -> Result<(), VmError> {
-    if matches!(year, Value::Undefined)
-        || matches!(day, Value::Undefined)
-        || (matches!(month, Value::Undefined) && matches!(month_code, Value::Undefined))
-    {
-        return Err(crate::value::error::throw_type_error(
-            "Missing PlainDate field",
-        ));
-    }
-    Ok(())
-}
-
-fn month_from_code(value: Value) -> Result<Value, VmError> {
-    if !matches!(value, Value::String(_) | Value::StringUnits(_)) {
-        return Err(crate::value::error::throw_type_error("Invalid monthCode"));
-    }
-    let text = crate::conversion::to_string(&value)?;
-    let month = text
-        .strip_prefix('M')
-        .filter(|value| value.len() == 2 && value.bytes().all(|byte| byte.is_ascii_digit()))
-        .and_then(|value| value.parse::<u8>().ok())
-        .filter(|month| (1..=12).contains(month))
-        .ok_or_else(|| crate::value::error::throw_range_error("Invalid monthCode"))?;
-    Ok(Value::Number(f64::from(month)))
-}
-
-fn has_uppercase_annotation_key(text: &str) -> bool {
-    text.split('[')
-        .skip(1)
-        .filter(|annotation| annotation.contains('='))
-        .any(|annotation| {
-            annotation
-                .split('=')
-                .next()
-                .is_some_and(|key| key.chars().any(|character| character.is_ascii_uppercase()))
-        })
-}
-
-fn has_unknown_critical_annotation(text: &str) -> bool {
-    text.split('[').skip(1).any(|annotation| {
-        annotation.starts_with('!') && annotation.contains('=') && !annotation.starts_with("!u-ca=")
-    })
-}
-
-fn has_invalid_calendar_annotation(text: &str) -> bool {
-    text.split('[').skip(1).any(|annotation| {
-        ["u-ca=", "!u-ca="]
-            .iter()
-            .find_map(|prefix| annotation.strip_prefix(prefix))
-            .and_then(|value| value.split(']').next())
-            .is_some_and(|value| !value.eq_ignore_ascii_case("iso8601"))
-    })
-}
-
-fn has_multiple_time_zones(text: &str) -> bool {
-    text.split('[')
-        .skip(1)
-        .filter(|annotation| !annotation.contains('=') && !annotation.is_empty())
-        .count()
-        > 1
-}
-
-fn has_excess_fraction(text: &str) -> bool {
-    text.split('[')
-        .next()
-        .and_then(|value| value.find('.').map(|index| &value[index + 1..]))
-        .is_some_and(|fraction| fraction.bytes().take_while(u8::is_ascii_digit).count() > 9)
-}
-
-fn has_utc_designator(text: &str) -> bool {
-    text.split('[')
-        .next()
-        .is_some_and(|value| value.ends_with('Z'))
-}
-
-fn date_part(text: &str) -> &str {
-    text.split(['T', 't', ' ', '[']).next().unwrap_or(text)
-}
-
-fn parse_date_parts(parts: &[&str]) -> Result<(i32, i32, i32), VmError> {
-    let (year, month, day) = match parts {
-        [year, month, day] => ((*year).to_owned(), (*month).to_owned(), (*day).to_owned()),
-        ["", year, month, day] => (format!("-{year}"), (*month).to_owned(), (*day).to_owned()),
-        _ => return Err(crate::value::error::throw_range_error("Invalid ISO date")),
-    };
-    Ok((
-        year.parse()
-            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?,
-        month
-            .parse()
-            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?,
-        day.parse()
-            .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?,
-    ))
-}
-
-fn checked_date_object(year: i32, month: i32, day: i32) -> Result<Value, VmError> {
-    let year = f64::from(year);
-    let month = f64::from(month);
-    let day = f64::from(day);
-    if !(-271_821.0..=275_760.0).contains(&year)
-        || !(1.0..=12.0).contains(&month)
-        || !(1.0..=days_in_month(year, month)).contains(&day)
-    {
-        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
-    }
-    if (year == -271_821.0 && (month < 4.0 || month == 4.0 && day < 19.0))
-        || (year == 275_760.0 && (month > 9.0 || month == 9.0 && day > 13.0))
-    {
-        return Err(crate::value::error::throw_range_error("Invalid ISO date"));
-    }
-    Ok(date_object(year, month, day))
-}
-
-fn number(value: Option<&Value>) -> Result<f64, VmError> {
-    let value = crate::conversion::to_number(value.unwrap_or(&Value::Undefined))?;
-    if !value.is_finite() {
-        return Err(crate::value::error::throw_range_error("Invalid PlainDate"));
-    }
-    Ok(value.trunc())
-}
-
-fn date_object(year: f64, month: f64, day: f64) -> Value {
-    date_object_with_calendar(year, month, day, Value::String("iso8601".into()))
-}
-
-fn date_object_with_calendar(year: f64, month: f64, day: f64, calendar: Value) -> Value {
-    let mut properties = vec![
-        ("year".into(), Value::Number(year)),
-        ("month".into(), Value::Number(month)),
-        ("monthCode".into(), Value::String(format!("M{month:02.0}"))),
-        ("day".into(), Value::Number(day)),
-        ("calendarId".into(), calendar.clone()),
-    ];
-    if matches!(&calendar, Value::String(name) if name.eq_ignore_ascii_case("gregory")) {
-        let (era, era_year) = if year >= 1.0 {
-            ("ce", year)
-        } else {
-            ("bce", 1.0 - year)
-        };
-        properties.extend([
-            ("era".into(), Value::String(era.into())),
-            ("eraYear".into(), Value::Number(era_year)),
-        ]);
-    }
-    properties.push((
-        "\0prototype".into(),
-        Value::Builtin(crate::ops::Builtin::TemporalPlainDatePrototype),
-    ));
-    Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
-}
+include!("plain_date_from.rs");
