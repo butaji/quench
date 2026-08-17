@@ -232,6 +232,7 @@ impl CapabilityName {
     const FsSymlinkPromise: u16 = 2320;
     const FsMkdtempPromise: u16 = 2321;
     const FsLstatPromise: u16 = 2322;
+    const FsTruncatePromise: u16 = 2330;
     const TmpdirRefresh: u16 = 2228;
     const TmpdirFileUrl: u16 = 2229;
     const BufferIsAscii: u16 = 2058;
