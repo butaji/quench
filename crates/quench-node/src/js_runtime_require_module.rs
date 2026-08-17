@@ -385,13 +385,21 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ]));
         }
         if name == "internal/errors" {
-            return Ok(quench_runtime::host_api::object(vec![(
-                "codes".into(),
-                quench_runtime::host_api::object(vec![(
-                    "ERR_OUT_OF_RANGE".into(),
-                    Value::Builtin(quench_runtime::ops::Builtin::RangeError),
-                )]),
-            )]));
+            return Ok(quench_runtime::host_api::object(vec![
+                (
+                    "codes".into(),
+                    quench_runtime::host_api::object(vec![(
+                        "ERR_OUT_OF_RANGE".into(),
+                        Value::Builtin(quench_runtime::ops::Builtin::RangeError),
+                    )]),
+                ),
+                (
+                    "determineSpecificType".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::ErrorsDetermineSpecificType,
+                    )),
+                ),
+            ]));
         }
         if name == "internal/test/binding" {
             return Ok(quench_runtime::host_api::object(vec![(

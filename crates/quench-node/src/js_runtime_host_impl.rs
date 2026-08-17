@@ -83,6 +83,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::AssertDoesNotReject) => {
                 assert_rejects_call(arguments, false)
             }
+            HostCapabilityKind::Custom(CapabilityName::ErrorsDetermineSpecificType) => {
+                determine_specific_type(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::HttpServer | CapabilityName::HttpGet) => {
                 self.http_call(capability.kind, arguments)
             }
