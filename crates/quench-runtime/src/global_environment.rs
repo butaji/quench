@@ -134,6 +134,10 @@ fn create_var(
         .as_ref()
         .is_some_and(|descriptor| !descriptor.configurable)
     {
+        // The property already exists and is non-configurable: per spec the
+        // declaration is a no-op, but the slot must still alias the existing
+        // global binding so reads and writes reach it.
+        binding_cell(name, slot, None);
         return Ok(());
     }
     let cell = binding_cell(name, slot, current.as_ref().map(|value| &value.value));
