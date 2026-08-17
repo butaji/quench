@@ -224,7 +224,7 @@ pub(crate) fn reduce_selected_body(
     let mut last = None;
     let mut next_register = 0;
     let mut next_slot = local_count;
-    crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot);
+    crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot, facts.strict);
     crate::reduce_support::predeclare_lexicals(statements, &mut locals, &mut next_slot);
     let barrier_len = facts.eval_var_barrier.len();
     facts

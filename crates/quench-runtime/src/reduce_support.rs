@@ -147,8 +147,9 @@ pub(crate) fn predeclare_functions(
     statements: &[oxc::ast::ast::Statement<'_>],
     locals: &mut HashMap<String, u16>,
     next_slot: &mut u16,
+    strict: bool,
 ) {
-    predeclare_functions_excluding(statements, locals, next_slot, &[]);
+    predeclare_functions_strict(statements, locals, next_slot, &[], strict);
 }
 
 pub(crate) fn predeclare_functions_excluding(
@@ -156,10 +157,23 @@ pub(crate) fn predeclare_functions_excluding(
     locals: &mut HashMap<String, u16>,
     next_slot: &mut u16,
     excluded: &[String],
+    strict: bool,
+) {
+    predeclare_functions_strict(statements, locals, next_slot, excluded, strict);
+}
+
+fn predeclare_functions_strict(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+    excluded: &[String],
+    strict: bool,
 ) {
     for statement in statements {
         let names = if matches!(statement, oxc::ast::ast::Statement::FunctionDeclaration(_)) {
             declared_names(statement)
+        } else if strict {
+            Vec::new()
         } else {
             nested_var_names(statement)
         };
@@ -209,7 +223,7 @@ pub(crate) fn instantiate_script_declarations(
     ops: &mut Vec<Op>,
     script: bool,
 ) -> Vec<(String, bool)> {
-    predeclare_functions(statements, locals, next_slot);
+    predeclare_functions(statements, locals, next_slot, false);
     if !script {
         return Vec::new();
     }
