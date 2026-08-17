@@ -134,6 +134,22 @@ fn reduce_static_if(
             )?;
             Ok(None)
         }
+        Statement::IfStatement(_)
+        | Statement::WithStatement(_)
+        | Statement::TryStatement(_)
+        | Statement::SwitchStatement(_)
+        | Statement::ForStatement(_)
+        | Statement::ForInStatement(_)
+        | Statement::ForOfStatement(_)
+        | Statement::WhileStatement(_)
+        | Statement::DoWhileStatement(_)
+        | Statement::LabeledStatement(_)
+        | Statement::ThrowStatement(_)
+        | Statement::ReturnStatement(_)
+        | Statement::BreakStatement(_)
+        | Statement::ContinueStatement(_) => {
+            crate::reduce::reduce_statement(selected, ops, facts, next_register, next_slot, locals)
+        }
         _ => Err(vec!["Unsupported conditional statement".to_string()]),
     }
 }
