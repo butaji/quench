@@ -329,6 +329,12 @@ fn require_fs_module(name: &str) -> Option<Value> {
                         ("W_OK".into(), Value::Number(2.0)),
                         ("X_OK".into(), Value::Number(1.0)),
                         ("F_OK".into(), Value::Number(0.0)),
+                        ("COPYFILE_EXCL".into(), Value::Number(1.0)),
+                        ("COPYFILE_FICLONE".into(), Value::Number(2.0)),
+                        ("COPYFILE_FICLONE_FORCE".into(), Value::Number(4.0)),
+                        ("UV_FS_COPYFILE_EXCL".into(), Value::Number(1.0)),
+                        ("UV_FS_COPYFILE_FICLONE".into(), Value::Number(2.0)),
+                        ("UV_FS_COPYFILE_FICLONE_FORCE".into(), Value::Number(4.0)),
                     ]),
                 ),
                 (
