@@ -112,6 +112,10 @@ fn require_fs_module(name: &str) -> Option<Value> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsSymlinkSync)),
                 ),
                 (
+                    "readlinkSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadlinkSync)),
+                ),
+                (
                     "stat".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsStatAsync)),
                 ),
