@@ -408,7 +408,7 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::UtilSystemErrorMapGet) => {
                 util_system_error_map_get(arguments)
             }
-            HostCapabilityKind::Custom(id) if is_util_promisified(id) =>
+            HostCapabilityKind::Custom(id) if self.promisified.borrow().contains_key(&id) =>
             {
                 self.call_promisified(id, arguments)
             }
