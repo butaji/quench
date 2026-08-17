@@ -396,3 +396,22 @@ pub(crate) fn execute_has_property(registers: &mut Vec<Value>, op: &Op) -> Resul
     crate::execute::write_value(registers, *dst, result);
     Ok(())
 }
+
+pub(crate) fn execute_has_private(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    let Op::HasPrivate { dst, object, name } = op else {
+        return Err(VmError::MissingReturn);
+    };
+    let object = crate::execute::read_register(registers, *object)?;
+    let name = crate::private_environment::resolve(*name).ok_or_else(|| {
+        crate::value::error::throw_type_error(
+            "Private field access on an object without the required brand",
+        )
+    })?;
+    let result = if let Ok(slots) = crate::private_slots::slots(&object) {
+        Value::Boolean(slots.borrow().iter().any(|(id, _)| id == &name))
+    } else {
+        Value::Boolean(false)
+    };
+    crate::execute::write_value(registers, *dst, result);
+    Ok(())
+}

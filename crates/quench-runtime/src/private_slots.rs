@@ -152,7 +152,7 @@ fn resolve(name: crate::facts::PrivateNameId) -> Result<PrivateName, VmError> {
     crate::private_environment::resolve(name).ok_or_else(private_brand_error)
 }
 
-fn slots(value: &Value) -> Result<PrivateSlots, VmError> {
+pub(crate) fn slots(value: &Value) -> Result<PrivateSlots, VmError> {
     match value {
         Value::BindingCell(cell) => slots(&cell.borrow()),
         Value::Function(function) => Ok(function.private_slots.clone()),
