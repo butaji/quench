@@ -166,7 +166,20 @@ fn timers_promises_module() -> Value {
     NODE_TIMERS_PROMISES.with(|module| {
         let mut module = module.borrow_mut();
         if module.is_none() {
-            *module = Some(quench_runtime::host_api::object(vec![]));
+            *module = Some(quench_runtime::host_api::object(vec![
+                (
+                    "setTimeout".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::TimersPromisesSetTimeout,
+                    )),
+                ),
+                (
+                    "setImmediate".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::TimersPromisesSetImmediate,
+                    )),
+                ),
+            ]));
         }
         module.as_ref().unwrap().clone()
     })
@@ -374,4 +387,16 @@ fn util_system_error_map_get(arguments: &[Value]) -> Result<Value, VmError> {
         Value::String(name.into()),
         Value::String(name.into()),
     ]))
+}
+
+fn timers_promises_set_timeout(_arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(timer_promise_settled())
+}
+fn timers_promises_set_immediate(_arguments: &[Value]) -> Result<Value, VmError> {
+    Ok(timer_promise_settled())
+}
+fn timer_promise_settled() -> Value {
+    Value::Promise(Rc::new(quench_runtime::value::PromiseData::new(
+        quench_runtime::value::PromiseState::Fulfilled(Value::Undefined),
+    )))
 }

@@ -283,6 +283,12 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsMkdtempAsync) => fs_mkdtemp_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsCpSync) => fs_cp(arguments, false),
             HostCapabilityKind::Custom(CapabilityName::FsCp) => fs_cp(arguments, true),
+            HostCapabilityKind::Custom(CapabilityName::TimersPromisesSetTimeout) => {
+                timers_promises_set_timeout(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::TimersPromisesSetImmediate) => {
+                timers_promises_set_immediate(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsReaddirSync) => fs_readdir(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsReaddirAsync) => {
                 fs_readdir_async(arguments)
