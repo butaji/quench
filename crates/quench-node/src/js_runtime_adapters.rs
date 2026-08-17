@@ -143,6 +143,7 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
                 HostCapabilityKind::Custom(CapabilityName::FsAppendBytes),
                 HostCapabilityKind::Custom(CapabilityName::FsUnlink),
                 HostCapabilityKind::Custom(CapabilityName::FsReadlinkSync),
+                HostCapabilityKind::Custom(CapabilityName::FsRenameSync),
                 HostCapabilityKind::Custom(CapabilityName::FsCpSync),
                 HostCapabilityKind::Custom(CapabilityName::FsCp),
                 HostCapabilityKind::Custom(CapabilityName::TmpdirResolve),

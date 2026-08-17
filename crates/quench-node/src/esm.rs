@@ -126,7 +126,7 @@ fn builtin_source(name: &str) -> Option<String> {
         "assert" => export_names!(AssertionError deepEqual deepStrictEqual doesNotMatch doesNotReject doesNotThrow equal fail ifError match notDeepEqual notDeepStrictEqual notEqual notStrictEqual ok rejects strict strictEqual throws),
         "events" => export_names!(EventEmitter EventEmitterAsyncResource addAbortListener captureRejectionSymbol captureRejections defaultMaxListeners errorMonitor getEventListeners getMaxListeners once setMaxListeners usingAsyncResource),
         "stream" => export_names!(Duplex PassThrough Readable Stream Transform Writable addAbortSignal compose destroy duplexPair finished getDefaultHighWaterMark isDisturbed isErrored isReadable pipeline promises setDefaultHighWaterMark),
-        "fs" | "fs/promises" => export_names!(access appendFile chmod close constants copyFile cp cpSync exists mkdir open glob globSync readFile readFileSync mkdtemp lstat lstatSync mkdirSync readlinkSync readdirSync realpathSync rmSync statSync symlinkSync unlinkSync utimesSync writeFileSync rename rm stat unlink writeFile promises),
+        "fs" | "fs/promises" => export_names!(access appendFile chmod close constants copyFile cp cpSync exists mkdir open glob globSync readFile readFileSync mkdtemp lstat lstatSync mkdirSync readlinkSync readdirSync realpathSync rmSync statSync symlinkSync unlinkSync utimesSync writeFileSync rename renameSync rm rmSync stat unlink writeFile promises),
         "test" => export_names!(after afterEach before beforeEach describe it run skip test todo),
         "module" => export_names!(createRequire builtinModules isBuiltin register runMain),
         "timers/promises" => export_names!(setTimeout setImmediate setInterval scheduler),

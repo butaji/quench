@@ -424,3 +424,10 @@ fn common_fs_entry_is_directory(receiver: Option<&Value>) -> Result<Value, VmErr
         .unwrap_or(false);
     Ok(Value::Boolean(is_dir))
 }
+
+fn fs_rename(arguments: &[Value]) -> Result<Value, VmError> {
+    let from = path_arg(arguments, 0).map_err(invalid_path_error)?;
+    let to = path_arg(arguments, 1).map_err(invalid_path_error)?;
+    std::fs::rename(from, to).map_err(|error| VmError::EvalError(error.to_string()))?;
+    Ok(Value::Undefined)
+}

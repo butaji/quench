@@ -23,6 +23,7 @@ impl CapabilityName {
     const CommonFsAssertDirEquivalent: u16 = 1333;
     const CommonFsCollectEntries: u16 = 1335;
     const CommonFsEntryIsDirectory: u16 = 1336;
+    const FsRenameSync: u16 = 1362;
     const CommonMustNotMutateObjectDeep: u16 = 1334;
     const BufferAlloc: u16 = 31;
     const BufferIsBuffer: u16 = 32;
