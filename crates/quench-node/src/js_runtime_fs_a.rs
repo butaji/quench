@@ -198,16 +198,7 @@ fn fs_stat_sync(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
     let metadata =
         std::fs::metadata(path).map_err(|error| VmError::EvalError(error.to_string()))?;
-    #[cfg(unix)]
-    let mode = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions())
-        | if metadata.is_dir() { 0o40000 } else { 0o100000 };
-    #[cfg(not(unix))]
-    let mode = if metadata.is_dir() { 0o40777 } else { 0o100666 };
-    Ok(quench_runtime::execute::set_property(
-        fs_stats(mode),
-        "size",
-        Value::Number(metadata.len() as f64),
-    ))
+    Ok(fs_stats_full(&metadata, stat_bigint_requested(arguments)))
 }
 
 fn fs_lstat_sync(arguments: &[Value]) -> Result<Value, VmError> {
