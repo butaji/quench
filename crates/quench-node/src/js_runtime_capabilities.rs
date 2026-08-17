@@ -25,6 +25,9 @@ impl CapabilityName {
     const CommonFsEntryIsDirectory: u16 = 1336;
     const FsRenameSync: u16 = 1362;
     const FsRm: u16 = 1363;
+    const FsSymlink: u16 = 1364;
+    const FsReadlink: u16 = 1365;
+    const FsRealpath: u16 = 1366;
     const CommonMustNotMutateObjectDeep: u16 = 1334;
     const BufferAlloc: u16 = 31;
     const BufferIsBuffer: u16 = 32;
