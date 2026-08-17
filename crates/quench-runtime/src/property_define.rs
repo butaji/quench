@@ -54,6 +54,13 @@ pub(crate) fn accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
 }
 
 fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
+    // The FunctionPrototype fallback exists for the four spec-fixed Function
+    // meta-keys (length/name/caller/arguments). It must NOT apply to
+    // arbitrary keys like "prototype" — otherwise it incorrectly reports a
+    // non-writable inherited descriptor for a Function instance's own
+    // `prototype` slot, blocking ordinary assignment to it (e.g. when a
+    // class definition installs its prototype).
+    let function_meta_key = matches!(key, "length" | "name" | "caller" | "arguments");
     match value {
         Value::Object(properties) => accessor_field(properties, key, field).or_else(|| {
             properties
@@ -62,8 +69,13 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
                 .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
                 .and_then(|prototype| accessor_value(&prototype, key, field))
         }),
-        Value::Function(function) => accessor_field(&function.properties.borrow(), key, field)
-            .or_else(|| accessor_builtin(Builtin::FunctionPrototype, key, field)),
+        Value::Function(function) => {
+            let own = accessor_field(&function.properties.borrow(), key, field);
+            if own.is_some() || !function_meta_key {
+                return own;
+            }
+            accessor_builtin(Builtin::FunctionPrototype, key, field)
+        }
         Value::ObjectAlias(alias) => alias.0.borrow().upgrade().and_then(|properties| {
             accessor_field(&properties, key, field).or_else(|| {
                 properties
@@ -74,8 +86,13 @@ fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {
             })
         }),
         Value::Promise(promise) => accessor_field(&promise.properties.borrow(), key, field),
-        Value::BoundFunction(bound) => accessor_field(&bound.properties.borrow(), key, field)
-            .or_else(|| accessor_bound(bound, key, field)),
+        Value::BoundFunction(bound) => {
+            let own = accessor_field(&bound.properties.borrow(), key, field);
+            if own.is_some() || !function_meta_key {
+                return own;
+            }
+            accessor_bound(bound, key, field)
+        }
         Value::ArrayBuffer(buffer) => buffer
             .own_property(&crate::builtins::descriptor_key(key))
             .and_then(|descriptor| descriptor_field(&descriptor, field)),
