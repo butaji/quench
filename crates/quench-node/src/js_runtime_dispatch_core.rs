@@ -219,6 +219,9 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsLstatPromise) => {
                 fs_lstat_promise(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::FsTruncatePromise) => {
+                fs_truncate_promise(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsUtimesPromise) => {
                 fs_utimes_promise(arguments)
             }
