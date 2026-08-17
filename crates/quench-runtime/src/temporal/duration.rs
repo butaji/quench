@@ -110,14 +110,43 @@ fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
 
 fn round(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
-    let unit = round_unit(arguments.first())?;
+    let options = arguments.first();
+    let unit = round_unit(options)?;
     validate_rounding_increment(arguments.first())?;
     let mut fields = duration_fields(object, false);
     let first = unit_index(unit)?;
-    for field in fields.iter_mut().skip(first + 1) {
-        *field = Value::Number(0.0);
+    if has_largest_unit(options) {
+        balance_time_fields(&mut fields, first);
+    }
+    if !has_largest_unit(options) {
+        for field in fields.iter_mut().skip(first + 1) {
+            *field = Value::Number(0.0);
+        }
     }
     construct(&fields)
+}
+
+fn has_largest_unit(value: Option<&Value>) -> bool {
+    matches!(
+        value,
+        Some(Value::Object(object))
+            if object.iter().any(|(key, _)| key == "largestUnit")
+    )
+}
+
+fn balance_time_fields(fields: &mut [Value], first: usize) {
+    for index in ((first + 1)..10).rev() {
+        let base = match index {
+            4 => 24,
+            5 | 6 => 60,
+            _ => 1_000,
+        };
+        let value = number_field(&fields[index]);
+        let carry = value / base;
+        fields[index] = Value::Number((value - carry * base) as f64);
+        let next = number_field(&fields[index - 1]);
+        fields[index - 1] = Value::Number((next + carry) as f64);
+    }
 }
 
 fn validate_rounding_increment(value: Option<&Value>) -> Result<(), VmError> {
@@ -147,7 +176,7 @@ fn round_unit(value: Option<&Value>) -> Result<&str, VmError> {
         Some(Value::String(unit)) => Ok(unit.as_str()),
         Some(Value::Object(object)) => object
             .iter()
-            .find(|(key, _)| key == "smallestUnit")
+            .find(|(key, _)| key == "smallestUnit" || key == "largestUnit")
             .and_then(|(_, value)| match value {
                 Value::String(unit) => Some(unit.as_str()),
                 _ => None,
@@ -160,6 +189,7 @@ fn round_unit(value: Option<&Value>) -> Result<&str, VmError> {
 }
 
 fn unit_index(unit: &str) -> Result<usize, VmError> {
+    let unit = unit.strip_suffix('s').unwrap_or(unit);
     [
         ("day", 3),
         ("hour", 4),
