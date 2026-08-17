@@ -444,8 +444,21 @@ pub(crate) fn reduce_values(
     arguments: &[Value],
     reverse: bool,
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Array(values)) = receiver else {
-        return Ok(Value::Undefined);
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.reduce called on null or undefined",
+        ));
+    };
+    if matches!(receiver, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.reduce called on null or undefined",
+        ));
+    }
+    let values = match receiver {
+        Value::Array(values) => values,
+        _ => return Err(crate::value::error::throw_type_error(
+            "Array.prototype.reduce called on a non-object",
+        )),
     };
     let Some(callback) = arguments.first() else {
         return Ok(Value::Undefined);
@@ -467,7 +480,7 @@ pub(crate) fn reduce_values(
             accumulator,
             values[index].clone(),
             Value::Number(index as f64),
-            receiver.cloned().unwrap_or(Value::Undefined),
+            receiver.clone(),
         ];
         accumulator = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
     }
