@@ -1,5 +1,6 @@
 include!("js_runtime_fs_a.rs");
 include!("js_runtime_fs_copy.rs");
+include!("js_runtime_fs_async.rs");
 
 fn fs_read_promise(arguments: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(arguments, 0)?;
