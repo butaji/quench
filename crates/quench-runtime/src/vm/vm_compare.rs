@@ -27,8 +27,12 @@ fn compare_values(left: &Value, right: &Value, compare: fn(f64, f64) -> bool) ->
 fn compare_bigint_operands(left: &Value, right: &Value, compare: fn(f64, f64) -> bool) -> Result<Option<bool>, VmError> {
     let (bigint, number, reverse) = match (left, right) {
         (Value::BigInt(left), Value::BigInt(right)) => return Ok(Some(compare_ordering(parse_bigint(left)?.cmp(&parse_bigint(right)?), compare, false))),
-        (Value::BigInt(bigint), Value::String(string)) => return Ok(compare_bigint_string(bigint, string, compare, false)),
-        (Value::String(string), Value::BigInt(bigint)) => return Ok(compare_bigint_string(bigint, string, compare, true)),
+        (Value::BigInt(bigint), Value::String(string)) if !crate::conversion::is_symbol_string(string) => {
+            return Ok(compare_bigint_string(bigint, string, compare, false))
+        }
+        (Value::String(string), Value::BigInt(bigint)) if !crate::conversion::is_symbol_string(string) => {
+            return Ok(compare_bigint_string(bigint, string, compare, true))
+        }
         (Value::BigInt(bigint), value) => (bigint, crate::conversion::primitive_to_number(value)?, false),
         (value, Value::BigInt(bigint)) => (bigint, crate::conversion::primitive_to_number(value)?, true),
         _ => return Ok(None),
