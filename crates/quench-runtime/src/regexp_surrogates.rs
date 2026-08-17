@@ -13,7 +13,7 @@ fn split_surrogate_classes(pattern: &str) -> String {
     while index < bytes.len() {
         // Drive the iteration off char_indices so multi-byte UTF-8
         // characters (e.g. the body of `\\u{80}` and other non-ASCII
-        // bytes that test262 injects into regex source) advance in one
+        // bytes in regex source) advance in one
         // step instead of one byte at a time. The previous byte-level
         // walk could land on a continuation byte and panic on the next
         // `&pattern[index..]` slice.
