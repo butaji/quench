@@ -29,7 +29,7 @@ fn rejected(value: Value) -> Value {
 fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
     let src = path_value(arguments, 0)?;
     let dest = path_value(arguments, 1)?;
-    let (recursive, force, error_on_exist, verbatim) = match arguments.get(2) {
+    let (recursive, force, error_on_exist, verbatim, dereference) = match arguments.get(2) {
         Some(Value::Object(options)) => {
             let options = Value::Object(options.clone());
             let recursive = quench_runtime::execute::get_property_result(&options, "recursive")
@@ -46,9 +46,13 @@ fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
                 quench_runtime::execute::get_property_result(&options, "verbatimSymlinks")
                     .map(|v| matches!(v, Value::Boolean(true)))
                     .unwrap_or(false);
-            (recursive, force, error_on_exist, verbatim)
+            let dereference =
+                quench_runtime::execute::get_property_result(&options, "dereference")
+                    .map(|v| matches!(v, Value::Boolean(true)))
+                    .unwrap_or(false);
+            (recursive, force, error_on_exist, verbatim, dereference)
         }
-        _ => (false, true, false, false),
+        _ => (false, true, false, false, false),
     };
     if let Some(Value::Object(options)) = arguments.get(2) {
         let options = Value::Object(options.clone());
@@ -102,7 +106,7 @@ fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
                 "The \"recursive\" option is mandatory when using cp with directories",
             )));
         }
-        copy_tree(&src, &dest, force, verbatim)
+        copy_tree(&src, &dest, force, verbatim, dereference)
     };
     match run() {
         Ok(()) if asynchronous => Ok(fulfilled(Value::Undefined)),
@@ -162,7 +166,13 @@ fn data_to_hex(data: &[u8]) -> String {
     data.iter().map(|b| format!("{b:02x}")).collect::<String>()
 }
 
-fn copy_tree(src: &str, dest: &str, force: bool, verbatim: bool) -> Result<(), VmError> {
+fn copy_tree(
+    src: &str,
+    dest: &str,
+    force: bool,
+    verbatim: bool,
+    dereference: bool,
+) -> Result<(), VmError> {
     let to_err = |error: std::io::Error| VmError::EvalError(error.to_string());
     let sym_metadata = std::fs::symlink_metadata(src).map_err(&to_err)?;
     if sym_metadata.file_type().is_symlink() && verbatim {
@@ -175,8 +185,12 @@ fn copy_tree(src: &str, dest: &str, force: bool, verbatim: bool) -> Result<(), V
         }
         return Ok(());
     }
-    if sym_metadata.file_type().is_symlink() && !verbatim {
-        // Resolve the symlink target into a regular file/dir copy.
+    if sym_metadata.file_type().is_symlink() && dereference {
+        // Follow the symlink and copy the referenced target (file or dir).
+        return copy_tree_followed(src, dest, force);
+    }
+    if sym_metadata.file_type().is_symlink() {
+        // Resolve the relative symlink into an absolute symlink at dest.
         return copy_tree_resolved(src, dest, force);
     }
     let metadata = std::fs::metadata(src).map_err(&to_err)?;
@@ -188,7 +202,46 @@ fn copy_tree(src: &str, dest: &str, force: bool, verbatim: bool) -> Result<(), V
             let entry = entry.map_err(&to_err)?;
             let from = entry.path();
             let to = std::path::Path::new(dest).join(entry.file_name());
-            copy_tree(&from.to_string_lossy(), &to.to_string_lossy(), force, verbatim)?;
+            copy_tree(
+                &from.to_string_lossy(),
+                &to.to_string_lossy(),
+                force,
+                verbatim,
+                dereference,
+            )?;
+        }
+        Ok(())
+    } else if metadata.is_file() {
+        if !force && std::path::Path::new(dest).exists() {
+            return Ok(());
+        }
+        if let Some(parent) = std::path::Path::new(dest).parent() {
+            std::fs::create_dir_all(parent).map_err(&to_err)?;
+        }
+        std::fs::copy(src, dest).map(|_| ()).map_err(&to_err)
+    } else {
+        Ok(())
+    }
+}
+
+fn copy_tree_followed(src: &str, dest: &str, force: bool) -> Result<(), VmError> {
+    let to_err = |error: std::io::Error| VmError::EvalError(error.to_string());
+    let metadata = std::fs::metadata(src).map_err(&to_err)?;
+    if metadata.is_dir() {
+        if !std::path::Path::new(dest).exists() {
+            std::fs::create_dir_all(dest).map_err(&to_err)?;
+        }
+        for entry in std::fs::read_dir(src).map_err(&to_err)? {
+            let entry = entry.map_err(&to_err)?;
+            let from = entry.path();
+            let to = std::path::Path::new(dest).join(entry.file_name());
+            copy_tree(
+                &from.to_string_lossy(),
+                &to.to_string_lossy(),
+                force,
+                false,
+                false,
+            )?;
         }
         Ok(())
     } else if metadata.is_file() {
@@ -206,32 +259,16 @@ fn copy_tree(src: &str, dest: &str, force: bool, verbatim: bool) -> Result<(), V
 
 fn copy_tree_resolved(src: &str, dest: &str, force: bool) -> Result<(), VmError> {
     let to_err = |error: std::io::Error| VmError::EvalError(error.to_string());
-    let metadata = std::fs::metadata(src).map_err(&to_err)?;
-    if metadata.is_dir() {
-        if !std::path::Path::new(dest).exists() {
-            std::fs::create_dir_all(dest).map_err(&to_err)?;
-        }
-        for entry in std::fs::read_dir(src).map_err(&to_err)? {
-            let entry = entry.map_err(&to_err)?;
-            let from = entry.path();
-            let to = std::path::Path::new(dest).join(entry.file_name());
-            copy_tree(
-                &from.to_string_lossy(),
-                &to.to_string_lossy(),
-                force,
-                false,
-            )?;
-        }
-        Ok(())
-    } else if metadata.is_file() {
-        if !force && std::path::Path::new(dest).exists() {
-            return Ok(());
-        }
-        if let Some(parent) = std::path::Path::new(dest).parent() {
-            std::fs::create_dir_all(parent).map_err(&to_err)?;
-        }
-        std::fs::copy(src, dest).map(|_| ()).map_err(&to_err)
-    } else {
-        Ok(())
+    let target = std::fs::read_link(src).map_err(&to_err)?;
+    let base = std::path::Path::new(src).parent().unwrap_or_else(|| std::path::Path::new("."));
+    let joined = base.join(&target);
+    let resolved = joined.to_string_lossy().into_owned();
+    if !force && std::path::Path::new(dest).exists() {
+        return Ok(());
     }
+    if let Some(parent) = std::path::Path::new(dest).parent() {
+        std::fs::create_dir_all(parent).map_err(&to_err)?;
+    }
+    std::os::unix::fs::symlink(resolved, dest).map_err(&to_err)?;
+    Ok(())
 }
