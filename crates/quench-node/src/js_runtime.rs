@@ -89,6 +89,8 @@ fn is_util_resolver(id: u16) -> bool {
                 | CapabilityName::UtilIsDate
                 | CapabilityName::TmpdirRefresh
                 | CapabilityName::TmpdirFileUrl
+                | CapabilityName::FixtureReadKey
+                | CapabilityName::FixturePath
                 | CapabilityName::UrlSearchParamsGetAll
                 | CapabilityName::UrlSearchParamsSet
                 | CapabilityName::UrlSearchParamsToString
