@@ -208,6 +208,12 @@ impl QuenchNodeHost {
                     ),
                 ]),
             ),
+            HostCapabilityKind::Custom(CapabilityName::FsGlob) => {
+                Ok(quench_runtime::host_api::array(Vec::new()))
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsGlobSync) => {
+                Ok(quench_runtime::host_api::array(Vec::new()))
+            }
             HostCapabilityKind::Custom(CapabilityName::FixtureReadKey) => {
                 Ok(Value::String(String::new().into()))
             }
