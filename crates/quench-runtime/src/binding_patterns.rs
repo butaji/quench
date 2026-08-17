@@ -354,7 +354,7 @@ fn bind_array(
     ops.push(Op::IteratorBinding {
         iterator,
         body: crate::machine::FunctionCode::from_ops(body),
-        close_normal: false,
+        close_normal: true,
     });
     Some(())
 }
