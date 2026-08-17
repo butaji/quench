@@ -320,12 +320,28 @@ impl QuenchNodeHost {
                 Ok(Value::String("новини.com".into()))
             }
             HostCapabilityKind::Custom(CapabilityName::UrlFileUrlToPath) => {
+                // Accept a file URL string or a URL-like object (as produced by
+                // pathToFileURL), whose href carries the file:// URL.
                 let value = match arguments.first() {
-                    Some(Value::String(value)) => value,
-                    _ => return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "url"))),
+                    Some(Value::String(value)) => value.clone(),
+                    Some(url_object) => match quench_runtime::execute::get_property_result(
+                        url_object,
+                        "href",
+                    ) {
+                        Ok(Value::String(href)) => href,
+                        _ => {
+                            return Err(VmError::Thrown(fs_error(
+                                "ERR_INVALID_ARG_TYPE",
+                                "url",
+                            )))
+                        }
+                    },
+                    None => {
+                        return Err(VmError::Thrown(fs_error("ERR_INVALID_ARG_TYPE", "url")))
+                    }
                 };
                 if !value.starts_with("file:///") {
-                    return Err(VmError::Thrown(fs_error("ERR_INVALID_URL", value)));
+                    return Err(VmError::Thrown(fs_error("ERR_INVALID_URL", &value)));
                 }
                 if value.contains("%2F") || value.contains("%2f") {
                     return Err(VmError::Thrown(fs_error(
@@ -356,7 +372,7 @@ impl QuenchNodeHost {
                 {
                     return Ok(Value::String("C:\\foo".into()));
                 }
-                Ok(Value::String(decode_file_url(value).into()))
+                Ok(Value::String(decode_file_url(&value).into()))
             }
             HostCapabilityKind::Custom(CapabilityName::UrlToHttpOptions) => {
                 Ok(Value::object(vec![
