@@ -454,11 +454,32 @@ pub(crate) fn reduce_values(
             "Array.prototype.reduce called on null or undefined",
         ));
     }
-    let values = match receiver {
-        Value::Array(values) => values,
-        _ => return Err(crate::value::error::throw_type_error(
-            "Array.prototype.reduce called on a non-object",
-        )),
+    let values: Vec<Value> = if let Value::Array(values) = receiver {
+        values.iter().cloned().collect()
+    } else {
+        let length = crate::execute::get_property_result(receiver, "length")
+            .ok()
+            .and_then(|v| {
+                if let Value::Number(n) = v {
+                    let clamped = if n.is_nan() || n < 0.0 {
+                        0.0
+                    } else if n > 1_048_576.0 {
+                        1_048_576.0
+                    } else {
+                        n
+                    };
+                    Some(clamped.trunc() as usize)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
+        (0..length)
+            .map(|i| {
+                crate::execute::get_property_result(receiver, &i.to_string())
+                    .unwrap_or(Value::Undefined)
+            })
+            .collect()
     };
     let Some(callback) = arguments.first() else {
         return Ok(Value::Undefined);
@@ -482,7 +503,7 @@ pub(crate) fn reduce_values(
             Value::Number(index as f64),
             receiver.clone(),
         ];
-        accumulator = crate::functions::execute_target(callback, &Value::Undefined, &args)?;
+        accumulator = crate::functions::execute_target(callback, receiver, &args)?;
     }
     Ok(accumulator)
 }
