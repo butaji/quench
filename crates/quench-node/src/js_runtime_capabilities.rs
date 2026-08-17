@@ -315,6 +315,7 @@ impl CapabilityName {
     const AssertNotDeepEqual: u16 = 38;
     const AssertRejects: u16 = 2340;
     const AssertDoesNotReject: u16 = 2341;
+    const ErrorsDetermineSpecificType: u16 = 2342;
     const HttpServer: u16 = 11;
     const HttpGet: u16 = 12;
     const HttpRequestOn: u16 = 401;
