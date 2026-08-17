@@ -111,9 +111,17 @@ fn reduce_source_with_type_and_global(
 
 fn wrap_cjs_source(source: &str) -> String {
     let mut output = String::with_capacity(source.len() + 64);
-    output.push_str("(function(exports,require,module,__filename,__dirname){");
+    // Invoke the module wrapper so the CommonJS body actually executes. A
+    // bare function expression (previously) left the body inert, so every
+    // CJS script swallowed its assertions and reported a vacuous pass. The
+    // no-param IIFE lets the body resolve require/module/exports/__filename/
+    // __dirname as free identifiers through globalThis, whose values the host
+    // prelude installs, avoiding a `.call(args...)` path that would drop the
+    // parameter bindings.
+    output.push_str("(function(){");
+    output.push_str("\n");
     output.push_str(source);
-    output.push_str("\n})");
+    output.push_str("\n})()");
     output
 }
 
