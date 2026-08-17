@@ -374,7 +374,9 @@ pub(crate) fn reduce_arrow(
         ops,
         next_register,
         body_ops,
-        crate::function_parameters::expected_argument_count(&function.params),
+        crate::function_parameters::bindings(&function.params)
+            .map(|(_, count)| count)
+            .ok()?,
         captures,
         FunctionMetadata {
             kind: FunctionKind::Arrow,
