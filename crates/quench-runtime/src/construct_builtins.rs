@@ -128,6 +128,7 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
 
 fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     let (source, observable_source, flags) = regexp_source_and_flags(arguments)?;
+    let visible_flags = crate::regexp::canonical_flags(&flags);
     crate::regexp::compile(&source, &flags)
         .map_err(|error| crate::value::error::throw_syntax_error(&error))?;
     let last_index = Value::BindingCell(Rc::new(RefCell::new(Value::Number(0.0))));
@@ -149,11 +150,11 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
         ),
         (
             "flags".to_string(),
-            Value::BindingCell(Rc::new(RefCell::new(Value::String(flags.clone())))),
+            Value::BindingCell(Rc::new(RefCell::new(Value::String(visible_flags.clone())))),
         ),
         (
             crate::builtins::descriptor_key("flags"),
-            regexp_data_descriptor(false, true, Value::String(flags.clone())),
+            regexp_data_descriptor(false, true, Value::String(visible_flags)),
         ),
         ("lastIndex".to_string(), last_index),
         (
