@@ -192,7 +192,7 @@ fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
     let Some((_, Value::String(value))) = properties.iter().find(|(key, _)| key == "_value") else {
         return ordered(properties, symbols)
             .into_iter()
-            .filter(|key| key != "_value")
+            .filter(|key| key != "_value" && key != "timeValue")
             .collect();
     };
     if crate::conversion::is_symbol_string(value) {
@@ -313,10 +313,9 @@ fn array_keys(values: &crate::value::ArrayData, symbols: bool) -> Vec<String> {
     if !symbols {
         keys.push("length".to_string());
     }
-    append_unique(
-        &mut keys,
-        ordered_properties(&values.property_keys(), symbols),
-    );
+    let mut named = values.property_keys();
+    append_unique(&mut named, values.descriptor_keys());
+    append_unique(&mut keys, ordered_properties(&named, symbols));
     keys
 }
 

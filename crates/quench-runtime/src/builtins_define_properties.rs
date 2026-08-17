@@ -17,10 +17,14 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
     };
     keys.iter().try_fold(target, |target, key| {
         let key = crate::conversion::to_property_key(key)?;
-        let descriptor = property_descriptor(&properties, &key)?;
-        let Some(descriptor) = descriptor_object(descriptor) else {
+        let Some(descriptor) = property_descriptor(&properties, &key)? else {
             return Ok(target);
         };
+        if !crate::value::is_object(&descriptor) {
+            return Err(crate::value::error::throw_type_error(
+                "Property descriptor must be an object",
+            ));
+        }
         let descriptor = descriptor_fields(&descriptor)?;
         let result = define_own_property(&target, &key, &descriptor)?;
         crate::locals::replace_value(&target, &result);
@@ -28,21 +32,21 @@ pub(crate) fn define_properties(arguments: &[Value]) -> Result<Value, crate::exe
     })
 }
 
-fn property_descriptor(properties: &Value, key: &str) -> Result<Value, crate::execute::VmError> {
+fn property_descriptor(
+    properties: &Value,
+    key: &str,
+) -> Result<Option<Value>, crate::execute::VmError> {
     if matches!(properties, Value::Proxy(_)) {
         let property = crate::proxy::proxy_get_own_property_descriptor(properties, key)?;
-        if !property_is_enumerable(&property) {
-            return Ok(Value::Undefined);
+        if !property_is_enumerable(&property) || matches!(property, Value::Undefined) {
+            return Ok(None);
         }
-        if matches!(property, Value::Undefined) {
-            return Ok(Value::Undefined);
-        }
-        return crate::execute::get_property_result(&property, "value");
+        return crate::execute::get_property_result(&property, "value").map(Some);
     }
     if crate::builtins::descriptor_flag(properties, key, "enumerable") == Some(false) {
-        return Ok(Value::Undefined);
+        return Ok(None);
     }
-    crate::execute::get_property_result(properties, key)
+    crate::execute::get_property_result(properties, key).map(Some)
 }
 
 fn property_is_enumerable(property: &Value) -> bool {
@@ -53,10 +57,6 @@ fn property_is_enumerable(property: &Value) -> bool {
         .iter()
         .rev()
         .any(|(name, value)| name == "enumerable" && matches!(value, Value::Boolean(false)))
-}
-
-fn descriptor_object(value: Value) -> Option<Value> {
-    crate::value::is_object(&value).then_some(value)
 }
 
 pub(crate) fn descriptor_fields(

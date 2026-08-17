@@ -224,8 +224,9 @@ pub(crate) fn instantiate_script_declarations(
     next_slot: &mut u16,
     ops: &mut Vec<Op>,
     script: bool,
+    strict: bool,
 ) -> Vec<(String, bool)> {
-    predeclare_functions(statements, locals, next_slot, false);
+    predeclare_functions(statements, locals, next_slot, strict);
     if !script {
         return Vec::new();
     }

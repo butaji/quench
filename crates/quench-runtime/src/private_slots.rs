@@ -12,6 +12,7 @@ pub(crate) fn get(value: &Value, name: &PrivateName) -> Result<Value, VmError> {
         .find(|(id, _)| id == name)
         .map(|(_, slot)| slot.clone());
     let Some(slot) = slot else {
+        eprintln!("DBG get miss name={:?} slots={:?}", name, slots.borrow());
         return Err(private_brand_error());
     };
     match slot {
@@ -123,6 +124,7 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmE
         return Err(VmError::MissingReturn);
     };
     let object = crate::execute::read_register(registers, *object)?;
+    eprintln!("DBG execute_get name={:?} obj={:?}", name, std::mem::discriminant(&object));
     let name = resolve(*name)?;
     let value = get(&object, &name)?;
     crate::execute::write_value(registers, *dst, value);
@@ -149,7 +151,11 @@ pub(crate) fn execute_define(registers: &mut [Value], op: &Op) -> Result<(), VmE
 }
 
 fn resolve(name: crate::facts::PrivateNameId) -> Result<PrivateName, VmError> {
-    crate::private_environment::resolve(name).ok_or_else(private_brand_error)
+    let resolved = crate::private_environment::resolve(name);
+    if resolved.is_none() {
+        eprintln!("DBG resolve miss id={:?} env={:?}", name, crate::private_environment::current());
+    }
+    resolved.ok_or_else(private_brand_error)
 }
 
 fn slots(value: &Value) -> Result<PrivateSlots, VmError> {
@@ -163,12 +169,20 @@ fn slots(value: &Value) -> Result<PrivateSlots, VmError> {
             .upgrade()
             .map(|object| object.private_slots.clone())
             .ok_or_else(private_brand_error),
-        _ => Err(private_brand_error()),
+        _ => {
+            eprintln!("DBG slots unsupported value: {:?}", std::mem::discriminant(value));
+            Err(private_brand_error())
+        }
     }
 }
 
+#[track_caller]
 fn private_brand_error() -> VmError {
+    eprintln!("DBG brand error at {}", std::panic::Location::caller());
     crate::value::error::throw_type_error(
         "Private field access on an object without the required brand",
     )
 }
+
+#[cfg(test)]
+mod dbg_tests {}
