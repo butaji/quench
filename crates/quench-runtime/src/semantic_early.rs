@@ -11,8 +11,18 @@ pub(crate) fn var_declared_names(program: &oxc::ast::ast::Program<'_>) -> Vec<St
 }
 
 pub(crate) fn var_declared_names_in(statements: &[Statement<'_>]) -> Vec<String> {
+    var_names_filtered(statements, true)
+}
+
+/// Var names hoisted out of a block in strict mode: Annex B function hoisting
+/// is suppressed, so block-level function declarations stay block-scoped.
+pub(crate) fn strict_var_declared_names_in(statements: &[Statement<'_>]) -> Vec<String> {
+    var_names_filtered(statements, false)
+}
+
+fn var_names_filtered(statements: &[Statement<'_>], hoist_functions: bool) -> Vec<String> {
     let mut names = BTreeSet::new();
-    collect_var_names(statements, &mut names);
+    collect_var_names(statements, &mut names, hoist_functions);
     names.into_iter().collect()
 }
 
@@ -199,33 +209,48 @@ fn collect_top_level_lexical_name(statement: &Statement<'_>, names: &mut BTreeSe
     }
 }
 
-fn collect_var_names(statements: &[Statement<'_>], names: &mut BTreeSet<String>) {
+fn collect_var_names(
+    statements: &[Statement<'_>],
+    names: &mut BTreeSet<String>,
+    hoist_functions: bool,
+) {
     for statement in statements {
-        collect_statement_var_names(statement, names);
+        collect_statement_var_names(statement, names, hoist_functions);
     }
 }
 
-fn collect_statement_var_names(statement: &Statement<'_>, names: &mut BTreeSet<String>) {
+fn collect_statement_var_names(
+    statement: &Statement<'_>,
+    names: &mut BTreeSet<String>,
+    hoist: bool,
+) {
+    if let Statement::FunctionDeclaration(function) = statement {
+        if hoist {
+            collect_function_name(function, names);
+        }
+        return;
+    }
     match statement {
         Statement::VariableDeclaration(declaration) => collect_var_declaration(declaration, names),
-        Statement::FunctionDeclaration(function) => collect_function_name(function, names),
-        Statement::BlockStatement(block) => collect_var_names(&block.body, names),
-        Statement::IfStatement(statement) => collect_if_var_names(statement, names),
+        Statement::BlockStatement(block) => collect_var_names(&block.body, names, hoist),
+        Statement::IfStatement(statement) => collect_if_var_names(statement, names, hoist),
+        Statement::ForStatement(statement) => collect_for_var_names(statement, names, hoist),
+        Statement::ForInStatement(statement) => collect_for_in_var_names(statement, names, hoist),
+        Statement::ForOfStatement(statement) => collect_for_of_var_names(statement, names, hoist),
+        Statement::SwitchStatement(statement) => collect_switch_var_names(statement, names, hoist),
+        Statement::TryStatement(statement) => collect_try_var_names(statement, names, hoist),
         Statement::LabeledStatement(statement) => {
-            collect_statement_var_names(&statement.body, names);
+            collect_statement_var_names(&statement.body, names, hoist);
         }
         Statement::WhileStatement(statement) => {
-            collect_statement_var_names(&statement.body, names);
+            collect_statement_var_names(&statement.body, names, hoist);
         }
         Statement::DoWhileStatement(statement) => {
-            collect_statement_var_names(&statement.body, names);
+            collect_statement_var_names(&statement.body, names, hoist);
         }
-        Statement::ForStatement(statement) => collect_for_var_names(statement, names),
-        Statement::ForInStatement(statement) => collect_for_in_var_names(statement, names),
-        Statement::ForOfStatement(statement) => collect_for_of_var_names(statement, names),
-        Statement::SwitchStatement(statement) => collect_switch_var_names(statement, names),
-        Statement::TryStatement(statement) => collect_try_var_names(statement, names),
-        Statement::WithStatement(statement) => collect_statement_var_names(&statement.body, names),
+        Statement::WithStatement(statement) => {
+            collect_statement_var_names(&statement.body, names, hoist);
+        }
         _ => {}
     }
 }
@@ -254,38 +279,45 @@ fn collect_function_name(function: &oxc::ast::ast::Function<'_>, names: &mut BTr
     }
 }
 
-fn collect_if_var_names(statement: &oxc::ast::ast::IfStatement<'_>, names: &mut BTreeSet<String>) {
-    collect_statement_var_names(&statement.consequent, names);
+fn collect_if_var_names(
+    statement: &oxc::ast::ast::IfStatement<'_>,
+    names: &mut BTreeSet<String>,
+    hoist_functions: bool,
+) {
+    collect_statement_var_names(&statement.consequent, names, hoist_functions);
     if let Some(alternate) = &statement.alternate {
-        collect_statement_var_names(alternate, names);
+        collect_statement_var_names(alternate, names, hoist_functions);
     }
 }
 
 fn collect_for_var_names(
     statement: &oxc::ast::ast::ForStatement<'_>,
     names: &mut BTreeSet<String>,
+    hoist_functions: bool,
 ) {
     if let Some(oxc::ast::ast::ForStatementInit::VariableDeclaration(declaration)) = &statement.init
     {
         collect_var_declaration(declaration, names);
     }
-    collect_statement_var_names(&statement.body, names);
+    collect_statement_var_names(&statement.body, names, hoist_functions);
 }
 
 fn collect_for_in_var_names(
     statement: &oxc::ast::ast::ForInStatement<'_>,
     names: &mut BTreeSet<String>,
+    hoist_functions: bool,
 ) {
     collect_for_left_var_names(&statement.left, names);
-    collect_statement_var_names(&statement.body, names);
+    collect_statement_var_names(&statement.body, names, hoist_functions);
 }
 
 fn collect_for_of_var_names(
     statement: &oxc::ast::ast::ForOfStatement<'_>,
     names: &mut BTreeSet<String>,
+    hoist_functions: bool,
 ) {
     collect_for_left_var_names(&statement.left, names);
-    collect_statement_var_names(&statement.body, names);
+    collect_statement_var_names(&statement.body, names, hoist_functions);
 }
 
 fn collect_for_left_var_names(
@@ -300,22 +332,24 @@ fn collect_for_left_var_names(
 fn collect_switch_var_names(
     statement: &oxc::ast::ast::SwitchStatement<'_>,
     names: &mut BTreeSet<String>,
+    hoist_functions: bool,
 ) {
     for case in &statement.cases {
-        collect_var_names(&case.consequent, names);
+        collect_var_names(&case.consequent, names, hoist_functions);
     }
 }
 
 fn collect_try_var_names(
     statement: &oxc::ast::ast::TryStatement<'_>,
     names: &mut BTreeSet<String>,
+    hoist_functions: bool,
 ) {
-    collect_var_names(&statement.block.body, names);
+    collect_var_names(&statement.block.body, names, hoist_functions);
     if let Some(handler) = &statement.handler {
-        collect_var_names(&handler.body.body, names);
+        collect_var_names(&handler.body.body, names, hoist_functions);
     }
     if let Some(finalizer) = &statement.finalizer {
-        collect_var_names(&finalizer.body, names);
+        collect_var_names(&finalizer.body, names, hoist_functions);
     }
 }
 

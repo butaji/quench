@@ -9,6 +9,9 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
     let Value::Iterator(data) = value else {
         return Err(not_iterable());
     };
+    if std::env::var_os("QDEBUG").is_some() {
+        eprintln!("step_value state={:?}", std::mem::discriminant(&*data.state.borrow()));
+    }
     match step_target(data)? {
         StepTarget::Value(value) => Ok(value),
         StepTarget::Protocol(iterator, cached) => {

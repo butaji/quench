@@ -310,7 +310,7 @@ fn initialize_statement_reduction(
     let mut ops = Vec::new();
     let mut next_register = 0;
     if eval_behavior == crate::reduce_support::EvalBehavior::Normal {
-        crate::reduce_support::predeclare_functions(statements, locals, next_slot, false);
+        crate::reduce_support::predeclare_functions(statements, locals, next_slot, facts.strict);
     } else {
         for statement in statements {
             let excluded = crate::semantic_early::annex_b_lexical_collisions_in(
