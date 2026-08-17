@@ -76,11 +76,6 @@ include!("js_runtime_dispatch_crypto_a.rs");
 include!("js_runtime_dispatch_buffer.rs");
 include!("js_runtime_dispatch_core.rs");
 
-fn is_util_promisified(id: u16) -> bool {
-    (CapabilityName::UtilPromisifiedFirst..CapabilityName::UtilDeprecatedFirst).contains(&id)
-        && !matches!(id, CapabilityName::ProcessOn | CapabilityName::ProcessEmit)
-}
-
 fn tmpdir_base() -> String {
     if let Some(base) = NODE_TMPDIR.with(|current| current.borrow().clone()) {
         return base;
