@@ -60,6 +60,7 @@ pub(crate) fn create(
         state: RefCell::new(state),
         pending_yield: RefCell::new(false),
         executing: RefCell::new(false),
+        running: RefCell::new(false),
         async_next_queue: RefCell::new(VecDeque::new()),
     })))
 }
@@ -277,6 +278,18 @@ enum Resume {
 }
 
 fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
+    if *generator.running.borrow() {
+        return Err(crate::value::error::throw_type_error(
+            "Generator is already executing",
+        ));
+    }
+    *generator.running.borrow_mut() = true;
+    let result = resume_inner(generator, resume);
+    *generator.running.borrow_mut() = false;
+    result
+}
+
+fn resume_inner(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     if *generator.done.borrow() {
         return completed_resume(resume);
     }
