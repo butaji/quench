@@ -28,6 +28,7 @@ impl CapabilityName {
     const FsSymlink: u16 = 1364;
     const FsReadlink: u16 = 1365;
     const FsRealpath: u16 = 1366;
+    const FsMkdtempAsync: u16 = 1367;
     const CommonMustNotMutateObjectDeep: u16 = 1334;
     const BufferAlloc: u16 = 31;
     const BufferIsBuffer: u16 = 32;
