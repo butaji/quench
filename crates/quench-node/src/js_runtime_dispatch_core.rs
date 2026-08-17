@@ -222,6 +222,9 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsTruncatePromise) => {
                 fs_truncate_promise(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::FsCopyFilePromise) => {
+                fs_copy_file_promise(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsUtimesPromise) => {
                 fs_utimes_promise(arguments)
             }
