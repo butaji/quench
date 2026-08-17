@@ -289,3 +289,23 @@ fn fs_readlink_promise(arguments: &[Value]) -> Result<Value, VmError> {
 fn fs_realpath_promise(arguments: &[Value]) -> Result<Value, VmError> {
     fs_settle_sync(|| fs_realpath(arguments))
 }
+
+fn fs_symlink_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_settle_sync(|| fs_symlink(arguments).map(|_| Value::Undefined))
+}
+fn fs_mkdtemp_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_settle_sync(|| fs_mkdtemp(arguments))
+}
+fn fs_lstat_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    let path = match path_arg(arguments, 0) {
+        Ok(path) => path.to_owned(),
+        Err(error) => return reject_fs_error(error),
+    };
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => Ok(fulfilled(fs_stats_full(
+            &metadata,
+            stat_bigint_requested(arguments),
+        ))),
+        Err(error) => reject_fs_error(VmError::EvalError(error.to_string())),
+    }
+}

@@ -210,6 +210,15 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsRealpathPromise) => {
                 fs_realpath_promise(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::FsSymlinkPromise) => {
+                fs_symlink_promise(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsMkdtempPromise) => {
+                fs_mkdtemp_promise(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsLstatPromise) => {
+                fs_lstat_promise(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsUtimesPromise) => {
                 fs_utimes_promise(arguments)
             }
