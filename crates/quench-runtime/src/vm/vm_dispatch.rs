@@ -79,6 +79,7 @@ fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError>
             | ResolveGlobal { .. }
             | GetPropertyDynamic { .. }
             | HasPropertyDynamic { .. }
+            | HasPrivate { .. }
             | ToPropertyKey { .. }
             | SetProperty { .. }
             | SetPrototype { .. }
@@ -263,6 +264,7 @@ fn run_get_set_property(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErr
         ResolveGlobal { .. } => crate::with_scope::execute_resolve_global(registers, op)?,
         GetPropertyDynamic { .. } => crate::properties::execute_get_dynamic(registers, op)?,
         HasPropertyDynamic { .. } => crate::with_scope::execute_has_property(registers, op)?,
+        HasPrivate { .. } => crate::with_scope::execute_has_private(registers, op)?,
         ResolveName { .. } | SetName { .. } | SetResolvedBinding { .. } | CheckStrictName { .. } => {
             run_name_property(registers, op)?
         }
