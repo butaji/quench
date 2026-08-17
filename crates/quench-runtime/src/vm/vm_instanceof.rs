@@ -8,7 +8,10 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
         return Ok(true);
     }
 if !instanceof_callable(&constructor) {
-        return Err(type_error("Right-hand side of instanceof is not callable"));
+        let Some(handler) = has_instance_handler(&constructor)? else {
+            return Err(type_error("Right-hand side of instanceof is not callable"));
+        };
+        return call_has_instance(&handler, &constructor, &value);
     }
     if !crate::value::is_object(&value) {
         return Ok(false);
@@ -17,11 +20,15 @@ if !instanceof_callable(&constructor) {
         return Ok(result);
     }
     if let Some(handler) = has_instance_handler(&constructor)? {
-        let arguments = [value.clone()];
-        let result = crate::functions::execute_target(&handler, &constructor, &arguments)?;
-        return Ok(is_truthy(&result));
+        return call_has_instance(&handler, &constructor, &value);
     }
     ordinary_instanceof(&value, &constructor)
+}
+
+fn call_has_instance(handler: &Value, constructor: &Value, value: &Value) -> Result<bool, VmError> {
+    let arguments = [value.clone()];
+    let result = crate::functions::execute_target(handler, constructor, &arguments)?;
+    Ok(is_truthy(&result))
 }
 
 fn dereference_binding(value: &Value) -> Value {

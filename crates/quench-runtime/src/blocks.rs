@@ -31,13 +31,7 @@ fn reduce_body(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    for name in crate::semantic_early::var_declared_names_in(&block.body) {
-        locals.entry(name).or_insert_with(|| {
-            let slot = *next_slot;
-            *next_slot = next_slot.saturating_add(1);
-            slot
-        });
-    }
+    hoist_var_names(block, facts.strict, next_slot, locals);
     let mut block_locals = locals.clone();
     crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, next_slot);
     block_locals.retain(|name, _| !name.starts_with("\0lexical-predeclared:"));
@@ -64,4 +58,26 @@ fn reduce_body(
         }
     }
     Ok(last)
+}
+
+/// Reserve enclosing-scope slots for names that hoist out of the block. In
+/// strict mode Annex B is suppressed, so block-level functions stay scoped.
+fn hoist_var_names(
+    block: &BlockStatement<'_>,
+    strict: bool,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) {
+    let hoisted = if strict {
+        crate::semantic_early::strict_var_declared_names_in(&block.body)
+    } else {
+        crate::semantic_early::var_declared_names_in(&block.body)
+    };
+    for name in hoisted {
+        locals.entry(name).or_insert_with(|| {
+            let slot = *next_slot;
+            *next_slot = next_slot.saturating_add(1);
+            slot
+        });
+    }
 }
