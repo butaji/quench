@@ -88,6 +88,10 @@ fn fs_promises_surface() -> Value {
             "lstat".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::FsLstatPromise)),
         ),
+        (
+            "truncate".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsTruncatePromise)),
+        ),
     ])
 }
 

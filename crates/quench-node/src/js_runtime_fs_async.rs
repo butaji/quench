@@ -309,3 +309,7 @@ fn fs_lstat_promise(arguments: &[Value]) -> Result<Value, VmError> {
         Err(error) => reject_fs_error(VmError::EvalError(error.to_string())),
     }
 }
+
+fn fs_truncate_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_settle_sync(|| fs_truncate_sync(arguments).map(|_| Value::Undefined))
+}
