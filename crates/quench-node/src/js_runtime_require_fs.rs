@@ -72,7 +72,12 @@ fn require_fs_module(name: &str) -> Option<Value> {
                     "mkdtempSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdtemp)),
                 ),
-                ("realpathSync".into(), realpath_sync),
+                (
+                    "realpath".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsRealpath)),
+                ),
+                (
+                    "realpathSync".into(), realpath_sync),
                 (
                     "openSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpenSync)),
@@ -108,8 +113,16 @@ fn require_fs_module(name: &str) -> Option<Value> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsLstatSync)),
                 ),
                 (
+                    "symlink".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsSymlink)),
+                ),
+                (
                     "symlinkSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsSymlinkSync)),
+                ),
+                (
+                    "readlink".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadlink)),
                 ),
                 (
                     "readlinkSync".into(),
