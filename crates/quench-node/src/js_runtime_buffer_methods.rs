@@ -264,48 +264,51 @@ fn buffer_compare(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value
         let right_full = string_or_bytes(arguments.first())?;
         let target_start = match arguments.get(1) {
             Some(Value::Number(value)) => *value as usize,
+            Some(Value::Undefined) | None => 0,
             Some(_) => {
                 return Err(VmError::Thrown(fs_error(
                     "ERR_INVALID_ARG_TYPE",
                     "targetStart must be a number",
                 )))
             }
-            None => 0,
         };
         let target_end = match arguments.get(2) {
             Some(Value::Number(value)) => *value as usize,
+            Some(Value::Undefined) | None => right_full.len(),
             Some(_) => {
                 return Err(VmError::Thrown(fs_error(
                     "ERR_INVALID_ARG_TYPE",
                     "targetEnd must be a number",
                 )))
             }
-            None => right_full.len(),
         };
         let source_start = match arguments.get(3) {
             Some(Value::Number(value)) => *value as usize,
+            Some(Value::Undefined) | None => 0,
             Some(_) => {
                 return Err(VmError::Thrown(fs_error(
                     "ERR_INVALID_ARG_TYPE",
                     "sourceStart must be a number",
                 )))
             }
-            None => 0,
         };
         let source_end = match arguments.get(4) {
             Some(Value::Number(value)) => *value as usize,
+            Some(Value::Undefined) | None => left.len(),
             Some(_) => {
                 return Err(VmError::Thrown(fs_error(
                     "ERR_INVALID_ARG_TYPE",
                     "sourceEnd must be a number",
                 )))
             }
-            None => left.len(),
         };
+        let left_start = source_start.min(left.len()).min(source_end);
+        let left_end = source_end.min(left.len());
+        let right_start = target_start.min(right_full.len()).min(target_end);
+        let right_end = target_end.min(right_full.len());
         (
-            left[source_start.min(left.len())..source_end.min(left.len())].to_vec(),
-            right_full[target_start.min(right_full.len())..target_end.min(right_full.len())]
-                .to_vec(),
+            left[left_start..left_end].to_vec(),
+            right_full[right_start..right_end].to_vec(),
         )
     } else {
         // Static Buffer.compare(buf, buf2): both arguments must be Buffer or
