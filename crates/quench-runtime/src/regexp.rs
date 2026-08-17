@@ -415,9 +415,7 @@ fn match_values(text: &str, m: &regress::Match, offset: usize) -> Vec<Value> {
 fn match_result(values: Vec<Value>, index: Value, input: &str, groups: Option<Value>) -> Value {
     let result = crate::builtins::set_property(Value::array(values), "index", index);
     let result = crate::builtins::set_property(result, "input", Value::String(input.to_string()));
-    groups.map_or(result.clone(), |groups| {
-        crate::builtins::set_property(result, "groups", groups)
-    })
+    crate::builtins::set_property(result, "groups", groups.unwrap_or(Value::Undefined))
 }
 
 fn argument_string(arguments: &[Value]) -> Result<String, VmError> {
