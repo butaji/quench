@@ -31,20 +31,30 @@ pub(crate) fn array_map(
     if let Value::Array(values) = &mut mapped {
         Rc::make_mut(values).set_length(length);
     }
-    let Value::Array(source) = receiver else {
-        return Ok(mapped);
-    };
-    let mut index = 0;
-    while let Some(current) = source.next_index(index, length) {
-        index = current.saturating_add(1);
-        let Some(value) = map_value(receiver, current)? else {
-            continue;
-        };
-        let args = [value, Value::Number(current as f64), receiver.clone()];
-        let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-        let result = crate::functions::execute_target(callback, this_arg, &args)?;
-        if let Value::Array(values) = &mut mapped {
-            Rc::make_mut(values).set_index(current, result);
+    let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
+    if let Value::Array(source) = receiver {
+        let mut index = 0;
+        while let Some(current) = source.next_index(index, length) {
+            index = current.saturating_add(1);
+            let Some(value) = map_value(receiver, current)? else {
+                continue;
+            };
+            let args = [value, Value::Number(current as f64), receiver.clone()];
+            let result = crate::functions::execute_target(callback, this_arg, &args)?;
+            if let Value::Array(values) = &mut mapped {
+                Rc::make_mut(values).set_index(current, result);
+            }
+        }
+    } else {
+        for index in 0..length {
+            let Some(value) = map_value(receiver, index)? else {
+                continue;
+            };
+            let args = [value, Value::Number(index as f64), receiver.clone()];
+            let result = crate::functions::execute_target(callback, this_arg, &args)?;
+            if let Value::Array(values) = &mut mapped {
+                Rc::make_mut(values).set_index(index, result);
+            }
         }
     }
     Ok(mapped)
@@ -90,20 +100,30 @@ pub(crate) fn array_for_each(
     }
     let length = map_length(receiver)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    let Value::Array(values) = receiver else {
-        return Ok(Value::Undefined);
-    };
-    let mut index = 0;
-    while let Some(current) = values.next_index(index, length) {
-        index = current.saturating_add(1);
-        let Some(value) = map_value(receiver, current)? else {
-            continue;
-        };
-        crate::functions::execute_target(
-            callback,
-            this_arg,
-            &[value, Value::Number(current as f64), receiver.clone()],
-        )?;
+    if let Value::Array(values) = receiver {
+        let mut index = 0;
+        while let Some(current) = values.next_index(index, length) {
+            index = current.saturating_add(1);
+            let Some(value) = map_value(receiver, current)? else {
+                continue;
+            };
+            crate::functions::execute_target(
+                callback,
+                this_arg,
+                &[value, Value::Number(current as f64), receiver.clone()],
+            )?;
+        }
+    } else {
+        for index in 0..length {
+            let Some(value) = map_value(receiver, index)? else {
+                continue;
+            };
+            crate::functions::execute_target(
+                callback,
+                this_arg,
+                &[value, Value::Number(index as f64), receiver.clone()],
+            )?;
+        }
     }
     Ok(Value::Undefined)
 }
