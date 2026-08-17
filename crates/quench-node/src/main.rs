@@ -61,21 +61,42 @@ fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
         .skip(1)
         .filter(|arg| arg != "--quickjs")
         .collect();
-    match args.first().map(String::as_str) {
+    // Node CLI switches (--experimental-*, --network-family-autoselection,
+    // --title=*) select runtime behavior in the polyfills and may precede the
+    // mode. They must not be mistaken for the script path. The argv reachable
+    // from JS is rebuilt from env::args() by the host, so dropping them here
+    // does not hide them from the polyfills.
+    let mode_index = args
+        .iter()
+        .position(|arg| {
+            !arg.starts_with("--experimental-")
+                && !arg.starts_with("--network-family-autoselection")
+                && !arg.starts_with("--title=")
+        })
+        .unwrap_or(args.len());
+    let mode = args.get(mode_index).map(String::as_str);
+    match mode {
         Some("--help") | Some("-h") => {
             println!("quench-node [--quickjs] [-e CODE|SCRIPT]");
             Ok(())
         }
         Some("-e") | Some("--eval") => {
-            QuenchRuntime.execute(args.get(1).map_or("", String::as_str), None, &host)
+            QuenchRuntime.execute(
+                args.get(mode_index + 1).map_or("", String::as_str),
+                None,
+                &host,
+            )
         }
         Some("--stage") => {
-            let stage = args.get(1).map(String::as_str).unwrap_or("0");
+            let stage = args
+                .get(mode_index + 1)
+                .map(String::as_str)
+                .unwrap_or("0");
             run_quench_directory(&PathBuf::from(format!("tests/node-compat/stage-{stage}")))
         }
         Some("--test-dir") => {
             let dir = PathBuf::from(
-                args.get(1)
+                args.get(mode_index + 1)
                     .cloned()
                     .unwrap_or_else(|| "tests/node-compat".into()),
             );

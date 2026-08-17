@@ -87,7 +87,11 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
             .replace("require('node:events')", "__quench_events_module()");
         let source = transform_esm_imports(&source);
         let support_source = crate::polyfills::bootstrap::lookup("support").unwrap_or("");
-        let source_with_globals = format!("var global = globalThis; var atob = function(value) {{ return String(value); }}; var btoa = function(value) {{ return String(value); }}; var structuredClone = function(value) {{ return {{ ...value }}; }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }};\n{support_source}\n{global_source}\nvar __quench_events_module = function() {{ return {{ EventEmitter: globalThis.__nodeEventEmitter, EventEmitterAsyncResource: globalThis.__nodeEventEmitter, default: globalThis.__nodeEventEmitter }}; }};\n{source}\nglobalThis.__quench_drain_dgram_callbacks();");
+        // atob/btoa are installed as globalThis properties (not `var`) so user
+        // `const { atob }` bindings must not collide with a script-scope var.
+        // Free-identifier resolution reads globalThis properties, so callers
+        // keep working; `??=` preserves any host-provided implementation.
+        let source_with_globals = format!("var global = globalThis; globalThis.atob ??= function(value) {{ return String(value); }}; globalThis.btoa ??= function(value) {{ return String(value); }}; var structuredClone = function(value) {{ return {{ ...value }}; }}; var fetch = function() {{ return Promise.resolve(undefined); }}; var AbortController = function() {{ this.signal = {{}}; }};\n{support_source}\n{global_source}\nvar __quench_events_module = function() {{ return {{ EventEmitter: globalThis.__nodeEventEmitter, EventEmitterAsyncResource: globalThis.__nodeEventEmitter, default: globalThis.__nodeEventEmitter }}; }};\n{source}\nglobalThis.__quench_drain_dgram_callbacks();");
         let program =
             match path.is_some_and(|path| path.extension().is_some_and(|ext| ext == "mjs")) {
                 true => quench_runtime::reduce::reduce_module_source(&source_with_globals),
