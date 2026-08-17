@@ -61,6 +61,7 @@ pub(crate) fn constant(key: &str) -> Option<Value> {
         "PI" => std::f64::consts::PI,
         "SQRT1_2" => std::f64::consts::FRAC_1_SQRT_2,
         "SQRT2" => std::f64::consts::SQRT_2,
+        "Symbol.toStringTag" => return Some(Value::String("Math".into())),
         _ => return None,
     };
     Some(Value::Number(value))
