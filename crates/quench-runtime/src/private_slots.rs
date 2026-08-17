@@ -124,7 +124,11 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmE
         return Err(VmError::MissingReturn);
     };
     let object = crate::execute::read_register(registers, *object)?;
-    eprintln!("DBG execute_get name={:?} obj={:?}", name, std::mem::discriminant(&object));
+    eprintln!(
+        "DBG execute_get name={:?} obj={:?}",
+        name,
+        std::mem::discriminant(&object)
+    );
     let name = resolve(*name)?;
     let value = get(&object, &name)?;
     crate::execute::write_value(registers, *dst, value);
@@ -153,7 +157,11 @@ pub(crate) fn execute_define(registers: &mut [Value], op: &Op) -> Result<(), VmE
 fn resolve(name: crate::facts::PrivateNameId) -> Result<PrivateName, VmError> {
     let resolved = crate::private_environment::resolve(name);
     if resolved.is_none() {
-        eprintln!("DBG resolve miss id={:?} env={:?}", name, crate::private_environment::current());
+        eprintln!(
+            "DBG resolve miss id={:?} env={:?}",
+            name,
+            crate::private_environment::current()
+        );
     }
     resolved.ok_or_else(private_brand_error)
 }
@@ -170,7 +178,10 @@ fn slots(value: &Value) -> Result<PrivateSlots, VmError> {
             .map(|object| object.private_slots.clone())
             .ok_or_else(private_brand_error),
         _ => {
-            eprintln!("DBG slots unsupported value: {:?}", std::mem::discriminant(value));
+            eprintln!(
+                "DBG slots unsupported value: {:?}",
+                std::mem::discriminant(value)
+            );
             Err(private_brand_error())
         }
     }

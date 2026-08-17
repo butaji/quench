@@ -183,9 +183,10 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     }
     let left = from(arguments.first())?;
     let right = from(arguments.get(1))?;
-    let relative_to_missing = arguments
-        .get(2)
-        .is_none_or(|value| matches!(value, Value::Undefined));
+    let relative_to_missing = match arguments.get(2) {
+        Some(value) => matches!(value, Value::Undefined),
+        None => true,
+    };
     if (date_units(&left) || date_units(&right)) && relative_to_missing {
         return Err(crate::value::error::throw_range_error(
             "relativeTo is required for date units",

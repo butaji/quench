@@ -55,10 +55,9 @@ fn locale_has_true_kn(locale: &str) -> bool {
     parts
         .iter()
         .position(|part| part.eq_ignore_ascii_case("kn"))
-        .is_some_and(|index| {
-            parts
-                .get(index + 1)
-                .is_none_or(|value| value.len() == 2 || value.eq_ignore_ascii_case("true"))
+        .is_some_and(|index| match parts.get(index + 1) {
+            Some(value) => value.len() == 2 || value.eq_ignore_ascii_case("true"),
+            None => true,
         })
 }
 
@@ -66,20 +65,20 @@ fn case_first_option_absent(value: Option<&Value>) -> bool {
     let Some(Value::Object(properties)) = value else {
         return true;
     };
-    properties
-        .iter()
-        .find(|(name, _)| name == "caseFirst")
-        .is_none_or(|(_, value)| matches!(value, Value::Undefined))
+    match properties.iter().find(|(name, _)| name == "caseFirst") {
+        Some((_, value)) => matches!(value, Value::Undefined),
+        None => true,
+    }
 }
 
 fn numeric_option_absent(value: Option<&Value>) -> bool {
     let Some(Value::Object(properties)) = value else {
         return true;
     };
-    properties
-        .iter()
-        .find(|(name, _)| name == "numeric")
-        .is_none_or(|(_, value)| matches!(value, Value::Undefined))
+    match properties.iter().find(|(name, _)| name == "numeric") {
+        Some((_, value)) => matches!(value, Value::Undefined),
+        None => true,
+    }
 }
 
 fn collator_object(locale: String, options: CollatorOptions) -> Value {
@@ -374,11 +373,13 @@ pub(crate) fn prototype_method(
                 &left,
                 &right,
                 &locale,
-                ignore_punctuation,
-                &sensitivity,
-                &usage,
-                numeric,
-                &case_first,
+                &CompareSpec {
+                    ignore_punctuation,
+                    sensitivity: &sensitivity,
+                    usage: &usage,
+                    numeric,
+                    case_first: &case_first,
+                },
             )))
         }
         crate::ops::Builtin::IntlCollatorResolvedOptions => Ok(resolved_options(&slots, locale)),
