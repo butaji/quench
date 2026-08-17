@@ -1,5 +1,9 @@
 fn require_fs_module(name: &str) -> Option<Value> {
-    if name == "node:fs" || name == "fs" {
+    if name == "node:fs"
+        || name == "fs"
+        || name == "node:fs/promises"
+        || name == "fs/promises"
+    {
             let realpath_sync = quench_runtime::execute::set_property(
                 capability_function(HostCapabilityKind::Custom(CapabilityName::FsRealpathSync)),
                 "native",
