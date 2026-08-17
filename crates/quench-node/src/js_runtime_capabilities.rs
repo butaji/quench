@@ -214,6 +214,8 @@ impl CapabilityName {
     const FsLutimesAsync: u16 = 2226;
     const UrlPathToFileUrl: u16 = 2227;
     const FsValidateRmOptions: u16 = 2230;
+    const FsStatPromise: u16 = 2236;
+    const FsUtimesPromise: u16 = 2240;
     const TmpdirRefresh: u16 = 2228;
     const TmpdirFileUrl: u16 = 2229;
     const BufferIsAscii: u16 = 2058;
