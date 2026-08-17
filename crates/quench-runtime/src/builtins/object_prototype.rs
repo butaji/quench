@@ -58,27 +58,46 @@ fn prototype_for_value(value: &Value) -> Value {
     }
 }
 
+fn function_prototype(function: &crate::value::FunctionValue) -> Value {
+    if function.is_async {
+        if let Some((_, prototype)) = function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == "\0prototype")
+        {
+            return prototype.clone();
+        }
+        return crate::vm::realm_id_for_global_value(&function.captures.get(0))
+            .map(|realm| crate::vm::realm_intrinsic_for(realm, Builtin::AsyncFunctionPrototype))
+            .unwrap_or(Value::Builtin(Builtin::AsyncFunctionPrototype));
+    }
+    internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
+}
+
+fn intrinsic_bound_prototype(bound: &crate::value::BoundFunctionValue) -> Value {
+    match &bound.target {
+        Value::Builtin(Builtin::AsyncFunction) => {
+            crate::vm::realm_intrinsic_for(bound.realm, Builtin::Function)
+        }
+        Value::Builtin(Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction) => {
+            let prototype = match bound.target {
+                Value::Builtin(Builtin::GeneratorFunction) => Builtin::GeneratorFunctionPrototype,
+                _ => Builtin::AsyncGeneratorFunctionPrototype,
+            };
+            crate::vm::realm_intrinsic_for(bound.realm, prototype)
+        }
+        Value::Builtin(builtin) if is_intrinsic_prototype(*builtin) => {
+            crate::vm::realm_intrinsic_for(bound.realm, Builtin::ObjectPrototype)
+        }
+        _ => Value::Builtin(Builtin::FunctionPrototype),
+    }
+}
+
 fn prototype_for_value_tail(value: &Value) -> Value {
     match value {
-        Value::Function(function) => {
-            if function.is_async {
-                if let Some((_, prototype)) = function
-                    .properties
-                    .borrow()
-                    .iter()
-                    .rev()
-                    .find(|(name, _)| name == "\0prototype")
-                {
-                    return prototype.clone();
-                }
-                return crate::vm::realm_id_for_global_value(&function.captures.get(0))
-                    .map(|realm| {
-                        crate::vm::realm_intrinsic_for(realm, Builtin::AsyncFunctionPrototype)
-                    })
-                    .unwrap_or(Value::Builtin(Builtin::AsyncFunctionPrototype));
-            }
-            internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
-        }
+        Value::Function(function) => function_prototype(function),
         Value::Builtin(Builtin::AsyncFunction) => Value::Builtin(Builtin::Function),
         Value::Builtin(
             Builtin::RangeError
@@ -90,31 +109,8 @@ fn prototype_for_value_tail(value: &Value) -> Value {
             | Builtin::AggregateError
             | Builtin::SuppressedError,
         ) => Value::Builtin(Builtin::Error),
-        Value::BoundFunction(bound)
-            if crate::vm::is_intrinsic_bound(bound)
-                && matches!(bound.target, Value::Builtin(Builtin::AsyncFunction)) =>
-        {
-            crate::vm::realm_intrinsic_for(bound.realm, Builtin::Function)
-        }
-        Value::BoundFunction(bound)
-            if crate::vm::is_intrinsic_bound(bound)
-                && matches!(
-                    bound.target,
-                    Value::Builtin(Builtin::GeneratorFunction)
-                        | Value::Builtin(Builtin::AsyncGeneratorFunction)
-                ) =>
-        {
-            let prototype = match bound.target {
-                Value::Builtin(Builtin::GeneratorFunction) => Builtin::GeneratorFunctionPrototype,
-                _ => Builtin::AsyncGeneratorFunctionPrototype,
-            };
-            crate::vm::realm_intrinsic_for(bound.realm, prototype)
-        }
-        Value::BoundFunction(bound)
-            if crate::vm::is_intrinsic_bound(bound)
-                && matches!(bound.target, Value::Builtin(builtin) if is_intrinsic_prototype(builtin)) =>
-        {
-            crate::vm::realm_intrinsic_for(bound.realm, Builtin::ObjectPrototype)
+        Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound) => {
+            intrinsic_bound_prototype(bound)
         }
         Value::Builtin(_) | Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),

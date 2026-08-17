@@ -193,7 +193,7 @@ fn regexp_constructor_source(value: &Value) -> Result<Value, crate::execute::VmE
 fn regexp_constructor_flags(arguments: &[Value]) -> Result<String, crate::execute::VmError> {
     let inherits_flags = arguments
         .get(1)
-        .is_none_or(|flags| matches!(flags, Value::Undefined));
+        .map_or(true, |flags| matches!(flags, Value::Undefined));
     if let Some(pattern) = arguments.first() {
         if inherits_flags && is_regexp_pattern(pattern)? {
             return crate::execute::get_property_result(pattern, "flags")

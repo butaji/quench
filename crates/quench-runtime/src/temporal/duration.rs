@@ -345,7 +345,7 @@ fn compare(arguments: &[Value]) -> Result<Value, VmError> {
     let right = from(arguments.get(1))?;
     let relative_to_missing = arguments
         .get(2)
-        .is_none_or(|value| matches!(value, Value::Undefined));
+        .map_or(true, |value| matches!(value, Value::Undefined));
     if (date_units(&left) || date_units(&right)) && relative_to_missing {
         return Err(crate::value::error::throw_range_error(
             "relativeTo is required for date units",
@@ -517,7 +517,7 @@ fn total_time_out_of_range(values: &[f64]) -> bool {
             total.checked_add(value.checked_mul(scale)?)
         });
     let limit = 9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;
-    total.is_none_or(|total| total.abs() > limit)
+    total.map_or(true, |total| total.abs() > limit)
 }
 
 fn number_property(value: &Value, name: &str) -> f64 {

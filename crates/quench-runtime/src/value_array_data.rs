@@ -283,7 +283,7 @@ impl ArrayData {
 }
 
 fn keep_index(key: &str, length: usize) -> bool {
-    crate::arrays::array_index(key).is_none_or(|index| (index as usize) < length)
+    crate::arrays::array_index(key).map_or(true, |index| (index as usize) < length)
 }
 
 fn set_live_index(live: &mut ArgumentLive, index: usize, value: Value) {

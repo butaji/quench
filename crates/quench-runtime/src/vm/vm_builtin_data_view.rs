@@ -25,22 +25,35 @@ fn execute_data_view_builtin(
     execute_data_view_set(builtin, view, offset, little_endian, arguments)
 }
 
+fn byte_length_getter(
+    builtin: Builtin,
+    buffer_length: usize,
+    byte_offset: usize,
+    byte_length: usize,
+) -> Option<Result<Value, VmError>> {
+    if builtin != Builtin::TypedArrayByteLengthGetter {
+        return None;
+    }
+    let length = if buffer_length < byte_offset + byte_length {
+        0.0
+    } else {
+        byte_length as f64
+    };
+    Some(Ok(Value::Number(length)))
+}
+
 fn typed_array_accessor(
     builtin: Builtin,
     receiver: Option<&Value>,
 ) -> Option<Result<Value, VmError>> {
     macro_rules! access {
         ($view:expr) => {
-            Some(Ok(match builtin {
-                Builtin::TypedArrayByteLengthGetter => Value::Number(
-                    if $view.buffer.byte_length() < $view.byte_offset + $view.byte_length() {
-                        0.0
-                    } else {
-                        $view.byte_length() as f64
-                    },
-                ),
-                _ => return None,
-            }))
+            byte_length_getter(
+                builtin,
+                $view.buffer.byte_length(),
+                $view.byte_offset,
+                $view.byte_length(),
+            )
         };
     }
     match receiver {

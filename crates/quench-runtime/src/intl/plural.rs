@@ -53,9 +53,9 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     ]))
 }
 
-fn plural_options(
-    option: Option<&Value>,
-) -> Result<(String, Option<String>, String, Option<(f64, f64)>), VmError> {
+type PluralOptions = (String, Option<String>, String, Option<(f64, f64)>);
+
+fn plural_options(option: Option<&Value>) -> Result<PluralOptions, VmError> {
     let Some(option) = option.filter(|value| !matches!(value, Value::Undefined | Value::Null))
     else {
         return Ok(("standard".to_string(), None, "cardinal".to_string(), None));
@@ -136,10 +136,10 @@ pub(crate) fn prototype_method(
         crate::ops::Builtin::IntlPluralRulesSelectRange => {
             if arguments
                 .first()
-                .is_none_or(|value| matches!(value, Value::Undefined))
+                .map_or(true, |value| matches!(value, Value::Undefined))
                 || arguments
                     .get(1)
-                    .is_none_or(|value| matches!(value, Value::Undefined))
+                    .map_or(true, |value| matches!(value, Value::Undefined))
             {
                 return Err(runtime_error(
                     "TypeError: selectRange argument is undefined",
