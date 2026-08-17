@@ -10,6 +10,13 @@ pub fn compile(pattern: &str, flags: &str) -> Result<Regex, String> {
         .map_err(|e| e.to_string())
 }
 
+pub(crate) fn canonical_flags(flags: &str) -> String {
+    ['d', 'g', 'i', 'm', 's', 'u', 'v', 'y']
+        .into_iter()
+        .filter(|flag| flags.contains(*flag))
+        .collect()
+}
+
 fn validate_flags(flags: &str) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for flag in flags.chars() {
@@ -171,7 +178,7 @@ fn update_compiled_receiver(
     for (key, value) in properties.iter() {
         let next = match key.as_str() {
             "source" => Some(Value::String(pattern.to_string())),
-            "flags" => Some(Value::String(flags.to_string())),
+            "flags" => Some(Value::String(canonical_flags(flags))),
             "\0regexp_source" => Some(Value::String(pattern.to_string())),
             "\0regexp_flags" => Some(Value::String(flags.to_string())),
             _ => None,
