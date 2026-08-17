@@ -1,9 +1,54 @@
+fn fs_promises_surface() -> Value {
+    Value::object(vec![
+        (
+            "cp".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsCp)),
+        ),
+        (
+            "writeFile".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsWritePromise)),
+        ),
+        (
+            "readFile".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadPromise)),
+        ),
+        (
+            "appendFile".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsAppendPromise)),
+        ),
+        (
+            "readdir".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsReaddirPromise)),
+        ),
+        (
+            "unlink".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsUnlinkPromise)),
+        ),
+        (
+            "opendir".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpendirPromise)),
+        ),
+        (
+            "readv".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadvPromise)),
+        ),
+        (
+            "link".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsLinkPromise)),
+        ),
+        (
+            "stat".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsStatPromise)),
+        ),
+        (
+            "utimes".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsUtimesPromise)),
+        ),
+    ])
+}
+
 fn require_fs_module(name: &str) -> Option<Value> {
-    if name == "node:fs"
-        || name == "fs"
-        || name == "node:fs/promises"
-        || name == "fs/promises"
-    {
+    if name == "node:fs" || name == "fs" {
             let realpath_sync = quench_runtime::execute::set_property(
                 capability_function(HostCapabilityKind::Custom(CapabilityName::FsRealpathSync)),
                 "native",
@@ -294,77 +339,13 @@ fn require_fs_module(name: &str) -> Option<Value> {
                 ),
                 (
                     "promises".into(),
-                    Value::object(vec![
-                        (
-                            "cp".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::FsCp,
-                            )),
-                        ),
-                        (
-                            "writeFile".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::FsWritePromise,
-                            )),
-                        ),
-                        (
-                            "readFile".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::FsReadPromise,
-                            )),
-                        ),
-                        (
-                            "appendFile".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::FsAppendPromise,
-                            )),
-                        ),
-                        (
-                            "readdir".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::FsReaddirPromise,
-                            )),
-                        ),
-                        (
-                            "unlink".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::FsUnlinkPromise,
-                            )),
-                        ),
-                        (
-                            "stat".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::FsStatPromise,
-                            )),
-                        ),
-                        (
-                            "utimes".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::FsUtimesPromise,
-                            )),
-                        ),
-                        (
-                            "opendir".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::FsOpendirPromise,
-                            )),
-                        ),
-                        (
-                            "readv".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::FsReadvPromise,
-                            )),
-                        ),
-                        (
-                            "link".into(),
-                            capability_function(HostCapabilityKind::Custom(
-                                CapabilityName::FsLinkPromise,
-                            )),
-                        ),
-                    ]),
+                    fs_promises_surface(),
                 ),
             ]);
             return Some(module);
+        }
+        if name == "node:fs/promises" || name == "fs/promises" {
+            return Some(fs_promises_surface());
         }
         if let Some(module) = require_crypto_module(name) {
             return Some(module);
