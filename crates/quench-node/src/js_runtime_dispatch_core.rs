@@ -200,6 +200,18 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsFileHandleClose) => {
                 self.fs_filehandle_close(receiver)
             }
+            HostCapabilityKind::Custom(CapabilityName::FsFileHandleReadFile) => {
+                self.fs_filehandle_read_file(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsFileHandleRead) => {
+                self.fs_filehandle_read(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsFileHandleWrite) => {
+                self.fs_filehandle_write(receiver, arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsFileHandleStat) => {
+                self.fs_filehandle_stat(receiver, arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsStatsIsDirectory) => {
                 Ok(Value::Boolean(true))
             }
