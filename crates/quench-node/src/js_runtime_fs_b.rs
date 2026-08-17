@@ -42,7 +42,7 @@ fn fs_write_options(arguments: &[Value]) -> Result<Value, VmError> {
     );
     let encoding = quench_runtime::execute::get_property_result(options, "encoding").ok();
     if let Ok(flush) = quench_runtime::execute::get_property_result(options, "flush") {
-        if !matches!(flush, Value::Boolean(_)) {
+        if !matches!(flush, Value::Boolean(_) | Value::Undefined) {
             return Err(VmError::Thrown(fs_error(
                 "ERR_INVALID_ARG_TYPE",
                 "flush must be a boolean",
