@@ -420,9 +420,7 @@ impl QuenchNodeHost {
             {
                 self.resolve_promisified(id, arguments)
             }
-            HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin) => {
-                module_is_builtin(arguments)
-            }
+            HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin) => module_is_builtin(arguments),
             HostCapabilityKind::Custom(CapabilityName::ModuleCreateRequire) => Ok(
                 capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleRequireCall)),
             ),
