@@ -177,6 +177,37 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(
                 CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout,
             ) => Ok(Value::Number(2500.0)),
+            HostCapabilityKind::Custom(CapabilityName::NetIsIP) => {
+                let value = arguments.first().map(safe_value_string).unwrap_or_default();
+                let family = if let Ok(ipv4) = value.parse::<std::net::Ipv4Addr>() {
+                    if value.split('.').count() == 4 && ipv4.to_string() == value {
+                        4
+                    } else {
+                        0
+                    }
+                } else if value.parse::<std::net::Ipv6Addr>().is_ok() {
+                    6
+                } else {
+                    0
+                };
+                Ok(Value::Number(family as f64))
+            }
+            HostCapabilityKind::Custom(CapabilityName::NetCreateServer) => Ok(
+                quench_runtime::host_api::object(vec![
+                    (
+                        "listen".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::NetGetDefaultAutoSelectFamily,
+                        )),
+                    ),
+                    (
+                        "on".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::NetGetDefaultAutoSelectFamily,
+                        )),
+                    ),
+                ]),
+            ),
             HostCapabilityKind::Custom(CapabilityName::FixtureReadKey) => {
                 Ok(Value::String(String::new().into()))
             }
