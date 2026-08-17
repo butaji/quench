@@ -78,14 +78,12 @@ pub(crate) fn is_out_of_bounds(value: &Value) -> bool {
     macro_rules! check {
         ($($variant:ident),+) => {
             match value {
-                $(Value::$variant(data) => {
-                    let required = if data.length == usize::MAX {
-                        data.byte_offset
-                    } else {
-                        data.byte_offset.saturating_add(data.byte_length())
-                    };
-                    data.buffer.byte_length() < required
-                },)+
+                $(Value::$variant(data) => out_of_bounds(
+                    data.length,
+                    data.byte_offset,
+                    data.byte_length(),
+                    &data.buffer,
+                ),)+
                 _ => false,
             }
         };
@@ -103,6 +101,20 @@ pub(crate) fn is_out_of_bounds(value: &Value) -> bool {
         Uint8Array,
         Uint8ClampedArray
     )
+}
+
+fn out_of_bounds(
+    length: usize,
+    byte_offset: usize,
+    byte_length: usize,
+    buffer: &crate::value::ArrayBufferData,
+) -> bool {
+    let required = if length == usize::MAX {
+        byte_offset
+    } else {
+        byte_offset.saturating_add(byte_length)
+    };
+    buffer.byte_length() < required
 }
 
 /// An own named property stored on a typed-array instance, if present.

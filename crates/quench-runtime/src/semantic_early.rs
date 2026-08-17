@@ -50,36 +50,16 @@ fn collect_annex_b_collisions(
                 }
             }
             Statement::IfStatement(statement) => {
-                collect_annex_b_collisions(
-                    std::slice::from_ref(&statement.consequent),
-                    visible,
-                    collisions,
-                );
+                collect_annex_b_one(&statement.consequent, visible, collisions);
                 if let Some(alternate) = &statement.alternate {
-                    collect_annex_b_collisions(
-                        std::slice::from_ref(alternate),
-                        visible,
-                        collisions,
-                    );
+                    collect_annex_b_one(alternate, visible, collisions);
                 }
             }
             Statement::ForInStatement(statement) => {
-                let mut nested = visible.to_vec();
-                extend_loop_lexicals(&statement.left, &mut nested);
-                collect_annex_b_collisions(
-                    std::slice::from_ref(&statement.body),
-                    &nested,
-                    collisions,
-                );
+                collect_loop_collisions(&statement.left, &statement.body, visible, collisions);
             }
             Statement::ForOfStatement(statement) => {
-                let mut nested = visible.to_vec();
-                extend_loop_lexicals(&statement.left, &mut nested);
-                collect_annex_b_collisions(
-                    std::slice::from_ref(&statement.body),
-                    &nested,
-                    collisions,
-                );
+                collect_loop_collisions(&statement.left, &statement.body, visible, collisions);
             }
             Statement::ForStatement(statement) => {
                 let mut nested = visible.to_vec();
@@ -91,56 +71,75 @@ fn collect_annex_b_collisions(
                 );
             }
             Statement::LabeledStatement(statement) => {
-                collect_annex_b_collisions(
-                    std::slice::from_ref(&statement.body),
-                    visible,
-                    collisions,
-                );
+                collect_annex_b_one(&statement.body, visible, collisions);
             }
             Statement::WhileStatement(statement) => {
-                collect_annex_b_collisions(
-                    std::slice::from_ref(&statement.body),
-                    visible,
-                    collisions,
-                );
+                collect_annex_b_one(&statement.body, visible, collisions);
             }
             Statement::DoWhileStatement(statement) => {
-                collect_annex_b_collisions(
-                    std::slice::from_ref(&statement.body),
-                    visible,
-                    collisions,
-                );
+                collect_annex_b_one(&statement.body, visible, collisions);
             }
             Statement::SwitchStatement(statement) => {
-                let mut nested = visible.to_vec();
-                for case in &statement.cases {
-                    nested.extend(lexically_declared_names_in(&case.consequent));
-                }
-                for case in &statement.cases {
-                    collect_annex_b_collisions(&case.consequent, &nested, collisions);
-                }
+                collect_switch_collisions(statement, visible, collisions);
             }
             Statement::TryStatement(statement) => {
-                collect_annex_b_collisions(&statement.block.body, visible, collisions);
-                if let Some(handler) = &statement.handler {
-                    let mut nested = visible.to_vec();
-                    if let Some(parameter) = &handler.param {
-                        if !matches!(
-                            parameter.pattern.kind,
-                            BindingPatternKind::BindingIdentifier(_)
-                        ) {
-                            nested.extend(crate::binding_patterns::names(&parameter.pattern));
-                        }
-                    }
-                    collect_annex_b_collisions(&handler.body.body, &nested, collisions);
-                }
-                if let Some(finalizer) = &statement.finalizer {
-                    collect_annex_b_collisions(&finalizer.body, visible, collisions);
-                }
+                collect_try_collisions(statement, visible, collisions);
             }
             _ => {}
         }
     }
+}
+
+fn collect_switch_collisions(
+    statement: &oxc::ast::ast::SwitchStatement<'_>,
+    visible: &[String],
+    collisions: &mut HashSet<String>,
+) {
+    let mut nested = visible.to_vec();
+    for case in &statement.cases {
+        nested.extend(lexically_declared_names_in(&case.consequent));
+    }
+    for case in &statement.cases {
+        collect_annex_b_collisions(&case.consequent, &nested, collisions);
+    }
+}
+
+fn collect_try_collisions(
+    statement: &oxc::ast::ast::TryStatement<'_>,
+    visible: &[String],
+    collisions: &mut HashSet<String>,
+) {
+    collect_annex_b_collisions(&statement.block.body, visible, collisions);
+    if let Some(handler) = &statement.handler {
+        let mut nested = visible.to_vec();
+        if let Some(parameter) = &handler.param {
+            if !matches!(
+                parameter.pattern.kind,
+                BindingPatternKind::BindingIdentifier(_)
+            ) {
+                nested.extend(crate::binding_patterns::names(&parameter.pattern));
+            }
+        }
+        collect_annex_b_collisions(&handler.body.body, &nested, collisions);
+    }
+    if let Some(finalizer) = &statement.finalizer {
+        collect_annex_b_collisions(&finalizer.body, visible, collisions);
+    }
+}
+
+fn collect_annex_b_one(body: &Statement<'_>, visible: &[String], collisions: &mut HashSet<String>) {
+    collect_annex_b_collisions(std::slice::from_ref(body), visible, collisions);
+}
+
+fn collect_loop_collisions(
+    left: &oxc::ast::ast::ForStatementLeft<'_>,
+    body: &Statement<'_>,
+    visible: &[String],
+    collisions: &mut HashSet<String>,
+) {
+    let mut nested = visible.to_vec();
+    extend_loop_lexicals(left, &mut nested);
+    collect_annex_b_one(body, &nested, collisions);
 }
 
 fn extend_loop_lexicals(left: &oxc::ast::ast::ForStatementLeft<'_>, names: &mut Vec<String>) {

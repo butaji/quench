@@ -91,6 +91,66 @@ const OPTION_KEYS: &[&str] = &[
     "signDisplay",
 ];
 
+fn option_text(key: &str, value: &Value) -> Result<String, VmError> {
+    if matches!(
+        key,
+        "roundingMode" | "roundingPriority" | "trailingZeroDisplay"
+    ) {
+        return crate::conversion::to_string(value);
+    }
+    if key == "roundingIncrement" {
+        return Ok(crate::conversion::to_number(value)?.to_string());
+    }
+    if matches!(
+        key,
+        "localeMatcher" | "style" | "currency" | "currencyDisplay" | "unitDisplay"
+    ) {
+        return crate::conversion::to_string(value);
+    }
+    Ok(to_string_value(value))
+}
+
+fn validate_option(key: &str, text: &str) -> Result<(), VmError> {
+    if matches!(key, "minimumFractionDigits" | "maximumFractionDigits") {
+        let digits = text.parse::<f64>().unwrap_or(f64::NAN);
+        if !digits.is_finite() || digits.fract() != 0.0 || !(0.0..=100.0).contains(&digits) {
+            return Err(crate::value::error::throw_range_error(
+                "fraction digits out of range",
+            ));
+        }
+    }
+    if key == "style" && !matches!(text, "decimal" | "currency" | "percent" | "unit") {
+        return Err(runtime_error("RangeError: style"));
+    }
+    if key == "localeMatcher" && !matches!(text, "lookup" | "best fit") {
+        return Err(runtime_error("RangeError: localeMatcher"));
+    }
+    if key == "currency"
+        && (text.len() != 3
+            || !text
+                .chars()
+                .all(|character| character.is_ascii_alphabetic()))
+    {
+        return Err(runtime_error("RangeError: currency"));
+    }
+    if key == "trailingZeroDisplay" && !matches!(text, "auto" | "stripIfInteger") {
+        return Err(crate::value::error::throw_range_error(
+            "invalid trailingZeroDisplay",
+        ));
+    }
+    if key == "roundingPriority" && !matches!(text, "auto" | "morePrecision" | "lessPrecision") {
+        return Err(crate::value::error::throw_range_error(
+            "invalid roundingPriority",
+        ));
+    }
+    if key == "numberingSystem" && !valid_numbering_system_syntax(text) {
+        return Err(crate::value::error::throw_range_error(
+            "invalid numbering system",
+        ));
+    }
+    Ok(())
+}
+
 impl RawOptions {
     fn from_value(options: Option<&Value>) -> Result<Self, VmError> {
         let mut raw = RawOptions {
@@ -130,67 +190,8 @@ impl RawOptions {
                         raw.grouping_min2 = min2;
                         continue;
                     }
-                    let text = if matches!(
-                        *key,
-                        "roundingMode" | "roundingPriority" | "trailingZeroDisplay"
-                    ) {
-                        crate::conversion::to_string(&value)?
-                    } else if *key == "roundingIncrement" {
-                        crate::conversion::to_number(&value)?.to_string()
-                    } else if matches!(
-                        *key,
-                        "localeMatcher" | "style" | "currency" | "currencyDisplay" | "unitDisplay"
-                    ) {
-                        crate::conversion::to_string(&value)?
-                    } else {
-                        to_string_value(&value)
-                    };
-                    if matches!(*key, "minimumFractionDigits" | "maximumFractionDigits") {
-                        let digits = text.parse::<f64>().unwrap_or(f64::NAN);
-                        if !digits.is_finite()
-                            || digits.fract() != 0.0
-                            || !(0.0..=100.0).contains(&digits)
-                        {
-                            return Err(crate::value::error::throw_range_error(
-                                "fraction digits out of range",
-                            ));
-                        }
-                    }
-                    if *key == "style"
-                        && !matches!(text.as_str(), "decimal" | "currency" | "percent" | "unit")
-                    {
-                        return Err(runtime_error("RangeError: style"));
-                    }
-                    if *key == "localeMatcher" && !matches!(text.as_str(), "lookup" | "best fit") {
-                        return Err(runtime_error("RangeError: localeMatcher"));
-                    }
-                    if *key == "currency"
-                        && (text.len() != 3
-                            || !text
-                                .chars()
-                                .all(|character| character.is_ascii_alphabetic()))
-                    {
-                        return Err(runtime_error("RangeError: currency"));
-                    }
-                    if *key == "trailingZeroDisplay"
-                        && !matches!(text.as_str(), "auto" | "stripIfInteger")
-                    {
-                        return Err(crate::value::error::throw_range_error(
-                            "invalid trailingZeroDisplay",
-                        ));
-                    }
-                    if *key == "roundingPriority"
-                        && !matches!(text.as_str(), "auto" | "morePrecision" | "lessPrecision")
-                    {
-                        return Err(crate::value::error::throw_range_error(
-                            "invalid roundingPriority",
-                        ));
-                    }
-                    if *key == "numberingSystem" && !valid_numbering_system_syntax(&text) {
-                        return Err(crate::value::error::throw_range_error(
-                            "invalid numbering system",
-                        ));
-                    }
+                    let text = option_text(key, &value)?;
+                    validate_option(key, &text)?;
                     apply_option(&mut raw, key, &text);
                 }
             }

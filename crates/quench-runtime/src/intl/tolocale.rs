@@ -415,7 +415,7 @@ fn bigint_digits(value: &str) -> (&str, &str) {
         .map_or(("", value), |digits| ("-", digits))
 }
 
-fn scaled_digits<'a>(digits: &'a str, style: &str) -> String {
+fn scaled_digits(digits: &str, style: &str) -> String {
     if style == "percent" {
         format!("{digits}00")
     } else {
@@ -473,11 +473,14 @@ fn add_minimum_fraction(formatted: &mut String, locales: &[String], options: Opt
     if digits == 0 {
         return;
     }
-    let separator = locales
+    let separator = if locales
         .first()
         .is_some_and(|locale| locale.starts_with("de"))
-        .then_some(',')
-        .unwrap_or('.');
+    {
+        ','
+    } else {
+        '.'
+    };
     formatted.push(separator);
     formatted.extend(std::iter::repeat('0').take(digits));
 }

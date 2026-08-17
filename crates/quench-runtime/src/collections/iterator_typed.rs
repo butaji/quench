@@ -39,21 +39,35 @@ pub(crate) fn typed_values(value: Value) -> Result<Vec<Value>, crate::execute::V
     }
 }
 
+fn checked_length(
+    length: usize,
+    byte_offset: usize,
+    byte_length: usize,
+    logical_len: usize,
+    buffer: &crate::value::ArrayBufferData,
+) -> Result<usize, crate::execute::VmError> {
+    let required = if length == usize::MAX {
+        byte_offset
+    } else {
+        byte_offset.saturating_add(byte_length)
+    };
+    if *buffer.detached.borrow() || buffer.byte_length() < required {
+        Err(crate::collections::iterator::not_iterable())
+    } else {
+        Ok(logical_len)
+    }
+}
+
 pub(crate) fn typed_length(value: &Value) -> Result<usize, crate::execute::VmError> {
     macro_rules! length {
         ($data:expr) => {
-            (|| {
-                let required = if $data.length == usize::MAX {
-                    $data.byte_offset
-                } else {
-                    $data.byte_offset.saturating_add($data.byte_length())
-                };
-                if *$data.buffer.detached.borrow() || $data.buffer.byte_length() < required {
-                    Err(crate::collections::iterator::not_iterable())
-                } else {
-                    Ok($data.logical_len())
-                }
-            })()
+            checked_length(
+                $data.length,
+                $data.byte_offset,
+                $data.byte_length(),
+                $data.logical_len(),
+                &$data.buffer,
+            )
         };
     }
     match value {

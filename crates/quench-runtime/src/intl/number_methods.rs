@@ -14,7 +14,7 @@ pub(crate) fn prototype_method(
                 let format_options = crate::intl::make_object(slots.clone());
                 return Ok(Value::String(crate::intl::tolocale::format_bigint(
                     value,
-                    &[options.locale.clone()],
+                    std::slice::from_ref(&options.locale),
                     Some(&format_options),
                 )));
             }

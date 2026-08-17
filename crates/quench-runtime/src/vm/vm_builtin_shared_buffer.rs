@@ -30,39 +30,42 @@ fn is_data_view_builtin(builtin: Builtin) -> bool {
     )
 }
 
+fn buffer_receiver_matches(builtin: Builtin, value: &Value) -> bool {
+    let non_shared_getter = matches!(
+        builtin,
+        Builtin::ArrayBufferByteLengthGetter
+            | Builtin::ArrayBufferDetachedGetter
+            | Builtin::ArrayBufferImmutableGetter
+            | Builtin::ArrayBufferMaxByteLengthGetter
+            | Builtin::ArrayBufferResizableGetter
+    );
+    let shared_getter = matches!(
+        builtin,
+        Builtin::SharedArrayBufferByteLengthGetter
+            | Builtin::SharedArrayBufferGrowableGetter
+            | Builtin::SharedArrayBufferMaxByteLengthGetter
+    );
+    let Value::ArrayBuffer(data) = value else {
+        return false;
+    };
+    if non_shared_getter {
+        return !data.shared;
+    }
+    if shared_getter {
+        return data.shared;
+    }
+    data.shared
+        == (builtin == Builtin::SharedArrayBufferSlice || builtin == Builtin::SharedArrayBufferGrow)
+}
+
 pub(crate) fn execute_shared_array_buffer_builtin(
     builtin: Builtin,
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(Value::ArrayBuffer(buffer)) = receiver.filter(|value| {
-        matches!(value, Value::ArrayBuffer(data) if (data.shared == (builtin == Builtin::SharedArrayBufferSlice || builtin == Builtin::SharedArrayBufferGrow)) && !matches!(
-            builtin,
-            Builtin::ArrayBufferByteLengthGetter
-                | Builtin::ArrayBufferDetachedGetter
-                | Builtin::ArrayBufferImmutableGetter
-            | Builtin::ArrayBufferMaxByteLengthGetter
-            | Builtin::ArrayBufferResizableGetter
-            | Builtin::SharedArrayBufferByteLengthGetter
-            | Builtin::SharedArrayBufferGrowableGetter
-            | Builtin::SharedArrayBufferMaxByteLengthGetter
-        )) || (builtin == Builtin::ArrayBufferByteLengthGetter
-            && matches!(value, Value::ArrayBuffer(data) if !data.shared))
-            || (builtin == Builtin::ArrayBufferDetachedGetter
-                && matches!(value, Value::ArrayBuffer(data) if !data.shared))
-            || (builtin == Builtin::ArrayBufferImmutableGetter
-                && matches!(value, Value::ArrayBuffer(data) if !data.shared))
-            || (builtin == Builtin::ArrayBufferMaxByteLengthGetter
-                && matches!(value, Value::ArrayBuffer(data) if !data.shared))
-            || (builtin == Builtin::ArrayBufferResizableGetter
-                && matches!(value, Value::ArrayBuffer(data) if !data.shared))
-            || (matches!(
-                builtin,
-                Builtin::SharedArrayBufferByteLengthGetter
-                    | Builtin::SharedArrayBufferGrowableGetter
-                    | Builtin::SharedArrayBufferMaxByteLengthGetter
-            ) && matches!(value, Value::ArrayBuffer(data) if data.shared))
-    }) else {
+    let Some(Value::ArrayBuffer(buffer)) =
+        receiver.filter(|value| buffer_receiver_matches(builtin, value))
+    else {
         return Err(type_error(
             "SharedArrayBuffer method called on incompatible receiver",
         ));

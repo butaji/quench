@@ -35,7 +35,7 @@ pub(crate) fn property_key_value(key: &str) -> Value {
         | "Symbol.search"
         | "Symbol.split"
         | "Symbol.matchAll" => Value::String(format!("{key}\0")),
-        _ => return Value::String(key.to_string()),
+        _ => Value::String(key.to_string()),
     }
 }
 
