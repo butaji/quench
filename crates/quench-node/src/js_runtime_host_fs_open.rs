@@ -113,4 +113,41 @@ impl QuenchNodeHost {
             .flatten()
             .ok_or(VmError::NotCallable)
     }
+
+    fn fs_open_promise(&self, arguments: &[Value]) -> Result<Value, VmError> {
+        let fd_value = self.fs_open(arguments)?;
+        let Value::Number(fd) = fd_value else {
+            return Err(VmError::NotCallable);
+        };
+        let fd_value = Value::Number(fd);
+        let handle = Value::object(vec![
+            ("fd".into(), fd_value.clone()),
+            ("\0fd".into(), fd_value),
+            (
+                "close".into(),
+                capability_function(HostCapabilityKind::Custom(
+                    CapabilityName::FsFileHandleClose,
+                )),
+            ),
+        ]);
+        Ok(fulfilled(handle))
+    }
+
+    fn fs_filehandle_close(&self, receiver: Option<&Value>) -> Result<Value, VmError> {
+        let Value::Object(object) = receiver.ok_or(VmError::NotCallable)? else {
+            return Err(VmError::NotCallable);
+        };
+        let fd = object
+            .iter()
+            .find_map(|(key, value)| {
+                (key == "\0fd").then(|| match value {
+                    Value::Number(fd) => Some(*fd as i32),
+                    _ => None,
+                })
+            })
+            .flatten()
+            .ok_or(VmError::NotCallable)?;
+        self.fs_close(&[Value::Number(fd as f64)])?;
+        Ok(fulfilled(Value::Undefined))
+    }
 }
