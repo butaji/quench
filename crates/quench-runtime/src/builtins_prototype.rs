@@ -35,10 +35,45 @@ pub(crate) fn prototype_to_string(receiver: Option<&Value>) -> Value {
     if let Some(tag) = receiver.and_then(string_tag) {
         return Value::String(format!("[object {tag}]"));
     }
+    // The various `*Prototype` builtins are not callable in their
+    // prototype role; report them as their type tag rather than
+    // `[object Function]`.
+    if let Some(tag) = receiver.and_then(prototype_builtin_tag) {
+        return Value::String(format!("[object {tag}]"));
+    }
     if receiver.is_some_and(crate::conversion::is_callable) {
         return Value::String("[object Function]".into());
     }
     Value::String(format!("[object {}]", prototype_tag(receiver)))
+}
+
+fn prototype_builtin_tag(receiver: &Value) -> Option<&'static str> {
+    let Value::Builtin(builtin) = receiver else {
+        return None;
+    };
+    if is_callable_prototype_builtin(*builtin) {
+        Some("Object")
+    } else {
+        None
+    }
+}
+
+fn is_callable_prototype_builtin(builtin: Builtin) -> bool {
+    use Builtin::*;
+    matches!(
+        builtin,
+        ObjectPrototype
+            | RegExpPrototype
+            | SymbolPrototype
+            | IteratorPrototype
+            | ArrayIteratorPrototype
+            | MapIteratorPrototype
+            | SetIteratorPrototype
+            | StringIteratorPrototype
+            | RegExpStringIteratorPrototype
+            | WeakRefPrototype
+            | FinalizationRegistryPrototype
+    )
 }
 
 fn prototype_tag(receiver: Option<&Value>) -> &'static str {
