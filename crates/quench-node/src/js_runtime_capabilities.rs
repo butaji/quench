@@ -113,6 +113,8 @@ impl CapabilityName {
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
     const NetIsIP: u16 = 2128;
     const NetCreateServer: u16 = 2129;
+    const FsGlob: u16 = 2130;
+    const FsGlobSync: u16 = 2131;
     const UtilGetCallSites: u16 = 2124;
     const VmCompileFunction: u16 = 2119;
     const VmCompiledFunction: u16 = 2120;

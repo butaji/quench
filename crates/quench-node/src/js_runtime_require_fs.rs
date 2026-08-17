@@ -96,6 +96,14 @@ fn fs_promises_surface() -> Value {
             "copyFile".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::FsCopyFilePromise)),
         ),
+        (
+            "glob".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsGlob)),
+        ),
+        (
+            "globSync".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsGlobSync)),
+        ),
     ])
 }
 
