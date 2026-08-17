@@ -48,6 +48,34 @@ fn fs_promises_surface() -> Value {
             "open".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpenPromise)),
         ),
+        (
+            "mkdir".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdirPromise)),
+        ),
+        (
+            "rm".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsRmPromise)),
+        ),
+        (
+            "rename".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsRenamePromise)),
+        ),
+        (
+            "access".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsAccessPromise)),
+        ),
+        (
+            "chmod".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsChmodPromise)),
+        ),
+        (
+            "readlink".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsReadlinkPromise)),
+        ),
+        (
+            "realpath".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsRealpathPromise)),
+        ),
     ])
 }
 

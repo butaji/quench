@@ -222,6 +222,13 @@ impl CapabilityName {
     const FsFileHandleRead: u16 = 2304;
     const FsFileHandleWrite: u16 = 2305;
     const FsFileHandleStat: u16 = 2306;
+    const FsMkdirPromise: u16 = 2313;
+    const FsRmPromise: u16 = 2314;
+    const FsRenamePromise: u16 = 2315;
+    const FsAccessPromise: u16 = 2316;
+    const FsChmodPromise: u16 = 2317;
+    const FsReadlinkPromise: u16 = 2318;
+    const FsRealpathPromise: u16 = 2319;
     const TmpdirRefresh: u16 = 2228;
     const TmpdirFileUrl: u16 = 2229;
     const BufferIsAscii: u16 = 2058;
