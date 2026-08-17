@@ -53,7 +53,7 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     {
         return Err(runtime_error("RangeError: invalid language tag"));
     }
-    let mut parts: Vec<&str> = parts.collect();
+    let parts: Vec<&str> = parts.collect();
     let mut out = Vec::new();
     let mut script_done = false;
     if language.eq_ignore_ascii_case("sh") {
@@ -78,24 +78,26 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     } else {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
-    apply_armenian_variant_alias(&mut out, &mut parts);
+    let (parts, replacement) = apply_armenian_variant_alias(&out, &parts);
+    if let Some(value) = replacement {
+        out[0] = value;
+    }
+    let parts = parts.to_vec();
     validate_transformed_extensions(&parts)?;
     Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
 }
 
-fn apply_armenian_variant_alias(out: &mut Vec<String>, parts: &mut Vec<&str>) {
+fn apply_armenian_variant_alias<'a>(
+    out: &[String],
+    parts: &'a [&'a str],
+) -> (&'a [&'a str], Option<String>) {
     if out.first().map(String::as_str) != Some("hy") {
-        return;
+        return (parts, None);
     }
     match parts.first().copied() {
-        Some("arevela") => {
-            let _ = parts.remove(0);
-        }
-        Some("arevmda") => {
-            out[0] = "hyw".to_string();
-            let _ = parts.remove(0);
-        }
-        _ => {}
+        Some("arevela") => (&parts[1..], None),
+        Some("arevmda") => (&parts[1..], Some("hyw".to_string())),
+        _ => (parts, None),
     }
 }
 

@@ -18,7 +18,10 @@ pub(super) fn total_time_out_of_range(values: &[f64]) -> bool {
             total.checked_add(value.checked_mul(scale)?)
         });
     let limit = 9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;
-    total.is_none_or(|total| total.abs() > limit)
+    match total {
+        Some(total) => total.abs() > limit,
+        None => true,
+    }
 }
 
 pub(super) fn number_property(value: &Value, name: &str) -> f64 {
