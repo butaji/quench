@@ -85,8 +85,50 @@ fn assertion_call(id: u16, arguments: &[Value]) -> Result<Value, VmError> {
             }
         }
         35 => Ok(Value::Undefined),
+        36 => failed("failed"),
+        37 => {
+            let string = arguments.first().map(safe_value_string).unwrap_or_default();
+            let pattern = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+            let matched = regex_matches(&pattern, &string);
+            if matched {
+                failed("The input did not match the regular expression")
+            } else {
+                Ok(Value::Undefined)
+            }
+        }
+        38 => {
+            if arguments
+                .first()
+                .zip(arguments.get(1))
+                .is_some_and(|(actual, expected)| !deep_value_equal(actual, expected))
+            {
+                Ok(Value::Undefined)
+            } else {
+                failed("values are equal")
+            }
+        }
         _ => Err(VmError::NotCallable),
     }
+}
+
+fn is_callable_value(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Function(_) | Value::BoundFunction(_) | Value::HostCapability(_) | Value::Proxy(_)
+    )
+}
+
+fn regex_matches(pattern: &Value, string: &str) -> bool {
+    let Ok(test) = quench_runtime::execute::get_property_result(pattern, "test") else {
+        return false;
+    };
+    if !is_callable_value(&test) {
+        return false;
+    }
+    matches!(
+        quench_runtime::execute::call(&test, pattern, &[Value::String(string.into())]),
+        Ok(Value::Boolean(true))
+    )
 }
 
 fn assertion_strict_equal(actual: &Value, expected: &Value) -> bool {

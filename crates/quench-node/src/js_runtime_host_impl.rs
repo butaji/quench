@@ -73,7 +73,7 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(id)
                 if (13..=20).contains(&id)
                     || (24..=26).contains(&id)
-                    || (33..=35).contains(&id) =>
+                    || (33..=38).contains(&id) =>
             {
                 assertion_call(id, arguments)
             }
