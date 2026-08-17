@@ -390,30 +390,53 @@ fn path_matches_glob(arguments: &[Value], win32: bool) -> Result<Value, VmError>
 }
 
 fn path_resolve(arguments: &[Value], win32: bool) -> Result<Value, VmError> {
+    let separator = if win32 { '\\' } else { '/' };
     let mut result = String::new();
     for argument in arguments {
         let value = path_arg(std::slice::from_ref(argument), 0)?;
-        if win32 {
-            result = format!(
-                "{}\\{}",
-                value.trim_end_matches(['/', '\\']),
-                result.trim_start_matches(['/', '\\'])
-            );
+        if win32 && value.len() > 2 && value.as_bytes()[1] == b':' {
+            result = value.to_string();
+            continue;
+        }
+        if value.starts_with(separator) {
+            result = value.to_string();
+        } else if result.is_empty() {
+            result = value.to_string();
         } else {
-            result = format!(
-                "{}/{}",
-                value.trim_end_matches('/'),
-                result.trim_start_matches('/')
-            );
+            result = format!("{}{}{}", result.trim_end_matches(separator), separator, value);
         }
     }
-    if result.is_empty() {
-        result = std::env::current_dir()
+    if !result.starts_with(separator) && !(win32 && result.len() > 2 && result.as_bytes()[1] == b':')
+    {
+        let cwd = std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .to_string_lossy()
             .into_owned();
+        result = format!("{}{}{}", cwd, separator, result);
     }
-    Ok(Value::String(result.into()))
+    // Normalize the resolved absolute path (collapse `.` / `..` / repeated separators).
+    let normalized = if win32 {
+        result.replace('/', "\\")
+    } else {
+        result.replace('\\', "/")
+    };
+    let absolute =
+        normalized.starts_with(separator) || (win32 && normalized.len() > 2 && normalized.as_bytes()[1] == b':');
+    let mut parts = Vec::new();
+    for part in normalized.split(separator) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            value => parts.push(value),
+        }
+    }
+    let mut joined = parts.join(&separator.to_string());
+    if absolute && !(win32 && joined.len() > 1 && joined.as_bytes()[1] == b':') {
+        joined = format!("{separator}{joined}");
+    }
+    Ok(Value::String(joined.into()))
 }
 
 fn path_win_to_namespaced(arguments: &[Value]) -> Result<Value, VmError> {
