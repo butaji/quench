@@ -131,11 +131,38 @@ fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
         }
         copy_tree(&src, &dest, force, verbatim, dereference, filter.as_ref(), &dest, &src)
     };
+    let callback_form = arguments.len() >= 4
+        && matches!(
+            arguments.get(3),
+            Some(
+                Value::Function(_)
+                    | Value::BoundFunction(_)
+                    | Value::HostCapability(_)
+                    | Value::Proxy(_)
+            )
+        );
     match run() {
         Ok(()) if asynchronous => Ok(fulfilled(Value::Undefined)),
         Ok(()) => Ok(Value::Undefined),
+        // Callback form throws argument-*validation* errors synchronously
+        // (node fs.cp); runtime copy errors still surface as a rejection.
+        Err(error) if asynchronous && callback_form && cp_validation_error(&error) => {
+            Err(error)
+        }
         Err(error) if asynchronous => Ok(rejected(cp_error_value(error)?)),
         Err(error) => Err(error),
+    }
+}
+
+fn cp_validation_error(error: &VmError) -> bool {
+    match error {
+        VmError::Thrown(value) => {
+            matches!(
+                quench_runtime::execute::get_property_result(value, "code"),
+                Ok(Value::String(code)) if code == "ERR_OUT_OF_RANGE" || code == "ERR_INVALID_ARG_TYPE"
+            )
+        }
+        _ => false,
     }
 }
 
