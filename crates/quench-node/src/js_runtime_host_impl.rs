@@ -86,6 +86,9 @@ impl Host for QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ErrorsDetermineSpecificType) => {
                 determine_specific_type(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::ProcessGetBuiltinModule) => {
+                process_get_builtin_module(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::HttpServer | CapabilityName::HttpGet) => {
                 self.http_call(capability.kind, arguments)
             }
