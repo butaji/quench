@@ -412,9 +412,7 @@ impl QuenchNodeHost {
             {
                 self.call_promisified(id, arguments)
             }
-            HostCapabilityKind::Custom(id)
-                if (CapabilityName::UtilDeprecatedFirst..CapabilityName::UtilResolverFirst)
-                    .contains(&id) =>
+            HostCapabilityKind::Custom(id) if self.deprecated.borrow().contains_key(&id) =>
             {
                 self.call_deprecated(id, arguments)
             }
