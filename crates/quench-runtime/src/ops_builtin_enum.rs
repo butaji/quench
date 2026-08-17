@@ -131,7 +131,7 @@ pub enum Builtin {
     DateToTemporalInstant, Temporal,
     TemporalDuration, TemporalDurationPrototype,
     TemporalDurationFrom, TemporalDurationCompare, TemporalDurationAdd, TemporalDurationSubtract,
-    TemporalDurationAbs,
+    TemporalDurationAbs, TemporalDurationNegated,
     TemporalDurationYearsGetter, TemporalDurationMonthsGetter, TemporalDurationWeeksGetter,
     TemporalDurationDaysGetter, TemporalDurationHoursGetter, TemporalDurationMinutesGetter,
     TemporalDurationSecondsGetter, TemporalDurationMillisecondsGetter,
