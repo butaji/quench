@@ -66,6 +66,17 @@ pub fn time_property(ms: f64) -> Value {
     Value::BindingCell(Rc::new(RefCell::new(Value::Number(ms))))
 }
 
+/// Construct a Date instance for host APIs that need to return a timestamp.
+pub fn instance(ms: f64) -> Value {
+    Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("timeValue".to_string(), time_property(ms)),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(crate::ops::Builtin::DatePrototype),
+        ),
+    ])))
+}
+
 pub fn local_tz_offset_minutes() -> i32 {
     chrono_utils::local_tz_offset_minutes()
 }

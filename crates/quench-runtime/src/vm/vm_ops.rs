@@ -96,7 +96,24 @@ pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
                     Ok(())
                 }
                 crate::value::PromiseState::Rejected(reason) => Err(VmError::Thrown(reason)),
-                crate::value::PromiseState::Pending => Err(VmError::Suspended(promise)),
+                crate::value::PromiseState::Pending => {
+                    // The awaited promise may settle through an already-queued
+                    // microtask (e.g. a `.then` reaction). Drain once and re-check
+                    // before suspending, so direct awaits over chained promises
+                    // complete for regular (non-generator) frames.
+                    crate::promise::drain_microtasks_all();
+                    let state = promise.state.borrow().clone();
+                    match state {
+                        crate::value::PromiseState::Fulfilled(value) => {
+                            super::write_value(registers, dst, value);
+                            Ok(())
+                        }
+                        crate::value::PromiseState::Rejected(reason) => {
+                            Err(VmError::Thrown(reason))
+                        }
+                        crate::value::PromiseState::Pending => Err(VmError::Suspended(promise)),
+                    }
+                }
             }
         }
         value => {
@@ -156,6 +173,22 @@ fn invoke_with_receiver(
 ) -> Result<Value, VmError> {
     match callee_value {
         Value::Function(body) => crate::functions::execute(body, receiver, arguments),
+        Value::BoundFunction(bound)
+            if matches!(
+                bound.target,
+                Value::Builtin(crate::ops::Builtin::HostCapability(_))
+            ) =>
+        {
+            let Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
+                unreachable!()
+            };
+            crate::vm::execute_host_capability_with_receiver(
+                kind,
+                Some(&bound.receiver),
+                Some(receiver),
+                arguments,
+            )
+        }
         Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
         Value::Builtin(builtin) if crate::conversion::is_callable(callee_value) => {
             super::execute_builtin_with_receiver(*builtin, arguments, Some(receiver))

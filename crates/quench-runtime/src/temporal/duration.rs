@@ -1,10 +1,47 @@
 use crate::{execute::VmError, value::Value};
 
-use super::{duration_arithmetic, duration_format, duration_parse};
+#[path = "duration_validation.rs"]
+mod duration_validation;
+use duration_validation::{number, number_property, total_time_out_of_range};
 
-pub(super) use duration_parse::from;
-
-pub(crate) use super::duration_construct::construct;
+pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
+    let values = (0..10)
+        .map(|index| number(arguments.get(index)))
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_range(&values)?;
+    let sign = values
+        .iter()
+        .find(|value| **value != 0.0)
+        .map_or(0.0, |value| value.signum());
+    let blank = values.iter().all(|value| *value == 0.0);
+    let mut properties = values
+        .into_iter()
+        .zip([
+            "years",
+            "months",
+            "weeks",
+            "days",
+            "hours",
+            "minutes",
+            "seconds",
+            "milliseconds",
+            "microseconds",
+            "nanoseconds",
+        ])
+        .map(|(value, name)| (name.to_string(), Value::Number(value)))
+        .collect::<Vec<_>>();
+    properties.extend([
+        ("sign".to_string(), Value::Number(sign)),
+        ("blank".to_string(), Value::Boolean(blank)),
+        (
+            "\0prototype".to_string(),
+            Value::Builtin(crate::ops::Builtin::TemporalDurationPrototype),
+        ),
+    ]);
+    Ok(Value::Object(std::rc::Rc::new(
+        crate::value::ObjectData::new(properties),
+    )))
+}
 
 pub(crate) fn execute(
     builtin: crate::ops::Builtin,
@@ -12,56 +49,35 @@ pub(crate) fn execute(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     match builtin {
-        crate::ops::Builtin::TemporalDurationFrom => Some(duration_parse::from(arguments.first())),
+        crate::ops::Builtin::TemporalDurationFrom => Some(from(arguments.first())),
         crate::ops::Builtin::TemporalDurationCompare => Some(compare(arguments)),
-        crate::ops::Builtin::TemporalDurationAdd => Some(duration_arithmetic::combine(
-            receiver,
-            arguments.first(),
-            1.0,
-        )),
-        crate::ops::Builtin::TemporalDurationSubtract => Some(duration_arithmetic::combine(
-            receiver,
-            arguments.first(),
-            -1.0,
-        )),
+        crate::ops::Builtin::TemporalDurationAdd => Some(add(receiver, arguments.first())),
         crate::ops::Builtin::TemporalDurationAbs => Some(abs(receiver)),
-        crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
-        crate::ops::Builtin::TemporalDurationRound => Some(round(receiver, arguments)),
         crate::ops::Builtin::TemporalDurationToLocaleString => Some(
             crate::intl::duration::format_temporal_duration(receiver, arguments),
         ),
-        crate::ops::Builtin::TemporalDurationToJSON => Some(duration_format::to_json(receiver)),
-        crate::ops::Builtin::TemporalDurationToString => Some(duration_format::to_string(receiver)),
-        _ => access_execute(builtin, receiver),
-    }
-}
-
-fn access_execute(
-    builtin: crate::ops::Builtin,
-    receiver: Option<&Value>,
-) -> Option<Result<Value, VmError>> {
-    let field = match builtin {
-        crate::ops::Builtin::TemporalDurationYearsGetter => "years",
-        crate::ops::Builtin::TemporalDurationMonthsGetter => "months",
-        crate::ops::Builtin::TemporalDurationWeeksGetter => "weeks",
-        crate::ops::Builtin::TemporalDurationDaysGetter => "days",
-        crate::ops::Builtin::TemporalDurationHoursGetter => "hours",
-        crate::ops::Builtin::TemporalDurationMinutesGetter => "minutes",
-        crate::ops::Builtin::TemporalDurationSecondsGetter => "seconds",
-        crate::ops::Builtin::TemporalDurationMillisecondsGetter => "milliseconds",
-        crate::ops::Builtin::TemporalDurationMicrosecondsGetter => "microseconds",
-        crate::ops::Builtin::TemporalDurationNanosecondsGetter => "nanoseconds",
-        crate::ops::Builtin::TemporalDurationSignGetter => "sign",
-        _ => return special_access_execute(builtin, receiver),
-    };
-    Some(field_getter(receiver, field))
-}
-
-fn special_access_execute(
-    builtin: crate::ops::Builtin,
-    receiver: Option<&Value>,
-) -> Option<Result<Value, VmError>> {
-    match builtin {
+        crate::ops::Builtin::TemporalDurationToJSON => Some(to_json(receiver)),
+        crate::ops::Builtin::TemporalDurationYearsGetter => Some(field_getter(receiver, "years")),
+        crate::ops::Builtin::TemporalDurationMonthsGetter => Some(field_getter(receiver, "months")),
+        crate::ops::Builtin::TemporalDurationWeeksGetter => Some(field_getter(receiver, "weeks")),
+        crate::ops::Builtin::TemporalDurationDaysGetter => Some(field_getter(receiver, "days")),
+        crate::ops::Builtin::TemporalDurationHoursGetter => Some(field_getter(receiver, "hours")),
+        crate::ops::Builtin::TemporalDurationMinutesGetter => {
+            Some(field_getter(receiver, "minutes"))
+        }
+        crate::ops::Builtin::TemporalDurationSecondsGetter => {
+            Some(field_getter(receiver, "seconds"))
+        }
+        crate::ops::Builtin::TemporalDurationMillisecondsGetter => {
+            Some(field_getter(receiver, "milliseconds"))
+        }
+        crate::ops::Builtin::TemporalDurationMicrosecondsGetter => {
+            Some(field_getter(receiver, "microseconds"))
+        }
+        crate::ops::Builtin::TemporalDurationNanosecondsGetter => {
+            Some(field_getter(receiver, "nanoseconds"))
+        }
+        crate::ops::Builtin::TemporalDurationSignGetter => Some(field_getter(receiver, "sign")),
         crate::ops::Builtin::TemporalDurationBlankGetter => {
             Some(boolean_field_getter(receiver, "blank"))
         }
@@ -96,145 +112,105 @@ fn abs(receiver: Option<&Value>) -> Result<Value, VmError> {
     construct(&arguments)
 }
 
-fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
-    let object = duration_receiver(receiver)?;
-    let arguments = duration_fields(object, false)
-        .into_iter()
-        .map(|value| match value {
-            Value::Number(value) => Value::Number(-value),
-            value => value,
-        })
-        .collect::<Vec<_>>();
-    construct(&arguments)
-}
-
-fn round(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    let object = duration_receiver(receiver)?;
-    let options = arguments.first();
-    let unit = round_unit(options)?;
-    let largest = largest_unit(options);
-    validate_rounding_increment(arguments.first())?;
-    let mut fields = duration_fields(object, false);
-    let first = unit_index(unit)?;
-    if largest == Some(2) {
-        promote_days_to_weeks(&mut fields);
-    }
-    if has_largest_unit(options) {
-        balance_time_fields(&mut fields, first);
-    }
-    if !has_largest_unit(options) {
-        for field in fields.iter_mut().skip(first + 1) {
-            *field = Value::Number(0.0);
-        }
-    }
+fn add(receiver: Option<&Value>, argument: Option<&Value>) -> Result<Value, VmError> {
+    let left = duration_receiver(receiver)?;
+    let right = from(argument)?;
+    let Value::Object(right) = right else {
+        return Err(crate::value::error::throw_type_error("Invalid duration"));
+    };
+    let fields = balanced_sum(left, &right);
     construct(&fields)
 }
 
-fn largest_unit(value: Option<&Value>) -> Option<usize> {
-    let Some(Value::Object(object)) = value else {
-        return None;
-    };
-    object
-        .iter()
-        .find(|(key, _)| key == "largestUnit")
-        .and_then(|(_, value)| match value {
-            Value::String(unit) => unit_index(unit).ok(),
-            _ => None,
-        })
-}
-
-fn promote_days_to_weeks(fields: &mut [Value]) {
-    let days = number_field(&fields[3]);
-    let hours = number_field(&fields[4]);
-    let extra_days = hours.signum() * ((hours.abs() + 23) / 24);
-    let days = days + extra_days;
-    let weeks = if days >= 0 { (days + 6) / 7 } else { days / 7 };
-    fields[2] = Value::Number(weeks as f64);
-    fields[3] = Value::Number(0.0);
-    fields[4] = Value::Number(0.0);
-}
-
-fn has_largest_unit(value: Option<&Value>) -> bool {
-    matches!(
-        value,
-        Some(Value::Object(object))
-            if object.iter().any(|(key, _)| key == "largestUnit")
-    )
-}
-
-fn balance_time_fields(fields: &mut [Value], first: usize) {
-    for index in ((first + 1)..10).rev() {
-        let base = match index {
-            4 => 24,
-            5 | 6 => 60,
-            _ => 1_000,
-        };
-        let value = number_field(&fields[index]);
-        let carry = value / base;
-        fields[index] = Value::Number((value - carry * base) as f64);
-        let next = number_field(&fields[index - 1]);
-        fields[index - 1] = Value::Number((next + carry) as f64);
-    }
-}
-
-fn validate_rounding_increment(value: Option<&Value>) -> Result<(), VmError> {
-    let Some(Value::Object(object)) = value else {
-        return Ok(());
-    };
-    let Some((_, Value::Number(increment))) =
-        object.iter().find(|(key, _)| key == "roundingIncrement")
-    else {
-        return Ok(());
-    };
-    if increment.is_nan() {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid roundingIncrement",
-        ));
-    }
-    Ok(())
-}
-
-fn round_unit(value: Option<&Value>) -> Result<&str, VmError> {
-    if value.is_none() || value.is_some_and(crate::conversion::is_symbol) {
-        return Err(crate::value::error::throw_type_error(
-            "Options must be an object",
-        ));
-    }
-    match value {
-        Some(Value::String(unit)) => Ok(unit.as_str()),
-        Some(Value::Object(object)) => object
-            .iter()
-            .find(|(key, _)| key == "smallestUnit" || key == "largestUnit")
-            .and_then(|(_, value)| match value {
-                Value::String(unit) => Some(unit.as_str()),
-                _ => None,
-            })
-            .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit")),
-        _ => Err(crate::value::error::throw_type_error(
-            "Options must be an object",
-        )),
-    }
-}
-
-fn unit_index(unit: &str) -> Result<usize, VmError> {
-    let unit = unit.strip_suffix('s').unwrap_or(unit);
-    [
-        ("week", 2),
-        ("day", 3),
-        ("hour", 4),
-        ("minute", 5),
-        ("second", 6),
-        ("millisecond", 7),
-        ("microsecond", 8),
-        ("nanosecond", 9),
+fn balanced_sum(left: &crate::value::ObjectData, right: &crate::value::ObjectData) -> Vec<Value> {
+    let years = sum_field(left, right, "years");
+    let months = sum_field(left, right, "months");
+    let weeks = sum_field(left, right, "weeks");
+    let days = sum_field(left, right, "days");
+    let time = [
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
     ]
     .iter()
-    .find(|(candidate, _)| *candidate == unit)
-    .map(|(_, index)| *index)
-    .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit"))
+    .map(|name| sum_field(left, right, name))
+    .collect::<Vec<_>>();
+    let total = time[0] * 3_600_000_000_000
+        + time[1] * 60_000_000_000
+        + time[2] * 1_000_000_000
+        + time[3] * 1_000_000
+        + time[4] * 1_000
+        + time[5];
+    let sign = total.signum();
+    let mut remainder = total.abs();
+    let day_carry = remainder / 86_400_000_000_000;
+    remainder %= 86_400_000_000_000;
+    let hours = remainder / 3_600_000_000_000;
+    remainder %= 3_600_000_000_000;
+    let minutes = remainder / 60_000_000_000;
+    remainder %= 60_000_000_000;
+    let seconds = remainder / 1_000_000_000;
+    remainder %= 1_000_000_000;
+    [years, months, weeks, days + sign * day_carry]
+        .into_iter()
+        .chain(
+            [
+                hours,
+                minutes,
+                seconds,
+                remainder / 1_000_000,
+                remainder / 1_000 % 1_000,
+                remainder % 1_000,
+            ]
+            .map(|value| value * sign),
+        )
+        .map(|value| Value::Number(value as f64))
+        .collect()
 }
 
-pub(super) fn duration_field(object: &crate::value::ObjectData, name: &str) -> i128 {
+fn sum_field(
+    left: &crate::value::ObjectData,
+    right: &crate::value::ObjectData,
+    name: &str,
+) -> i128 {
+    duration_field(left, name) + duration_field(right, name)
+}
+
+fn to_json(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    Ok(Value::String(format_iso_duration(object)))
+}
+
+fn format_iso_duration(object: &crate::value::ObjectData) -> String {
+    let names = [
+        "years",
+        "months",
+        "weeks",
+        "days",
+        "hours",
+        "minutes",
+        "seconds",
+        "milliseconds",
+        "microseconds",
+        "nanoseconds",
+    ];
+    let fields = names.map(|name| duration_field(object, name));
+    let negative = fields.iter().any(|value| *value < 0);
+    let fields = fields.map(|value| value.abs());
+    let date = format_date_fields(&fields);
+    let time = format_time_fields(&fields);
+    let body = if date.is_empty() && time.is_empty() {
+        "T0S".to_string()
+    } else {
+        format!("{date}{time}")
+    };
+    format!("{}P{body}", if negative { "-" } else { "" })
+}
+
+fn duration_field(object: &crate::value::ObjectData, name: &str) -> i128 {
     object
         .iter()
         .find(|(key, _)| key == name)
@@ -248,9 +224,44 @@ fn number_field(value: &Value) -> i128 {
     }
 }
 
-pub(super) fn duration_receiver(
-    receiver: Option<&Value>,
-) -> Result<&crate::value::ObjectData, VmError> {
+fn format_date_fields(fields: &[i128; 10]) -> String {
+    ["Y", "M", "W", "D"]
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| fields[*index] != 0)
+        .map(|(index, suffix)| format!("{}{}", fields[index], suffix))
+        .collect()
+}
+
+fn format_time_fields(fields: &[i128; 10]) -> String {
+    let mut result = String::new();
+    append_time_field(&mut result, fields[4], "H");
+    append_time_field(&mut result, fields[5], "M");
+    let subseconds = fields[7] * 1_000_000 + fields[8] * 1_000 + fields[9];
+    let seconds = fields[6] + subseconds / 1_000_000_000;
+    let remainder = subseconds % 1_000_000_000;
+    if seconds != 0 || remainder != 0 {
+        let fraction = format!("{remainder:09}").trim_end_matches('0').to_string();
+        if fraction.is_empty() {
+            append_time_field(&mut result, seconds, "S");
+        } else {
+            result.push_str(&format!("{seconds}.{fraction}S"));
+        }
+    }
+    if result.is_empty() {
+        String::new()
+    } else {
+        format!("T{result}")
+    }
+}
+
+fn append_time_field(result: &mut String, value: i128, suffix: &str) {
+    if value != 0 {
+        result.push_str(&format!("{value}{suffix}"));
+    }
+}
+
+fn duration_receiver(receiver: Option<&Value>) -> Result<&crate::value::ObjectData, VmError> {
     let Some(Value::Object(object)) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Temporal.Duration.prototype.abs called on incompatible receiver",
@@ -302,10 +313,6 @@ fn has_duration_slots(object: &crate::value::ObjectData) -> bool {
 }
 
 fn absolute_fields(object: &crate::value::ObjectData) -> Vec<Value> {
-    duration_fields(object, true)
-}
-
-fn duration_fields(object: &crate::value::ObjectData, absolute: bool) -> Vec<Value> {
     let names = [
         "years",
         "months",
@@ -325,207 +332,11 @@ fn duration_fields(object: &crate::value::ObjectData, absolute: bool) -> Vec<Val
                 .iter()
                 .find(|(key, _)| key == name)
                 .map_or(Value::Number(0.0), |(_, value)| match value {
-                    Value::Number(value) => {
-                        Value::Number(if absolute { value.abs() } else { *value })
-                    }
+                    Value::Number(value) => Value::Number(value.abs()),
                     _ => Value::Number(0.0),
                 })
         })
         .collect()
 }
 
-pub(crate) use super::duration_parse::parse_string;
-
-fn compare(arguments: &[Value]) -> Result<Value, VmError> {
-    validate_compare_options(arguments.get(2))?;
-    if same_fields(arguments.first(), arguments.get(1)) {
-        return Ok(Value::Number(0.0));
-    }
-    let left = from(arguments.first())?;
-    let right = from(arguments.get(1))?;
-    let relative_to_missing = arguments
-        .get(2)
-        .map_or(true, |value| matches!(value, Value::Undefined));
-    if (date_units(&left) || date_units(&right)) && relative_to_missing {
-        return Err(crate::value::error::throw_range_error(
-            "relativeTo is required for date units",
-        ));
-    }
-    let difference = if date_units(&left) || date_units(&right) {
-        duration_value(&left) - duration_value(&right)
-    } else {
-        exact_time_difference(&left, &right)
-    };
-    if difference == 0.0 {
-        return Ok(Value::Number(0.0));
-    }
-    Ok(Value::Number(difference.signum()))
-}
-
-fn validate_compare_options(options: Option<&Value>) -> Result<(), VmError> {
-    if let Some(options) = options {
-        if !matches!(options, Value::Undefined) && !crate::value::is_object(options) {
-            return Err(crate::value::error::throw_type_error(
-                "Duration.compare options must be an object",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn date_units(value: &Value) -> bool {
-    ["years", "months", "weeks"]
-        .iter()
-        .any(|name| number_property(value, name) != 0.0)
-}
-
-fn same_fields(left: Option<&Value>, right: Option<&Value>) -> bool {
-    let Some((Value::Object(left), Value::Object(right))) = left.zip(right) else {
-        return false;
-    };
-    [
-        "years",
-        "months",
-        "weeks",
-        "days",
-        "hours",
-        "minutes",
-        "seconds",
-        "milliseconds",
-        "microseconds",
-        "nanoseconds",
-    ]
-    .iter()
-    .all(|name| {
-        let left = left
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value);
-        let right = right
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value);
-        crate::builtins::same_value(left, right)
-    })
-}
-
-fn duration_value(value: &Value) -> f64 {
-    [
-        ("years", 31_536_000.0),
-        ("months", 2_592_000.0),
-        ("weeks", 604_800.0),
-        ("days", 86_400.0),
-        ("hours", 3_600.0),
-        ("minutes", 60.0),
-        ("seconds", 1.0),
-        ("milliseconds", 1e-3),
-        ("microseconds", 1e-6),
-        ("nanoseconds", 1e-9),
-    ]
-    .iter()
-    .map(|(name, scale)| number_property(value, name) * scale)
-    .sum()
-}
-
-fn exact_time_difference(left: &Value, right: &Value) -> f64 {
-    let left = time_nanoseconds(left);
-    let right = time_nanoseconds(right);
-    match left.cmp(&right) {
-        std::cmp::Ordering::Less => -1.0,
-        std::cmp::Ordering::Equal => 0.0,
-        std::cmp::Ordering::Greater => 1.0,
-    }
-}
-
-fn time_nanoseconds(value: &Value) -> i128 {
-    [
-        ("days", 86_400_000_000_000_i128),
-        ("hours", 3_600_000_000_000),
-        ("minutes", 60_000_000_000),
-        ("seconds", 1_000_000_000),
-        ("milliseconds", 1_000_000),
-        ("microseconds", 1_000),
-        ("nanoseconds", 1),
-    ]
-    .iter()
-    .map(|(name, scale)| i128::from(number_property(value, name) as i64) * scale)
-    .sum()
-}
-
-pub(super) fn validate_range(values: &[f64]) -> Result<(), VmError> {
-    if values.iter().any(|value| value.fract() != 0.0)
-        || mixed_signs(values)
-        || date_fields_out_of_range(&values[..3])
-        || time_fields_out_of_range(&values[3..])
-    {
-        return Err(crate::value::error::throw_range_error(
-            "Duration fields are out of range",
-        ));
-    }
-    Ok(())
-}
-
-fn mixed_signs(values: &[f64]) -> bool {
-    let Some(sign) = values
-        .iter()
-        .find(|value| **value != 0.0)
-        .map(|value| value.signum())
-    else {
-        return false;
-    };
-    values
-        .iter()
-        .any(|value| *value != 0.0 && value.signum() != sign)
-}
-
-fn date_fields_out_of_range(values: &[f64]) -> bool {
-    values.iter().any(|value| value.abs() > 4_294_967_295.0)
-}
-
-fn time_fields_out_of_range(values: &[f64]) -> bool {
-    let limits = [
-        104_249_991_375.0,
-        2_501_999_792_984.0,
-        150_119_987_579_017.0,
-        9_007_199_254_740_991.0,
-        9_007_199_254_740_991.0,
-        9_007_199_254_740_991.0,
-        9_007_199_254_740_991.0,
-    ];
-    values
-        .iter()
-        .zip(limits)
-        .any(|(value, limit)| value.abs() > limit)
-        || total_time_out_of_range(values)
-}
-
-fn total_time_out_of_range(values: &[f64]) -> bool {
-    let scales = [
-        86_400_000_000_000_i128,
-        3_600_000_000_000,
-        60_000_000_000,
-        1_000_000_000,
-        1_000_000,
-        1_000,
-        1,
-    ];
-    let total = values
-        .iter()
-        .zip(scales)
-        .try_fold(0_i128, |total, (value, scale)| {
-            let value = i128::from(*value as i64);
-            total.checked_add(value.checked_mul(scale)?)
-        });
-    let limit = 9_007_199_254_740_991_i128 * 1_000_000_000 + 999_999_999;
-    total.map_or(true, |total| total.abs() > limit)
-}
-
-fn number_property(value: &Value, name: &str) -> f64 {
-    crate::execute::get_property_result(value, name)
-        .ok()
-        .and_then(|value| match value {
-            Value::Number(value) => Some(value),
-            _ => None,
-        })
-        .unwrap_or(0.0)
-}
+include!("duration_helpers.rs");

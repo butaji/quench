@@ -473,63 +473,6 @@ fn validate_define_invariant(
     Ok(())
 }
 
-fn descriptor_value<'a>(descriptor: &'a Value, field: &str) -> Option<&'a Value> {
-    let Value::Object(properties) = descriptor else {
-        return None;
-    };
-    properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == field).then_some(value))
-}
-
-pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
-    if let Value::Proxy(proxy) = target {
-        check_revoked(proxy)?;
-        if let Some(trap) = get_handler_trap(proxy, "ownKeys") {
-            let result = call_trap(
-                &trap,
-                std::slice::from_ref(&proxy.target),
-                Some(&proxy.handler),
-            )?;
-            validate_own_keys_result(&result)?;
-            return Ok(result);
-        }
-    }
-    let target = match target {
-        Value::Proxy(proxy) => &proxy.target,
-        target => target,
-    };
-    if matches!(target, Value::Proxy(_)) {
-        proxy_own_keys(target)
-    } else {
-        crate::own_keys::all(target)
-    }
-}
-
-fn validate_own_keys_result(value: &Value) -> Result<(), VmError> {
-    let Value::Array(keys) = value else {
-        return Err(crate::value::error::throw_type_error(
-            "Proxy ownKeys trap must return an object",
-        ));
-    };
-    let mut seen = Vec::new();
-    for key in keys.snapshot() {
-        let Value::String(key) = key else {
-            return Err(crate::value::error::throw_type_error(
-                "Proxy ownKeys trap returned a non-property key",
-            ));
-        };
-        if seen.contains(&key) {
-            return Err(crate::value::error::throw_type_error(
-                "Proxy ownKeys trap returned duplicate keys",
-            ));
-        }
-        seen.push(key);
-    }
-    Ok(())
-}
-
 pub fn builtin(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
     match builtin {
         Builtin::Proxy => proxy_new(arguments),
@@ -549,70 +492,6 @@ pub fn builtin(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> 
         Builtin::ReflectConstruct => reflect_construct(arguments),
         _ => Err(VmError::NotCallable),
     }
-}
-
-fn reflect_get(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = reflect_target(arguments)?;
-    let prop = reflect_property(arguments)?;
-    let receiver = arguments.get(2);
-    proxy_get(target, &prop, receiver)
-}
-
-fn reflect_set(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = reflect_target(arguments)?;
-    let prop = reflect_property(arguments)?;
-    let value = arguments.get(2).cloned().unwrap_or(Value::Undefined);
-    let receiver = arguments.get(3);
-    proxy_set(target, &prop, &value, receiver)
-}
-
-fn reflect_has(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = reflect_target(arguments)?;
-    let prop = reflect_property(arguments)?;
-    proxy_has(target, &prop)
-}
-
-fn reflect_delete_property(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = reflect_target(arguments)?;
-    let prop = reflect_property(arguments)?;
-    proxy_delete(target, &prop)
-}
-
-fn reflect_get_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = reflect_target(arguments)?;
-    proxy_get_prototype_of(target)
-}
-
-fn reflect_set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = reflect_target(arguments)?;
-    let prototype = arguments.get(1).cloned().unwrap_or(Value::Null);
-    proxy_set_prototype_of(target, &prototype)
-}
-
-fn reflect_is_extensible(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = reflect_target(arguments)?;
-    proxy_is_extensible(target)
-}
-
-fn reflect_prevent_extensions(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = reflect_target(arguments)?;
-    proxy_prevent_extensions(target)
-}
-
-fn reflect_get_own_property_descriptor(arguments: &[Value]) -> Result<Value, VmError> {
-    let target = reflect_target(arguments)?;
-    let prop = reflect_property(arguments)?;
-    proxy_get_own_property_descriptor(target, &prop)
-}
-
-fn reflect_target(arguments: &[Value]) -> Result<&Value, VmError> {
-    let target = arguments.first().ok_or(VmError::NotCallable)?;
-    require_reflect_object(target)?;
-    Ok(target)
-}
-
-fn reflect_property(arguments: &[Value]) -> Result<String, VmError> {
-    crate::conversion::to_property_key(arguments.get(1).unwrap_or(&Value::Undefined))
 }
 
 include!("proxy_reflect.rs");
