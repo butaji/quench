@@ -92,6 +92,10 @@ fn fs_promises_surface() -> Value {
             "truncate".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::FsTruncatePromise)),
         ),
+        (
+            "copyFile".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsCopyFilePromise)),
+        ),
     ])
 }
 
