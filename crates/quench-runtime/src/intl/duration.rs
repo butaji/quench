@@ -41,7 +41,7 @@ pub(crate) fn format_temporal_duration(
     ])?;
     method(
         Builtin::IntlDurationFormatFormat,
-        &[duration.clone()],
+        std::slice::from_ref(duration),
         Some(&formatter),
     )
 }
@@ -302,19 +302,9 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
     let value = value.unwrap_or(&Value::Undefined);
     let properties = duration_properties(value)?;
     validate_duration_fields(&properties)?;
-    let [_, _, _, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] =
-        duration_values(&properties);
+    let values = duration_values(&properties);
     validate_duration(&properties)?;
-    format_duration_values(
-        slots,
-        days,
-        hours,
-        minutes,
-        seconds,
-        milliseconds,
-        microseconds,
-        nanoseconds,
-    )
+    format_duration_values(slots, fields_from(values))
 }
 
 fn duration_properties(value: &Value) -> Result<Vec<(String, Value)>, VmError> {
