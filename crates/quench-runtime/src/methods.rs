@@ -42,9 +42,18 @@ fn resolved_callee(
     key: &str,
 ) -> Result<Value, VmError> {
     callee.map_or_else(
-        || get_property_result(receiver, key),
+        || match get_property_result(receiver, key)? {
+            Value::Undefined if key == "slice" && is_arguments_object(receiver) => {
+                Ok(Value::Builtin(crate::ops::Builtin::ArraySlice))
+            }
+            value => Ok(value),
+        },
         |callee| read_register(registers, callee),
     )
+}
+
+fn is_arguments_object(value: &Value) -> bool {
+    matches!(value, Value::Array(values) if values.is_arguments())
 }
 
 fn execute_callee(
