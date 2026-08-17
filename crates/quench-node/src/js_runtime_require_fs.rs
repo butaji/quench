@@ -76,6 +76,18 @@ fn fs_promises_surface() -> Value {
             "realpath".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::FsRealpathPromise)),
         ),
+        (
+            "symlink".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsSymlinkPromise)),
+        ),
+        (
+            "mkdtemp".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdtempPromise)),
+        ),
+        (
+            "lstat".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsLstatPromise)),
+        ),
     ])
 }
 
