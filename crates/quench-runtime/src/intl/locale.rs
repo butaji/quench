@@ -280,57 +280,64 @@ pub(crate) fn case_first_extension(tag: &str) -> Option<String> {
     parse_canonical(tag).case_first
 }
 
+fn set_once(slot: &mut Option<String>, value: &str) {
+    if slot.is_none() {
+        *slot = Some(value.to_string());
+    }
+}
+
+fn parse_calendar_key(locale: &mut Locale, parts: &[&str], j: usize) {
+    if locale.calendar.is_some() {
+        return;
+    }
+    let item = parts[j + 1];
+    let calendar = if item == "ethiopic"
+        && parts.get(j + 2) == Some(&"amete")
+        && parts.get(j + 3) == Some(&"alem")
+    {
+        "ethiopic-amete-alem"
+    } else {
+        item
+    };
+    locale.calendar = Some(calendar_alias(calendar));
+}
+
+fn parse_unicode_key(locale: &mut Locale, parts: &[&str], j: usize) -> usize {
+    let key = parts[j];
+    let item = parts[j + 1];
+    if key == "kn" {
+        locale.numeric = item != "false";
+        locale.numeric_explicit = true;
+        return if matches!(item, "true" | "false") {
+            2
+        } else {
+            1
+        };
+    }
+    match key {
+        "ca" => parse_calendar_key(locale, parts, j),
+        "co" => set_once(&mut locale.collation, item),
+        "kf" if locale.case_first.is_none() => {
+            locale.case_first = Some(match item {
+                "upper" | "lower" | "false" => item.to_string(),
+                _ => String::new(),
+            })
+        }
+        "hc" => set_once(&mut locale.hour_cycle, item),
+        "fw" => set_once(&mut locale.first_day_of_week, item),
+        "nu" => set_once(&mut locale.numbering_system, item),
+        _ => {}
+    }
+    2
+}
+
 fn parse_extensions(locale: &mut Locale, parts: &[&str]) {
     let mut i = 0;
     while i < parts.len() {
         if parts[i] == "u" {
             let mut j = i + 1;
             while j + 1 < parts.len() {
-                let key = parts[j];
-                let item = parts[j + 1];
-                if key == "kn" {
-                    locale.numeric = item != "false";
-                    locale.numeric_explicit = true;
-                    j += if matches!(item, "true" | "false") {
-                        2
-                    } else {
-                        1
-                    };
-                    continue;
-                }
-                match key {
-                    "ca" => {
-                        if locale.calendar.is_none() {
-                            let calendar = if item == "ethiopic"
-                                && parts.get(j + 2) == Some(&"amete")
-                                && parts.get(j + 3) == Some(&"alem")
-                            {
-                                "ethiopic-amete-alem"
-                            } else {
-                                item
-                            };
-                            locale.calendar = Some(calendar_alias(calendar));
-                        }
-                    }
-                    "co" if locale.collation.is_none() => locale.collation = Some(item.to_string()),
-                    "kf" if locale.case_first.is_none() => {
-                        locale.case_first = Some(match item {
-                            "upper" | "lower" | "false" => item.to_string(),
-                            _ => String::new(),
-                        })
-                    }
-                    "hc" if locale.hour_cycle.is_none() => {
-                        locale.hour_cycle = Some(item.to_string())
-                    }
-                    "fw" if locale.first_day_of_week.is_none() => {
-                        locale.first_day_of_week = Some(item.to_string())
-                    }
-                    "nu" if locale.numbering_system.is_none() => {
-                        locale.numbering_system = Some(item.to_string())
-                    }
-                    _ => {}
-                }
-                j += 2;
+                j += parse_unicode_key(locale, parts, j);
             }
             break;
         }
@@ -480,7 +487,7 @@ fn sync_unicode_extensions(locale: &mut Locale) {
     sort_unicode_extensions(&mut locale.unicode_extensions);
 }
 
-fn sort_unicode_extensions(extensions: &mut Vec<UnicodeExtension>) {
+fn sort_unicode_extensions(extensions: &mut [UnicodeExtension]) {
     let attributes = extensions
         .iter_mut()
         .flat_map(|extension| std::mem::take(&mut extension.attributes))

@@ -112,7 +112,7 @@ pub(crate) fn reduce_for_in(
             body_locals.insert(format!("\0lexical-predeclared:{name}"), slot);
         }
     }
-    let body = crate::branch::reduce(&statement.body, facts, &mut body_locals)?;
+    let body = crate::branch::reduce(&statement.body, facts, &body_locals)?;
     *locals = outer_locals;
     ops.push(Op::ForIn {
         label: None,
@@ -160,7 +160,7 @@ pub(crate) fn reduce_for_of(
             body_locals.insert(format!("\0lexical-predeclared:{name}"), slot);
         }
     }
-    let mut body = crate::branch::reduce(&statement.body, facts, &mut body_locals)?;
+    let mut body = crate::branch::reduce(&statement.body, facts, &body_locals)?;
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
     }

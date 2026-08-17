@@ -74,6 +74,12 @@ fn has_instance_handler(constructor: &Value) -> Result<Option<Value>, VmError> {
     Ok(Some(handler))
 }
 
+fn has_temporal_plain_date_fields(properties: &crate::value::ObjectData) -> bool {
+    has_property(properties, "year")
+        && has_property(properties, "month")
+        && has_property(properties, "day")
+}
+
 fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
     let constructor = intrinsic_builtin(constructor)?;
     if constructor == Builtin::Function {
@@ -93,34 +99,21 @@ fn builtin_instanceof(value: &Value, constructor: &Value) -> Option<bool> {
         | (Value::Uint16Array(_), Builtin::Uint16Array)
         | (Value::Uint32Array(_), Builtin::Uint32Array)
         | (Value::Promise(_), Builtin::Promise) => true,
-        (Value::Object(properties), Builtin::Date)
-            if properties.iter().any(|(name, _)| name == "timeValue") =>
-        {
-            true
+        (Value::Object(properties), Builtin::Date) if has_property(properties, "timeValue") => true,
+        (Value::Object(properties), Builtin::RegExp) if has_property(properties, "source") => true,
+        (Value::Map(data), Builtin::Map | Builtin::WeakMap) => {
+            data.weak == (constructor == Builtin::WeakMap)
         }
-        (Value::Object(properties), Builtin::RegExp)
-            if properties.iter().any(|(name, _)| name == "source") =>
-        {
-            true
+        (Value::ArrayBuffer(data), Builtin::SharedArrayBuffer | Builtin::ArrayBuffer) => {
+            data.shared == (constructor == Builtin::SharedArrayBuffer)
         }
-        (Value::Map(data), Builtin::Map) if !data.weak => true,
-        (Value::Map(data), Builtin::WeakMap) if data.weak => true,
-        (Value::ArrayBuffer(data), Builtin::SharedArrayBuffer) if data.shared => true,
-        (Value::ArrayBuffer(data), Builtin::ArrayBuffer) if !data.shared => true,
-        (Value::Set(_), Builtin::Set) => true,
-        (Value::Set(data), Builtin::WeakSet) if data.weak => true,
-        (Value::Object(properties), Builtin::WeakRef) => {
-            properties.iter().any(|(name, _)| name == "\0weakref")
+        (Value::Set(data), Builtin::Set | Builtin::WeakSet) => {
+            data.weak == (constructor == Builtin::WeakSet)
         }
-        (Value::Object(properties), Builtin::ShadowRealm) => {
-            properties.iter().any(|(name, value)| {
-                name == "\0prototype" && *value == Value::Builtin(Builtin::ShadowRealmPrototype)
-            })
-        }
+        (Value::Object(properties), Builtin::WeakRef) => has_property(properties, "\0weakref"),
+        (Value::Object(properties), Builtin::ShadowRealm) => is_shadow_realm(properties),
         (Value::Object(properties), Builtin::TemporalPlainDate) => {
-            has_property(properties, "year")
-                && has_property(properties, "month")
-                && has_property(properties, "day")
+            has_temporal_plain_date_fields(properties)
         }
         _ => return None,
     })
@@ -152,6 +145,12 @@ fn ordinary_instanceof(value: &Value, constructor: &Value) -> Result<bool, VmErr
         || own_constructor(value)
             .is_some_and(|found| crate::builtins::same_value(Some(&found), Some(constructor)))
         || is_error_subclass(value, constructor))
+}
+
+fn is_shadow_realm(properties: &crate::value::ObjectData) -> bool {
+    properties.iter().any(|(name, value)| {
+        name == "\0prototype" && *value == Value::Builtin(Builtin::ShadowRealmPrototype)
+    })
 }
 
 fn has_property(properties: &crate::value::ObjectData, key: &str) -> bool {

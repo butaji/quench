@@ -162,9 +162,7 @@ fn restore_segment(
         return value;
     };
     let start = segment_index(&Value::Object(object.clone()));
-    let end = source
-        .get(index + 1)
-        .map_or(units.len(), |value| segment_index(value));
+    let end = source.get(index + 1).map_or(units.len(), segment_index);
     let segment = crate::strings::from_units(units[start..end].to_vec());
     let properties = object
         .properties

@@ -219,7 +219,7 @@ fn collator_bound_properties() -> Vec<(String, Value)> {
         ("name", Value::String(String::new())),
     ]
     .into_iter()
-    .map(|(key, value)| {
+    .flat_map(|(key, value)| {
         let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
             ("value".to_string(), value.clone()),
             ("writable".to_string(), Value::Boolean(false)),
@@ -231,7 +231,6 @@ fn collator_bound_properties() -> Vec<(String, Value)> {
             (crate::builtins::descriptor_key(key), descriptor),
         ]
     })
-    .flatten()
     .collect()
 }
 

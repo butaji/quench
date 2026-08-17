@@ -37,7 +37,7 @@ pub(crate) fn format_temporal_duration(
     ])?;
     method(
         Builtin::IntlDurationFormatFormat,
-        &[duration.clone()],
+        std::slice::from_ref(duration),
         Some(&formatter),
     )
 }
@@ -298,22 +298,9 @@ fn format_duration(value: Option<&Value>, slots: &[(String, Value)]) -> Result<S
     let value = value.unwrap_or(&Value::Undefined);
     let properties = duration_properties(value)?;
     validate_duration_fields(&properties)?;
-    let [years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds] =
-        duration_values(&properties);
+    let units = duration_values(&properties);
     validate_duration(&properties)?;
-    format_duration_values(
-        slots,
-        years,
-        months,
-        weeks,
-        days,
-        hours,
-        minutes,
-        seconds,
-        milliseconds,
-        microseconds,
-        nanoseconds,
-    )
+    format_duration_values(slots, &units)
 }
 
 fn duration_properties(value: &Value) -> Result<Vec<(String, Value)>, VmError> {
@@ -338,8 +325,8 @@ fn duration_properties(value: &Value) -> Result<Vec<(String, Value)>, VmError> {
     }
 }
 
-fn format_duration_values(
-    slots: &[(String, Value)],
+#[derive(Clone, Copy)]
+struct DurationUnits {
     years: i64,
     months: i64,
     weeks: i64,
@@ -350,81 +337,48 @@ fn format_duration_values(
     milliseconds: i64,
     microseconds: i64,
     nanoseconds: i64,
+}
+
+fn format_duration_values(
+    slots: &[(String, Value)],
+    units: &DurationUnits,
 ) -> Result<String, VmError> {
-    let negative = [days, hours, minutes, seconds]
+    let negative = [units.days, units.hours, units.minutes, units.seconds]
         .iter()
         .any(|value| *value < 0);
-    let days = days.abs();
-    let hours = hours.abs();
-    let minutes = minutes.abs();
-    let seconds = seconds.abs();
+    let units = DurationUnits {
+        days: units.days.abs(),
+        hours: units.hours.abs(),
+        minutes: units.minutes.abs(),
+        seconds: units.seconds.abs(),
+        ..*units
+    };
     let style = duration_style(slots);
-    format_duration_shape(
-        slots,
-        style,
-        negative,
-        years,
-        months,
-        weeks,
-        days,
-        hours,
-        minutes,
-        seconds,
-        milliseconds,
-        microseconds,
-        nanoseconds,
-    )
+    format_duration_shape(slots, style, negative, &units)
 }
 
 fn format_duration_shape(
     slots: &[(String, Value)],
     style: &str,
     negative: bool,
-    years: i64,
-    months: i64,
-    weeks: i64,
-    days: i64,
-    hours: i64,
-    minutes: i64,
-    seconds: i64,
-    milliseconds: i64,
-    microseconds: i64,
-    nanoseconds: i64,
+    units: &DurationUnits,
 ) -> Result<String, VmError> {
     if matches!(slot_value(slots, "minutes"), Some("numeric" | "2-digit"))
         && matches!(slot_value(slots, "seconds"), Some("numeric" | "2-digit"))
     {
         return Ok(format_mixed_numeric_duration(
-            slots, style, days, hours, minutes, seconds,
+            slots,
+            style,
+            units.days,
+            units.hours,
+            units.minutes,
+            units.seconds,
         ));
     }
     if style == "digital" {
-        return Ok(format_digital_duration(
-            slots,
-            days,
-            hours,
-            minutes,
-            seconds,
-            milliseconds,
-            microseconds,
-            nanoseconds,
-            negative,
-        ));
+        return Ok(format_digital_duration(slots, units, negative));
     }
-    Ok(format_standard_duration(
-        slots,
-        style,
-        years,
-        months,
-        weeks,
-        days,
-        hours,
-        minutes,
-        seconds,
-        milliseconds,
-        microseconds,
-        nanoseconds,
-    ))
+    Ok(format_standard_duration(slots, style, units))
 }
 
 fn duration_style(slots: &[(String, Value)]) -> &str {
@@ -438,19 +392,19 @@ fn duration_style(slots: &[(String, Value)]) -> &str {
         .unwrap_or("short")
 }
 
-fn duration_values(properties: &[(String, Value)]) -> [i64; 10] {
-    [
-        number(properties, "years"),
-        number(properties, "months"),
-        number(properties, "weeks"),
-        number(properties, "days"),
-        number(properties, "hours"),
-        number(properties, "minutes"),
-        number(properties, "seconds"),
-        number(properties, "milliseconds"),
-        number(properties, "microseconds"),
-        number(properties, "nanoseconds"),
-    ]
+fn duration_values(properties: &[(String, Value)]) -> DurationUnits {
+    DurationUnits {
+        years: number(properties, "years"),
+        months: number(properties, "months"),
+        weeks: number(properties, "weeks"),
+        days: number(properties, "days"),
+        hours: number(properties, "hours"),
+        minutes: number(properties, "minutes"),
+        seconds: number(properties, "seconds"),
+        milliseconds: number(properties, "milliseconds"),
+        microseconds: number(properties, "microseconds"),
+        nanoseconds: number(properties, "nanoseconds"),
+    }
 }
 
 fn format_mixed_numeric_duration(
@@ -487,17 +441,14 @@ fn format_mixed_numeric_duration(
 
 fn format_digital_duration(
     slots: &[(String, Value)],
-    days: i64,
-    hours: i64,
-    minutes: i64,
-    seconds: i64,
-    milliseconds: i64,
-    microseconds: i64,
-    nanoseconds: i64,
+    units: &DurationUnits,
     negative: bool,
 ) -> String {
-    let subsecond = milliseconds.abs() * 1_000_000 + microseconds.abs() * 1_000 + nanoseconds.abs();
-    let seconds = seconds + subsecond / 1_000_000_000;
+    let (days, hours, minutes) = (units.days, units.hours, units.minutes);
+    let subsecond = units.milliseconds.abs() * 1_000_000
+        + units.microseconds.abs() * 1_000
+        + units.nanoseconds.abs();
+    let seconds = units.seconds + subsecond / 1_000_000_000;
     let remainder = subsecond % 1_000_000_000;
     let mut clock = if hours == 0 {
         format!("{minutes:02}:{seconds:02}")
@@ -518,50 +469,27 @@ fn format_digital_duration(
 fn format_standard_duration(
     slots: &[(String, Value)],
     style: &str,
-    years: i64,
-    months: i64,
-    weeks: i64,
-    days: i64,
-    hours: i64,
-    minutes: i64,
-    seconds: i64,
-    milliseconds: i64,
-    microseconds: i64,
-    nanoseconds: i64,
+    units: &DurationUnits,
 ) -> String {
     let locale = slot_string(slots, "locale").unwrap_or_else(default_locale);
     if slot_value(slots, "microseconds") == Some("numeric")
         || slot_value(slots, "nanoseconds") == Some("numeric")
     {
-        return format_fractional_standard(
-            slots,
-            style,
-            years,
-            months,
-            weeks,
-            days,
-            hours,
-            minutes,
-            seconds,
-            milliseconds,
-            microseconds,
-            nanoseconds,
-            &locale,
-        );
+        return format_fractional_standard(slots, style, units, &locale);
     }
-    let units = [
-        ("years", "year", years),
-        ("months", "month", months),
-        ("weeks", "week", weeks),
-        ("days", "day", days),
-        ("hours", "hour", hours),
-        ("minutes", "minute", minutes),
-        ("seconds", "second", seconds),
-        ("milliseconds", "millisecond", milliseconds),
-        ("microseconds", "microsecond", microseconds),
-        ("nanoseconds", "nanosecond", nanoseconds),
+    let units_list = [
+        ("years", "year", units.years),
+        ("months", "month", units.months),
+        ("weeks", "week", units.weeks),
+        ("days", "day", units.days),
+        ("hours", "hour", units.hours),
+        ("minutes", "minute", units.minutes),
+        ("seconds", "second", units.seconds),
+        ("milliseconds", "millisecond", units.milliseconds),
+        ("microseconds", "microsecond", units.microseconds),
+        ("nanoseconds", "nanosecond", units.nanoseconds),
     ];
-    let items = units
+    let items = units_list
         .iter()
         .map(|(slot, unit, value)| {
             let display = slot_value(slots, slot).unwrap_or(style);
@@ -574,27 +502,16 @@ fn format_standard_duration(
 fn format_fractional_standard(
     slots: &[(String, Value)],
     style: &str,
-    years: i64,
-    months: i64,
-    weeks: i64,
-    days: i64,
-    hours: i64,
-    minutes: i64,
-    seconds: i64,
-    milliseconds: i64,
-    microseconds: i64,
-    nanoseconds: i64,
+    units: &DurationUnits,
     locale: &str,
 ) -> String {
-    let mut items = format_fractional_prefix(
-        slots, style, years, months, weeks, days, hours, minutes, seconds,
-    );
+    let mut items = format_fractional_prefix(slots, style, units);
     items.extend(format_fractional_subseconds(
         slots,
         style,
-        milliseconds,
-        microseconds,
-        nanoseconds,
+        units.milliseconds,
+        units.microseconds,
+        units.nanoseconds,
     ));
     crate::intl::list::format_list(items.as_slice(), locale, style, "unit")
 }
@@ -602,23 +519,17 @@ fn format_fractional_standard(
 fn format_fractional_prefix(
     slots: &[(String, Value)],
     style: &str,
-    years: i64,
-    months: i64,
-    weeks: i64,
-    days: i64,
-    hours: i64,
-    minutes: i64,
-    seconds: i64,
+    units: &DurationUnits,
 ) -> Vec<String> {
     let mut items = Vec::new();
     for (slot, unit, value) in [
-        ("years", "year", years),
-        ("months", "month", months),
-        ("weeks", "week", weeks),
-        ("days", "day", days),
-        ("hours", "hour", hours),
-        ("minutes", "minute", minutes),
-        ("seconds", "second", seconds),
+        ("years", "year", units.years),
+        ("months", "month", units.months),
+        ("weeks", "week", units.weeks),
+        ("days", "day", units.days),
+        ("hours", "hour", units.hours),
+        ("minutes", "minute", units.minutes),
+        ("seconds", "second", units.seconds),
     ] {
         if value != 0 {
             items.push(format_duration_unit(

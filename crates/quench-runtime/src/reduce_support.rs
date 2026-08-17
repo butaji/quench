@@ -173,7 +173,9 @@ fn predeclare_functions_strict(
         let names = if matches!(statement, oxc::ast::ast::Statement::FunctionDeclaration(_)) {
             declared_names(statement)
         } else if strict {
-            Vec::new()
+            // Strict mode suppresses Annex B block-level function hoisting, but
+            // function-scoped `var` names still hoist and must be reserved.
+            declared_names(statement)
         } else {
             nested_var_names(statement)
         };

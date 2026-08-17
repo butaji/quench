@@ -573,18 +573,17 @@ fn validate_calendar(calendar: Option<&Value>) -> Result<(), VmError> {
 }
 
 fn validate_gregory_era(calendar: &Value, era: &Value, era_year: &Value) -> Result<(), VmError> {
-    let era_missing = matches!(era, Value::Undefined);
-    let era_year_missing = matches!(era_year, Value::Undefined);
-    if matches!(calendar, Value::String(value) if value.eq_ignore_ascii_case("gregory"))
-        && era_missing != era_year_missing
-    {
+    if !matches!(calendar, Value::String(value) if value.eq_ignore_ascii_case("gregory")) {
+        return Ok(());
+    }
+    if matches!(era, Value::Undefined) != matches!(era_year, Value::Undefined) {
         return Err(crate::value::error::throw_type_error(
             "era and eraYear must be provided together",
         ));
     }
     let valid = matches!(era, Value::Undefined)
         || matches!(era, Value::String(value) if matches!(value.as_str(), "ce" | "bce" | "ad" | "bc"));
-    if matches!(calendar, Value::String(value) if value.eq_ignore_ascii_case("gregory")) && !valid {
+    if !valid {
         return Err(crate::value::error::throw_range_error("Invalid era"));
     }
     Ok(())
