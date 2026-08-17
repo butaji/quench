@@ -392,6 +392,7 @@ impl CapabilityName {
     const FsStringToFlags: u16 = 1540;
     const FsLstatSync: u16 = 1541;
     const FsSymlinkSync: u16 = 1542;
+    const FsReadlinkSync: u16 = 1543;
     const FsStatsIsDirectoryFile: u16 = 1543;
     const FsStatsIsSymbolicLink: u16 = 1544;
     const FsStatsIsNotSymbolicLink: u16 = 1545;
