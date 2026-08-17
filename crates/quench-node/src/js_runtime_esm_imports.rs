@@ -236,6 +236,7 @@ fn parse_import_names(inner: &str) -> String {
                 if chars.peek().is_some() && chars.peek() != Some(&' ') && chars.peek() != Some(&',') {
                     let saved = parts.pop().unwrap_or_default();
                     if !saved.is_empty() {
+                        parts.push(saved);
                         parts.push("as".to_string());
                     }
                     current.clear();
