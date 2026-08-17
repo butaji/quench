@@ -266,24 +266,13 @@ fn number_format_bound_properties() -> Vec<(String, Value)> {
     .collect()
 }
 fn promise_property(value: &Value, key: &str) -> Value {
-    if key == "finally" {
-        return Value::Builtin(Builtin::PromiseFinally);
-    }
-    let Some(builtin @ (Builtin::PromiseThen | Builtin::PromiseCatch | Builtin::PromiseFinally)) =
-        (match crate::builtins::property(Builtin::PromisePrototype, key) {
-            Value::Builtin(builtin) => Some(builtin),
-            _ => None,
-        })
-    else {
-        return crate::builtins::property(Builtin::PromisePrototype, key);
-    };
-    Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue {
-        realm: crate::vm::current_context_or_default().realm(),
-        target: Value::Builtin(builtin),
-        receiver: value.clone(),
-        arguments: Vec::new(),
-        properties: RefCell::new(Vec::new()),
-    }))
+    // Per ES §27.2.5 `Promise.prototype.then` is a single function
+    // object stored on the prototype. `Get(p, "then")` walks the
+    // prototype chain and returns that function — it must NOT be
+    // eagerly bound to the receiver, otherwise `p.then` would not
+    // match `Promise.prototype.then` by reference.
+    let _ = value;
+    crate::builtins::property(Builtin::PromisePrototype, key)
 }
 include!("vm_typed_array_properties.rs");
 fn typed_index(key: &str, get: impl FnOnce(usize) -> Option<f64>) -> Option<Value> {
