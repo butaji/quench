@@ -68,6 +68,12 @@ fn process_module() -> Value {
         ("Symbol.toStringTag".into(), Value::String("process".into())),
         ("pid".into(), Value::Number(std::process::id() as f64)),
         (
+            "getBuiltinModule".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::ProcessGetBuiltinModule,
+            )),
+        ),
+        (
             "platform".into(),
             Value::String(
                 match std::env::consts::OS {
@@ -318,4 +324,36 @@ fn specific_type_of(value: &Value) -> String {
             "an instance of Object".into()
         }
     }
+}
+
+fn process_get_builtin_module(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(id)) = arguments.first() else {
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "The \"id\" argument must be of type string",
+        )));
+    };
+    if id.starts_with("Symbol.") {
+        // The engine represents symbols as a Symbol.-prefixed string; a symbol
+        // is not an accepted id.
+        return Err(VmError::Thrown(fs_error(
+            "ERR_INVALID_ARG_TYPE",
+            "The \"id\" argument must be of type string",
+        )));
+    }
+    if !is_process_builtin(id) {
+        return Ok(Value::Undefined);
+    }
+    require_module(&[Value::String(id.clone())])
+}
+
+fn is_process_builtin(id: &str) -> bool {
+    let bare = id.strip_prefix("node:").unwrap_or(id);
+    matches!(
+        bare,
+        "assert" | "buffer" | "child_process" | "crypto" | "events" | "fs" | "fs/promises"
+            | "http" | "https" | "module" | "net" | "os" | "path" | "process" | "stream"
+            | "string_decoder" | "timers" | "timers/promises" | "tls" | "url" | "util"
+            | "v8" | "worker_threads"
+    )
 }
