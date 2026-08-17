@@ -169,3 +169,7 @@ fn fs_readlink_async(arguments: &[Value]) -> Result<Value, VmError> {
 fn fs_realpath_async(arguments: &[Value]) -> Result<Value, VmError> {
     fs_async_wrapper(arguments, |real| fs_realpath(real), true)
 }
+
+fn fs_mkdtemp_async(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_async_wrapper(arguments, |real| fs_mkdtemp(real), true)
+}

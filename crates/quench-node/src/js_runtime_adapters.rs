@@ -148,6 +148,7 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
                 HostCapabilityKind::Custom(CapabilityName::FsSymlink),
                 HostCapabilityKind::Custom(CapabilityName::FsReadlink),
                 HostCapabilityKind::Custom(CapabilityName::FsRealpath),
+                HostCapabilityKind::Custom(CapabilityName::FsMkdtempAsync),
                 HostCapabilityKind::Custom(CapabilityName::FsCpSync),
                 HostCapabilityKind::Custom(CapabilityName::FsCp),
                 HostCapabilityKind::Custom(CapabilityName::TmpdirResolve),

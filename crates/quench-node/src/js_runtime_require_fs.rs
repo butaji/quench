@@ -69,6 +69,10 @@ fn require_fs_module(name: &str) -> Option<Value> {
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsRmdirSync)),
                 ),
                 (
+                    "mkdtemp".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdtempAsync)),
+                ),
+                (
                     "mkdtempSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsMkdtemp)),
                 ),
