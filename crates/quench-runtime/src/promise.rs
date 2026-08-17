@@ -25,7 +25,6 @@ include!("promise_settlement.rs");
 include!("promise_with_resolvers.rs");
 include!("promise_try.rs");
 
-
 fn process_promise(promise: &Rc<PromiseData>) {
     let state = promise.state.borrow().clone();
     let then_actions = std::mem::take(&mut *promise.then_actions.borrow_mut());
