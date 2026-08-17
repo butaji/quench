@@ -41,9 +41,10 @@ pub(super) fn from(value: Option<&Value>) -> Result<Value, VmError> {
 }
 
 fn from_string(text: &str) -> Result<Value, VmError> {
-    let (negative, body) = text
-        .strip_prefix('-')
-        .map_or((false, text), |body| (true, body));
+    let (negative, body) = text.strip_prefix('-').map_or_else(
+        || (false, text.strip_prefix('+').unwrap_or(text)),
+        |body| (true, body),
+    );
     let body = body
         .strip_prefix('P')
         .or_else(|| body.strip_prefix('p'))
