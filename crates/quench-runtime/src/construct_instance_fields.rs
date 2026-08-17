@@ -128,9 +128,6 @@ fn builtin_default_prototype(target: &crate::value::Value) -> Option<crate::valu
     let crate::value::Value::Builtin(builtin) = target else {
         return None;
     };
-    let prototype = match builtin {
-        crate::ops::Builtin::AsyncFunction => crate::ops::Builtin::AsyncFunctionPrototype,
-        _ => crate::builtin_meta::prototype(*builtin)?,
-    };
+    let prototype = crate::builtin_meta::instance_prototype(*builtin)?;
     Some(crate::value::Value::Builtin(prototype))
 }
