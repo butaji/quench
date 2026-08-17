@@ -138,6 +138,11 @@ fn validate_rounding_increment(value: Option<&Value>) -> Result<(), VmError> {
 }
 
 fn round_unit(value: Option<&Value>) -> Result<&str, VmError> {
+    if value.is_none() || value.is_some_and(crate::conversion::is_symbol) {
+        return Err(crate::value::error::throw_type_error(
+            "Options must be an object",
+        ));
+    }
     match value {
         Some(Value::String(unit)) => Ok(unit.as_str()),
         Some(Value::Object(object)) => object
@@ -148,8 +153,8 @@ fn round_unit(value: Option<&Value>) -> Result<&str, VmError> {
                 _ => None,
             })
             .ok_or_else(|| crate::value::error::throw_range_error("Invalid smallestUnit")),
-        _ => Err(crate::value::error::throw_range_error(
-            "Invalid smallestUnit",
+        _ => Err(crate::value::error::throw_type_error(
+            "Options must be an object",
         )),
     }
 }
