@@ -44,7 +44,7 @@ fn default_prototype_from_constructor(target: &Value, global: &Value) -> Option<
         return None;
     };
     if let Some(realm) = crate::vm::realm_id_for_global_value(global) {
-        if let Some(prototype) = crate::builtin_meta::prototype(*builtin) {
+        if let Some(prototype) = crate::builtin_meta::instance_prototype(*builtin) {
             return Some(crate::vm::realm_intrinsic_for(realm, prototype));
         }
     }
