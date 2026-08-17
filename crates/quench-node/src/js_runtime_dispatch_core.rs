@@ -234,7 +234,7 @@ impl QuenchNodeHost {
                 string_to_flags(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::FsStatsIsDirectoryFile) => {
-                Ok(Value::Boolean(true))
+                Ok(Value::Boolean(false))
             }
             HostCapabilityKind::Custom(CapabilityName::FsStatsIsSymbolicLink) => {
                 Ok(Value::Boolean(true))

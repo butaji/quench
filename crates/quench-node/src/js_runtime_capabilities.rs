@@ -21,6 +21,8 @@ impl CapabilityName {
     const TmpdirResolve: u16 = 1331;
     const CommonFsNextdir: u16 = 1332;
     const CommonFsAssertDirEquivalent: u16 = 1333;
+    const CommonFsCollectEntries: u16 = 1335;
+    const CommonFsEntryIsDirectory: u16 = 1336;
     const CommonMustNotMutateObjectDeep: u16 = 1334;
     const BufferAlloc: u16 = 31;
     const BufferIsBuffer: u16 = 32;
@@ -392,7 +394,7 @@ impl CapabilityName {
     const FsStringToFlags: u16 = 1540;
     const FsLstatSync: u16 = 1541;
     const FsSymlinkSync: u16 = 1542;
-    const FsReadlinkSync: u16 = 1543;
+    const FsReadlinkSync: u16 = 1599;
     const FsStatsIsDirectoryFile: u16 = 1543;
     const FsStatsIsSymbolicLink: u16 = 1544;
     const FsStatsIsNotSymbolicLink: u16 = 1545;
