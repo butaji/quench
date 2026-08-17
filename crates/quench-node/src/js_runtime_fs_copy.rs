@@ -123,7 +123,7 @@ fn fs_cp(arguments: &[Value], asynchronous: bool) -> Result<Value, VmError> {
                 "The \"recursive\" option is mandatory when using cp with directories",
             )));
         }
-        copy_tree(&src, &dest, force, verbatim, dereference, filter.as_ref())
+        copy_tree(&src, &dest, force, verbatim, dereference, filter.as_ref(), &dest, &src)
     };
     match run() {
         Ok(()) if asynchronous => Ok(fulfilled(Value::Undefined)),
@@ -190,25 +190,54 @@ fn copy_tree(
     verbatim: bool,
     dereference: bool,
     filter: Option<&Value>,
+    dest_root: &str,
+    src_root: &str,
 ) -> Result<(), VmError> {
     let to_err = |error: std::io::Error| VmError::EvalError(error.to_string());
     let sym_metadata = std::fs::symlink_metadata(src).map_err(&to_err)?;
-    if sym_metadata.file_type().is_symlink() && verbatim {
-        if force || !std::path::Path::new(dest).exists() {
-            if let Some(parent) = std::path::Path::new(dest).parent() {
-                std::fs::create_dir_all(parent).map_err(&to_err)?;
-            }
-            let target = std::fs::read_link(src).map_err(&to_err)?;
-            std::os::unix::fs::symlink(target, dest).map_err(&to_err)?;
-        }
-        return Ok(());
-    }
-    if sym_metadata.file_type().is_symlink() && dereference {
-        // Follow the symlink and copy the referenced target (file or dir).
-        return copy_tree_followed(src, dest, force);
-    }
     if sym_metadata.file_type().is_symlink() {
-        // Resolve the relative symlink into an absolute symlink at dest.
+        let target = std::fs::read_link(src).map_err(&to_err)?;
+        let base = std::path::Path::new(src)
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let resolved = base.join(&target).to_string_lossy().into_owned();
+        let dest_exists = std::path::Path::new(dest).exists();
+        // Copying a symlink that resolves into the destination creates a cycle;
+        // Node errors when that dest entry already exists.
+        if dest_exists && fs_path_inside(&resolved, dest_root) {
+            return Err(VmError::Thrown(fs_error(
+                "ERR_FS_CP_EINVAL",
+                "Cannot copy a symlink that resolves within the destination",
+            )));
+        }
+        // An existing dest symlink that resolves into the source tree must error.
+        if let Ok(dest_link) = std::fs::read_link(dest) {
+            let dest_base = std::path::Path::new(dest)
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            let dest_resolved = dest_base.join(&dest_link).to_string_lossy().into_owned();
+            if fs_path_inside(&dest_resolved, src_root)
+                && std::path::Path::new(&dest_resolved).is_dir()
+            {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_FS_CP_SYMLINK_TO_SUBDIRECTORY",
+                    "Cannot copy to a symlink that points into the source directory",
+                )));
+            }
+        }
+        if verbatim {
+            if force || !dest_exists {
+                if let Some(parent) = std::path::Path::new(dest).parent() {
+                    std::fs::create_dir_all(parent).map_err(&to_err)?;
+                }
+                std::os::unix::fs::symlink(target, dest).map_err(&to_err)?;
+            }
+            return Ok(());
+        }
+        if dereference {
+            // Follow the symlink and copy the referenced target (file or dir).
+            return copy_tree_followed(src, dest, force, dest_root, src_root);
+        }
         return copy_tree_resolved(src, dest, force);
     }
     let metadata = std::fs::metadata(src).map_err(&to_err)?;
@@ -235,6 +264,8 @@ fn copy_tree(
                 verbatim,
                 dereference,
                 filter,
+                dest_root,
+                src_root,
             )?;
         }
         Ok(())
@@ -251,7 +282,13 @@ fn copy_tree(
     }
 }
 
-fn copy_tree_followed(src: &str, dest: &str, force: bool) -> Result<(), VmError> {
+fn copy_tree_followed(
+    src: &str,
+    dest: &str,
+    force: bool,
+    dest_root: &str,
+    src_root: &str,
+) -> Result<(), VmError> {
     let to_err = |error: std::io::Error| VmError::EvalError(error.to_string());
     let metadata = std::fs::metadata(src).map_err(&to_err)?;
     if metadata.is_dir() {
@@ -269,6 +306,8 @@ fn copy_tree_followed(src: &str, dest: &str, force: bool) -> Result<(), VmError>
                 false,
                 false,
                 None,
+                dest_root,
+                src_root,
             )?;
         }
         Ok(())
@@ -294,11 +333,25 @@ fn copy_tree_resolved(src: &str, dest: &str, force: bool) -> Result<(), VmError>
     if !force && std::path::Path::new(dest).exists() {
         return Ok(());
     }
+    if std::fs::symlink_metadata(dest)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        let _ = std::fs::remove_file(dest);
+    }
     if let Some(parent) = std::path::Path::new(dest).parent() {
         std::fs::create_dir_all(parent).map_err(&to_err)?;
     }
     std::os::unix::fs::symlink(resolved, dest).map_err(&to_err)?;
     Ok(())
+}
+
+fn fs_path_inside(path: &str, root: &str) -> bool {
+    if path == root {
+        return true;
+    }
+    let prefix = format!("{}{}", root.trim_end_matches('/'), std::path::MAIN_SEPARATOR);
+    path.starts_with(&prefix)
 }
 fn collect_entries_dirent(dir: &str, mut out: Value) -> Result<Value, VmError> {
     let mut length = quench_runtime::execute::get_property_result(&out, "length")
