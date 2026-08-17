@@ -111,6 +111,8 @@ impl CapabilityName {
     const CryptoDhHasInstance: u16 = 2191;
     const NetGetDefaultAutoSelectFamily: u16 = 2126;
     const NetGetDefaultAutoSelectFamilyAttemptTimeout: u16 = 2127;
+    const NetIsIP: u16 = 2128;
+    const NetCreateServer: u16 = 2129;
     const UtilGetCallSites: u16 = 2124;
     const VmCompileFunction: u16 = 2119;
     const VmCompiledFunction: u16 = 2120;

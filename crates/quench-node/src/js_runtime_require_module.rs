@@ -111,6 +111,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                     CapabilityName::NetGetDefaultAutoSelectFamilyAttemptTimeout,
                 )),
             ),
+            (
+                "isIP".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::NetIsIP)),
+            ),
+            (
+                "createServer".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::NetCreateServer)),
+            ),
         ]));
     }
     if name == "path" || name == "node:path" {
