@@ -150,6 +150,10 @@ fn require_fs_module(name: &str) -> Option<Value> {
                     )),
                 ),
                 (
+                    "renameSync".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::FsRenameSync)),
+                ),
+                (
                     "rmSync".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::FsRmSync)),
                 ),
