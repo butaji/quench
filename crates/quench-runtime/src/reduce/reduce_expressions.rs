@@ -8,7 +8,7 @@ use crate::{
     special, transparent,
 };
 use oxc::{
-    ast::ast::{Expression, Statement, VariableDeclarationKind},
+    ast::ast::{Expression, PrivateInExpression, Statement, VariableDeclarationKind},
     syntax::operator::UnaryOperator,
 };
 use std::collections::HashMap;
@@ -276,6 +276,25 @@ pub fn reduce_expression(
     }
     reduce_atom(expression, ops, facts, next_register, locals)
         .or_else(|| reduce_binary(expression, ops, facts, next_register, locals))
+        .or_else(|| reduce_private_in(expression, ops, facts, next_register, locals))
+}
+
+fn reduce_private_in(
+    expression: &Expression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let Expression::PrivateInExpression(boxed) = expression else {
+        return None;
+    };
+    let PrivateInExpression { left, right, .. } = boxed.as_ref();
+    let dst = take_register(next_register);
+    let name = facts.private_name(left.span)?;
+    let object = reduce_expression(right, ops, facts, next_register, locals)?;
+    ops.push(Op::HasPrivate { dst, object, name });
+    Some(dst)
 }
 
 fn reduce_await(
@@ -327,9 +346,20 @@ fn reduce_in(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    let dst = take_register(next_register);
+    if let Expression::PrivateFieldExpression(member) = &binary.left {
+        let name = facts.private_name(member.field.span)?;
+        let object = reduce_expression(&member.object, ops, facts, next_register, locals)?;
+        ops.push(Op::HasPrivate { dst, object, name });
+        return Some(dst);
+    }
+    // For `#field in obj`, OXC may package the LHS as a `PrivateIdentifier`
+    // wrapped in an `Identifier` whose name carries the `#`. Fall through
+    // to the dynamic path which will then fail; the structural path above
+    // matches the field-on-object form.
+    let _ = binary;
     let key = reduce_expression(&binary.left, ops, facts, next_register, locals)?;
     let object = reduce_expression(&binary.right, ops, facts, next_register, locals)?;
-    let dst = take_register(next_register);
     ops.push(Op::HasPropertyDynamic { dst, object, key });
     Some(dst)
 }
