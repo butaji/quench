@@ -31,6 +31,13 @@ fn reduce_body(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
+    for name in crate::semantic_early::var_declared_names_in(&block.body) {
+        locals.entry(name).or_insert_with(|| {
+            let slot = *next_slot;
+            *next_slot = next_slot.saturating_add(1);
+            slot
+        });
+    }
     let mut block_locals = locals.clone();
     crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, next_slot);
     block_locals.retain(|name, _| !name.starts_with("\0lexical-predeclared:"));

@@ -7,8 +7,12 @@ pub(crate) fn validate(program: &oxc::ast::ast::Program<'_>) -> Result<(), Vec<S
 }
 
 pub(crate) fn var_declared_names(program: &oxc::ast::ast::Program<'_>) -> Vec<String> {
+    var_declared_names_in(&program.body)
+}
+
+pub(crate) fn var_declared_names_in(statements: &[Statement<'_>]) -> Vec<String> {
     let mut names = BTreeSet::new();
-    collect_var_names(&program.body, &mut names);
+    collect_var_names(statements, &mut names);
     names.into_iter().collect()
 }
 
