@@ -323,15 +323,19 @@ fn set_builtin_property(
     key: &str,
     value: crate::value::Value,
 ) -> Result<(), crate::execute::VmError> {
-    let properties = std::rc::Rc::new(crate::value::ObjectData::new(vec![
-        ("value".to_string(), value),
-        ("writable".to_string(), crate::value::Value::Boolean(true)),
-        ("enumerable".to_string(), crate::value::Value::Boolean(true)),
-        (
-            "configurable".to_string(),
-            crate::value::Value::Boolean(true),
-        ),
-    ]));
+    // Assignment to an existing property updates only its value; attributes
+    // are preserved by complete_descriptor. New properties get the
+    // assignment defaults (writable, enumerable, configurable).
+    let key_value = crate::value::Value::String(key.to_string());
+    let existing = crate::builtins::object::descriptor(Some(target), Some(&key_value))?;
+    let exists = !matches!(existing, crate::value::Value::Undefined);
+    let mut fields = vec![("value".to_string(), value)];
+    if !exists {
+        for name in ["writable", "enumerable", "configurable"] {
+            fields.push((name.to_string(), crate::value::Value::Boolean(true)));
+        }
+    }
+    let properties = std::rc::Rc::new(crate::value::ObjectData::new(fields));
     let updated = crate::builtins::define_own_property(target, key, properties.as_ref())?;
     crate::execute::write_value(registers, object, updated);
     Ok(())
