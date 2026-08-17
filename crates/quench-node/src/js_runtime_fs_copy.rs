@@ -498,3 +498,48 @@ fn fs_rm_async(arguments: &[Value]) -> Result<Value, VmError> {
     quench_runtime::execute::call(&callback, &Value::Undefined, &[arg])?;
     Ok(Value::Undefined)
 }
+
+fn fs_async_wrapper(
+    arguments: &[Value],
+    run: impl FnOnce(&[Value]) -> Result<Value, VmError>,
+    has_result: bool,
+) -> Result<Value, VmError> {
+    let Some((last_idx, callback)) = arguments
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, v)| {
+            matches!(
+                v,
+                Value::Function(_)
+                    | Value::BoundFunction(_)
+                    | Value::HostCapability(_)
+                    | Value::Proxy(_)
+            )
+        })
+    else {
+        return Err(VmError::NotCallable);
+    };
+    let real = &arguments[..last_idx];
+    let result = run(real);
+    let call_args = match result {
+        Ok(value) if has_result => vec![Value::Null, value],
+        Ok(_) => vec![Value::Null],
+        Err(VmError::Thrown(error)) => vec![error],
+        Err(other) => return Err(other),
+    };
+    quench_runtime::execute::call(&callback, &Value::Undefined, &call_args)?;
+    Ok(Value::Undefined)
+}
+
+fn fs_symlink_async(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_async_wrapper(arguments, |real| fs_symlink(real), false)
+}
+
+fn fs_readlink_async(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_async_wrapper(arguments, |real| fs_readlink(real), true)
+}
+
+fn fs_realpath_async(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_async_wrapper(arguments, |real| fs_realpath(real), true)
+}
