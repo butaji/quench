@@ -257,3 +257,35 @@ fn fs_utimes_promise(arguments: &[Value]) -> Result<Value, VmError> {
         Err(error) => reject_fs_error(error),
     }
 }
+
+fn fs_settle_sync<F>(run: F) -> Result<Value, VmError>
+where
+    F: FnOnce() -> Result<Value, VmError>,
+{
+    match run() {
+        Ok(value) => Ok(fulfilled(value)),
+        Err(error) => reject_fs_error(error),
+    }
+}
+
+fn fs_mkdir_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_settle_sync(|| fs_mkdir(arguments))
+}
+fn fs_rm_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_settle_sync(|| fs_rm(arguments).map(|_| Value::Undefined))
+}
+fn fs_rename_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_settle_sync(|| fs_rename(arguments).map(|_| Value::Undefined))
+}
+fn fs_access_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_settle_sync(|| fs_access(arguments).map(|_| Value::Undefined))
+}
+fn fs_chmod_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_settle_sync(|| fs_chmod(arguments).map(|_| Value::Undefined))
+}
+fn fs_readlink_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_settle_sync(|| fs_readlink(arguments))
+}
+fn fs_realpath_promise(arguments: &[Value]) -> Result<Value, VmError> {
+    fs_settle_sync(|| fs_realpath(arguments))
+}
