@@ -15,6 +15,9 @@ pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if let Some(value) = iterator_property(builtin, key) {
         return value;
     }
+    if let Some(value) = typed_array_prototype_tag(builtin, key) {
+        return value;
+    }
     if let Some(value) = special(builtin, key) {
         return value;
     }
@@ -34,6 +37,27 @@ fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
         "constructor" => Some(Value::Builtin(Builtin::Iterator)),
         "filter" => Some(Value::Builtin(Builtin::IteratorFilter)),
         _ => None,
+    }
+}
+fn typed_array_prototype_tag(builtin: Builtin, key: &str) -> Option<Value> {
+    let name = match builtin {
+        Builtin::Float64ArrayPrototype => "Float64Array",
+        Builtin::Float32ArrayPrototype => "Float32Array",
+        Builtin::Int8ArrayPrototype => "Int8Array",
+        Builtin::Int16ArrayPrototype => "Int16Array",
+        Builtin::Int32ArrayPrototype => "Int32Array",
+        Builtin::Uint8ArrayPrototype => "Uint8Array",
+        Builtin::Uint8ClampedArrayPrototype => "Uint8ClampedArray",
+        Builtin::Uint16ArrayPrototype => "Uint16Array",
+        Builtin::Uint32ArrayPrototype => "Uint32Array",
+        Builtin::BigInt64ArrayPrototype => "BigInt64Array",
+        Builtin::BigUint64ArrayPrototype => "BigUint64Array",
+        _ => return None,
+    };
+    if key == "Symbol.toStringTag" {
+        Some(Value::String(name.to_string()))
+    } else {
+        None
     }
 }
 fn builtin_method(builtin: Builtin, key: &str) -> Option<Builtin> {
