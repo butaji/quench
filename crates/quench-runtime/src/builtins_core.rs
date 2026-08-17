@@ -16,8 +16,15 @@ pub(crate) fn array_map(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let Some(receiver) = receiver else {
-        return Ok(Value::array(Vec::new()));
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.map called on null or undefined",
+        ));
     };
+    if matches!(receiver, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.map called on null or undefined",
+        ));
+    }
     let Some(callback) = arguments.first() else {
         return Ok(Value::array(Vec::new()));
     };
@@ -131,8 +138,21 @@ pub(crate) fn array_filter(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::Array(values)) = receiver else {
-        return Ok(Value::array(Vec::new()));
+    let Some(receiver) = receiver else {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.filter called on null or undefined",
+        ));
+    };
+    if matches!(receiver, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.filter called on null or undefined",
+        ));
+    }
+    let values = match receiver {
+        Value::Array(values) => values,
+        _ => return Err(crate::value::error::throw_type_error(
+            "Array.prototype.filter called on a non-object",
+        )),
     };
     let Some(callback) = arguments.first() else {
         return Ok(Value::Array(values.clone()));
