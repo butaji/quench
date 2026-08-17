@@ -1,11 +1,39 @@
 pub use scope::ExecutionScope;
 pub type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
+pub trait Host: 'static {
+    fn call(
+        &self,
+        capability: HostCapabilityRef,
+        receiver: Option<&Value>,
+        arguments: &[Value],
+    ) -> Result<Value, VmError>;
+
+    fn construct(
+        &self,
+        capability: HostCapabilityRef,
+        arguments: &[Value],
+    ) -> Result<Value, VmError> {
+        let _ = (capability, arguments);
+        Err(VmError::NotCallable)
+    }
+
+    fn construct_with_new_target(
+        &self,
+        capability: HostCapabilityRef,
+        arguments: &[Value],
+        _new_target: &Value,
+    ) -> Result<Value, VmError> {
+        self.construct(capability, arguments)
+    }
+}
 pub(crate) fn with_realm<T>(realm: RealmId, callback: impl FnOnce() -> T) -> Option<T> {
     realm::with_realm(realm, callback)
 }
 
 pub(crate) fn global_builtin_exists(key: &str) -> bool {
-    (realm::global_builtin_exists(key) && !is_legacy_global(key))
+    (current_context_or_default().host_value(key).is_some()
+        || current_context_or_default().host_binding(key).is_some()
+        || (realm::global_builtin_exists(key) && !is_legacy_global(key)))
         || crate::globals::immutable_value(key).is_some()
 }
 
@@ -80,17 +108,21 @@ type ObjectProperties = Rc<crate::value::ObjectData>;
 #[derive(Clone)]
 pub struct VmContext {
     output_sink: Option<OutputSink>,
+    host: Option<Rc<dyn Host>>,
     realm: RealmId,
     capabilities: Vec<HostCapabilityRef>,
     host_bindings: Vec<(String, HostCapabilityRef)>,
+    host_values: Vec<(String, Value)>,
 }
 impl Default for VmContext {
     fn default() -> Self {
         Self {
             output_sink: None,
+            host: None,
             realm: RealmId::ROOT,
             capabilities: Vec::new(),
             host_bindings: Vec::new(),
+            host_values: Vec::new(),
         }
     }
 }
@@ -121,6 +153,26 @@ impl VmContext {
         }
     }
 
+    pub fn with_host(mut self, host: Rc<dyn Host>) -> Self {
+        self.host = Some(host);
+        self
+    }
+
+    pub(crate) fn host_handle(&self) -> Option<Rc<dyn Host>> {
+        self.host.clone()
+    }
+
+    pub(crate) fn construct_host_with_new_target(
+        &self,
+        capability: HostCapabilityRef,
+        arguments: &[Value],
+        new_target: &Value,
+    ) -> Option<Result<Value, VmError>> {
+        self.host.as_ref().map(|host| {
+            host.construct_with_new_target(capability, arguments, new_target)
+        })
+    }
+
     pub fn with_host_capability(
         mut self,
         name: impl Into<String>,
@@ -128,6 +180,18 @@ impl VmContext {
     ) -> Self {
         self.host_bindings.push((name.into(), value));
         self
+    }
+
+    pub fn with_host_value(mut self, name: impl Into<String>, value: Value) -> Self {
+        self.host_values.push((name.into(), value));
+        self
+    }
+
+    pub(crate) fn host_value(&self, name: &str) -> Option<Value> {
+        self.host_values
+            .iter()
+            .rev()
+            .find_map(|(key, value)| (key == name).then_some(value.clone()))
     }
 
     pub(crate) fn host_binding(&self, name: &str) -> Option<HostCapabilityRef> {
@@ -160,7 +224,10 @@ impl VmContext {
     }
 
     pub(crate) fn permits(&self, capability: HostCapabilityRef) -> bool {
-        capability.realm == self.realm && self.has_capability(capability.kind)
+        capability.realm == self.realm
+            && (self.has_capability(capability.kind)
+                || (self.host.is_some()
+                    && matches!(capability.kind, HostCapabilityKind::Custom(_))))
     }
 
     pub fn emit_output(&self, text: &str) {

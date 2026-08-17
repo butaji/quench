@@ -356,6 +356,7 @@ fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
         .collect();
     VmContext {
         output_sink: parent.output_sink.clone(),
+        host: parent.host.clone(),
         realm,
         capabilities,
         host_bindings: parent
@@ -371,6 +372,7 @@ fn child_context(parent: &VmContext, realm: RealmId) -> VmContext {
                 )
             })
             .collect(),
+        host_values: parent.host_values.clone(),
     }
 }
 

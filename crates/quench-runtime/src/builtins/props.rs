@@ -23,10 +23,6 @@ pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     }
     Value::Undefined
 }
-
-pub(crate) fn number_constant(key: &str) -> Option<Value> {
-    props_number::constant(key)
-}
 include!("props_special_core.rs");
 fn iterator_property(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin != Builtin::IteratorPrototype {
@@ -310,6 +306,15 @@ fn is_typed_array_prototype(builtin: Builtin) -> bool {
 }
 fn host_capability_method(_kind: crate::ops::HostCapabilityKind, key: &str) -> Option<Builtin> {
     use crate::ops::HostCapabilityKind::*;
+    if let Custom(id) = _kind {
+        let custom = match (id, key) {
+            (1, "basename") => Custom(2),
+            (3, "log") => Custom(4),
+            (5, "cwd") => Custom(6),
+            _ => return None,
+        };
+        return Some(Builtin::HostCapability(custom));
+    }
     let kind = match key {
         "global" => GetGlobal,
         "createRealm" => CreateRealm,
@@ -348,138 +353,7 @@ fn data_view_method(key: &str) -> Option<Builtin> {
         _ => None,
     }
 }
-fn array_method(key: &str) -> Option<Builtin> {
-    use Builtin::*;
-    match key {
-        "forEach" => Some(ArrayForEach),
-        "map" => Some(ArrayMap),
-        "filter" => Some(ArrayFilter),
-        "some" => Some(ArraySome),
-        "every" => Some(ArrayEvery),
-        "find" => Some(ArrayFind),
-        "findLast" => Some(ArrayFindLast),
-        "findLastIndex" => Some(ArrayFindLastIndex),
-        "includes" => Some(ArrayIncludes),
-        "indexOf" => Some(ArrayIndexOf),
-        "lastIndexOf" => Some(ArrayLastIndexOf),
-        "slice" => Some(ArraySlice),
-        "concat" => Some(ArrayConcat),
-        "flat" => Some(ArrayFlat),
-        _ => array_method_tail(key),
-    }
-}
-
-fn array_method_tail(key: &str) -> Option<Builtin> {
-    use Builtin::*;
-    match key {
-        "flatMap" => Some(ArrayFlatMap),
-        "at" => Some(ArrayAt),
-        "toReversed" => Some(ArrayToReversed),
-        "join" | "toString" => Some(ArrayJoin),
-        "reduce" => Some(ArrayReduce),
-        "reduceRight" => Some(ArrayReduceRight),
-        "toLocaleString" => Some(ArrayToLocaleString),
-        "values" => Some(ArrayIterator),
-        "Symbol.iterator" => Some(ArrayIterator),
-        "keys" => Some(ArrayKeys),
-        "entries" => Some(ArrayEntries),
-        "push" => Some(ArrayPush),
-        "shift" => Some(ArrayShift),
-        "reverse" => Some(ArrayReverse),
-        "pop" => Some(ArrayPop),
-        "unshift" => Some(ArrayUnshift),
-        "fill" => Some(ArrayFill),
-        "copyWithin" => Some(ArrayCopyWithin),
-        "toSorted" => Some(ArrayToSorted),
-        "splice" => Some(ArraySplice),
-        _ => None,
-    }
-}
-fn builtin_method2(builtin: Builtin, key: &str) -> Option<Builtin> {
-    use Builtin::*;
-    match (builtin, key) {
-        (Object, "defineProperty") => Some(ObjectDefineProperty),
-        (Object, "defineProperties") => Some(ObjectDefineProperties),
-        (Object, "getOwnPropertyDescriptor") => Some(ObjectGetOwnPropertyDescriptor),
-        (Object, "getOwnPropertyDescriptors") => Some(ObjectGetOwnPropertyDescriptors),
-        (Object, "keys") => Some(ObjectKeys),
-        (Object, "values") => Some(ObjectValues),
-        (Object, "entries") => Some(ObjectEntries),
-        (Object, "hasOwn") => Some(ObjectHasOwn),
-        (Object, "getOwnPropertyNames") => Some(ObjectGetOwnPropertyNames),
-        (Object, "getOwnPropertySymbols") => Some(ObjectGetOwnPropertySymbols),
-        (Object, "create") => Some(ObjectCreate),
-        (Object, "freeze") => Some(ObjectFreeze),
-        (Object, "seal") => Some(ObjectSeal),
-        (Object, "preventExtensions") => Some(ObjectPreventExtensions),
-        (Object, "isFrozen") => Some(ObjectIsFrozen),
-        (Object, "isSealed") => Some(ObjectIsSealed),
-        (Object, "isExtensible") => Some(ObjectIsExtensible),
-        (Object, "getPrototypeOf") => Some(ObjectGetPrototypeOf),
-        (Object, "is") => Some(ObjectIs),
-        (Object, "assign") => Some(ObjectAssign),
-        (Object, "setPrototypeOf") => Some(ObjectSetPrototypeOf),
-        (Map, "prototype") => Some(MapPrototype),
-        (Set, "prototype") => Some(SetPrototype),
-        (FunctionPrototype, "toString") => Some(FunctionPrototypeToString),
-        (FunctionPrototype, "valueOf") => Some(FunctionPrototypeValueOf),
-        (FunctionPrototype, "Symbol.hasInstance") => Some(FunctionPrototypeHasInstance),
-        (RegExpPrototype, "toString") => Some(RegExpPrototypeToString),
-        _ => builtin_method3(builtin, key),
-    }
-}
-fn builtin_method3(builtin: Builtin, key: &str) -> Option<Builtin> {
-    use Builtin::*;
-    match (builtin, key) {
-        (Number, "prototype") => Some(NumberPrototype),
-        (NumberPrototype, "toLocaleString") => Some(NumberToLocaleString),
-        (NumberPrototype, "toString") => Some(NumberToString),
-        (NumberPrototype, "valueOf") => Some(NumberValueOf),
-        (NumberPrototype, "toFixed") => Some(NumberToFixed),
-        (NumberPrototype, "toPrecision") => Some(NumberToPrecision),
-        (NumberPrototype, "toExponential") => Some(NumberToExponential),
-        (Number, "isNaN") => Some(IsNaN),
-        (Number, "isFinite") => Some(IsFinite),
-        (Number, key @ ("isInteger" | "isSafeInteger")) => Some(if key == "isInteger" {
-            NumberIsInteger
-        } else {
-            NumberIsSafeInteger
-        }),
-        _ => builtin_method3_tail(builtin, key),
-    }
-}
-
-fn builtin_method3_tail(builtin: Builtin, key: &str) -> Option<Builtin> {
-    use Builtin::*;
-    match (builtin, key) {
-        (Boolean, "prototype") => Some(BooleanPrototype),
-        (BooleanPrototype, "valueOf") => Some(BooleanValueOf),
-        (BooleanPrototype, "toString") => Some(BooleanToString),
-        (BooleanPrototype, "constructor") => Some(Boolean),
-        (NumberPrototype, "constructor") => Some(Number),
-        (ObjectPrototype, "constructor") => Some(Object),
-        (ObjectPrototype, "toLocaleString") => Some(ObjectPrototypeToString),
-        (TemporalDurationPrototype, "toJSON") => Some(TemporalDurationToJSON),
-        (TemporalDurationPrototype, "toString") => Some(TemporalDurationToString),
-        (TemporalPlainDatePrototype, "toString") => Some(TemporalPlainDateToString),
-        (TemporalPlainDatePrototype, "toJSON") => Some(TemporalPlainDateToJSON),
-        (Symbol, "prototype") => Some(SymbolPrototype),
-        (SymbolPrototype, "toString") => Some(SymbolToString),
-        (SymbolPrototype, "valueOf") => Some(SymbolValueOf),
-        (SymbolPrototype, "Symbol.toPrimitive") => Some(SymbolPrototypeToPrimitive),
-        (SymbolPrototype, "constructor") => Some(Symbol),
-        (String, "prototype") => Some(StringPrototype),
-        (StringPrototype, "valueOf") => Some(StringValueOf),
-        (BigInt, "prototype") => Some(BigIntPrototype),
-        (BigInt, "asIntN") => Some(BigIntAsIntN),
-        (BigInt, "asUintN") => Some(BigIntAsUintN),
-        (BigIntPrototype, "valueOf") => Some(BigIntValueOf),
-        (BigIntPrototype, "constructor") => Some(BigInt),
-        (BigIntPrototype, "toString") => Some(BigIntToString),
-        (BigIntPrototype, "toLocaleString") => Some(BigIntToLocaleString),
-        _ => None,
-    }
-}
+include!("props_builtin_methods.rs");
 pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
@@ -499,71 +373,5 @@ pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
         _ => None,
     }
 }
-pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
-    if _builtin == Builtin::FunctionPrototype && key == "Symbol.hasInstance" {
-        return false;
-    }
-    if _builtin == Builtin::Number && props_number::constant(key).is_some() {
-        return false;
-    }
-    if matches!(
-        (_builtin, key),
-        (Builtin::ThrowTypeError, "length" | "name")
-    ) {
-        return false;
-    }
-    if key == "prototype" {
-        return false;
-    }
-    if crate::builtins::object::is_well_known_symbol_property(_builtin, key) {
-        return false;
-    }
-    if matches!(
-        (_builtin, key),
-        (
-            Builtin::Math,
-            "E" | "LN2" | "LN10" | "LOG2E" | "LOG10E" | "PI" | "SQRT1_2" | "SQRT2"
-        )
-    ) {
-        return false;
-    }
-    true
-}
-fn builtin_length(builtin: Builtin) -> f64 {
-    use Builtin::*;
-    if let Some(length) = data_view_length(builtin) {
-        return length;
-    }
-    if let Some(length) = crate::builtin_meta::constructor_length(builtin) {
-        return length;
-    }
-    if let Some(length) = crate::builtin_meta::methods::function_length(builtin) {
-        return length;
-    }
-    match builtin {
-        Escape | Unescape | EncodeURI | EncodeURIComponent | DecodeURI | DecodeURIComponent
-        | DateSetYear | GeneratorNext | GeneratorReturn | GeneratorThrow | AsyncGeneratorNext
-        | AsyncGeneratorReturn | AsyncGeneratorThrow => 1.0,
-        ArrayBuffer => 1.0,
-        Object => 1.0,
-        ObjectCreate => 2.0,
-        Float64Array => 3.0,
-        Float32Array => 3.0,
-        Int8Array => 3.0,
-        Int16Array => 3.0,
-        Uint16Array => 3.0,
-        Int32Array => 3.0,
-        Uint8Array => 3.0,
-        Uint32Array => 3.0,
-        Uint8ClampedArray => 3.0,
-        BigInt64Array | BigUint64Array => 3.0,
-        MapEntries | MapKeys | MapValues => 0.0,
-        DataView => 1.0,
-        DateNow => 0.0,
-        RegExp => 2.0,
-        DateParse => 1.0,
-        DateUTC => 7.0,
-        _ => 0.0,
-    }
-}
+include!("props_metadata.rs");
 include!("props_builtin_names.rs");

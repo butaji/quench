@@ -7,7 +7,7 @@ fn instanceof(value: &Value, constructor: &Value) -> Result<bool, VmError> {
     if builtin_error_instance(&value, &constructor) {
         return Ok(true);
     }
-    if !instanceof_callable(&constructor) {
+if !instanceof_callable(&constructor) {
         return Err(type_error("Right-hand side of instanceof is not callable"));
     }
     if !crate::value::is_object(&value) {
@@ -344,7 +344,7 @@ fn custom_object_prototype(value: &Value) -> Option<Value> {
         Value::Object(properties) => properties
             .iter()
             .rev()
-            .find(|(name, _)| name == "\0prototype")
+            .find(|(name, _)| name == "\0prototype" || name == "prototype")
             .map(|(_, prototype)| prototype.clone()),
         Value::Function(function) => function
             .properties
@@ -352,6 +352,13 @@ fn custom_object_prototype(value: &Value) -> Option<Value> {
             .iter()
             .rev()
             .find(|(name, _)| name == "\0prototype")
+            .map(|(_, prototype)| prototype.clone()),
+        Value::BoundFunction(function) => function
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(name, _)| name == "\0prototype" || name == "prototype")
             .map(|(_, prototype)| prototype.clone()),
         _ => None,
     }

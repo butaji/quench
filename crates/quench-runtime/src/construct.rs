@@ -88,6 +88,19 @@ fn construct_with_new_target(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     match target {
+        Value::HostCapability(capability) => {
+            let value = crate::vm::current_context_or_default()
+                .construct_host_with_new_target(
+                    crate::ops::HostCapabilityRef {
+                        realm: capability.realm(),
+                        kind: capability.descriptor.kind,
+                    },
+                    arguments,
+                    new_target,
+                )
+                .unwrap_or(Err(crate::vm::not_callable()))?;
+            with_new_target_prototype(value, target, new_target)
+        }
         Value::Builtin(builtin) => {
             construct_builtin_target(*builtin, target, new_target, arguments)
         }
@@ -236,6 +249,13 @@ fn construct_bound(
     };
     let value = construct_bound_target(bound, &bound.target, &new_target, &combined)?;
     if let Value::HostCapability(capability) = &bound.receiver {
+        // Host-created objects are owned by the host implementation. Adding
+        // ordinary properties here goes through the aliasing setter, which
+        // clones object data when the host retains an Rc and breaks JS object
+        // identity. Host dispatch already carries the capability realm.
+        if matches!(value, Value::Object(_) | Value::ObjectAlias(_)) {
+            return Ok(value);
+        }
         let value = crate::builtins::set_property(
             value,
             "\0realm",
@@ -258,6 +278,21 @@ fn construct_bound_target(
 ) -> Result<Value, crate::execute::VmError> {
     match target {
         Value::Builtin(builtin) => {
+            if let crate::ops::Builtin::HostCapability(kind) = builtin {
+                let Value::HostCapability(capability) = &bound.receiver else {
+                    return Err(crate::vm::not_callable());
+                };
+                return crate::vm::current_context_or_default()
+                    .construct_host_with_new_target(
+                        crate::ops::HostCapabilityRef {
+                            realm: capability.realm(),
+                            kind: *kind,
+                        },
+                        arguments,
+                        new_target,
+                    )
+                    .unwrap_or(Err(crate::vm::not_callable()));
+            }
             if crate::builtin_meta::constructor_name(*builtin).is_none() {
                 return Err(crate::vm::not_callable());
             }

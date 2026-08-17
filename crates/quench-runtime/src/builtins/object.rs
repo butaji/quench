@@ -147,9 +147,26 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             "Cannot set the prototype of a non-extensible object",
         ));
     }
-    let result = crate::builtins::set_property(target.clone(), "\0prototype", prototype);
+    let internal_key = if matches!(target, Value::Function(_) | Value::BoundFunction(_)) {
+        "\0function_prototype"
+    } else {
+        "\0prototype"
+    };
+    let result = crate::builtins::set_property(target.clone(), internal_key, prototype);
+    if let Value::Object(data) = &result {
+        if data.original_prototype().is_none() {
+            data.set_original_prototype(current.clone());
+        }
+    }
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
+}
+
+pub fn original_prototype(value: &Value) -> Option<Value> {
+    match value {
+        Value::Object(data) => data.original_prototype(),
+        _ => None,
+    }
 }
 
 fn validate_set_prototype_target(target: &Value) -> Result<(), VmError> {
@@ -176,6 +193,8 @@ fn validate_set_prototype_value(prototype: &Value) -> Result<(), VmError> {
             | Value::ObjectAlias(_)
             | Value::Proxy(_)
             | Value::Builtin(_)
+            | Value::Function(_)
+            | Value::BoundFunction(_)
             | Value::Null
     ) {
         return Ok(());
