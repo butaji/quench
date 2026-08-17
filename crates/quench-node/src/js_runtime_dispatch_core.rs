@@ -188,6 +188,12 @@ impl QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsStatAsync) => fs_stat_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsLstatAsync) => fs_lstat_async(arguments),
+            HostCapabilityKind::Custom(CapabilityName::FsStatPromise) => {
+                fs_stat_promise(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsUtimesPromise) => {
+                fs_utimes_promise(arguments)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsStatsIsDirectory) => {
                 Ok(Value::Boolean(true))
             }
