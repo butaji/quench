@@ -46,6 +46,16 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
 fn number(value: Option<&Value>) -> Result<f64, VmError> {
     match value {
         None | Some(Value::Undefined) => Ok(0.0),
-        Some(value) => crate::conversion::to_number(value),
+        Some(value) => {
+            crate::conversion::to_number(value).map(
+                |number| {
+                    if number == 0.0 {
+                        0.0
+                    } else {
+                        number
+                    }
+                },
+            )
+        }
     }
 }
