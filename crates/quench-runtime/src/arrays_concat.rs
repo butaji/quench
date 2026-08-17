@@ -12,7 +12,7 @@ pub(crate) fn concat(
     let mut items = vec![this];
     items.extend(arguments.iter().cloned());
     if species.is_none() && sparse_array_items(&items)? {
-        return Ok(concat_sparse_arrays(&items)?);
+        return concat_sparse_arrays(&items);
     }
     let mut elements = Vec::new();
     let mut holes = Vec::new();

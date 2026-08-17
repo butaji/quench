@@ -45,6 +45,7 @@ pub(crate) fn reduce_eval_source_in_context(
         strict,
         global,
     );
+    facts.eval_deletable = deletable;
     reduce_eval_program(
         &parsed.program.body,
         facts,
@@ -53,7 +54,6 @@ pub(crate) fn reduce_eval_source_in_context(
         next_slot,
         behavior,
         directive_completion,
-        deletable,
     )
 }
 
@@ -65,9 +65,7 @@ fn reduce_eval_program(
     next_slot: u16,
     behavior: crate::reduce_support::EvalBehavior,
     directive_completion: Option<String>,
-    deletable: Vec<(String, u16)>,
 ) -> Result<ResidualProgram, Vec<String>> {
-    facts.eval_deletable = deletable;
     facts
         .eval_var_barrier
         .extend(crate::semantic_early::lexically_declared_names_in(

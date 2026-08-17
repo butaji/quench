@@ -435,7 +435,7 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
 }
 
-fn apply_armenian_variant_alias(out: &mut Vec<String>, parts: &mut Vec<&str>) {
+fn apply_armenian_variant_alias(out: &mut [String], parts: &mut Vec<&str>) {
     if out.first().map(String::as_str) != Some("hy") {
         return;
     }
