@@ -104,6 +104,9 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
         }
         IteratorState::Mapped { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
         IteratorState::Filtered { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::FlatMapped { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::Dropped { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::Take { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
         IteratorState::Concat { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
         IteratorState::Zip { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
     };
@@ -117,6 +120,12 @@ pub(crate) fn property(key: &str) -> Value {
         "map" => Value::Builtin(crate::ops::Builtin::IteratorMap),
         "filter" => Value::Builtin(crate::ops::Builtin::IteratorFilter),
         "every" => Value::Builtin(crate::ops::Builtin::IteratorEvery),
+        "flatMap" => Value::Builtin(crate::ops::Builtin::IteratorFlatMap),
+        "drop" => Value::Builtin(crate::ops::Builtin::IteratorDrop),
+        "take" => Value::Builtin(crate::ops::Builtin::IteratorTake),
+        "reduce" => Value::Builtin(crate::ops::Builtin::IteratorReduce),
+        "find" => Value::Builtin(crate::ops::Builtin::IteratorFind),
+        "forEach" => Value::Builtin(crate::ops::Builtin::IteratorForEach),
         "Symbol.iterator" => Value::Builtin(crate::ops::Builtin::IteratorSelf),
         _ => Value::Undefined,
     }
@@ -157,6 +166,9 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
         IteratorState::Protocol { .. } => "Iterator",
         IteratorState::Mapped { .. } => "Iterator",
         IteratorState::Filtered { .. } => "Iterator",
+        IteratorState::FlatMapped { .. } => "Iterator",
+        IteratorState::Dropped { .. } => "Iterator",
+        IteratorState::Take { .. } => "Iterator",
         IteratorState::Concat { .. } => "Iterator",
         IteratorState::Zip { .. } => "Iterator",
     };
@@ -176,6 +188,9 @@ fn next_for(value: &Value) -> Value {
         IteratorState::Native { .. } | IteratorState::Protocol { .. } => Builtin::IteratorNext,
         IteratorState::Mapped { .. } => Builtin::IteratorNext,
         IteratorState::Filtered { .. } => Builtin::IteratorNext,
+        IteratorState::FlatMapped { .. } => Builtin::IteratorNext,
+        IteratorState::Dropped { .. } => Builtin::IteratorNext,
+        IteratorState::Take { .. } => Builtin::IteratorNext,
         IteratorState::Concat { .. } => Builtin::IteratorNext,
         IteratorState::Zip { .. } => Builtin::IteratorNext,
     };
