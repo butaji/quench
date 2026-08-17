@@ -44,6 +44,10 @@ fn fs_promises_surface() -> Value {
             "utimes".into(),
             capability_function(HostCapabilityKind::Custom(CapabilityName::FsUtimesPromise)),
         ),
+        (
+            "open".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::FsOpenPromise)),
+        ),
     ])
 }
 
