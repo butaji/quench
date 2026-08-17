@@ -423,9 +423,13 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin) => {
                 module_is_builtin(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::ModuleCreateRequire) => Ok(
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleRequireCall)),
+            ),
             HostCapabilityKind::Custom(
-                CapabilityName::ModuleCreateRequire..=CapabilityName::ModuleSyncBuiltinExports,
+                CapabilityName::ModuleFindSourceMap..=CapabilityName::ModuleSyncBuiltinExports,
             ) => Ok(Value::Undefined),
+            HostCapabilityKind::Custom(CapabilityName::ModuleRequireCall) => require_module(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsPlatform) => os_platform(),
             HostCapabilityKind::Custom(CapabilityName::OsArch) => os_arch(),
             HostCapabilityKind::Custom(CapabilityName::OsUptime) => Ok(Value::Number(
