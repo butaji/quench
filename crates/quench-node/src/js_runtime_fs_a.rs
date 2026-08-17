@@ -10,9 +10,12 @@ fn fs_stats(mode: u32) -> Value {
     } else {
         CapabilityName::FsStatsIsFile
     };
-    Value::object(vec![
+    let epoch = quench_runtime::date::instance(0.0);
+    let stats = Value::object(vec![
         ("mode".into(), Value::Number(mode as f64)),
-        ("mtime".into(), quench_runtime::date::instance(0.0)),
+        ("mtime".into(), epoch.clone()),
+        ("atime".into(), epoch.clone()),
+        ("ctime".into(), epoch.clone()),
         (
             "isDirectory".into(),
             capability_function(HostCapabilityKind::Custom(directory_method)),
@@ -27,7 +30,8 @@ fn fs_stats(mode: u32) -> Value {
                 CapabilityName::FsStatsIsNotSymbolicLink,
             )),
         ),
-    ])
+    ]);
+    stats
 }
 
 fn fs_stat_async(arguments: &[Value]) -> Result<Value, VmError> {
