@@ -41,6 +41,8 @@ pub enum HostCapabilityKind {
     CreateRealm,
     EvalScript,
     DetachArrayBuffer,
+    /// Capability-owned operation implemented by the embedding host.
+    Custom(u16),
 }
 
 /// Non-JavaScript capability descriptor; exposure is owned by the host.

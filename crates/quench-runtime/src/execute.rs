@@ -1,9 +1,109 @@
 //! VM helpers for executing residual operations.
 pub use crate::vm::{
     copy_register, execute as run_vm, execute_builtin_with_receiver, execute_in_place,
-    execute_with_registers, get_property, get_property_result, is_truthy, read_register,
-    write_value, VmError,
+    execute_with_context, execute_with_registers, get_property, get_property_result, is_truthy,
+    read_register, write_value, VmError,
 };
+
+pub fn call(
+    function: &crate::value::Value,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, VmError> {
+    crate::functions::execute_target(function, receiver, arguments)
+}
+
+pub fn set_property(
+    target: crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> crate::value::Value {
+    crate::builtins::set_property(target, key, value)
+}
+
+pub fn delete_property(target: crate::value::Value, key: &str) -> (crate::value::Value, bool) {
+    crate::builtins::delete_property(target, key)
+}
+
+/// Define an own property with an explicit JavaScript property descriptor.
+/// Hosts use this to expose non-enumerable compatibility methods without
+/// changing the engine's object model.
+pub fn define_property(
+    target: crate::value::Value,
+    key: &str,
+    descriptor: crate::value::Value,
+) -> Result<crate::value::Value, VmError> {
+    crate::builtins::define_property(&[
+        target,
+        crate::value::Value::String(key.to_owned()),
+        descriptor,
+    ])
+}
+
+/// Attach a host-defined property to a capability value.
+pub fn set_host_capability_property(
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<(), VmError> {
+    let crate::value::Value::HostCapability(capability) = target else {
+        return Err(VmError::NotCallable);
+    };
+    let mut properties = capability.properties.borrow_mut();
+    properties.retain(|(name, _)| name != key);
+    properties.push((key.to_owned(), value));
+    Ok(())
+}
+
+/// Set an object's prototype through the runtime's ordinary object semantics.
+pub fn set_prototype_of(
+    target: &crate::value::Value,
+    prototype: &crate::value::Value,
+) -> Result<crate::value::Value, VmError> {
+    crate::builtins::object::set_prototype_of(&[target.clone(), prototype.clone()])
+}
+
+/// Set an own property on a callable value without invoking inherited
+/// setters. Hosts use this for compatibility metadata such as `super_`.
+pub fn set_callable_property(
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+) -> Result<(), VmError> {
+    match target {
+        crate::value::Value::Function(function) => {
+            function
+                .properties
+                .borrow_mut()
+                .retain(|(name, _)| name != key);
+            function
+                .properties
+                .borrow_mut()
+                .push((key.to_owned(), value));
+            Ok(())
+        }
+        crate::value::Value::BoundFunction(function) => {
+            function
+                .properties
+                .borrow_mut()
+                .retain(|(name, _)| name != key);
+            function
+                .properties
+                .borrow_mut()
+                .push((key.to_owned(), value));
+            Ok(())
+        }
+        _ => Err(VmError::NotCallable),
+    }
+}
+
+/// Publish a host-side replacement for an identity-bearing JavaScript value.
+/// Hosts use this when a callback mutates an object through a receiver but
+/// the value representation requires replacement rather than interior
+/// mutation.
+pub fn replace_value(old: &crate::value::Value, new: &crate::value::Value) {
+    crate::locals::replace_value(old, new);
+}
 pub(crate) use crate::vm::{
     execute_completion_in_place, execute_completion_step_in_place, not_callable,
 };

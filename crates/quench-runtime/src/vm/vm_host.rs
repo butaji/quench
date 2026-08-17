@@ -3,7 +3,16 @@ pub(crate) fn execute_host_capability(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, VmError> {
-    let Some(Value::HostCapability(capability)) = receiver else {
+    execute_host_capability_with_receiver(kind, receiver, receiver, arguments)
+}
+
+pub(crate) fn execute_host_capability_with_receiver(
+    kind: HostCapabilityKind,
+    capability_receiver: Option<&Value>,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::HostCapability(capability)) = capability_receiver else {
         return Err(VmError::NotCallable);
     };
     let descriptor = HostCapabilityRef {
@@ -33,6 +42,16 @@ pub(crate) fn execute_host_capability(
             run_eval_script(arguments)
         })
         .ok_or(VmError::NotCallable)?,
+        HostCapabilityKind::Custom(_) => {
+            let host = CURRENT_CONTEXT.with(|context| {
+                context
+                    .borrow()
+                    .as_ref()
+                    .and_then(VmContext::host_handle)
+            });
+            host.map(|host| host.call(descriptor, receiver, arguments))
+                .unwrap_or(Err(VmError::NotCallable))
+        }
     }
 }
 

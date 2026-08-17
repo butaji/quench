@@ -50,12 +50,14 @@ pub(crate) mod error {
 pub struct HostCapabilityValue {
     pub descriptor: HostCapabilityRef,
     identity: Rc<()>,
+    pub properties: RefCell<Vec<(String, Value)>>,
 }
 impl HostCapabilityValue {
     pub fn new(descriptor: HostCapabilityRef) -> Self {
         Self {
             descriptor,
             identity: Rc::new(()),
+            properties: RefCell::new(Vec::new()),
         }
     }
 
@@ -196,6 +198,9 @@ pub struct MapData {
 }
 
 impl MapData {
+    pub fn is_weak(&self) -> bool {
+        self.weak
+    }
     pub(crate) fn prototype(&self) -> Option<Value> {
         self.prototype.borrow().clone()
     }
@@ -213,6 +218,9 @@ pub struct SetData {
 }
 
 impl SetData {
+    pub fn is_weak(&self) -> bool {
+        self.weak
+    }
     pub(crate) fn prototype(&self) -> Option<Value> {
         self.prototype.borrow().clone()
     }
@@ -252,6 +260,7 @@ pub(crate) type PrivateSlots = Rc<RefCell<Vec<(PrivateName, PrivateSlot)>>>;
 pub struct ObjectData {
     pub(crate) properties: ObjectProperties,
     pub(crate) private_slots: PrivateSlots,
+    original_prototype: RefCell<Option<Value>>,
 }
 
 impl ObjectData {
@@ -266,7 +275,16 @@ impl ObjectData {
         Self {
             properties,
             private_slots,
+            original_prototype: RefCell::new(None),
         }
+    }
+
+    pub(crate) fn original_prototype(&self) -> Option<Value> {
+        self.original_prototype.borrow().clone()
+    }
+
+    pub(crate) fn set_original_prototype(&self, value: Value) {
+        self.original_prototype.replace(Some(value));
     }
 }
 
@@ -410,23 +428,6 @@ pub enum Value {
     Undefined,
 }
 
-pub(crate) fn is_object(value: &Value) -> bool {
-    if let Value::BindingCell(cell) = value {
-        return is_object(&cell.borrow());
-    }
-    !matches!(
-        value,
-        Value::Number(_)
-            | Value::Boolean(_)
-            | Value::String(_)
-            | Value::StringUnits(_)
-            | Value::BigInt(_)
-            | Value::Null
-            | Value::Undefined
-            | Value::HostCapability(_)
-    )
-}
-
 include!("value_array_data.rs");
 
 #[derive(Debug, Clone, PartialEq)]
@@ -491,3 +492,4 @@ pub struct BoundFunctionValue {
     pub properties: RefCell<Vec<(String, Value)>>,
 }
 include!("value_constant.rs");
+include!("value_helpers.rs");
