@@ -343,6 +343,11 @@ pub enum Op {
     Call {
         dst: u16,
         callee: u16,
+        /// `this` register for the call. `None` means undefined (legacy
+        /// bare-call behavior); private method calls set this to the
+        /// enclosing frame's `this` slot so the method receives the
+        /// correct receiver.
+        receiver: Option<u16>,
         args: Vec<u16>,
         spreads: Vec<bool>,
     },
