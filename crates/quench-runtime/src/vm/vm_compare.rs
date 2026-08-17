@@ -5,9 +5,15 @@ use num_bigint::{BigInt, Sign};
 fn compare_values(left: &Value, right: &Value, compare: fn(f64, f64) -> bool) -> Result<Value, VmError> {
     let left = crate::conversion::to_primitive(left, "number")?;
     let right = crate::conversion::to_primitive(right, "number")?;
-    if let (Value::String(left), Value::String(right)) = (&left, &right) {
-        if !crate::conversion::is_symbol_string(left) && !crate::conversion::is_symbol_string(right) {
-            return Ok(Value::Boolean(compare_strings(left, right, compare)));
+    if let (Some(left_units), Some(right_units)) =
+        (crate::strings::units_of(&left), crate::strings::units_of(&right))
+    {
+        let symbol = [&left, &right].into_iter().any(|value| match value {
+            Value::String(value) => crate::conversion::is_symbol_string(value),
+            _ => false,
+        });
+        if !symbol {
+            return Ok(Value::Boolean(compare_units(&left_units, &right_units, compare)));
         }
     }
     if let Some(result) = compare_bigint_operands(&left, &right, compare)? {
@@ -66,8 +72,8 @@ fn compare_positive_bigint_number(integer: BigInt, number: f64) -> Ordering {
     if exponent >= 0 { integer.cmp(&(significand << exponent as usize)) } else { (integer << (-exponent) as usize).cmp(&significand) }
 }
 
-fn compare_strings(left: &str, right: &str, compare: fn(f64, f64) -> bool) -> bool {
-    match left.encode_utf16().collect::<Vec<_>>().cmp(&right.encode_utf16().collect()) {
+fn compare_units(left: &[u16], right: &[u16], compare: fn(f64, f64) -> bool) -> bool {
+    match left.cmp(right) {
         Ordering::Less => compare(0.0, 1.0), Ordering::Equal => compare(0.0, 0.0), Ordering::Greater => compare(1.0, 0.0),
     }
 }
