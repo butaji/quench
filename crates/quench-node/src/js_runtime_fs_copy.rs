@@ -431,3 +431,70 @@ fn fs_rename(arguments: &[Value]) -> Result<Value, VmError> {
     std::fs::rename(from, to).map_err(|error| VmError::EvalError(error.to_string()))?;
     Ok(Value::Undefined)
 }
+
+fn fs_rm_error(code: &str, message: &str) -> Value {
+    quench_runtime::host_api::object(vec![
+        ("code".into(), Value::String(code.into())),
+        ("syscall".into(), Value::String("rm".into())),
+        ("message".into(), Value::String(message.into())),
+    ])
+}
+
+fn fs_rm_core(path: &str, force: bool, recursive: bool) -> Result<(), VmError> {
+    if !std::path::Path::new(path).exists() {
+        if force {
+            return Ok(());
+        }
+        return Err(VmError::Thrown(fs_rm_error("ENOENT", "no such file or directory")));
+    }
+    let is_dir = std::fs::metadata(path).map(|m| m.is_dir()).unwrap_or(false);
+    if is_dir {
+        if !recursive {
+            return Err(VmError::Thrown(fs_rm_error(
+                "EISDIR",
+                "cannot rmdir a file or directory without recursive",
+            )));
+        }
+        std::fs::remove_dir_all(path).map_err(|e| VmError::EvalError(e.to_string()))?;
+    } else {
+        std::fs::remove_file(path).map_err(|e| VmError::EvalError(e.to_string()))?;
+    }
+    Ok(())
+}
+
+fn fs_rm_async(arguments: &[Value]) -> Result<Value, VmError> {
+    let callback = arguments
+        .iter()
+        .rfind(|v| {
+            matches!(
+                v,
+                Value::Function(_)
+                    | Value::BoundFunction(_)
+                    | Value::HostCapability(_)
+                    | Value::Proxy(_)
+            )
+        })
+        .cloned();
+    let Some(callback) = callback else { return Err(VmError::NotCallable); };
+    let path = path_arg(arguments, 0)?;
+    let options = arguments
+        .iter()
+        .find(|v| matches!(v, Value::Object(_)))
+        .cloned();
+    let truthy = |key: &str| -> bool {
+        options
+            .as_ref()
+            .and_then(|o| quench_runtime::execute::get_property_result(o, key).ok())
+            .is_some_and(|v| matches!(v, Value::Boolean(true)))
+    };
+    let force = truthy("force");
+    let recursive = truthy("recursive");
+    let result = fs_rm_core(path, force, recursive);
+    let arg = match result {
+        Ok(()) => Value::Null,
+        Err(VmError::Thrown(v)) => v,
+        Err(other) => return Err(other),
+    };
+    quench_runtime::execute::call(&callback, &Value::Undefined, &[arg])?;
+    Ok(Value::Undefined)
+}
