@@ -25,6 +25,7 @@ pub(crate) fn execute(
             -1.0,
         )),
         crate::ops::Builtin::TemporalDurationAbs => Some(abs(receiver)),
+        crate::ops::Builtin::TemporalDurationNegated => Some(negated(receiver)),
         crate::ops::Builtin::TemporalDurationToLocaleString => Some(
             crate::intl::duration::format_temporal_duration(receiver, arguments),
         ),
@@ -91,6 +92,18 @@ fn boolean_field_getter(receiver: Option<&Value>, field: &str) -> Result<Value, 
 fn abs(receiver: Option<&Value>) -> Result<Value, VmError> {
     let object = duration_receiver(receiver)?;
     let arguments = absolute_fields(object);
+    construct(&arguments)
+}
+
+fn negated(receiver: Option<&Value>) -> Result<Value, VmError> {
+    let object = duration_receiver(receiver)?;
+    let arguments = duration_fields(object, false)
+        .into_iter()
+        .map(|value| match value {
+            Value::Number(value) => Value::Number(-value),
+            value => value,
+        })
+        .collect::<Vec<_>>();
     construct(&arguments)
 }
 
@@ -162,6 +175,10 @@ fn has_duration_slots(object: &crate::value::ObjectData) -> bool {
 }
 
 fn absolute_fields(object: &crate::value::ObjectData) -> Vec<Value> {
+    duration_fields(object, true)
+}
+
+fn duration_fields(object: &crate::value::ObjectData, absolute: bool) -> Vec<Value> {
     let names = [
         "years",
         "months",
@@ -181,7 +198,9 @@ fn absolute_fields(object: &crate::value::ObjectData) -> Vec<Value> {
                 .iter()
                 .find(|(key, _)| key == name)
                 .map_or(Value::Number(0.0), |(_, value)| match value {
-                    Value::Number(value) => Value::Number(value.abs()),
+                    Value::Number(value) => {
+                        Value::Number(if absolute { value.abs() } else { *value })
+                    }
                     _ => Value::Number(0.0),
                 })
         })
