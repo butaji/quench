@@ -134,6 +134,7 @@ fn error_constructor_name(builtin: Builtin) -> Option<&'static str> {
 pub fn prototype(builtin: Builtin) -> Option<Builtin> {
     match builtin {
         Builtin::Array => Some(Builtin::ArrayPrototype),
+        Builtin::Iterator => Some(Builtin::IteratorPrototype),
         Builtin::Boolean => Some(Builtin::ObjectPrototype),
         Builtin::Promise => Some(Builtin::PromisePrototype),
         Builtin::Date => Some(Builtin::DatePrototype),
