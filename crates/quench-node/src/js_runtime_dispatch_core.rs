@@ -194,6 +194,12 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::FsUtimesPromise) => {
                 fs_utimes_promise(arguments)
             }
+            HostCapabilityKind::Custom(CapabilityName::FsOpenPromise) => {
+                self.fs_open_promise(arguments)
+            }
+            HostCapabilityKind::Custom(CapabilityName::FsFileHandleClose) => {
+                self.fs_filehandle_close(receiver)
+            }
             HostCapabilityKind::Custom(CapabilityName::FsStatsIsDirectory) => {
                 Ok(Value::Boolean(true))
             }
