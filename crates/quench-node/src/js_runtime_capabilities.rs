@@ -218,6 +218,10 @@ impl CapabilityName {
     const FsUtimesPromise: u16 = 2240;
     const FsOpenPromise: u16 = 2301;
     const FsFileHandleClose: u16 = 2302;
+    const FsFileHandleReadFile: u16 = 2303;
+    const FsFileHandleRead: u16 = 2304;
+    const FsFileHandleWrite: u16 = 2305;
+    const FsFileHandleStat: u16 = 2306;
     const TmpdirRefresh: u16 = 2228;
     const TmpdirFileUrl: u16 = 2229;
     const BufferIsAscii: u16 = 2058;
