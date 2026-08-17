@@ -71,23 +71,39 @@ fn reserved_slots(lexical_receiver: bool, rest: Option<u16>) -> u16 {
 fn bind_rest(mut body: Vec<Op>, rest: Option<u16>, params: u16, captures: u16) -> Vec<Op> {
     let Some(slot) = rest else { return body };
     let arguments = captures.saturating_add(params);
+    // Gather the rest tail via Array.prototype.slice.call(arguments, params).
+    // The arguments object is an ArgumentsExoticObject (no own `slice`), so a
+    // direct `arguments.slice(...)` method call would resolve to undefined and
+    // every rest-parameter function would fail to be callable.
     let mut prefix = vec![
-        Op::LoadLocal {
-            dst: 0,
-            slot: arguments,
+        Op::LoadLocal { dst: 0, slot: arguments },
+        Op::MakeBuiltin {
+            dst: 1,
+            builtin: crate::ops::Builtin::Array,
+        },
+        Op::GetProperty {
+            dst: 2,
+            object: 1,
+            key: "prototype".to_string(),
+        },
+        Op::GetProperty {
+            dst: 3,
+            object: 2,
+            key: "slice".to_string(),
         },
         Op::Const {
-            dst: 1,
+            dst: 4,
             value: crate::ops::Constant::Number(f64::from(params)),
         },
-        Op::CallMethod {
-            dst: 2,
-            object: 0,
-            key: "slice".to_string(),
-            callee: None,
-            args: vec![1],
+        Op::OptionalCall {
+            dst: 5,
+            callee: 3,
+            receiver: Some(0),
+            guard_receiver: false,
+            args: vec![4],
+            spreads: vec![],
         },
-        Op::StoreLocal { slot, src: 2 },
+        Op::StoreLocal { slot, src: 5 },
     ];
     prefix.append(&mut body);
     prefix
