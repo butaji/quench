@@ -237,6 +237,10 @@ fn should_preserve_receiver_property(
         || is_intl_number_format_property(property)
         || is_boxed_primitive(receiver) && matches!(property, Value::Builtin(_))
         || matches!(key, "constructor" | "prototype")
+        // Promise instances must return the prototype's `then`/`catch`/
+        // `finally` by reference (ES §27.2.5); binding the receiver
+        // creates a fresh BoundFunction per access.
+        || matches!(value, Value::Promise(_)) && matches!(property, Value::Builtin(_))
 }
 
 fn plural_rules_instance(value: &Value) -> bool {
