@@ -73,9 +73,11 @@ fn execute_try_body(ops: &[Op], registers: &mut Vec<Value>) -> Result<Completion
             }
             continue;
         }
-        match execute_completion_in_place(std::slice::from_ref(op), registers)? {
-            Completion::Normal => {}
-            completion => return Ok(completion),
+        match execute_completion_in_place(std::slice::from_ref(op), registers) {
+            Ok(Completion::Normal) => {}
+            Ok(completion) => return Ok(completion),
+            Err(VmError::Thrown(value)) => return Ok(Completion::Throw(value)),
+            Err(error) => return Err(error),
         }
     }
     Ok(Completion::Normal)

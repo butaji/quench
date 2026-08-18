@@ -63,6 +63,7 @@ pub(crate) fn reduce_named_declaration(
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let tail_calls = tail_calls_enabled(strictness, kind, is_async);
     let inherited = enter_function(facts, strictness, tail_calls);
+    let self_name = (!locals.contains_key(name)).then_some((name, false));
     let reduced = reduce_function_ops_named(
         &body.statements,
         formal,
@@ -70,7 +71,7 @@ pub(crate) fn reduce_named_declaration(
         (parameters, parameter_count),
         locals,
         None,
-        Some((name, false)),
+        self_name,
     );
     (facts.strict, facts.in_function, facts.tail_calls) = inherited;
     reduced.ok_or_else(|| vec!["Unsupported function declaration body".to_string()])
