@@ -1,17 +1,65 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    rc::Rc,
+};
 
 use crate::value::Value;
+
+thread_local! {
+    static ENSURE: RefCell<HashMap<*const RefCell<Value>, Rc<dyn Fn()>>> =
+        RefCell::new(HashMap::new());
+}
+
+pub fn register_ensure(cell: &Rc<RefCell<Value>>, ensure: Rc<dyn Fn()>) {
+    ENSURE.with(|map| {
+        map.borrow_mut().insert(Rc::as_ptr(cell), ensure);
+    });
+}
+
+pub fn run_ensure(cell: &Rc<RefCell<Value>>) {
+    let ensure = ENSURE.with(|map| map.borrow().get(&Rc::as_ptr(cell)).cloned());
+    if let Some(ensure) = ensure {
+        ensure();
+    }
+}
 
 /// A live binding shared by module environments.
 ///
 /// Imports and exports observe the same mutable cell rather than copied
 /// values. The wrapper keeps module linkage independent from slot storage.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ModuleBindingCell(Rc<RefCell<Value>>);
+#[derive(Clone)]
+pub struct ModuleBindingCell {
+    cell: Rc<RefCell<Value>>,
+    ensure: Option<Rc<dyn Fn()>>,
+}
+
+impl std::fmt::Debug for ModuleBindingCell {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ModuleBindingCell")
+            .field("value", &self.cell.borrow().clone())
+            .finish()
+    }
+}
+
+impl PartialEq for ModuleBindingCell {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.cell, &other.cell)
+    }
+}
 
 impl ModuleBindingCell {
     pub fn new(value: Value) -> Self {
-        Self(Rc::new(RefCell::new(value)))
+        Self {
+            cell: Rc::new(RefCell::new(value)),
+            ensure: None,
+        }
+    }
+
+    pub fn with_ensure(mut self, ensure: Rc<dyn Fn()>) -> Self {
+        self.ensure = Some(ensure);
+        self
     }
 
     pub fn unresolved() -> Self {
@@ -24,27 +72,33 @@ impl ModuleBindingCell {
     }
 
     pub fn from_shared(cell: Rc<RefCell<Value>>) -> Self {
-        Self(cell)
+        Self {
+            cell,
+            ensure: None,
+        }
     }
 
     pub fn get(&self) -> Value {
+        if let Some(ensure) = &self.ensure {
+            ensure();
+        }
         self.get_with_seen(&mut Vec::new())
     }
 
     fn get_with_seen(&self, seen: &mut Vec<*const RefCell<Value>>) -> Value {
-        let pointer = Rc::as_ptr(&self.0);
+        let pointer = Rc::as_ptr(&self.cell);
         if seen.contains(&pointer) {
             return Value::Undefined;
         }
         seen.push(pointer);
-        match self.0.borrow().clone() {
+        match self.cell.borrow().clone() {
             Value::BindingCell(cell) => Self::from_shared(cell).get_with_seen(seen),
             value => value,
         }
     }
 
     pub fn set(&self, value: Value) {
-        self.0.replace(value);
+        self.cell.replace(value);
     }
 
     pub fn forward_to(&self, target: &Self) {
@@ -61,7 +115,7 @@ impl ModuleBindingCell {
     }
 
     pub fn shared(&self) -> Rc<RefCell<Value>> {
-        Rc::clone(&self.0)
+        Rc::clone(&self.cell)
     }
 }
 
