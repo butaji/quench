@@ -18,11 +18,10 @@ pub fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> 
         .ok_or(VmError::RegisterOutOfBounds(index))
 }
 pub fn get_property(value: &Value, key: &str) -> Value {
+    crate::module_bindings::exports(value, key).ok();
     if let Value::BindingCell(cell) = value {
-        crate::module_bindings::run_ensure(cell);
         return get_property(&cell.borrow(), key);
     }
-    crate::module_bindings::run_object_ensure(value, key);
     direct_or_primitive_property(value, key)
 }
 
