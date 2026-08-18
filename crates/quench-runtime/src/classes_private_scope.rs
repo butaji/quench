@@ -7,9 +7,10 @@ pub(crate) fn reduce_expression(
 ) -> Option<u16> {
     let names = private_definitions(class, facts);
     let mut body = Vec::new();
-    let heritage = reduce_heritage(class, &mut body, facts, next, locals)?;
+    let class_locals = class_scope_locals(class, locals);
+    let heritage = reduce_heritage(class, &mut body, facts, next, &class_locals)?;
     let (constructor, default_constructor) =
-        reduce_constructor(class, &mut body, facts, next, locals)?;
+        reduce_constructor(class, &mut body, facts, next, &class_locals)?;
     finish_class(
         class,
         heritage,
@@ -17,10 +18,11 @@ pub(crate) fn reduce_expression(
         &mut body,
         facts,
         next,
-        locals,
+        &class_locals,
     )?;
     ops.push(Op::PrivateScope {
         names,
+        class_name: class.id.as_ref().map(|id| id.name.to_string()),
         body: crate::machine::FunctionCode::from_ops(body),
     });
     Some(constructor)
