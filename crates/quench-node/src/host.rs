@@ -27,6 +27,7 @@ pub struct HostState {
     pub fs: crate::modules::fs::FsState,
     pub net: crate::modules::net::NetState,
     pub http: crate::modules::http::HttpState,
+    pub emitters: crate::modules::events::EmitterRegistry,
     pub output: Option<OutputSink>,
     pub realm: RealmId,
 }
@@ -40,6 +41,7 @@ impl NodeHost {
             fs: crate::modules::fs::FsState::new(),
             net: crate::modules::net::NetState::new(),
             http: crate::modules::http::HttpState::new(),
+            emitters: crate::modules::events::EmitterRegistry::new(),
             output: None,
             realm,
         };
@@ -62,14 +64,14 @@ impl Host for NodeHost {
     fn call(
         &self,
         capability: HostCapabilityRef,
-        _receiver: Option<&Value>,
+        receiver: Option<&Value>,
         arguments: &[Value],
     ) -> Result<Value, VmError> {
         let cap = match capability.kind {
             HostCapabilityKind::Custom(c) => c,
             _ => return Err(VmError::NotCallable),
         };
-        dispatch(cap, &self.state, arguments)
+        dispatch(cap, &self.state, receiver, arguments)
     }
 
     fn construct(
@@ -98,9 +100,14 @@ impl Host for NodeHost {
     }
 }
 
-fn dispatch(cap: CapId, state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+fn dispatch(
+    cap: CapId,
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
     if let Some(handler) = crate::dispatch::lookup(cap) {
-        return handler(state, args);
+        return handler(state, receiver, args);
     }
     Err(VmError::NotCallable)
 }
