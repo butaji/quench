@@ -6,6 +6,13 @@ pub(crate) fn is_builtin_deletable(_builtin: Builtin, key: &str) -> bool {
     if _builtin == Builtin::FunctionPrototype && key == "Symbol.hasInstance" { return false; }
     if _builtin == Builtin::Number && props_number::constant(key).is_some() { return false; }
     if matches!((_builtin, key), (Builtin::ThrowTypeError, "length" | "name")) { return false; }
+    if matches!(
+        (_builtin, key),
+        (Builtin::GeneratorFunctionPrototype, "prototype")
+            | (Builtin::AsyncGeneratorFunctionPrototype, "prototype")
+    ) {
+        return true;
+    }
     if key == "prototype" || crate::builtins::object::is_well_known_symbol_property(_builtin, key) { return false; }
     if matches!((_builtin, key), (Builtin::Math, "E" | "LN2" | "LN10" | "LOG2E" | "LOG10E" | "PI" | "SQRT1_2" | "SQRT2")) { return false; }
     true
