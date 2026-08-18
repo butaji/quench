@@ -20,6 +20,10 @@ fn set_prototype_slot(target: &Value, key: &str, value: Value) -> Option<Value> 
     if key != "\0prototype" {
         return None;
     }
+    if let Value::Builtin(builtin) = target {
+        crate::builtins::set_intrinsic_prototype_override(*builtin, value);
+        return Some(target.clone());
+    }
     Some(match target {
         Value::ArrayBuffer(buffer) => {
             buffer.set_prototype(value);

@@ -11,6 +11,29 @@ thread_local! {
         RefCell::new(HashMap::new());
     static INTRINSIC_REMOVED: RefCell<HashMap<(Builtin, String), ()>> =
         RefCell::new(HashMap::new());
+    static INTRINSIC_PROTOTYPE_OVERRIDES: RefCell<HashMap<Builtin, Value>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Record a `[[Prototype]]` override for the intrinsic `builtin`. Subsequent
+/// `get_prototype_of` lookups return the override instead of the default.
+pub(crate) fn write_prototype(builtin: Builtin, value: Value) {
+    INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| {
+        overrides.borrow_mut().insert(builtin, value);
+    });
+}
+
+/// Look up a `[[Prototype]]` override for the intrinsic `builtin`.
+pub(crate) fn read_prototype(builtin: Builtin) -> Option<Value> {
+    INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| overrides.borrow().get(&builtin).cloned())
+}
+
+/// Clear the recorded `[[Prototype]]` override for the intrinsic `builtin`.
+#[allow(dead_code)]
+pub(crate) fn clear_prototype(builtin: Builtin) {
+    INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| {
+        overrides.borrow_mut().remove(&builtin);
+    });
 }
 
 pub(crate) fn read(builtin: Builtin, key: &str) -> Option<Value> {
@@ -66,4 +89,5 @@ pub(crate) fn is_removed(builtin: Builtin, key: &str) -> bool {
 pub(crate) fn reset() {
     INTRINSIC_OVERRIDES.with(|overrides| overrides.borrow_mut().clear());
     INTRINSIC_REMOVED.with(|removed| removed.borrow_mut().clear());
+    INTRINSIC_PROTOTYPE_OVERRIDES.with(|overrides| overrides.borrow_mut().clear());
 }
