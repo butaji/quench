@@ -243,16 +243,32 @@ pub(crate) fn return_iterator(
         ));
     };
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let already_done = matches!(
-        &*data.state.borrow(),
-        IteratorState::Zip { done: true, .. }
-    );
+    let (already_done, concat_inner) = {
+        let state = data.state.borrow();
+        match &*state {
+            IteratorState::Zip { done: true, .. } => (true, Vec::new()),
+            IteratorState::Concat { opened, done, .. } => {
+                if *done {
+                    (true, Vec::new())
+                } else {
+                    let inner = opened
+                        .iter()
+                        .filter_map(|slot| slot.clone())
+                        .collect::<Vec<_>>();
+                    (false, inner)
+                }
+            }
+            _ => (false, Vec::new()),
+        }
+    };
     if already_done {
         return Ok(result(value, true));
     }
     mark_done(data);
     *data.in_return.borrow_mut() = true;
-    let completion = if let Some(iterators) = zip_iterators(data) {
+    let completion = if !concat_inner.is_empty() {
+        close_iterators(concat_inner, crate::completion::Completion::Normal)?
+    } else if let Some(iterators) = zip_iterators(data) {
         close_iterators(iterators, crate::completion::Completion::Normal)?
     } else {
         close(
