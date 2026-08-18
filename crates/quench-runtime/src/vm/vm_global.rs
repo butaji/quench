@@ -7,14 +7,12 @@ pub(crate) fn current_global_object() -> Value {
     if let Some(global) = registered_current_global() {
         return Value::Object(global);
     }
-    GLOBAL_OBJECT
-        .with(|global| {
-            global
-                .borrow()
-                .as_ref()
-                .map(|object| Value::Object(object.clone()))
-        })
-        .unwrap_or(Value::Undefined)
+    if let Some(global) = GLOBAL_OBJECT.with(|global| global.borrow().clone()) {
+        return Value::Object(global);
+    }
+    let created = std::rc::Rc::new(ObjectData::new(Vec::new()));
+    initialize_global_object(&Value::Object(created.clone()));
+    Value::Object(created)
 }
 
 pub(crate) fn initialize_global_object(value: &Value) {
@@ -169,6 +167,37 @@ thread_local! {
     static GLOBAL_DECLARATION_BASE: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
     static GLOBAL_DECLARATION_BATCH: RefCell<Option<ObjectProperties>> =
         const { RefCell::new(None) };
+    static SHARED_GLOBAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Keep one global object alive across nested residual executions.
+pub struct SharedGlobal {
+    previous: Option<ObjectProperties>,
+}
+
+impl SharedGlobal {
+    pub fn install() -> Self {
+        let previous = GLOBAL_OBJECT.with(|global| global.borrow().clone());
+        if previous.is_none() {
+            let created = std::rc::Rc::new(ObjectData::new(Vec::new()));
+            initialize_global_object(&Value::Object(created));
+        }
+        SHARED_GLOBAL.with(|count| count.set(count.get().saturating_add(1)));
+        Self { previous }
+    }
+}
+
+impl Drop for SharedGlobal {
+    fn drop(&mut self) {
+        let remaining = SHARED_GLOBAL.with(|count| {
+            let next = count.get().saturating_sub(1);
+            count.set(next);
+            next
+        });
+        if remaining == 0 {
+            GLOBAL_OBJECT.with(|global| global.replace(self.previous.take()));
+        }
+    }
 }
 
 impl GlobalObjectGuard {
@@ -192,6 +221,9 @@ impl GlobalObjectGuard {
 
 impl Drop for GlobalObjectGuard {
     fn drop(&mut self) {
+        if SHARED_GLOBAL.with(|count| count.get() > 0) {
+            return;
+        }
         if let Some(realm) = self.realm {
             let current = GLOBAL_OBJECT.with(|slot| slot.replace(self.previous.take()));
             if let Some(current) = current {

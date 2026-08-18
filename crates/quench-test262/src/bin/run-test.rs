@@ -1,4 +1,4 @@
-use std::{env, fs, path::PathBuf, process::ExitCode};
+use std::{env, path::PathBuf, process::ExitCode};
 
 use quench_test262::{HarnessCache, RuntimeHost, Test262Runner, TestOutcome};
 
@@ -7,14 +7,10 @@ fn main() -> ExitCode {
         eprintln!("usage: cargo run -p quench-test262 --bin run-test -- <test.js>");
         return ExitCode::from(2);
     };
-    let source = match fs::read_to_string(&path) {
-        Ok(source) => source,
-        Err(error) => return fail(format!("{}: {error}", path.display())),
-    };
     let root = test262_root();
     let mut runner = Test262Runner::new(RuntimeHost);
     let mut harness = HarnessCache::new(root.join("harness"));
-    let outcome = runner.run_test_with_cache(&source, &mut harness);
+    let outcome = runner.run_file_with_cache(&path, &mut harness);
     match outcome {
         Ok(TestOutcome::Pass) => ExitCode::SUCCESS,
         Ok(TestOutcome::Fail { reason }) => fail(reason),
