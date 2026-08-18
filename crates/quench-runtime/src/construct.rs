@@ -122,7 +122,15 @@ fn construct_builtin_target(
     {
         return construct_shared_array_buffer_with_target(builtin, target, new_target, arguments);
     }
-    let prototype = (!crate::builtins::same_value(Some(target), Some(new_target)))
+    let needs_new_target = !crate::builtins::same_value(Some(target), Some(new_target));
+    if builtin == crate::ops::Builtin::DataView && needs_new_target {
+        let value = construct_data_view(arguments)?;
+        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+        let value = apply_new_target_prototype(value, target, new_target, prototype)?;
+        validate_data_view(&value)?;
+        return Ok(value);
+    }
+    let prototype = needs_new_target
         .then(|| crate::execute::get_property_result(new_target, "prototype"))
         .transpose()?;
     let value = construct_builtin(builtin, arguments)?;
