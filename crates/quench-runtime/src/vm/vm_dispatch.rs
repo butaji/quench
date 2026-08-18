@@ -40,6 +40,7 @@ fn is_global_declaration_op(op: &Op) -> bool {
 fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
     let Op::Eval {
         dst,
+        callee,
         source,
         strict,
         global,
@@ -55,6 +56,7 @@ fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
         registers,
         crate::reflect::EvalExecution {
             dst: *dst,
+            callee: *callee,
             source: *source,
             strict: *strict,
             global: *global,

@@ -374,6 +374,7 @@ pub enum Op {
     },
     Eval {
         dst: u16,
+        callee: u16,
         source: u16,
         strict: bool,
         global: bool,
