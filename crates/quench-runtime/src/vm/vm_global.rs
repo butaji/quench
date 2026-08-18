@@ -7,12 +7,14 @@ pub(crate) fn current_global_object() -> Value {
     if let Some(global) = registered_current_global() {
         return Value::Object(global);
     }
-    if let Some(global) = GLOBAL_OBJECT.with(|global| global.borrow().clone()) {
-        return Value::Object(global);
-    }
-    let created = std::rc::Rc::new(ObjectData::new(Vec::new()));
-    initialize_global_object(&Value::Object(created.clone()));
-    Value::Object(created)
+    GLOBAL_OBJECT
+        .with(|global| {
+            global
+                .borrow()
+                .as_ref()
+                .map(|object| Value::Object(object.clone()))
+        })
+        .unwrap_or(Value::Undefined)
 }
 
 pub(crate) fn initialize_global_object(value: &Value) {
