@@ -378,6 +378,10 @@ pub(crate) fn initialize_instance_fields(
     function: &crate::value::FunctionValue,
     receiver: Value,
 ) -> Result<Value, crate::execute::VmError> {
+    let _home = crate::super_scope::Guard::install(
+        &std::rc::Rc::new(function.clone()),
+        &receiver,
+    );
     initialize_instance_fields_impl(function, receiver)
 }
 include!("construct_instance_fields.rs");
