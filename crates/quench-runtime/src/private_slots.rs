@@ -109,6 +109,11 @@ pub(crate) fn define(value: &Value, name: PrivateName, initial: Value) -> Result
 }
 
 fn define_slot(value: &Value, name: PrivateName, slot: PrivateSlot) -> Result<(), VmError> {
+    if !crate::properties::object_is_extensible(value) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot add private field to a non-extensible object",
+        ));
+    }
     let slots = slots(value)?;
     let mut slots = slots.borrow_mut();
     if slots.iter().any(|(id, _)| id == &name) {
