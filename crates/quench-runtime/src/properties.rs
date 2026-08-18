@@ -398,14 +398,14 @@ fn primitive_prototype_for(value: &crate::value::Value) -> crate::value::Value {
     use crate::value::Value;
     use crate::ops::Builtin;
     match value {
-        Value::Number(_) => Value::Builtin(Builtin::NumberPrototype),
-        Value::Boolean(_) => Value::Builtin(Builtin::BooleanPrototype),
-        Value::StringUnits(_) => Value::Builtin(Builtin::StringPrototype),
-        Value::BigInt(_) => Value::Builtin(Builtin::BigIntPrototype),
+        Value::Number(_) => crate::vm::realm_intrinsic(Builtin::NumberPrototype),
+        Value::Boolean(_) => crate::vm::realm_intrinsic(Builtin::BooleanPrototype),
+        Value::StringUnits(_) => crate::vm::realm_intrinsic(Builtin::StringPrototype),
+        Value::BigInt(_) => crate::vm::realm_intrinsic(Builtin::BigIntPrototype),
         Value::String(v) if crate::conversion::is_symbol_string(v) => {
-            Value::Builtin(Builtin::SymbolPrototype)
+            crate::vm::realm_intrinsic(Builtin::SymbolPrototype)
         }
-        Value::String(_) => Value::Builtin(Builtin::StringPrototype),
+        Value::String(_) => crate::vm::realm_intrinsic(Builtin::StringPrototype),
         _ => Value::Null,
     }
 }
