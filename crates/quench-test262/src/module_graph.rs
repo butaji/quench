@@ -123,9 +123,9 @@ impl ModuleGraph {
         I: IntoIterator<Item = &'a str>,
     {
         for specifier in specifiers {
-            let target = self.resolve(from, specifier).ok_or_else(|| {
-                format!("unresolved module specifier {specifier:?} from {from:?}")
-            })?;
+            let Some(target) = self.resolve(from, specifier) else {
+                continue;
+            };
             self.link(from, target)?;
         }
         Ok(())
