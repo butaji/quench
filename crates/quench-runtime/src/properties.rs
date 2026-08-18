@@ -214,7 +214,7 @@ fn finish_set_property(
             | crate::value::Value::Boolean(_)
             | crate::value::Value::BigInt(_)
     ) {
-        return write_failure(strict);
+        return finish_primitive_set(target, key, value, strict);
     }
     if let crate::value::Value::Builtin(builtin) = &target {
         if !crate::builtins::object::builtin_property_writable(*builtin, key) {
@@ -300,6 +300,114 @@ fn finish_property_write(
     crate::locals::replace_value(target, &result);
     crate::vm::synchronize_global_object(registers, target, &result);
     crate::execute::write_value(registers, object, result);
+}
+fn finish_primitive_set(
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+    strict: bool,
+) -> Result<(), crate::execute::VmError> {
+    let receiver = crate::construct::to_object(target)?;
+    let mut home_proto = primitive_prototype_for(target);
+    loop {
+        match &home_proto {
+            crate::value::Value::Null => break,
+            crate::value::Value::Proxy(_) => {
+                let trap_result =
+                    crate::proxy::proxy_set(&home_proto, key, &value, Some(&receiver))?;
+                let succeeded = matches!(trap_result, crate::value::Value::Boolean(true));
+                if !succeeded && strict {
+                    return Err(crate::value::error::throw_type_error(
+                        "Cannot assign to read-only property",
+                    ));
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
+        let descriptor = crate::builtins::object::descriptor(
+            Some(&home_proto),
+            Some(&crate::value::Value::String(key.to_string())),
+        )?;
+        if !matches!(descriptor, crate::value::Value::Undefined) {
+            let has_setter = !matches!(
+                crate::builtins::object::descriptor(
+                    Some(&descriptor),
+                    Some(&crate::value::Value::String("set".to_string())),
+                ),
+                Ok(crate::value::Value::Undefined)
+            );
+            if has_setter {
+                let succeeded = crate::proxy::proxy_set(
+                    &home_proto,
+                    key,
+                    &value,
+                    Some(&receiver),
+                )?;
+                let ok = matches!(succeeded, crate::value::Value::Boolean(true));
+                if !ok && strict {
+                    return Err(crate::value::error::throw_type_error(
+                        "Cannot assign to read-only property",
+                    ));
+                }
+                return Ok(());
+            }
+            let writable = matches!(
+                crate::execute::get_property_result(&descriptor, "writable")?,
+                crate::value::Value::Boolean(true)
+            );
+            if !writable {
+                if strict {
+                    return Err(crate::value::error::throw_type_error(
+                        "Cannot assign to read-only property",
+                    ));
+                }
+                return Ok(());
+            }
+            let own = vec![
+                ("value".to_string(), value),
+                (
+                    "writable".to_string(),
+                    crate::value::Value::Boolean(true),
+                ),
+                (
+                    "enumerable".to_string(),
+                    crate::value::Value::Boolean(true),
+                ),
+                (
+                    "configurable".to_string(),
+                    crate::value::Value::Boolean(true),
+                ),
+            ];
+            let _ = crate::builtins::define_own_property(&receiver, key, &own)?;
+            return Ok(());
+        }
+        home_proto = crate::builtins::object::get_prototype_of(Some(&home_proto))?;
+    }
+    let own = vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), crate::value::Value::Boolean(true)),
+        ("enumerable".to_string(), crate::value::Value::Boolean(true)),
+        ("configurable".to_string(), crate::value::Value::Boolean(true)),
+    ];
+    let _ = crate::builtins::define_own_property(&receiver, key, &own)?;
+    Ok(())
+}
+
+fn primitive_prototype_for(value: &crate::value::Value) -> crate::value::Value {
+    use crate::value::Value;
+    use crate::ops::Builtin;
+    match value {
+        Value::Number(_) => Value::Builtin(Builtin::NumberPrototype),
+        Value::Boolean(_) => Value::Builtin(Builtin::BooleanPrototype),
+        Value::StringUnits(_) => Value::Builtin(Builtin::StringPrototype),
+        Value::BigInt(_) => Value::Builtin(Builtin::BigIntPrototype),
+        Value::String(v) if crate::conversion::is_symbol_string(v) => {
+            Value::Builtin(Builtin::SymbolPrototype)
+        }
+        Value::String(_) => Value::Builtin(Builtin::StringPrototype),
+        _ => Value::Null,
+    }
 }
 fn reject_nullish_property_write(
     target: &crate::value::Value,
