@@ -100,14 +100,16 @@ pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
             match state {
                 crate::value::PromiseState::Fulfilled(value) => {
                     super::write_value(registers, dst, value);
+                    if crate::module_bindings::fulfilled_await_defers() {
+                        return Err(VmError::Suspended(promise));
+                    }
                     Ok(())
                 }
                 crate::value::PromiseState::Rejected(reason) => Err(VmError::Thrown(reason)),
                 crate::value::PromiseState::Pending => {
-                    // The awaited promise may settle through an already-queued
-                    // microtask (e.g. a `.then` reaction). Drain once and re-check
-                    // before suspending, so direct awaits over chained promises
-                    // complete for regular (non-generator) frames.
+                    if crate::module_bindings::fulfilled_await_defers() {
+                        return Err(VmError::Suspended(promise));
+                    }
                     crate::promise::drain_microtasks_all();
                     let state = promise.state.borrow().clone();
                     match state {

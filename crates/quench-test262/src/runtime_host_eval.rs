@@ -32,64 +32,33 @@ fn evaluate_module(
     }
     unit.started.set(true);
     let metadata = unit.program.module_metadata.as_ref();
-    for dependency in evaluation_targets(metadata, graph, id, skip_deferred) {
-        evaluate_module(graph_units, graph, dependency, skip_deferred)?;
+    let targets = evaluation_targets(graph_units, metadata, graph, id, skip_deferred);
+    for dependency in &targets {
+        evaluate_module(graph_units, graph, *dependency, skip_deferred)?;
     }
-    gather_deferred_async(graph_units, graph, id, metadata, skip_deferred)?;
-    graph_units
+    if targets.iter().any(|dependency| {
+        graph_units
+            .units
+            .get(dependency)
+            .is_some_and(|unit| !unit.evaluated.get())
+    }) {
+        let units = graph_units as *const LinkedModuleGraph;
+        quench_runtime::module_bindings::enqueue_job(Rc::new(move || {
+            let _ = unsafe { &*units }.units.get(&id).map(LinkedModule::execute);
+        }));
+        return Ok(());
+    }
+    if metadata.is_some_and(|metadata| metadata.imports.iter().any(|binding| binding.deferred)) {
+        quench_runtime::module_bindings::drain_jobs();
+    }
+    CURRENT_MODULE_ID.with(|current| current.set(Some(id)));
+    let result = graph_units
         .units
         .get(&id)
         .ok_or_else(|| "module unit missing".to_string())?
-        .execute()?;
-    Ok(())
-}
-
-fn gather_deferred_async(
-    graph_units: &LinkedModuleGraph,
-    graph: &ModuleGraph,
-    id: ModuleId,
-    metadata: Option<&quench_runtime::reduce::ModuleMetadata>,
-    skip_deferred: bool,
-) -> Result<(), String> {
-    if !skip_deferred {
-        return Ok(());
-    }
-    let Some(metadata) = metadata else {
-        return Ok(());
-    };
-    for binding in metadata.imports.iter().filter(|binding| binding.deferred) {
-        if let Some(target) = graph.resolve(id, &binding.source) {
-            evaluate_async_transitive(graph_units, graph, target, &mut HashSet::new())?;
-        }
-    }
-    Ok(())
-}
-
-fn evaluate_async_transitive(
-    graph_units: &LinkedModuleGraph,
-    graph: &ModuleGraph,
-    id: ModuleId,
-    seen: &mut HashSet<ModuleId>,
-) -> Result<(), String> {
-    if !seen.insert(id) {
-        return Ok(());
-    }
-    let unit = graph_units
-        .units
-        .get(&id)
-        .ok_or_else(|| "module unit missing".to_string())?;
-    if unit
-        .program
-        .module_metadata
-        .as_ref()
-        .is_some_and(|metadata| metadata.has_top_level_await)
-    {
-        return evaluate_module(graph_units, graph, id, true);
-    }
-    for dependency in graph.dependencies(id) {
-        evaluate_async_transitive(graph_units, graph, *dependency, seen)?;
-    }
-    Ok(())
+        .execute();
+    CURRENT_MODULE_ID.with(|current| current.set(None));
+    result.map(|_| ())
 }
 
 fn ready_for_sync_execution(
@@ -125,6 +94,7 @@ fn ready_for_sync_execution(
 }
 
 fn evaluation_targets(
+    units: &LinkedModuleGraph,
     metadata: Option<&quench_runtime::reduce::ModuleMetadata>,
     graph: &ModuleGraph,
     from: ModuleId,
@@ -134,16 +104,65 @@ fn evaluation_targets(
         return graph.dependencies(from).to_vec();
     };
     let mut targets = Vec::new();
+    let mut seen = HashSet::new();
     for binding in &metadata.imports {
+        let Some(target) = graph.resolve(from, &binding.source) else {
+            continue;
+        };
         if skip_deferred && binding.deferred {
+            gather_async_transitive(units, graph, target, &mut seen, &mut targets);
             continue;
         }
-        push_target(&mut targets, graph, from, &binding.source);
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
     }
     for binding in &metadata.reexports {
         push_target(&mut targets, graph, from, &binding.source);
     }
     targets
+}
+
+fn gather_async_transitive(
+    units: &LinkedModuleGraph,
+    graph: &ModuleGraph,
+    id: ModuleId,
+    seen: &mut HashSet<ModuleId>,
+    result: &mut Vec<ModuleId>,
+) {
+    if !seen.insert(id) {
+        return;
+    }
+    let Some(unit) = units.units.get(&id) else {
+        return;
+    };
+    if unit.started.get() || unit.evaluated.get() {
+        return;
+    }
+    if unit
+        .program
+        .module_metadata
+        .as_ref()
+        .is_some_and(|metadata| metadata.has_top_level_await)
+    {
+        if !result.contains(&id) {
+            result.push(id);
+        }
+        return;
+    }
+    let Some(metadata) = unit.program.module_metadata.as_ref() else {
+        return;
+    };
+    for source in metadata
+        .imports
+        .iter()
+        .map(|binding| binding.source.as_str())
+        .chain(metadata.reexports.iter().map(|binding| binding.source.as_str()))
+    {
+        if let Some(target) = graph.resolve(id, source) {
+            gather_async_transitive(units, graph, target, seen, result);
+        }
+    }
 }
 
 fn push_target(targets: &mut Vec<ModuleId>, graph: &ModuleGraph, from: ModuleId, source: &str) {

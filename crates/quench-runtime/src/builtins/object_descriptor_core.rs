@@ -137,7 +137,12 @@ fn object_descriptor(properties: &[(String, Value)], key: &str) -> Option<Value>
         .rev()
         .find(|(name, _)| name == &super::descriptor_key(key))
     {
-        return Some(public_descriptor(metadata));
+        let live = properties
+            .iter()
+            .rev()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| public_value(value));
+        return Some(live_descriptor(metadata, live));
     }
     properties
         .iter()

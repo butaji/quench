@@ -11,6 +11,30 @@ thread_local! {
         RefCell::new(HashMap::new());
     static PENDING_TYPE_ERROR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static PENDING_THROW: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static DYNAMIC_IMPORT: RefCell<Option<Rc<dyn Fn(&str, bool) -> Option<Value>>>> =
+        const { RefCell::new(None) };
+}
+
+/// Host-owned GetModuleNamespace for `import()` / `import.defer()`.
+pub fn install_dynamic_import(resolve: Rc<dyn Fn(&str, bool) -> Option<Value>>) -> DynamicImportGuard {
+    DYNAMIC_IMPORT.with(|slot| slot.replace(Some(resolve)));
+    DynamicImportGuard
+}
+
+pub struct DynamicImportGuard;
+
+impl Drop for DynamicImportGuard {
+    fn drop(&mut self) {
+        DYNAMIC_IMPORT.with(|slot| slot.replace(None));
+    }
+}
+
+pub fn resolve_dynamic_import(specifier: &str, deferred: bool) -> Option<Value> {
+    DYNAMIC_IMPORT.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .and_then(|resolve| resolve(specifier, deferred))
+    })
 }
 
 /// GetModuleExportsList: evaluate a deferred namespace unless the key is
@@ -70,6 +94,31 @@ pub fn rehome_evaluator(from: &Value, to: &Value) {
 
 pub fn request_ensure_type_error() {
     PENDING_TYPE_ERROR.with(|flag| flag.set(true));
+}
+
+thread_local! {
+    static DEFER_FULFILLED_AWAIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn defer_fulfilled_await(enable: bool) {
+    DEFER_FULFILLED_AWAIT.with(|flag| flag.set(enable));
+}
+
+pub fn fulfilled_await_defers() -> bool {
+    DEFER_FULFILLED_AWAIT.with(std::cell::Cell::get)
+}
+
+pub fn enqueue_job(job: Rc<dyn Fn()>) {
+    crate::promise::enqueue_job(job);
+}
+
+pub fn drain_jobs() {
+    crate::promise::drain_microtasks_all();
+}
+
+pub fn reset_module_jobs() {
+    crate::promise::clear_jobs();
+    defer_fulfilled_await(false);
 }
 
 /// A live binding shared by module environments.

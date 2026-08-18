@@ -36,6 +36,8 @@ pub struct LinkedModule {
     started: Cell<bool>,
     evaluating: Cell<bool>,
     thrown: RefCell<Option<quench_runtime::value::Value>>,
+    resume_pc: Cell<usize>,
+    resume_registers: RefCell<Vec<quench_runtime::value::Value>>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -105,14 +107,34 @@ impl LinkedModuleGraph {
 
     pub fn execute(&self, graph: &ModuleGraph, entry: ModuleId) -> Result<(), String> {
         let _shared = quench_runtime::vm::SharedGlobal::install();
+        quench_runtime::module_bindings::reset_module_jobs();
+        quench_runtime::module_bindings::defer_fulfilled_await(true);
+        let graph_ptr = self as *const LinkedModuleGraph;
+        let modules_ptr = graph as *const ModuleGraph;
         CURRENT_MODULE_GRAPH.with(|current| {
-            current.set(Some((
-                self as *const LinkedModuleGraph,
-                graph as *const ModuleGraph,
-            )));
+            current.set(Some((graph_ptr, modules_ptr)));
         });
+        let _import = quench_runtime::module_bindings::install_dynamic_import(Rc::new(
+            move |specifier, deferred| {
+                CURRENT_MODULE_ID.with(|id| {
+                    let from = id.get().or_else(|| unsafe { &*modules_ptr }.entry())?;
+                    let target = unsafe { &*modules_ptr }.resolve(from, specifier)?;
+                    import_cell(
+                        unsafe { &*modules_ptr },
+                        &unsafe { &*graph_ptr }.units,
+                        target,
+                        "*",
+                        deferred,
+                    )
+                    .ok()
+                    .map(|cell| cell.get())
+                })
+            },
+        ));
         let result = evaluate_module(self, graph, entry, true);
+        quench_runtime::module_bindings::drain_jobs();
         CURRENT_MODULE_GRAPH.with(|current| current.set(None));
+        quench_runtime::module_bindings::defer_fulfilled_await(false);
         result
     }
 
@@ -140,6 +162,8 @@ impl LinkedModule {
             started: Cell::new(false),
             evaluating: Cell::new(false),
             thrown: RefCell::new(None),
+            resume_pc: Cell::new(0),
+            resume_registers: RefCell::new(Vec::new()),
         })
     }
 
@@ -159,6 +183,8 @@ impl LinkedModule {
             started: Cell::new(false),
             evaluating: Cell::new(false),
             thrown: RefCell::new(None),
+            resume_pc: Cell::new(0),
+            resume_registers: RefCell::new(Vec::new()),
         })
     }
 
@@ -251,9 +277,15 @@ impl LinkedModule {
     }
 
     fn refresh_namespace(&self) {
-        let Some(cell) = self.namespace_cell.borrow().clone() else {
-            return;
-        };
+        if let Some(cell) = self.namespace_cell.borrow().clone() {
+            self.write_namespace_cell(&cell);
+        }
+        if let Some(cell) = self.deferred_namespace_cell.borrow().clone() {
+            self.write_namespace_cell(&cell);
+        }
+    }
+
+    fn write_namespace_cell(&self, cell: &ModuleBindingCell) {
         let mut properties: Vec<(String, quench_runtime::value::Value)> = self
             .export_names()
             .iter()
@@ -342,46 +374,15 @@ impl LinkedModule {
         self.ambiguous_exports.borrow().contains(name)
     }
 
-    pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
-        if let Some(thrown) = self.thrown.borrow().clone() {
-            quench_runtime::module_bindings::request_ensure_throw(thrown.clone());
-            return Err(format!("residual VM error: {thrown:?}"));
-        }
-        if self.evaluated.get() {
-            return Ok(quench_runtime::value::Value::Undefined);
-        }
-        self.evaluating.set(true);
-        let mut registers = Vec::new();
-        let result = self
-            .scope
-            .execute(self.program.ops(), &mut registers, host_context());
-        self.evaluating.set(false);
-        self.evaluated.set(true);
-        let result = match result {
-            Ok(value) => value,
-            Err(error) => {
-                if let quench_runtime::execute::VmError::Thrown(value) = &error {
-                    *self.thrown.borrow_mut() = Some(value.clone());
-                    quench_runtime::module_bindings::request_ensure_throw(value.clone());
-                }
-                return Err(format!("residual VM error: {}", error.render()));
-            }
-        };
-        for (name, value) in &self.fixed_exports {
-            let cell = self
-                .export_cell(name)
-                .ok_or_else(|| format!("fixed export {name} missing"))?;
-            cell.set(value.clone());
-        }
-        Ok(result)
-    }
 }
 
 thread_local! {
     static CURRENT_MODULE_GRAPH: Cell<Option<(*const LinkedModuleGraph, *const ModuleGraph)>> =
         const { Cell::new(None) };
+    static CURRENT_MODULE_ID: Cell<Option<ModuleId>> = const { Cell::new(None) };
 }
 
+include!("runtime_host_execute.rs");
 include!("runtime_host_eval.rs");
 
 fn module_source_cell() -> ModuleBindingCell {

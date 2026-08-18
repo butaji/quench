@@ -339,6 +339,13 @@ fn reduce_import_expression(
     for argument in &import.arguments {
         reduce_expression(argument, ops, facts, next_register, locals)?;
     }
+    let deferred = import.phase == Some(oxc::ast::ast::ImportPhase::Defer);
+    let namespace = take_register(next_register);
+    ops.push(Op::DynamicImport {
+        dst: namespace,
+        specifier,
+        deferred,
+    });
     let promise = take_register(next_register);
     ops.push(Op::MakeBuiltin {
         dst: promise,
@@ -350,7 +357,7 @@ fn reduce_import_expression(
         object: promise,
         key: "resolve".to_string(),
         callee: None,
-        args: vec![specifier],
+        args: vec![namespace],
     });
     Some(dst)
 }
