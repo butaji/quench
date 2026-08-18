@@ -175,3 +175,30 @@ fn reserved_class_name(name: &str, module: bool) -> bool {
             | "arguments"
     ) || (module && name == "await")
 }
+
+#[cfg(test)]
+mod tests {
+    use oxc::{allocator::Allocator, parser::Parser, span::SourceType};
+
+    fn ids(source: &str, module: bool) -> Vec<(u32, u32, u32)> {
+        let allocator = Allocator::default();
+        let source_type = if module {
+            SourceType::mjs()
+        } else {
+            SourceType::cjs()
+        };
+        let parsed = Parser::new(&allocator, source, source_type).parse();
+        let analysis = super::analyze(&parsed.program).expect("analyze");
+        analysis
+            .private_names
+            .iter()
+            .map(|(span, id)| (span.start, span.end, id.0))
+            .collect()
+    }
+
+    #[test]
+    fn module_and_script_share_private_name_ids() {
+        let source = "class outer { #x = 42; f() { return this.#x; } }";
+        assert_eq!(ids(source, true), ids(source, false));
+    }
+}

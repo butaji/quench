@@ -153,6 +153,39 @@ fn deferred_gopd_after_own_keys() {
 }
 
 #[test]
+fn deferred_tla_finishes_before_importer_body() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        concat!(
+            "import './setup.js';\n",
+            "import defer * as ns from './tla.js';\n",
+            "export default globalThis.evaluations.join(',');\n",
+        )
+        .to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("setup.js"),
+        "globalThis.evaluations = [];\n".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("tla.js"),
+        concat!(
+            "globalThis.evaluations.push('tla start');\n",
+            "await Promise.resolve(0);\n",
+            "globalThis.evaluations.push('tla end');\n",
+        )
+        .to_string(),
+    );
+    let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    assert_eq!(
+        linked.export_cell(entry, "default").expect("default").get(),
+        Value::String("tla start,tla end".to_string())
+    );
+}
+
+#[test]
 fn module_throw_statement_fails_execute() {
     let module = LinkedModule::compile("throw { someError: 'x' };").expect("compiles");
     assert!(

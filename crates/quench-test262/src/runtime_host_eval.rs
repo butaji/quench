@@ -212,23 +212,36 @@ fn evaluate_request_wave(
     for dependency in &first {
         evaluate_module(graph_units, graph, *dependency, skip_deferred)?;
     }
-    if !delayed.is_empty()
-        || first.iter().any(|id| {
-            graph_units
-                .units
-                .get(id)
-                .is_some_and(|unit| !unit.evaluated.get())
-        })
-    {
-        quench_runtime::module_bindings::drain_jobs();
-    }
+    settle_wave(graph_units, &first);
     if !delayed.is_empty() {
-        for dependency in delayed {
-            evaluate_module(graph_units, graph, dependency, skip_deferred)?;
+        for dependency in &delayed {
+            evaluate_module(graph_units, graph, *dependency, skip_deferred)?;
         }
-        quench_runtime::module_bindings::drain_jobs();
+        settle_wave(graph_units, &delayed);
     }
     Ok(())
+}
+
+fn settle_wave(units: &LinkedModuleGraph, ids: &[ModuleId]) {
+    for _ in 0..1024 {
+        if ids.iter().all(|id| {
+            units
+                .units
+                .get(id)
+                .is_none_or(|unit| unit.evaluated.get() || unit.thrown.borrow().is_some())
+        }) {
+            return;
+        }
+        quench_runtime::module_bindings::drain_jobs();
+        for id in ids {
+            let Some(unit) = units.units.get(id) else {
+                continue;
+            };
+            if unit.async_suspended.get() && !unit.evaluated.get() && !unit.evaluating.get() {
+                let _ = unit.execute();
+            }
+        }
+    }
 }
 
 fn partition_evaluation(
@@ -306,7 +319,19 @@ fn gather_async_transitive(
     let Some(unit) = units.units.get(&id) else {
         return;
     };
-    if unit.started.get() || unit.evaluated.get() {
+    if unit.evaluated.get() {
+        return;
+    }
+    if unit.started.get() {
+        if unit
+            .program
+            .module_metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata.has_top_level_await)
+            && !result.contains(&id)
+        {
+            result.push(id);
+        }
         return;
     }
     if unit
