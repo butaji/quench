@@ -190,6 +190,13 @@ pub fn reduce_declaration(
         infer_declaration_name(&declarator.id, declarator.init.as_ref(), register, ops);
         crate::binding_patterns::bind(&declarator.id, register, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported binding pattern".to_string()])?;
+        crate::using_scope::register_resource(
+            declaration.kind,
+            register,
+            ops,
+            next_register,
+            locals,
+        );
     }
     Ok(())
 }

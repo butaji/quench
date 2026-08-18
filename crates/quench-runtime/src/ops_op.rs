@@ -500,4 +500,9 @@ pub enum Op {
     Throw {
         src: u16,
     },
+    WithDispose {
+        body: crate::machine::FunctionCode,
+        stack: u16,
+        await_using: bool,
+    },
 }

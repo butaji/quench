@@ -138,6 +138,7 @@ fn run_control_op(
         PrivateScope { .. } => crate::private_environment::execute_scope(registers, op).map(Some),
         StaticBlock { .. } => crate::classes::execute_static_block(registers, op).map(Some),
         Try { .. } => crate::exceptions::execute(registers, op).map(Some),
+        WithDispose { .. } => crate::using_scope::execute(registers, op).map(Some),
         IteratorBinding { .. } => crate::collections::iterator::execute_binding(registers, op)
             .map(Some),
         Loop { .. } => crate::loops::execute(registers, op).map(Some),
