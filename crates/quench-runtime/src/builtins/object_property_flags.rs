@@ -37,6 +37,9 @@ fn builtin_property_configurable(builtin: Builtin, key: &str) -> bool {
     if builtin == Builtin::Number && crate::builtins::props::number_constant(key).is_some() {
         return false;
     }
+    if builtin == Builtin::Math && key == "Symbol.toStringTag" {
+        return true;
+    }
     builtin != Builtin::Math || crate::math::constant(key).is_none()
 }
 pub(crate) fn is_well_known_symbol_property(builtin: Builtin, key: &str) -> bool {
