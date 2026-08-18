@@ -276,66 +276,6 @@ impl LinkedModule {
         self.refresh_namespace();
     }
 
-    fn refresh_namespace(&self) {
-        if let Some(cell) = self.namespace_cell.borrow().clone() {
-            self.write_namespace_cell(&cell);
-        }
-        if let Some(cell) = self.deferred_namespace_cell.borrow().clone() {
-            self.write_namespace_cell(&cell);
-        }
-    }
-
-    fn write_namespace_cell(&self, cell: &ModuleBindingCell) {
-        let mut properties: Vec<(String, quench_runtime::value::Value)> = self
-            .export_names()
-            .iter()
-            .filter_map(|name| self.export_cell(name).map(|value| (name.clone(), value)))
-            .map(|(name, value)| {
-                (
-                    name,
-                    quench_runtime::value::Value::BindingCell(value.shared()),
-                )
-            })
-            .collect();
-        properties.push((
-            "\0prototype".to_string(),
-            quench_runtime::value::Value::Null,
-        ));
-        properties.push((
-            "\0quench:non_extensible".to_string(),
-            quench_runtime::value::Value::Boolean(true),
-        ));
-        for name in self.export_names() {
-            if let Some(cell) = self.export_cell(&name) {
-                properties.push((
-                    format!("\0quench:descriptor:\0{name}"),
-                    quench_runtime::value::Value::object(vec![
-                        (
-                            "value".to_string(),
-                            quench_runtime::value::Value::BindingCell(cell.shared()),
-                        ),
-                        (
-                            "writable".to_string(),
-                            quench_runtime::value::Value::Boolean(true),
-                        ),
-                        (
-                            "enumerable".to_string(),
-                            quench_runtime::value::Value::Boolean(true),
-                        ),
-                        (
-                            "configurable".to_string(),
-                            quench_runtime::value::Value::Boolean(false),
-                        ),
-                    ]),
-                ));
-            }
-        }
-        let previous = cell.get();
-        let next = quench_runtime::value::Value::object(properties);
-        cell.set(next.clone());
-        quench_runtime::module_bindings::rehome_evaluator(&previous, &next);
-    }
-
     fn link_star_export(&self, name: &str, cell: ModuleBindingCell) {
         self.link_export(name, cell);
         self.star_exports.borrow_mut().insert(name.to_string());
@@ -382,6 +322,7 @@ thread_local! {
     static CURRENT_MODULE_ID: Cell<Option<ModuleId>> = const { Cell::new(None) };
 }
 
+include!("runtime_host_namespace.rs");
 include!("runtime_host_execute.rs");
 include!("runtime_host_eval.rs");
 
