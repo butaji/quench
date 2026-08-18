@@ -292,6 +292,18 @@ pub(crate) fn builtin_prototype_property_is_removed(builtin: Builtin, key: &str)
     overrides::is_removed(builtin, key)
 }
 
+/// Install an override for the intrinsic `builtin`'s `[[Prototype]]` so
+/// `Object.setPrototypeOf(Number.prototype, spy)` changes the lookup chain.
+pub fn set_intrinsic_prototype_override(builtin: Builtin, value: Value) {
+    overrides::write_prototype(builtin, value);
+}
+
+/// Look up an override for the intrinsic `builtin`'s `[[Prototype]]`. Returns
+/// `None` when the caller is asking for the default prototype chain.
+pub fn read_intrinsic_prototype_override(builtin: Builtin) -> Option<Value> {
+    overrides::read_prototype(builtin)
+}
+
 /// Drop every cached intrinsic-property override and recorded deletion so a
 /// fresh program can start with a clean prototype view.
 pub fn reset_intrinsic_prototype_state() {

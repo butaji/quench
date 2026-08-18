@@ -27,6 +27,11 @@ fn prototype_for_value(value: &Value) -> Value {
             return prototype.clone();
         }
     }
+    if let Value::Builtin(builtin) = value {
+        if let Some(prototype) = crate::builtins::read_intrinsic_prototype_override(*builtin) {
+            return prototype;
+        }
+    }
     if let Some(prototype) = slot_prototype(value) {
         return prototype;
     }

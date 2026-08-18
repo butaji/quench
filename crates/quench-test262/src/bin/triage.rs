@@ -340,8 +340,20 @@ fn run_fixture_batch(
         if counter.load(Ordering::Relaxed) >= limit {
             break;
         }
-        let outcome =
-            runner.run_test_with_cache_and_metadata(&fixture.source, &fixture.metadata, harness);
+        let outcome = if fixture.metadata.is_module {
+            runner.run_test_with_cache_metadata_and_path(
+                &fixture.source,
+                &fixture.metadata,
+                &fixture.path,
+                harness,
+            )
+        } else {
+            runner.run_test_with_cache_and_metadata(
+                &fixture.source,
+                &fixture.metadata,
+                harness,
+            )
+        };
         let (category, reason) = match outcome {
             Ok(TestOutcome::Pass) => (String::from("pass"), None),
             Ok(TestOutcome::Fail { reason }) | Err(reason) => {
