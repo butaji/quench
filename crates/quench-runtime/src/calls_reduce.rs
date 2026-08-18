@@ -145,6 +145,7 @@ fn reduce_direct_eval(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let source = reduce_eval_source(call, ops, facts, next, locals)?;
+    let callee = load_eval_binding(ops, facts, next, locals);
     let dst = take_register(next);
     let mut bindings = locals
         .iter()
@@ -155,6 +156,7 @@ fn reduce_direct_eval(
     let forbidden_var_names = forbidden_eval_var_names(locals, facts);
     ops.push(Op::Eval {
         dst,
+        callee,
         source,
         strict: facts.strict,
         global: !facts.in_function,
@@ -164,6 +166,29 @@ fn reduce_direct_eval(
         forbidden_var_names,
     });
     Some(dst)
+}
+
+fn load_eval_binding(
+    ops: &mut Vec<Op>,
+    facts: &ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> u16 {
+    let dst = take_register(next);
+    if let Some(&slot) = locals.get("eval") {
+        ops.push(Op::LoadBinding {
+            dst,
+            slot,
+            name: "eval".to_string(),
+            dynamic: facts.in_function && slot < facts.eval_var_scope_start,
+        });
+    } else {
+        ops.push(Op::ResolveName {
+            dst,
+            key: "eval".to_string(),
+        });
+    }
+    dst
 }
 
 fn forbidden_eval_var_names(locals: &HashMap<String, u16>, facts: &ProgramDb) -> Vec<String> {
