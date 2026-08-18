@@ -58,6 +58,10 @@ fn run_finalizer(
     }
 }
 
+pub(crate) fn execute_ops(ops: &[Op], registers: &mut Vec<Value>) -> Result<Completion, VmError> {
+    execute_try_body(ops, registers)
+}
+
 fn execute_try_body(ops: &[Op], registers: &mut Vec<Value>) -> Result<Completion, VmError> {
     for op in ops {
         if matches!(op, Op::YieldStar { .. }) {

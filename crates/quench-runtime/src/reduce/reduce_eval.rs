@@ -157,7 +157,12 @@ pub(super) fn emit_global_lexical_bindings(
             Statement::VariableDeclaration(declaration)
                 if declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var =>
             {
-                let immutable = declaration.kind == oxc::ast::ast::VariableDeclarationKind::Const;
+                let immutable = matches!(
+                    declaration.kind,
+                    oxc::ast::ast::VariableDeclarationKind::Const
+                        | oxc::ast::ast::VariableDeclarationKind::Using
+                        | oxc::ast::ast::VariableDeclarationKind::AwaitUsing
+                );
                 emit_lexical_declaration(declaration, locals, ops, immutable);
             }
             Statement::ClassDeclaration(class) => emit_class_binding(class, locals, ops),

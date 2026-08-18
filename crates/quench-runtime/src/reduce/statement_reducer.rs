@@ -67,8 +67,43 @@ impl StatementReducer {
         self.next_register = self
             .next_register
             .max(crate::reduce_support::register_base(&self.locals));
-        append_scoped_statements(self, statements, facts, program_scope, global_script)
+        let stack = crate::using_scope::reserve(statements, &mut self.locals, &mut self.next_slot);
+        crate::using_scope::emit_tdz(statements, &mut self.ops, &self.locals);
+        let await_using = crate::using_scope::has_await_using(statements);
+        if let Some(stack) = stack {
+            crate::using_scope::emit_create(
+                &mut self.ops,
+                stack,
+                await_using,
+                &mut self.next_register,
+            );
+        }
+        let body_start = self.ops.len();
+        let last = append_scoped_statements(self, statements, facts, program_scope, global_script)?;
+        wrap_program_using(self, stack, await_using, body_start)?;
+        Ok(last)
     }
+}
+
+fn wrap_program_using(
+    state: &mut StatementReducer,
+    stack: Option<u16>,
+    await_using: bool,
+    body_start: usize,
+) -> Result<(), Vec<String>> {
+    let Some(stack) = stack else {
+        return Ok(());
+    };
+    let body = state.ops.split_off(body_start);
+    state
+        .ops
+        .extend(crate::using_scope::wrap(
+            body,
+            stack,
+            await_using,
+            &mut state.next_register,
+        )?);
+    Ok(())
 }
 
 fn instantiate_module_functions(
