@@ -135,8 +135,8 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
         IteratorState::FlatMapped { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
         IteratorState::Dropped { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
         IteratorState::Take { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
-        IteratorState::Concat { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
-        IteratorState::Zip { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
+        IteratorState::Concat { .. } => crate::ops::Builtin::IteratorPrototype,
+        IteratorState::Zip { .. } => crate::ops::Builtin::IteratorPrototype,
     };
     Value::Builtin(builtin)
 }
