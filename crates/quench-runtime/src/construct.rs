@@ -221,9 +221,8 @@ fn apply_new_target_prototype(
         realm_default_prototype(target, new_target)
     };
     Ok(prototype.map_or(value.clone(), |prototype| {
-        if let crate::value::Value::Array(data) = &value {
-            data.set_prototype(prototype.clone());
-            return value;
+        if let crate::value::Value::Array(_) = &value {
+            return crate::builtins::set_property(value, "\0prototype", prototype);
         }
         let value = crate::builtins::set_property(value, "\0prototype", prototype);
         drop_shadowed_error_constructor(value)
