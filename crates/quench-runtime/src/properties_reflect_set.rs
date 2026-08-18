@@ -72,6 +72,12 @@ fn set_receiver_data(
     key: &str,
     value: &crate::value::Value,
 ) -> Result<bool, crate::execute::VmError> {
+    if matches!(receiver, crate::value::Value::Proxy(_)) {
+        return Ok(matches!(
+            crate::proxy::proxy_set(receiver, key, value, Some(receiver))?,
+            crate::value::Value::Boolean(true)
+        ));
+    }
     let current = crate::builtins::object::descriptor(
         Some(receiver),
         Some(&crate::value::Value::String(key.to_string())),
