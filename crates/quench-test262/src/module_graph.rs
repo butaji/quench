@@ -137,7 +137,10 @@ impl ModuleGraph {
         let unit = self
             .unit(from)
             .ok_or_else(|| "module unit is unknown".to_string())?;
-        if matches!(unit.kind, ModuleKind::Json | ModuleKind::Bytes) {
+        if matches!(
+            unit.kind,
+            ModuleKind::Json | ModuleKind::Bytes | ModuleKind::Text
+        ) {
             return Ok(());
         }
         let source = unit.source.clone();

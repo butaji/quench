@@ -272,4 +272,20 @@ mod tests {
         assert!(metadata.import_specifiers.iter().any(|s| s == "./dep.js"));
         assert!(metadata.imports.iter().any(|binding| binding.deferred));
     }
+
+    #[test]
+    fn import_attributes_record_type_text() {
+        let metadata = crate::reduce::inspect_module_source(
+            "import value from \"./a.js\" with { type: \"text\" };\n",
+        )
+        .expect("inspect");
+        assert!(
+            metadata
+                .import_types
+                .iter()
+                .any(|(source, attribute)| source == "./a.js" && attribute == "type=text"),
+            "{:?}",
+            metadata.import_types
+        );
+    }
 }
