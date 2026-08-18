@@ -129,7 +129,7 @@ pub(crate) fn validate_program(program: &oxc::ast::ast::Program<'_>) -> Result<(
     if !import_validator.errors.is_empty() {
         return Err(import_validator.errors);
     }
-    Ok(())
+    crate::using_early::validate(program)
 }
 
 /// Highest allocated local slot plus one, used as the next register base.

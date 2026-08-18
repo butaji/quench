@@ -357,15 +357,32 @@ fn validate_nested(statements: &[Statement<'_>]) -> Result<(), Vec<String>> {
     for statement in statements {
         match statement {
             Statement::BlockStatement(block) => validate_block(&block.body)?,
-            Statement::FunctionDeclaration(function) => {
-                if let Some(body) = &function.body {
-                    validate_nested(&body.statements)?;
-                }
+            Statement::FunctionDeclaration(function) => validate_function(function)?,
+            Statement::ExpressionStatement(statement) => {
+                validate_expression(&statement.expression)?;
             }
             _ => {}
         }
     }
     Ok(())
+}
+
+fn validate_function(function: &oxc::ast::ast::Function<'_>) -> Result<(), Vec<String>> {
+    function
+        .body
+        .as_ref()
+        .map_or(Ok(()), |body| validate_nested(&body.statements))
+}
+
+fn validate_expression(expression: &oxc::ast::ast::Expression<'_>) -> Result<(), Vec<String>> {
+    match expression {
+        oxc::ast::ast::Expression::FunctionExpression(function) => validate_function(function),
+        oxc::ast::ast::Expression::ParenthesizedExpression(value) => {
+            validate_expression(&value.expression)
+        }
+        oxc::ast::ast::Expression::CallExpression(call) => validate_expression(&call.callee),
+        _ => Ok(()),
+    }
 }
 
 fn validate_block(statements: &[Statement<'_>]) -> Result<(), Vec<String>> {
