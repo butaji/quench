@@ -31,7 +31,10 @@ impl EventEmitter {
         }
     }
     pub fn on(&mut self, event: &str, cb: Value) {
-        self.listeners.entry(event.to_string()).or_default().push(cb);
+        self.listeners
+            .entry(event.to_string())
+            .or_default()
+            .push(cb);
     }
     pub fn emit(&self, event: &str) -> Vec<Value> {
         let list = self.listeners.get(event).cloned().unwrap_or_default();
@@ -52,7 +55,10 @@ pub struct EmitterRegistry {
 
 impl EmitterRegistry {
     pub fn new() -> Self {
-        Self { next: 1, emitters: HashMap::new() }
+        Self {
+            next: 1,
+            emitters: HashMap::new(),
+        }
     }
     pub fn allocate(&mut self) -> EmitterId {
         let id = EmitterId(self.next);
@@ -119,17 +125,13 @@ impl EventLoop {
     }
 }
 
-pub fn new_emitter(
-    state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn new_emitter(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     let id = state.borrow_mut().emitters.allocate();
     let emitter = Rc::new(RefCell::new(EventEmitter::new()));
     state.borrow_mut().emitters.insert(id, emitter);
     let id_value = Value::Number(id.0 as f64);
-    let object = crate::host::namespace_object_from_pairs(vec![
-        (EMITTER_ID_PROP.to_string(), id_value),
-    ]);
+    let object =
+        crate::host::namespace_object_from_pairs(vec![(EMITTER_ID_PROP.to_string(), id_value)]);
     install_emitter_props(object)
 }
 
@@ -241,11 +243,7 @@ pub fn method_emit(
     Ok(Value::Boolean(count > 0))
 }
 
-fn take_listeners(
-    state: &Rc<RefCell<HostState>>,
-    id: EmitterId,
-    event: &str,
-) -> Vec<Value> {
+fn take_listeners(state: &Rc<RefCell<HostState>>, id: EmitterId, event: &str) -> Vec<Value> {
     let event = event.to_string();
     state
         .borrow()
