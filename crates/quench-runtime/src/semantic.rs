@@ -11,6 +11,7 @@ use oxc::{
 pub(crate) struct EvalGrammarContext {
     pub(crate) new_target: bool,
     pub(crate) super_property: bool,
+    pub(crate) arguments: bool,
 }
 
 pub(crate) struct Analysis {
@@ -84,6 +85,9 @@ fn analyze_with_context(
         .filter(|error| !context.permits(error, &semantic.semantic))
         .map(|error| format!("SyntaxError: {error}"))
         .collect::<Vec<_>>();
+    if context.arguments && contains_arguments(&semantic.semantic) {
+        errors.push("SyntaxError: 'arguments' is not allowed in this eval".to_string());
+    }
     errors.extend(class_name_errors(program, &semantic.semantic));
     if !errors.is_empty() {
         return Err(errors);
@@ -113,6 +117,14 @@ impl EvalGrammarContext {
         }
         self.super_property && message == SUPER_PROPERTY && !has_function_boundary(error, semantic)
     }
+}
+
+fn contains_arguments(semantic: &Semantic<'_>) -> bool {
+    semantic.nodes().iter().any(|node| match node.kind() {
+        AstKind::IdentifierReference(id) => id.name == "arguments",
+        AstKind::BindingIdentifier(id) => id.name == "arguments",
+        _ => false,
+    })
 }
 
 fn has_function_boundary(error: &OxcDiagnostic, semantic: &Semantic<'_>) -> bool {

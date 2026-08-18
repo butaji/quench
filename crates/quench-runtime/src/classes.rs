@@ -401,6 +401,12 @@ fn reduce_field_initializer(
     let captures = crate::reduce_support::register_base(locals);
     let mut body_locals = locals.clone();
     body_locals.insert("this".to_string(), captures.saturating_add(1));
+    body_locals.insert(
+        "\0new_target".to_string(),
+        captures.saturating_add(2),
+    );
+    let barrier_len = facts.eval_var_barrier.len();
+    facts.eval_var_barrier.push("arguments".to_string());
     let mut next = captures.saturating_add(3);
     let mut body = Vec::new();
     let inherited = (facts.strict, facts.in_function);
@@ -408,6 +414,7 @@ fn reduce_field_initializer(
     facts.in_function = true;
     let result = crate::reduce::reduce_expression(value, &mut body, facts, &mut next, &body_locals);
     (facts.strict, facts.in_function) = inherited;
+    facts.eval_var_barrier.truncate(barrier_len);
     let result = result?;
     body.push(Op::Return { src: result });
     Some(InstanceFieldInitializerOp {
