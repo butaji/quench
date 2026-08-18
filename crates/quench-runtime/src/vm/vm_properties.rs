@@ -19,6 +19,7 @@ pub fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> 
 }
 pub fn get_property(value: &Value, key: &str) -> Value {
     if let Value::BindingCell(cell) = value {
+        crate::module_bindings::run_ensure(cell);
         return get_property(&cell.borrow(), key);
     }
     direct_or_primitive_property(value, key)

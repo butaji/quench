@@ -90,6 +90,10 @@ impl ModuleGraph {
         &self.units
     }
 
+    pub fn dependencies(&self, from: ModuleId) -> &[ModuleId] {
+        self.edges.get(&from).map_or(&[], Vec::as_slice)
+    }
+
     pub fn resolve(&self, from: ModuleId, specifier: &str) -> Option<ModuleId> {
         if specifier == "<module source>" {
             return self.paths.get(Path::new(specifier)).copied();
