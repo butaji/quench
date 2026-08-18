@@ -21,12 +21,7 @@ pub fn events_from(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
 pub fn events_method_on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::events::method_on(state, args)
 }
-pub fn events_method_emit(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::events::method_emit(state, args)
-}
+pub fn events_method_emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::events::method_emit(state, args) }
 pub fn events_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::events::new_emitter(state, args)
 }
@@ -106,42 +101,12 @@ pub fn qs_unescape(_: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
 }
 
 // ---- timers ----
-pub fn timers_set_timeout(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::timers::set_timeout(state, args)
-}
-pub fn timers_clear_timeout(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::timers::clear_timeout(state, args)
-}
-pub fn timers_set_interval(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::timers::set_interval(state, args)
-}
-pub fn timers_clear_interval(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::timers::clear_interval(state, args)
-}
-pub fn timers_set_immediate(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::timers::set_immediate(state, args)
-}
-pub fn timers_clear_immediate(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::timers::clear_immediate(state, args)
-}
+pub fn timers_set_timeout(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::timers::set_timeout(state, args) }
+pub fn timers_clear_timeout(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::timers::clear_timeout(state, args) }
+pub fn timers_set_interval(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::timers::set_interval(state, args) }
+pub fn timers_clear_interval(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::timers::clear_interval(state, args) }
+pub fn timers_set_immediate(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::timers::set_immediate(state, args) }
+pub fn timers_clear_immediate(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::timers::clear_immediate(state, args) }
 pub fn timers_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::timers::tick(state, args)
 }
@@ -153,12 +118,7 @@ pub fn buffer_from(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Val
 pub fn buffer_alloc(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::buffer::alloc(state, args)
 }
-pub fn buffer_byte_length(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::buffer::byte_length(state, args)
-}
+pub fn buffer_byte_length(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::buffer::byte_length(state, args) }
 pub fn buffer_is_buffer(_: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Boolean(crate::modules::buffer::is_buffer(args)))
 }
@@ -232,12 +192,7 @@ pub fn os_totalmem(_: &Rc<RefCell<HostState>>, _: &[Value]) -> Result<Value, VmE
 pub fn os_loadavg(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::os::loadavg(state, args)
 }
-pub fn os_network_interfaces(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::os::network_interfaces(state, args)
-}
+pub fn os_network_interfaces(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::os::network_interfaces(state, args) }
 pub fn os_hostname(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::os::hostname(state, args)
 }
@@ -275,12 +230,7 @@ pub fn fs_unlink(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
 pub fn fs_read_file_sync(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::fs::read_file_sync(state, args)
 }
-pub fn fs_write_file_sync(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::fs::write_file_sync(state, args)
-}
+pub fn fs_write_file_sync(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::fs::write_file_sync(state, args) }
 pub fn fs_stat_sync(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::fs::stat_sync(state, args)
 }
@@ -318,12 +268,7 @@ pub fn http_request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
 pub fn http_get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::http::get(state, args)
 }
-pub fn http_create_server(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::http::create_server(state, args)
-}
+pub fn http_create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::http::create_server(state, args) }
 
 // ---- stream ----
 pub fn stream_pipeline(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -343,12 +288,7 @@ pub fn stream_transform(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resul
 }
 
 // ---- string_decoder ----
-pub fn string_decoder_new(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::string_decoder::new_decoder(state, args)
-}
+pub fn string_decoder_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { crate::modules::string_decoder::new_decoder(state, args) }
 
 // ---- require ----
 pub fn node_require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
@@ -356,9 +296,4 @@ pub fn node_require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
 }
 
 // ---- readline ----
-pub fn readline_create_interface(
-    _: &Rc<RefCell<HostState>>,
-    _: &[Value],
-) -> Result<Value, VmError> {
-    Ok(Value::Undefined)
-}
+pub fn readline_create_interface(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::Undefined) }
