@@ -74,6 +74,7 @@ pub(crate) fn iterator_prototype_property_callable(builtin: Builtin, key: &str) 
                 "every" => Some(Value::Builtin(IteratorEvery)),
                 "find" => Some(Value::Builtin(IteratorFind)),
                 "some" => Some(Value::Builtin(IteratorSome)),
+                "return" => Some(Value::Builtin(IteratorReturn)),
                 _ => None,
             };
         }

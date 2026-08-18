@@ -34,9 +34,11 @@ pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
         }
         items.push((argument.clone(), method));
     }
+    let opened = vec![None; items.len()];
     Ok(Value::Iterator(Rc::new(IteratorData::new(
         IteratorState::Concat {
             items,
+            opened,
             index: 0,
             current: None,
             done: false,
@@ -125,6 +127,9 @@ pub(crate) fn close(
     record: Value,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    if !matches!(record, Value::Iterator(_)) {
+        return close_user_iter(record, completion);
+    }
     let Some(iterator) = close_target(&record)? else {
         return Ok(completion);
     };
@@ -136,6 +141,24 @@ pub(crate) fn close(
         return Ok(completion);
     };
     let result = call(&method, &iterator);
+    finish_close(completion, result)
+}
+
+fn close_user_iter(
+    value: Value,
+    completion: crate::completion::Completion,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let method = match crate::execute::get_property_result(&value, "return") {
+        Ok(method) => method,
+        Err(_) => return Ok(completion),
+    };
+    if matches!(method, Value::Null | Value::Undefined) {
+        return Ok(completion);
+    }
+    if !crate::conversion::is_callable(&method) {
+        return Ok(completion);
+    }
+    let result = call(&method, &value);
     finish_close(completion, result)
 }
 fn close_target(record: &Value) -> Result<Option<Value>, crate::execute::VmError> {
