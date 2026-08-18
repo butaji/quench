@@ -31,21 +31,8 @@ fn enter_function(
     facts.tail_calls = tail_calls;
     inherited
 }
-fn rest_slot(
-    parameters: &HashMap<String, u16>,
-    params: u16,
-    captures: u16,
-    lexical_receiver: bool,
-    _reserve_self: bool,
-) -> Option<u16> {
-    let slot = captures
-        .saturating_add(params)
-        .saturating_add(if lexical_receiver {
-            2
-        } else {
-            4
-        });
-    parameters.values().copied().find(|value| *value == slot)
+fn rest_slot(parameters: &HashMap<String, u16>) -> Option<u16> {
+    parameters.get("\0rest").copied()
 }
 
 pub(crate) fn ordered_function_declarations_first<'a>(
@@ -70,46 +57,40 @@ fn reserved_slots(lexical_receiver: bool, rest: Option<u16>) -> u16 {
     // that declarations install via FUNCTION_SELF.
     (if lexical_receiver { 2_u16 } else { 4_u16 }).saturating_add(u16::from(rest.is_some()))
 }
+pub(crate) fn execute_make_rest(
+    slot: u16,
+    arguments: u16,
+    skip: u16,
+) -> Result<(), crate::execute::VmError> {
+    let arguments = crate::locals::current().get(arguments);
+    crate::locals::current().set(slot, rest_array(&arguments, skip));
+    Ok(())
+}
+
+fn rest_array(arguments: &crate::value::Value, skip: u16) -> crate::value::Value {
+    let skip = usize::from(skip);
+    let crate::value::Value::Array(values) = arguments else {
+        return crate::value::Value::array(Vec::new());
+    };
+    let length = values.logical_len();
+    let mut tail = Vec::with_capacity(length.saturating_sub(skip));
+    for index in skip..length {
+        tail.push(
+            values
+                .get_index(index)
+                .unwrap_or(crate::value::Value::Undefined),
+        );
+    }
+    crate::value::Value::array(tail)
+}
+
 fn bind_rest(mut body: Vec<Op>, rest: Option<u16>, params: u16, captures: u16) -> Vec<Op> {
     let Some(slot) = rest else { return body };
-    let arguments = captures.saturating_add(params);
-    // Gather the rest tail via Array.prototype.slice.call(arguments, params).
-    // The arguments object is an ArgumentsExoticObject (no own `slice`), so a
-    // direct `arguments.slice(...)` method call would resolve to undefined and
-    // every rest-parameter function would fail to be callable.
-    let mut prefix = vec![
-        Op::LoadLocal {
-            dst: 0,
-            slot: arguments,
-        },
-        Op::MakeBuiltin {
-            dst: 1,
-            builtin: crate::ops::Builtin::Array,
-        },
-        Op::GetProperty {
-            dst: 2,
-            object: 1,
-            key: "prototype".to_string(),
-        },
-        Op::GetProperty {
-            dst: 3,
-            object: 2,
-            key: "slice".to_string(),
-        },
-        Op::Const {
-            dst: 4,
-            value: crate::ops::Constant::Number(f64::from(params)),
-        },
-        Op::OptionalCall {
-            dst: 5,
-            callee: 3,
-            receiver: Some(0),
-            guard_receiver: false,
-            args: vec![4],
-            spreads: vec![],
-        },
-        Op::StoreLocal { slot, src: 5 },
-    ];
+    let mut prefix = vec![Op::MakeRest {
+        slot,
+        arguments: captures.saturating_add(params),
+        skip: params,
+    }];
     prefix.append(&mut body);
     prefix
 }
