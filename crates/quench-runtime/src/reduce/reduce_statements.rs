@@ -248,8 +248,6 @@ pub fn reduce_expression_statements_with_locals(
         },
     )
 }
-/// Reduce statements without appending a terminal `Return`. Used for nested
-/// blocks whose control flow continues after the block (if/try/switch bodies).
 pub fn reduce_statements_no_tail(
     statements: &[Statement<'_>],
     facts: &mut ProgramDb,
@@ -287,6 +285,8 @@ fn reduce_statements_opt(
         eval_behavior,
         directive_completion,
     } = options;
+    let stack = crate::using_scope::reserve(statements, &mut locals, &mut next_slot);
+    let await_using = crate::using_scope::has_await_using(statements);
     let (mut ops, mut next_register, initial_value) = initialize_statement_reduction(
         statements,
         facts,
@@ -295,6 +295,10 @@ fn reduce_statements_opt(
         eval_behavior,
         directive_completion,
     )?;
+    crate::using_scope::emit_tdz(statements, &mut ops, &locals);
+    if let Some(stack) = stack {
+        crate::using_scope::emit_create(&mut ops, stack, await_using, &mut next_register);
+    }
     let last_value = reduce_statement_list(
         statements,
         facts,
@@ -304,6 +308,10 @@ fn reduce_statements_opt(
         &mut locals,
         (eval_behavior, initial_value),
     )?;
+    let ops = match stack {
+        Some(stack) => crate::using_scope::wrap(ops, stack, await_using, &mut next_register)?,
+        None => ops,
+    };
     finish_statements_opt(ops, last_value, tail)
 }
 

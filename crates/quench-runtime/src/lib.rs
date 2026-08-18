@@ -98,6 +98,7 @@ mod typed_array_base64;
 mod typed_array_ops;
 mod typed_array_prototype;
 mod unary;
+mod using_scope;
 pub mod value;
 pub mod vm;
 mod with_scope;
