@@ -105,6 +105,35 @@ pub(crate) fn create_shadow_realm_value() -> Value {
     create_realm_value()
 }
 
+fn realm_global_object(
+    realm: crate::ops::RealmId,
+    token: &Rc<crate::value::HostCapabilityValue>,
+) -> Option<Rc<crate::value::ObjectData>> {
+    let mut properties = vec![
+        (
+            "\0prototype".to_string(),
+            realm::intrinsic(realm, Builtin::ObjectPrototype)?,
+        ),
+        (
+            "\0realm".to_string(),
+            Value::HostCapability(Rc::clone(token)),
+        ),
+    ];
+    for (name, builtin) in [
+        ("eval", Builtin::Eval),
+        ("Object", Builtin::Object),
+        ("Function", Builtin::Function),
+        ("Number", Builtin::Number),
+        ("String", Builtin::String),
+        ("Boolean", Builtin::Boolean),
+        ("Symbol", Builtin::Symbol),
+        ("TypeError", Builtin::TypeError),
+    ] {
+        properties.push((name.to_string(), realm::intrinsic(realm, builtin)?));
+    }
+    Some(Rc::new(crate::value::ObjectData::new(properties)))
+}
+
 fn create_realm_value() -> Value {
     let parent = CURRENT_CONTEXT
         .with(|context| context.borrow().clone())
@@ -119,17 +148,9 @@ fn create_realm_value() -> Value {
     let creation_realm = realm::token(crate::vm::current_context_or_default().realm())
         .map(Value::HostCapability)
         .unwrap_or(Value::Undefined);
-    let Some(constructor) = realm::intrinsic(realm, Builtin::TypeError) else {
+    let Some(properties) = realm_global_object(realm, &token) else {
         return Value::Undefined;
     };
-    let Some(object_prototype) = realm::intrinsic(realm, Builtin::ObjectPrototype) else {
-        return Value::Undefined;
-    };
-    let properties = Rc::new(crate::value::ObjectData::new(vec![
-        ("TypeError".to_string(), constructor),
-        ("\0prototype".to_string(), object_prototype),
-        ("\0realm".to_string(), Value::HostCapability(Rc::clone(&token))),
-    ]));
     if realm::id_for_token(&token).is_none() || !realm::register_global(&token, properties) {
         return Value::Undefined;
     }

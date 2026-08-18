@@ -6,8 +6,12 @@ fn set_object_alias_property(
     let Some(properties) = alias.0.borrow().upgrade() else {
         return Value::ObjectAlias(alias);
     };
+    let previous = Rc::clone(&properties);
     let result = builtins_cells::set_object_property(properties, key, value);
     retarget_object_alias(&alias, &result);
+    if let Value::Object(object) = &result {
+        crate::vm::replace_realm_global_if_current(&previous, object);
+    }
     result
 }
 
