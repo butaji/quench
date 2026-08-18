@@ -2,6 +2,7 @@
 pub struct IteratorData {
     pub state: RefCell<IteratorState>,
     pub executing: RefCell<bool>,
+    pub in_return: RefCell<bool>,
 }
 
 impl IteratorData {
@@ -9,6 +10,7 @@ impl IteratorData {
         Self {
             state: RefCell::new(state),
             executing: RefCell::new(false),
+            in_return: RefCell::new(false),
         }
     }
 }
