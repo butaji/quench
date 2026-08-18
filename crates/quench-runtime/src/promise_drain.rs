@@ -16,19 +16,11 @@ pub fn clear_jobs() {
 
 /// Drains all queued microtasks.
 pub fn drain_microtasks() {
-    loop {
-        let promise = MICROTASK_QUEUE.with(|q| q.borrow_mut().pop_front());
-        let job = JOB_QUEUE.with(|q| q.borrow_mut().pop_front());
-        match (promise, job) {
-            (None, None) => break,
-            (Some(promise), job) => {
-                process_promise(&promise);
-                if let Some(job) = job {
-                    job();
-                }
-            }
-            (None, Some(job)) => job(),
-        }
+    while let Some(promise) = MICROTASK_QUEUE.with(|q| q.borrow_mut().pop_front()) {
+        process_promise(&promise);
+    }
+    if let Some(job) = JOB_QUEUE.with(|q| q.borrow_mut().pop_front()) {
+        job();
     }
 }
 
@@ -36,8 +28,9 @@ pub fn drain_microtasks() {
 /// reactions and synchronously-settling chains run to completion.
 pub fn drain_microtasks_all() {
     loop {
-        let pending = MICROTASK_QUEUE.with(|queue| queue.borrow().len());
-        if pending == 0 {
+        let promises = MICROTASK_QUEUE.with(|queue| queue.borrow().len());
+        let jobs = JOB_QUEUE.with(|queue| queue.borrow().len());
+        if promises == 0 && jobs == 0 {
             break;
         }
         drain_microtasks();

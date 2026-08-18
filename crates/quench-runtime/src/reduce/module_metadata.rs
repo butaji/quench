@@ -65,6 +65,9 @@ impl ModuleMetadata {
         }
         metadata.mark_source_exports();
         metadata.has_top_level_await = statements.iter().any(statement_has_tla);
+        for specifier in dynamic_import_specifiers(statements) {
+            push_unique(&mut metadata.import_specifiers, &specifier);
+        }
         metadata
     }
 
@@ -310,6 +313,26 @@ fn module_export_name(name: &ModuleExportName<'_>) -> String {
         ModuleExportName::IdentifierReference(identifier) => identifier.name.to_string(),
         ModuleExportName::StringLiteral(literal) => literal.value.to_string(),
     }
+}
+
+fn dynamic_import_specifiers(statements: &[Statement<'_>]) -> Vec<String> {
+    struct Finder {
+        specifiers: Vec<String>,
+    }
+    impl<'a> oxc::ast::visit::Visit<'a> for Finder {
+        fn visit_import_expression(&mut self, import: &oxc::ast::ast::ImportExpression<'a>) {
+            if let oxc::ast::ast::Expression::StringLiteral(literal) = &import.source {
+                push_unique(&mut self.specifiers, literal.value.as_str());
+            }
+        }
+    }
+    let mut finder = Finder {
+        specifiers: Vec::new(),
+    };
+    for statement in statements {
+        oxc::ast::visit::walk::walk_statement(&mut finder, statement);
+    }
+    finder.specifiers
 }
 
 fn statement_has_tla(statement: &Statement<'_>) -> bool {

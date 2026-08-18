@@ -28,7 +28,7 @@ fn evaluate_module(
         return Err("module evaluation failed".to_string());
     }
     if unit.started.get() {
-        return Ok(());
+        return continue_started_module(graph_units, graph, id, skip_deferred);
     }
     unit.started.set(true);
     let metadata = unit.program.module_metadata.as_ref();
@@ -43,8 +43,9 @@ fn evaluate_module(
             .is_some_and(|unit| !unit.evaluated.get())
     }) {
         let units = graph_units as *const LinkedModuleGraph;
+        let modules = graph as *const ModuleGraph;
         quench_runtime::module_bindings::enqueue_job(Rc::new(move || {
-            let _ = unsafe { &*units }.units.get(&id).map(LinkedModule::execute);
+            let _ = evaluate_module(unsafe { &*units }, unsafe { &*modules }, id, true);
         }));
         return Ok(());
     }
@@ -57,6 +58,46 @@ fn evaluate_module(
         .get(&id)
         .ok_or_else(|| "module unit missing".to_string())?
         .execute();
+    CURRENT_MODULE_ID.with(|current| current.set(None));
+    result.map(|_| ())
+}
+
+fn continue_started_module(
+    graph_units: &LinkedModuleGraph,
+    graph: &ModuleGraph,
+    id: ModuleId,
+    skip_deferred: bool,
+) -> Result<(), String> {
+    let unit = graph_units
+        .units
+        .get(&id)
+        .ok_or_else(|| "module unit missing".to_string())?;
+    if unit.evaluated.get() {
+        return Ok(());
+    }
+    let metadata = unit.program.module_metadata.as_ref();
+    let targets = evaluation_targets(graph_units, metadata, graph, id, skip_deferred);
+    if let Some(thrown) = targets.iter().find_map(|dependency| {
+        graph_units
+            .units
+            .get(dependency)
+            .and_then(|unit| unit.thrown.borrow().clone())
+    }) {
+        *unit.thrown.borrow_mut() = Some(thrown.clone());
+        quench_runtime::module_bindings::request_ensure_throw(thrown);
+        unit.evaluated.set(true);
+        return Err("module evaluation failed".to_string());
+    }
+    if targets.iter().any(|dependency| {
+        graph_units
+            .units
+            .get(dependency)
+            .is_some_and(|unit| !unit.evaluated.get())
+    }) {
+        return Ok(());
+    }
+    CURRENT_MODULE_ID.with(|current| current.set(Some(id)));
+    let result = unit.execute();
     CURRENT_MODULE_ID.with(|current| current.set(None));
     result.map(|_| ())
 }
