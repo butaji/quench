@@ -21,7 +21,8 @@ impl FunctionGuard {
     }
 
     pub(crate) fn install(captured: &[Value]) -> Self {
-        let previous = OBJECTS.with(|objects| objects.replace(captured.to_vec()));
+        let live = captured.iter().map(live_object).collect();
+        let previous = OBJECTS.with(|objects| objects.replace(live));
         Self { previous }
     }
 }
@@ -191,11 +192,12 @@ pub(crate) fn execute_delete_name(
 fn delete_from_with_objects(key: &str) -> Result<Option<bool>, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for (index, object) in objects.iter().enumerate().rev() {
-        if !has_property(object, key)? || is_unscopable(object, key)? {
+        let object = live_object(object);
+        if !has_property(&object, key)? || is_unscopable(&object, key)? {
             continue;
         }
         let (updated, deleted) = crate::builtins::delete_property(object.clone(), key);
-        crate::locals::replace_value(object, &updated);
+        crate::locals::replace_value(&object, &updated);
         OBJECTS.with(|objects| objects.borrow_mut()[index] = updated);
         return Ok(Some(deleted));
     }
@@ -308,8 +310,9 @@ fn resolve(key: &str) -> Result<Option<Value>, VmError> {
 pub(crate) fn receiver_for_callable(callee: &Value) -> Option<Value> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for object in objects.iter().rev() {
-        if callable_on(object, callee) {
-            return Some(object.clone());
+        let object = live_object(object);
+        if callable_on(&object, callee) {
+            return Some(object);
         }
     }
     None
@@ -334,18 +337,25 @@ pub(crate) fn resolve_binding(key: &str) -> Result<Option<Value>, VmError> {
 pub(crate) fn binding_target(key: &str) -> Result<Option<Value>, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for object in objects.iter().rev() {
-        if has_property(object, key)? && !is_unscopable(object, key)? {
-            return Ok(Some(object.clone()));
+        let object = live_object(object);
+        if has_property(&object, key)? && !is_unscopable(&object, key)? {
+            return Ok(Some(object));
         }
     }
     Ok(None)
 }
 
+/// Copy-on-write object sets publish a replacement; `with` must see it.
+fn live_object(value: &Value) -> Value {
+    crate::locals::resolved_replacement(value.clone())
+}
+
 pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for (index, object) in objects.iter().enumerate().rev() {
-        if has_property(object, key)? && !is_unscopable(object, key)? {
-            let updated = crate::proxy::proxy_set(object, key, value, None)?;
+        let object = live_object(object);
+        if has_property(&object, key)? && !is_unscopable(&object, key)? {
+            let updated = crate::proxy::proxy_set(&object, key, value, None)?;
             OBJECTS.with(|objects| objects.borrow_mut()[index] = updated);
             return Ok(true);
         }

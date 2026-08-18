@@ -287,6 +287,14 @@ pub(crate) fn execute_eval(
     input: EvalExecution<'_>,
 ) -> Result<(), VmError> {
     let source = crate::execute::read_register(registers, input.source)?;
+    let callee = crate::execute::read_register(registers, input.callee)?;
+    if !is_percent_eval(&callee) {
+        let this_value = crate::with_scope::receiver_for_callable(&callee)
+            .unwrap_or(Value::Undefined);
+        let value = crate::functions::execute_target(&callee, &this_value, &[source])?;
+        crate::execute::write_value(registers, input.dst, value);
+        return Ok(());
+    }
     let value = if input.direct {
         evaluate_direct(
             &source,
@@ -303,8 +311,19 @@ pub(crate) fn execute_eval(
     Ok(())
 }
 
+fn is_percent_eval(value: &Value) -> bool {
+    match value {
+        Value::Builtin(crate::ops::Builtin::Eval) => true,
+        Value::BoundFunction(bound) => {
+            matches!(bound.target, Value::Builtin(crate::ops::Builtin::Eval))
+        }
+        _ => false,
+    }
+}
+
 pub(crate) struct EvalExecution<'a> {
     pub(crate) dst: u16,
+    pub(crate) callee: u16,
     pub(crate) source: u16,
     pub(crate) strict: bool,
     pub(crate) global: bool,
