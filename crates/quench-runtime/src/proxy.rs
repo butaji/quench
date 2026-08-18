@@ -287,6 +287,7 @@ pub(crate) fn proxy_get_prototype_of(target: &Value) -> Result<Value, VmError> {
             }
             return Ok(result);
         }
+        return crate::builtins::object::get_prototype_of(Some(&proxy.target));
     }
     crate::builtins::object::get_prototype_of(Some(target))
 }
