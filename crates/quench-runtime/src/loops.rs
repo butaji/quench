@@ -221,9 +221,6 @@ pub(crate) fn execute_for_of(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    if std::env::var_os("QDEBUG").is_some() {
-        eprintln!("execute_for_of entry");
-    }
     let (label, slot, body, per_iteration, iterable) = unpack_for_of(registers, op)?;
     let iterator = crate::collections::iterator::open(iterable)?;
     iterate_loop_values(registers, label, slot, body, per_iteration, iterator)
