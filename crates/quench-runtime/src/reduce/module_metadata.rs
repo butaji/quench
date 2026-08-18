@@ -16,6 +16,14 @@ pub struct ModuleMetadata {
     pub reexports: Vec<ReexportBinding>,
     pub exported_names: Vec<String>,
     pub has_top_level_await: bool,
+    pub requests: Vec<ModuleRequest>,
+}
+
+/// One ModuleRequest Record: specifier + phase, in source order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleRequest {
+    pub source: String,
+    pub deferred: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +81,9 @@ impl ModuleMetadata {
         match statement {
             Statement::ImportDeclaration(import) => {
                 let source = import.source.value.to_string();
+                let deferred = import.phase == Some(oxc::ast::ast::ImportPhase::Defer);
                 push_unique(&mut self.import_specifiers, &source);
+                self.push_request(&source, deferred);
                 if let Some(with_clause) = &import.with_clause {
                     for entry in &with_clause.with_entries {
                         let key = match &entry.key {
@@ -94,7 +104,7 @@ impl ModuleMetadata {
                         source: source.clone(),
                         imported: String::new(),
                         local: String::new(),
-                        deferred: import.phase == Some(oxc::ast::ast::ImportPhase::Defer),
+                        deferred,
                     });
                 }
                 if let Some(specifiers) = &import.specifiers {
@@ -120,7 +130,7 @@ impl ModuleMetadata {
                             source: source.clone(),
                             imported,
                             local,
-                            deferred: import.phase == Some(oxc::ast::ast::ImportPhase::Defer),
+                            deferred,
                         });
                     }
                 }
@@ -153,6 +163,7 @@ impl ModuleMetadata {
 
     fn visit_named_reexports(&mut self, export: &ExportNamedDeclaration<'_>, source: &str) {
         push_unique(&mut self.import_specifiers, source);
+        self.push_request(source, false);
         for specifier in &export.specifiers {
             let exported = module_export_name(&specifier.exported);
             push_unique(&mut self.exported_names, &exported);
@@ -167,6 +178,7 @@ impl ModuleMetadata {
     fn visit_all(&mut self, export: &oxc::ast::ast::ExportAllDeclaration<'_>) {
         let source = export.source.value.to_string();
         push_unique(&mut self.import_specifiers, &source);
+        self.push_request(&source, false);
         if let Some(exported) = &export.exported {
             let exported = module_export_name(exported);
             push_unique(&mut self.exported_names, &exported);
@@ -182,6 +194,20 @@ impl ModuleMetadata {
                 exported: "*all*".to_string(),
             });
         }
+    }
+
+    fn push_request(&mut self, source: &str, deferred: bool) {
+        if self
+            .requests
+            .iter()
+            .any(|request| request.source == source && request.deferred == deferred)
+        {
+            return;
+        }
+        self.requests.push(ModuleRequest {
+            source: source.to_string(),
+            deferred,
+        });
     }
 
     fn visit_default(&mut self, export: &ExportDefaultDeclaration<'_>) {

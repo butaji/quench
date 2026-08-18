@@ -112,6 +112,28 @@ pub fn enqueue_job(job: Rc<dyn Fn()>) {
     crate::promise::enqueue_job(job);
 }
 
+const MODULE_NAMESPACE: &str = "\0quench:module_namespace";
+
+pub fn mark_namespace(properties: &mut Vec<(String, Value)>) {
+    properties.push((MODULE_NAMESPACE.to_string(), Value::Boolean(true)));
+}
+
+pub fn is_namespace(value: &Value) -> bool {
+    let Value::Object(properties) = unwrap_cells(value) else {
+        return false;
+    };
+    properties
+        .iter()
+        .any(|(name, value)| name == MODULE_NAMESPACE && matches!(value, Value::Boolean(true)))
+}
+
+fn unwrap_cells(value: &Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => unwrap_cells(&cell.borrow()),
+        value => value.clone(),
+    }
+}
+
 pub fn drain_jobs() {
     crate::promise::drain_microtasks_all();
 }

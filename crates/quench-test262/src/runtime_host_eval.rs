@@ -105,20 +105,17 @@ fn evaluation_targets(
     };
     let mut targets = Vec::new();
     let mut seen = HashSet::new();
-    for binding in &metadata.imports {
-        let Some(target) = graph.resolve(from, &binding.source) else {
+    for request in &metadata.requests {
+        let Some(target) = graph.resolve(from, &request.source) else {
             continue;
         };
-        if skip_deferred && binding.deferred {
+        if skip_deferred && request.deferred {
             gather_async_transitive(units, graph, target, &mut seen, &mut targets);
             continue;
         }
         if !targets.contains(&target) {
             targets.push(target);
         }
-    }
-    for binding in &metadata.reexports {
-        push_target(&mut targets, graph, from, &binding.source);
     }
     targets
 }
@@ -165,11 +162,4 @@ fn gather_async_transitive(
     }
 }
 
-fn push_target(targets: &mut Vec<ModuleId>, graph: &ModuleGraph, from: ModuleId, source: &str) {
-    let Some(target) = graph.resolve(from, source) else {
-        return;
-    };
-    if !targets.contains(&target) {
-        targets.push(target);
-    }
-}
+
