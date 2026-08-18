@@ -44,6 +44,31 @@ fn namespace_import_reads_live_export_cells() {
 }
 
 #[test]
+fn import_defer_does_not_evaluate_dependency() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import defer * as ns from './dep.js';\nexport default 1;\n".to_string(),
+    );
+    let dep = graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const value = 2;\n".to_string(),
+    );
+    let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    assert_eq!(
+        linked.export_cell(entry, "default").expect("default").get(),
+        Value::Number(1.0)
+    );
+    let value = linked.export_cell(dep, "value").expect("dep export").get();
+    assert!(
+        matches!(value, Value::Undefined)
+            || quench_runtime::module_bindings::ModuleBindingCell::is_unresolved(&value),
+        "deferred module must not evaluate: {value:?}"
+    );
+}
+
+#[test]
 fn export_star_forwards_live_cells() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(PathBuf::from("entry.js"), "import { value } from './barrel.js'; export default value;".to_string());
