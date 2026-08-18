@@ -26,7 +26,11 @@ fn listed(target: &Value, symbols: bool) -> Result<Vec<String>, VmError> {
 }
 
 fn pack_keys(keys: Vec<String>) -> Result<Value, VmError> {
-    Ok(Value::array(keys.into_iter().map(Value::String).collect()))
+    Ok(Value::array(
+        keys.into_iter()
+            .map(|key| crate::conversion::own_key_value(&key))
+            .collect(),
+    ))
 }
 
 pub(crate) fn keys_result(target: Option<&Value>) -> Result<Value, VmError> {
@@ -366,7 +370,7 @@ fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
         if crate::builtins::is_descriptor_key(key) || key.starts_with('\0') {
             continue;
         }
-        if key.contains('\0') != symbols {
+        if crate::conversion::is_symbol_string(key) != symbols {
             continue;
         }
         match array_index(key) {

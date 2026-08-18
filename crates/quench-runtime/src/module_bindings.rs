@@ -10,12 +10,13 @@ thread_local! {
     static EVALUATORS: RefCell<HashMap<*const crate::value::ObjectData, Rc<dyn Fn()>>> =
         RefCell::new(HashMap::new());
     static PENDING_TYPE_ERROR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PENDING_THROW: RefCell<Option<Value>> = const { RefCell::new(None) };
 }
 
 /// GetModuleExportsList: evaluate a deferred namespace unless the key is
-/// symbol-like (`then` or a symbol).
+/// symbol-like (`then` or a symbol) or a private/internal name.
 pub fn exports(value: &Value, key: &str) -> Result<(), VmError> {
-    if key == "then" || key.starts_with("Symbol.") {
+    if skips_deferred_evaluation(key) {
         return Ok(());
     }
     if let Value::BindingCell(cell) = value {
@@ -32,7 +33,20 @@ pub fn exports(value: &Value, key: &str) -> Result<(), VmError> {
             "deferred namespace is not ready",
         ));
     }
+    if let Some(thrown) = PENDING_THROW.with(|slot| slot.borrow_mut().take()) {
+        return Err(crate::execute::VmError::Thrown(thrown));
+    }
     Ok(())
+}
+
+fn skips_deferred_evaluation(key: &str) -> bool {
+    key == "then"
+        || key.starts_with('#')
+        || crate::conversion::is_symbol_string(key)
+}
+
+pub fn request_ensure_throw(value: Value) {
+    PENDING_THROW.with(|slot| *slot.borrow_mut() = Some(value));
 }
 
 pub fn attach_evaluator(value: &Value, evaluate: Rc<dyn Fn()>) {

@@ -35,6 +35,7 @@ pub struct LinkedModule {
     evaluated: Cell<bool>,
     started: Cell<bool>,
     evaluating: Cell<bool>,
+    thrown: RefCell<Option<quench_runtime::value::Value>>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -76,7 +77,7 @@ impl LinkedModuleGraph {
                 .get(&id)
                 .and_then(|unit| unit.program.module_metadata.as_ref())
                 .ok_or_else(|| "module metadata missing".to_string())?;
-            for binding in &metadata.imports {
+            for binding in metadata.imports.iter().filter(|binding| binding.is_binding()) {
                 let target = graph
                     .resolve(id, &binding.source)
                     .ok_or_else(|| format!("unresolved module {}", binding.source))?;
@@ -138,6 +139,7 @@ impl LinkedModule {
             evaluated: Cell::new(false),
             started: Cell::new(false),
             evaluating: Cell::new(false),
+            thrown: RefCell::new(None),
         })
     }
 
@@ -156,6 +158,7 @@ impl LinkedModule {
             evaluated: Cell::new(false),
             started: Cell::new(false),
             evaluating: Cell::new(false),
+            thrown: RefCell::new(None),
         })
     }
 
@@ -340,6 +343,10 @@ impl LinkedModule {
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
+        if let Some(thrown) = self.thrown.borrow().clone() {
+            quench_runtime::module_bindings::request_ensure_throw(thrown.clone());
+            return Err(format!("residual VM error: {thrown:?}"));
+        }
         if self.evaluated.get() {
             return Ok(quench_runtime::value::Value::Undefined);
         }
@@ -350,7 +357,16 @@ impl LinkedModule {
             .execute(self.program.ops(), &mut registers, host_context());
         self.evaluating.set(false);
         self.evaluated.set(true);
-        let result = result.map_err(|error| format!("residual VM error: {}", error.render()))?;
+        let result = match result {
+            Ok(value) => value,
+            Err(error) => {
+                if let quench_runtime::execute::VmError::Thrown(value) = &error {
+                    *self.thrown.borrow_mut() = Some(value.clone());
+                    quench_runtime::module_bindings::request_ensure_throw(value.clone());
+                }
+                return Err(format!("residual VM error: {}", error.render()));
+            }
+        };
         for (name, value) in &self.fixed_exports {
             let cell = self
                 .export_cell(name)
@@ -366,100 +382,7 @@ thread_local! {
         const { Cell::new(None) };
 }
 
-fn ensure_module(id: ModuleId) {
-    CURRENT_MODULE_GRAPH.with(|current| {
-        let Some((units, graph)) = current.get() else {
-            return;
-        };
-        let units = unsafe { &*units };
-        let graph = unsafe { &*graph };
-        if units
-            .units
-            .get(&id)
-            .is_some_and(|unit| unit.evaluating.get())
-        {
-            quench_runtime::module_bindings::request_ensure_type_error();
-            return;
-        }
-        let _ = evaluate_module(units, graph, id, true);
-    });
-}
-
-fn evaluate_module(
-    graph_units: &LinkedModuleGraph,
-    graph: &ModuleGraph,
-    id: ModuleId,
-    skip_deferred: bool,
-) -> Result<(), String> {
-    let unit = graph_units
-        .units
-        .get(&id)
-        .ok_or_else(|| "module unit missing".to_string())?;
-    if unit.started.get() {
-        return Ok(());
-    }
-    unit.started.set(true);
-    let metadata = unit.program.module_metadata.as_ref();
-    for dependency in graph.dependencies(id) {
-        if skip_deferred && is_deferred_edge(metadata, graph, id, *dependency) {
-            evaluate_async_transitive(
-                graph_units,
-                graph,
-                *dependency,
-                &mut HashSet::new(),
-            )?;
-            continue;
-        }
-        evaluate_module(graph_units, graph, *dependency, skip_deferred)?;
-    }
-    graph_units
-        .units
-        .get(&id)
-        .ok_or_else(|| "module unit missing".to_string())?
-        .execute()?;
-    Ok(())
-}
-
-fn evaluate_async_transitive(
-    graph_units: &LinkedModuleGraph,
-    graph: &ModuleGraph,
-    id: ModuleId,
-    seen: &mut HashSet<ModuleId>,
-) -> Result<(), String> {
-    if !seen.insert(id) {
-        return Ok(());
-    }
-    let unit = graph_units
-        .units
-        .get(&id)
-        .ok_or_else(|| "module unit missing".to_string())?;
-    if unit
-        .program
-        .module_metadata
-        .as_ref()
-        .is_some_and(|metadata| metadata.has_top_level_await)
-    {
-        return evaluate_module(graph_units, graph, id, true);
-    }
-    for dependency in graph.dependencies(id) {
-        evaluate_async_transitive(graph_units, graph, *dependency, seen)?;
-    }
-    Ok(())
-}
-
-fn is_deferred_edge(
-    metadata: Option<&quench_runtime::reduce::ModuleMetadata>,
-    graph: &ModuleGraph,
-    from: ModuleId,
-    to: ModuleId,
-) -> bool {
-    let Some(metadata) = metadata else {
-        return false;
-    };
-    metadata.imports.iter().any(|binding| {
-        binding.deferred && graph.resolve(from, &binding.source) == Some(to)
-    })
-}
+include!("runtime_host_eval.rs");
 
 fn module_source_cell() -> ModuleBindingCell {
     ModuleBindingCell::new(quench_runtime::value::Value::object(vec![(
