@@ -129,7 +129,7 @@ fn reduce_function_body_inner(
         arrow_expression.is_none(),
     )?;
     let local_count = function_local_count(&body_locals, layout, rest, arrow_expression.is_some());
-    let inherited_barrier = std::mem::take(&mut facts.eval_var_barrier);
+    let inherited_barrier = facts.eval_var_barrier.clone();
     let body_ops = reduce_selected_body(
         statements,
         &ordered,
