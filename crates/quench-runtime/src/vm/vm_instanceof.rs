@@ -78,7 +78,31 @@ fn has_instance_handler(constructor: &Value) -> Result<Option<Value>, VmError> {
     if !crate::conversion::is_callable(&handler) {
         return Err(type_error("@@hasInstance is not callable"));
     }
+    let handler = unbind_function_prototype_handler(&handler);
     Ok(Some(handler))
+}
+
+// `Get(C, @@hasInstance)` walks the prototype chain when C is a subclass.
+// For a built-in parent like Set, the chain yields a `BoundFunction` whose
+// `this` is bound to the parent (Set), not to C. Per ES `InstanceofOperator`,
+// the handler is invoked with `this = C`, so we must rebind it before the
+// call. We only rebind when the target is the canonical `Function.prototype
+// [@@hasInstance]` because that handler is the only one we know to be safe
+// to redirect; user-defined handlers keep their original receiver.
+fn unbind_function_prototype_handler(handler: &Value) -> Value {
+    let Value::BoundFunction(bound) = handler else {
+        return handler.clone();
+    };
+    if !matches!(
+        bound.target,
+        Value::Builtin(Builtin::FunctionPrototypeHasInstance)
+    ) {
+        return handler.clone();
+    }
+    if !bound.arguments.is_empty() {
+        return handler.clone();
+    }
+    Value::Builtin(Builtin::FunctionPrototypeHasInstance)
 }
 
 fn has_temporal_plain_date_fields(properties: &crate::value::ObjectData) -> bool {
