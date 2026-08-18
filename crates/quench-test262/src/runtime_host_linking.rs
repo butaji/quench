@@ -1,3 +1,29 @@
+fn bind_imports(
+    units: &HashMap<ModuleId, LinkedModule>,
+    graph: &ModuleGraph,
+    order: &[ModuleId],
+    accept: impl Fn(&quench_runtime::reduce::ImportBinding) -> bool,
+) -> Result<(), String> {
+    for id in order {
+        let metadata = unit_metadata(units, *id)?;
+        for binding in metadata
+            .imports
+            .iter()
+            .filter(|binding| binding.is_binding() && accept(binding))
+        {
+            let target = graph
+                .resolve(*id, &binding.source)
+                .ok_or_else(|| format!("unresolved module {}", binding.source))?;
+            let cell = import_cell(graph, units, target, &binding.imported, binding.deferred)?;
+            units
+                .get(id)
+                .ok_or_else(|| "module unit missing".to_string())?
+                .bind_import(&binding.local, cell)?;
+        }
+    }
+    Ok(())
+}
+
 fn link_reexports(
     graph: &ModuleGraph,
     units: &HashMap<ModuleId, LinkedModule>,
