@@ -235,14 +235,24 @@ pub(crate) fn descriptor(
     let (Some(value), Some(key)) = (value, key) else {
         return Ok(Value::Undefined);
     };
-    let value = crate::locals::resolved_replacement(value.clone());
+    let value = unwrap_binding_cells(crate::locals::resolved_replacement(value.clone()));
     let key = crate::conversion::to_property_key(key)?;
     crate::module_bindings::exports(&value, &key)?;
     let descriptor = descriptor_for_value(&value, &key);
     Ok(descriptor.unwrap_or(Value::Undefined))
 }
 
+fn unwrap_binding_cells(value: Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => unwrap_binding_cells(cell.borrow().clone()),
+        value => value,
+    }
+}
+
 fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
+    if let Value::BindingCell(cell) = value {
+        return descriptor_for_value(&cell.borrow(), key);
+    }
     let descriptor = match value {
         Value::Object(properties) => {
             let global = Value::Object(properties.clone());

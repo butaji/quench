@@ -174,13 +174,28 @@ pub(crate) fn declared_names_in(statements: &[oxc::ast::ast::Statement<'_>]) -> 
     names
 }
 
+pub(crate) fn lexical_declaration<'a>(
+    statement: &'a oxc::ast::ast::Statement<'a>,
+) -> Option<&'a oxc::ast::ast::VariableDeclaration<'a>> {
+    match statement {
+        oxc::ast::ast::Statement::VariableDeclaration(declaration) => Some(declaration),
+        oxc::ast::ast::Statement::ExportNamedDeclaration(export) => {
+            export.declaration.as_ref().and_then(|declaration| match declaration {
+                oxc::ast::ast::Declaration::VariableDeclaration(declaration) => Some(&**declaration),
+                _ => None,
+            })
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn predeclare_lexicals(
     statements: &[oxc::ast::ast::Statement<'_>],
     locals: &mut HashMap<String, u16>,
     next_slot: &mut u16,
 ) {
     for statement in statements {
-        let oxc::ast::ast::Statement::VariableDeclaration(declaration) = statement else {
+        let Some(declaration) = lexical_declaration(statement) else {
             continue;
         };
         if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var {
