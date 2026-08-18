@@ -243,44 +243,66 @@ pub(crate) fn return_iterator(
         ));
     };
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let (already_done, concat_inner) = {
-        let state = data.state.borrow();
-        match &*state {
-            IteratorState::Zip { done: true, .. } => (true, Vec::new()),
-            IteratorState::Concat { opened, done, .. } => {
-                if *done {
-                    (true, Vec::new())
-                } else {
-                    let inner = opened
-                        .iter()
-                        .filter_map(|slot| slot.clone())
-                        .collect::<Vec<_>>();
-                    (false, inner)
-                }
-            }
-            _ => (false, Vec::new()),
-        }
-    };
+    let (already_done, inner) = inner_iterators(data);
     if already_done {
         return Ok(result(value, true));
     }
     mark_done(data);
     *data.in_return.borrow_mut() = true;
-    let completion = if !concat_inner.is_empty() {
-        close_iterators(concat_inner, crate::completion::Completion::Normal)?
-    } else if let Some(iterators) = zip_iterators(data) {
-        close_iterators(iterators, crate::completion::Completion::Normal)?
-    } else {
-        close(
-            receiver.cloned().unwrap_or(Value::Undefined),
-            crate::completion::Completion::Normal,
-        )?
-    };
+    let completion = close_inner(data, inner, receiver)?;
     *data.in_return.borrow_mut() = false;
     match completion {
         crate::completion::Completion::Normal => Ok(result(value, true)),
         completion => completion.into_vm_error().map(|_| result(value, true)),
     }
+}
+
+/// Walk the iterator state and return a tuple of `(already_done, inner)`
+/// where `inner` is the list of opened inner iterators that must be closed
+/// before the receiver itself is reported as returned.
+fn inner_iterators(data: &IteratorData) -> (bool, Vec<Value>) {
+    let state = data.state.borrow();
+    match &*state {
+        IteratorState::Zip { done: true, .. } | IteratorState::Zip { .. } => {
+            let iterators = zip_iterators(data).unwrap_or_default();
+            let already_done = matches!(&*data.state.borrow(), IteratorState::Zip { done: true, .. });
+            (already_done, iterators)
+        }
+        IteratorState::Concat { opened, done, .. } => {
+            if *done {
+                (true, Vec::new())
+            } else {
+                let inner = opened
+                    .iter()
+                    .filter_map(|slot| slot.clone())
+                    .collect();
+                (false, inner)
+            }
+        }
+        _ => (false, Vec::new()),
+    }
+}
+
+fn close_inner(
+    data: &IteratorData,
+    inner: Vec<Value>,
+    receiver: Option<&Value>,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    if !inner.is_empty() {
+        return close_iterators(inner, crate::completion::Completion::Normal);
+    }
+    if matches!(
+        &*data.state.borrow(),
+        IteratorState::Zip { .. }
+    ) {
+        if let Some(iterators) = zip_iterators(data) {
+            return close_iterators(iterators, crate::completion::Completion::Normal);
+        }
+    }
+    close(
+        receiver.cloned().unwrap_or(Value::Undefined),
+        crate::completion::Completion::Normal,
+    )
 }
 
 pub(crate) fn flat_map(
