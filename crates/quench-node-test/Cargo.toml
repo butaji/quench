@@ -7,3 +7,4 @@ license = "MIT"
 
 [dependencies]
 quench-node = { path = "../quench-node" }
+quench-runtime = { path = "../quench-runtime" }
