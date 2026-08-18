@@ -100,28 +100,13 @@ fn define_instance_field(
 }
 
 fn constructor_receiver(target: &crate::value::Value) -> crate::value::Value {
-    let prototype = crate::execute::get_property(target, "prototype");
-    let prototype = if crate::value::is_object(&prototype) {
-        prototype
-    } else {
-        constructor_receiver_default(target)
-    };
+    let prototype = crate::construct::get_prototype_from_constructor(target, |realm| {
+        crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::ObjectPrototype)
+    });
     crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![(
         "\0prototype".to_string(),
         prototype,
     )])))
-}
-
-fn constructor_receiver_default(target: &crate::value::Value) -> crate::value::Value {
-    if let crate::value::Value::Function(function) = target {
-        let global = function.captures.get(0);
-        let object_constructor = crate::execute::get_property(&global, "Object");
-        let object_prototype = crate::execute::get_property(&object_constructor, "prototype");
-        if crate::value::is_object(&object_prototype) {
-            return object_prototype;
-        }
-    }
-    crate::value::Value::Builtin(crate::ops::Builtin::ObjectPrototype)
 }
 
 fn builtin_default_prototype(target: &crate::value::Value) -> Option<crate::value::Value> {

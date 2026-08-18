@@ -71,7 +71,10 @@ fn async_iterator_descriptor(value: Value) -> Vec<(String, Value)> {
 }
 
 pub(crate) fn generator_prototype() -> Value {
-    let realm = crate::vm::current_context_or_default().realm();
+    generator_prototype_in(crate::vm::current_context_or_default().realm())
+}
+
+pub(crate) fn generator_prototype_in(realm: crate::ops::RealmId) -> Value {
     GENERATOR_PROTOTYPES.with(|cell| {
         if let Some(value) = cell.borrow().get(&realm) {
             return value.clone();
@@ -141,7 +144,10 @@ pub(crate) fn generator_prototype() -> Value {
 }
 
 pub(crate) fn async_generator_prototype() -> Value {
-    let realm = crate::vm::current_context_or_default().realm();
+    async_generator_prototype_in(crate::vm::current_context_or_default().realm())
+}
+
+pub(crate) fn async_generator_prototype_in(realm: crate::ops::RealmId) -> Value {
     ASYNC_GENERATOR_PROTOTYPES.with(|cell| {
         if let Some(value) = cell.borrow().get(&realm) {
             return value.clone();
