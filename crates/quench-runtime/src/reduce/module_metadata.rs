@@ -26,6 +26,13 @@ pub struct ImportBinding {
     pub deferred: bool,
 }
 
+impl ImportBinding {
+    /// Side-effect `import "./x"` has no imported/local names.
+    pub fn is_binding(&self) -> bool {
+        !self.imported.is_empty() || !self.local.is_empty()
+    }
+}
+
 /// One local binding exposed under an exported module name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportBinding {
@@ -80,6 +87,15 @@ impl ModuleMetadata {
                         self.import_types
                             .push((source.clone(), format!("{key}={}", entry.value.value)));
                     }
+                }
+                if import.specifiers.as_ref().is_none_or(|specifiers| specifiers.is_empty())
+                {
+                    self.imports.push(ImportBinding {
+                        source: source.clone(),
+                        imported: String::new(),
+                        local: String::new(),
+                        deferred: import.phase == Some(oxc::ast::ast::ImportPhase::Defer),
+                    });
                 }
                 if let Some(specifiers) = &import.specifiers {
                     for specifier in specifiers {

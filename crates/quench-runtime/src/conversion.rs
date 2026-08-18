@@ -18,6 +18,38 @@ pub(crate) fn to_property_key(value: &Value) -> Result<String, VmError> {
     }
 }
 
+/// Expose an internal property key as the JS value `Reflect.ownKeys` yields.
+pub(crate) fn own_key_value(key: &str) -> Value {
+    let name = key.trim_end_matches('\0');
+    match well_known_symbol(name) {
+        Some(builtin) => Value::Builtin(builtin),
+        None if is_symbol_string(key) => Value::String(key.to_string()),
+        None => Value::String(key.to_string()),
+    }
+}
+
+fn well_known_symbol(name: &str) -> Option<crate::ops::Builtin> {
+    use crate::ops::Builtin::*;
+    Some(match name {
+        "Symbol.iterator" => SymbolIterator,
+        "Symbol.asyncIterator" => SymbolAsyncIterator,
+        "Symbol.dispose" => SymbolDispose,
+        "Symbol.asyncDispose" => SymbolAsyncDispose,
+        "Symbol.unscopables" => SymbolUnscopables,
+        "Symbol.toStringTag" => SymbolToStringTag,
+        "Symbol.toPrimitive" => SymbolToPrimitive,
+        "Symbol.hasInstance" => SymbolHasInstance,
+        "Symbol.isConcatSpreadable" => SymbolIsConcatSpreadable,
+        "Symbol.species" => SymbolSpecies,
+        "Symbol.match" => SymbolMatch,
+        "Symbol.replace" => SymbolReplace,
+        "Symbol.search" => SymbolSearch,
+        "Symbol.split" => SymbolSplit,
+        "Symbol.matchAll" => SymbolMatchAll,
+        _ => return None,
+    })
+}
+
 pub(crate) fn property_key_value(key: &str) -> Value {
     match key {
         "Symbol.iterator"
@@ -124,7 +156,7 @@ pub(crate) fn is_symbol(value: &Value) -> bool {
 }
 
 pub(crate) fn is_symbol_string(value: &str) -> bool {
-    value.starts_with("Symbol.") && value.contains('\0')
+    value.starts_with("Symbol.") || value.contains('\0')
 }
 
 pub(crate) fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {
