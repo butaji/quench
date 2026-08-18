@@ -1,5 +1,5 @@
 fn from_code_point(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
-    let mut result = String::new();
+    let mut units: Vec<u16> = Vec::new();
     for value in arguments {
         let number = crate::intl::tolocale::value::to_number_result(Some(value))?;
         if !number.is_finite()
@@ -8,11 +8,19 @@ fn from_code_point(arguments: &[Value]) -> Result<Value, crate::execute::VmError
         {
             return Err(crate::value::error::throw_range_error("Invalid code point"));
         }
-        let character = char::from_u32(number as u32)
-            .ok_or_else(|| crate::value::error::throw_range_error("Invalid code point"))?;
-        result.push(character);
+        let codepoint = number as u32;
+        if (0xD800..=0xDFFF).contains(&codepoint) {
+            units.push(codepoint as u16);
+        } else {
+            let character = char::from_u32(codepoint).ok_or_else(|| {
+                crate::value::error::throw_range_error("Invalid code point")
+            })?;
+            let mut encoded = [0u16; 2];
+            let encoded_slice = character.encode_utf16(&mut encoded);
+            units.extend_from_slice(encoded_slice);
+        }
     }
-    Ok(Value::String(result))
+    Ok(crate::strings::from_units(units))
 }
 
 fn raw(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
