@@ -1,3 +1,40 @@
+fn wake_waiting_modules() {
+    CURRENT_MODULE_GRAPH.with(|current| {
+        let Some((units, graph)) = current.get() else {
+            return;
+        };
+        let units = unsafe { &*units };
+        let graph = unsafe { &*graph };
+        for id in units.units.keys().copied() {
+            let Some(unit) = units.units.get(&id) else {
+                continue;
+            };
+            if unit.started.get() && !unit.evaluated.get() && !unit.async_suspended.get() {
+                let units = units as *const LinkedModuleGraph;
+                let modules = graph as *const ModuleGraph;
+                quench_runtime::module_bindings::enqueue_job(Rc::new(move || {
+                    let _ = evaluate_module(unsafe { &*units }, unsafe { &*modules }, id, true);
+                }));
+            }
+        }
+    });
+}
+
+fn settle_dynamic_import(graph_units: &LinkedModuleGraph, id: ModuleId) {
+    for _ in 0..1024 {
+        let Some(unit) = graph_units.units.get(&id) else {
+            return;
+        };
+        if unit.evaluated.get() || unit.thrown.borrow().is_some() {
+            if let Some(thrown) = unit.thrown.borrow().clone() {
+                quench_runtime::module_bindings::request_ensure_throw(thrown);
+            }
+            return;
+        }
+        quench_runtime::module_bindings::drain_jobs();
+    }
+}
+
 fn ensure_module(id: ModuleId) {
     CURRENT_MODULE_GRAPH.with(|current| {
         let Some((units, graph)) = current.get() else {
@@ -28,30 +65,43 @@ fn evaluate_module(
         return Err("module evaluation failed".to_string());
     }
     if unit.started.get() {
+        if unit.async_suspended.get() {
+            return Ok(());
+        }
         return continue_started_module(graph_units, graph, id, skip_deferred);
     }
+    start_module(graph_units, graph, id, skip_deferred)
+}
+
+fn start_module(
+    graph_units: &LinkedModuleGraph,
+    graph: &ModuleGraph,
+    id: ModuleId,
+    skip_deferred: bool,
+) -> Result<(), String> {
+    let unit = graph_units
+        .units
+        .get(&id)
+        .ok_or_else(|| "module unit missing".to_string())?;
     unit.started.set(true);
     let metadata = unit.program.module_metadata.as_ref();
-    let targets = evaluation_targets(graph_units, metadata, graph, id, skip_deferred);
-    for dependency in &targets {
-        evaluate_module(graph_units, graph, *dependency, skip_deferred)?;
-    }
-    if targets.iter().any(|dependency| {
-        graph_units
-            .units
-            .get(dependency)
-            .is_some_and(|unit| !unit.evaluated.get())
-    }) {
-        let units = graph_units as *const LinkedModuleGraph;
-        let modules = graph as *const ModuleGraph;
-        quench_runtime::module_bindings::enqueue_job(Rc::new(move || {
-            let _ = evaluate_module(unsafe { &*units }, unsafe { &*modules }, id, true);
-        }));
+    evaluate_request_wave(graph_units, graph, id, metadata, skip_deferred)?;
+    if unfinished_targets(graph_units, metadata, graph, id, skip_deferred) {
+        schedule_evaluate(graph_units, graph, id);
         return Ok(());
     }
-    if metadata.is_some_and(|metadata| metadata.imports.iter().any(|binding| binding.deferred)) {
-        quench_runtime::module_bindings::drain_jobs();
-    }
+    run_module_body(graph_units, id)
+}
+
+fn schedule_evaluate(graph_units: &LinkedModuleGraph, graph: &ModuleGraph, id: ModuleId) {
+    let units = graph_units as *const LinkedModuleGraph;
+    let modules = graph as *const ModuleGraph;
+    quench_runtime::module_bindings::enqueue_job(Rc::new(move || {
+        let _ = evaluate_module(unsafe { &*units }, unsafe { &*modules }, id, true);
+    }));
+}
+
+fn run_module_body(graph_units: &LinkedModuleGraph, id: ModuleId) -> Result<(), String> {
     CURRENT_MODULE_ID.with(|current| current.set(Some(id)));
     let result = graph_units
         .units
@@ -132,6 +182,88 @@ fn ready_for_sync_execution(
         .dependencies(id)
         .iter()
         .all(|dependency| ready_for_sync_execution(graph_units, graph, *dependency, seen))
+}
+
+fn unfinished_targets(
+    units: &LinkedModuleGraph,
+    metadata: Option<&quench_runtime::reduce::ModuleMetadata>,
+    graph: &ModuleGraph,
+    from: ModuleId,
+    skip_deferred: bool,
+) -> bool {
+    evaluation_targets(units, metadata, graph, from, skip_deferred)
+        .iter()
+        .any(|dependency| {
+            units
+                .units
+                .get(dependency)
+                .is_some_and(|unit| !unit.evaluated.get())
+        })
+}
+
+fn evaluate_request_wave(
+    graph_units: &LinkedModuleGraph,
+    graph: &ModuleGraph,
+    from: ModuleId,
+    metadata: Option<&quench_runtime::reduce::ModuleMetadata>,
+    skip_deferred: bool,
+) -> Result<(), String> {
+    let (first, delayed) = partition_evaluation(graph_units, graph, from, metadata, skip_deferred);
+    for dependency in &first {
+        evaluate_module(graph_units, graph, *dependency, skip_deferred)?;
+    }
+    if !delayed.is_empty()
+        || first.iter().any(|id| {
+            graph_units
+                .units
+                .get(id)
+                .is_some_and(|unit| !unit.evaluated.get())
+        })
+    {
+        quench_runtime::module_bindings::drain_jobs();
+    }
+    if !delayed.is_empty() {
+        for dependency in delayed {
+            evaluate_module(graph_units, graph, dependency, skip_deferred)?;
+        }
+        quench_runtime::module_bindings::drain_jobs();
+    }
+    Ok(())
+}
+
+fn partition_evaluation(
+    units: &LinkedModuleGraph,
+    graph: &ModuleGraph,
+    from: ModuleId,
+    metadata: Option<&quench_runtime::reduce::ModuleMetadata>,
+    skip_deferred: bool,
+) -> (Vec<ModuleId>, Vec<ModuleId>) {
+    let Some(metadata) = metadata else {
+        return (graph.dependencies(from).to_vec(), Vec::new());
+    };
+    let mut first = Vec::new();
+    let mut delayed = Vec::new();
+    let mut pending_tla = false;
+    for request in &metadata.requests {
+        let Some(target) = graph.resolve(from, &request.source) else {
+            continue;
+        };
+        if skip_deferred && request.deferred {
+            let mut gat = Vec::new();
+            gather_async_transitive(units, graph, target, &mut HashSet::new(), &mut gat);
+            if pending_tla {
+                delayed.extend(gat);
+            } else {
+                pending_tla = !gat.is_empty();
+                first.extend(gat);
+            }
+            continue;
+        }
+        if !first.contains(&target) {
+            first.push(target);
+        }
+    }
+    (first, delayed)
 }
 
 fn evaluation_targets(
