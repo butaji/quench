@@ -75,33 +75,13 @@ impl LinkedModuleGraph {
             .or_else(|| graph.entry())
             .ok_or_else(|| "module graph missing entry".to_string())?;
         let order = graph.dependency_order(root)?;
+        bind_imports(&units, graph, &order, |binding| binding.imported == "source")?;
         for _ in 0..units.len() {
             for id in &order {
                 link_reexports(graph, &units, *id)?;
             }
         }
-        for id in order {
-            let metadata = units
-                .get(&id)
-                .and_then(|unit| unit.program.module_metadata.as_ref())
-                .ok_or_else(|| "module metadata missing".to_string())?;
-            for binding in metadata.imports.iter().filter(|binding| binding.is_binding()) {
-                let target = graph
-                    .resolve(id, &binding.source)
-                    .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-                let cell = import_cell(
-                    graph,
-                    &units,
-                    target,
-                    &binding.imported,
-                    binding.deferred,
-                )?;
-                units
-                    .get(&id)
-                    .ok_or_else(|| "module unit missing".to_string())?
-                    .bind_import(&binding.local, cell)?;
-            }
-        }
+        bind_imports(&units, graph, &order, |binding| binding.imported != "source")?;
         Ok(Self { units })
     }
 
@@ -243,9 +223,6 @@ impl LinkedModule {
             .exports
             .iter()
             .find(|binding| binding.exported == name)?;
-        if binding.source {
-            return Some(self.module_source.clone());
-        }
         let local = binding.local.as_str();
         self.program
             .local_slots
