@@ -124,6 +124,13 @@ pub(crate) fn reduce_for_in(
     Ok(())
 }
 
+fn for_left_using(left: &oxc::ast::ast::ForStatementLeft<'_>) -> bool {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        return false;
+    };
+    crate::using_scope::is_using_kind(declaration.kind)
+}
+
 fn for_in_name(left: &oxc::ast::ast::ForStatementLeft<'_>) -> Option<String> {
     let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
         return None;
@@ -163,6 +170,9 @@ pub(crate) fn reduce_for_of(
     let mut body = crate::branch::reduce(&statement.body, facts, &body_locals)?;
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
+    }
+    if for_left_using(&statement.left) {
+        body.insert(0, Op::MarkImmutable { slot });
     }
     *locals = outer_locals;
     ops.push(Op::ForOf {
