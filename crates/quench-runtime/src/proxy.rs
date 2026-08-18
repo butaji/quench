@@ -369,6 +369,7 @@ pub(crate) fn proxy_get_own_property_descriptor(
     target: &Value,
     prop: &str,
 ) -> Result<Value, VmError> {
+    crate::module_bindings::run_object_ensure(target, prop);
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "getOwnPropertyDescriptor") {

@@ -62,6 +62,7 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
         ));
     }
     let key = crate::conversion::to_property_key(arguments.get(1).unwrap_or(&Value::Undefined))?;
+    crate::module_bindings::run_object_ensure(target, &key);
     if matches!(target, Value::Proxy(_)) {
         return crate::proxy::proxy_define_property(
             target,
