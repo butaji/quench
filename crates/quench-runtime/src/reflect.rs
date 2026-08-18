@@ -368,6 +368,7 @@ fn evaluate_direct(
     let grammar = crate::semantic::EvalGrammarContext {
         new_target: bindings.iter().any(|(name, _)| name == "\0new_target"),
         super_property: crate::super_scope::is_active(),
+        arguments: forbidden_var_names.iter().any(|name| name == "arguments"),
     };
     let program = crate::reduce::reduce_statements::reduce_eval_source_in_context(
         &source,

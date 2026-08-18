@@ -53,6 +53,12 @@ fn finish_class(
         src: prototype,
         strict: true,
     });
+    body.push(Op::SetProperty {
+        object: constructor,
+        key: "\0home_object".to_string(),
+        src: prototype,
+        strict: true,
+    });
     body.extend(static_fields);
     Some(())
 }
