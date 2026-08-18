@@ -187,7 +187,7 @@ fn invoke_with_receiver(
     arguments: &[Value],
 ) -> Result<Value, VmError> {
     match callee_value {
-        Value::Function(body) => crate::functions::execute(body, receiver, arguments),
+        Value::Function(_) => crate::functions::execute_target(callee_value, receiver, arguments),
         Value::BoundFunction(bound)
             if matches!(
                 bound.target,
