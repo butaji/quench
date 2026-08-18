@@ -218,6 +218,44 @@ pub(crate) fn lexical_declaration<'a>(
     }
 }
 
+pub(crate) fn predeclare_module_vars(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    for statement in statements {
+        for name in module_var_names(statement) {
+            if locals.contains_key(&name) {
+                continue;
+            }
+            let slot = *next_slot;
+            *next_slot = next_slot.saturating_add(1);
+            locals.insert(name, slot);
+        }
+    }
+}
+
+fn module_var_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
+    let declaration = match statement {
+        oxc::ast::ast::Statement::VariableDeclaration(declaration) => declaration,
+        oxc::ast::ast::Statement::ExportNamedDeclaration(export) => {
+            match &export.declaration {
+                Some(oxc::ast::ast::Declaration::VariableDeclaration(declaration)) => declaration,
+                _ => return Vec::new(),
+            }
+        }
+        _ => return Vec::new(),
+    };
+    if declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var {
+        return Vec::new();
+    }
+    declaration
+        .declarations
+        .iter()
+        .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
+        .collect()
+}
+
 pub(crate) fn predeclare_lexicals(
     statements: &[oxc::ast::ast::Statement<'_>],
     locals: &mut HashMap<String, u16>,
