@@ -1,6 +1,16 @@
 #[derive(Debug, PartialEq)]
 pub struct IteratorData {
     pub state: RefCell<IteratorState>,
+    pub executing: RefCell<bool>,
+}
+
+impl IteratorData {
+    pub fn new(state: IteratorState) -> Self {
+        Self {
+            state: RefCell::new(state),
+            executing: RefCell::new(false),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]

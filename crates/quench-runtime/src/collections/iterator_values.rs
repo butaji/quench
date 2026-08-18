@@ -54,16 +54,43 @@ pub(crate) fn from_set_entries(receiver: Option<&Value>) -> Result<Value, crate:
 }
 
 pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    let Some(iterator @ Value::Iterator(_)) = receiver else {
+    let Some(iterator @ Value::Iterator(data)) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Iterator.prototype.next called on incompatible receiver",
         ));
     };
+    if is_helper_iter(&**data) {
+        if *(**data).executing.borrow() {
+            return Err(crate::value::error::throw_type_error(
+                "Iterator is already executing",
+            ));
+        }
+        *(**data).executing.borrow_mut() = true;
+        let stepped = step_value(iterator);
+        *(**data).executing.borrow_mut() = false;
+        return match stepped {
+            Ok(Some(value)) => Ok(result(value, false)),
+            Ok(None) => Ok(result(Value::Undefined, true)),
+            Err(error) => Err(error),
+        };
+    }
     match step_value(iterator) {
         Ok(Some(value)) => Ok(result(value, false)),
         Ok(None) => Ok(result(Value::Undefined, true)),
         Err(error) => Err(error),
     }
+}
+
+fn is_helper_iter(data: &crate::value::IteratorData) -> bool {
+    matches!(
+        &*data.state.borrow(),
+        IteratorState::Mapped { .. }
+            | IteratorState::Filtered { .. }
+            | IteratorState::FlatMapped { .. }
+            | IteratorState::Dropped { .. }
+            | IteratorState::Take { .. }
+            | IteratorState::Zip { .. }
+    )
 }
 
 pub(crate) fn next_set(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
