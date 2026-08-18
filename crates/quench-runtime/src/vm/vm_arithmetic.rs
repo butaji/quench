@@ -21,7 +21,10 @@ pub(crate) fn execute_unary(
         UnaryOp::BitwiseNot => bitwise_not(&value)?,
         UnaryOp::Void => Value::Undefined,
         UnaryOp::Typeof => Value::String(type_of(&value).to_string()),
-        UnaryOp::ToString => Value::String(crate::conversion::to_string(&value)?),
+        UnaryOp::ToString => match value {
+            Value::StringUnits(units) => Value::StringUnits(units),
+            other => Value::String(crate::conversion::to_string(&other)?),
+        },
         UnaryOp::ToNumeric => to_numeric(&value)?,
         UnaryOp::Delete => Value::Boolean(true),
         UnaryOp::IsNullish => Value::Boolean(matches!(value, Value::Null | Value::Undefined)),
