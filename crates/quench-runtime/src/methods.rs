@@ -63,21 +63,21 @@ fn execute_callee(
     args: &[u16],
     registers: &mut Vec<Value>,
 ) -> Result<Value, VmError> {
-    let value = match callee {
+    let value = match &callee {
         Value::Builtin(crate::ops::Builtin::String) => {
             execute_builtin_with_receiver(crate::ops::Builtin::String, arguments, None)?
         }
         Value::Builtin(
             builtin @ (crate::ops::Builtin::ObjectDefineProperty
             | crate::ops::Builtin::ObjectDefineProperties),
-        ) => define_object_properties(builtin, arguments, args, registers)?,
+        ) => define_object_properties(*builtin, arguments, args, registers)?,
         Value::Builtin(crate::ops::Builtin::ObjectSetPrototypeOf) => {
             execute_mutating_object_builtin(arguments, args, registers)?
         }
         Value::Builtin(builtin) => {
-            execute_builtin_with_receiver(builtin, arguments, Some(receiver))?
+            execute_builtin_with_receiver(*builtin, arguments, Some(receiver))?
         }
-        Value::Function(function) => crate::functions::execute(&function, receiver, arguments)?,
+        Value::Function(_) => crate::functions::execute_target(&callee, receiver, arguments)?,
         Value::BoundFunction(bound)
             if matches!(
                 bound.target,

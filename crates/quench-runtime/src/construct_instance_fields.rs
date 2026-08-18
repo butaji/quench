@@ -18,7 +18,11 @@ fn initialize_instance_field(
     let value = match &field.initializer {
         crate::value::InstanceFieldInitializer::Undefined => Value::Undefined,
         crate::value::InstanceFieldInitializer::Callable(initializer) => {
-            crate::functions::execute(initializer, &receiver, &[])?
+            crate::functions::execute_target(
+                &Value::Function(std::rc::Rc::clone(initializer)),
+                &receiver,
+                &[],
+            )?
         }
         crate::value::InstanceFieldInitializer::Value(value) => value.clone(),
         crate::value::InstanceFieldInitializer::PrivateMethod(value) => {
