@@ -846,6 +846,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "quench-node"
+version = "0.1.0"
+dependencies = [
+ "quench-runtime",
+]
+
+[[package]]
+name = "quench-node-test"
+version = "0.1.0"
+dependencies = [
+ "quench-node",
+]
+
+[[package]]
 name = "quench-runtime"
 version = "0.1.0"
 dependencies = [

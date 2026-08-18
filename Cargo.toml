@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/quench-runtime", "crates/quench-test262"]
+members = [
+  "crates/quench-node",
+  "crates/quench-node-test",
+  "crates/quench-runtime",
+  "crates/quench-test262",
+]
 
 [profile.dev]
 debug = 0

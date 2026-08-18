@@ -1,0 +1,9 @@
+[package]
+name = "quench-node"
+version = "0.1.0"
+edition = "2021"
+description = "Node.js-API compatibility host on top of quench-runtime"
+license = "MIT"
+
+[dependencies]
+quench-runtime = { path = "../quench-runtime" }
