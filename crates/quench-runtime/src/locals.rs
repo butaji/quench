@@ -241,6 +241,11 @@ pub(crate) fn set_resolved_local(
     }
     if matches!(target, Value::Undefined) {
         ensure_initialized(slot, name)?;
+        if current().is_immutable_slot(slot) {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot assign to immutable binding",
+            ));
+        }
         write(slot, value);
         return Ok(());
     }
@@ -284,6 +289,10 @@ pub(crate) fn write(slot: u16, value: Value) {
 
 pub(crate) fn mark_uninitialized(slot: u16) {
     current().mark_uninitialized(slot);
+}
+
+pub(crate) fn mark_immutable(slot: u16) {
+    current().mark_immutable_slot(slot);
 }
 
 pub(crate) fn check_initialized(slot: u16, name: &str) -> Result<(), VmError> {
