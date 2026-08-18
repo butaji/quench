@@ -10,8 +10,31 @@ fn array_iterator(receiver: Option<&Value>) -> Result<Value, crate::execute::VmE
     Ok(crate::collections::iterator::make(array_iterator_values(receiver)?))
 }
 
+fn typed_array_is_detached(value: &Value) -> bool {
+    let buffer = match value {
+        Value::Float64Array(data) => &data.buffer,
+        Value::Float32Array(data) => &data.buffer,
+        Value::Int8Array(data) => &data.buffer,
+        Value::Int16Array(data) => &data.buffer,
+        Value::Int32Array(data) => &data.buffer,
+        Value::Uint8Array(data) => &data.buffer,
+        Value::Uint8ClampedArray(data) => &data.buffer,
+        Value::Uint16Array(data) => &data.buffer,
+        Value::Uint32Array(data) => &data.buffer,
+        Value::BigInt64Array(data) => &data.buffer,
+        Value::BigUint64Array(data) => &data.buffer,
+        _ => return false,
+    };
+    *buffer.detached.borrow()
+}
+
 fn array_keys(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
     if let Some(value) = receiver.filter(|value| is_typed_array(value)) {
+        if typed_array_is_detached(value) {
+            return Err(crate::value::error::throw_type_error(
+                "Array iterator called on detached TypedArray",
+            ));
+        }
         return Ok(crate::collections::iterator::make_typed_keys(value.clone()));
     }
     let values = array_iterator_values(receiver)?;
