@@ -19,6 +19,20 @@ fn descriptor_object(value: &Value) -> Value {
     descriptor_object_with_flags(public_value(value), true, true, true)
 }
 
+fn live_descriptor(descriptor: &Value, live: Option<Value>) -> Value {
+    let Value::Object(properties) = public_descriptor(descriptor) else {
+        return public_descriptor(descriptor);
+    };
+    let Some(live) = live else {
+        return Value::Object(properties);
+    };
+    let mut properties = properties.properties.clone();
+    if let Some((_, value)) = properties.iter_mut().find(|(name, _)| name == "value") {
+        *value = live;
+    }
+    Value::Object(Rc::new(ObjectData::new(properties)))
+}
+
 fn public_descriptor(descriptor: &Value) -> Value {
     let Value::Object(properties) = descriptor else {
         return descriptor.clone();

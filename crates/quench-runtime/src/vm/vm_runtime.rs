@@ -13,12 +13,35 @@ fn run_ops_completion(
     Ok(run_ops_completion_step(ops, registers, context)?.completion)
 }
 
+pub(crate) fn execute_ops_from(
+    ops: &[Op],
+    start: usize,
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+    environment: Rc<crate::environment::Environment>,
+) -> Result<(crate::completion::Completion, usize), VmError> {
+    let _context_guard = ContextGuard::install(context);
+    let _global_guard = GlobalObjectGuard::install();
+    let _environment_guard = crate::locals::EnvironmentGuard::install(environment);
+    let step = run_ops_completion_step_from(ops, start, registers, context)?;
+    Ok((step.completion, step.next))
+}
+
 fn run_ops_completion_step(
     ops: &[Op],
     registers: &mut Vec<Value>,
     context: &VmContext,
 ) -> Result<CompletionStep, VmError> {
-    for (index, op) in ops.iter().enumerate() {
+    run_ops_completion_step_from(ops, 0, registers, context)
+}
+
+fn run_ops_completion_step_from(
+    ops: &[Op],
+    start: usize,
+    registers: &mut Vec<Value>,
+    context: &VmContext,
+) -> Result<CompletionStep, VmError> {
+    for (index, op) in ops.iter().enumerate().skip(start) {
         let result = match run_op(registers, op, context) {
             Ok(result) => result,
             Err(error) => {
