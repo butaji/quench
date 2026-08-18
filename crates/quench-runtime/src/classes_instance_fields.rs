@@ -90,7 +90,14 @@ fn define_static_field(
     let constructor = crate::execute::read_register(registers, field.constructor)?;
     let key = field_key_value(registers, &field.key)?;
     let initializer = instance_field_initializer(field.initializer.as_ref())?;
+    if let crate::value::InstanceFieldInitializer::Callable(function) = &initializer {
+        crate::super_scope::attach_home(
+            &crate::value::Value::Function(std::rc::Rc::clone(function)),
+            &constructor,
+        );
+    }
     let value = field_initializer_value(&initializer, &constructor)?;
+    let value = name_static_field(&field.key, value)?;
     define_public_field(&constructor, &key, value)?;
     Ok(())
 }
@@ -183,4 +190,31 @@ fn instance_field_initializer(
         return Err(crate::execute::VmError::NotCallable);
     };
     Ok(crate::value::InstanceFieldInitializer::Callable(function))
+}
+
+fn name_static_field(
+    key: &InstanceFieldKeyOp,
+    value: crate::value::Value,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let name = match key {
+        InstanceFieldKeyOp::Static(name) => name.as_str(),
+        InstanceFieldKeyOp::Private(_) | InstanceFieldKeyOp::Dynamic(_) => return Ok(value),
+    };
+    if crate::execute::get_property(&value, "name") == crate::value::Value::String(String::new()) {
+        let _ = crate::builtins::set_function_name(&value, name);
+    }
+    Ok(value)
+}
+
+fn name_initialized_value(
+    initializer: Option<&InstanceFieldInitializerOp>,
+    value: crate::value::Value,
+) -> crate::value::Value {
+    let Some(name) = initializer.and_then(|init| init.name.as_deref()) else {
+        return value;
+    };
+    if crate::execute::get_property(&value, "name") == crate::value::Value::String(String::new()) {
+        let _ = crate::builtins::set_function_name(&value, name);
+    }
+    value
 }
