@@ -42,10 +42,11 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
 }
 
 fn concat_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
-    let (items, mut index, mut current, done) = {
+    let (items, mut opened_clone, mut index, mut current, done) = {
         let state = data.state.borrow();
         let IteratorState::Concat {
             items,
+            opened,
             index,
             current,
             done,
@@ -53,7 +54,7 @@ fn concat_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmEr
         else {
             return Ok(StepTarget::Value(None));
         };
-        (items.clone(), *index, current.clone(), *done)
+        (items.clone(), opened.clone(), *index, current.clone(), *done)
     };
     if done {
         return Ok(StepTarget::Value(None));
@@ -64,6 +65,7 @@ fn concat_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmEr
                 update_concat(data, index, current, done);
                 return Ok(StepTarget::Value(Some(value)));
             }
+            update_concat_opened(data, index, None);
             current = None;
             index += 1;
         }
@@ -75,11 +77,13 @@ fn concat_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmEr
         if !crate::value::is_object(&iterator) {
             return Err(not_iterable());
         }
-        current = Some(if matches!(iterator, Value::Iterator(_)) {
+        let iterator = if matches!(iterator, Value::Iterator(_)) {
             iterator
         } else {
             super::make_protocol(iterator)
-        });
+        };
+        update_concat_opened(data, index, Some(iterator.clone()));
+        current = Some(iterator);
     }
 }
 
@@ -94,6 +98,14 @@ fn update_concat(data: &IteratorData, index: usize, current: Option<Value>, done
         *state_index = index;
         *state_current = current;
         *state_done = done;
+    }
+}
+
+fn update_concat_opened(data: &IteratorData, index: usize, opened: Option<Value>) {
+    if let IteratorState::Concat { opened: slot, .. } = &mut *data.state.borrow_mut() {
+        if let Some(slot) = slot.get_mut(index) {
+            *slot = opened;
+        }
     }
 }
 

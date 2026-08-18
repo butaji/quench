@@ -19,6 +19,7 @@ impl IteratorData {
 pub enum IteratorState {
     Concat {
         items: Vec<(Value, Value)>,
+        opened: Vec<Option<Value>>,
         index: usize,
         current: Option<Value>,
         done: bool,
