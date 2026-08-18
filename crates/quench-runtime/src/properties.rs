@@ -550,7 +550,9 @@ fn mark_non_extensible(target: &crate::value::Value) -> crate::value::Value {
         crate::value::Value::Object(properties) => {
             let mut sealed = properties.as_ref().clone();
             push_non_extensible(&mut sealed);
-            crate::value::Value::Object(std::rc::Rc::new(sealed))
+            let next = crate::value::Value::Object(std::rc::Rc::new(sealed));
+            crate::module_bindings::rehome_evaluator(target, &next);
+            next
         }
         crate::value::Value::Array(values) => {
             let mut values = std::rc::Rc::clone(values);

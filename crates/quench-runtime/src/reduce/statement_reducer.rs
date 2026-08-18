@@ -255,7 +255,7 @@ fn emit_module_lexical_tdz(
     locals: &HashMap<String, u16>,
 ) {
     for statement in statements {
-        let oxc::ast::ast::Statement::VariableDeclaration(declaration) = statement else {
+        let Some(declaration) = crate::reduce_support::lexical_declaration(statement) else {
             continue;
         };
         if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var {
