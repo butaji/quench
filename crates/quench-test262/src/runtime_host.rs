@@ -30,6 +30,7 @@ pub struct LinkedModule {
     star_exports: RefCell<HashSet<String>>,
     ambiguous_exports: RefCell<HashSet<String>>,
     namespace_cell: RefCell<Option<ModuleBindingCell>>,
+    deferred_namespace_cell: RefCell<Option<ModuleBindingCell>>,
     module_source: ModuleBindingCell,
     evaluated: Cell<bool>,
     started: Cell<bool>,
@@ -79,7 +80,13 @@ impl LinkedModuleGraph {
                 let target = graph
                     .resolve(id, &binding.source)
                     .ok_or_else(|| format!("unresolved module {}", binding.source))?;
-                let cell = import_cell(graph, &units, target, &binding.imported)?;
+                let cell = import_cell(
+                    graph,
+                    &units,
+                    target,
+                    &binding.imported,
+                    binding.deferred,
+                )?;
                 units
                     .get(&id)
                     .ok_or_else(|| "module unit missing".to_string())?
@@ -126,6 +133,7 @@ impl LinkedModule {
             star_exports: RefCell::new(HashSet::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace_cell: RefCell::new(None),
+            deferred_namespace_cell: RefCell::new(None),
             module_source: module_source_cell(),
             evaluated: Cell::new(false),
             started: Cell::new(false),
@@ -143,6 +151,7 @@ impl LinkedModule {
             star_exports: RefCell::new(HashSet::new()),
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace_cell: RefCell::new(None),
+            deferred_namespace_cell: RefCell::new(None),
             module_source: module_source_cell(),
             evaluated: Cell::new(false),
             started: Cell::new(false),
@@ -286,8 +295,10 @@ impl LinkedModule {
                 ));
             }
         }
-        cell.set(quench_runtime::value::Value::object(properties));
-        quench_runtime::module_bindings::rebind_object_ensure(&cell.shared());
+        let previous = cell.get();
+        let next = quench_runtime::value::Value::object(properties);
+        cell.set(next.clone());
+        quench_runtime::module_bindings::rehome_evaluator(&previous, &next);
     }
 
     fn link_star_export(&self, name: &str, cell: ModuleBindingCell) {
