@@ -15,6 +15,28 @@ pub(crate) fn execute_optional_get(
     Ok(())
 }
 
+pub(crate) fn execute_optional_get_private(
+    registers: &mut Vec<crate::value::Value>,
+    op: &crate::ops::Op,
+) -> Result<(), crate::execute::VmError> {
+    let crate::ops::Op::OptionalGetPrivate { dst, object, name } = op else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    let object = crate::execute::read_register(registers, *object)?;
+    let value = if matches!(object, crate::value::Value::Null | crate::value::Value::Undefined) {
+        crate::value::Value::Undefined
+    } else {
+        let name = crate::private_environment::resolve(*name).ok_or_else(|| {
+            crate::value::error::throw_type_error(
+                "Private field access on an object without the required brand",
+            )
+        })?;
+        crate::private_slots::get(&object, &name)?
+    };
+    crate::execute::write_value(registers, *dst, value);
+    Ok(())
+}
+
 pub(crate) fn execute_optional_get_dynamic(
     registers: &mut Vec<crate::value::Value>,
     op: &crate::ops::Op,

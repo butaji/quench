@@ -16,6 +16,7 @@ pub enum InstanceFieldKeyOp {
 pub struct InstanceFieldInitializerOp {
     pub body: crate::machine::FunctionCode,
     pub captures: u16,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +173,11 @@ pub enum Op {
         dst: u16,
         object: u16,
         key: String,
+    },
+    OptionalGetPrivate {
+        dst: u16,
+        object: u16,
+        name: crate::facts::PrivateNameId,
     },
     OptionalGetDynamic {
         dst: u16,

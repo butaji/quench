@@ -326,7 +326,7 @@ fn reduce_public_field(
     let is_static = field.r#static;
     let key = reduce_field_key(field, ops, facts, next, locals)?;
     let initializer = match field.value.as_ref() {
-        Some(value) => Some(reduce_field_initializer(value, facts, locals)?),
+        Some(value) => Some(reduce_field_initializer(value, facts, locals, None)?),
         None => None,
     };
     let field = AppendInstanceFieldOp {
@@ -356,8 +356,9 @@ fn reduce_private_field(
     let oxc::ast::ast::PropertyKey::PrivateIdentifier(name) = &field.key else {
         return None;
     };
+    let display = format!("#{}", name.name);
     let initializer = match field.value.as_ref() {
-        Some(value) => Some(reduce_field_initializer(value, facts, locals)?),
+        Some(value) => Some(reduce_field_initializer(value, facts, locals, Some(display))?),
         None => None,
     };
     let field = AppendInstanceFieldOp {
@@ -397,6 +398,7 @@ fn reduce_field_initializer(
     value: &oxc::ast::ast::Expression<'_>,
     facts: &mut ProgramDb,
     locals: &HashMap<String, u16>,
+    name: Option<String>,
 ) -> Option<InstanceFieldInitializerOp> {
     let captures = crate::reduce_support::register_base(locals);
     let mut body_locals = locals.clone();
@@ -420,6 +422,7 @@ fn reduce_field_initializer(
     Some(InstanceFieldInitializerOp {
         body: crate::machine::FunctionCode::from_ops(body),
         captures,
+        name,
     })
 }
 

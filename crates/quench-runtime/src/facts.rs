@@ -88,6 +88,7 @@ pub struct ProgramDb {
     pub(crate) strict: bool,
     pub(crate) in_function: bool,
     pub(crate) function_name_slot: Option<u16>,
+    pub(crate) inferred_name: Option<String>,
     pub(crate) tail_calls: bool,
     pub(crate) eval_var_barrier: Vec<String>,
     pub(crate) eval_var_scope_start: u16,

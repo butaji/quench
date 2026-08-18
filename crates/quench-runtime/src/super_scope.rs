@@ -332,6 +332,10 @@ pub(crate) fn attach_home_objects(value: &Value) {
     }
 }
 
+pub(crate) fn attach_home(value: &Value, home: &Value) {
+    attach(value, home);
+}
+
 fn attach(value: &Value, home: &Value) {
     match value {
         Value::Function(function) => {

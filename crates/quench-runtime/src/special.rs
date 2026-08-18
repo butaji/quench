@@ -67,8 +67,43 @@ fn reduce_chain(
         ChainElement::ComputedMemberExpression(member) => {
             reduce_computed_chain(member, ops, facts, next_register, locals)
         }
+        ChainElement::PrivateFieldExpression(member) => {
+            reduce_private_chain(member, ops, facts, next_register, locals)
+        }
         _ => None,
     }
+}
+
+fn reduce_private_chain(
+    member: &oxc::ast::ast::PrivateFieldExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let object = crate::reduce::reduce_expression(&member.object, ops, facts, next, locals)?;
+    let name = facts.private_name(member.field.span)?;
+    let dst = *next;
+    *next = next.saturating_add(1);
+    if member.optional {
+        emit_optional_private(ops, dst, object, name);
+    } else {
+        ops.push(Op::GetPrivate {
+            dst,
+            object,
+            name,
+        });
+    }
+    Some(dst)
+}
+
+fn emit_optional_private(
+    ops: &mut Vec<Op>,
+    dst: u16,
+    object: u16,
+    name: crate::facts::PrivateNameId,
+) {
+    ops.push(Op::OptionalGetPrivate { dst, object, name });
 }
 
 fn reduce_static_chain(
