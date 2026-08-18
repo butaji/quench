@@ -80,7 +80,7 @@ fn reduce_source_with_type_and_global(
     global: bool,
 ) -> Result<ResidualProgram, Vec<String>> {
     let allocator = Allocator::default();
-    if !source_type.is_module() {
+    if !source_type.is_module() && !global {
         let wrapped = wrap_cjs_source(source);
         let parsed = Parser::new(&allocator, &wrapped, source_type).parse();
         crate::reduce_support::validate_parse(&parsed)?;
