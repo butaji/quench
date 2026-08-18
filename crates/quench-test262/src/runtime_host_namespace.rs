@@ -51,6 +51,7 @@ impl LinkedModule {
             "\0quench:non_extensible".to_string(),
             quench_runtime::value::Value::Boolean(true),
         ));
+        quench_runtime::module_bindings::mark_namespace(&mut properties);
         for name in self.export_names() {
             if let Some(cell) = self.export_cell(&name) {
                 properties.push(export_descriptor(&name, cell));
