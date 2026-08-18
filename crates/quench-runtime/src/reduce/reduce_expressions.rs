@@ -516,7 +516,7 @@ pub fn reduce_atom(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     if matches!(expression, Expression::ThisExpression(_)) {
-        return Some(reduce_this_atom(ops, next_register, locals));
+        return Some(reduce_this_atom(ops, facts, next_register, locals));
     }
     if let Expression::MetaProperty(property) = expression {
         if property.meta.name == "new" && property.property.name == "target" {
@@ -541,10 +541,13 @@ pub fn reduce_atom(
 
 fn reduce_this_atom(
     ops: &mut Vec<Op>,
+    facts: &ProgramDb,
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> u16 {
-    if locals.contains_key(super::reduce_statements::MODULE_THIS_SLOT) {
+    if !facts.in_function
+        && locals.contains_key(super::reduce_statements::MODULE_THIS_SLOT)
+    {
         return crate::reduce_support::emit_undefined(ops, next_register);
     }
     if let Some(slot) = locals
