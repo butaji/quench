@@ -74,7 +74,13 @@ impl LinkedModuleGraph {
         let root = entry
             .or_else(|| graph.entry())
             .ok_or_else(|| "module graph missing entry".to_string())?;
-        for id in graph.dependency_order(root)? {
+        let order = graph.dependency_order(root)?;
+        for _ in 0..units.len() {
+            for id in &order {
+                link_reexports(graph, &units, *id)?;
+            }
+        }
+        for id in order {
             let metadata = units
                 .get(&id)
                 .and_then(|unit| unit.program.module_metadata.as_ref())
@@ -94,12 +100,6 @@ impl LinkedModuleGraph {
                     .get(&id)
                     .ok_or_else(|| "module unit missing".to_string())?
                     .bind_import(&binding.local, cell)?;
-            }
-            link_reexports(graph, &units, id)?;
-        }
-        for _ in 0..units.len() {
-            for id in graph.dependency_order(root)? {
-                link_reexports(graph, &units, id)?;
             }
         }
         Ok(Self { units })
