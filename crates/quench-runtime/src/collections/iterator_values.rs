@@ -54,16 +54,13 @@ pub(crate) fn from_set_entries(receiver: Option<&Value>) -> Result<Value, crate:
 }
 
 pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
-    if std::env::var_os("QDEBUG").is_some() {
-        eprintln!("DBG: next() called");
-    }
     let Some(iterator @ Value::Iterator(data)) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Iterator.prototype.next called on incompatible receiver",
         ));
     };
     if is_helper_iter(&**data) {
-        if *(**data).executing.borrow() {
+        if *(**data).executing.borrow() || *(**data).in_return.borrow() {
             return Err(crate::value::error::throw_type_error(
                 "Iterator is already executing",
             ));
