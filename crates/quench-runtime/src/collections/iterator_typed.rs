@@ -46,11 +46,13 @@ fn checked_length(
     logical_len: usize,
     buffer: &crate::value::ArrayBufferData,
 ) -> Result<usize, crate::execute::VmError> {
-    let required = if length == usize::MAX {
-        byte_offset
-    } else {
-        byte_offset.saturating_add(byte_length)
-    };
+    if length == usize::MAX {
+        if *buffer.detached.borrow() {
+            return Err(crate::collections::iterator::not_iterable());
+        }
+        return Ok(logical_len);
+    }
+    let required = byte_offset.saturating_add(byte_length);
     if *buffer.detached.borrow() || buffer.byte_length() < required {
         Err(crate::collections::iterator::not_iterable())
     } else {
