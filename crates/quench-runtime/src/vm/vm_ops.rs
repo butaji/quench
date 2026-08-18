@@ -20,7 +20,10 @@ pub fn execute_call(
             let this_value = super::read_register(registers, receiver)?;
             invoke_with_receiver(&callee_value, &this_value, &arguments)?
         }
-        None => invoke_callee(&callee_value, &arguments)?,
+        None => match crate::with_scope::receiver_for_callable(&callee_value) {
+            Some(this_value) => invoke_with_receiver(&callee_value, &this_value, &arguments)?,
+            None => invoke_callee(&callee_value, &arguments)?,
+        },
     };
     propagate_object_mutation(registers, &callee_value, args, &arguments, &value);
     super::write_value(registers, dst, value);
