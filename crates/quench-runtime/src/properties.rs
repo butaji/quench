@@ -307,6 +307,15 @@ fn finish_primitive_set(
     value: crate::value::Value,
     strict: bool,
 ) -> Result<(), crate::execute::VmError> {
+    // Per V8 / ES engine behaviour, assignment to a Symbol primitive
+    // value is rejected outright: in strict mode it throws a TypeError;
+    // in non-strict mode the write is silently dropped (the auto-boxed
+    // wrapper is discarded before any subsequent read).
+    if strict && crate::conversion::is_symbol(target) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot create property on a symbol value",
+        ));
+    }
     let receiver = crate::construct::to_object(target)?;
     let mut home_proto = primitive_prototype_for(target);
     loop {
