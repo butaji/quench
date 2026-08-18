@@ -76,16 +76,48 @@ pub(crate) fn execute_scope(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<Completion, VmError> {
-    let Op::PrivateScope { names, body } = op else {
+    let Op::PrivateScope {
+        names,
+        class_name,
+        body,
+    } = op
+    else {
         return Err(VmError::MissingReturn);
     };
     let Some(body) = body.ops() else {
         return Err(VmError::MissingReturn);
     };
     let _scope = Guard::install(names);
+    let _class_name = class_name.as_deref().map(ClassNameGuard::install);
     let completion = crate::execute::execute_completion_in_place(body, registers)?;
     if completion.is_suspension() {
         SUSPENDED.with(|slot| *slot.borrow_mut() = Some(current()));
     }
     Ok(completion)
+}
+
+struct ClassNameGuard {
+    _environment: crate::locals::EnvironmentGuard,
+    name: String,
+}
+
+impl ClassNameGuard {
+    fn install(name: &str) -> Self {
+        let parent = crate::locals::current();
+        let child = crate::environment::Environment::child(&parent, Vec::new());
+        let cell = std::rc::Rc::new(std::cell::RefCell::new(crate::value::Value::Undefined));
+        child.alias_binding(name, cell);
+        child.mark_immutable(name);
+        crate::locals::begin_class_name(name);
+        Self {
+            _environment: crate::locals::EnvironmentGuard::install(child),
+            name: name.to_string(),
+        }
+    }
+}
+
+impl Drop for ClassNameGuard {
+    fn drop(&mut self) {
+        crate::locals::end_class_name(&self.name);
+    }
 }

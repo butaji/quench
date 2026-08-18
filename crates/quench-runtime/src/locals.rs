@@ -9,6 +9,7 @@ thread_local! {
     static REPLACEMENTS: RefCell<Vec<(Value, Value)>> = const { RefCell::new(Vec::new()) };
     static STRICT_EVAL: RefCell<bool> = const { RefCell::new(false) };
     static ACTIVE_EVAL: RefCell<bool> = const { RefCell::new(false) };
+    static INITIALIZING_CLASS_NAMES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 pub(crate) struct StrictEvalGuard {
@@ -348,8 +349,33 @@ pub(crate) fn declare_global_lexical(name: &str, slot: u16, immutable: bool) {
     }
 }
 
+pub(crate) fn begin_class_name(name: &str) {
+    INITIALIZING_CLASS_NAMES.with(|names| names.borrow_mut().push(name.to_string()));
+}
+
+pub(crate) fn end_class_name(name: &str) {
+    INITIALIZING_CLASS_NAMES.with(|names| {
+        let mut names = names.borrow_mut();
+        if let Some(index) = names.iter().rposition(|entry| entry == name) {
+            names.remove(index);
+        }
+    });
+}
+
+pub(crate) fn finish_class_name(name: &str) {
+    end_class_name(name);
+}
+
+fn is_initializing_class_name(name: &str) -> bool {
+    INITIALIZING_CLASS_NAMES.with(|names| names.borrow().iter().any(|entry| entry == name))
+}
+
 pub(crate) fn is_immutable_name(name: &str) -> bool {
-    global_lexical().is_some_and(|environment| environment.is_immutable_name(name))
+    if is_initializing_class_name(name) {
+        return false;
+    }
+    current().is_immutable_name(name)
+        || global_lexical().is_some_and(|environment| environment.is_immutable_name(name))
 }
 
 pub(crate) fn resolve_name(name: &str) -> Option<Value> {
@@ -384,7 +410,11 @@ pub(crate) fn resolve_name_or_undefined(name: &str) -> Result<Value, VmError> {
 }
 
 pub(crate) fn set_named(name: &str, value: Value) -> bool {
-    current().set_named(name, value)
+    let written = current().set_named(name, value);
+    if written {
+        finish_class_name(name);
+    }
+    written
 }
 
 pub(crate) fn set_eval_named(name: &str, value: Value) -> bool {
