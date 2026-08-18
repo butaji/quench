@@ -11,6 +11,17 @@ thread_local! {
         RefCell::new(HashMap::new());
     static OBJECT_ENSURE: RefCell<HashMap<*const crate::value::ObjectData, Rc<dyn Fn()>>> =
         RefCell::new(HashMap::new());
+    static ENSURE_THROW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn request_ensure_type_error() {
+    ENSURE_THROW.with(|flag| flag.set(true));
+}
+
+pub fn take_ensure_error() -> Option<crate::execute::VmError> {
+    ENSURE_THROW
+        .with(|flag| flag.replace(false))
+        .then(|| crate::value::error::throw_type_error("deferred namespace is not ready"))
 }
 
 pub fn register_ensure(cell: &Rc<RefCell<Value>>, ensure: Rc<dyn Fn()>) {
@@ -46,6 +57,10 @@ pub fn rebind_object_ensure(cell: &Rc<RefCell<Value>>) {
 pub fn run_object_ensure(value: &Value, key: &str) {
     if key == "then" || key.starts_with("Symbol.") {
         return;
+    }
+    if let Value::BindingCell(cell) = value {
+        run_ensure(cell);
+        return run_object_ensure(&cell.borrow(), key);
     }
     let Value::Object(object) = value else {
         return;

@@ -124,7 +124,8 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
             require_initialized_this(&context)?;
             let prototype = require_super_base(&context.home)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
-            put_with_receiver(&prototype, key, value, &context.receiver)?;
+            let receiver = active_this(&context)?;
+            put_with_receiver(&prototype, key, value, &receiver)?;
             Ok(())
         }
         crate::ops::Op::SetSuperPropertyDynamic { key, src } => {
@@ -134,7 +135,8 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
             let key_value = crate::execute::read_register(registers, *key)?;
             let key_string = crate::properties::dynamic_property_key(&key_value)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
-            put_with_receiver(&prototype, &key_string, value, &context.receiver)?;
+            let receiver = active_this(&context)?;
+            put_with_receiver(&prototype, &key_string, value, &receiver)?;
             Ok(())
         }
         _ => Err(VmError::MissingReturn),
@@ -201,23 +203,34 @@ fn current() -> Result<Context, VmError> {
         .ok_or_else(super_error)
 }
 
+fn derived_this_slot(function: &crate::value::FunctionValue) -> Result<u16, VmError> {
+    let slot = function
+        .captures
+        .len()
+        .saturating_add(usize::from(function.params))
+        .saturating_add(1);
+    u16::try_from(slot).map_err(|_| VmError::MissingReturn)
+}
+
 fn require_initialized_this(context: &Context) -> Result<(), VmError> {
     if !crate::functions::is_derived_constructor(&context.function) {
         return Ok(());
     }
-    let slot = context
-        .function
-        .captures
-        .len()
-        .saturating_add(usize::from(context.function.params))
-        .saturating_add(1);
-    let slot = u16::try_from(slot).map_err(|_| VmError::MissingReturn)?;
+    let slot = derived_this_slot(&context.function)?;
     if crate::locals::current().is_uninitialized(slot) {
         return Err(crate::value::error::throw_reference_error(
             "this is uninitialized",
         ));
     }
     Ok(())
+}
+
+fn active_this(context: &Context) -> Result<Value, VmError> {
+    if !crate::functions::is_derived_constructor(&context.function) {
+        return Ok(context.receiver.clone());
+    }
+    let slot = derived_this_slot(&context.function)?;
+    Ok(crate::locals::current().get(slot))
 }
 
 pub(crate) fn check_initialized_this() -> Result<(), VmError> {
