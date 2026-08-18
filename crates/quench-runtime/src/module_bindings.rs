@@ -4,71 +4,58 @@ use std::{
     rc::Rc,
 };
 
-use crate::value::Value;
+use crate::{execute::VmError, value::Value};
 
 thread_local! {
-    static ENSURE: RefCell<HashMap<*const RefCell<Value>, Rc<dyn Fn()>>> =
+    static EVALUATORS: RefCell<HashMap<*const crate::value::ObjectData, Rc<dyn Fn()>>> =
         RefCell::new(HashMap::new());
-    static OBJECT_ENSURE: RefCell<HashMap<*const crate::value::ObjectData, Rc<dyn Fn()>>> =
-        RefCell::new(HashMap::new());
-    static ENSURE_THROW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static PENDING_TYPE_ERROR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-pub fn request_ensure_type_error() {
-    ENSURE_THROW.with(|flag| flag.set(true));
-}
-
-pub fn take_ensure_error() -> Option<crate::execute::VmError> {
-    ENSURE_THROW
-        .with(|flag| flag.replace(false))
-        .then(|| crate::value::error::throw_type_error("deferred namespace is not ready"))
-}
-
-pub fn register_ensure(cell: &Rc<RefCell<Value>>, ensure: Rc<dyn Fn()>) {
-    ENSURE.with(|map| {
-        map.borrow_mut().insert(Rc::as_ptr(cell), ensure.clone());
-    });
-    if let Value::Object(object) = cell.borrow().clone() {
-        OBJECT_ENSURE.with(|map| {
-            map.borrow_mut().insert(Rc::as_ptr(&object), ensure);
-        });
-    }
-}
-
-pub fn run_ensure(cell: &Rc<RefCell<Value>>) {
-    let ensure = ENSURE.with(|map| map.borrow().get(&Rc::as_ptr(cell)).cloned());
-    if let Some(ensure) = ensure {
-        ensure();
-    }
-}
-
-pub fn rebind_object_ensure(cell: &Rc<RefCell<Value>>) {
-    let ensure = ENSURE.with(|map| map.borrow().get(&Rc::as_ptr(cell)).cloned());
-    let Some(ensure) = ensure else {
-        return;
-    };
-    if let Value::Object(object) = cell.borrow().clone() {
-        OBJECT_ENSURE.with(|map| {
-            map.borrow_mut().insert(Rc::as_ptr(&object), ensure);
-        });
-    }
-}
-
-pub fn run_object_ensure(value: &Value, key: &str) {
+/// GetModuleExportsList: evaluate a deferred namespace unless the key is
+/// symbol-like (`then` or a symbol).
+pub fn exports(value: &Value, key: &str) -> Result<(), VmError> {
     if key == "then" || key.starts_with("Symbol.") {
-        return;
+        return Ok(());
     }
     if let Value::BindingCell(cell) = value {
-        run_ensure(cell);
-        return run_object_ensure(&cell.borrow(), key);
+        return exports(&cell.borrow(), key);
     }
+    let Value::Object(object) = value else {
+        return Ok(());
+    };
+    if let Some(evaluate) = EVALUATORS.with(|map| map.borrow().get(&Rc::as_ptr(object)).cloned()) {
+        evaluate();
+    }
+    if PENDING_TYPE_ERROR.with(|flag| flag.replace(false)) {
+        return Err(crate::value::error::throw_type_error(
+            "deferred namespace is not ready",
+        ));
+    }
+    Ok(())
+}
+
+pub fn attach_evaluator(value: &Value, evaluate: Rc<dyn Fn()>) {
     let Value::Object(object) = value else {
         return;
     };
-    let ensure = OBJECT_ENSURE.with(|map| map.borrow().get(&Rc::as_ptr(object)).cloned());
-    if let Some(ensure) = ensure {
-        ensure();
-    }
+    EVALUATORS.with(|map| {
+        map.borrow_mut().insert(Rc::as_ptr(object), evaluate);
+    });
+}
+
+pub fn rehome_evaluator(from: &Value, to: &Value) {
+    let Value::Object(old) = from else {
+        return;
+    };
+    let Some(evaluate) = EVALUATORS.with(|map| map.borrow().get(&Rc::as_ptr(old)).cloned()) else {
+        return;
+    };
+    attach_evaluator(to, evaluate);
+}
+
+pub fn request_ensure_type_error() {
+    PENDING_TYPE_ERROR.with(|flag| flag.set(true));
 }
 
 /// A live binding shared by module environments.
@@ -78,7 +65,6 @@ pub fn run_object_ensure(value: &Value, key: &str) {
 #[derive(Clone)]
 pub struct ModuleBindingCell {
     cell: Rc<RefCell<Value>>,
-    ensure: Option<Rc<dyn Fn()>>,
 }
 
 impl std::fmt::Debug for ModuleBindingCell {
@@ -100,13 +86,7 @@ impl ModuleBindingCell {
     pub fn new(value: Value) -> Self {
         Self {
             cell: Rc::new(RefCell::new(value)),
-            ensure: None,
         }
-    }
-
-    pub fn with_ensure(mut self, ensure: Rc<dyn Fn()>) -> Self {
-        self.ensure = Some(ensure);
-        self
     }
 
     pub fn unresolved() -> Self {
@@ -119,16 +99,10 @@ impl ModuleBindingCell {
     }
 
     pub fn from_shared(cell: Rc<RefCell<Value>>) -> Self {
-        Self {
-            cell,
-            ensure: None,
-        }
+        Self { cell }
     }
 
     pub fn get(&self) -> Value {
-        if let Some(ensure) = &self.ensure {
-            ensure();
-        }
         self.get_with_seen(&mut Vec::new())
     }
 
@@ -182,5 +156,20 @@ mod tests {
         assert_eq!(importer.resolve_name("value"), Some(Value::Number(1.0)));
         exporter.set_named("value", Value::Number(2.0));
         assert_eq!(importer.resolve_name("value"), Some(Value::Number(2.0)));
+    }
+
+    #[test]
+    fn exports_evaluates_a_deferred_namespace_once() {
+        use std::{cell::Cell, rc::Rc};
+        let object = Value::object(Vec::new());
+        let hits = Rc::new(Cell::new(0));
+        let count = hits.clone();
+        super::attach_evaluator(
+            &object,
+            Rc::new(move || count.set(count.get() + 1)),
+        );
+        super::exports(&object, "foo").expect("exports");
+        super::exports(&object, "then").expect("then is symbol-like");
+        assert_eq!(hits.get(), 1);
     }
 }

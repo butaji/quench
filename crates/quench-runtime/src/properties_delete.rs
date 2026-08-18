@@ -21,7 +21,7 @@ pub(crate) fn execute_delete_property(
         ));
     }
     let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
-    crate::module_bindings::run_object_ensure(&target, &key);
+    crate::module_bindings::exports(&target, &key)?;
     if matches!(target, crate::value::Value::Proxy(_)) {
         return delete_proxy_property(registers, *dst, &target, &key, *strict);
     }

@@ -62,7 +62,6 @@ pub(crate) fn define_property(arguments: &[Value]) -> Result<Value, crate::execu
         ));
     }
     let key = crate::conversion::to_property_key(arguments.get(1).unwrap_or(&Value::Undefined))?;
-    crate::module_bindings::run_object_ensure(target, &key);
     if matches!(target, Value::Proxy(_)) {
         return crate::proxy::proxy_define_property(
             target,
@@ -89,7 +88,6 @@ pub(crate) fn define_own_property(
     key: &str,
     descriptor: &[(String, Value)],
 ) -> Result<Value, crate::execute::VmError> {
-    crate::module_bindings::run_object_ensure(target, key);
     validate_descriptor_kind(descriptor)?;
     let key_value = Value::String(key.to_string());
     let current = crate::builtins::object::descriptor(Some(target), Some(&key_value))?;
