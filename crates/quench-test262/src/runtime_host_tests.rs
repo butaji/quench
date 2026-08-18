@@ -44,6 +44,25 @@ fn namespace_import_reads_live_export_cells() {
 }
 
 #[test]
+fn modules_share_global_this_across_units() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import './setup.js';\nexport default globalThis.evaluations.length;\n".to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("setup.js"),
+        "globalThis.evaluations = [];\n".to_string(),
+    );
+    let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    assert_eq!(
+        linked.export_cell(entry, "default").expect("default").get(),
+        Value::Number(0.0)
+    );
+}
+
+#[test]
 fn import_defer_does_not_evaluate_dependency() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(

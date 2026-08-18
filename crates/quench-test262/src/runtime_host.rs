@@ -95,6 +95,7 @@ impl LinkedModuleGraph {
     }
 
     pub fn execute(&self, graph: &ModuleGraph, entry: ModuleId) -> Result<(), String> {
+        let _shared = quench_runtime::vm::SharedGlobal::install();
         CURRENT_MODULE_GRAPH.with(|current| {
             current.set(Some((
                 self as *const LinkedModuleGraph,
@@ -283,6 +284,7 @@ impl LinkedModule {
             }
         }
         cell.set(quench_runtime::value::Value::object(properties));
+        quench_runtime::module_bindings::rebind_object_ensure(&cell.shared());
     }
 
     fn link_star_export(&self, name: &str, cell: ModuleBindingCell) {

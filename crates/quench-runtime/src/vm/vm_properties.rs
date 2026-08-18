@@ -22,6 +22,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
         crate::module_bindings::run_ensure(cell);
         return get_property(&cell.borrow(), key);
     }
+    crate::module_bindings::run_object_ensure(value, key);
     direct_or_primitive_property(value, key)
 }
 

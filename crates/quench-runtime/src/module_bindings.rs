@@ -9,16 +9,48 @@ use crate::value::Value;
 thread_local! {
     static ENSURE: RefCell<HashMap<*const RefCell<Value>, Rc<dyn Fn()>>> =
         RefCell::new(HashMap::new());
+    static OBJECT_ENSURE: RefCell<HashMap<*const crate::value::ObjectData, Rc<dyn Fn()>>> =
+        RefCell::new(HashMap::new());
 }
 
 pub fn register_ensure(cell: &Rc<RefCell<Value>>, ensure: Rc<dyn Fn()>) {
     ENSURE.with(|map| {
-        map.borrow_mut().insert(Rc::as_ptr(cell), ensure);
+        map.borrow_mut().insert(Rc::as_ptr(cell), ensure.clone());
     });
+    if let Value::Object(object) = cell.borrow().clone() {
+        OBJECT_ENSURE.with(|map| {
+            map.borrow_mut().insert(Rc::as_ptr(&object), ensure);
+        });
+    }
 }
 
 pub fn run_ensure(cell: &Rc<RefCell<Value>>) {
     let ensure = ENSURE.with(|map| map.borrow().get(&Rc::as_ptr(cell)).cloned());
+    if let Some(ensure) = ensure {
+        ensure();
+    }
+}
+
+pub fn rebind_object_ensure(cell: &Rc<RefCell<Value>>) {
+    let ensure = ENSURE.with(|map| map.borrow().get(&Rc::as_ptr(cell)).cloned());
+    let Some(ensure) = ensure else {
+        return;
+    };
+    if let Value::Object(object) = cell.borrow().clone() {
+        OBJECT_ENSURE.with(|map| {
+            map.borrow_mut().insert(Rc::as_ptr(&object), ensure);
+        });
+    }
+}
+
+pub fn run_object_ensure(value: &Value, key: &str) {
+    if key == "then" || key.starts_with("Symbol.") {
+        return;
+    }
+    let Value::Object(object) = value else {
+        return;
+    };
+    let ensure = OBJECT_ENSURE.with(|map| map.borrow().get(&Rc::as_ptr(object)).cloned());
     if let Some(ensure) = ensure {
         ensure();
     }
