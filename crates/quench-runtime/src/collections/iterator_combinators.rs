@@ -137,14 +137,14 @@ pub(crate) fn map(
         ));
     }
     let iterator = receiver_iterator(receiver)?;
-    Ok(Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Mapped {
+    Ok(Value::Iterator(Rc::new(IteratorData::new(
+        IteratorState::Mapped {
             iterator,
             mapper,
             index: 0,
             done: false,
-        }),
-    })))
+        },
+    ))))
 }
 
 pub(crate) fn filter(
@@ -159,14 +159,14 @@ pub(crate) fn filter(
         ));
     }
     let iterator = receiver_iterator(receiver)?;
-    Ok(Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Filtered {
+    Ok(Value::Iterator(Rc::new(IteratorData::new(
+        IteratorState::Filtered {
             iterator,
             predicate,
             index: 0,
             done: false,
-        }),
-    })))
+        },
+    ))))
 }
 
 pub(crate) fn some(
@@ -243,7 +243,14 @@ pub(crate) fn return_iterator(
         ));
     };
     let value = arguments.first().cloned().unwrap_or(Value::Undefined);
-    let completion = if let Some(iterators) = zip_iterators(data) {
+    let already_done = matches!(
+        &*data.state.borrow(),
+        IteratorState::Zip { done: true, .. }
+    );
+    mark_done(data);
+    let completion = if already_done {
+        crate::completion::Completion::Normal
+    } else if let Some(iterators) = zip_iterators(data) {
         close_iterators(iterators, crate::completion::Completion::Normal)?
     } else {
         close(
@@ -251,7 +258,6 @@ pub(crate) fn return_iterator(
             crate::completion::Completion::Normal,
         )?
     };
-    mark_done(data);
     match completion {
         crate::completion::Completion::Normal => Ok(result(value, true)),
         completion => completion.into_vm_error().map(|_| result(value, true)),
@@ -270,15 +276,15 @@ pub(crate) fn flat_map(
         ));
     }
     let inner = receiver_iterator(receiver)?;
-    let outer = Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::FlatMapped {
+    let outer = Value::Iterator(Rc::new(IteratorData::new(
+        IteratorState::FlatMapped {
             inner,
             mapper,
             index: 0,
             current: None,
             done: false,
-        }),
-    }));
+        },
+    )));
     Ok(outer)
 }
 
@@ -295,13 +301,13 @@ pub(crate) fn drop(
     let n = if limit.is_nan() || limit < 0.0 { 0.0 } else { limit };
     let inner = receiver_iterator(receiver)?;
     let dropped = consume_count(&inner, n as usize)?;
-    Ok(Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Dropped {
+    Ok(Value::Iterator(Rc::new(IteratorData::new(
+        IteratorState::Dropped {
             inner,
             skipped: dropped,
             done: dropped < n as usize,
-        }),
-    })))
+        },
+    ))))
 }
 
 pub(crate) fn take(
@@ -317,12 +323,9 @@ pub(crate) fn take(
     let n = if limit.is_nan() || limit < 0.0 { 0.0 } else { limit };
     let n = n.clamp(0.0, 9_007_199_254_740_991.0) as u64;
     let inner = receiver_iterator(receiver)?;
-    Ok(Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Take {
-            inner,
-            remaining: n,
-        }),
-    })))
+    Ok(Value::Iterator(Rc::new(IteratorData::new(
+        IteratorState::Take { inner, remaining: n },
+    ))))
 }
 
 pub(crate) fn reduce(
