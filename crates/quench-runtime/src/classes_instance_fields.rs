@@ -114,7 +114,11 @@ fn field_initializer_value(
     match initializer {
         crate::value::InstanceFieldInitializer::Undefined => Ok(crate::value::Value::Undefined),
         crate::value::InstanceFieldInitializer::Callable(function) => {
-            crate::functions::execute(function, receiver, &[])
+            crate::functions::execute_target(
+                &crate::value::Value::Function(std::rc::Rc::clone(function)),
+                receiver,
+                &[],
+            )
         }
         crate::value::InstanceFieldInitializer::Value(value) => Ok(value.clone()),
         crate::value::InstanceFieldInitializer::PrivateMethod(value) => Ok(value.clone()),
