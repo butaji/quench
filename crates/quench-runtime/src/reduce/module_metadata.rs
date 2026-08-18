@@ -1,6 +1,6 @@
 use oxc::ast::ast::{
     BindingPattern, BindingPatternKind, Declaration, ExportDefaultDeclaration,
-    ExportNamedDeclaration, ModuleExportName, Statement,
+    ExportDefaultDeclarationKind, ExportNamedDeclaration, ModuleExportName, Statement,
 };
 
 /// Static module edges and names discovered directly from OXC's module AST.
@@ -184,10 +184,10 @@ impl ModuleMetadata {
         }
     }
 
-    fn visit_default(&mut self, _export: &ExportDefaultDeclaration<'_>) {
+    fn visit_default(&mut self, export: &ExportDefaultDeclaration<'_>) {
         push_unique(&mut self.exported_names, "default");
         self.exports.push(ExportBinding {
-            local: "default".to_string(),
+            local: default_local_name(export),
             exported: "default".to_string(),
             source: false,
         });
@@ -250,6 +250,20 @@ fn binding_names(pattern: &BindingPattern<'_>, names: &mut Vec<String>) {
             }
         }
         BindingPatternKind::AssignmentPattern(assignment) => binding_names(&assignment.left, names),
+    }
+}
+
+fn default_local_name(export: &ExportDefaultDeclaration<'_>) -> String {
+    match &export.declaration {
+        ExportDefaultDeclarationKind::FunctionDeclaration(function) => function
+            .id
+            .as_ref()
+            .map_or_else(|| "default".to_string(), |id| id.name.to_string()),
+        ExportDefaultDeclarationKind::ClassDeclaration(class) => class
+            .id
+            .as_ref()
+            .map_or_else(|| "default".to_string(), |id| id.name.to_string()),
+        _ => "default".to_string(),
     }
 }
 

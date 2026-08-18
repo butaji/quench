@@ -113,6 +113,9 @@ fn resolve_export_cell(
     let metadata = unit_metadata(units, module).ok()?;
     let mut result: Option<ModuleBindingCell> = None;
     for binding in &metadata.reexports {
+        if binding.imported == "*all*" && name == "default" {
+            continue;
+        }
         if binding.imported != "*all*" && binding.exported != name {
             continue;
         }
