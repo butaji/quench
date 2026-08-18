@@ -6,6 +6,7 @@ pub(crate) fn reduce_expression(
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
     let names = private_definitions(class, facts);
+    let inferred = facts.inferred_name.clone();
     let mut body = Vec::new();
     let class_locals = class_scope_locals(class, locals);
     let heritage = reduce_heritage(class, &mut body, facts, next, &class_locals)?;
@@ -19,6 +20,7 @@ pub(crate) fn reduce_expression(
         facts,
         next,
         &class_locals,
+        inferred.as_deref(),
     )?;
     ops.push(Op::PrivateScope {
         names,
@@ -36,9 +38,10 @@ fn finish_class(
     facts: &mut ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
+    inferred: Option<&str>,
 ) -> Option<()> {
     let (constructor, default_constructor) = constructor;
-    set_class_name(class, constructor, body);
+    set_class_name(class, constructor, inferred, body);
     let prototype = configure_class(heritage, constructor, default_constructor, body, next);
     let static_fields = reduce_elements(
         class,

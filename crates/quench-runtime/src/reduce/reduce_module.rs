@@ -362,8 +362,12 @@ fn reduce_default_class_declaration<'a>(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
+    if class.id.is_none() {
+        facts.inferred_name = Some("default".to_string());
+    }
     let register = crate::classes::reduce_expression(class, ops, facts, next_register, locals)
         .ok_or_else(|| vec!["Unsupported class body".to_string()])?;
+    facts.inferred_name = None;
     if class.id.is_none() {
         ops.push(Op::SetFunctionName {
             function: register,

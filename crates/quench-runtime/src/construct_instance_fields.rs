@@ -2,7 +2,13 @@ pub(crate) fn initialize_instance_fields_impl(
     function: &crate::value::FunctionValue,
     mut receiver: Value,
 ) -> Result<Value, crate::execute::VmError> {
-    for field in function.instance_fields.borrow().iter() {
+    let fields = function.instance_fields.borrow();
+    for field in fields.iter().filter(|field| is_private_method(field)) {
+        let previous = receiver.clone();
+        receiver = initialize_instance_field(function, field, receiver)?;
+        crate::locals::replace_value(&previous, &receiver);
+    }
+    for field in fields.iter().filter(|field| !is_private_method(field)) {
         let previous = receiver.clone();
         receiver = initialize_instance_field(function, field, receiver)?;
         crate::locals::replace_value(&previous, &receiver);
@@ -18,11 +24,16 @@ fn initialize_instance_field(
     let value = match &field.initializer {
         crate::value::InstanceFieldInitializer::Undefined => Value::Undefined,
         crate::value::InstanceFieldInitializer::Callable(initializer) => {
-            crate::functions::execute_target(
+            crate::super_scope::attach_home(
+                &Value::Function(std::rc::Rc::clone(initializer)),
+                &receiver,
+            );
+            let value = crate::functions::execute_target(
                 &Value::Function(std::rc::Rc::clone(initializer)),
                 &receiver,
                 &[],
-            )?
+            )?;
+            name_field_value(&field.key, value)?
         }
         crate::value::InstanceFieldInitializer::Value(value) => value.clone(),
         crate::value::InstanceFieldInitializer::PrivateMethod(value) => {
@@ -101,6 +112,31 @@ fn define_instance_field(
         ("configurable".to_string(), Value::Boolean(true)),
     ];
     crate::builtins::define_own_property(&receiver, key, &descriptor)
+}
+
+fn is_private_method(field: &crate::value::InstanceFieldPlan) -> bool {
+    matches!(
+        field.initializer,
+        crate::value::InstanceFieldInitializer::PrivateMethod(_)
+            | crate::value::InstanceFieldInitializer::PrivateAccessor { .. }
+    )
+}
+
+fn name_field_value(
+    key: &crate::value::InstanceFieldKey,
+    value: crate::value::Value,
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let name = match key {
+        crate::value::InstanceFieldKey::Static(name) => name.as_ref(),
+        crate::value::InstanceFieldKey::Private(_) => {
+            return Ok(value);
+        }
+        crate::value::InstanceFieldKey::Dynamic(_) => return Ok(value),
+    };
+    if crate::execute::get_property(&value, "name") == crate::value::Value::String(String::new()) {
+        let _ = crate::builtins::set_function_name(&value, name);
+    }
+    Ok(value)
 }
 
 fn constructor_receiver(target: &crate::value::Value) -> crate::value::Value {

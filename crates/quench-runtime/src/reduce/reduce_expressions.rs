@@ -183,10 +183,12 @@ pub fn reduce_declaration(
         if declaration.kind == VariableDeclarationKind::Var && declarator.init.is_none() {
             continue;
         }
+        facts.inferred_name = binding_inferred_name(&declarator.id, declarator.init.as_ref());
         let register = match declarator.init.as_ref() {
             Some(init) => reduce_expression(init, ops, facts, next_register, locals),
             None => Some(crate::reduce_support::emit_undefined(ops, next_register)),
         };
+        facts.inferred_name = None;
         let Some(register) = register else {
             return Err(vec!["Unsupported variable initializer".to_string()]);
         };
@@ -208,6 +210,20 @@ pub fn reduce_declaration(
         );
     }
     Ok(())
+}
+
+fn binding_inferred_name(
+    pattern: &oxc::ast::ast::BindingPattern<'_>,
+    initializer: Option<&Expression<'_>>,
+) -> Option<String> {
+    let initializer = initializer?;
+    if !crate::binding_patterns::anonymous_function_definition(initializer) {
+        return None;
+    }
+    let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &pattern.kind else {
+        return None;
+    };
+    Some(identifier.name.to_string())
 }
 
 fn infer_declaration_name(

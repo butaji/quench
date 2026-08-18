@@ -28,6 +28,7 @@ fn define_static_private_field(
         return crate::private_slots::define_accessor(&constructor, name, accessor.0, accessor.1);
     }
     let value = private_field_value(registers, field, &constructor)?;
+    let value = name_initialized_value(field.initializer.as_ref(), value);
     if field.value.is_some() {
         return crate::private_slots::define_method(&constructor, name, value);
     }
