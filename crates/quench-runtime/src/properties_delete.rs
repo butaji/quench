@@ -22,6 +22,20 @@ pub(crate) fn execute_delete_property(
     }
     let key = dynamic_property_key(&crate::execute::read_register(registers, *key)?)?;
     crate::module_bindings::exports(&target, &key)?;
+    if crate::module_bindings::is_namespace(&target) {
+        let owned = crate::with_scope::has_property(&target, &key)?;
+        if owned && *strict {
+            return Err(crate::value::error::throw_type_error(
+                "Cannot delete module namespace export",
+            ));
+        }
+        crate::execute::write_value(
+            registers,
+            *dst,
+            crate::value::Value::Boolean(!owned),
+        );
+        return Ok(());
+    }
     if matches!(target, crate::value::Value::Proxy(_)) {
         return delete_proxy_property(registers, *dst, &target, &key, *strict);
     }

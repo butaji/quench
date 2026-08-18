@@ -65,6 +65,11 @@ impl StatementReducer {
                 &mut self.locals,
                 &mut self.next_slot,
             );
+            crate::reduce_support::predeclare_module_vars(
+                statements,
+                &mut self.locals,
+                &mut self.next_slot,
+            );
             emit_module_lexical_tdz(&mut self.ops, statements, &self.locals);
         }
         if global_script {

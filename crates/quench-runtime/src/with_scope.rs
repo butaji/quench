@@ -343,6 +343,9 @@ fn is_unscopable(object: &Value, key: &str) -> Result<bool, VmError> {
 
 pub(crate) fn has_property(value: &Value, key: &str) -> Result<bool, VmError> {
     crate::module_bindings::exports(value, key)?;
+    if let Value::BindingCell(cell) = value {
+        return has_property(&cell.borrow(), key);
+    }
     if let Value::ObjectAlias(alias) = value {
         let Some(object) = alias.0.borrow().upgrade().map(Value::Object) else {
             return Ok(false);

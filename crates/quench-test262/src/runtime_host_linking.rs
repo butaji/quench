@@ -126,8 +126,11 @@ fn resolve_export_cell(
             &binding.imported
         };
         let mut branch_seen = seen.clone();
-        let cell = resolve_export_cell(graph, units, target, imported, &mut branch_seen)
-            .or_else(|| units.get(&target)?.export_cell(imported))?;
+        let Some(cell) = resolve_export_cell(graph, units, target, imported, &mut branch_seen)
+            .or_else(|| units.get(&target).and_then(|unit| unit.export_cell(imported)))
+        else {
+            continue;
+        };
         if result
             .as_ref()
             .is_some_and(|existing| !Rc::ptr_eq(&existing.shared(), &cell.shared()))
@@ -179,6 +182,7 @@ fn namespace_cell(
         "\0quench:non_extensible".to_string(),
         quench_runtime::value::Value::Boolean(true),
     ));
+    quench_runtime::module_bindings::mark_namespace(&mut properties);
     let tag = if deferred {
         "Deferred Module"
     } else {
