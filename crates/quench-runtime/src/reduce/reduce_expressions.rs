@@ -177,6 +177,9 @@ pub fn reduce_declaration(
 ) -> Result<(), Vec<String>> {
     for declarator in &declaration.declarations {
         allocate_pattern_slots(&declarator.id, declaration.kind, next_slot, locals);
+        if crate::using_scope::is_using_kind(declaration.kind) {
+            crate::using_scope::mark_binding_tdz(&declarator.id, ops, locals);
+        }
         if declaration.kind == VariableDeclarationKind::Var && declarator.init.is_none() {
             continue;
         }
@@ -195,6 +198,12 @@ pub fn reduce_declaration(
             register,
             ops,
             next_register,
+            locals,
+        );
+        crate::using_scope::mark_binding_immutable(
+            declaration.kind,
+            &declarator.id,
+            ops,
             locals,
         );
     }

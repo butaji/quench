@@ -14,6 +14,16 @@ pub(crate) fn has_await_using(statements: &[Statement<'_>]) -> bool {
     statements.iter().any(statement_has_await_using)
 }
 
+pub(crate) fn reserve_slot(
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) -> u16 {
+    let slot = *next_slot;
+    *next_slot = next_slot.saturating_add(1);
+    locals.insert(CAPABILITY.to_string(), slot);
+    slot
+}
+
 pub(crate) fn reserve(
     statements: &[Statement<'_>],
     locals: &mut HashMap<String, u16>,
@@ -22,10 +32,7 @@ pub(crate) fn reserve(
     if !has_using(statements) {
         return None;
     }
-    let slot = *next_slot;
-    *next_slot = next_slot.saturating_add(1);
-    locals.insert(CAPABILITY.to_string(), slot);
-    Some(slot)
+    Some(reserve_slot(locals, next_slot))
 }
 
 pub(crate) fn emit_tdz(
@@ -136,6 +143,43 @@ pub(crate) fn register_resource(
         callee: None,
         args: vec![resource],
     });
+}
+
+pub(crate) fn mark_binding_tdz(
+    pattern: &oxc::ast::ast::BindingPattern<'_>,
+    ops: &mut Vec<Op>,
+    locals: &HashMap<String, u16>,
+) {
+    for name in crate::binding_patterns::names(pattern) {
+        if let Some(&slot) = locals.get(&name) {
+            ops.push(Op::MarkUninitialized { slot });
+        }
+    }
+}
+
+pub(crate) fn mark_binding_immutable(
+    kind: VariableDeclarationKind,
+    pattern: &oxc::ast::ast::BindingPattern<'_>,
+    ops: &mut Vec<Op>,
+    locals: &HashMap<String, u16>,
+) {
+    if !is_using_kind(kind) {
+        return;
+    }
+    for name in crate::binding_patterns::names(pattern) {
+        if let Some(&slot) = locals.get(&name) {
+            ops.push(Op::MarkImmutable { slot });
+        }
+    }
+}
+
+pub(crate) fn for_init_kind(
+    init: Option<&oxc::ast::ast::ForStatementInit<'_>>,
+) -> Option<VariableDeclarationKind> {
+    let oxc::ast::ast::ForStatementInit::VariableDeclaration(declaration) = init? else {
+        return None;
+    };
+    is_using_kind(declaration.kind).then_some(declaration.kind)
 }
 
 pub(crate) fn is_using_kind(kind: VariableDeclarationKind) -> bool {
