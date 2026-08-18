@@ -1,5 +1,4 @@
 use crate::value::Value;
-include!("strings_static.rs");
 
 /// Builds the canonical string value for raw UTF-16 code units: a plain
 /// `String` when the units are valid UTF-16, otherwise `StringUnits`.
@@ -9,6 +8,8 @@ pub(crate) fn from_units(units: Vec<u16>) -> Value {
         Err(_) => Value::StringUnits(std::rc::Rc::new(units)),
     }
 }
+
+include!("strings_static.rs");
 
 /// The raw UTF-16 code units of a string value.
 pub(crate) fn units_of(value: &Value) -> Option<Vec<u16>> {
