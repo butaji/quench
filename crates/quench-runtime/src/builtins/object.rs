@@ -237,7 +237,7 @@ pub(crate) fn descriptor(
     };
     let value = crate::locals::resolved_replacement(value.clone());
     let key = crate::conversion::to_property_key(key)?;
-    crate::module_bindings::run_object_ensure(&value, &key);
+    crate::module_bindings::exports(&value, &key)?;
     let descriptor = descriptor_for_value(&value, &key);
     Ok(descriptor.unwrap_or(Value::Undefined))
 }

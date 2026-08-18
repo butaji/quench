@@ -37,7 +37,7 @@ fn link_reexport(
     if binding.imported == "*all*" {
         return link_star_exports(units, from, target);
     }
-    let cell = import_cell(graph, units, target, &binding.imported)?;
+    let cell = import_cell(graph, units, target, &binding.imported, false)?;
     units
         .get(&from)
         .ok_or_else(|| "module unit missing".to_string())?
@@ -79,9 +79,10 @@ fn import_cell(
     units: &std::collections::HashMap<ModuleId, LinkedModule>,
     target: ModuleId,
     imported: &str,
+    deferred: bool,
 ) -> Result<ModuleBindingCell, String> {
     if imported == "*" {
-        return namespace_cell(units, target, Some(target));
+        return namespace_cell(units, target, deferred.then_some(target), deferred);
     }
     if imported == "source" {
         return units
@@ -139,17 +140,25 @@ fn namespace_cell(
     units: &std::collections::HashMap<ModuleId, LinkedModule>,
     target: ModuleId,
     evaluate: Option<ModuleId>,
+    deferred: bool,
 ) -> Result<ModuleBindingCell, String> {
     let unit = units
         .get(&target)
         .ok_or_else(|| "module unit missing".to_string())?;
-    let cached = unit.namespace_cell.borrow().clone();
+    let cached = if deferred {
+        unit.deferred_namespace_cell.borrow().clone()
+    } else {
+        unit.namespace_cell.borrow().clone()
+    };
     if let Some(cell) = cached {
-        unit.refresh_namespace();
+        if !deferred {
+            unit.refresh_namespace();
+        }
         return Ok(cell);
     }
-    let mut properties: Vec<(String, quench_runtime::value::Value)> = unit
-        .export_names()
+    let mut export_names = unit.export_names();
+    export_names.sort();
+    let mut properties: Vec<(String, quench_runtime::value::Value)> = export_names
         .iter()
         .filter_map(|name| unit.export_cell(name).map(|cell| (name.clone(), cell)))
         .map(|(name, cell)| {
@@ -166,6 +175,36 @@ fn namespace_cell(
     properties.push((
         "\0quench:non_extensible".to_string(),
         quench_runtime::value::Value::Boolean(true),
+    ));
+    let tag = if deferred {
+        "Deferred Module"
+    } else {
+        "Module"
+    };
+    properties.push((
+        "Symbol.toStringTag".to_string(),
+        quench_runtime::value::Value::String(tag.to_string()),
+    ));
+    properties.push((
+        "\0quench:descriptor:\0Symbol.toStringTag".to_string(),
+        quench_runtime::value::Value::object(vec![
+            (
+                "value".to_string(),
+                quench_runtime::value::Value::String(tag.to_string()),
+            ),
+            (
+                "writable".to_string(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+            (
+                "enumerable".to_string(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+            (
+                "configurable".to_string(),
+                quench_runtime::value::Value::Boolean(false),
+            ),
+        ]),
     ));
     for name in unit.export_names() {
         if let Some(cell) = unit.export_cell(&name) {
@@ -194,12 +233,16 @@ fn namespace_cell(
     }
     let cell = ModuleBindingCell::new(quench_runtime::value::Value::object(properties));
     if let Some(id) = evaluate {
-        quench_runtime::module_bindings::register_ensure(
-            &cell.shared(),
+        quench_runtime::module_bindings::attach_evaluator(
+            &cell.get(),
             std::rc::Rc::new(move || ensure_module(id)),
         );
     }
-    *unit.namespace_cell.borrow_mut() = Some(cell.clone());
+    if deferred {
+        *unit.deferred_namespace_cell.borrow_mut() = Some(cell.clone());
+    } else {
+        *unit.namespace_cell.borrow_mut() = Some(cell.clone());
+    }
     Ok(cell)
 }
 

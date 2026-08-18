@@ -21,7 +21,7 @@ fn has_own_property_result(
         return Ok(Value::Boolean(false));
     };
     let key = crate::properties::dynamic_property_key(key)?;
-    crate::module_bindings::run_object_ensure(receiver, &key);
+    crate::module_bindings::exports(receiver, &key)?;
     Ok(Value::Boolean(owns_property(receiver, &key)?))
 }
 fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError> {
