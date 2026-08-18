@@ -508,4 +508,9 @@ pub enum Op {
         stack: u16,
         await_using: bool,
     },
+    DynamicImport {
+        dst: u16,
+        specifier: u16,
+        deferred: bool,
+    },
 }

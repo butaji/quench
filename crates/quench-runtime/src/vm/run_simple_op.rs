@@ -33,6 +33,7 @@ fn run_simple_single_op(
         MakeFunction { .. } | MakeFunctionWithKind { .. } => {
             crate::functions::write_op(registers, op)
         }
+        DynamicImport { .. } => run_dynamic_import(registers, op)?,
         Call { .. } => run_call(registers, op)?,
         OptionalCall { .. } => run_optional_call(registers, op)?,
         Eval { .. } => run_eval(registers, op)?,
@@ -50,6 +51,22 @@ fn run_simple_single_op(
         _ => return Ok(None),
     }
     Ok(Some(None))
+}
+
+fn run_dynamic_import(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+    let Op::DynamicImport {
+        dst,
+        specifier,
+        deferred,
+    } = op
+    else {
+        return Ok(());
+    };
+    let specifier = crate::conversion::to_string(&crate::execute::read_register(registers, *specifier)?)?;
+    let value = crate::module_bindings::resolve_dynamic_import(&specifier, *deferred)
+        .unwrap_or_else(|| Value::String(specifier));
+    write_value(registers, *dst, value);
+    Ok(())
 }
 
 fn run_class_prototype(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {

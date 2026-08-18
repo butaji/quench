@@ -3,12 +3,32 @@ thread_local! {
         const { RefCell::new(VecDeque::new()) };
     static THEN_RESULTS: RefCell<HashMap<usize, VecDeque<Rc<PromiseData>>>> =
         RefCell::new(HashMap::new());
+    static JOB_QUEUE: RefCell<VecDeque<Rc<dyn Fn()>>> = const { RefCell::new(VecDeque::new()) };
+}
+
+pub fn enqueue_job(job: Rc<dyn Fn()>) {
+    JOB_QUEUE.with(|queue| queue.borrow_mut().push_back(job));
+}
+
+pub fn clear_jobs() {
+    JOB_QUEUE.with(|queue| queue.borrow_mut().clear());
 }
 
 /// Drains all queued microtasks.
 pub fn drain_microtasks() {
-    while let Some(promise) = MICROTASK_QUEUE.with(|q| q.borrow_mut().pop_front()) {
-        process_promise(&promise);
+    loop {
+        let promise = MICROTASK_QUEUE.with(|q| q.borrow_mut().pop_front());
+        let job = JOB_QUEUE.with(|q| q.borrow_mut().pop_front());
+        match (promise, job) {
+            (None, None) => break,
+            (Some(promise), job) => {
+                process_promise(&promise);
+                if let Some(job) = job {
+                    job();
+                }
+            }
+            (None, Some(job)) => job(),
+        }
     }
 }
 
