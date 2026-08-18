@@ -44,6 +44,24 @@ fn namespace_import_reads_live_export_cells() {
 }
 
 #[test]
+fn text_import_attribute_does_not_parse_fixture_as_javascript() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import value from './note.js' with { type: 'text' };\nexport default value;\n".to_string(),
+    );
+    graph.add_text_dependency(PathBuf::from("note.js"), "invalid { javascript".to_string());
+    graph.link(entry, graph.resolve(entry, "./note.js").expect("resolved"))
+        .expect("linked");
+    let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    assert_eq!(
+        linked.export_cell(entry, "default").expect("default").get(),
+        Value::String("invalid { javascript".to_string())
+    );
+}
+
+#[test]
 fn modules_share_global_this_across_units() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(
