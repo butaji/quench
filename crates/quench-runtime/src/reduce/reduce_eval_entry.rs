@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn eval_accepts_nul_inside_a_line_comment() {
         let program = super::reduce_eval_source(
-            "//\0var yy = -1\n",
+            "//var \0yy = -1",
             false,
             true,
             true,
