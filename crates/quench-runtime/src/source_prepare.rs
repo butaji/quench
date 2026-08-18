@@ -20,7 +20,6 @@ fn rewrite_nuls(source: &str) -> String {
             '/' => push_slash(&mut out, &mut chars),
             '"' | '\'' => push_quoted(&mut out, ch, &mut chars),
             '`' => push_template(&mut out, &mut chars),
-            '\0' => out.push(' '),
             other => out.push(other),
         }
     }
