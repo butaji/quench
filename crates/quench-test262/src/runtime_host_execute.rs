@@ -27,7 +27,12 @@ impl LinkedModule {
     ) -> Result<quench_runtime::value::Value, String> {
         match result {
             Ok((quench_runtime::completion::Completion::Suspend(_), next)) => {
-                self.suspend_execute(next, registers)
+                let pc = if quench_runtime::module_bindings::await_advanced() {
+                    next
+                } else {
+                    next.saturating_sub(1)
+                };
+                self.suspend_execute(pc, registers)
             }
             Ok((quench_runtime::completion::Completion::Throw(value), _)) => {
                 self.fail_execute(value)
@@ -45,6 +50,10 @@ impl LinkedModule {
         next: usize,
         registers: Vec<quench_runtime::value::Value>,
     ) -> Result<quench_runtime::value::Value, String> {
+        if self.resume_pc.get() == next && !registers.is_empty() {
+            *self.resume_registers.borrow_mut() = registers;
+            return Ok(quench_runtime::value::Value::Undefined);
+        }
         self.resume_pc.set(next);
         *self.resume_registers.borrow_mut() = registers;
         let unit = self as *const LinkedModule;

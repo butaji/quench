@@ -99,6 +99,14 @@ impl LinkedModuleGraph {
                 CURRENT_MODULE_ID.with(|id| {
                     let from = id.get().or_else(|| unsafe { &*modules_ptr }.entry())?;
                     let target = unsafe { &*modules_ptr }.resolve(from, specifier)?;
+                    if !deferred {
+                        let _ = evaluate_module(
+                            unsafe { &*graph_ptr },
+                            unsafe { &*modules_ptr },
+                            target,
+                            true,
+                        );
+                    }
                     import_cell(
                         unsafe { &*modules_ptr },
                         &unsafe { &*graph_ptr }.units,
@@ -113,6 +121,16 @@ impl LinkedModuleGraph {
         ));
         let result = evaluate_module(self, graph, entry, true);
         quench_runtime::module_bindings::drain_jobs();
+        let result = match self.units.get(&entry).and_then(|unit| unit.thrown.borrow().clone()) {
+            Some(thrown) => {
+                quench_runtime::module_bindings::request_ensure_throw(thrown.clone());
+                Err(format!(
+                    "residual VM error: {}",
+                    quench_runtime::execute::VmError::Thrown(thrown).render()
+                ))
+            }
+            None => result,
+        };
         CURRENT_MODULE_GRAPH.with(|current| current.set(None));
         quench_runtime::module_bindings::defer_fulfilled_await(false);
         result
