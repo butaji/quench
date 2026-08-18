@@ -57,7 +57,7 @@ pub(crate) fn reduce_global_script_source(source: &str) -> Result<ResidualProgra
     reduce_source_with_type_and_global(source, SourceType::cjs(), true)
 }
 pub fn reduce_module_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
-    reduce_source_with_type(source, SourceType::mjs())
+    reduce_source_with_type_and_global(source, SourceType::mjs(), true)
 }
 
 pub fn inspect_module_source(source: &str) -> Result<crate::reduce::ModuleMetadata, Vec<String>> {
