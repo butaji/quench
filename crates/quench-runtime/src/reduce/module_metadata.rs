@@ -15,6 +15,7 @@ pub struct ModuleMetadata {
     pub exports: Vec<ExportBinding>,
     pub reexports: Vec<ReexportBinding>,
     pub exported_names: Vec<String>,
+    pub has_top_level_await: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +49,7 @@ impl ModuleMetadata {
             metadata.visit_statement(statement);
         }
         metadata.mark_source_exports();
+        metadata.has_top_level_await = statements.iter().any(statement_has_tla);
         metadata
     }
 
@@ -252,6 +254,26 @@ fn module_export_name(name: &ModuleExportName<'_>) -> String {
         ModuleExportName::IdentifierReference(identifier) => identifier.name.to_string(),
         ModuleExportName::StringLiteral(literal) => literal.value.to_string(),
     }
+}
+
+fn statement_has_tla(statement: &Statement<'_>) -> bool {
+    struct Finder {
+        found: bool,
+    }
+    impl<'a> oxc::ast::visit::Visit<'a> for Finder {
+        fn visit_await_expression(&mut self, _: &oxc::ast::ast::AwaitExpression<'a>) {
+            self.found = true;
+        }
+        fn visit_function(&mut self, _: &oxc::ast::ast::Function<'a>, _: oxc::syntax::scope::ScopeFlags) {}
+        fn visit_arrow_function_expression(
+            &mut self,
+            _: &oxc::ast::ast::ArrowFunctionExpression<'a>,
+        ) {
+        }
+    }
+    let mut finder = Finder { found: false };
+    oxc::ast::visit::walk::walk_statement(&mut finder, statement);
+    finder.found
 }
 
 fn push_unique(values: &mut Vec<String>, value: &str) {

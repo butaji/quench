@@ -33,6 +33,7 @@ pub struct LinkedModule {
     module_source: ModuleBindingCell,
     evaluated: Cell<bool>,
     started: Cell<bool>,
+    evaluating: Cell<bool>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -128,6 +129,7 @@ impl LinkedModule {
             module_source: module_source_cell(),
             evaluated: Cell::new(false),
             started: Cell::new(false),
+            evaluating: Cell::new(false),
         })
     }
 
@@ -144,6 +146,7 @@ impl LinkedModule {
             module_source: module_source_cell(),
             evaluated: Cell::new(false),
             started: Cell::new(false),
+            evaluating: Cell::new(false),
         })
     }
 
@@ -329,12 +332,14 @@ impl LinkedModule {
         if self.evaluated.get() {
             return Ok(quench_runtime::value::Value::Undefined);
         }
-        self.evaluated.set(true);
+        self.evaluating.set(true);
         let mut registers = Vec::new();
         let result = self
             .scope
-            .execute(self.program.ops(), &mut registers, host_context())
-            .map_err(|error| format!("residual VM error: {}", error.render()))?;
+            .execute(self.program.ops(), &mut registers, host_context());
+        self.evaluating.set(false);
+        self.evaluated.set(true);
+        let result = result.map_err(|error| format!("residual VM error: {}", error.render()))?;
         for (name, value) in &self.fixed_exports {
             let cell = self
                 .export_cell(name)
@@ -357,6 +362,14 @@ fn ensure_module(id: ModuleId) {
         };
         let units = unsafe { &*units };
         let graph = unsafe { &*graph };
+        if units
+            .units
+            .get(&id)
+            .is_some_and(|unit| unit.evaluating.get())
+        {
+            quench_runtime::module_bindings::request_ensure_type_error();
+            return;
+        }
         let _ = evaluate_module(units, graph, id, true);
     });
 }
@@ -378,6 +391,12 @@ fn evaluate_module(
     let metadata = unit.program.module_metadata.as_ref();
     for dependency in graph.dependencies(id) {
         if skip_deferred && is_deferred_edge(metadata, graph, id, *dependency) {
+            evaluate_async_transitive(
+                graph_units,
+                graph,
+                *dependency,
+                &mut HashSet::new(),
+            )?;
             continue;
         }
         evaluate_module(graph_units, graph, *dependency, skip_deferred)?;
@@ -387,6 +406,33 @@ fn evaluate_module(
         .get(&id)
         .ok_or_else(|| "module unit missing".to_string())?
         .execute()?;
+    Ok(())
+}
+
+fn evaluate_async_transitive(
+    graph_units: &LinkedModuleGraph,
+    graph: &ModuleGraph,
+    id: ModuleId,
+    seen: &mut HashSet<ModuleId>,
+) -> Result<(), String> {
+    if !seen.insert(id) {
+        return Ok(());
+    }
+    let unit = graph_units
+        .units
+        .get(&id)
+        .ok_or_else(|| "module unit missing".to_string())?;
+    if unit
+        .program
+        .module_metadata
+        .as_ref()
+        .is_some_and(|metadata| metadata.has_top_level_await)
+    {
+        return evaluate_module(graph_units, graph, id, true);
+    }
+    for dependency in graph.dependencies(id) {
+        evaluate_async_transitive(graph_units, graph, *dependency, seen)?;
+    }
     Ok(())
 }
 
