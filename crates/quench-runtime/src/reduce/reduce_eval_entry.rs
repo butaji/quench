@@ -27,8 +27,9 @@ pub(crate) fn reduce_eval_source_in_context(
 ) -> Result<ResidualProgram, Vec<String>> {
     let strict_source = inherited_strict.then(|| format!("\"use strict\";\n{source}"));
     let source = strict_source.as_deref().unwrap_or(source);
+    let source = crate::reduce_support::prepare_source(source);
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
+    let parsed = Parser::new(&allocator, source.as_ref(), SourceType::cjs()).parse();
     crate::reduce_support::validate_parse(&parsed)?;
     crate::reduce_support::validate_program(&parsed.program)?;
     let analysis = crate::semantic::analyze_eval(&parsed.program, grammar)?;
@@ -37,7 +38,7 @@ pub(crate) fn reduce_eval_source_in_context(
     let directive_completion =
         super::reduce_eval::directive_completion(&parsed.program, inherited_strict);
     let mut facts = eval_facts(&analysis, strict);
-    install_eval_facts(&mut facts, source, &analysis);
+    install_eval_facts(&mut facts, source.as_ref(), &analysis);
     let (locals, next_slot, prefix, behavior, deletable) = crate::reduce_support::eval_bindings(
         &parsed.program,
         bindings,
@@ -126,4 +127,20 @@ fn eval_facts(analysis: &crate::semantic::Analysis, strict: bool) -> ProgramDb {
 fn install_eval_facts(facts: &mut ProgramDb, source: &str, analysis: &crate::semantic::Analysis) {
     facts.install_reduction_source(source);
     facts.install_fact_sites(analysis.fact_sites.clone());
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn eval_accepts_nul_inside_a_line_comment() {
+        let program = super::reduce_eval_source(
+            "//\0var yy = -1\n",
+            false,
+            true,
+            true,
+            &[("globalThis".to_string(), 0)],
+            &[],
+        );
+        assert!(program.is_ok(), "{program:?}");
+    }
 }
