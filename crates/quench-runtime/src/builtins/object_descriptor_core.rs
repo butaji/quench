@@ -300,14 +300,22 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
     }
     if builtin == Builtin::GeneratorFunctionPrototype && key == "prototype" {
         return Some(descriptor_object_with_flags(
-            Value::Builtin(Builtin::ObjectPrototype),
+            crate::builtins::generator_prototype(),
+            false,
+            false,
+            true,
+        ));
+    }
+    if builtin == Builtin::AsyncGeneratorFunctionPrototype && key == "prototype" {
+        return Some(descriptor_object_with_flags(
+            crate::builtins::async_generator_prototype(),
             false,
             false,
             true,
         ));
     }
     if builtin == Builtin::AsyncGeneratorFunctionPrototype
-        && matches!(key, "constructor" | "prototype" | "Symbol.toStringTag")
+        && matches!(key, "constructor" | "Symbol.toStringTag")
     {
         let property = super::property(builtin, key);
         if !matches!(property, Value::Undefined) {
@@ -333,7 +341,7 @@ fn builtin_descriptor(builtin: Builtin, key: &str) -> Option<Value> {
 fn builtin_descriptor_tail(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::GeneratorFunctionPrototype && key == "prototype" {
         return Some(descriptor_object_with_flags(
-            Value::Builtin(Builtin::ObjectPrototype),
+            crate::builtins::generator_prototype(),
             false,
             false,
             true,
