@@ -378,6 +378,12 @@ pub(super) fn native_step(
             let length = iterator_typed::typed_length(value)?;
             (*index < length).then_some(Value::Number(*index as f64))
         } else {
+            let detached = typed_receiver_is_detached(value);
+            if detached {
+                return Err(crate::value::error::throw_type_error(
+                    "Array iterator called on detached TypedArray",
+                ));
+            }
             let values = iterator_typed::typed_values(value.clone())?;
             values.get(*index).cloned()
         }
@@ -389,6 +395,24 @@ pub(super) fn native_step(
     *index = index.saturating_add(1);
     *done = value.is_none();
     Ok(value)
+}
+
+fn typed_receiver_is_detached(value: &Value) -> bool {
+    let buffer = match value {
+        Value::Float64Array(data) => &data.buffer,
+        Value::Float32Array(data) => &data.buffer,
+        Value::Int8Array(data) => &data.buffer,
+        Value::Int16Array(data) => &data.buffer,
+        Value::Int32Array(data) => &data.buffer,
+        Value::Uint8Array(data) => &data.buffer,
+        Value::Uint8ClampedArray(data) => &data.buffer,
+        Value::Uint16Array(data) => &data.buffer,
+        Value::Uint32Array(data) => &data.buffer,
+        Value::BigInt64Array(data) => &data.buffer,
+        Value::BigUint64Array(data) => &data.buffer,
+        _ => return false,
+    };
+    *buffer.detached.borrow()
 }
 
 fn array_receiver_step(
