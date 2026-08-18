@@ -75,6 +75,22 @@ pub fn request_ensure_throw(value: Value) {
     PENDING_THROW.with(|slot| *slot.borrow_mut() = Some(value));
 }
 
+pub fn take_pending_throw() -> Option<Value> {
+    PENDING_THROW.with(|slot| slot.borrow_mut().take())
+}
+
+thread_local! {
+    static AWAIT_ADVANCED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn mark_await_advanced(advanced: bool) {
+    AWAIT_ADVANCED.with(|flag| flag.set(advanced));
+}
+
+pub fn await_advanced() -> bool {
+    AWAIT_ADVANCED.with(std::cell::Cell::get)
+}
+
 pub fn has_evaluator(value: &Value) -> bool {
     let Value::Object(object) = unwrap_cells(value) else {
         return false;
