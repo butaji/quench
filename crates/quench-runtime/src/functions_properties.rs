@@ -13,10 +13,15 @@ fn function_properties(length: u16) -> std::rc::Rc<std::cell::RefCell<Vec<(Strin
         ("enumerable".to_string(), crate::value::Value::Boolean(false)),
         ("configurable".to_string(), crate::value::Value::Boolean(true)),
     ])));
-    std::rc::Rc::new(std::cell::RefCell::new(vec![
+    let realm = crate::vm::current_context_or_default().realm();
+    let mut properties = vec![
         ("name".to_string(), name),
         (crate::builtins::descriptor_key("name"), name_descriptor),
         ("length".to_string(), value),
         (crate::builtins::descriptor_key("length"), descriptor),
-    ]))
+    ];
+    if let Some(token) = crate::vm::realm_token(realm) {
+        properties.push(("\0realm".to_string(), token));
+    }
+    std::rc::Rc::new(std::cell::RefCell::new(properties))
 }
