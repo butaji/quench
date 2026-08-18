@@ -107,6 +107,10 @@ pub(crate) fn execute_construct(
     if is_derived_constructor(function) {
         environment.mark_uninitialized(this_slot);
     }
+    let _private = crate::private_environment::Guard::install_environment(
+        function.private_environment.clone(),
+    );
+    let _home = crate::super_scope::Guard::install(function, this_value);
     let result = crate::vm::execute_in_environment(
         function.ops(),
         &mut registers,
