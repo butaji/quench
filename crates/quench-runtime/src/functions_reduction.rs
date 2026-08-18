@@ -152,6 +152,7 @@ fn prepare_function_scope(
     self_name: Option<&str>,
 ) -> (HashMap<String, u16>, HashMap<String, u16>, u16, Option<u16>) {
     let (parameters, count) = parameters;
+    let has_rest = parameters.contains_key("\0rest");
     let captures = capture_count(locals);
     let (mut parameters, mut body) = split_function_locals(
         statements,
@@ -167,7 +168,7 @@ fn prepare_function_scope(
         parameters.insert(name.to_string(), slot);
         body.insert(name.to_string(), slot);
     }
-    let rest = rest_slot(&parameters);
+    let rest = has_rest.then(|| rest_slot(&parameters)).flatten();
     (parameters, body, captures, rest)
 }
 fn split_function_locals(
