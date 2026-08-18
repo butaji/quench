@@ -176,7 +176,7 @@ pub fn reduce_declaration(
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
     for declarator in &declaration.declarations {
-        allocate_pattern_slots(&declarator.id, declaration.kind, next_slot, locals);
+        allocate_pattern_slots(&declarator.id, declaration.kind, next_slot, locals, facts);
         if crate::using_scope::is_using_kind(declaration.kind) {
             crate::using_scope::mark_binding_tdz(&declarator.id, ops, locals);
         }
@@ -236,20 +236,22 @@ fn allocate_pattern_slots(
     kind: VariableDeclarationKind,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
+    facts: &ProgramDb,
 ) {
     for name in crate::binding_patterns::names(pattern) {
-        let slot = declaration_slot(kind, &name, next_slot, locals);
+        let slot = declaration_slot(kind, &name, next_slot, locals, facts);
         locals.insert(name, slot);
     }
 }
 
 fn declaration_slot(
-    _kind: VariableDeclarationKind,
+    kind: VariableDeclarationKind,
     name: &str,
     next_slot: &mut u16,
     locals: &HashMap<String, u16>,
+    facts: &ProgramDb,
 ) -> u16 {
-    if _kind != VariableDeclarationKind::Var {
+    if kind != VariableDeclarationKind::Var {
         let marker = format!("\0lexical-predeclared:{name}");
         if let Some(slot) = locals.get(&marker) {
             return *slot;
@@ -259,7 +261,9 @@ fn declaration_slot(
         return slot;
     }
     if let Some(slot) = locals.get(name) {
-        return *slot;
+        if facts.function_name_slot != Some(*slot) {
+            return *slot;
+        }
     }
     let slot = *next_slot;
     *next_slot = next_slot.saturating_add(1);
