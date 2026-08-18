@@ -153,6 +153,44 @@ fn deferred_gopd_after_own_keys() {
 }
 
 #[test]
+fn module_throw_statement_fails_execute() {
+    let module = LinkedModule::compile("throw { someError: 'x' };").expect("compiles");
+    assert!(
+        module.execute().is_err(),
+        "throw statement must fail LinkedModule::execute"
+    );
+}
+
+#[test]
+fn deferred_module_throw_is_replayed_on_get() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        concat!(
+            "import defer * as ns from './throws.js';\n",
+            "let caught;\n",
+            "try { ns.foo } catch (error) { caught = error }\n",
+            "export default caught;\n",
+            "export { ns };\n",
+        )
+        .to_string(),
+    );
+    graph.add_dependency(
+        PathBuf::from("throws.js"),
+        "throw { someError: 'x' };\n".to_string(),
+    );
+    let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    let ns = linked.export_cell(entry, "ns").expect("ns").get();
+    let caught = linked.export_cell(entry, "default").expect("caught").get();
+    assert!(
+        !matches!(caught, Value::Undefined),
+        "evaluation throw must be caught, evaluator={} ns={ns:?} caught={caught:?}",
+        quench_runtime::module_bindings::has_evaluator(&ns)
+    );
+}
+
+#[test]
 fn export_star_forwards_live_cells() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(PathBuf::from("entry.js"), "import { value } from './barrel.js'; export default value;".to_string());
