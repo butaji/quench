@@ -54,6 +54,7 @@ impl LinkedModule {
             *self.resume_registers.borrow_mut() = registers;
             return Ok(quench_runtime::value::Value::Undefined);
         }
+        self.async_suspended.set(true);
         self.resume_pc.set(next);
         *self.resume_registers.borrow_mut() = registers;
         let unit = self as *const LinkedModule;
@@ -67,7 +68,9 @@ impl LinkedModule {
         &self,
         value: quench_runtime::value::Value,
     ) -> Result<quench_runtime::value::Value, String> {
+        self.async_suspended.set(false);
         self.evaluated.set(true);
+        wake_waiting_modules();
         *self.thrown.borrow_mut() = Some(value.clone());
         quench_runtime::module_bindings::request_ensure_throw(value.clone());
         Err(format!(
@@ -91,7 +94,9 @@ impl LinkedModule {
         &self,
         value: quench_runtime::value::Value,
     ) -> Result<quench_runtime::value::Value, String> {
+        self.async_suspended.set(false);
         self.evaluated.set(true);
+        wake_waiting_modules();
         for (name, export) in &self.fixed_exports {
             let cell = self
                 .export_cell(name)

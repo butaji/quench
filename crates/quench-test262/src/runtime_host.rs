@@ -38,6 +38,7 @@ pub struct LinkedModule {
     thrown: RefCell<Option<quench_runtime::value::Value>>,
     resume_pc: Cell<usize>,
     resume_registers: RefCell<Vec<quench_runtime::value::Value>>,
+    async_suspended: Cell<bool>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -106,6 +107,7 @@ impl LinkedModuleGraph {
                             target,
                             true,
                         );
+                        settle_dynamic_import(unsafe { &*graph_ptr }, target);
                     }
                     import_cell(
                         unsafe { &*modules_ptr },
@@ -162,6 +164,7 @@ impl LinkedModule {
             thrown: RefCell::new(None),
             resume_pc: Cell::new(0),
             resume_registers: RefCell::new(Vec::new()),
+            async_suspended: Cell::new(false),
         })
     }
 
@@ -183,6 +186,7 @@ impl LinkedModule {
             thrown: RefCell::new(None),
             resume_pc: Cell::new(0),
             resume_registers: RefCell::new(Vec::new()),
+            async_suspended: Cell::new(false),
         })
     }
 

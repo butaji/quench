@@ -14,7 +14,9 @@ impl PrivateEnvironment {
     fn extend(&self, definitions: &[PrivateNameId]) -> Self {
         let mut names = self.names.as_ref().clone();
         for definition in definitions {
-            names.insert(*definition, PrivateName::new(*definition));
+            names
+                .entry(*definition)
+                .or_insert_with(|| PrivateName::new(*definition));
         }
         Self {
             names: Rc::new(names),
