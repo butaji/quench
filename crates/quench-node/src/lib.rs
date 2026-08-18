@@ -15,6 +15,7 @@
 //! `install` function lowers that table into a `VmContext`.
 
 pub mod dispatch;
+pub mod dispatch_handlers;
 pub mod envelope;
 pub mod host;
 pub mod modules;
