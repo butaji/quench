@@ -153,6 +153,32 @@ fn deferred_gopd_after_own_keys() {
 }
 
 #[test]
+fn function_var_is_per_activation() {
+    let source = concat!(
+        "function f() {\n",
+        "  var x;\n",
+        "  if (x === undefined) { x = 0; } else { x = 1; }\n",
+        "  return x;\n",
+        "}\n",
+        "void 0;\n",
+    );
+    let program = quench_runtime::reduce::reduce_source(source).expect("reduce");
+    let _ = quench_runtime::vm::execute_with_context(program.ops(), super::host_context())
+        .expect("execute");
+    let again = quench_runtime::reduce::reduce_source(
+        "function f(){ var x; if(x===undefined){x=0;}else{x=1;} return x; } return [f(), f()];",
+    )
+    .expect("reduce2");
+    let value = quench_runtime::vm::execute_with_context(again.ops(), super::host_context())
+        .expect("execute2");
+    let Value::Array(items) = value else {
+        panic!("expected array, got {value:?}");
+    };
+    assert_eq!(items[0], Value::Number(0.0), "first call");
+    assert_eq!(items[1], Value::Number(0.0), "second call");
+}
+
+#[test]
 fn module_this_in_method_is_the_instance() {
     let source = concat!(
         "class outer {\n",

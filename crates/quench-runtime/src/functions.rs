@@ -36,14 +36,14 @@ fn rest_slot(
     params: u16,
     captures: u16,
     lexical_receiver: bool,
-    reserve_self: bool,
+    _reserve_self: bool,
 ) -> Option<u16> {
     let slot = captures
         .saturating_add(params)
         .saturating_add(if lexical_receiver {
             2
         } else {
-            3 + u16::from(reserve_self)
+            4
         });
     parameters.values().copied().find(|value| *value == slot)
 }
@@ -66,7 +66,9 @@ pub(crate) fn ordered_function_declarations_first<'a>(
 }
 
 fn reserved_slots(lexical_receiver: bool, rest: Option<u16>) -> u16 {
-    (if lexical_receiver { 2_u16 } else { 3_u16 }).saturating_add(u16::from(rest.is_some()))
+    // arguments, this, new.target, and the optional function-self slot
+    // that declarations install via FUNCTION_SELF.
+    (if lexical_receiver { 2_u16 } else { 4_u16 }).saturating_add(u16::from(rest.is_some()))
 }
 fn bind_rest(mut body: Vec<Op>, rest: Option<u16>, params: u16, captures: u16) -> Vec<Op> {
     let Some(slot) = rest else { return body };
