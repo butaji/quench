@@ -15,8 +15,7 @@ use std::rc::Rc;
 use quench_runtime::execute::VmError;
 use quench_runtime::value::Value;
 
-pub type CallHandler = fn(&Rc<RefCell<HostState>>, &[Value]) -> Result<Value, VmError>;
-pub type ConstructHandler = fn(&Rc<RefCell<HostState>>, &[Value]) -> Result<Value, VmError>;
+pub use crate::dispatch_handlers::{CallHandler, ConstructHandler};
 
 const CAP_EVENTS_NEW: u16 = 0x0100;
 const CAP_EVENTS_FROM: u16 = 0x0101;
@@ -240,7 +239,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_URL_SEARCH => url_search_params,
         CAP_NET_SERVER => net_create_server,
         CAP_HTTP_SERVER => http_create_server,
-        CAP_BUFFER_NEW => buffer_new,
+        CAP_BUFFER_NEW => buffer_new_construct,
         CAP_READLINE => readline_create_interface,
         _ => return None,
     })

@@ -14,6 +14,10 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+/// Hidden property that stores the host-side emitter id on
+/// the JS Object. Non-enumerable, non-writable.
+const EMITTER_ID_PROP: &str = "\0quench:emitter:id";
+
 pub struct EventEmitter {
     pub listeners: HashMap<String, Vec<Value>>,
     pub max: usize,
@@ -25,6 +29,41 @@ impl EventEmitter {
             listeners: HashMap::new(),
             max: 10,
         }
+    }
+    pub fn on(&mut self, event: &str, cb: Value) {
+        self.listeners.entry(event.to_string()).or_default().push(cb);
+    }
+    pub fn emit(&self, event: &str) -> Vec<Value> {
+        let list = self.listeners.get(event).cloned().unwrap_or_default();
+        list.into_iter().take(self.max).collect()
+    }
+}
+
+/// Stable per-emitter identity. The runtime never sees this
+/// directly; the host stores it on the JS Object's descriptor
+/// slot and recovers it when `on`/`emit` fire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct EmitterId(pub u64);
+
+pub struct EmitterRegistry {
+    next: u64,
+    emitters: HashMap<EmitterId, Rc<RefCell<EventEmitter>>>,
+}
+
+impl EmitterRegistry {
+    pub fn new() -> Self {
+        Self { next: 1, emitters: HashMap::new() }
+    }
+    pub fn allocate(&mut self) -> EmitterId {
+        let id = EmitterId(self.next);
+        self.next += 1;
+        id
+    }
+    pub fn get(&self, id: EmitterId) -> Option<Rc<RefCell<EventEmitter>>> {
+        self.emitters.get(&id).cloned()
+    }
+    pub fn insert(&mut self, id: EmitterId, emitter: Rc<RefCell<EventEmitter>>) {
+        self.emitters.insert(id, emitter);
     }
 }
 
@@ -80,10 +119,18 @@ impl EventLoop {
     }
 }
 
-pub fn new_emitter(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    let emitter = EventEmitter::new();
-    let _ = emitter;
-    install_emitter_props(host_api::object(Vec::new()))
+pub fn new_emitter(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let id = state.borrow_mut().emitters.allocate();
+    let emitter = Rc::new(RefCell::new(EventEmitter::new()));
+    state.borrow_mut().emitters.insert(id, emitter);
+    let id_value = Value::Number(id.0 as f64);
+    let object = crate::host::namespace_object_from_pairs(vec![
+        (EMITTER_ID_PROP.to_string(), id_value),
+    ]);
+    install_emitter_props(object)
 }
 
 fn install_emitter_props(mut object: Value) -> Result<Value, VmError> {
@@ -145,14 +192,75 @@ pub fn from(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, Vm
     Ok(host_api::object(out))
 }
 
-pub fn method_on(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let _ = args;
+pub fn method_on(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = _receiver else {
+        return Ok(Value::Undefined);
+    };
+    let Some(id) = emitter_id(receiver) else {
+        return Ok(Value::Undefined);
+    };
+    let event = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Ok(Value::Undefined),
+    };
+    let cb = match args.get(1).cloned() {
+        Some(v) => v,
+        None => return Ok(Value::Undefined),
+    };
+    if let Some(emitter) = state.borrow().emitters.get(id) {
+        emitter.borrow_mut().on(&event, cb);
+    }
     Ok(Value::Undefined)
 }
 
-pub fn method_emit(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let _ = args;
-    Ok(Value::Undefined)
+pub fn method_emit(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = _receiver else {
+        return Ok(Value::Boolean(false));
+    };
+    let Some(id) = emitter_id(receiver) else {
+        return Ok(Value::Boolean(false));
+    };
+    let event = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        _ => return Ok(Value::Boolean(false)),
+    };
+    let rest: Vec<Value> = args.get(1..).unwrap_or(&[]).to_vec();
+    let listeners = take_listeners(state, id, &event);
+    let count = listeners.len();
+    for cb in listeners {
+        let _ = quench_runtime::execute::call(&cb, receiver, &rest);
+    }
+    Ok(Value::Boolean(count > 0))
+}
+
+fn take_listeners(
+    state: &Rc<RefCell<HostState>>,
+    id: EmitterId,
+    event: &str,
+) -> Vec<Value> {
+    let event = event.to_string();
+    state
+        .borrow()
+        .emitters
+        .get(id)
+        .map(|e| e.borrow().emit(&event))
+        .unwrap_or_default()
+}
+
+fn emitter_id(receiver: &Value) -> Option<EmitterId> {
+    let v = quench_runtime::vm::get_property(receiver, EMITTER_ID_PROP);
+    match v {
+        Value::Number(n) if n.is_finite() && n >= 0.0 => Some(EmitterId(n as u64)),
+        _ => None,
+    }
 }
 
 /// Shared thunk used by `setTimeout` / `setImmediate` to push a
