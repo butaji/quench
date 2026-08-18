@@ -197,21 +197,10 @@ fn slot_prototype(value: &Value) -> Option<Value> {
 }
 
 fn generator_prototype(generator: &crate::value::GeneratorData) -> Value {
-    let properties = generator.function.properties.borrow();
-    let prototype = properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "prototype").then(|| value.clone()));
-    if prototype.as_ref().is_some_and(crate::value::is_object) {
-        return prototype.unwrap_or(Value::Undefined);
-    }
-    properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-        .map_or(Value::Builtin(Builtin::ObjectPrototype), |value| {
-            crate::execute::get_property(&value, "prototype")
-        })
+    crate::construct::get_prototype_from_constructor(
+        &Value::Function(std::rc::Rc::clone(&generator.function)),
+        |realm| crate::construct::generator_kind_prototype(&generator.function, realm),
+    )
 }
 
 fn internal_prototype(properties: &[(String, Value)], fallback: Builtin) -> Value {

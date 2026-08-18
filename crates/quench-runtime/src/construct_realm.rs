@@ -1,3 +1,53 @@
+/// GetPrototypeFromConstructor: use own `.prototype` when it is an object,
+/// otherwise the constructor realm's default intrinsic.
+pub(crate) fn get_prototype_from_constructor(
+    constructor: &Value,
+    default: impl FnOnce(crate::ops::RealmId) -> Value,
+) -> Value {
+    let proto = crate::execute::get_property(constructor, "prototype");
+    if crate::value::is_object(&proto) {
+        return proto;
+    }
+    default(constructor_realm(constructor))
+}
+
+fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
+    match constructor {
+        Value::Function(function) => function_realm_id(function),
+        Value::BoundFunction(bound) => bound.realm,
+        _ => crate::ops::RealmId::ROOT,
+    }
+}
+
+pub(crate) fn function_realm_id(
+    function: &crate::value::FunctionValue,
+) -> crate::ops::RealmId {
+    function
+        .properties
+        .borrow()
+        .iter()
+        .rev()
+        .find_map(|(key, value)| {
+            (key == "\0realm").then(|| match value {
+                Value::HostCapability(token) => token.realm(),
+                _ => crate::ops::RealmId::ROOT,
+            })
+        })
+        .or_else(|| crate::vm::realm_id_for_global_value(&function.captures.get(0)))
+        .unwrap_or(crate::ops::RealmId::ROOT)
+}
+
+pub(crate) fn generator_kind_prototype(
+    function: &crate::value::FunctionValue,
+    realm: crate::ops::RealmId,
+) -> Value {
+    if function.is_async {
+        crate::builtins::async_generator_prototype_in(realm)
+    } else {
+        crate::builtins::generator_prototype_in(realm)
+    }
+}
+
 fn realm_default_prototype(target: &Value, new_target: &Value) -> Option<Value> {
     if let Value::Function(function) = new_target {
         let global = function.captures.get(0);

@@ -297,18 +297,10 @@ fn internal_prototype(value: &Value) -> Option<Value> {
 }
 
 fn generator_instance_prototype(generator: &crate::value::GeneratorData) -> Option<Value> {
-    let properties = generator.function.properties.borrow();
-    let prototype = properties
-        .iter()
-        .rev()
-        .find_map(|(name, value)| (name == "prototype").then(|| value.clone()));
-    prototype.filter(crate::value::is_object).or_else(|| {
-        properties
-            .iter()
-            .rev()
-            .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
-            .map(|value| crate::execute::get_property(&value, "prototype"))
-    })
+    Some(crate::construct::get_prototype_from_constructor(
+        &crate::value::Value::Function(std::rc::Rc::clone(&generator.function)),
+        |realm| crate::construct::generator_kind_prototype(&generator.function, realm),
+    ))
 }
 
 fn builtin_prototype_parent(builtin: Builtin) -> Option<Value> {
