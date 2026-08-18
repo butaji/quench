@@ -81,10 +81,14 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     if has_invalid_private_identifier(body) {
         return Err(syntax_error("Invalid private identifier"));
     }
+    let analysis = crate::semantic::analyze(&parsed.program)
+        .map_err(|_| syntax_error("Invalid function source"))?;
     let mut facts = ProgramDb {
         strict: matches!(strictness, crate::ops::FunctionStrictness::Strict),
+        private_names: analysis.private_names.into_iter().collect(),
         ..ProgramDb::default()
     };
+    facts.install_fact_sites(analysis.fact_sites);
     let global = HashMap::from([("globalThis".to_string(), 0)]);
     let inherited = facts.in_function;
     facts.in_function = true;
