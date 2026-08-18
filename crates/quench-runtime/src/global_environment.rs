@@ -58,11 +58,14 @@ fn check_var(name: &str, is_lexical: bool, is_eval: bool) -> Result<(), VmError>
     // Lexical declarations (let/const/class) must throw SyntaxError on existing
     // or restricted bindings, while var declarations follow CanDeclareGlobalVar:
     // if the global already has an own property of that name, the declaration
-    // is permitted; otherwise the global must be extensible.
+    // is permitted; otherwise the global must be extensible. Per spec
+    // (GlobalDeclarationInstantiation step 6) a var declaration that collides
+    // with an existing lexical declaration also throws SyntaxError.
+    let _ = is_eval;
     if is_lexical {
         check_lexical_declaration(name)?;
         Ok(())
-    } else if is_eval && crate::locals::global_has_lexical_name(name) {
+    } else if crate::locals::global_has_lexical_name(name) {
         lexical_collision(name)
     } else if own_descriptor(name).is_some() {
         Ok(())

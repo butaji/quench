@@ -19,40 +19,61 @@ pub(crate) fn execute_host_capability_with_receiver(
         realm: capability.realm(),
         kind,
     };
-    let permitted = CURRENT_CONTEXT.with(|context| {
-        context
-            .borrow()
-            .as_ref()
-            .is_some_and(|context| {
-                context.permits(descriptor)
-                    || (kind == HostCapabilityKind::EvalScript
-                        && realm::context(capability.realm()).is_some())
-            })
-    });
-    if !permitted {
+    if !host_capability_permitted(descriptor, kind) {
         return Err(VmError::NotCallable);
     }
+    dispatch_host_capability(descriptor, kind, capability, receiver, arguments)
+}
+
+fn host_capability_permitted(descriptor: HostCapabilityRef, kind: HostCapabilityKind) -> bool {
+    CURRENT_CONTEXT.with(|context| {
+        context.borrow().as_ref().is_some_and(|context| {
+            context.permits(descriptor)
+                || (kind == HostCapabilityKind::EvalScript
+                    && realm::context(descriptor.realm).is_some())
+        })
+    })
+}
+
+fn dispatch_host_capability(
+    descriptor: HostCapabilityRef,
+    kind: HostCapabilityKind,
+    capability: &Rc<crate::value::HostCapabilityValue>,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
     match kind {
         HostCapabilityKind::GetGlobal if arguments.is_empty() => current_global_value(),
         HostCapabilityKind::GetGlobal => Err(type_error("getGlobal expects no arguments")),
         HostCapabilityKind::CreateRealm if arguments.is_empty() => Ok(create_realm_value()),
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
-        HostCapabilityKind::EvalScript => realm::with_realm(capability.realm(), || {
-            run_eval_script(arguments)
-        })
-        .ok_or(VmError::NotCallable)?,
-        HostCapabilityKind::Custom(_) => {
-            let host = CURRENT_CONTEXT.with(|context| {
-                context
-                    .borrow()
-                    .as_ref()
-                    .and_then(VmContext::host_handle)
-            });
-            host.map(|host| host.call(descriptor, receiver, arguments))
-                .unwrap_or(Err(VmError::NotCallable))
-        }
+        HostCapabilityKind::EvalScript => run_eval_in_capability_realm(capability, arguments),
+        HostCapabilityKind::Custom(_) => host_custom_call(descriptor, receiver, arguments),
     }
+}
+
+fn run_eval_in_capability_realm(
+    capability: &Rc<crate::value::HostCapabilityValue>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    realm::with_realm(capability.realm(), || run_eval_script(arguments))
+        .unwrap_or_else(|| run_eval_script(arguments))
+}
+
+fn host_custom_call(
+    descriptor: HostCapabilityRef,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    let host = CURRENT_CONTEXT.with(|context| {
+        context
+            .borrow()
+            .as_ref()
+            .and_then(VmContext::host_handle)
+    });
+    host.map(|host| host.call(descriptor, receiver, arguments))
+        .unwrap_or(Err(VmError::NotCallable))
 }
 
 fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
