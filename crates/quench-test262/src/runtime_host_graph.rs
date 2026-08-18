@@ -46,6 +46,9 @@ fn load_module_dependencies(graph: &mut ModuleGraph, from: ModuleId) -> Result<(
             continue;
         }
         let path = base.join(&specifier);
+        if !path.exists() {
+            continue;
+        }
         let dependency = add_module_source(graph, path, &metadata.import_types, &specifier)?;
         load_module_dependencies(graph, dependency)?;
     }
