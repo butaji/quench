@@ -400,11 +400,26 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
 }
 
 fn os_capability_props(out: &mut Vec<(String, Value)>) {
-    out.push(("uptime".to_string(), crate::host::capability(crate::registry::SPEC_OS_UPTIME)));
-    out.push(("totalmem".to_string(), crate::host::capability(crate::registry::SPEC_OS_TOTALMEM)));
-    out.push(("freemem".to_string(), crate::host::capability(crate::registry::SPEC_OS_FREEMEM)));
-    out.push(("cpus".to_string(), crate::host::capability(crate::registry::SPEC_OS_CPUS)));
-    out.push(("loadavg".to_string(), crate::host::capability(crate::registry::SPEC_OS_LOADAVG)));
+    out.push((
+        "uptime".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_UPTIME),
+    ));
+    out.push((
+        "totalmem".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_TOTALMEM),
+    ));
+    out.push((
+        "freemem".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_FREEMEM),
+    ));
+    out.push((
+        "cpus".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_CPUS),
+    ));
+    out.push((
+        "loadavg".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_LOADAVG),
+    ));
     out.push((
         "networkInterfaces".to_string(),
         crate::host::capability(crate::registry::SPEC_OS_NETWORKINTERFACES),
