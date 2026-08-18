@@ -1,5 +1,7 @@
 //! Small reduction helpers shared across the reducer.
 
+include!("source_prepare.rs");
+
 use std::collections::HashMap;
 
 pub(crate) fn function_strictness(

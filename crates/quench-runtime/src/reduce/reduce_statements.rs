@@ -82,7 +82,8 @@ fn reduce_source_with_type_and_global(
     let allocator = Allocator::default();
     if !source_type.is_module() && !global {
         let wrapped = wrap_cjs_source(source);
-        let parsed = Parser::new(&allocator, &wrapped, source_type).parse();
+        let wrapped = crate::reduce_support::prepare_source(&wrapped);
+        let parsed = Parser::new(&allocator, wrapped.as_ref(), source_type).parse();
         crate::reduce_support::validate_parse(&parsed)?;
         let (mut facts, ops, scope_count, symbol_count, module_metadata, local_slots) =
             reduce_program(&parsed.program, &wrapped, source_type, global)?;
@@ -95,10 +96,11 @@ fn reduce_source_with_type_and_global(
             local_slots,
         ));
     }
-    let parsed = Parser::new(&allocator, source, source_type).parse();
+    let source = crate::reduce_support::prepare_source(source);
+    let parsed = Parser::new(&allocator, source.as_ref(), source_type).parse();
     crate::reduce_support::validate_parse(&parsed)?;
     let (mut facts, ops, scope_count, symbol_count, module_metadata, local_slots) =
-        reduce_program(&parsed.program, source, source_type, global)?;
+        reduce_program(&parsed.program, source.as_ref(), source_type, global)?;
     facts.scope_count = scope_count;
     facts.symbol_count = symbol_count;
     Ok(ResidualProgram::new(
