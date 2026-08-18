@@ -81,7 +81,7 @@ fn import_cell(
     imported: &str,
 ) -> Result<ModuleBindingCell, String> {
     if imported == "*" {
-        return namespace_cell(units, target);
+        return namespace_cell(units, target, Some(target));
     }
     if imported == "source" {
         return units
@@ -138,6 +138,7 @@ fn resolve_export_cell(
 fn namespace_cell(
     units: &std::collections::HashMap<ModuleId, LinkedModule>,
     target: ModuleId,
+    evaluate: Option<ModuleId>,
 ) -> Result<ModuleBindingCell, String> {
     let unit = units
         .get(&target)
@@ -192,6 +193,12 @@ fn namespace_cell(
         }
     }
     let cell = ModuleBindingCell::new(quench_runtime::value::Value::object(properties));
+    if let Some(id) = evaluate {
+        quench_runtime::module_bindings::register_ensure(
+            &cell.shared(),
+            std::rc::Rc::new(move || ensure_module(id)),
+        );
+    }
     *unit.namespace_cell.borrow_mut() = Some(cell.clone());
     Ok(cell)
 }

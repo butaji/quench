@@ -1,7 +1,7 @@
 //! Adapter from the runner contract to the residual runtime.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     path::Path,
     rc::Rc,
@@ -31,6 +31,8 @@ pub struct LinkedModule {
     ambiguous_exports: RefCell<HashSet<String>>,
     namespace_cell: RefCell<Option<ModuleBindingCell>>,
     module_source: ModuleBindingCell,
+    evaluated: Cell<bool>,
+    started: Cell<bool>,
 }
 
 /// Graph-owned collection of independently compiled linked modules.
@@ -93,13 +95,15 @@ impl LinkedModuleGraph {
     }
 
     pub fn execute(&self, graph: &ModuleGraph, entry: ModuleId) -> Result<(), String> {
-        for id in graph.dependency_order(entry)? {
-            self.units
-                .get(&id)
-                .ok_or_else(|| "module unit missing".to_string())?
-                .execute()?;
-        }
-        Ok(())
+        CURRENT_MODULE_GRAPH.with(|current| {
+            current.set(Some((
+                self as *const LinkedModuleGraph,
+                graph as *const ModuleGraph,
+            )));
+        });
+        let result = evaluate_module(self, graph, entry, true);
+        CURRENT_MODULE_GRAPH.with(|current| current.set(None));
+        result
     }
 
     pub fn export_cell(&self, unit: ModuleId, name: &str) -> Option<ModuleBindingCell> {
@@ -121,6 +125,8 @@ impl LinkedModule {
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace_cell: RefCell::new(None),
             module_source: module_source_cell(),
+            evaluated: Cell::new(false),
+            started: Cell::new(false),
         })
     }
 
@@ -135,6 +141,8 @@ impl LinkedModule {
             ambiguous_exports: RefCell::new(HashSet::new()),
             namespace_cell: RefCell::new(None),
             module_source: module_source_cell(),
+            evaluated: Cell::new(false),
+            started: Cell::new(false),
         })
     }
 
@@ -316,6 +324,10 @@ impl LinkedModule {
     }
 
     pub fn execute(&self) -> Result<quench_runtime::value::Value, String> {
+        if self.evaluated.get() {
+            return Ok(quench_runtime::value::Value::Undefined);
+        }
+        self.evaluated.set(true);
         let mut registers = Vec::new();
         let result = self
             .scope
@@ -329,6 +341,65 @@ impl LinkedModule {
         }
         Ok(result)
     }
+}
+
+thread_local! {
+    static CURRENT_MODULE_GRAPH: Cell<Option<(*const LinkedModuleGraph, *const ModuleGraph)>> =
+        const { Cell::new(None) };
+}
+
+fn ensure_module(id: ModuleId) {
+    CURRENT_MODULE_GRAPH.with(|current| {
+        let Some((units, graph)) = current.get() else {
+            return;
+        };
+        let units = unsafe { &*units };
+        let graph = unsafe { &*graph };
+        let _ = evaluate_module(units, graph, id, true);
+    });
+}
+
+fn evaluate_module(
+    graph_units: &LinkedModuleGraph,
+    graph: &ModuleGraph,
+    id: ModuleId,
+    skip_deferred: bool,
+) -> Result<(), String> {
+    let unit = graph_units
+        .units
+        .get(&id)
+        .ok_or_else(|| "module unit missing".to_string())?;
+    if unit.started.get() {
+        return Ok(());
+    }
+    unit.started.set(true);
+    let metadata = unit.program.module_metadata.as_ref();
+    for dependency in graph.dependencies(id) {
+        if skip_deferred && is_deferred_edge(metadata, graph, id, *dependency) {
+            continue;
+        }
+        evaluate_module(graph_units, graph, *dependency, skip_deferred)?;
+    }
+    graph_units
+        .units
+        .get(&id)
+        .ok_or_else(|| "module unit missing".to_string())?
+        .execute()?;
+    Ok(())
+}
+
+fn is_deferred_edge(
+    metadata: Option<&quench_runtime::reduce::ModuleMetadata>,
+    graph: &ModuleGraph,
+    from: ModuleId,
+    to: ModuleId,
+) -> bool {
+    let Some(metadata) = metadata else {
+        return false;
+    };
+    metadata.imports.iter().any(|binding| {
+        binding.deferred && graph.resolve(from, &binding.source) == Some(to)
+    })
 }
 
 fn module_source_cell() -> ModuleBindingCell {

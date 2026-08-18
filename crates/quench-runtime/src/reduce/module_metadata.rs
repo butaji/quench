@@ -22,6 +22,7 @@ pub struct ImportBinding {
     pub source: String,
     pub imported: String,
     pub local: String,
+    pub deferred: bool,
 }
 
 /// One local binding exposed under an exported module name.
@@ -101,6 +102,7 @@ impl ModuleMetadata {
                             source: source.clone(),
                             imported,
                             local,
+                            deferred: import.phase == Some(oxc::ast::ast::ImportPhase::Defer),
                         });
                     }
                 }
@@ -255,5 +257,19 @@ fn module_export_name(name: &ModuleExportName<'_>) -> String {
 fn push_unique(values: &mut Vec<String>, value: &str) {
     if !values.iter().any(|existing| existing == value) {
         values.push(value.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn import_defer_keeps_eager_and_deferred_specifiers() {
+        let metadata = crate::reduce::inspect_module_source(
+            "import \"./setup.js\";\nimport defer * as ns from \"./dep.js\";\n",
+        )
+        .expect("inspect");
+        assert!(metadata.import_specifiers.iter().any(|s| s == "./setup.js"));
+        assert!(metadata.import_specifiers.iter().any(|s| s == "./dep.js"));
+        assert!(metadata.imports.iter().any(|binding| binding.deferred));
     }
 }
