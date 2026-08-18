@@ -4,3 +4,7 @@
 [submodule "tests/test262"]
 	path = tests/test262
 	url = https://github.com/tc39/test262.git
+[submodule "crates/quench-node-test/node-tests"]
+	path = crates/quench-node-test/node-tests
+	url = https://github.com/nodejs/node.git
+	branch = main
