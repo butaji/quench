@@ -303,6 +303,27 @@ fn resolve(key: &str) -> Result<Option<Value>, VmError> {
     crate::execute::get_property_result(&target, key).map(Some)
 }
 
+/// WithBaseObject for an identifier call: the innermost `with` object
+/// that owns this callable.
+pub(crate) fn receiver_for_callable(callee: &Value) -> Option<Value> {
+    let objects = OBJECTS.with(|objects| objects.borrow().clone());
+    for object in objects.iter().rev() {
+        if callable_on(object, callee) {
+            return Some(object.clone());
+        }
+    }
+    None
+}
+
+fn callable_on(object: &Value, callee: &Value) -> bool {
+    let Value::Object(object) = object else {
+        return false;
+    };
+    object.properties.iter().any(|(name, value)| {
+        !name.starts_with('\0') && crate::builtins::same_value(Some(value), Some(callee))
+    })
+}
+
 pub(crate) fn resolve_binding(key: &str) -> Result<Option<Value>, VmError> {
     let Some(target) = binding_target(key)? else {
         return Ok(None);
