@@ -55,9 +55,14 @@ fn reduce_class(
     let Some(identifier) = class.id.as_ref() else {
         return Err(vec!["Anonymous class declaration".to_string()]);
     };
-    let slot = *next_slot;
-    *next_slot = next_slot.saturating_add(1);
-    locals.insert(identifier.name.to_string(), slot);
+    let name = identifier.name.to_string();
+    let marker = format!("\0lexical-predeclared:{name}");
+    let slot = locals.get(&marker).copied().unwrap_or_else(|| {
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        slot
+    });
+    locals.insert(name, slot);
     let register = crate::classes::reduce_expression(class, ops, facts, next_register, locals)
         .ok_or_else(|| vec!["Unsupported class body".to_string()])?;
     ops.push(Op::StoreLocal {

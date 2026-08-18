@@ -174,6 +174,35 @@ pub(crate) fn declared_names_in(statements: &[oxc::ast::ast::Statement<'_>]) -> 
     names
 }
 
+pub(crate) fn lexical_bound_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
+    if let Some(declaration) = lexical_declaration(statement) {
+        if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var {
+            return Vec::new();
+        }
+        return declaration
+            .declarations
+            .iter()
+            .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
+            .collect();
+    }
+    class_bound_name(statement).into_iter().collect()
+}
+
+fn class_bound_name(statement: &oxc::ast::ast::Statement<'_>) -> Option<String> {
+    match statement {
+        oxc::ast::ast::Statement::ClassDeclaration(class) => {
+            class.id.as_ref().map(|id| id.name.to_string())
+        }
+        oxc::ast::ast::Statement::ExportNamedDeclaration(export) => match &export.declaration {
+            Some(oxc::ast::ast::Declaration::ClassDeclaration(class)) => {
+                class.id.as_ref().map(|id| id.name.to_string())
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 pub(crate) fn lexical_declaration<'a>(
     statement: &'a oxc::ast::ast::Statement<'a>,
 ) -> Option<&'a oxc::ast::ast::VariableDeclaration<'a>> {
@@ -195,17 +224,7 @@ pub(crate) fn predeclare_lexicals(
     next_slot: &mut u16,
 ) {
     for statement in statements {
-        let Some(declaration) = lexical_declaration(statement) else {
-            continue;
-        };
-        if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var {
-            continue;
-        }
-        for name in declaration
-            .declarations
-            .iter()
-            .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
-        {
+        for name in lexical_bound_names(statement) {
             let slot = *next_slot;
             *next_slot = next_slot.saturating_add(1);
             locals.insert(name.clone(), slot);
