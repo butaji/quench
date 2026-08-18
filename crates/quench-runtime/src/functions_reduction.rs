@@ -226,12 +226,18 @@ pub(crate) fn reduce_selected_body(
     let mut next_slot = local_count;
     crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot, facts.strict);
     crate::reduce_support::predeclare_lexicals(statements, &mut locals, &mut next_slot);
+    let stack = crate::using_scope::reserve(statements, &mut locals, &mut next_slot);
+    crate::using_scope::emit_tdz(statements, &mut ops, &locals);
+    let await_using = crate::using_scope::has_await_using(statements);
     let barrier_len = facts.eval_var_barrier.len();
     facts
         .eval_var_barrier
         .extend(crate::semantic_early::lexically_declared_names_in(
             statements,
         ));
+    if let Some(stack) = stack {
+        crate::using_scope::emit_create(&mut ops, stack, await_using, &mut next_register);
+    }
     for statement in ordered {
         let Some(value) = evaluate_statement(
             statement,
@@ -247,6 +253,10 @@ pub(crate) fn reduce_selected_body(
         last = value.or(last);
     }
     facts.eval_var_barrier.truncate(barrier_len);
+    let ops = match stack {
+        Some(stack) => crate::using_scope::wrap(ops, stack, await_using, &mut next_register).ok()?,
+        None => ops,
+    };
     finalize_function_body(ops, last, expression_body)
 }
 

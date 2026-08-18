@@ -213,6 +213,34 @@ fn move_stack(receiver: Option<&Value>) -> Result<Value, VmError> {
     Ok(stack(moved))
 }
 
+pub(crate) fn dispose_completion(
+    _registers: &[crate::value::Value],
+    stack_slot: u16,
+    completion: crate::completion::Completion,
+    _await_using: bool,
+) -> Result<crate::completion::Completion, VmError> {
+    let stack = crate::locals::current().get(stack_slot);
+    let pending = match &completion {
+        crate::completion::Completion::Throw(value) => Some(VmError::Thrown(value.clone())),
+        _ => None,
+    };
+    match dispose_stack_with(Some(&stack), pending) {
+        Ok(()) => Ok(completion),
+        Err(error) => Err(error),
+    }
+}
+
+fn dispose_stack_with(receiver: Option<&Value>, pending: Option<VmError>) -> Result<(), VmError> {
+    let receiver = receiver.ok_or_else(incompatible_receiver)?;
+    let state = state(receiver)?;
+    if is_disposed(&state.borrow()) {
+        return pending.map_or(Ok(()), Err);
+    }
+    let records = records(receiver)?;
+    set_disposed(receiver, true)?;
+    dispose_pending(take_records(&records)?, pending)
+}
+
 fn dispose_stack(receiver: Option<&Value>) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(incompatible_receiver)?;
     let state = state(receiver)?;
@@ -225,8 +253,11 @@ fn dispose_stack(receiver: Option<&Value>) -> Result<Value, VmError> {
     dispose_records(values)
 }
 
-fn dispose_records(mut values: Vec<Value>) -> Result<Value, VmError> {
-    let mut error = None;
+fn dispose_records(values: Vec<Value>) -> Result<Value, VmError> {
+    dispose_pending(values, None).map(|()| Value::Undefined)
+}
+
+fn dispose_pending(mut values: Vec<Value>, mut error: Option<VmError>) -> Result<(), VmError> {
     while let Some(record) = values.pop() {
         if let Err(next) = dispose_record(&record) {
             error = Some(match error {
@@ -235,26 +266,17 @@ fn dispose_records(mut values: Vec<Value>) -> Result<Value, VmError> {
             });
         }
     }
-    error.map_or(Ok(Value::Undefined), Err)
+    error.map_or(Ok(()), Err)
 }
 
 fn suppress(error: VmError, suppressed: VmError) -> VmError {
     let (VmError::Thrown(error), VmError::Thrown(suppressed)) = (error, suppressed) else {
         return VmError::Thrown(Value::Undefined);
     };
-    VmError::Thrown(Value::Object(Rc::new(ObjectData::new(vec![
-        (
-            "\0prototype".into(),
-            Value::Builtin(Builtin::ErrorPrototype),
-        ),
-        ("name".into(), Value::String("SuppressedError".into())),
-        (
-            "constructor".into(),
-            Value::Builtin(Builtin::SuppressedError),
-        ),
-        ("error".into(), error),
-        ("suppressed".into(), suppressed),
-    ]))))
+    match crate::builtins::suppressed_error(&[error, suppressed]) {
+        Ok(value) => VmError::Thrown(value),
+        Err(error) => error,
+    }
 }
 
 fn dispose_record(record: &Value) -> Result<Value, VmError> {
