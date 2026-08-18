@@ -255,6 +255,22 @@ impl<H: Test262Host> Test262Runner<H> {
         ))
     }
 
+    /// Compose a test with cached harness sources, pre-parsed metadata, and a
+    /// source-file location so module tests can resolve their imports.
+    pub fn run_test_with_cache_metadata_and_path(
+        &mut self,
+        source: &str,
+        metadata: &TestMetadata,
+        path: &Path,
+        cache: &mut HarnessCache,
+    ) -> Result<TestOutcome, String> {
+        let harness = runner_support::cached_harness(metadata, cache)?;
+        Ok(runner_support::negative(
+            self.dispatch_test_at(&harness, source, metadata, Some(path)),
+            metadata,
+        ))
+    }
+
     /// Read and execute one test262 source file.
     pub fn run_file<P: AsRef<Path>>(&mut self, path: P) -> Result<TestOutcome, String> {
         let source = std::fs::read_to_string(path.as_ref())

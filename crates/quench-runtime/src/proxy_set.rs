@@ -4,6 +4,8 @@ pub(crate) fn proxy_set(
     value: &Value,
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
+    std::fs::OpenOptions::new().create(true).append(true).open("/tmp/ps_trace.log").ok()
+        .map(|mut f| std::io::Write::write_all(&mut f, format!("proxy_set target={:?} prop={}\n", target, prop).as_bytes()).ok());
     if let Value::Proxy(proxy) = target {
         check_revoked(proxy)?;
         if let Some(trap) = get_handler_trap(proxy, "set") {
