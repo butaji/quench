@@ -247,10 +247,12 @@ pub(crate) fn return_iterator(
         &*data.state.borrow(),
         IteratorState::Zip { done: true, .. }
     );
+    if already_done {
+        return Ok(result(value, true));
+    }
     mark_done(data);
-    let completion = if already_done {
-        crate::completion::Completion::Normal
-    } else if let Some(iterators) = zip_iterators(data) {
+    *data.in_return.borrow_mut() = true;
+    let completion = if let Some(iterators) = zip_iterators(data) {
         close_iterators(iterators, crate::completion::Completion::Normal)?
     } else {
         close(
@@ -258,6 +260,7 @@ pub(crate) fn return_iterator(
             crate::completion::Completion::Normal,
         )?
     };
+    *data.in_return.borrow_mut() = false;
     match completion {
         crate::completion::Completion::Normal => Ok(result(value, true)),
         completion => completion.into_vm_error().map(|_| result(value, true)),
