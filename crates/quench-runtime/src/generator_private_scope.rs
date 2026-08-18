@@ -87,7 +87,7 @@ fn suspended_private_scope<'a>(
     generator: &'a GeneratorData,
     state: &GeneratorState,
 ) -> Option<(&'a [crate::facts::PrivateNameId], &'a [Op], usize)> {
-    let Op::PrivateScope { names, body } = generator.function.ops().get(machine_pc(generator).checked_sub(1)?)?
+    let Op::PrivateScope { names, body, .. } = generator.function.ops().get(machine_pc(generator).checked_sub(1)?)?
     else {
         return None;
     };
