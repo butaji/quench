@@ -11,8 +11,9 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
     };
     if std::env::var_os("QDEBUG").is_some() {
         eprintln!(
-            "step_value state={:?}",
-            std::mem::discriminant(&*data.state.borrow())
+            "step_value state={:?} addr={:p}",
+            std::mem::discriminant(&*data.state.borrow()),
+            data.state.as_ptr(),
         );
     }
     match step_target(data)? {
@@ -31,8 +32,14 @@ enum StepTarget {
 }
 
 fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
+    if std::env::var_os("QDEBUG").is_some() {
+        eprintln!("step_target called, addr={:p}", data.state.as_ptr());
+    }
     if matches!(&*data.state.borrow(), IteratorState::Concat { .. }) {
         return concat_target(data);
+    }
+    if let Some(step) = user_step_target(data)? {
+        return Ok(step);
     }
     let mut state = data.state.borrow_mut();
     step_target_state(data, &mut state)
@@ -94,6 +101,232 @@ fn update_concat(data: &IteratorData, index: usize, current: Option<Value>, done
     }
 }
 
+/// Combinator iterator states whose step runs user code. Snapshot the
+/// fields, drop the borrow, then drive the step — so re-entrant calls
+/// like `iter.next()` from inside a mapper predicate do not collide with
+/// the mutable borrow on `state`.
+enum Snapshot {
+    Mapped {
+        iterator: Value,
+        mapper: Value,
+        index: usize,
+        done: bool,
+    },
+    Filtered {
+        iterator: Value,
+        predicate: Value,
+        index: usize,
+        done: bool,
+    },
+    FlatMapped {
+        inner: Value,
+        mapper: Value,
+        index: usize,
+        current: Option<Value>,
+        done: bool,
+    },
+    Dropped {
+        inner: Value,
+        skipped: usize,
+        done: bool,
+    },
+    Take {
+        inner: Value,
+        remaining: u64,
+    },
+    Zip {
+        iterators: Vec<Value>,
+        mode: u8,
+        done: bool,
+    },
+}
+
+fn snapshot_reentry(data: &IteratorData) -> Option<Snapshot> {
+    let state = data.state.borrow();
+    Some(match &*state {
+        IteratorState::Mapped {
+            iterator,
+            mapper,
+            index,
+            done,
+        } => Snapshot::Mapped {
+            iterator: iterator.clone(),
+            mapper: mapper.clone(),
+            index: *index,
+            done: *done,
+        },
+        IteratorState::Filtered {
+            iterator,
+            predicate,
+            index,
+            done,
+        } => Snapshot::Filtered {
+            iterator: iterator.clone(),
+            predicate: predicate.clone(),
+            index: *index,
+            done: *done,
+        },
+        IteratorState::FlatMapped {
+            inner,
+            mapper,
+            index,
+            current,
+            done,
+        } => Snapshot::FlatMapped {
+            inner: inner.clone(),
+            mapper: mapper.clone(),
+            index: *index,
+            current: current.clone(),
+            done: *done,
+        },
+        IteratorState::Dropped {
+            inner,
+            skipped,
+            done,
+        } => Snapshot::Dropped {
+            inner: inner.clone(),
+            skipped: *skipped,
+            done: *done,
+        },
+        IteratorState::Take {
+            inner,
+            remaining,
+        } => Snapshot::Take {
+            inner: inner.clone(),
+            remaining: *remaining,
+        },
+        IteratorState::Zip {
+            iterators,
+            mode,
+            done,
+        } => Snapshot::Zip {
+            iterators: iterators.clone(),
+            mode: *mode,
+            done: *done,
+        },
+        _ => return None,
+    })
+}
+
+fn write_snapshot(data: &IteratorData, snapshot: &Snapshot) {
+    let mut state = data.state.borrow_mut();
+    match snapshot {
+        Snapshot::Mapped { index, done, .. } => {
+            if let IteratorState::Mapped {
+                index: idx, done: d, ..
+            } = &mut *state
+            {
+                *idx = *index;
+                *d = *done;
+            }
+        }
+        Snapshot::Filtered { index, done, .. } => {
+            if let IteratorState::Filtered {
+                index: idx, done: d, ..
+            } = &mut *state
+            {
+                *idx = *index;
+                *d = *done;
+            }
+        }
+        Snapshot::FlatMapped {
+            index,
+            current,
+            done,
+            ..
+        } => {
+            if let IteratorState::FlatMapped {
+                index: idx,
+                current: cur,
+                done: d,
+                ..
+            } = &mut *state
+            {
+                *idx = *index;
+                *cur = current.clone();
+                *d = *done;
+            }
+        }
+        Snapshot::Dropped {
+            skipped, done, ..
+        } => {
+            if let IteratorState::Dropped {
+                skipped: sk, done: d, ..
+            } = &mut *state
+            {
+                *sk = *skipped;
+                *d = *done;
+            }
+        }
+        Snapshot::Take { remaining, .. } => {
+            if let IteratorState::Take {
+                remaining: rem, ..
+            } = &mut *state
+            {
+                *rem = *remaining;
+            }
+        }
+        Snapshot::Zip { done, .. } => {
+            if let IteratorState::Zip { done: d, .. } = &mut *state {
+                *d = *done;
+            }
+        }
+    }
+}
+
+fn user_step_target(data: &IteratorData) -> Result<Option<StepTarget>, crate::execute::VmError> {
+    let Some(snapshot) = snapshot_reentry(data) else {
+        return Ok(None);
+    };
+    if std::env::var_os("QDEBUG").is_some() {
+        eprintln!("user_step_target snapshot taken");
+    }
+    let mut owned = snapshot;
+    let result = match &mut owned {
+        Snapshot::Mapped {
+            iterator,
+            mapper,
+            index,
+            done,
+        } => mapped_step(iterator, mapper, index, done).map(StepTarget::Value)?,
+        Snapshot::Filtered {
+            iterator,
+            predicate,
+            index,
+            done,
+        } => filtered_step(iterator, predicate, index, done).map(StepTarget::Value)?,
+        Snapshot::FlatMapped {
+            inner,
+            mapper,
+            index,
+            current,
+            done,
+        } => flat_mapped_step(inner, mapper, index, current, done).map(StepTarget::Value)?,
+        Snapshot::Dropped {
+            inner,
+            skipped,
+            done,
+        } => dropped_step(inner, skipped, done).map(StepTarget::Value)?,
+        Snapshot::Take {
+            inner,
+            remaining,
+        } => take_step(inner, remaining).map(StepTarget::Value)?,
+        Snapshot::Zip {
+            iterators,
+            mode,
+            done,
+        } => zip_step(iterators, *mode, done).map(StepTarget::Value)?,
+    };
+    if std::env::var_os("QDEBUG").is_some() {
+        eprintln!("user_step_target writing snapshot");
+    }
+    write_snapshot(data, &owned);
+    if std::env::var_os("QDEBUG").is_some() {
+        eprintln!("user_step_target done");
+    }
+    Ok(Some(result))
+}
+
 fn step_target_state(
     _data: &IteratorData,
     state: &mut IteratorState,
@@ -129,38 +362,6 @@ fn step_target_state(
             kind,
             done,
         } => StepTarget::Value(iterator_map::step(data, index, kind, done)),
-        IteratorState::Mapped {
-            iterator,
-            mapper,
-            index,
-            done,
-        } => StepTarget::Value(mapped_step(iterator, mapper, index, done)?),
-        IteratorState::Filtered {
-            iterator,
-            predicate,
-            index,
-            done,
-        } => StepTarget::Value(filtered_step(iterator, predicate, index, done)?),
-        IteratorState::FlatMapped {
-            inner,
-            mapper,
-            index,
-            current,
-            done,
-        } => StepTarget::Value(flat_mapped_step(inner, mapper, index, current, done)?),
-        IteratorState::Dropped {
-            inner,
-            skipped,
-            done,
-        } => StepTarget::Value(dropped_step(inner, skipped, done)?),
-        IteratorState::Take { inner, remaining } => {
-            StepTarget::Value(take_step(inner, remaining)?)
-        }
-        IteratorState::Zip {
-            iterators,
-            mode,
-            done,
-        } => StepTarget::Value(zip_step(iterators, *mode, done)?),
         state => return step_target_tail(state),
     })
 }
