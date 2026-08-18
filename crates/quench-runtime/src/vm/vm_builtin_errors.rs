@@ -85,32 +85,37 @@ fn error_stack_setter(receiver: Option<&Value>, arguments: &[Value]) -> Result<V
         }
     }
     let Value::String(text) = stack else {
-        return Err(crate::value::error::throw_type_error(
-            "Stack value must be a string",
-        ));
+        return Err(crate::value::error::throw_type_error("Stack value must be a string"));
     };
     if crate::conversion::is_symbol_string(text) {
-        return Err(crate::value::error::throw_type_error(
-            "Stack value must be a string",
-        ));
+        return Err(crate::value::error::throw_type_error("Stack value must be a string"));
     }
-    if matches!(value, Value::Proxy(_)) {
-        define_proxy_stack(value, stack.clone())?;
+    if error_stack_setter_dispatch(value, stack)? {
         return Ok(Value::Undefined);
     }
-    let key = Value::String("stack".to_string());
-    let owns_stack = crate::builtins::object::has_own_property(Some(value), Some(&key));
-    if matches!(owns_stack, Value::Boolean(true)) {
+    Err(crate::value::error::throw_type_error("Cannot set property 'stack' of error"))
+}
+
+fn error_stack_setter_dispatch(value: &Value, stack: &Value) -> Result<bool, VmError> {
+    let owns_stack = if matches!(value, Value::Proxy(_)) {
+        crate::proxy::proxy_get_own_property_descriptor(value, "stack")? != Value::Undefined
+    } else {
+        matches!(
+            crate::builtins::object::has_own_property(Some(value), Some(&Value::String("stack".to_string()))),
+            Value::Boolean(true)
+        )
+    };
+    if owns_stack {
         let updated = crate::properties::set_with_receiver(value, "stack", stack, value)?;
         if !updated {
-            return Err(crate::value::error::throw_type_error(
-                "Cannot set property 'stack' of error",
-            ));
+            return Ok(false);
         }
+    } else if matches!(value, Value::Proxy(_)) {
+        define_proxy_stack(value, stack.clone())?;
     } else {
         define_own_stack(value, stack.clone())?;
     }
-    Ok(Value::Undefined)
+    Ok(true)
 }
 
 fn define_own_stack(value: &Value, stack: Value) -> Result<(), VmError> {
