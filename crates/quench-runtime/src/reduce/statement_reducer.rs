@@ -255,25 +255,17 @@ fn emit_module_lexical_tdz(
     locals: &HashMap<String, u16>,
 ) {
     for statement in statements {
-        let Some(declaration) = crate::reduce_support::lexical_declaration(statement) else {
-            continue;
-        };
-        if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var {
-            continue;
-        }
-        for name in declaration
-            .declarations
-            .iter()
-            .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
-        {
+        for name in crate::reduce_support::lexical_bound_names(statement) {
             if let Some(&slot) = locals.get(&name) {
                 ops.push(Op::MarkUninitialized { slot });
-                if matches!(
-                    declaration.kind,
-                    oxc::ast::ast::VariableDeclarationKind::Const
-                        | oxc::ast::ast::VariableDeclarationKind::Using
-                        | oxc::ast::ast::VariableDeclarationKind::AwaitUsing
-                ) {
+                if crate::reduce_support::lexical_declaration(statement).is_some_and(|declaration| {
+                    matches!(
+                        declaration.kind,
+                        oxc::ast::ast::VariableDeclarationKind::Const
+                            | oxc::ast::ast::VariableDeclarationKind::Using
+                            | oxc::ast::ast::VariableDeclarationKind::AwaitUsing
+                    )
+                }) {
                     ops.push(Op::MarkImmutable { slot });
                 }
             }
