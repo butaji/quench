@@ -167,13 +167,7 @@ fn prepare_function_scope(
         parameters.insert(name.to_string(), slot);
         body.insert(name.to_string(), slot);
     }
-    let rest = rest_slot(
-        &parameters,
-        count,
-        captures,
-        lexical_receiver,
-        self_name.is_some(),
-    );
+    let rest = rest_slot(&parameters);
     (parameters, body, captures, rest)
 }
 fn split_function_locals(

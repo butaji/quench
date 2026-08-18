@@ -48,6 +48,11 @@ pub enum Op {
         slot: u16,
         src: u16,
     },
+    MakeRest {
+        slot: u16,
+        arguments: u16,
+        skip: u16,
+    },
     AliasLocal {
         slot: u16,
         source: u16,

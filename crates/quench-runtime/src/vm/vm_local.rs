@@ -9,6 +9,11 @@ fn run_local_storage_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmE
     use Op::*;
     match op {
         StoreLocal { slot, src } => crate::locals::store(registers, *slot, *src)?,
+        MakeRest {
+            slot,
+            arguments,
+            skip,
+        } => crate::functions::execute_make_rest(*slot, *arguments, *skip)?,
         StoreFunctionName { slot, src, strict } => {
             crate::locals::store_function_name(registers, *slot, *src, *strict)?
         }
