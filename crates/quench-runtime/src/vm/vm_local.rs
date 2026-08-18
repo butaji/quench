@@ -16,6 +16,7 @@ fn run_local_storage_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmE
             write_value(registers, *dst, crate::vm::current_global_object())
         }
         MarkUninitialized { slot } => crate::locals::mark_uninitialized(*slot),
+        MarkImmutable { slot } => crate::locals::mark_immutable(*slot),
         CheckInitialized { slot, name } => crate::locals::check_initialized(*slot, name)?,
         InitializeLocal { slot } => crate::locals::initialize(*slot),
         LoadParameter { dst, slot } => crate::locals::load_parameter(registers, *dst, *slot)?,
