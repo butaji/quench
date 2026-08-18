@@ -197,10 +197,10 @@ const fn set_fn_name(b: Builtin) -> Option<&'static str> {
 pub const fn fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::IteratorConcat
-        | Builtin::IteratorZip
         | Builtin::IteratorSelf
         | Builtin::AsyncIteratorSelf
         | Builtin::AsyncIteratorDispose => Some(0.0),
+        Builtin::IteratorZip => Some(1.0),
         Builtin::IteratorFrom => Some(1.0),
         Builtin::IteratorToArray => Some(0.0),
         Builtin::IteratorMap => Some(1.0),
