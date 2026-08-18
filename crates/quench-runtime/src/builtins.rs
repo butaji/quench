@@ -370,10 +370,10 @@ include!("builtins_object_core.rs");
 pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     let (name, constructor, prototype) = error_parts(builtin);
     let constructor_builtin = constructor;
-    let constructor = crate::vm::realm_intrinsic(constructor_builtin);
+    let constructor = Value::Builtin(constructor_builtin);
     let prototype_builtin =
         crate::builtin_meta::instance_prototype(constructor_builtin).unwrap_or(prototype);
-    let prototype = crate::vm::realm_intrinsic(prototype_builtin);
+    let prototype = Value::Builtin(prototype_builtin);
     let message = arguments.first().map_or_else(String::new, value_to_string);
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
