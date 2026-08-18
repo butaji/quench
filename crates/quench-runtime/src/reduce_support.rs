@@ -112,6 +112,32 @@ impl<'a> oxc::ast::visit::Visit<'a> for DynamicImportValidator<'a> {
     }
 }
 
+/// Reject `await using` and `using` declarations that depend on the
+/// explicit-resource-management proposal. The proposal is not part of
+/// stable ECMAScript, so test262 expects them to throw SyntaxError at
+/// parse time.
+struct AwaitUsingValidator<'a> {
+    errors: Vec<String>,
+    marker: std::marker::PhantomData<&'a ()>,
+}
+
+impl<'a> oxc::ast::visit::Visit<'a> for AwaitUsingValidator<'a> {
+    fn visit_variable_declaration(
+        &mut self,
+        declaration: &oxc::ast::ast::VariableDeclaration<'a>,
+    ) {
+        use oxc::ast::ast::VariableDeclarationKind;
+        if matches!(
+            declaration.kind,
+            VariableDeclarationKind::AwaitUsing | VariableDeclarationKind::Using
+        ) {
+            self.errors.push(
+                "SyntaxError: await using declarations are not supported".to_string(),
+            );
+        }
+    }
+}
+
 pub(crate) fn validate_program(program: &oxc::ast::ast::Program<'_>) -> Result<(), Vec<String>> {
     let mut regexp_validator = RegexpLiteralValidator {
         errors: Vec::new(),
@@ -126,11 +152,18 @@ pub(crate) fn validate_program(program: &oxc::ast::ast::Program<'_>) -> Result<(
         marker: std::marker::PhantomData,
     };
     oxc::ast::visit::walk::walk_program(&mut import_validator, program);
-    if import_validator.errors.is_empty() {
-        Ok(())
-    } else {
-        Err(import_validator.errors)
+    if !import_validator.errors.is_empty() {
+        return Err(import_validator.errors);
     }
+    let mut using_validator = AwaitUsingValidator {
+        errors: Vec::new(),
+        marker: std::marker::PhantomData,
+    };
+    oxc::ast::visit::walk::walk_program(&mut using_validator, program);
+    if !using_validator.errors.is_empty() {
+        return Err(using_validator.errors);
+    }
+    Ok(())
 }
 
 /// Highest allocated local slot plus one, used as the next register base.
