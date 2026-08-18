@@ -65,8 +65,19 @@ fn run_dynamic_import(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError
     let specifier = crate::conversion::to_string(&crate::execute::read_register(registers, *specifier)?)?;
     let value = crate::module_bindings::resolve_dynamic_import(&specifier, *deferred)
         .unwrap_or_else(|| Value::String(specifier));
+    let value = if let Some(thrown) = crate::module_bindings::take_pending_throw() {
+        rejected_promise(thrown)
+    } else {
+        value
+    };
     write_value(registers, *dst, value);
     Ok(())
+}
+
+fn rejected_promise(reason: Value) -> Value {
+    let promise = std::rc::Rc::new(crate::value::PromiseData::default());
+    crate::promise::reject_promise(&promise, reason);
+    Value::Promise(promise)
 }
 
 fn run_class_prototype(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
