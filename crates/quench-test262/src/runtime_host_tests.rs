@@ -106,6 +106,53 @@ fn import_defer_does_not_evaluate_dependency() {
 }
 
 #[test]
+fn deferred_export_cell_is_live_after_namespace_get() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        "import defer * as ns from './dep.js';\nexport default ns.foo;\n".to_string(),
+    );
+    let dep = graph.add_dependency(
+        PathBuf::from("dep.js"),
+        "export const foo = 1;\n".to_string(),
+    );
+    let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    assert_eq!(
+        linked.export_cell(dep, "foo").expect("foo").get(),
+        Value::Number(1.0),
+        "export cell after deferred evaluation"
+    );
+    assert_eq!(
+        linked.export_cell(entry, "default").expect("default").get(),
+        Value::Number(1.0),
+        "ns.foo after deferred evaluation"
+    );
+}
+
+#[test]
+fn deferred_gopd_after_own_keys() {
+    let mut graph = ModuleGraph::new();
+    let entry = graph.add_entry(
+        PathBuf::from("entry.js"),
+        concat!(
+            "import defer * as ns from './dep.js';\n",
+            "const keys = Reflect.ownKeys(ns);\n",
+            "const desc = Reflect.getOwnPropertyDescriptor(ns, 'foo');\n",
+            "export default desc && desc.value;\n",
+        )
+        .to_string(),
+    );
+    graph.add_dependency(PathBuf::from("dep.js"), "export const foo = 1;\nexport const bar = 2;\n".to_string());
+    let linked = LinkedModuleGraph::compile(&mut graph).expect("graph compiles");
+    linked.execute(&graph, entry).expect("graph executes");
+    assert_eq!(
+        linked.export_cell(entry, "default").expect("default").get(),
+        Value::Number(1.0)
+    );
+}
+
+#[test]
 fn export_star_forwards_live_cells() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(PathBuf::from("entry.js"), "import { value } from './barrel.js'; export default value;".to_string());
