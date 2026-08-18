@@ -1,6 +1,6 @@
 //! `Intl.Segmenter`.
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -301,16 +301,16 @@ fn segment_entry(segment: &str, index: usize, input: &str, word_like: bool) -> V
 
 fn segments_iterator(receiver: Option<&Value>) -> Result<Value, VmError> {
     let values = segment_values(receiver)?;
-    Ok(Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Native {
+    Ok(Value::Iterator(Rc::new(IteratorData::new(
+        IteratorState::Native {
             values,
             receiver: None,
             typed_receiver: None,
             typed_keys: false,
             index: 0,
             done: false,
-        }),
-    })))
+        },
+    ))))
 }
 
 fn segments_containing(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {

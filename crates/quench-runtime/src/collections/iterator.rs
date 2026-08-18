@@ -1,5 +1,5 @@
 use crate::value::{IteratorData, IteratorState, Value};
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 #[path = "iterator_map.rs"]
 mod iterator_map;
 #[path = "iterator_protocol.rs"]
@@ -34,14 +34,14 @@ pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmErr
         }
         items.push((argument.clone(), method));
     }
-    Ok(Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Concat {
+    Ok(Value::Iterator(Rc::new(IteratorData::new(
+        IteratorState::Concat {
             items,
             index: 0,
             current: None,
             done: false,
-        }),
-    })))
+        },
+    ))))
 }
 
 pub(crate) fn zip(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
@@ -54,13 +54,13 @@ pub(crate) fn zip(arguments: &[Value]) -> Result<Value, crate::execute::VmError>
     }
     let mode = zip_mode(&options)?;
     let iterators = collect_zip_iterators(inputs)?;
-    Ok(Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Zip {
+    Ok(Value::Iterator(Rc::new(IteratorData::new(
+        IteratorState::Zip {
             iterators,
             mode,
             done: false,
-        }),
-    })))
+        },
+    ))))
 }
 
 include!("iterator_combinators.rs");
@@ -91,13 +91,11 @@ fn make_protocol(iterator: Value) -> Value {
     make_protocol_with_next(iterator, Value::Undefined)
 }
 fn make_protocol_with_next(iterator: Value, next: Value) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Protocol {
-            iterator,
-            next,
-            done: false,
-        }),
-    }))
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::Protocol {
+        iterator,
+        next,
+        done: false,
+    })))
 }
 pub(crate) fn execute(
     registers: &mut Vec<Value>,
