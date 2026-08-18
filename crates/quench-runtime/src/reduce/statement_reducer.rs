@@ -59,6 +59,14 @@ impl StatementReducer {
             global_script,
             facts.strict,
         );
+        if !self.script {
+            crate::reduce_support::predeclare_lexicals(
+                statements,
+                &mut self.locals,
+                &mut self.next_slot,
+            );
+            emit_module_lexical_tdz(&mut self.ops, statements, &self.locals);
+        }
         if global_script {
             instantiate_global_script_functions(statements, facts, self)?;
         } else if !self.script {
@@ -239,4 +247,36 @@ fn is_module_function_declaration(statement: &Statement<'_>) -> bool {
         &export.declaration,
         Some(oxc::ast::ast::Declaration::FunctionDeclaration(_))
     )
+}
+
+fn emit_module_lexical_tdz(
+    ops: &mut Vec<Op>,
+    statements: &[Statement<'_>],
+    locals: &HashMap<String, u16>,
+) {
+    for statement in statements {
+        let oxc::ast::ast::Statement::VariableDeclaration(declaration) = statement else {
+            continue;
+        };
+        if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var {
+            continue;
+        }
+        for name in declaration
+            .declarations
+            .iter()
+            .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
+        {
+            if let Some(&slot) = locals.get(&name) {
+                ops.push(Op::MarkUninitialized { slot });
+                if matches!(
+                    declaration.kind,
+                    oxc::ast::ast::VariableDeclarationKind::Const
+                        | oxc::ast::ast::VariableDeclarationKind::Using
+                        | oxc::ast::ast::VariableDeclarationKind::AwaitUsing
+                ) {
+                    ops.push(Op::MarkImmutable { slot });
+                }
+            }
+        }
+    }
 }

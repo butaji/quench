@@ -156,6 +156,7 @@ pub(crate) fn store(registers: &[Value], slot: u16, source: u16) -> Result<(), V
         ));
     }
     current().set(slot, value);
+    current().initialize(slot);
     if slot == 0 {
         crate::vm::initialize_global_object(&current().get(slot));
     }
@@ -218,6 +219,7 @@ pub(crate) fn initialize_resolved(
     let value = crate::execute::read_register(registers, source)?;
     let target = crate::execute::read_register(registers, target)?;
     current().set(slot, value.clone());
+    current().initialize(slot);
     if matches!(target, Value::Undefined) {
         return Ok(());
     } else {
