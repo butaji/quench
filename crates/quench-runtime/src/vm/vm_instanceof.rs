@@ -266,7 +266,8 @@ fn internal_prototype(value: &Value) -> Option<Value> {
             Some(Value::Builtin(Builtin::ObjectPrototype))
         }
         Value::Array(values) => values
-            .property("\0prototype")
+            .prototype()
+            .or_else(|| values.property("\0prototype"))
             .or_else(|| Some(Value::Builtin(Builtin::ArrayPrototype))),
         Value::ArrayBuffer(buffer) => buffer_prototype(buffer),
         Value::DataView(view) => view
