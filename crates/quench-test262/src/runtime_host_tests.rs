@@ -153,6 +153,23 @@ fn deferred_gopd_after_own_keys() {
 }
 
 #[test]
+fn module_this_in_method_is_the_instance() {
+    let source = concat!(
+        "class outer {\n",
+        "  #x = 42;\n",
+        "  f() { return this.#x; }\n",
+        "}\n",
+        "export default new outer().f();\n",
+    );
+    let module = LinkedModule::compile(source).expect("module compiles");
+    module.execute().expect("module executes");
+    assert_eq!(
+        module.export_cell("default").expect("default").get(),
+        Value::Number(42.0)
+    );
+}
+
+#[test]
 fn deferred_tla_finishes_before_importer_body() {
     let mut graph = ModuleGraph::new();
     let entry = graph.add_entry(
