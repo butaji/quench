@@ -159,6 +159,19 @@ fn singleton_matches(object: &ObjectProperties) -> bool {
     })
 }
 
+pub(crate) fn current_realm_intrinsic(builtin: crate::ops::Builtin) -> Option<Value> {
+    realm::intrinsic(current_realm(), builtin)
+}
+
+pub(crate) fn replace_realm_global_if_current(
+    previous: &ObjectProperties,
+    next: &ObjectProperties,
+) {
+    if let Some(realm) = realm::id_for_global(previous) {
+        replace_realm_global(realm, next.clone());
+    }
+}
+
 fn replace_realm_global(realm: RealmId, global: ObjectProperties) {
     if let Some(token) = realm::token(realm) {
         realm::register_global(&token, global);
