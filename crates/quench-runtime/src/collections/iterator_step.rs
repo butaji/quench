@@ -11,9 +11,8 @@ pub(crate) fn step_value(value: &Value) -> Result<Option<Value>, crate::execute:
     };
     if std::env::var_os("QDEBUG").is_some() {
         eprintln!(
-            "step_value state={:?} addr={:p}",
-            std::mem::discriminant(&*data.state.borrow()),
-            data.state.as_ptr(),
+            "step_value state={:?}",
+            std::mem::discriminant(&*data.state.borrow())
         );
     }
     match step_target(data)? {
@@ -32,9 +31,6 @@ enum StepTarget {
 }
 
 fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
-    if std::env::var_os("QDEBUG").is_some() {
-        eprintln!("step_target called, addr={:p}", data.state.as_ptr());
-    }
     if matches!(&*data.state.borrow(), IteratorState::Concat { .. }) {
         return concat_target(data);
     }
@@ -278,9 +274,6 @@ fn user_step_target(data: &IteratorData) -> Result<Option<StepTarget>, crate::ex
     let Some(snapshot) = snapshot_reentry(data) else {
         return Ok(None);
     };
-    if std::env::var_os("QDEBUG").is_some() {
-        eprintln!("user_step_target snapshot taken");
-    }
     let mut owned = snapshot;
     let result = match &mut owned {
         Snapshot::Mapped {
@@ -317,13 +310,7 @@ fn user_step_target(data: &IteratorData) -> Result<Option<StepTarget>, crate::ex
             done,
         } => zip_step(iterators, *mode, done).map(StepTarget::Value)?,
     };
-    if std::env::var_os("QDEBUG").is_some() {
-        eprintln!("user_step_target writing snapshot");
-    }
     write_snapshot(data, &owned);
-    if std::env::var_os("QDEBUG").is_some() {
-        eprintln!("user_step_target done");
-    }
     Ok(Some(result))
 }
 

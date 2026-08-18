@@ -54,6 +54,9 @@ pub(crate) fn from_set_entries(receiver: Option<&Value>) -> Result<Value, crate:
 }
 
 pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
+    if std::env::var_os("QDEBUG").is_some() {
+        eprintln!("DBG: next() called");
+    }
     let Some(iterator @ Value::Iterator(data)) = receiver else {
         return Err(crate::value::error::throw_type_error(
             "Iterator.prototype.next called on incompatible receiver",
@@ -90,6 +93,7 @@ fn is_helper_iter(data: &crate::value::IteratorData) -> bool {
             | IteratorState::Dropped { .. }
             | IteratorState::Take { .. }
             | IteratorState::Zip { .. }
+            | IteratorState::Concat { .. }
     )
 }
 
@@ -225,65 +229,55 @@ fn next_for(value: &Value) -> Value {
 }
 
 pub(crate) fn make(values: Vec<Value>) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Native {
-            values,
-            receiver: None,
-            typed_receiver: None,
-            typed_keys: false,
-            index: 0,
-            done: false,
-        }),
-    }))
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::Native {
+        values,
+        receiver: None,
+        typed_receiver: None,
+        typed_keys: false,
+        index: 0,
+        done: false,
+    })))
 }
 
 pub(crate) fn make_array(data: Rc<crate::value::ArrayData>) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Native {
-            values: Vec::new(),
-            receiver: Some(data),
-            typed_receiver: None,
-            typed_keys: false,
-            index: 0,
-            done: false,
-        }),
-    }))
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::Native {
+        values: Vec::new(),
+        receiver: Some(data),
+        typed_receiver: None,
+        typed_keys: false,
+        index: 0,
+        done: false,
+    })))
 }
 
 pub(crate) fn make_typed(value: Value) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Native {
-            values: Vec::new(),
-            receiver: None,
-            typed_receiver: Some(value),
-            typed_keys: false,
-            index: 0,
-            done: false,
-        }),
-    }))
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::Native {
+        values: Vec::new(),
+        receiver: None,
+        typed_receiver: Some(value),
+        typed_keys: false,
+        index: 0,
+        done: false,
+    })))
 }
 
 pub(crate) fn make_typed_keys(value: Value) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Native {
-            values: Vec::new(),
-            receiver: None,
-            typed_receiver: Some(value),
-            typed_keys: true,
-            index: 0,
-            done: false,
-        }),
-    }))
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::Native {
+        values: Vec::new(),
+        receiver: None,
+        typed_receiver: Some(value),
+        typed_keys: true,
+        index: 0,
+        done: false,
+    })))
 }
 
 pub(crate) fn make_string(input: Vec<u16>) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::String {
-            input,
-            index: 0,
-            done: false,
-        }),
-    }))
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::String {
+        input,
+        index: 0,
+        done: false,
+    })))
 }
 
 pub(crate) fn make_regexp_string(
@@ -292,37 +286,33 @@ pub(crate) fn make_regexp_string(
     global: bool,
     unicode: bool,
 ) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::RegExpString {
+    Value::Iterator(Rc::new(IteratorData::new(
+        IteratorState::RegExpString {
             regexp,
             input,
             global,
             unicode,
             done: false,
-        }),
-    }))
+        },
+    )))
 }
 
 fn make_set(data: Rc<crate::value::SetData>, kind: u8) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Set {
-            data,
-            index: 0,
-            kind,
-            done: false,
-        }),
-    }))
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::Set {
+        data,
+        index: 0,
+        kind,
+        done: false,
+    })))
 }
 
 fn make_map(data: Rc<crate::value::MapData>, kind: u8) -> Value {
-    Value::Iterator(Rc::new(IteratorData {
-        state: RefCell::new(IteratorState::Map {
-            data,
-            index: 0,
-            kind,
-            done: false,
-        }),
-    }))
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::Map {
+        data,
+        index: 0,
+        kind,
+        done: false,
+    })))
 }
 
 pub(crate) fn result(value: Value, done: bool) -> Value {
@@ -333,4 +323,4 @@ pub(crate) fn result(value: Value, done: bool) -> Value {
 }
 use super::step_value;
 use crate::value::{IteratorData, IteratorState, Value};
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
