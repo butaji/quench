@@ -49,9 +49,11 @@ pub fn exports(value: &Value, key: &str) -> Result<(), VmError> {
     let Value::Object(object) = value else {
         return Ok(());
     };
-    if let Some(evaluate) = EVALUATORS.with(|map| map.borrow().get(&Rc::as_ptr(object)).cloned()) {
-        evaluate();
-    }
+    let Some(evaluate) = EVALUATORS.with(|map| map.borrow().get(&Rc::as_ptr(object)).cloned())
+    else {
+        return Ok(());
+    };
+    evaluate();
     if PENDING_TYPE_ERROR.with(|flag| flag.replace(false)) {
         return Err(crate::value::error::throw_type_error(
             "deferred namespace is not ready",
@@ -71,6 +73,13 @@ fn skips_deferred_evaluation(key: &str) -> bool {
 
 pub fn request_ensure_throw(value: Value) {
     PENDING_THROW.with(|slot| *slot.borrow_mut() = Some(value));
+}
+
+pub fn has_evaluator(value: &Value) -> bool {
+    let Value::Object(object) = unwrap_cells(value) else {
+        return false;
+    };
+    EVALUATORS.with(|map| map.borrow().contains_key(&Rc::as_ptr(&object)))
 }
 
 pub fn attach_evaluator(value: &Value, evaluate: Rc<dyn Fn()>) {
@@ -141,6 +150,8 @@ pub fn drain_jobs() {
 pub fn reset_module_jobs() {
     crate::promise::clear_jobs();
     defer_fulfilled_await(false);
+    PENDING_TYPE_ERROR.with(|flag| flag.set(false));
+    PENDING_THROW.with(|slot| slot.replace(None));
 }
 
 /// A live binding shared by module environments.
