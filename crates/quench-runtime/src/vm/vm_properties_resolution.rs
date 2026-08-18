@@ -1,5 +1,6 @@
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     let value = crate::locals::resolved_replacement(value.clone());
+    crate::module_bindings::run_object_ensure(&value, key);
     get_property_with_receiver(&value, key, &value)
 }
 
@@ -8,6 +9,7 @@ pub(crate) fn get_property_with_receiver(
     key: &str,
     receiver: &Value,
 ) -> Result<Value, VmError> {
+    crate::module_bindings::run_object_ensure(value, key);
     if let Some(result) = early_property_result(value, key, receiver) {
         return result;
     }
