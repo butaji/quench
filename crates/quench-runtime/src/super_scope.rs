@@ -244,7 +244,9 @@ fn put_with_receiver(
     value: Value,
     receiver: &Value,
 ) -> Result<(), VmError> {
+    crate::module_bindings::run_object_ensure(target, key);
     let receiver = crate::locals::resolved_replacement(receiver.clone());
+    crate::module_bindings::run_object_ensure(&receiver, key);
     if matches!(target, Value::Proxy(_)) {
         crate::proxy::proxy_set(target, key, &value, Some(&receiver))?;
         return Ok(());
