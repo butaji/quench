@@ -34,7 +34,66 @@ pub fn build() -> Vec<(String, Value)> {
             "concat".to_string(),
             crate::host::capability(crate::registry::SPEC_BUFFER_CONCAT),
         ),
+        (
+            "atob".to_string(),
+            crate::host::capability(crate::registry::SPEC_BUFFER_ATOB),
+        ),
+        (
+            "btoa".to_string(),
+            crate::host::capability(crate::registry::SPEC_BUFFER_BTOA),
+        ),
     ]
+}
+
+const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub fn btoa(args: &[Value]) -> String {
+    let input: Vec<u8> = match args.first() {
+        Some(Value::String(s)) => s.bytes().collect(),
+        _ => Vec::new(),
+    };
+    let mut out = String::new();
+    for chunk in input.chunks(3) {
+        let n =
+            chunk.iter().fold(0u32, |acc, b| (acc << 8) | u32::from(*b)) << (8 * (3 - chunk.len()));
+        out.push(B64[((n >> 18) & 0x3F) as usize] as char);
+        out.push(B64[((n >> 12) & 0x3F) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            B64[((n >> 6) & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            B64[(n & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+pub fn atob(args: &[Value]) -> Result<String, VmError> {
+    let Some(Value::String(input)) = args.first() else {
+        return Ok(String::new());
+    };
+    let mut out = Vec::new();
+    let mut acc = 0u32;
+    let mut bits = 0u32;
+    for byte in input.bytes().filter(|b| !b.is_ascii_whitespace()) {
+        if byte == b'=' {
+            break;
+        }
+        let Some(digit) = B64.iter().position(|c| *c == byte) else {
+            return Err(VmError::EvalError("InvalidCharacterError".into()));
+        };
+        acc = (acc << 6) | digit as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Ok(out.into_iter().map(|b| b as char).collect())
 }
 
 pub fn from_handler(

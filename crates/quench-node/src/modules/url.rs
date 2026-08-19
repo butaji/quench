@@ -9,6 +9,8 @@ use quench_runtime::execute::VmError;
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
+use crate::host::HostState;
+
 const URL_KEYS: &[&str] = &[
     "protocol", "auth", "host", "hostname", "port", "pathname", "search", "query", "hash",
 ];
@@ -346,6 +348,30 @@ pub fn build_root() -> Value {
                 0x0504,
             )),
         ),
+        (
+            "pathToFileURL",
+            crate::host::capability(crate::registry::SPEC_URL_PATH_TO_FILE_URL),
+        ),
     ])
     .unwrap_or_else(|_| Value::Undefined)
+}
+
+/// `url.pathToFileURL` — minimal POSIX form: `file://` + absolute path.
+pub fn path_to_file_url(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let path = args.first().map(value_to_string).unwrap_or_default();
+    let cwd = value_to_string(&crate::modules::process::cwd(state, &[])?);
+    let absolute = if path.starts_with('/') {
+        path
+    } else {
+        format!("{cwd}/{path}")
+    };
+    let mut encoded = String::new();
+    for c in absolute.chars() {
+        if c.is_ascii_alphanumeric() || "-._~/".contains(c) {
+            encoded.push(c);
+        } else {
+            encoded.push_str(&format!("%{:02X}", c as u32));
+        }
+    }
+    new_url(state, &[Value::String(format!("file://{encoded}"))])
 }

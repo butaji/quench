@@ -1,0 +1,268 @@
+//! `assert` module — Node assertion semantics in pure Rust.
+//!
+//! The exported value is the callable `assert` function itself
+//! (`assert(x)` === `assert.ok(x)`) with every assertion attached as
+//! a host capability property. Failures throw `VmError::Thrown` with
+//! an AssertionError-shaped object (`name`, `message`, `operator`,
+//! `actual`, `expected`), which is catchable via `try`/`catch`.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use quench_runtime::execute::{self, VmError};
+use quench_runtime::host_api;
+use quench_runtime::value::Value;
+
+use crate::host::HostState;
+use crate::registry::*;
+
+/// Namespace pairs following the module convention; `build_value`
+/// also attaches them to the callable `assert` capability value.
+pub fn build() -> Vec<(String, Value)> {
+    vec![
+        pair("ok", SPEC_ASSERT_OK),
+        pair("strictEqual", SPEC_ASSERT_STRICT_EQUAL),
+        pair("notStrictEqual", SPEC_ASSERT_NOT_STRICT_EQUAL),
+        pair("equal", SPEC_ASSERT_EQUAL),
+        pair("notEqual", SPEC_ASSERT_NOT_EQUAL),
+        pair("deepStrictEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
+        pair("notDeepStrictEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+        // Legacy deep equality aliases share the strict engine for now.
+        pair("deepEqual", SPEC_ASSERT_DEEP_STRICT_EQUAL),
+        pair("notDeepEqual", SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL),
+        pair("throws", SPEC_ASSERT_THROWS),
+        pair("doesNotThrow", SPEC_ASSERT_DOES_NOT_THROW),
+        pair("fail", SPEC_ASSERT_FAIL),
+        pair("ifError", SPEC_ASSERT_IF_ERROR),
+        pair("match", SPEC_ASSERT_MATCH),
+        pair("doesNotMatch", SPEC_ASSERT_DOES_NOT_MATCH),
+        ("AssertionError".to_string(), assertion_error_type()),
+    ]
+}
+
+/// The callable `assert` export: `assert(value)` is `assert.ok`.
+pub fn build_value() -> Value {
+    let value = crate::host::capability(SPEC_ASSERT_OK);
+    for (key, property) in build() {
+        let _ = execute::set_callable_property(&value, &key, property);
+    }
+    // `assert.strict === assert` in Node's strict entry point.
+    let _ = execute::set_callable_property(&value, "strict", value.clone());
+    value
+}
+
+fn pair(name: &str, spec: NodeSpec) -> (String, Value) {
+    (name.to_string(), crate::host::capability(spec))
+}
+
+fn assertion_error_type() -> Value {
+    host_api::object(vec![(
+        "name".to_string(),
+        Value::String("AssertionError".to_string()),
+    )])
+}
+
+/// AssertionError-shaped thrown value, catchable from JavaScript.
+/// `generated` mirrors Node's `generatedMessage`: true when the
+/// message was produced by assert itself, false when user-supplied.
+pub fn assertion_error(
+    message: String,
+    operator: &str,
+    actual: Value,
+    expected: Value,
+    generated: bool,
+) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        (
+            "name".to_string(),
+            Value::String("AssertionError".to_string()),
+        ),
+        ("message".to_string(), Value::String(message.clone())),
+        ("operator".to_string(), Value::String(operator.to_string())),
+        ("actual".to_string(), actual),
+        ("expected".to_string(), expected),
+        (
+            "code".to_string(),
+            Value::String("ERR_ASSERTION".to_string()),
+        ),
+        ("generatedMessage".to_string(), Value::Boolean(generated)),
+        (
+            "stack".to_string(),
+            Value::String(format!("AssertionError: {message}")),
+        ),
+    ]))
+}
+
+/// Optional trailing message argument; `None` when absent/undefined.
+pub fn custom_message(args: &[Value], index: usize) -> Option<String> {
+    match args.get(index) {
+        Some(Value::String(message)) => Some(message.clone()),
+        Some(Value::Undefined) | None => None,
+        Some(value) => Some(crate::modules::util::inspect(value)),
+    }
+}
+
+fn rendered(value: &Value) -> String {
+    crate::modules::util::inspect(value)
+}
+
+pub(crate) fn arg(args: &[Value], index: usize) -> Value {
+    args.get(index).cloned().unwrap_or(Value::Undefined)
+}
+
+pub fn ok(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if execute::is_truthy(&arg(args, 0)) {
+        return Ok(Value::Undefined);
+    }
+    let custom = custom_message(args, 1);
+    let generated = custom.is_none();
+    let message = custom.unwrap_or_else(|| {
+        format!(
+            "The expression evaluated to a falsy value:\n\n  assert.ok({})\n",
+            rendered(&arg(args, 0))
+        )
+    });
+    Err(assertion_error(
+        message,
+        "ok",
+        arg(args, 0),
+        Value::Boolean(true),
+        generated,
+    ))
+}
+
+pub fn fail(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let custom = custom_message(args, 0);
+    let generated = custom.is_none();
+    let message = custom.unwrap_or_else(|| "Failed".to_string());
+    Err(assertion_error(
+        message,
+        "fail",
+        Value::Undefined,
+        Value::Undefined,
+        generated,
+    ))
+}
+
+pub fn if_error(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = arg(args, 0);
+    if matches!(value, Value::Null | Value::Undefined) {
+        return Ok(Value::Undefined);
+    }
+    let custom = custom_message(args, 1);
+    let generated = custom.is_none();
+    let message =
+        custom.unwrap_or_else(|| format!("ifError got unwanted exception: {}", describe(&value)));
+    Err(assertion_error(
+        message,
+        "ifError",
+        value,
+        Value::Null,
+        generated,
+    ))
+}
+
+/// Error values render as their message; other values via inspect.
+fn describe(value: &Value) -> String {
+    match execute::get_property(value, "message") {
+        Value::String(message) if !matches!(value, Value::String(_)) => message,
+        _ => rendered(value),
+    }
+}
+
+fn binary_assert(
+    args: &[Value],
+    operator: &str,
+    expect_equal: bool,
+    compare: impl Fn(&Value, &Value) -> Result<bool, VmError>,
+) -> Result<Value, VmError> {
+    let actual = arg(args, 0);
+    let expected = arg(args, 1);
+    let equal = compare(&actual, &expected)?;
+    if equal == expect_equal {
+        return Ok(Value::Undefined);
+    }
+    let relation = if expect_equal { "!==" } else { "===" };
+    let custom = custom_message(args, 2);
+    let generated = custom.is_none();
+    let message = custom.unwrap_or_else(|| {
+        format!(
+            "Expected values to be {}:\n\n{} {} {}\n",
+            operator,
+            rendered(&actual),
+            relation,
+            rendered(&expected)
+        )
+    });
+    Err(assertion_error(
+        message, operator, actual, expected, generated,
+    ))
+}
+
+pub fn strict_equal(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    binary_assert(args, "strictEqual", true, |a, b| {
+        Ok(execute::strict_equal(a, b))
+    })
+}
+
+pub fn not_strict_equal(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    binary_assert(args, "notStrictEqual", false, |a, b| {
+        Ok(execute::strict_equal(a, b))
+    })
+}
+
+pub fn equal(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    binary_assert(args, "equal", true, execute::abstract_equal)
+}
+
+pub fn not_equal(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    binary_assert(args, "notEqual", false, execute::abstract_equal)
+}
+
+pub fn deep_strict_equal(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    binary_assert(args, "deepStrictEqual", true, |a, b| {
+        crate::modules::deep_equal::deep_equal(a, b, true)
+    })
+}
+
+pub fn not_deep_strict_equal(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    binary_assert(args, "notDeepStrictEqual", false, |a, b| {
+        crate::modules::deep_equal::deep_equal(a, b, true)
+    })
+}

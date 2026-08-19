@@ -44,6 +44,7 @@ pub const SPEC_CONSOLE_TRACE: NodeSpec = NodeSpec::new("console:trace", 0x0205);
 pub const SPEC_UTIL_FORMAT: NodeSpec = NodeSpec::new("util:format", 0x0300);
 pub const SPEC_UTIL_INSPECT: NodeSpec = NodeSpec::new("util:inspect", 0x0301);
 pub const SPEC_UTIL_TYPES: NodeSpec = NodeSpec::new("util:types", 0x0302);
+pub const SPEC_UTIL_GETCALLSITES: NodeSpec = NodeSpec::new("util:getCallSites", 0x0303);
 pub const SPEC_UTIL_IS: NodeSpec = NodeSpec::new("util:is", 0x0303);
 pub const SPEC_UTIL_INHERITS: NodeSpec = NodeSpec::new("util:inherits", 0x0304);
 
@@ -83,6 +84,8 @@ pub const SPEC_BUFFER_BYTELENGTH: NodeSpec = NodeSpec::new("buffer:byteLength", 
 pub const SPEC_BUFFER_ISBUFFER: NodeSpec = NodeSpec::new("buffer:isBuffer", 0x0803);
 pub const SPEC_BUFFER_CONCAT: NodeSpec = NodeSpec::new("buffer:concat", 0x0804);
 pub const SPEC_BUFFER_NEW: NodeSpec = NodeSpec::new("buffer:Buffer", 0x0805);
+pub const SPEC_BUFFER_ATOB: NodeSpec = NodeSpec::new("buffer:atob", 0x0806);
+pub const SPEC_BUFFER_BTOA: NodeSpec = NodeSpec::new("buffer:btoa", 0x0807);
 
 pub const SPEC_TTY_ISATTY: NodeSpec = NodeSpec::new("tty:isatty", 0x0900);
 
@@ -92,6 +95,8 @@ pub const SPEC_PROCESS_CWD: NodeSpec = NodeSpec::new("process:cwd", 0x0A02);
 pub const SPEC_PROCESS_CHDIR: NodeSpec = NodeSpec::new("process:chdir", 0x0A03);
 pub const SPEC_PROCESS_NEXT_TICK: NodeSpec = NodeSpec::new("process:nextTick", 0x0A04);
 pub const SPEC_PROCESS_HRTIME: NodeSpec = NodeSpec::new("process:hrtime", 0x0A05);
+pub const SPEC_PROCESS_UMASK: NodeSpec = NodeSpec::new("process:umask", 0x0A06);
+pub const SPEC_PROCESS_ON: NodeSpec = NodeSpec::new("process:on", 0x0A07);
 
 pub const SPEC_OS_PLATFORM: NodeSpec = NodeSpec::new("os:platform", 0x0B00);
 pub const SPEC_OS_ARCH: NodeSpec = NodeSpec::new("os:arch", 0x0B01);
@@ -129,6 +134,10 @@ pub const SPEC_NET_SERVER: NodeSpec = NodeSpec::new("net:createServer", 0x1001);
 pub const SPEC_NET_ISIP: NodeSpec = NodeSpec::new("net:isIP", 0x1002);
 pub const SPEC_NET_ISIPV4: NodeSpec = NodeSpec::new("net:isIPv4", 0x1003);
 pub const SPEC_NET_ISIPV6: NodeSpec = NodeSpec::new("net:isIPv6", 0x1004);
+pub const SPEC_NET_GET_ASF_TIMEOUT: NodeSpec =
+    NodeSpec::new("net:getDefaultAutoSelectFamilyAttemptTimeout", 0x1005);
+pub const SPEC_NET_SET_ASF_TIMEOUT: NodeSpec =
+    NodeSpec::new("net:setDefaultAutoSelectFamilyAttemptTimeout", 0x1006);
 
 pub const SPEC_FS_READFILE: NodeSpec = NodeSpec::new("fs:readFile", 0x1100);
 pub const SPEC_FS_WRITEFILE: NodeSpec = NodeSpec::new("fs:writeFile", 0x1101);
@@ -147,6 +156,30 @@ pub const SPEC_FS_REALSYNC: NodeSpec = NodeSpec::new("fs:realpathSync", 0x110C);
 pub const SPEC_REQUIRE: NodeSpec = NodeSpec::new("require", 0x1200);
 pub const SPEC_READLINE: NodeSpec = NodeSpec::new("readline:createInterface", 0x1300);
 pub const SPEC_CJS_WRAP: NodeSpec = NodeSpec::new("__quench_cjs_wrap__", 0x1d00);
+pub const SPEC_CP_SPAWNSYNC: NodeSpec = NodeSpec::new("child_process:spawnSync", 0x1e00);
+pub const SPEC_CP_EXECSYNC: NodeSpec = NodeSpec::new("child_process:execSync", 0x1e01);
+pub const SPEC_CP_EXEC: NodeSpec = NodeSpec::new("child_process:exec", 0x1e02);
+pub const SPEC_CP_SPAWN: NodeSpec = NodeSpec::new("child_process:spawn", 0x1e03);
+pub const SPEC_URL_PATH_TO_FILE_URL: NodeSpec = NodeSpec::new("url:pathToFileURL", 0x0505);
+pub const SPEC_STRUCTURED_CLONE: NodeSpec = NodeSpec::new("structuredClone", 0x1f00);
+pub const SPEC_FETCH: NodeSpec = NodeSpec::new("fetch", 0x1f01);
+pub const SPEC_ABORT_CONTROLLER: NodeSpec = NodeSpec::new("AbortController", 0x1f02);
+pub const SPEC_ABORT_SIGNAL: NodeSpec = NodeSpec::new("AbortSignal", 0x1f03);
+
+pub const SPEC_ASSERT_OK: NodeSpec = NodeSpec::new("assert:ok", 0x1400);
+pub const SPEC_ASSERT_STRICT_EQUAL: NodeSpec = NodeSpec::new("assert:strictEqual", 0x1401);
+pub const SPEC_ASSERT_NOT_STRICT_EQUAL: NodeSpec = NodeSpec::new("assert:notStrictEqual", 0x1402);
+pub const SPEC_ASSERT_EQUAL: NodeSpec = NodeSpec::new("assert:equal", 0x1403);
+pub const SPEC_ASSERT_NOT_EQUAL: NodeSpec = NodeSpec::new("assert:notEqual", 0x1404);
+pub const SPEC_ASSERT_DEEP_STRICT_EQUAL: NodeSpec = NodeSpec::new("assert:deepStrictEqual", 0x1405);
+pub const SPEC_ASSERT_NOT_DEEP_STRICT_EQUAL: NodeSpec =
+    NodeSpec::new("assert:notDeepStrictEqual", 0x1406);
+pub const SPEC_ASSERT_THROWS: NodeSpec = NodeSpec::new("assert:throws", 0x1407);
+pub const SPEC_ASSERT_DOES_NOT_THROW: NodeSpec = NodeSpec::new("assert:doesNotThrow", 0x1408);
+pub const SPEC_ASSERT_FAIL: NodeSpec = NodeSpec::new("assert:fail", 0x1409);
+pub const SPEC_ASSERT_IF_ERROR: NodeSpec = NodeSpec::new("assert:ifError", 0x140A);
+pub const SPEC_ASSERT_MATCH: NodeSpec = NodeSpec::new("assert:match", 0x140B);
+pub const SPEC_ASSERT_DOES_NOT_MATCH: NodeSpec = NodeSpec::new("assert:doesNotMatch", 0x140C);
 
 /// Symbolic id for a Node host object stored in a `Value::Object`.
 /// The runtime does not interpret this; the host uses it to map
@@ -224,6 +257,34 @@ pub fn namespace_bindings() -> Vec<(String, quench_runtime::value::Value)> {
     out.push((
         "__quench_cjs_wrap__".to_string(),
         crate::host::capability(crate::registry::SPEC_CJS_WRAP),
+    ));
+    out.push((
+        "structuredClone".to_string(),
+        crate::host::capability(crate::registry::SPEC_STRUCTURED_CLONE),
+    ));
+    out.push((
+        "fetch".to_string(),
+        crate::host::capability(crate::registry::SPEC_FETCH),
+    ));
+    out.push((
+        "AbortController".to_string(),
+        crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER),
+    ));
+    out.push((
+        "AbortSignal".to_string(),
+        crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL),
+    ));
+    out.push((
+        "atob".to_string(),
+        crate::host::capability(crate::registry::SPEC_BUFFER_ATOB),
+    ));
+    out.push((
+        "btoa".to_string(),
+        crate::host::capability(crate::registry::SPEC_BUFFER_BTOA),
+    ));
+    out.push((
+        "global".to_string(),
+        crate::host::namespace_object_from_pairs(vec![]),
     ));
     out
 }
