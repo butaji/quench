@@ -41,19 +41,20 @@ pub(crate) fn emit_tdz(
     locals: &HashMap<String, u16>,
 ) {
     for statement in statements {
-        let Statement::VariableDeclaration(declaration) = statement else {
-            continue;
-        };
-        if !is_using_kind(declaration.kind) {
-            continue;
-        }
-        for name in declaration
-            .declarations
-            .iter()
-            .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
-        {
-            if let Some(&slot) = locals.get(&name) {
-                ops.push(Op::MarkUninitialized { slot });
+        for name in crate::reduce_support::lexical_bound_names(statement) {
+            let Some(&slot) = locals.get(&name) else {
+                continue;
+            };
+            ops.push(Op::MarkUninitialized { slot });
+            if crate::reduce_support::lexical_declaration(statement).is_some_and(|declaration| {
+                matches!(
+                    declaration.kind,
+                    oxc::ast::ast::VariableDeclarationKind::Const
+                        | oxc::ast::ast::VariableDeclarationKind::Using
+                        | oxc::ast::ast::VariableDeclarationKind::AwaitUsing
+                )
+            }) {
+                ops.push(Op::MarkImmutable { slot });
             }
         }
     }
@@ -163,7 +164,12 @@ pub(crate) fn mark_binding_immutable(
     ops: &mut Vec<Op>,
     locals: &HashMap<String, u16>,
 ) {
-    if !is_using_kind(kind) {
+    if !matches!(
+        kind,
+        VariableDeclarationKind::Const
+            | VariableDeclarationKind::Using
+            | VariableDeclarationKind::AwaitUsing
+    ) {
         return;
     }
     for name in crate::binding_patterns::names(pattern) {
