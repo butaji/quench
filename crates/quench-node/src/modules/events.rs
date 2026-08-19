@@ -323,6 +323,12 @@ pub fn new_emitter(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Va
     install_emitter_props(object)
 }
 
+/// Build a fresh EventEmitter-backed object with all standard emitter
+/// methods installed. Shared by `net` for its server/socket objects.
+pub fn new_emitter_object(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    new_emitter(state, &[])
+}
+
 fn install_emitter_props(mut object: Value) -> Result<Value, VmError> {
     for (key, value) in emitter_props() {
         let descriptor = host_api::object(vec![
