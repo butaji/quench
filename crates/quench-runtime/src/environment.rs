@@ -294,15 +294,26 @@ impl Environment {
     }
 
     pub(crate) fn resolve_eval_name(&self, name: &str) -> Option<Value> {
+        self.eval_name_binding(name).map(|binding| binding.load())
+    }
+
+    pub(crate) fn eval_name_aliases_slot(&self, name: &str, slot: u16) -> bool {
+        let Some(eval_binding) = self.eval_name_binding(name) else {
+            return false;
+        };
+        self.slot(slot).is_some_and(|binding| binding.same(&eval_binding))
+    }
+
+    fn eval_name_binding(&self, name: &str) -> Option<BindingRef> {
         if let Some(binding) = self
             .eval_names
             .borrow()
             .as_ref()
             .and_then(|names| names.get(name).cloned())
         {
-            return Some(binding.load());
+            return Some(binding);
         }
-        self.caller.as_ref()?.resolve_eval_name(name)
+        self.caller.as_ref()?.eval_name_binding(name)
     }
 
     pub(crate) fn set_eval_named(&self, name: &str, value: Value) -> bool {
