@@ -218,6 +218,9 @@ fn reduce_static_block(
     let captures = crate::reduce_support::register_base(locals);
     let mut block_locals = locals.clone();
     block_locals.insert("this".to_string(), captures.saturating_add(1));
+    let mut next_slot = captures.saturating_add(2);
+    crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, &mut next_slot);
+    block_locals.retain(|name, _| !name.starts_with("\0lexical-predeclared:"));
     let inherited = (facts.strict, facts.in_function);
     facts.strict = true;
     facts.in_function = true;
@@ -225,7 +228,7 @@ fn reduce_static_block(
         &block.body,
         facts,
         block_locals,
-        captures.saturating_add(2),
+        next_slot,
     );
     (facts.strict, facts.in_function) = inherited;
     let body = body.ok()?;
@@ -363,7 +366,12 @@ fn reduce_private_field(
     };
     let display = format!("#{}", name.name);
     let initializer = match field.value.as_ref() {
-        Some(value) => Some(reduce_field_initializer(value, facts, locals, Some(display))?),
+        Some(value) => Some(reduce_field_initializer(
+            value,
+            facts,
+            locals,
+            Some(display),
+        )?),
         None => None,
     };
     let field = AppendInstanceFieldOp {
@@ -408,10 +416,7 @@ fn reduce_field_initializer(
     let captures = crate::reduce_support::register_base(locals);
     let mut body_locals = locals.clone();
     body_locals.insert("this".to_string(), captures.saturating_add(1));
-    body_locals.insert(
-        "\0new_target".to_string(),
-        captures.saturating_add(2),
-    );
+    body_locals.insert("\0new_target".to_string(), captures.saturating_add(2));
     let barrier_len = facts.eval_var_barrier.len();
     facts.eval_var_barrier.push("arguments".to_string());
     let mut next = captures.saturating_add(3);
@@ -451,14 +456,8 @@ fn reduce_method(
     let inherited = facts.strict;
     facts.strict = true;
     let kind = method_function_kind(method);
-    let result = crate::functions::reduce_expression_kind(
-        &method.value,
-        ops,
-        facts,
-        next,
-        locals,
-        kind,
-    );
+    let result =
+        crate::functions::reduce_expression_kind(&method.value, ops, facts, next, locals, kind);
     facts.strict = inherited;
     result
 }
