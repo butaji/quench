@@ -25,7 +25,7 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     if matches!(value, Value::Proxy(_)) {
         return crate::proxy::proxy_get(value, key, Some(value)).unwrap_or(Value::Undefined);
     }
-    direct_or_primitive_property(value, key)
+    crate::locals::resolved_replacement(direct_or_primitive_property(value, key))
 }
 
 fn direct_or_primitive_property(value: &Value, key: &str) -> Value {
