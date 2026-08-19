@@ -215,12 +215,7 @@ pub fn reduce_declaration(
             next_register,
             locals,
         );
-        crate::using_scope::mark_binding_immutable(
-            declaration.kind,
-            &declarator.id,
-            ops,
-            locals,
-        );
+        crate::using_scope::mark_binding_immutable(declaration.kind, &declarator.id, ops, locals);
     }
     Ok(())
 }
@@ -471,12 +466,11 @@ pub fn reduce_unary(
         UnaryOperator::Typeof => crate::ops::UnaryOp::Typeof,
         _ => return None,
     };
-    let unresolved_typeof = operator == crate::ops::UnaryOp::Typeof
-        && crate::unary::is_unresolved_identifier(&unary.argument, locals);
-    let src = if unresolved_typeof && dynamic_binding_may_exist(ops) {
-        emit_optional_name_lookup(&unary.argument, ops, next_register)?
-    } else if unresolved_typeof {
-        crate::reduce_support::emit_undefined(ops, next_register)
+    let src = if operator == crate::ops::UnaryOp::Typeof
+        && crate::unary::is_unbound_identifier(&unary.argument, locals)
+    {
+        emit_optional_name_lookup(&unary.argument, ops, next_register)
+            .unwrap_or_else(|| crate::reduce_support::emit_undefined(ops, next_register))
     } else {
         reduce_expression(&unary.argument, ops, facts, next_register, locals)?
     };
@@ -506,32 +500,6 @@ fn emit_optional_name_lookup(
     Some(dst)
 }
 
-fn dynamic_binding_may_exist(ops: &[Op]) -> bool {
-    ops.iter().any(op_may_invoke_eval)
-}
-
-fn op_may_invoke_eval(op: &Op) -> bool {
-    matches!(
-        op,
-        Op::Eval { .. }
-            | Op::Call { .. }
-            | Op::OptionalCall { .. }
-            | Op::CallMethod { .. }
-            | Op::CallSuperMethod { .. }
-            | Op::Construct { .. }
-            | Op::Await { .. }
-            | Op::Yield { .. }
-            | Op::Branch { .. }
-            | Op::Label { .. }
-            | Op::With { .. }
-            | Op::Try { .. }
-            | Op::Loop { .. }
-            | Op::ForIn { .. }
-            | Op::ForOf { .. }
-            | Op::Switch { .. }
-            | Op::Conditional { .. }
-    )
-}
 pub fn reduce_call(
     call: &oxc::ast::ast::CallExpression<'_>,
     ops: &mut Vec<Op>,
@@ -578,9 +546,7 @@ fn reduce_this_atom(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> u16 {
-    if !facts.in_function
-        && locals.contains_key(super::reduce_statements::MODULE_THIS_SLOT)
-    {
+    if !facts.in_function && locals.contains_key(super::reduce_statements::MODULE_THIS_SLOT) {
         return crate::reduce_support::emit_undefined(ops, next_register);
     }
     if let Some(slot) = locals
