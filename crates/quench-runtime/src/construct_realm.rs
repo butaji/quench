@@ -1,14 +1,37 @@
-/// GetPrototypeFromConstructor: use own `.prototype` when it is an object,
-/// otherwise the constructor realm's default intrinsic.
+/// Peel `BindingCell` so construct and Get see the same identity.
+pub(crate) fn peel_construct_value(value: &Value) -> Value {
+    match value {
+        Value::BindingCell(cell) => peel_construct_value(&cell.borrow()),
+        value => value.clone(),
+    }
+}
+
+/// BoundFunction [[Construct]]: if newTarget is the bound function, use [[BoundTargetFunction]].
+pub(crate) fn bound_construct_new_target(this: &Value, new_target: &Value) -> Value {
+    let this = peel_construct_value(this);
+    let new_target = peel_construct_value(new_target);
+    let Value::BoundFunction(bound) = &this else {
+        return new_target;
+    };
+    if crate::builtins::same_value(Some(&this), Some(&new_target)) {
+        peel_construct_value(&bound.target)
+    } else {
+        new_target
+    }
+}
+
+/// GetPrototypeFromConstructor: Get(newTarget, "prototype"), else realm default.
 pub(crate) fn get_prototype_from_constructor(
     constructor: &Value,
     default: impl FnOnce(crate::ops::RealmId) -> Value,
 ) -> Value {
-    let proto = crate::execute::get_property(constructor, "prototype");
+    let constructor = peel_construct_value(constructor);
+    let proto = crate::execute::get_property_result(&constructor, "prototype")
+        .unwrap_or(Value::Undefined);
     if crate::value::is_object(&proto) {
         return proto;
     }
-    default(constructor_realm(constructor))
+    default(constructor_realm(&constructor))
 }
 
 fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
