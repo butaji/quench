@@ -26,18 +26,24 @@ pub(crate) fn reduce(
     statement: &oxc::ast::ast::Statement<'_>,
     facts: &mut crate::facts::ProgramDb,
     locals: &HashMap<String, u16>,
-) -> Result<Vec<Op>, Vec<String>> {
+) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
     match statement {
         oxc::ast::ast::Statement::BlockStatement(block) => {
             let next_slot = crate::reduce_support::register_base(locals);
-            crate::reduce::reduce_statements_no_tail(&block.body, facts, locals.clone(), next_slot)
+            let (ops, last) = crate::reduce::reduce_statements_no_tail_value(
+                &block.body,
+                facts,
+                locals.clone(),
+                next_slot,
+            )?;
+            Ok((ops, last))
         }
         statement => {
             let mut ops = Vec::new();
             let mut next_register = crate::reduce_support::register_base(locals);
             let mut next_slot = crate::reduce_support::register_base(locals);
             let mut locals = locals.clone();
-            crate::reduce::reduce_statement(
+            let last = crate::reduce::reduce_statement(
                 statement,
                 &mut ops,
                 facts,
@@ -45,7 +51,7 @@ pub(crate) fn reduce(
                 &mut next_slot,
                 &mut locals,
             )?;
-            Ok(ops)
+            Ok((ops, last))
         }
     }
 }

@@ -60,14 +60,10 @@ fn reduce_counted_loop(
     locals: &mut Locals,
 ) -> Option<ReduceResult> {
     match statement {
-        Statement::ForStatement(statement) => Some(loop_result(crate::loops::reduce_for(
-            statement,
-            ops,
-            facts,
-            next_register,
-            next_slot,
-            locals,
-        ))),
+        Statement::ForStatement(statement) => Some(loop_result(
+            crate::loops::reduce_for(statement, ops, facts, next_register, next_slot, locals)
+                .map(|_| None),
+        )),
         Statement::WhileStatement(statement) => Some(loop_result(crate::loops::reduce_while(
             statement,
             ops,
@@ -97,22 +93,14 @@ fn reduce_enumeration_loop(
     locals: &mut Locals,
 ) -> Option<ReduceResult> {
     match statement {
-        Statement::ForInStatement(statement) => Some(loop_result(crate::loops::reduce_for_in(
-            statement,
-            ops,
-            facts,
-            next_register,
-            next_slot,
-            locals,
-        ))),
-        Statement::ForOfStatement(statement) => Some(loop_result(crate::loops::reduce_for_of(
-            statement,
-            ops,
-            facts,
-            next_register,
-            next_slot,
-            locals,
-        ))),
+        Statement::ForInStatement(statement) => Some(loop_result(
+            crate::loops::reduce_for_in(statement, ops, facts, next_register, next_slot, locals)
+                .map(|_| None),
+        )),
+        Statement::ForOfStatement(statement) => Some(loop_result(
+            crate::loops::reduce_for_of(statement, ops, facts, next_register, next_slot, locals)
+                .map(|_| None),
+        )),
         _ => None,
     }
 }
@@ -195,8 +183,8 @@ fn set_loop_label(ops: &mut [Op], label: String) {
     }
 }
 
-fn loop_result(result: Result<(), Vec<String>>) -> ReduceResult {
-    result.map(|_| None)
+fn loop_result(result: Result<Option<u16>, Vec<String>>) -> ReduceResult {
+    result
 }
 
 fn reduce_break(statement: &BreakStatement<'_>, ops: &mut Vec<Op>) -> ReduceResult {
