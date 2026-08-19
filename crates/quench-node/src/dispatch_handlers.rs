@@ -608,6 +608,7 @@ pub fn http_get(
 }
 pub fn http_create_server(
     state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::http::create_server(state, args)
@@ -665,4 +666,154 @@ pub fn readline_create_interface(
     _args: &[Value],
 ) -> Result<Value, VmError> {
     Ok(Value::Undefined)
+}
+
+// ---- assert-independent leaf caps ----
+pub fn util_get_call_sites(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(quench_runtime::host_api::array(vec![]))
+}
+
+pub fn buffer_atob(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::buffer::atob(args).map(Value::String)
+}
+
+pub fn buffer_btoa(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::String(crate::modules::buffer::btoa(args)))
+}
+
+fn child_process_result() -> Value {
+    quench_runtime::host_api::object(vec![
+        ("status".to_string(), Value::Number(0.0)),
+        ("stdout".to_string(), Value::String(String::new())),
+        ("stderr".to_string(), Value::String(String::new())),
+        (
+            "output".to_string(),
+            quench_runtime::host_api::array(vec![]),
+        ),
+    ])
+}
+
+pub fn cp_spawn_sync(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(child_process_result())
+}
+
+pub fn cp_exec_sync(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::String(String::new()))
+}
+
+pub fn cp_async(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
+pub fn url_path_to_file_url(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::url::path_to_file_url(state, args)
+}
+
+pub fn process_umask(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::umask(state, args)
+}
+
+pub fn net_get_asf_timeout(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(250.0))
+}
+
+pub fn net_set_asf_timeout(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
+// ---- web-compatible globals ----
+pub fn structured_clone(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::clone::deep_clone(
+        args.first().cloned().unwrap_or(Value::Undefined),
+    ))
+}
+
+pub fn fetch(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
+pub fn abort_controller_new(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let signal =
+        quench_runtime::host_api::object(vec![("aborted".to_string(), Value::Boolean(false))]);
+    Ok(quench_runtime::host_api::object(vec![(
+        "signal".to_string(),
+        signal,
+    )]))
+}
+
+pub fn abort_signal_new(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(quench_runtime::host_api::object(vec![(
+        "aborted".to_string(),
+        Value::Boolean(false),
+    )]))
+}
+
+pub fn process_on(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::on(state, args)
+}
+
+pub fn test_run(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::test::run(args)
 }

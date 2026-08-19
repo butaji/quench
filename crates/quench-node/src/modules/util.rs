@@ -18,6 +18,10 @@ pub fn build() -> Vec<(String, Value)> {
             "inspect".to_string(),
             crate::host::capability(crate::registry::SPEC_UTIL_INSPECT),
         ),
+        (
+            "getCallSites".to_string(),
+            crate::host::capability(crate::registry::SPEC_UTIL_GETCALLSITES),
+        ),
     ]
 }
 
@@ -151,9 +155,41 @@ pub fn inspect(value: &Value) -> String {
         Value::Boolean(b) => b.to_string(),
         Value::Null => "null".into(),
         Value::Undefined => "undefined".into(),
-        Value::Object(_) => "[object Object]".into(),
+        Value::Object(_) => inspect_object(value),
         Value::Array(_) => "[Array]".into(),
         Value::Uint8Array(_) => "[Buffer]".into(),
+        _ => "<unknown>".into(),
+    }
+}
+
+/// Plain objects render as `{ key: value, ... }` with shallow values.
+fn inspect_object(value: &Value) -> String {
+    let keys = quench_runtime::execute::own_enumerable_keys(value);
+    if keys.is_empty() {
+        return "{}".into();
+    }
+    let body = keys
+        .iter()
+        .map(|key| {
+            format!(
+                "{key}: {}",
+                inspect_shallow(&quench_runtime::execute::get_property(value, key))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{{ {body} }}")
+}
+
+fn inspect_shallow(value: &Value) -> String {
+    match value {
+        Value::String(s) => format!("'{s}'"),
+        Value::Number(n) => n.to_string(),
+        Value::Boolean(b) => b.to_string(),
+        Value::Null => "null".into(),
+        Value::Undefined => "undefined".into(),
+        Value::Object(_) => "[object Object]".into(),
+        Value::Array(_) => "[Array]".into(),
         _ => "<unknown>".into(),
     }
 }

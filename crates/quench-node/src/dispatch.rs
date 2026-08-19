@@ -102,7 +102,37 @@ const CAP_FS_EXISTSSYNC: u16 = 0x110B;
 const CAP_FS_REALSYNC: u16 = 0x110C;
 const CAP_REQUIRE: u16 = 0x1200;
 const CAP_READLINE: u16 = 0x1300;
+const CAP_ASSERT_OK: u16 = 0x1400;
+const CAP_ASSERT_STRICT_EQUAL: u16 = 0x1401;
+const CAP_ASSERT_NOT_STRICT_EQUAL: u16 = 0x1402;
+const CAP_ASSERT_EQUAL: u16 = 0x1403;
+const CAP_ASSERT_NOT_EQUAL: u16 = 0x1404;
+const CAP_ASSERT_DEEP_STRICT_EQUAL: u16 = 0x1405;
+const CAP_ASSERT_NOT_DEEP_STRICT_EQUAL: u16 = 0x1406;
+const CAP_ASSERT_THROWS: u16 = 0x1407;
+const CAP_ASSERT_DOES_NOT_THROW: u16 = 0x1408;
+const CAP_ASSERT_FAIL: u16 = 0x1409;
+const CAP_ASSERT_IF_ERROR: u16 = 0x140A;
+const CAP_ASSERT_MATCH: u16 = 0x140B;
+const CAP_ASSERT_DOES_NOT_MATCH: u16 = 0x140C;
 const CAP_CJS_WRAP: u16 = 0x1d00;
+const CAP_UTIL_GETCALLSITES: u16 = 0x0303;
+const CAP_BUFFER_ATOB: u16 = 0x0806;
+const CAP_BUFFER_BTOA: u16 = 0x0807;
+const CAP_URL_PATH_TO_FILE_URL: u16 = 0x0505;
+const CAP_CP_SPAWNSYNC: u16 = 0x1e00;
+const CAP_CP_EXECSYNC: u16 = 0x1e01;
+const CAP_CP_EXEC: u16 = 0x1e02;
+const CAP_CP_SPAWN: u16 = 0x1e03;
+const CAP_PROCESS_UMASK: u16 = 0x0A06;
+const CAP_PROCESS_ON: u16 = 0x0A07;
+const CAP_NET_GET_ASF_TIMEOUT: u16 = 0x1005;
+const CAP_NET_SET_ASF_TIMEOUT: u16 = 0x1006;
+const CAP_STRUCTURED_CLONE: u16 = 0x1f00;
+const CAP_FETCH: u16 = 0x1f01;
+const CAP_ABORT_CONTROLLER: u16 = 0x1f02;
+const CAP_ABORT_SIGNAL: u16 = 0x1f03;
+const CAP_TEST_RUN: u16 = 0x1b00;
 
 /// Single canonical mapping from capability id to call handler.
 pub fn lookup(cap: u16) -> Option<CallHandler> {
@@ -165,6 +195,8 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_CHDIR => process_chdir,
         CAP_PROCESS_NEXT_TICK => process_next_tick,
         CAP_PROCESS_HRTIME => process_hrtime,
+        CAP_PROCESS_UMASK => process_umask,
+        CAP_PROCESS_ON => process_on,
         _ => return os_dispatch(cap),
     })
 }
@@ -198,6 +230,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_DNS_RESOLVE4 => dns_resolve4,
         CAP_HTTP_REQUEST => http_request,
         CAP_HTTP_GET => http_get,
+        CAP_HTTP_SERVER => http_create_server,
         CAP_FS_READFILE => fs_read_file,
         CAP_FS_WRITEFILE => fs_write_file,
         CAP_FS_STAT => fs_stat,
@@ -215,8 +248,40 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_ISIP => net_is_ip,
         CAP_NET_ISIPV4 => net_is_ipv4,
         CAP_NET_ISIPV6 => net_is_ipv6,
+        CAP_NET_GET_ASF_TIMEOUT => net_get_asf_timeout,
+        CAP_NET_SET_ASF_TIMEOUT => net_set_asf_timeout,
         CAP_REQUIRE => node_require,
         CAP_CJS_WRAP => cjs_wrap,
+        CAP_UTIL_GETCALLSITES => util_get_call_sites,
+        CAP_BUFFER_ATOB => buffer_atob,
+        CAP_BUFFER_BTOA => buffer_btoa,
+        CAP_URL_PATH_TO_FILE_URL => url_path_to_file_url,
+        CAP_CP_SPAWNSYNC => cp_spawn_sync,
+        CAP_CP_EXECSYNC => cp_exec_sync,
+        CAP_CP_EXEC | CAP_CP_SPAWN => cp_async,
+        CAP_TEST_RUN => test_run,
+        CAP_STRUCTURED_CLONE => structured_clone,
+        CAP_FETCH => fetch,
+        _ => return assert_dispatch(cap),
+    })
+}
+
+fn assert_dispatch(cap: u16) -> Option<CallHandler> {
+    use crate::modules::{assert, assert_validate};
+    Some(match cap {
+        CAP_ASSERT_OK => assert::ok,
+        CAP_ASSERT_STRICT_EQUAL => assert::strict_equal,
+        CAP_ASSERT_NOT_STRICT_EQUAL => assert::not_strict_equal,
+        CAP_ASSERT_EQUAL => assert::equal,
+        CAP_ASSERT_NOT_EQUAL => assert::not_equal,
+        CAP_ASSERT_DEEP_STRICT_EQUAL => assert::deep_strict_equal,
+        CAP_ASSERT_NOT_DEEP_STRICT_EQUAL => assert::not_deep_strict_equal,
+        CAP_ASSERT_THROWS => assert_validate::throws,
+        CAP_ASSERT_DOES_NOT_THROW => assert_validate::does_not_throw,
+        CAP_ASSERT_FAIL => assert::fail,
+        CAP_ASSERT_IF_ERROR => assert::if_error,
+        CAP_ASSERT_MATCH => assert_validate::matches,
+        CAP_ASSERT_DOES_NOT_MATCH => assert_validate::does_not_match,
         _ => return None,
     })
 }
@@ -234,9 +299,10 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_URL_NEW => url_new,
         CAP_URL_SEARCH => url_search_params,
         CAP_NET_SERVER => net_create_server,
-        CAP_HTTP_SERVER => http_create_server,
         CAP_BUFFER_NEW => buffer_new_construct,
         CAP_READLINE => readline_create_interface,
+        CAP_ABORT_CONTROLLER => abort_controller_new,
+        CAP_ABORT_SIGNAL => abort_signal_new,
         _ => return None,
     })
 }

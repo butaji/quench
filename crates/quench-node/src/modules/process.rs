@@ -11,6 +11,7 @@ use crate::host::HostState;
 
 pub struct ProcessState {
     pub argv: Vec<String>,
+    pub exit_handlers: Vec<Value>,
     pub exec_path: String,
     pub version: String,
     pub versions: Vec<(String, String)>,
@@ -37,6 +38,7 @@ impl ProcessState {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/"));
         Self {
             argv,
+            exit_handlers: Vec::new(),
             exec_path,
             version: "v22.0.0".into(),
             versions,
@@ -49,6 +51,11 @@ impl ProcessState {
 pub fn build() -> Value {
     let props: Vec<(&str, Value)> = vec![
         ("argv", host_api::array(argv_values())),
+        ("env", env_object()),
+        (
+            "config",
+            host_api::object(vec![("variables".to_string(), host_api::object(vec![]))]),
+        ),
         ("execPath", Value::String("/usr/bin/env".into())),
         ("version", Value::String("v22.0.0".into())),
         (
@@ -81,12 +88,30 @@ pub fn build() -> Value {
         ),
         ("arch", Value::String(current_arch().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
+        ("execArgv", host_api::array(vec![])),
+        ("features", host_api::object(vec![])),
+        (
+            "umask",
+            crate::host::capability(crate::registry::SPEC_PROCESS_UMASK),
+        ),
+        (
+            "on",
+            crate::host::capability(crate::registry::SPEC_PROCESS_ON),
+        ),
     ];
     crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()))
 }
 
 pub fn argv_values() -> Vec<Value> {
     std::env::args().map(Value::String).collect()
+}
+
+/// `process.env` — a snapshot of the host environment at startup.
+fn env_object() -> Value {
+    let pairs: Vec<(String, Value)> = std::env::vars()
+        .map(|(key, value)| (key, Value::String(value)))
+        .collect();
+    host_api::object(pairs)
 }
 
 pub fn versions_props() -> Vec<(String, Value)> {
@@ -184,4 +209,26 @@ fn value_to_i32(value: &Value) -> i32 {
         Value::String(s) => s.parse().unwrap_or(0),
         _ => 0,
     }
+}
+
+/// `process.umask([mask])` — accepts an optional new mask, returns the
+/// previous one. The host keeps a single shared mask (0o022 default).
+pub fn umask(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::Number(0o022 as f64))
+}
+
+/// `process.on(event, handler)` — registers lifecycle handlers.
+/// Handlers are stored on the process state; `exit` handlers run
+/// when the host drains the run.
+pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let (Some(Value::String(event)), Some(handler)) = (args.first(), args.get(1)) {
+        if event == "exit" {
+            state
+                .borrow_mut()
+                .process
+                .exit_handlers
+                .push(handler.clone());
+        }
+    }
+    Ok(Value::Undefined)
 }

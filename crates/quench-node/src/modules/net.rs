@@ -98,6 +98,14 @@ pub fn build() -> Value {
             "isIPv6",
             crate::host::capability(crate::registry::SPEC_NET_ISIPV6),
         ),
+        (
+            "getDefaultAutoSelectFamilyAttemptTimeout",
+            crate::host::capability(crate::registry::SPEC_NET_GET_ASF_TIMEOUT),
+        ),
+        (
+            "setDefaultAutoSelectFamilyAttemptTimeout",
+            crate::host::capability(crate::registry::SPEC_NET_SET_ASF_TIMEOUT),
+        ),
     ])
     .unwrap_or_else(|_| Value::Undefined)
 }

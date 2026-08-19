@@ -21,6 +21,6 @@ pub use reduce_scripts::{reduce_module_sequence, reduce_script_sources, ScriptSo
 pub use reduce_statements::inspect_module_source;
 pub use reduce_statements::{
     reduce_eval_source, reduce_expression_statements_with_locals, reduce_function_declaration,
-    reduce_module_source, reduce_source, reduce_source_with_type, reduce_statement,
-    reduce_statements_no_tail, reduce_statements_with_locals, ResidualProgram,
+    reduce_global_script_source, reduce_module_source, reduce_source, reduce_source_with_type,
+    reduce_statement, reduce_statements_no_tail, reduce_statements_with_locals, ResidualProgram,
 };

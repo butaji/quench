@@ -2,8 +2,12 @@
 //! objects installed via the runtime's host contract. There is no
 //! self-hosted JavaScript builtin layer.
 
+pub mod assert;
+pub mod assert_validate;
 pub mod buffer;
+pub mod clone;
 pub mod console;
+pub mod deep_equal;
 pub mod dns;
 pub mod events;
 pub mod fs;
@@ -17,6 +21,7 @@ pub mod readline;
 pub mod require;
 pub mod stream;
 pub mod string_decoder;
+pub mod test;
 pub mod timers;
 pub mod tty;
 pub mod url;
