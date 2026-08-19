@@ -98,12 +98,21 @@ pub(crate) fn reduce_for_in(
 ) -> Result<(), Vec<String>> {
     let outer_locals = locals.clone();
     let (slot, per_iteration, pattern) = for_of_slot(&statement.left, next_slot, locals)?;
+    emit_for_in_initializer(
+        &statement.left,
+        slot,
+        ops,
+        facts,
+        next_register,
+        locals,
+        facts.strict,
+    )?;
     let object = crate::reduce::reduce_expression(
         &statement.right,
         ops,
         facts,
         next_register,
-        &outer_locals,
+        locals,
     )
     .ok_or_else(|| vec!["Unsupported for-in object".to_string()])?;
     let mut body_locals = locals.clone();
@@ -140,6 +149,33 @@ fn for_left_immutable(left: &oxc::ast::ast::ForStatementLeft<'_>) -> bool {
             | oxc::ast::ast::VariableDeclarationKind::Using
             | oxc::ast::ast::VariableDeclarationKind::AwaitUsing
     )
+}
+
+fn emit_for_in_initializer(
+    left: &oxc::ast::ast::ForStatementLeft<'_>,
+    slot: u16,
+    ops: &mut Vec<Op>,
+    facts: &mut crate::facts::ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+    strict: bool,
+) -> Result<(), Vec<String>> {
+    if strict {
+        return Ok(());
+    }
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        return Ok(());
+    };
+    if declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var {
+        return Ok(());
+    }
+    let Some(init) = declaration.declarations.first().and_then(|d| d.init.as_ref()) else {
+        return Ok(());
+    };
+    let src = crate::reduce::reduce_expression(init, ops, facts, next_register, locals)
+        .ok_or_else(|| vec!["Unsupported for-in initializer".to_string()])?;
+    ops.push(Op::StoreLocal { slot, src });
+    Ok(())
 }
 
 fn for_in_name(left: &oxc::ast::ast::ForStatementLeft<'_>) -> Option<String> {
