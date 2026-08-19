@@ -396,6 +396,7 @@ pub enum Op {
         strict: bool,
         global: bool,
         direct: bool,
+        tail: bool,
         bindings: Vec<(String, u16)>,
         reusable_var_names: Vec<String>,
         forbidden_var_names: Vec<String>,

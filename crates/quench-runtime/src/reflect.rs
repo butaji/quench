@@ -291,6 +291,13 @@ pub(crate) fn execute_eval(
     if !is_percent_eval(&callee) {
         let this_value =
             crate::with_scope::receiver_for_callable(&callee).unwrap_or(Value::Undefined);
+        if input.tail {
+            return Ok(Some(crate::completion::TailCallRequest {
+                callee,
+                receiver: this_value,
+                arguments: vec![source],
+            }));
+        }
         let value = crate::functions::execute_target(&callee, &this_value, &[source])?;
         crate::execute::write_value(registers, input.dst, value);
         return Ok(None);
@@ -331,6 +338,7 @@ pub(crate) struct EvalExecution<'a> {
     pub(crate) strict: bool,
     pub(crate) global: bool,
     pub(crate) direct: bool,
+    pub(crate) tail: bool,
     pub(crate) bindings: &'a [(String, u16)],
     pub(crate) reusable_var_names: &'a [String],
     pub(crate) forbidden_var_names: &'a [String],
