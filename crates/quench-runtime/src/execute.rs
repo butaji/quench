@@ -104,6 +104,14 @@ pub fn set_callable_property(
 pub fn replace_value(old: &crate::value::Value, new: &crate::value::Value) {
     crate::locals::replace_value(old, new);
 }
+
+/// Drop every forwarded replacement. Only for hosts that run several
+/// independent programs on one thread: call it between programs, never
+/// between re-entrant executions of one program, or heap-resident
+/// references revert to stale snapshots.
+pub fn reset_replacements() {
+    crate::locals::reset_replacements();
+}
 /// Canonical strict equality (`===`) for host code. The VM and host
 /// modules share this single semantic owner.
 pub fn strict_equal(left: &crate::value::Value, right: &crate::value::Value) -> bool {
