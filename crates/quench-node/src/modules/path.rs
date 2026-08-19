@@ -104,6 +104,41 @@ pub fn is_absolute(args: &[Value]) -> bool {
         .starts_with('/')
 }
 
+pub fn relative(args: &[Value]) -> String {
+    let from = args.first().map(value_to_string).unwrap_or_default();
+    let to = args.get(1).map(value_to_string).unwrap_or_default();
+    relative_posix(&from, &to)
+}
+
+fn relative_posix(from: &str, to: &str) -> String {
+    let from_norm = normalize_posix(from);
+    let to_norm = normalize_posix(to);
+    let from_parts: Vec<&str> = from_norm.split('/').filter(|s| !s.is_empty()).collect();
+    let to_parts: Vec<&str> = to_norm.split('/').filter(|s| !s.is_empty()).collect();
+    let common = from_parts
+        .iter()
+        .zip(to_parts.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let ups = from_parts.len() - common;
+    let mut out = String::new();
+    for _ in 0..ups {
+        out.push_str("../");
+    }
+    for part in &to_parts[common..] {
+        out.push_str(part);
+        out.push('/');
+    }
+    if out.ends_with('/') && out.len() > 1 {
+        out.pop();
+    }
+    if out.is_empty() {
+        ".".into()
+    } else {
+        out
+    }
+}
+
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
@@ -174,6 +209,10 @@ pub fn build() -> Vec<(String, Value)> {
         (
             "isAbsolute".to_string(),
             crate::host::capability(SPEC_PATH_ISABSOLUTE),
+        ),
+        (
+            "relative".to_string(),
+            crate::host::capability(SPEC_PATH_RELATIVE),
         ),
         ("sep".to_string(), Value::String("/".into())),
         ("delimiter".to_string(), Value::String(":".into())),
