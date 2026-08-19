@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use quench_runtime::execute::VmError;
+use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
@@ -55,9 +55,101 @@ pub fn parse(
     Ok(host_api::object(out))
 }
 
-pub fn format(args: &[Value]) -> String {
+/// `url.format(urlObject[, options])` — port of Node's `urlFormat`:
+/// strings go through the legacy parser, WHATWG `URL` instances through
+/// the flag-driven serializer, other non-objects throw `ERR_INVALID_ARG_TYPE`.
+pub fn format(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let obj = args.first().cloned().unwrap_or(Value::Undefined);
+    if matches!(&obj, Value::String(s) if !execute::is_symbol(&obj)) {
+        let Value::String(s) = obj else {
+            return Ok(Value::String(String::new()));
+        };
+        let parsed = legacy_parse_url(&s);
+        let get = |k: &str| parsed.get(k).cloned().unwrap_or_default();
+        return Ok(Value::String(assemble_url(
+            &get("protocol"),
+            &get("auth"),
+            &get("host"),
+            &get("pathname"),
+            &get("search"),
+            &get("hash"),
+        )));
+    }
+    if !is_object_arg(&obj) {
+        return Err(invalid_arg_type_object(&obj));
+    }
+    if crate::modules::url_whatwg::is_url_instance(&obj) {
+        return format_whatwg(&obj, args.get(1));
+    }
     let (protocol, auth, host, pathname, query, hash) = read_url_parts(args);
-    assemble_url(&protocol, &auth, &host, &pathname, &query, &hash)
+    Ok(Value::String(assemble_url(
+        &protocol, &auth, &host, &pathname, &query, &hash,
+    )))
+}
+
+pub(crate) fn is_object_arg(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Object(_) | Value::ObjectAlias(_) | Value::Array(_)
+    ) && !execute::is_symbol(value)
+}
+
+fn invalid_arg_type_object(value: &Value) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".to_string(), Value::String("TypeError".to_string())),
+        (
+            "message".to_string(),
+            Value::String(format!(
+                "The \"urlObject\" argument must be one of type Object or string.{}",
+                crate::modules::util::invalid_arg_received(value)
+            )),
+        ),
+        (
+            "code".to_string(),
+            Value::String("ERR_INVALID_ARG_TYPE".to_string()),
+        ),
+    ]))
+}
+
+fn format_whatwg(obj: &Value, options: Option<&Value>) -> Result<Value, VmError> {
+    let (mut fragment, mut unicode, mut search, mut auth) = (true, false, true, true);
+    if let Some(options) = options {
+        if !matches!(options, Value::Undefined) && !is_object_arg(options) {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".to_string(), Value::String("TypeError".to_string())),
+                (
+                    "message".to_string(),
+                    Value::String(format!(
+                        "The \"options\" argument must be of type object.{}",
+                        crate::modules::util::invalid_arg_received(options)
+                    )),
+                ),
+                (
+                    "code".to_string(),
+                    Value::String("ERR_INVALID_ARG_TYPE".to_string()),
+                ),
+            ])));
+        }
+        flag(options, "fragment", &mut fragment);
+        flag(options, "unicode", &mut unicode);
+        flag(options, "search", &mut search);
+        flag(options, "auth", &mut auth);
+    }
+    let href = crate::modules::url_whatwg::parsed_of(Some(obj))?.get("href");
+    Ok(Value::String(crate::modules::url_whatwg::format_href(
+        &href, fragment, unicode, search, auth,
+    )))
+}
+
+fn flag(options: &Value, key: &str, slot: &mut bool) {
+    let value = execute::get_property(options, key);
+    if !matches!(value, Value::Undefined | Value::Null) {
+        *slot = execute::is_truthy(&value);
+    }
 }
 
 fn read_url_parts(args: &[Value]) -> (String, String, String, String, String, String) {
@@ -128,27 +220,6 @@ fn assemble_url(
         out.push_str(hash);
     }
     out
-}
-
-pub fn new_url(
-    _state: &Rc<RefCell<crate::host::HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let url = args.first().map(value_to_string).unwrap_or_default();
-    let base = args.get(1).map(value_to_string);
-    let parsed = match base {
-        Some(b) => legacy_parse_url(&legacy_resolve(&b, &url)),
-        None => legacy_parse_url(&url),
-    };
-    let mut out = Vec::new();
-    for (k, v) in parsed.into_iter() {
-        out.push((k, Value::String(v)));
-    }
-    out.push((
-        "toString".to_string(),
-        crate::host::capability(crate::registry::NodeSpec::new("url:toString", 0x0505)),
-    ));
-    Ok(host_api::object(out))
 }
 
 pub fn new_search_params(
@@ -320,58 +391,43 @@ fn value_to_string(value: &Value) -> String {
     }
 }
 
-pub fn build_root() -> Value {
+pub fn build_root(state: &Rc<RefCell<HostState>>) -> Value {
+    let (url_class, _) = crate::modules::url_whatwg::url_class(state);
     crate::host::namespace_object(vec![
-        (
-            "parse",
-            crate::host::capability(crate::registry::NodeSpec::new("require:url:parse", 0x0500)),
-        ),
-        (
-            "format",
-            crate::host::capability(crate::registry::NodeSpec::new("require:url:format", 0x0501)),
-        ),
-        (
-            "resolve",
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "require:url:resolve",
-                0x0502,
-            )),
-        ),
-        (
-            "URL",
-            crate::host::capability(crate::registry::NodeSpec::new("require:url:URL", 0x0503)),
-        ),
-        (
-            "URLSearchParams",
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "require:url:URLSearchParams",
-                0x0504,
-            )),
-        ),
+        spec_fn("parse", "require:url:parse", 0x0500),
+        spec_fn("format", "require:url:format", 0x0501),
+        spec_fn("resolve", "require:url:resolve", 0x0502),
+        ("URL", url_class),
+        spec_fn("URLSearchParams", "require:url:URLSearchParams", 0x0504),
         (
             "pathToFileURL",
             crate::host::capability(crate::registry::SPEC_URL_PATH_TO_FILE_URL),
+        ),
+        (
+            "fileURLToPath",
+            crate::host::capability(crate::registry::SPEC_URL_FILE_URL_TO_PATH),
+        ),
+        (
+            "urlToHttpOptions",
+            crate::host::capability(crate::registry::SPEC_URL_TO_HTTP_OPTIONS),
+        ),
+        (
+            "domainToASCII",
+            crate::host::capability(crate::registry::SPEC_URL_DOMAIN_TO_ASCII),
+        ),
+        (
+            "domainToUnicode",
+            crate::host::capability(crate::registry::SPEC_URL_DOMAIN_TO_UNICODE),
         ),
     ])
     .unwrap_or_else(|_| Value::Undefined)
 }
 
-/// `url.pathToFileURL` — minimal POSIX form: `file://` + absolute path.
-pub fn path_to_file_url(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let path = args.first().map(value_to_string).unwrap_or_default();
-    let cwd = value_to_string(&crate::modules::process::cwd(state, &[])?);
-    let absolute = if path.starts_with('/') {
-        path
-    } else {
-        format!("{cwd}/{path}")
-    };
-    let mut encoded = String::new();
-    for c in absolute.chars() {
-        if c.is_ascii_alphanumeric() || "-._~/".contains(c) {
-            encoded.push(c);
-        } else {
-            encoded.push_str(&format!("%{:02X}", c as u32));
-        }
-    }
-    new_url(state, &[Value::String(format!("file://{encoded}"))])
+fn spec_fn(name: &'static str, spec: &'static str, id: u16) -> (&'static str, Value) {
+    (
+        name,
+        crate::host::capability(crate::registry::NodeSpec::new(spec, id)),
+    )
 }
+
+// `url.pathToFileURL` lives in `url_file`; see `SPEC_URL_PATH_TO_FILE_URL`.

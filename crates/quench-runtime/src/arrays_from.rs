@@ -160,6 +160,13 @@ fn create_result(
     iterable: bool,
 ) -> Result<Value, crate::execute::VmError> {
     let length = values.len();
+    let plain_array = match receiver {
+        None => true,
+        Some(value) => matches!(value, Value::Builtin(crate::ops::Builtin::Array)),
+    };
+    if plain_array {
+        return Ok(Value::array(values));
+    }
     let mut result = construct_result(receiver, length, iterable)?;
     for (index, value) in values.into_iter().enumerate() {
         result = write_result_element(result, index, value)?;
