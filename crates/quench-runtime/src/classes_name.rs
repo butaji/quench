@@ -31,10 +31,6 @@ fn class_scope_locals(
     class: &oxc::ast::ast::Class<'_>,
     locals: &std::collections::HashMap<String, u16>,
 ) -> std::collections::HashMap<String, u16> {
-    let Some(identifier) = &class.id else {
-        return locals.clone();
-    };
-    let mut class_locals = locals.clone();
-    class_locals.remove(identifier.name.as_str());
-    class_locals
+    let _ = class;
+    locals.clone()
 }

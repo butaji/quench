@@ -242,7 +242,7 @@ pub(crate) fn instantiate_script_declarations(
             let slot = *next_slot;
             *next_slot = next_slot.saturating_add(1);
             locals.insert(name.clone(), slot);
-            ops.push(Op::MarkUninitialized { slot });
+            ops.push(Op::MarkUninitialized { slot, shared: true });
             lexical.push((name, immutable));
         }
     }

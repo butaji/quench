@@ -262,7 +262,7 @@ fn emit_module_lexical_tdz(
     for statement in statements {
         for name in crate::reduce_support::lexical_bound_names(statement) {
             if let Some(&slot) = locals.get(&name) {
-                ops.push(Op::MarkUninitialized { slot });
+                ops.push(Op::MarkUninitialized { slot, shared: true });
                 if crate::reduce_support::lexical_declaration(statement).is_some_and(|declaration| {
                     matches!(
                         declaration.kind,

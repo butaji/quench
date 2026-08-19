@@ -294,6 +294,10 @@ pub(crate) fn mark_uninitialized(slot: u16) {
     current().mark_uninitialized(slot);
 }
 
+pub(crate) fn mark_uninitialized_shared(slot: u16) {
+    current().mark_uninitialized_shared(slot);
+}
+
 pub(crate) fn mark_immutable(slot: u16) {
     current().mark_immutable_slot(slot);
 }

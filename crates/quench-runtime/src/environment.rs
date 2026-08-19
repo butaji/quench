@@ -342,7 +342,27 @@ impl Environment {
 
     pub(crate) fn mark_uninitialized(&self, slot: u16) {
         self.ensure_slot(slot);
+        self.writable_tdz().borrow_mut().insert(slot);
+    }
+
+    pub(crate) fn mark_uninitialized_shared(&self, slot: u16) {
+        self.ensure_slot(slot);
         self.shared_tdz().borrow_mut().insert(slot);
+    }
+
+    fn writable_tdz(&self) -> Rc<RefCell<HashSet<u16>>> {
+        let mut state = self.uninitialized.borrow_mut();
+        if let Some(slots) = state.as_ref() {
+            if Rc::strong_count(slots) == 1 {
+                return Rc::clone(slots);
+            }
+            let detached = Rc::new(RefCell::new(slots.borrow().clone()));
+            *state = Some(Rc::clone(&detached));
+            return detached;
+        }
+        let slots = Rc::new(RefCell::new(HashSet::new()));
+        *state = Some(Rc::clone(&slots));
+        slots
     }
 
     pub(crate) fn is_uninitialized(&self, slot: u16) -> bool {
