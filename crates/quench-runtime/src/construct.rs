@@ -356,10 +356,10 @@ fn construct_function(
         let (result, final_this) =
             crate::functions::execute_construct(function, &Value::Undefined, target, arguments)?;
         if crate::value::is_object(&result) {
-            return Ok(result);
+            return Ok(crate::locals::resolved_replacement(result));
         }
         if crate::value::is_object(&final_this) {
-            return Ok(final_this);
+            return Ok(crate::locals::resolved_replacement(final_this));
         }
         return Err(crate::value::error::throw_reference_error(
             "Derived constructor did not initialize this",
@@ -369,11 +369,11 @@ fn construct_function(
     let (result, final_this) =
         crate::functions::execute_construct(function, &object, target, arguments)?;
     if crate::value::is_object(&result) {
-        Ok(result)
+        Ok(crate::locals::resolved_replacement(result))
     } else if crate::value::is_object(&final_this) {
-        Ok(final_this)
+        Ok(crate::locals::resolved_replacement(final_this))
     } else {
-        Ok(object)
+        Ok(crate::locals::resolved_replacement(object))
     }
 }
 
@@ -381,10 +381,8 @@ pub(crate) fn initialize_instance_fields(
     function: &crate::value::FunctionValue,
     receiver: Value,
 ) -> Result<Value, crate::execute::VmError> {
-    let _home = crate::super_scope::Guard::install(
-        &std::rc::Rc::new(function.clone()),
-        &receiver,
-    );
+    let receiver = crate::locals::resolved_replacement(receiver);
+    let _home = crate::super_scope::Guard::install(&std::rc::Rc::new(function.clone()), &receiver);
     initialize_instance_fields_impl(function, receiver)
 }
 include!("construct_instance_fields.rs");
