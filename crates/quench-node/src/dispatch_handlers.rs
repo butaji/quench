@@ -651,24 +651,12 @@ pub fn buffer_btoa(
     Ok(Value::String(crate::modules::buffer::btoa(args)))
 }
 
-fn child_process_result() -> Value {
-    quench_runtime::host_api::object(vec![
-        ("status".to_string(), Value::Number(0.0)),
-        ("stdout".to_string(), Value::String(String::new())),
-        ("stderr".to_string(), Value::String(String::new())),
-        (
-            "output".to_string(),
-            quench_runtime::host_api::array(vec![]),
-        ),
-    ])
-}
-
 pub fn cp_spawn_sync(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(child_process_result())
+    crate::modules::child_process::spawn_sync(_state, args)
 }
 
 pub fn cp_exec_sync(

@@ -61,6 +61,8 @@ Current coverage (28 scripts):
 
 - `test-assert.js` — assert.ok function shape
 - `test-buffer.js` — Buffer.from / Buffer.alloc / Buffer.concat
+- `test-child-process.js` — child_process.spawnSync (real subprocess
+  execution, status/stdout/error codes)
 - `test-console.js` — console.log/info/warn/error/debug/trace
 - `test-dns.js` — dns.lookup (callback)
 - `test-events.js` — events.EventEmitter round-trip
