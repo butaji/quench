@@ -49,6 +49,7 @@ fn dispatch_host_capability(
         HostCapabilityKind::CreateRealm => Err(type_error("createRealm expects no arguments")),
         HostCapabilityKind::DetachArrayBuffer => vm_ops::detach_array_buffer(arguments),
         HostCapabilityKind::EvalScript => run_eval_in_capability_realm(capability, arguments),
+        HostCapabilityKind::IsHTMLDDA => Ok(Value::Null),
         HostCapabilityKind::Custom(_) => host_custom_call(descriptor, receiver, arguments),
     }
 }
