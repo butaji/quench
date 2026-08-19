@@ -111,34 +111,7 @@ pub fn url_search_params(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resu
 }
 
 // ---- querystring ----
-pub fn qs_parse(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::querystring::parse(state, args)
-}
-pub fn qs_stringify(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    Ok(Value::String(crate::modules::querystring::stringify(args)))
-}
-pub fn qs_escape(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::querystring::escape(args).map_err(|_| VmError::NotCallable)
-}
-pub fn qs_unescape(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    crate::modules::querystring::unescape(args).map_err(|_| VmError::NotCallable)
-}
+// Handlers point directly at `crate::modules::querystring` functions.
 
 // ---- timers ----
 pub fn timers_set_timeout(

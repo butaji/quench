@@ -133,6 +133,36 @@ pub fn own_enumerable_keys(value: &crate::value::Value) -> Vec<String> {
     crate::own_keys::enumerable_key_strings(Some(value))
 }
 
+/// Canonical JavaScript `ToString` (may run user `toString`/`valueOf`).
+pub fn to_js_string(value: &crate::value::Value) -> Result<String, VmError> {
+    crate::conversion::to_string(value)
+}
+
+/// Canonical `Number::toString` (radix 10) for host code.
+pub fn number_to_js_string(value: f64) -> String {
+    crate::conversion::number_to_string(value)
+}
+
+/// UTF-16 code units of a string value, preserving lone surrogates.
+pub fn string_units(value: &crate::value::Value) -> Option<Vec<u16>> {
+    crate::strings::units_of(value)
+}
+
+/// Build a string value from UTF-16 code units, preserving lone surrogates.
+pub fn string_from_units(units: Vec<u16>) -> crate::value::Value {
+    crate::strings::from_units(units)
+}
+
+/// Canonical `decodeURIComponent` semantics for host code.
+pub fn decode_uri_component(value: &crate::value::Value) -> Result<crate::value::Value, VmError> {
+    crate::builtins::decode_uri(Some(value), false)
+}
+
+/// Whether a value is a symbol (symbols are raw `desc\0id` strings here).
+pub fn is_symbol(value: &crate::value::Value) -> bool {
+    crate::conversion::is_symbol(value)
+}
+
 pub(crate) use crate::vm::{
     execute_completion_in_place, execute_completion_step_in_place, not_callable,
 };
