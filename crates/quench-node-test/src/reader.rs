@@ -95,6 +95,7 @@ impl NodeRunner {
         };
         let result = quench_runtime::vm::execute_with_context(&ops, &self.context)
             .and_then(|_| self.drive("__quench_run_loop__();"));
+        let result = self.route_uncaught(result);
         // `process.exit` unwinds with an error; `exit` handlers still run.
         let result = match result {
             Err(error) => match self.drive("__quench_run_exit__();") {
@@ -104,6 +105,26 @@ impl NodeRunner {
             ok => ok.map(|_| ()),
         };
         Self::classify(result, self.host.exit_code())
+    }
+
+    /// Node dispatches top-level uncaught exceptions to
+    /// `process.on('uncaughtException')`; a handled run continues.
+    fn route_uncaught(
+        &self,
+        result: Result<quench_runtime::value::Value, quench_runtime::vm::VmError>,
+    ) -> Result<(), quench_runtime::vm::VmError> {
+        match result {
+            Err(error) => {
+                match quench_node::modules::pump::handle_uncaught(&self.host.state(), error) {
+                    Ok(()) => self
+                        .drive("__quench_uncaught__();")
+                        .and_then(|_| self.drive("__quench_run_loop__();"))
+                        .map(|_| ()),
+                    Err(error) => Err(error),
+                }
+            }
+            ok => ok.map(|_| ()),
+        }
     }
 
     fn classify(

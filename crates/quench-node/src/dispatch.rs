@@ -13,6 +13,25 @@ const CAP_EVENTS_NEW: u16 = 0x0100;
 const CAP_EVENTS_FROM: u16 = 0x0101;
 const CAP_EVENTS_ON: u16 = 0x0102;
 const CAP_EVENTS_EMIT: u16 = 0x0103;
+const CAP_EVENTS_ONCE: u16 = 0x0105;
+const CAP_EVENTS_REMOVE_LISTENER: u16 = 0x0106;
+const CAP_EVENTS_REMOVE_ALL: u16 = 0x0107;
+const CAP_EVENTS_LISTENERS: u16 = 0x0108;
+const CAP_EVENTS_EVENT_NAMES: u16 = 0x0109;
+const CAP_EVENTS_LISTENER_COUNT: u16 = 0x010A;
+const CAP_EVENTS_PREPEND: u16 = 0x010B;
+const CAP_EVENTS_PREPEND_ONCE: u16 = 0x010C;
+const CAP_EVENTS_SET_MAX: u16 = 0x010D;
+const CAP_EVENTS_GET_MAX: u16 = 0x010E;
+const CAP_EVENTS_SET_MAX_STATIC: u16 = 0x010F;
+const CAP_EVENTS_GET_LISTENERS: u16 = 0x0110;
+const CAP_EVENTS_LISTENER_COUNT_STATIC: u16 = 0x0111;
+const CAP_EVENTS_GET_MAX_STATIC: u16 = 0x0112;
+const CAP_TARGET_ADD: u16 = 0x0113;
+const CAP_TARGET_REMOVE: u16 = 0x0114;
+const CAP_TARGET_DISPATCH: u16 = 0x0115;
+const CAP_EVENT_TARGET_NEW: u16 = 0x0116;
+const CAP_RUN_UNCAUGHT: u16 = 0x0117;
 const CAP_CONSOLE_LOG: u16 = 0x0200;
 const CAP_CONSOLE_INFO: u16 = 0x0201;
 const CAP_CONSOLE_WARN: u16 = 0x0202;
@@ -155,6 +174,38 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_CONSOLE_TRACE => console_trace,
         CAP_UTIL_FORMAT => util_format,
         CAP_UTIL_INSPECT => util_inspect,
+        _ => return events_dispatch(cap),
+    };
+    Some(h)
+}
+
+fn events_dispatch(cap: u16) -> Option<CallHandler> {
+    use crate::modules::{event_target, events};
+    Some(match cap {
+        CAP_EVENTS_ONCE => events::method_once,
+        CAP_EVENTS_REMOVE_LISTENER => events::method_remove_listener,
+        CAP_EVENTS_REMOVE_ALL => events::method_remove_all_listeners,
+        CAP_EVENTS_LISTENERS => events::method_listeners,
+        CAP_EVENTS_EVENT_NAMES => events::method_event_names,
+        CAP_EVENTS_LISTENER_COUNT => events::method_listener_count,
+        CAP_EVENTS_PREPEND => events::method_prepend_listener,
+        CAP_EVENTS_PREPEND_ONCE => events::method_prepend_once_listener,
+        CAP_EVENTS_SET_MAX => events::method_set_max_listeners,
+        CAP_EVENTS_GET_MAX => events::method_get_max_listeners,
+        CAP_EVENTS_SET_MAX_STATIC => event_target::set_max_listeners,
+        CAP_EVENTS_GET_LISTENERS => event_target::get_event_listeners,
+        CAP_EVENTS_LISTENER_COUNT_STATIC => event_target::listener_count,
+        CAP_EVENTS_GET_MAX_STATIC => event_target::get_max_listeners,
+        CAP_TARGET_ADD => event_target::add_event_listener,
+        CAP_TARGET_REMOVE => event_target::remove_event_listener,
+        CAP_TARGET_DISPATCH => event_target::dispatch_event,
+        _ => return path_dispatch(cap),
+    })
+}
+
+fn path_dispatch(cap: u16) -> Option<CallHandler> {
+    use handlers::*;
+    Some(match cap {
         CAP_PATH_JOIN => path_join,
         CAP_PATH_RESOLVE => path_resolve,
         CAP_PATH_NORMALIZE => path_normalize,
@@ -170,6 +221,13 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_QS_STRINGIFY => qs_stringify,
         CAP_QS_ESCAPE => qs_escape,
         CAP_QS_UNESCAPE => qs_unescape,
+        _ => return timers_dispatch(cap),
+    })
+}
+
+fn timers_dispatch(cap: u16) -> Option<CallHandler> {
+    use handlers::*;
+    Some(match cap {
         CAP_TIMERS_SETTIMEOUT => timers_set_timeout,
         CAP_TIMERS_CLEARTIMEOUT => timers_clear_timeout,
         CAP_TIMERS_SETINTERVAL => timers_set_interval,
@@ -183,11 +241,11 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_TIMERS_REFRESH => timers_method_refresh,
         CAP_RUN_LOOP => timers_run_loop,
         CAP_RUN_EXIT => timers_run_exit,
+        CAP_RUN_UNCAUGHT => uncaught_dispatch,
         CAP_INTERNAL_UTIL_SLEEP => internal_util_sleep,
         CAP_TIMERS_CLOSE => timers_method_close,
         _ => return os_buffer_dispatch(cap),
-    };
-    Some(h)
+    })
 }
 
 fn os_buffer_dispatch(cap: u16) -> Option<CallHandler> {
@@ -309,6 +367,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
     use handlers::*;
     Some(match cap {
         CAP_EVENTS_NEW => events_new,
+        CAP_EVENT_TARGET_NEW => crate::modules::event_target::new_target,
         CAP_STREAM_READABLE => stream_readable,
         CAP_STREAM_WRITABLE => stream_writable,
         CAP_STREAM_DUPLEX => stream_duplex,

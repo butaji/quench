@@ -108,6 +108,19 @@ fn error_text(error: &Value) -> String {
     }
 }
 
+/// Node tests the expected RegExp against the inspected error, which
+/// renders coded errors as `Name [CODE]: message`. Match the message
+/// first, then that bracketed form.
+fn coded_text(error: &Value) -> Option<String> {
+    let Value::String(name) = execute::get_property(error, "name") else {
+        return None;
+    };
+    let Value::String(code) = execute::get_property(error, "code") else {
+        return None;
+    };
+    Some(format!("{name} [{code}]: {}", error_text(error)))
+}
+
 fn regexp_matches(pattern: &Value, input: &str) -> Result<bool, VmError> {
     let result = regexp::test(Some(pattern), &[Value::String(input.to_string())])?;
     Ok(execute::is_truthy(&result))
@@ -150,6 +163,11 @@ fn validate_regexp(
 ) -> Result<Value, VmError> {
     if regexp_matches(pattern, &error_text(error))? {
         return Ok(Value::Undefined);
+    }
+    if let Some(coded) = coded_text(error) {
+        if regexp_matches(pattern, &coded)? {
+            return Ok(Value::Undefined);
+        }
     }
     Err(invalid_expected(
         user_message,

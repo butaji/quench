@@ -1,146 +1,316 @@
-//! `events` module — `EventEmitter` as a pure Rust object.
+//! `events` module — `EventEmitter` methods and module exports.
 //!
-//! Every emitter is a `NodeObject<EventEmitter>` whose listeners
-//! live in a Rust `Vec<Vec<Value>>`. `emit` walks the listeners
-//! and calls back into the runtime via the host's call channel.
+//! Listener state lives in `modules::emitter`; `EventTarget` and the
+//! statics live in `modules::event_target`. Every emitter method is
+//! a host capability dispatched with the JS receiver.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
-use quench_runtime::execute::VmError;
+use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
 use crate::host::HostState;
+use crate::modules::emitter::{emitter_id, EmitterId, EventEmitter, Listener, EMITTER_ID_PROP};
 
-/// Hidden property that stores the host-side emitter id on
-/// the JS Object. Non-enumerable, non-writable.
-const EMITTER_ID_PROP: &str = "\0quench:emitter:id";
-
-pub struct EventEmitter {
-    pub listeners: HashMap<String, Vec<Value>>,
-    pub max: usize,
+/// Resolve the emitter for a receiver, throwing Node-style when the
+/// receiver is not an emitter at all.
+fn expect_emitter(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Option<EmitterId> {
+    receiver
+        .and_then(emitter_id)
+        .filter(|id| state.borrow().emitters.get(*id).is_some())
 }
 
-impl Default for EventEmitter {
-    fn default() -> Self {
-        Self::new()
+fn event_name(value: Option<&Value>) -> Result<String, VmError> {
+    match value {
+        Some(Value::String(name)) => Ok(name.clone()),
+        _ => Err(execute::type_error(
+            "The \"event\" argument must be of type string or symbol",
+        )),
     }
 }
 
-impl EventEmitter {
-    pub fn new() -> Self {
-        Self {
-            listeners: HashMap::new(),
-            max: 10,
+fn expect_listener(args: &[Value]) -> Result<Value, VmError> {
+    match args.get(1) {
+        Some(value) if quench_runtime::is_callable(value) => Ok(value.clone()),
+        _ => Err(execute::type_error(
+            "The \"listener\" argument must be of type function",
+        )),
+    }
+}
+
+fn add_listener(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+    once: bool,
+    prepend: bool,
+) -> Result<Value, VmError> {
+    let event = event_name(args.first())?;
+    let callback = expect_listener(args)?;
+    let Some(id) = expect_emitter(state, receiver) else {
+        return Err(execute::type_error("receiver is not an EventEmitter"));
+    };
+    let Some(emitter) = state.borrow().emitters.get(id) else {
+        return Err(execute::type_error("receiver is not an EventEmitter"));
+    };
+    let (count, max, already_warned) = {
+        let mut guard = emitter.borrow_mut();
+        let count = guard.add(&event, callback, once, prepend);
+        (count, guard.max, guard.warned)
+    };
+    let limit = max.unwrap_or(state.borrow().emitters.default_max);
+    if count > limit && limit > 0 && !already_warned {
+        emitter.borrow_mut().warned = true;
+        warn_max_listeners(state, &event, count);
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+/// Queue a `MaxListenersExceededWarning` process warning, mirroring
+/// Node's one-warning-per-emitter behavior.
+fn warn_max_listeners(state: &Rc<RefCell<HostState>>, event: &str, count: usize) {
+    let message = format!(
+        "Possible EventEmitter memory leak detected. {count} {event} listeners added. Use emitter.setMaxListeners() to increase limit"
+    );
+    let warning = host_api::object(vec![
+        (
+            "name".to_string(),
+            Value::String("MaxListenersExceededWarning".to_string()),
+        ),
+        ("message".to_string(), Value::String(message)),
+    ]);
+    let handlers: Vec<Value> = state
+        .borrow()
+        .process
+        .warning_handlers
+        .iter()
+        .map(|(handler, _)| handler.clone())
+        .collect();
+    for handler in handlers {
+        state
+            .borrow_mut()
+            .event_loop
+            .queue_microtask(handler, vec![warning.clone()]);
+    }
+}
+
+pub fn method_on(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    add_listener(state, receiver, args, false, false)
+}
+
+pub fn method_once(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    add_listener(state, receiver, args, true, false)
+}
+
+pub fn method_prepend_listener(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    add_listener(state, receiver, args, false, true)
+}
+
+pub fn method_prepend_once_listener(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    add_listener(state, receiver, args, true, true)
+}
+
+pub fn method_emit(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(receiver) = receiver else {
+        return Ok(Value::Boolean(false));
+    };
+    let Some(id) = emitter_id(receiver) else {
+        return Ok(Value::Boolean(false));
+    };
+    let event = match args.first() {
+        Some(Value::String(name)) => name.clone(),
+        _ => return Ok(Value::Boolean(false)),
+    };
+    let Some(emitter) = state.borrow().emitters.get(id) else {
+        return Ok(Value::Boolean(false));
+    };
+    let snapshot: Vec<Listener> = emitter.borrow().listeners_of(&event).to_vec();
+    if snapshot.is_empty() {
+        if event == "error" {
+            return Err(unhandled_error(args.get(1)));
+        }
+        return Ok(Value::Boolean(false));
+    }
+    let rest: Vec<Value> = args.get(1..).unwrap_or(&[]).to_vec();
+    for listener in &snapshot {
+        if listener.once {
+            emitter.borrow_mut().remove(&event, &listener.callback);
+        }
+        execute::call(&listener.callback, receiver, &rest)?;
+    }
+    Ok(Value::Boolean(true))
+}
+
+/// `emit('error')` with no listeners throws the error argument.
+fn unhandled_error(arg: Option<&Value>) -> VmError {
+    match arg {
+        Some(value) if !matches!(value, Value::Undefined) => VmError::Thrown(value.clone()),
+        _ => VmError::Thrown(host_api::object(vec![
+            ("name".to_string(), Value::String("Error".to_string())),
+            (
+                "message".to_string(),
+                Value::String("Unhandled error.".to_string()),
+            ),
+            (
+                "code".to_string(),
+                Value::String("ERR_UNHANDLED_ERROR".to_string()),
+            ),
+        ])),
+    }
+}
+
+pub fn method_remove_listener(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let event = event_name(args.first())?;
+    let callback = expect_listener(args)?;
+    if let Some(id) = expect_emitter(state, receiver) {
+        if let Some(emitter) = state.borrow().emitters.get(id) {
+            emitter.borrow_mut().remove(&event, &callback);
         }
     }
-    pub fn on(&mut self, event: &str, cb: Value) {
-        self.listeners
-            .entry(event.to_string())
-            .or_default()
-            .push(cb);
-    }
-    pub fn emit(&self, event: &str) -> Vec<Value> {
-        let list = self.listeners.get(event).cloned().unwrap_or_default();
-        list.into_iter().take(self.max).collect()
-    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
-/// Stable per-emitter identity. The runtime never sees this
-/// directly; the host stores it on the JS Object's descriptor
-/// slot and recovers it when `on`/`emit` fire.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct EmitterId(pub u64);
-
-pub struct EmitterRegistry {
-    next: u64,
-    emitters: HashMap<EmitterId, Rc<RefCell<EventEmitter>>>,
-}
-
-impl Default for EmitterRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EmitterRegistry {
-    pub fn new() -> Self {
-        Self {
-            next: 1,
-            emitters: HashMap::new(),
-        }
-    }
-    pub fn allocate(&mut self) -> EmitterId {
-        let id = EmitterId(self.next);
-        self.next += 1;
-        id
-    }
-    pub fn get(&self, id: EmitterId) -> Option<Rc<RefCell<EventEmitter>>> {
-        self.emitters.get(&id).cloned()
-    }
-    pub fn insert(&mut self, id: EmitterId, emitter: Rc<RefCell<EventEmitter>>) {
-        self.emitters.insert(id, emitter);
-    }
-}
-
-pub struct EventLoop {
-    pub microtasks: RefCell<Vec<(Value, Vec<Value>)>>,
-    pub immediates: RefCell<Vec<(Value, Vec<Value>)>>,
-}
-
-impl Default for EventLoop {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EventLoop {
-    pub fn new() -> Self {
-        Self {
-            microtasks: RefCell::new(Vec::new()),
-            immediates: RefCell::new(Vec::new()),
-        }
-    }
-
-    pub fn queue_microtask(&self, cb: Value, args: Vec<Value>) {
-        self.microtasks.borrow_mut().push((cb, args));
-    }
-
-    pub fn queue_immediate(&self, cb: Value, args: Vec<Value>) {
-        self.immediates.borrow_mut().push((cb, args));
-    }
-
-    pub fn drain_microtasks<F>(&self, mut call: F)
-    where
-        F: FnMut(&Value, &[Value]) -> Result<Value, VmError>,
-    {
-        loop {
-            let snapshot: Vec<_> = self.microtasks.borrow_mut().drain(..).collect();
-            if snapshot.is_empty() {
-                break;
+pub fn method_remove_all_listeners(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(id) = expect_emitter(state, receiver) {
+        if let Some(emitter) = state.borrow().emitters.get(id) {
+            let mut guard = emitter.borrow_mut();
+            match args.first() {
+                Some(Value::String(event)) => guard.events.retain(|(key, _)| key != event),
+                Some(Value::Undefined) | None => guard.events.clear(),
+                _ => {
+                    return Err(execute::type_error(
+                        "The \"event\" argument must be a string",
+                    ))
+                }
             }
-            for (cb, args) in snapshot {
-                let _ = call(&cb, &args);
-            }
         }
     }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
 
-    pub fn drain_immediates<F>(&self, mut call: F)
-    where
-        F: FnMut(&Value, &[Value]) -> Result<Value, VmError>,
-    {
-        loop {
-            let snapshot: Vec<_> = self.immediates.borrow_mut().drain(..).collect();
-            if snapshot.is_empty() {
-                break;
+pub fn method_listeners(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let event = event_name(args.first())?;
+    let callbacks = expect_emitter(state, receiver)
+        .and_then(|id| state.borrow().emitters.get(id))
+        .map(|emitter| {
+            emitter
+                .borrow()
+                .listeners_of(&event)
+                .iter()
+                .map(|listener| listener.callback.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(host_api::array(callbacks))
+}
+
+pub fn method_event_names(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let names = expect_emitter(state, receiver)
+        .and_then(|id| state.borrow().emitters.get(id))
+        .map(|emitter| {
+            emitter
+                .borrow()
+                .events
+                .iter()
+                .map(|(key, _)| Value::String(key.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(host_api::array(names))
+}
+
+pub fn method_listener_count(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let event = event_name(args.first())?;
+    let count = expect_emitter(state, receiver)
+        .and_then(|id| state.borrow().emitters.get(id))
+        .map(|emitter| {
+            let guard = emitter.borrow();
+            let list = guard.listeners_of(&event);
+            match args.get(1) {
+                Some(Value::Undefined) | None => list.len(),
+                Some(callback) => list
+                    .iter()
+                    .filter(|listener| execute::same_value(&listener.callback, callback))
+                    .count(),
             }
-            for (cb, args) in snapshot {
-                let _ = call(&cb, &args);
-            }
+        })
+        .unwrap_or(0);
+    Ok(Value::Number(count as f64))
+}
+
+pub fn method_set_max_listeners(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let n = match args.first() {
+        Some(Value::Number(n)) if *n >= 0.0 && n.is_finite() => *n as usize,
+        _ => {
+            return Err(execute::type_error(
+                "The \"n\" argument must be a non-negative number",
+            ))
+        }
+    };
+    if let Some(id) = expect_emitter(state, receiver) {
+        if let Some(emitter) = state.borrow().emitters.get(id) {
+            emitter.borrow_mut().max = Some(n);
         }
     }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
+pub fn method_get_max_listeners(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let max = expect_emitter(state, receiver)
+        .and_then(|id| state.borrow().emitters.get(id))
+        .and_then(|emitter| emitter.borrow().max)
+        .unwrap_or_else(|| state.borrow().emitters.default_max);
+    Ok(Value::Number(max as f64))
 }
 
 pub fn new_emitter(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
@@ -154,43 +324,41 @@ pub fn new_emitter(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Va
 }
 
 fn install_emitter_props(mut object: Value) -> Result<Value, VmError> {
-    let props: Vec<(&str, Value)> = vec![
-        (
-            "on",
-            crate::host::capability(crate::registry::NodeSpec::new("events:on", 0x0102)),
-        ),
-        (
-            "addListener",
-            crate::host::capability(crate::registry::NodeSpec::new("events:addListener", 0x0104)),
-        ),
-        (
-            "once",
-            crate::host::capability(crate::registry::NodeSpec::new("events:once", 0x0105)),
-        ),
-        (
-            "emit",
-            crate::host::capability(crate::registry::NodeSpec::new("events:emit", 0x0103)),
-        ),
-        ("removeListener", cap("events:removeListener", 0x0106)),
-        (
-            "removeAllListeners",
-            cap("events:removeAllListeners", 0x0107),
-        ),
-        (
-            "listeners",
-            crate::host::capability(crate::registry::NodeSpec::new("events:listeners", 0x0108)),
-        ),
-    ];
-    for (key, value) in props {
+    for (key, value) in emitter_props() {
         let descriptor = host_api::object(vec![
             ("value".to_string(), value),
             ("writable".to_string(), Value::Boolean(true)),
             ("enumerable".to_string(), Value::Boolean(false)),
             ("configurable".to_string(), Value::Boolean(true)),
         ]);
-        object = quench_runtime::execute::define_property(object, key, descriptor)?;
+        object = execute::define_property(object, key, descriptor)?;
     }
     Ok(object)
+}
+
+fn emitter_props() -> Vec<(&'static str, Value)> {
+    vec![
+        ("on", cap("events:on", 0x0102)),
+        ("addListener", cap("events:on", 0x0102)),
+        ("once", cap("events:once", 0x0105)),
+        ("emit", cap("events:emit", 0x0103)),
+        ("removeListener", cap("events:removeListener", 0x0106)),
+        ("off", cap("events:removeListener", 0x0106)),
+        (
+            "removeAllListeners",
+            cap("events:removeAllListeners", 0x0107),
+        ),
+        ("listeners", cap("events:listeners", 0x0108)),
+        ("eventNames", cap("events:eventNames", 0x0109)),
+        ("listenerCount", cap("events:listenerCount", 0x010A)),
+        ("prependListener", cap("events:prependListener", 0x010B)),
+        (
+            "prependOnceListener",
+            cap("events:prependOnceListener", 0x010C),
+        ),
+        ("setMaxListeners", cap("events:setMaxListeners", 0x010D)),
+        ("getMaxListeners", cap("events:getMaxListeners", 0x010E)),
+    ]
 }
 
 fn cap(name: &'static str, id: u16) -> Value {
@@ -200,84 +368,11 @@ fn cap(name: &'static str, id: u16) -> Value {
 pub fn from(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
     let out = vec![
-        (
-            "on".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("events:on:method", 0x0102)),
-        ),
-        (
-            "emit".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("events:emit:method", 0x0103)),
-        ),
+        ("on".to_string(), cap("events:on", 0x0102)),
+        ("emit".to_string(), cap("events:emit", 0x0103)),
         ("target".to_string(), target),
     ];
     Ok(host_api::object(out))
-}
-
-pub fn method_on(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let Some(receiver) = _receiver else {
-        return Ok(Value::Undefined);
-    };
-    let Some(id) = emitter_id(receiver) else {
-        return Ok(Value::Undefined);
-    };
-    let event = match args.first() {
-        Some(Value::String(s)) => s.clone(),
-        _ => return Ok(Value::Undefined),
-    };
-    let cb = match args.get(1).cloned() {
-        Some(v) => v,
-        None => return Ok(Value::Undefined),
-    };
-    if let Some(emitter) = state.borrow().emitters.get(id) {
-        emitter.borrow_mut().on(&event, cb);
-    }
-    Ok(Value::Undefined)
-}
-
-pub fn method_emit(
-    state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let Some(receiver) = _receiver else {
-        return Ok(Value::Boolean(false));
-    };
-    let Some(id) = emitter_id(receiver) else {
-        return Ok(Value::Boolean(false));
-    };
-    let event = match args.first() {
-        Some(Value::String(s)) => s.clone(),
-        _ => return Ok(Value::Boolean(false)),
-    };
-    let rest: Vec<Value> = args.get(1..).unwrap_or(&[]).to_vec();
-    let listeners = take_listeners(state, id, &event);
-    let count = listeners.len();
-    for cb in listeners {
-        let _ = quench_runtime::execute::call(&cb, receiver, &rest);
-    }
-    Ok(Value::Boolean(count > 0))
-}
-
-fn take_listeners(state: &Rc<RefCell<HostState>>, id: EmitterId, event: &str) -> Vec<Value> {
-    let event = event.to_string();
-    state
-        .borrow()
-        .emitters
-        .get(id)
-        .map(|e| e.borrow().emit(&event))
-        .unwrap_or_default()
-}
-
-fn emitter_id(receiver: &Value) -> Option<EmitterId> {
-    let v = quench_runtime::vm::get_property(receiver, EMITTER_ID_PROP);
-    match v {
-        Value::Number(n) if n.is_finite() && n >= 0.0 => Some(EmitterId(n as u64)),
-        _ => None,
-    }
 }
 
 /// Shared thunk used by `setTimeout` / `setImmediate` to push a
@@ -286,15 +381,33 @@ pub fn enqueue_callback(state: &Rc<RefCell<HostState>>, cb: Value, args: Vec<Val
     state.borrow_mut().event_loop.queue_immediate(cb, args);
 }
 
-/// One callable that the host can invoke from inside the runtime.
-pub fn make_callback(_state: &Rc<RefCell<HostState>>, _cb: Value) -> Value {
-    crate::host::capability(crate::registry::NodeSpec::new("events:noop", 0x01FF))
-}
-
+/// `require('events')` is the `EventEmitter` constructor itself, with
+/// the statics attached — mirroring Node's `module.exports =
+/// EventEmitter; EventEmitter.EventEmitter = EventEmitter`.
 pub fn build() -> Value {
-    crate::host::namespace_object(vec![(
-        "EventEmitter",
-        crate::host::capability(crate::registry::SPEC_EVENTS_NEW),
-    )])
-    .unwrap_or_else(|_| Value::Undefined)
+    let value = crate::host::capability(crate::registry::SPEC_EVENTS_NEW);
+    let props: Vec<(String, Value)> = vec![
+        ("EventEmitter".to_string(), value.clone()),
+        ("defaultMaxListeners".to_string(), Value::Number(10.0)),
+        (
+            "getMaxListeners".to_string(),
+            cap("events:getMaxListeners:static", 0x0112),
+        ),
+        (
+            "setMaxListeners".to_string(),
+            cap("events:setMaxListeners:static", 0x010F),
+        ),
+        (
+            "getEventListeners".to_string(),
+            cap("events:getEventListeners", 0x0110),
+        ),
+        (
+            "listenerCount".to_string(),
+            cap("events:listenerCount:static", 0x0111),
+        ),
+    ];
+    for (key, property) in props {
+        let _ = execute::set_callable_property(&value, &key, property);
+    }
+    value
 }
