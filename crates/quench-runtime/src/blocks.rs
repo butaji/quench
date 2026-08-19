@@ -104,7 +104,7 @@ fn emit_wrapped(
 
 /// Reserve enclosing-scope slots for names that hoist out of the block. In
 /// strict mode Annex B is suppressed, so block-level functions stay scoped.
-fn hoist_var_names(
+pub(crate) fn hoist_var_names(
     block: &BlockStatement<'_>,
     strict: bool,
     next_slot: &mut u16,

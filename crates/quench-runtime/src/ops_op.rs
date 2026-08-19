@@ -48,6 +48,10 @@ pub enum Op {
         slot: u16,
         src: u16,
     },
+    Move {
+        dst: u16,
+        src: u16,
+    },
     MakeRest {
         slot: u16,
         arguments: u16,

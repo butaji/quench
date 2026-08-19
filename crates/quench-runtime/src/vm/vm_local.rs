@@ -9,6 +9,13 @@ fn run_local_storage_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmE
     use Op::*;
     match op {
         StoreLocal { slot, src } => crate::locals::store(registers, *slot, *src)?,
+        Move { dst, src } => {
+            write_value(
+                registers,
+                *dst,
+                crate::execute::read_register(registers, *src)?,
+            )
+        }
         MakeRest {
             slot,
             arguments,

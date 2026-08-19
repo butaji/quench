@@ -214,7 +214,7 @@ pub fn reduce_statements_with_locals(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    let mut ops = reduce_statements_opt(
+    let (mut ops, _) = reduce_statements_opt(
         statements,
         facts,
         locals,
@@ -249,6 +249,7 @@ pub fn reduce_expression_statements_with_locals(
             directive_completion: None,
         },
     )
+    .map(|(ops, _)| ops)
 }
 pub fn reduce_statements_no_tail(
     statements: &[Statement<'_>],
@@ -256,6 +257,15 @@ pub fn reduce_statements_no_tail(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
+    reduce_statements_no_tail_value(statements, facts, locals, next_slot).map(|(ops, _)| ops)
+}
+
+pub fn reduce_statements_no_tail_value(
+    statements: &[Statement<'_>],
+    facts: &mut ProgramDb,
+    locals: HashMap<String, u16>,
+    next_slot: u16,
+) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
     reduce_statements_opt(
         statements,
         facts,
@@ -281,7 +291,7 @@ fn reduce_statements_opt(
     mut locals: HashMap<String, u16>,
     mut next_slot: u16,
     options: StatementsOptions,
-) -> Result<Vec<Op>, Vec<String>> {
+) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
     let StatementsOptions {
         tail,
         eval_behavior,
@@ -314,7 +324,8 @@ fn reduce_statements_opt(
         Some(stack) => crate::using_scope::wrap(ops, stack, await_using, &mut next_register)?,
         None => ops,
     };
-    finish_statements_opt(ops, last_value, tail)
+    let ops = finish_statements_opt(ops, last_value, tail)?;
+    Ok((ops, last_value))
 }
 
 fn initialize_statement_reduction(
