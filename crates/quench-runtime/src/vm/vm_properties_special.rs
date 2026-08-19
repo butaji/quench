@@ -109,7 +109,7 @@ fn bound_function_property(
         return intrinsic_bound_property(bound, key);
     }
     if key == "prototype" {
-        Value::Undefined
+        bound_constructor_prototype(bound)
     } else if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
     } else if key == "length" && !realm::is_intrinsic(bound) {
@@ -124,6 +124,16 @@ fn bound_function_property(
     } else {
         bound_function_fallback(bound, shadow_wrapper, key)
     }
+}
+
+fn bound_constructor_prototype(bound: &crate::value::BoundFunctionValue) -> Value {
+    let Value::Builtin(builtin) = bound.target else {
+        return Value::Undefined;
+    };
+    let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) else {
+        return Value::Undefined;
+    };
+    crate::vm::realm_intrinsic_for(bound.realm, prototype)
 }
 
 fn intrinsic_target_is_abstract_module_source(bound: &crate::value::BoundFunctionValue) -> bool {

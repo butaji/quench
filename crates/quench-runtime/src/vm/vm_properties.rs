@@ -299,6 +299,12 @@ fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
     }
+    if matches!(key, "caller" | "arguments")
+        && function.strictness == crate::ops::FunctionStrictness::Sloppy
+        && matches!(function.kind, crate::ops::FunctionKind::Ordinary)
+    {
+        return Value::Undefined;
+    }
     if key == "constructor" {
         return function_realm_intrinsic(function, function_constructor(function));
     }
@@ -320,6 +326,9 @@ fn function_inherited_property(
     properties: &[(String, Value)],
     key: &str,
 ) -> Value {
+    if matches!(key, "prototype") {
+        return Value::Undefined;
+    }
     properties
         .iter()
         .rev()
