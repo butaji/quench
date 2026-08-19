@@ -22,6 +22,7 @@ pub mod events;
 pub mod fs;
 pub mod fs_async;
 pub mod fs_error;
+pub mod fs_promises;
 pub mod fs_stats;
 pub mod fs_sync;
 pub mod http;

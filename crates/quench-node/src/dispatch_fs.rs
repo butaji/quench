@@ -1,7 +1,7 @@
 //! `fs` capability dispatch table — one arm per operation.
 
 use crate::dispatch_handlers::CallHandler;
-use crate::modules::{fs_async, fs_stats, fs_sync};
+use crate::modules::{fs_async, fs_promises, fs_stats, fs_sync};
 
 const CAP_FS_READFILE: u16 = 0x1100;
 const CAP_FS_WRITEFILE: u16 = 0x1101;
@@ -47,6 +47,26 @@ const CAP_FS_STAT_ISBLOCK: u16 = 0x1133;
 const CAP_FS_STAT_ISCHAR: u16 = 0x1134;
 const CAP_FS_STAT_ISFIFO: u16 = 0x1135;
 const CAP_FS_STAT_ISSOCKET: u16 = 0x1136;
+
+const CAP_FS_REALPATH: u16 = 0x1137;
+const CAP_FSP_READFILE: u16 = 0x1140;
+const CAP_FSP_WRITEFILE: u16 = 0x1141;
+const CAP_FSP_APPENDFILE: u16 = 0x1142;
+const CAP_FSP_STAT: u16 = 0x1143;
+const CAP_FSP_LSTAT: u16 = 0x1144;
+const CAP_FSP_READDIR: u16 = 0x1145;
+const CAP_FSP_MKDIR: u16 = 0x1146;
+const CAP_FSP_UNLINK: u16 = 0x1147;
+const CAP_FSP_RMDIR: u16 = 0x1148;
+const CAP_FSP_RM: u16 = 0x1149;
+const CAP_FSP_RENAME: u16 = 0x114A;
+const CAP_FSP_COPYFILE: u16 = 0x114B;
+const CAP_FSP_ACCESS: u16 = 0x114C;
+const CAP_FSP_MKDTEMP: u16 = 0x114D;
+const CAP_FSP_READLINK: u16 = 0x114E;
+const CAP_FSP_CHMOD: u16 = 0x114F;
+const CAP_FSP_TRUNCATE: u16 = 0x1150;
+const CAP_FSP_REALPATH: u16 = 0x1151;
 
 pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
     Some(match cap {
@@ -100,6 +120,31 @@ fn fs_dispatch_more(cap: u16) -> Option<CallHandler> {
         CAP_FS_STAT_ISCHAR => fs_stats::is_char,
         CAP_FS_STAT_ISFIFO => fs_stats::is_fifo,
         CAP_FS_STAT_ISSOCKET => fs_stats::is_socket,
+        _ => return fs_dispatch_promises(cap),
+    })
+}
+
+fn fs_dispatch_promises(cap: u16) -> Option<CallHandler> {
+    Some(match cap {
+        CAP_FS_REALPATH => fs_async::realpath,
+        CAP_FSP_READFILE => fs_promises::read_file,
+        CAP_FSP_WRITEFILE => fs_promises::write_file,
+        CAP_FSP_APPENDFILE => fs_promises::append_file,
+        CAP_FSP_STAT => fs_promises::stat,
+        CAP_FSP_LSTAT => fs_promises::lstat,
+        CAP_FSP_READDIR => fs_promises::readdir,
+        CAP_FSP_MKDIR => fs_promises::mkdir,
+        CAP_FSP_UNLINK => fs_promises::unlink,
+        CAP_FSP_RMDIR => fs_promises::rmdir,
+        CAP_FSP_RM => fs_promises::rm,
+        CAP_FSP_RENAME => fs_promises::rename,
+        CAP_FSP_COPYFILE => fs_promises::copy_file,
+        CAP_FSP_ACCESS => fs_promises::access,
+        CAP_FSP_MKDTEMP => fs_promises::mkdtemp,
+        CAP_FSP_READLINK => fs_promises::readlink,
+        CAP_FSP_CHMOD => fs_promises::chmod,
+        CAP_FSP_TRUNCATE => fs_promises::truncate,
+        CAP_FSP_REALPATH => fs_promises::realpath,
         _ => return crate::dispatch::assert_dispatch(cap),
     })
 }

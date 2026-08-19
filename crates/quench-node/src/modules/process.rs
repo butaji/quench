@@ -334,3 +334,43 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
     }
     Ok(Value::Undefined)
 }
+
+/// Queue a process `warning` event for registered handlers. Warnings
+/// with `once_per_process` fire a single time per process (Node's
+/// deprecation-warning semantics); the warning object carries
+/// `name`/`message` and, when given, `code`.
+pub(crate) fn emit_warning(
+    state: &Rc<RefCell<HostState>>,
+    name: &str,
+    message: &str,
+    code: Option<&str>,
+    once_per_process: bool,
+) {
+    {
+        let mut guard = state.borrow_mut();
+        let key = format!("{name}:{message}");
+        if guard.process.warnings_emitted.iter().any(|n| n == &key) {
+            return;
+        }
+        if once_per_process {
+            guard.process.warnings_emitted.push(key);
+        }
+    }
+    let mut props = vec![
+        ("name".to_string(), Value::String(name.to_string())),
+        ("message".to_string(), Value::String(message.to_string())),
+    ];
+    if let Some(code) = code {
+        props.push(("code".to_string(), Value::String(code.to_string())));
+    }
+    let warning = host_api::object(props);
+    for handler in crate::modules::timers::take_once_handlers(
+        state,
+        crate::modules::timers::HandlerKind::Warning,
+    ) {
+        state
+            .borrow_mut()
+            .event_loop
+            .queue_microtask(handler, vec![warning.clone()]);
+    }
+}
