@@ -40,6 +40,7 @@ pub fn path_dirname(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, a
 pub fn path_basename(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::String(crate::modules::path::basename(args))) }
 pub fn path_extname(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::String(crate::modules::path::extname(args))) }
 pub fn path_is_absolute(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::Boolean(crate::modules::path::is_absolute(args))) }
+pub fn path_relative(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::String(crate::modules::path::relative(args))) }
 
 // ---- url ----
 pub fn url_parse(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { crate::modules::url::parse(state, args) }
