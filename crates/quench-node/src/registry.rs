@@ -54,6 +54,7 @@ pub const SPEC_PATH_DIRNAME: NodeSpec = NodeSpec::new("path:dirname", 0x0403);
 pub const SPEC_PATH_BASENAME: NodeSpec = NodeSpec::new("path:basename", 0x0404);
 pub const SPEC_PATH_EXTNAME: NodeSpec = NodeSpec::new("path:extname", 0x0405);
 pub const SPEC_PATH_ISABSOLUTE: NodeSpec = NodeSpec::new("path:isAbsolute", 0x0406);
+pub const SPEC_PATH_RELATIVE: NodeSpec = NodeSpec::new("path:relative", 0x0409);
 pub const SPEC_PATH_SEP: NodeSpec = NodeSpec::new("path:sep", 0x0407);
 pub const SPEC_PATH_DELIM: NodeSpec = NodeSpec::new("path:delimiter", 0x0408);
 
