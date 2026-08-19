@@ -110,7 +110,9 @@ pub(crate) fn execute_construct(
     let result = crate::vm::execute_in_environment(
         function.ops(),
         &mut registers,
-        &crate::vm::VmContext::default(),
+        // Keep the active context so host-provided globals (console,
+        // timers, capabilities) stay visible inside constructor bodies.
+        &crate::vm::current_context(),
         std::rc::Rc::clone(&environment),
     )?;
     let final_this = environment.get(this_slot);
