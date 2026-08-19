@@ -14,6 +14,12 @@ pub struct NodeTestRunner {
     runner: NodeRunner,
 }
 
+impl Default for NodeTestRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NodeTestRunner {
     pub fn new() -> Self {
         let runner = NodeRunner::new().with_output_sink(Arc::new(|line| {

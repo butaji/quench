@@ -21,7 +21,9 @@ fn main() -> ExitCode {
         println!("  --list           enumerate the suite instead of running it");
         println!("  --filter NAME    only run scripts whose name contains NAME");
         println!("  --quiet          skip per-test output, only the summary");
-        println!("  DIR              compat suite root (default: crates/quench-node-test/node-tests)");
+        println!(
+            "  DIR              compat suite root (default: crates/quench-node-test/node-tests)"
+        );
         return ExitCode::SUCCESS;
     }
     let mut args = std::env::args().skip(1);
@@ -37,7 +39,9 @@ fn main() -> ExitCode {
             return run_with_dir(dir);
         }
     }
-    run_with_dir(std::path::PathBuf::from("crates/quench-node-test/node-tests"))
+    run_with_dir(std::path::PathBuf::from(
+        "crates/quench-node-test/node-tests",
+    ))
 }
 
 fn run_with_dir(dir: std::path::PathBuf) -> ExitCode {
@@ -67,20 +71,7 @@ fn run_with_dir(dir: std::path::PathBuf) -> ExitCode {
     }
 }
 
-fn resolve_dir() -> PathBuf {
-    std::env::args_os()
-        .skip(1)
-        .find(|a| {
-            let s = a.to_string_lossy();
-            s != "--list" && !s.starts_with("--filter")
-        })
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("crates/quench-node-test/node-tests"))
-}
-
-fn filter_fixtures(
-    fixtures: Vec<std::path::PathBuf>,
-) -> Vec<std::path::PathBuf> {
+fn filter_fixtures(fixtures: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
     let args: Vec<String> = std::env::args().collect();
     let idx = args.iter().position(|a| a == "--filter");
     let filter = idx.and_then(|i| args.get(i + 1).cloned());
@@ -99,10 +90,7 @@ struct SuiteSummary {
     failed_names: Vec<String>,
 }
 
-fn run_suite(
-    runner: &mut quench_node_test::NodeTestRunner,
-    fixtures: &[PathBuf],
-) -> SuiteSummary {
+fn run_suite(runner: &mut quench_node_test::NodeTestRunner, fixtures: &[PathBuf]) -> SuiteSummary {
     let mut summary = SuiteSummary {
         passed: 0,
         failed: 0,

@@ -1,6 +1,4 @@
-use oxc::ast::ast::{
-    Statement, VariableDeclaration, VariableDeclarationKind,
-};
+use oxc::ast::ast::{Statement, VariableDeclaration, VariableDeclarationKind};
 
 const USING_SYNTAX: &str = "SyntaxError: invalid using declaration";
 
@@ -143,14 +141,15 @@ fn reject_lone_using(statement: &Statement<'_>, errors: &mut Vec<String>) {
     }
 }
 
-fn reject_using_without_init(
-    declaration: &VariableDeclaration<'_>,
-    errors: &mut Vec<String>,
-) {
+fn reject_using_without_init(declaration: &VariableDeclaration<'_>, errors: &mut Vec<String>) {
     if !is_using_kind(declaration.kind) {
         return;
     }
-    if declaration.declarations.iter().any(|item| item.init.is_none()) {
+    if declaration
+        .declarations
+        .iter()
+        .any(|item| item.init.is_none())
+    {
         errors.push(USING_SYNTAX.to_string());
     }
 }

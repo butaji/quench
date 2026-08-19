@@ -23,6 +23,12 @@ pub fn create_server(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result
 
 pub struct HttpState;
 
+impl Default for HttpState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HttpState {
     pub fn new() -> Self {
         Self

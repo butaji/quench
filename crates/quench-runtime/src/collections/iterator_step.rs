@@ -42,19 +42,19 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
 }
 
 fn concat_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
-    let (items, mut opened_clone, mut index, mut current, done) = {
+    let (items, mut index, mut current, done) = {
         let state = data.state.borrow();
         let IteratorState::Concat {
             items,
-            opened,
             index,
             current,
             done,
+            ..
         } = &*state
         else {
             return Ok(StepTarget::Value(None));
         };
-        (items.clone(), opened.clone(), *index, current.clone(), *done)
+        (items.clone(), *index, current.clone(), *done)
     };
     if done {
         return Ok(StepTarget::Value(None));
@@ -196,10 +196,7 @@ fn snapshot_reentry(data: &IteratorData) -> Option<Snapshot> {
             skipped: *skipped,
             done: *done,
         },
-        IteratorState::Take {
-            inner,
-            remaining,
-        } => Snapshot::Take {
+        IteratorState::Take { inner, remaining } => Snapshot::Take {
             inner: inner.clone(),
             remaining: *remaining,
         },
@@ -221,7 +218,9 @@ fn write_snapshot(data: &IteratorData, snapshot: &Snapshot) {
     match snapshot {
         Snapshot::Mapped { index, done, .. } => {
             if let IteratorState::Mapped {
-                index: idx, done: d, ..
+                index: idx,
+                done: d,
+                ..
             } = &mut *state
             {
                 *idx = *index;
@@ -230,7 +229,9 @@ fn write_snapshot(data: &IteratorData, snapshot: &Snapshot) {
         }
         Snapshot::Filtered { index, done, .. } => {
             if let IteratorState::Filtered {
-                index: idx, done: d, ..
+                index: idx,
+                done: d,
+                ..
             } = &mut *state
             {
                 *idx = *index;
@@ -255,11 +256,11 @@ fn write_snapshot(data: &IteratorData, snapshot: &Snapshot) {
                 *d = *done;
             }
         }
-        Snapshot::Dropped {
-            skipped, done, ..
-        } => {
+        Snapshot::Dropped { skipped, done, .. } => {
             if let IteratorState::Dropped {
-                skipped: sk, done: d, ..
+                skipped: sk,
+                done: d,
+                ..
             } = &mut *state
             {
                 *sk = *skipped;
@@ -267,10 +268,7 @@ fn write_snapshot(data: &IteratorData, snapshot: &Snapshot) {
             }
         }
         Snapshot::Take { remaining, .. } => {
-            if let IteratorState::Take {
-                remaining: rem, ..
-            } = &mut *state
-            {
+            if let IteratorState::Take { remaining: rem, .. } = &mut *state {
                 *rem = *remaining;
             }
         }
@@ -312,10 +310,9 @@ fn user_step_target(data: &IteratorData) -> Result<Option<StepTarget>, crate::ex
             skipped,
             done,
         } => dropped_step(inner, skipped, done).map(StepTarget::Value)?,
-        Snapshot::Take {
-            inner,
-            remaining,
-        } => take_step(inner, remaining).map(StepTarget::Value)?,
+        Snapshot::Take { inner, remaining } => {
+            take_step(inner, remaining).map(StepTarget::Value)?
+        }
         Snapshot::Zip {
             iterators,
             mode,
@@ -595,10 +592,7 @@ fn dropped_step(
     Ok(Some(value))
 }
 
-fn take_step(
-    inner: &Value,
-    remaining: &mut u64,
-) -> Result<Option<Value>, crate::execute::VmError> {
+fn take_step(inner: &Value, remaining: &mut u64) -> Result<Option<Value>, crate::execute::VmError> {
     if *remaining == 0 {
         return Ok(None);
     }

@@ -45,8 +45,14 @@ pub fn parse(
 
 pub fn stringify(args: &[Value]) -> String {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    let sep = args.get(1).map(value_to_string).unwrap_or_else(|| "&".into());
-    let eq = args.get(2).map(value_to_string).unwrap_or_else(|| "=".into());
+    let sep = args
+        .get(1)
+        .map(value_to_string)
+        .unwrap_or_else(|| "&".into());
+    let eq = args
+        .get(2)
+        .map(value_to_string)
+        .unwrap_or_else(|| "=".into());
     let mut out = String::new();
     let mut first = true;
     for i in 0..64u32 {
@@ -101,9 +107,8 @@ pub fn unescape(args: &[Value]) -> Result<Value, VmError> {
 }
 
 const QUERY_KEYS: &[&str] = &[
-    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
-    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
-    "foo", "bar", "baz", "qux", "quux",
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
+    "t", "u", "v", "w", "x", "y", "z", "foo", "bar", "baz", "qux", "quux",
 ];
 
 fn escape_str(input: &str) -> String {
