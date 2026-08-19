@@ -35,7 +35,24 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         state.borrow_mut().module_cache.insert(key, value.clone());
         return Ok(value);
     }
+    if matches!(
+        spec.as_str(),
+        "path/posix" | "path/win32" | "node:path/posix" | "node:path/win32"
+    ) {
+        if let Some(cached) = state.borrow().module_cache.get(&spec) {
+            return Ok(cached.clone());
+        }
+        let path_mod = require(state, &[Value::String("path".into())])?;
+        let key = spec.rsplit('/').next().unwrap_or("posix");
+        let ns = quench_runtime::execute::get_property(&path_mod, key);
+        state.borrow_mut().module_cache.insert(spec, ns.clone());
+        return Ok(ns);
+    }
+    if let Some(cached) = state.borrow().module_cache.get(&spec) {
+        return Ok(cached.clone());
+    }
     if let Some(ns) = resolve(state, &spec) {
+        state.borrow_mut().module_cache.insert(spec, ns.clone());
         return Ok(ns);
     }
     load_file_module(state, &spec)
@@ -92,18 +109,13 @@ fn execute_module(
     path: &std::path::Path,
     source: &str,
 ) -> Result<Value, VmError> {
-    let exports = host_api::object(vec![]);
-    let module = host_api::object(vec![("exports".to_string(), exports)]);
-    let dirname = path
-        .parent()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "/".to_string());
-    state.borrow_mut().pending_module = Some(crate::host::PendingModule {
-        module: module.clone(),
-        filename: path.to_string_lossy().into_owned(),
-        dirname,
-    });
-    let wrapped = format!("__quench_cjs_wrap__(function (exports, require, module, __filename, __dirname) {{\n{source}\n}})");
+    let filename = path.to_string_lossy().into_owned();
+    let wrapped = wrap_cjs(state, &filename, source);
+    let module = state
+        .borrow()
+        .pending_module
+        .as_ref()
+        .map(|pending| pending.module.clone());
     let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     let context = quench_runtime::vm::current_context();
@@ -111,7 +123,27 @@ fn execute_module(
     // runtime's locals state and corrupt the frame that called `require`.
     let mut registers = Vec::new();
     quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)?;
+    let module = module.unwrap_or(Value::Undefined);
     quench_runtime::execute::get_property_result(&module, "exports")
+}
+
+/// Prepare `source` as a CJS module: records the pending module
+/// record and returns the wrapped source. The caller reduces and
+/// executes the result — in-place for nested `require`, in a fresh
+/// frame for the main script (see `quench-node-test`'s runner).
+pub fn wrap_cjs(state: &Rc<RefCell<HostState>>, filename: &str, source: &str) -> String {
+    let exports = host_api::object(vec![]);
+    let module = host_api::object(vec![("exports".to_string(), exports)]);
+    let dirname = std::path::Path::new(filename)
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/".to_string());
+    state.borrow_mut().pending_module = Some(crate::host::PendingModule {
+        module,
+        filename: filename.to_string(),
+        dirname,
+    });
+    format!("__quench_cjs_wrap__(function (exports, require, module, __filename, __dirname) {{\n{source}\n}})")
 }
 
 /// `__quench_cjs_wrap__(fn)` — invoke a CJS wrapper with the pending record.
@@ -157,9 +189,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             "kWeakHandler".to_string(),
             Value::String("kWeakHandler\0quench".to_string()),
         )])),
-        "path" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::path::build(),
-        )),
+        "path" => Some(crate::modules::path::build()),
         "url" => Some(crate::modules::url::build_root()),
         "querystring" => Some(crate::modules::querystring::build()),
         "os" => Some(crate::host::namespace_object_from_pairs(

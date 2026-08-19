@@ -81,64 +81,6 @@ pub fn util_inspect(
     Ok(Value::String(crate::modules::util::inspect(&arg)))
 }
 
-// ---- path ----
-pub fn path_join(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    Ok(Value::String(crate::modules::path::join(args)))
-}
-pub fn path_resolve(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    Ok(Value::String(crate::modules::path::resolve(args)))
-}
-pub fn path_normalize(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    Ok(Value::String(crate::modules::path::normalize(args)))
-}
-pub fn path_dirname(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    Ok(Value::String(crate::modules::path::dirname(args)))
-}
-pub fn path_basename(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    Ok(Value::String(crate::modules::path::basename(args)))
-}
-pub fn path_extname(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    Ok(Value::String(crate::modules::path::extname(args)))
-}
-pub fn path_is_absolute(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    Ok(Value::Boolean(crate::modules::path::is_absolute(args)))
-}
-pub fn path_relative(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    Ok(Value::String(crate::modules::path::relative(args)))
-}
-
 // ---- url ----
 pub fn url_parse(
     state: &Rc<RefCell<HostState>>,

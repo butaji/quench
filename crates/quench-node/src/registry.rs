@@ -56,8 +56,24 @@ pub const SPEC_PATH_BASENAME: NodeSpec = NodeSpec::new("path:basename", 0x0404);
 pub const SPEC_PATH_EXTNAME: NodeSpec = NodeSpec::new("path:extname", 0x0405);
 pub const SPEC_PATH_ISABSOLUTE: NodeSpec = NodeSpec::new("path:isAbsolute", 0x0406);
 pub const SPEC_PATH_RELATIVE: NodeSpec = NodeSpec::new("path:relative", 0x0409);
-pub const SPEC_PATH_SEP: NodeSpec = NodeSpec::new("path:sep", 0x0407);
-pub const SPEC_PATH_DELIM: NodeSpec = NodeSpec::new("path:delimiter", 0x0408);
+pub const SPEC_PATH_PARSE: NodeSpec = NodeSpec::new("path:parse", 0x040A);
+pub const SPEC_PATH_FORMAT: NodeSpec = NodeSpec::new("path:format", 0x040B);
+pub const SPEC_PATH_TO_NAMESPACED: NodeSpec = NodeSpec::new("path:toNamespacedPath", 0x040C);
+pub const SPEC_PATH_MATCHES_GLOB: NodeSpec = NodeSpec::new("path:matchesGlob", 0x040D);
+
+pub const SPEC_PATH_WIN32_JOIN: NodeSpec = NodeSpec::new("path.win32:join", 0x0410);
+pub const SPEC_PATH_WIN32_RESOLVE: NodeSpec = NodeSpec::new("path.win32:resolve", 0x0411);
+pub const SPEC_PATH_WIN32_NORMALIZE: NodeSpec = NodeSpec::new("path.win32:normalize", 0x0412);
+pub const SPEC_PATH_WIN32_DIRNAME: NodeSpec = NodeSpec::new("path.win32:dirname", 0x0413);
+pub const SPEC_PATH_WIN32_BASENAME: NodeSpec = NodeSpec::new("path.win32:basename", 0x0414);
+pub const SPEC_PATH_WIN32_EXTNAME: NodeSpec = NodeSpec::new("path.win32:extname", 0x0415);
+pub const SPEC_PATH_WIN32_ISABSOLUTE: NodeSpec = NodeSpec::new("path.win32:isAbsolute", 0x0416);
+pub const SPEC_PATH_WIN32_RELATIVE: NodeSpec = NodeSpec::new("path.win32:relative", 0x0417);
+pub const SPEC_PATH_WIN32_PARSE: NodeSpec = NodeSpec::new("path.win32:parse", 0x0418);
+pub const SPEC_PATH_WIN32_FORMAT: NodeSpec = NodeSpec::new("path.win32:format", 0x0419);
+pub const SPEC_PATH_WIN32_TO_NAMESPACED: NodeSpec =
+    NodeSpec::new("path.win32:toNamespacedPath", 0x041A);
+pub const SPEC_PATH_WIN32_MATCHES_GLOB: NodeSpec = NodeSpec::new("path.win32:matchesGlob", 0x041B);
 
 pub const SPEC_URL_PARSE: NodeSpec = NodeSpec::new("url:parse", 0x0500);
 pub const SPEC_URL_FORMAT: NodeSpec = NodeSpec::new("url:format", 0x0501);
