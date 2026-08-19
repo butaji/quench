@@ -67,7 +67,11 @@ fn read_url_parts(args: &[Value]) -> (String, String, String, String, String, St
     let mut query = String::new();
     let mut hash = String::new();
     for key in URL_KEYS {
-        let value = value_to_string(&quench_runtime::vm::get_property(&obj, key));
+        let raw = quench_runtime::vm::get_property(&obj, key);
+        let value = value_to_string(&raw);
+        if matches!(raw, Value::Undefined) {
+            continue;
+        }
         match *key {
             "protocol" => protocol = value,
             "auth" => auth = value,

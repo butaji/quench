@@ -7,3 +7,8 @@ license = "MIT"
 
 [dependencies]
 quench-runtime = { path = "../quench-runtime" }
+
+[dependencies.sysinfo]
+version = "0.32"
+default-features = false
+features = ["system"]
