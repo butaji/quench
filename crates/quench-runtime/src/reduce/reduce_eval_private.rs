@@ -1,5 +1,6 @@
 fn wrap_eval_for_private(source: &str) -> Option<String> {
-    if !crate::private_environment::current().has_names() {
+    let current = crate::private_environment::current();
+    if !current.has_names() {
         return None;
     }
     let labels = private_labels(source);

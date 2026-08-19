@@ -37,7 +37,10 @@ fn is_global_declaration_op(op: &Op) -> bool {
     )
 }
 
-fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
+fn run_eval_completion(
+    registers: &mut Vec<Value>,
+    op: &Op,
+) -> Result<Option<crate::completion::Completion>, VmError> {
     let Op::Eval {
         dst,
         callee,
@@ -50,9 +53,9 @@ fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
         forbidden_var_names,
     } = op
     else {
-        return Ok(());
+        return Ok(None);
     };
-    crate::reflect::execute_eval(
+    let tail = crate::reflect::execute_eval(
         registers,
         crate::reflect::EvalExecution {
             dst: *dst,
@@ -65,7 +68,8 @@ fn run_eval(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
             reusable_var_names,
             forbidden_var_names,
         },
-    )
+    )?;
+    Ok(tail.map(crate::completion::Completion::TailCall))
 }
 
 fn run_property_op(registers: &mut Vec<Value>, op: &Op) -> Result<bool, VmError> {
@@ -145,6 +149,7 @@ fn run_control_op(
         IteratorBinding { .. } => crate::collections::iterator::execute_binding(registers, op)
             .map(Some),
         Loop { .. } => crate::loops::execute(registers, op).map(Some),
+        Eval { .. } => run_eval_completion(registers, op),
         Switch { .. } => crate::switch::execute(registers, op).map(Some),
         Conditional { .. } => run_conditional(registers, op).map(Some),
         Return { src } => read_register(registers, *src)

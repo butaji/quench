@@ -36,7 +36,6 @@ fn run_simple_single_op(
         DynamicImport { .. } => run_dynamic_import(registers, op)?,
         Call { .. } => run_call(registers, op)?,
         OptionalCall { .. } => run_optional_call(registers, op)?,
-        Eval { .. } => run_eval(registers, op)?,
         DeclareEvalBinding { name, slot } => crate::locals::alias_eval_name(name, *slot),
         DeclareGlobalLexicalBinding {
             name,
