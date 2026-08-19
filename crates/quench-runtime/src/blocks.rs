@@ -108,7 +108,7 @@ fn block_function_names(statements: &[oxc::ast::ast::Statement<'_>]) -> Vec<Stri
         .collect()
 }
 
-fn prepare_block_functions(
+pub(crate) fn prepare_block_functions(
     statements: &[oxc::ast::ast::Statement<'_>],
     locals: &mut HashMap<String, u16>,
     next_slot: &mut u16,

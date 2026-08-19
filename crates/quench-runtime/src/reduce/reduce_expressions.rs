@@ -137,6 +137,12 @@ fn reduce_static_if(
             Ok(None)
         }
         Statement::FunctionDeclaration(function) => {
+            crate::blocks::prepare_block_functions(
+                std::slice::from_ref(selected),
+                locals,
+                next_slot,
+                ops,
+            );
             crate::reduce::reduce_function_declaration(
                 function,
                 ops,

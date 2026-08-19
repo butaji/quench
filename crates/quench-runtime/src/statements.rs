@@ -27,6 +27,12 @@ pub(crate) fn reduce_declaration(
             reduce_variable(value, ops, facts, next_register, next_slot, locals)
         }
         oxc::ast::ast::Statement::FunctionDeclaration(value) => {
+            crate::blocks::prepare_block_functions(
+                std::slice::from_ref(statement),
+                locals,
+                next_slot,
+                ops,
+            );
             crate::reduce::reduce_function_declaration(
                 value,
                 ops,
