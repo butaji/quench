@@ -130,6 +130,12 @@ fn reduce_function_body_inner(
     )?;
     let local_count = function_local_count(&body_locals, layout, rest, arrow_expression.is_some());
     let inherited_barrier = facts.eval_var_barrier.clone();
+    facts
+        .eval_var_barrier
+        .extend(crate::function_parameters::eval_var_barrier(
+            formal,
+            arrow_expression.is_none(),
+        ));
     let body_ops = reduce_selected_body(
         statements,
         &ordered,

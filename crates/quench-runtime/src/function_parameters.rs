@@ -72,7 +72,10 @@ fn reduce_prefix(
         mark_later_parameters(formal, index, captures, &mut ops);
         mark_later_bindings(formal, index, locals, &mut ops);
         let slot = captures.saturating_add(u16::try_from(index).ok()?);
-        ops.push(Op::MarkUninitialized { slot, shared: false });
+        ops.push(Op::MarkUninitialized {
+            slot,
+            shared: false,
+        });
         let source = load_parameter(&mut ops, &mut next, slot);
         crate::binding_patterns::bind(
             &parameter.pattern,
@@ -155,7 +158,10 @@ fn bind_rest_pattern(
     crate::binding_patterns::bind(&rest.argument, source, ops, facts, next, locals)
 }
 
-fn eval_var_barrier(formal: &FormalParameters<'_>, implicit_arguments: bool) -> Vec<String> {
+pub(crate) fn eval_var_barrier(
+    formal: &FormalParameters<'_>,
+    implicit_arguments: bool,
+) -> Vec<String> {
     let mut names = formal
         .items
         .iter()
