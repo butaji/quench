@@ -385,6 +385,7 @@ pub struct ProxyValue {
     pub target: Value,
     pub handler: Value,
     pub revoked: Rc<RefCell<bool>>,
+    pub(crate) private_slots: PrivateSlots,
 }
 
 #[derive(Debug, Clone, PartialEq)]
