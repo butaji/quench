@@ -56,8 +56,9 @@ operations, and throws on failure. There is no `node:test`
 runner, no `common.mustCall`, and no harness. The host must
 satisfy each script's observable behavior.
 
-Current coverage (14 scripts):
+Current coverage (16 scripts):
 
+- `test-assert.js` — assert.ok function shape
 - `test-buffer.js` — Buffer.from / Buffer.alloc / Buffer.concat
 - `test-console.js` — console.log/info/warn/error/debug/trace
 - `test-dns.js` — dns.lookup (callback)
@@ -67,9 +68,10 @@ Current coverage (14 scripts):
 - `test-net.js` — net.isIP / isIPv4 / isIPv6
 - `test-os.js` — os.cpus / totalmem / freemem / networkInterfaces
 - `test-path.js` — path.join / normalize / dirname / basename /
-  extname / isAbsolute / relative
+  extname / isAbsolute / relative + posix/win32 subnamespaces
 - `test-process.js` — process.version / platform / arch / pid
 - `test-querystring.js` — querystring.parse / stringify / escape
+- `test-stream.js` — stream module shape (Readable/Writable/...)
 - `test-timers.js` — setTimeout / setImmediate / setInterval
 - `test-tty.js` — tty.isatty
 - `test-url.js` — url.parse / format
