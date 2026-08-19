@@ -144,6 +144,9 @@ pub(crate) mod value {
         crate::conversion::to_number(value.unwrap_or(&Value::Undefined))
     }
     pub fn is_truthy(value: &Value) -> bool {
+        if crate::conversion::is_html_dda(value) {
+            return false;
+        }
         match value {
             Value::BindingCell(value) => is_truthy(&value.borrow()),
             Value::Boolean(value) => *value,
@@ -179,6 +182,9 @@ pub(crate) mod value {
         }
     }
     pub(crate) fn type_of(value: &Value) -> &'static str {
+        if crate::conversion::is_html_dda(value) {
+            return "undefined";
+        }
         match value {
             Value::BindingCell(value) => type_of(&value.borrow()),
             Value::Undefined => "undefined",

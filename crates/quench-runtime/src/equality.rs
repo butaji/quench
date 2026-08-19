@@ -41,7 +41,13 @@ fn is_nullish_pair(left: &Value, right: &Value) -> bool {
     matches!(
         (left, right),
         (Value::Null, Value::Undefined) | (Value::Undefined, Value::Null)
-    )
+    ) || html_dda_nullish(left, right)
+}
+
+fn html_dda_nullish(left: &Value, right: &Value) -> bool {
+    use crate::conversion::is_html_dda;
+    (is_html_dda(left) && matches!(right, Value::Null | Value::Undefined))
+        || (is_html_dda(right) && matches!(left, Value::Null | Value::Undefined))
 }
 
 fn boolean_pair(left: &Value, right: &Value) -> Option<(Value, Value)> {

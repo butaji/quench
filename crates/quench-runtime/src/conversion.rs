@@ -243,6 +243,20 @@ fn call_primitive(method: &Value, receiver: &Value, arguments: &[Value]) -> Resu
     Ok(result)
 }
 
+pub(crate) fn is_html_dda(value: &Value) -> bool {
+    match value {
+        Value::BindingCell(cell) => is_html_dda(&cell.borrow()),
+        Value::Builtin(crate::ops::Builtin::HostCapability(
+            crate::ops::HostCapabilityKind::IsHTMLDDA,
+        )) => true,
+        Value::HostCapability(token) => {
+            token.descriptor.kind == crate::ops::HostCapabilityKind::IsHTMLDDA
+        }
+        Value::BoundFunction(bound) => is_html_dda(&bound.target),
+        _ => false,
+    }
+}
+
 pub(crate) fn is_callable(value: &Value) -> bool {
     match value {
         Value::Builtin(

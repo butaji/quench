@@ -222,6 +222,7 @@ impl VmContext {
                 HostCapabilityKind::CreateRealm,
                 HostCapabilityKind::EvalScript,
                 HostCapabilityKind::DetachArrayBuffer,
+                HostCapabilityKind::IsHTMLDDA,
             ],
         );
         let realm = realm::create(&parent);
