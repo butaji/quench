@@ -91,7 +91,12 @@ fn instantiate_context<'a>(
     let winners = selected_function_names(&selected);
     let mut variables = global_variable_names(statements, &winners);
     if annex_b {
-        variables.extend(crate::reduce_support::annex_b_function_names(statements));
+        let skip = crate::semantic_early::annex_b_lexical_collisions_in(statements);
+        variables.extend(
+            crate::reduce_support::annex_b_function_names(statements)
+                .into_iter()
+                .filter(|name| !skip.contains(name)),
+        );
         variables.sort_unstable();
         variables.dedup();
     }
