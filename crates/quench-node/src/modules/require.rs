@@ -58,6 +58,7 @@ fn resolve(spec: &str) -> Option<Value> {
         "fs" => Some(crate::modules::fs::build()),
         "http" => Some(crate::modules::http::build()),
         "readline" => Some(crate::modules::readline::build()),
+        "vm" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "timers" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
