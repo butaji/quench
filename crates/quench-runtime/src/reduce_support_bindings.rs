@@ -298,12 +298,23 @@ pub(crate) fn predeclare_lexicals(
     }
 }
 
+pub(crate) fn switch_var_names(statement: &oxc::ast::ast::SwitchStatement<'_>) -> Vec<String> {
+    let mut names = Vec::new();
+    for case in &statement.cases {
+        collect_block_var_names(&case.consequent, &mut names);
+    }
+    names
+}
+
 fn collect_declared_names(statement: &oxc::ast::ast::Statement<'_>, names: &mut Vec<String>) {
     match statement {
         oxc::ast::ast::Statement::FunctionDeclaration(function) => {
             if let Some(identifier) = &function.id {
                 names.push(identifier.name.to_string());
             }
+        }
+        oxc::ast::ast::Statement::SwitchStatement(statement) => {
+            names.extend(switch_var_names(statement));
         }
         oxc::ast::ast::Statement::VariableDeclaration(declaration)
             if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Var =>
