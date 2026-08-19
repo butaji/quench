@@ -83,6 +83,7 @@ mod reflect;
 pub mod regexp;
 pub mod resource;
 mod semantic;
+mod semantic_catch;
 mod semantic_early;
 mod sequences;
 mod special;
