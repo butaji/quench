@@ -50,14 +50,14 @@ cargo run -p quench-node-test --bin run -- crates/quench-node-test/node-tests/te
 ## Suite
 
 The compat suite is a plain directory of Node compat API
-scripts under `node-tests/` (currently 26 scripts). Each test
+scripts under `node-tests/` (currently 27 scripts). Each test
 is a self-contained file:
 it requires the relevant `node:` module, runs a small set of
 operations, and throws on failure. There is no `node:test`
 runner, no `common.mustCall`, and no harness. The host must
 satisfy each script's observable behavior.
 
-Current coverage (26 scripts):
+Current coverage (27 scripts):
 
 - `test-assert.js` — assert.ok function shape
 - `test-buffer.js` — Buffer.from / Buffer.alloc / Buffer.concat
@@ -83,6 +83,7 @@ Current coverage (26 scripts):
 - `test-repl.js` — repl + wasi shape
 - `test-worker_threads.js` — worker_threads shape (Worker stub)
 - `test-sea.js` — sea shape (isSea stub)
+- `test-test.js` — node:test shape (test stub)
 - `test-timers.js` — setTimeout / setImmediate / setInterval
 - `test-tty.js` — tty.isatty
 - `test-url.js` — url.parse / format
