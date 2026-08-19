@@ -294,6 +294,13 @@ pub fn timers_run_exit(
 }
 /// `internal/util.sleep(ms)` — synchronous sleep used by Node's own
 /// tests to assert timer ordering.
+pub fn timers_method_close(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::timers::method_close(state, receiver))
+}
 pub fn internal_util_sleep(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,

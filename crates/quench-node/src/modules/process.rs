@@ -16,6 +16,8 @@ pub struct ProcessState {
     /// `(handler, once)` — `once` handlers fire a single time.
     pub uncaught_exception_handlers: Vec<(Value, bool)>,
     pub warning_handlers: Vec<(Value, bool)>,
+    /// Warning names already emitted; duration warnings fire once per process.
+    pub warnings_emitted: Vec<String>,
     pub exit_handlers_ran: bool,
     pub exec_path: String,
     pub version: String,
@@ -46,6 +48,7 @@ impl ProcessState {
             before_exit_handlers: Vec::new(),
             uncaught_exception_handlers: Vec::new(),
             warning_handlers: Vec::new(),
+            warnings_emitted: Vec::new(),
             exit_handlers_ran: false,
             exec_path,
             version: "v22.0.0".into(),

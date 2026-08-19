@@ -33,3 +33,5 @@ test-timers-unrefd-interval-still-fires.js
 test-timers-unrefed-in-beforeexit.js
 test-timers-user-call.js
 test-timers.js
+test-timers-nan-duration-emit-once-per-process.js
+test-timers-negative-duration-warning-emit-once-per-process.js

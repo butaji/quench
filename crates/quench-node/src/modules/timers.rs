@@ -120,34 +120,24 @@ fn schedule(
 /// Build the JS Timeout/Immediate object: hidden id plus the
 /// `unref`/`ref`/`hasRef`/`refresh` capability methods.
 fn timer_object(id: u64, destroyed: &Rc<RefCell<Value>>) -> Result<Value, VmError> {
-    let mut object = crate::host::namespace_object_from_pairs(vec![
+    let object = crate::host::namespace_object_from_pairs(vec![
         (TIMER_ID_PROP.to_string(), Value::Number(id as f64)),
         (
             "_destroyed".to_string(),
             Value::BindingCell(Rc::clone(destroyed)),
         ),
     ]);
-    let methods: Vec<(&str, Value)> = vec![
-        (
-            "unref",
-            crate::host::capability(crate::registry::SPEC_TIMERS_UNREF),
-        ),
-        (
-            "ref",
-            crate::host::capability(crate::registry::SPEC_TIMERS_REF),
-        ),
-        (
-            "hasRef",
-            crate::host::capability(crate::registry::SPEC_TIMERS_HASREF),
-        ),
-        (
-            "refresh",
-            crate::host::capability(crate::registry::SPEC_TIMERS_REFRESH),
-        ),
+    let methods: Vec<(&str, crate::registry::NodeSpec)> = vec![
+        ("unref", crate::registry::SPEC_TIMERS_UNREF),
+        ("ref", crate::registry::SPEC_TIMERS_REF),
+        ("hasRef", crate::registry::SPEC_TIMERS_HASREF),
+        ("refresh", crate::registry::SPEC_TIMERS_REFRESH),
+        ("close", crate::registry::SPEC_TIMERS_CLOSE),
     ];
-    for (key, value) in methods {
+    let mut object = object;
+    for (key, spec) in methods {
         let descriptor = host_api::object(vec![
-            ("value".to_string(), value),
+            ("value".to_string(), crate::host::capability(spec)),
             ("writable".to_string(), Value::Boolean(true)),
             ("enumerable".to_string(), Value::Boolean(false)),
             ("configurable".to_string(), Value::Boolean(true)),
@@ -220,6 +210,17 @@ pub fn method_has_ref(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) 
         .and_then(|id| state.borrow().timers.timers.get(&id).map(|t| t.referenced))
         .unwrap_or(true);
     Value::Boolean(referenced)
+}
+
+/// `timer.close()` — alias for clearing the timer (used by
+/// `Symbol.dispose` and legacy unenroll paths in Node).
+pub fn method_close(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Value {
+    if let Some(id) = timer_id_of(receiver) {
+        if let Some(timer) = state.borrow_mut().timers.timers.remove(&id) {
+            mark_destroyed(&timer);
+        }
+    }
+    receiver.cloned().unwrap_or(Value::Undefined)
 }
 
 pub fn method_refresh(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Value {
@@ -312,6 +313,18 @@ fn normalize_delay(state: &Rc<RefCell<HostState>>, value: Option<&Value>) -> u64
 
 /// Queue a process `warning` event for registered handlers.
 fn emit_warning(state: &Rc<RefCell<HostState>>, name: &str, message: &str) {
+    // NaN/negative duration warnings fire once per process; overflow
+    // warnings fire per call (Node semantics).
+    let once_per_process = matches!(name, "TimeoutNaNWarning" | "TimeoutNegativeWarning");
+    {
+        let mut guard = state.borrow_mut();
+        if guard.process.warnings_emitted.iter().any(|n| n == name) {
+            return;
+        }
+        if once_per_process {
+            guard.process.warnings_emitted.push(name.to_string());
+        }
+    }
     let warning = host_api::object(vec![
         ("name".to_string(), Value::String(name.to_string())),
         ("message".to_string(), Value::String(message.to_string())),
