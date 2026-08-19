@@ -214,6 +214,7 @@ fn nested_var_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
         oxc::ast::ast::Statement::DoWhileStatement(statement) => {
             annex_b_function_names(std::slice::from_ref(&statement.body))
         }
+        oxc::ast::ast::Statement::TryStatement(statement) => annex_b_try_function_names(statement),
         _ => declared_names(statement),
     }
 }

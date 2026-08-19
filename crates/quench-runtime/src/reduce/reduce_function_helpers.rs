@@ -27,9 +27,29 @@ fn function_metadata(
     }
 }
 
-fn declaration_slot(name: &str, next_slot: &mut u16, locals: &mut HashMap<String, u16>) -> u16 {
-    if let Some(slot) = locals.get(&format!("\0annex-b-outer:{name}")) { return *slot; }
-    if let Some(slot) = locals.get(name) { return *slot; }
+fn declaration_slot(
+    name: &str,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+    facts: &crate::facts::ProgramDb,
+) -> u16 {
+    if let Some(slot) = locals.get(&format!("\0annex-b-outer:{name}")) {
+        return *slot;
+    }
+    if facts.eval_var_barrier.iter().any(|bound| bound == name) {
+        return reserve_blocked_function(name, next_slot, locals);
+    }
+    if let Some(slot) = locals.get(name) {
+        return *slot;
+    }
+    reserve_blocked_function(name, next_slot, locals)
+}
+
+fn reserve_blocked_function(
+    name: &str,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> u16 {
     let slot = *next_slot;
     *next_slot = next_slot.saturating_add(1);
     locals.insert(name.to_string(), slot);
@@ -42,7 +62,7 @@ pub fn reduce_default_function_declaration(
     let Some(body) = function.body.as_ref() else {
         return Err(vec!["Function without body".to_string()]);
     };
-    let slot = declaration_slot("default", next_slot, locals);
+    let slot = declaration_slot("default", next_slot, locals, facts);
     let (_, parameter_count) = crate::function_parameters::bindings(&function.params)?;
     let (body_ops, captures) = functions::reduce_named_declaration(
         body, &function.params, facts, locals, "default",

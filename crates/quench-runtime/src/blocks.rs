@@ -65,9 +65,6 @@ fn reduce_block_statements(
 ) -> Result<Option<u16>, Vec<String>> {
     let mut last = None;
     for statement in &block.body {
-        if skip_blocked_function(statement, facts) {
-            continue;
-        }
         if let Some(value) = reduce_statement(
             statement,
             ops,
@@ -80,17 +77,6 @@ fn reduce_block_statements(
         }
     }
     Ok(last)
-}
-
-fn skip_blocked_function(statement: &oxc::ast::ast::Statement<'_>, facts: &ProgramDb) -> bool {
-    let oxc::ast::ast::Statement::FunctionDeclaration(function) = statement else {
-        return false;
-    };
-    function.id.as_ref().is_some_and(|identifier| {
-        facts
-            .eval_var_barrier
-            .contains(&identifier.name.to_string())
-    })
 }
 
 fn emit_wrapped(
