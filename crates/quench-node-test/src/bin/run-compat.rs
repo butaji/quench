@@ -14,7 +14,23 @@ use quench_node_test::reader::NodeOutcome;
 use quench_node_test::stages::discover_fixtures;
 
 fn main() -> ExitCode {
-    let dir = resolve_dir();
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        if a == "--list" {
+            // Handled in discover_fixtures; skip.
+        } else if a == "--filter" {
+            // Skip the value too.
+            args.next();
+        } else {
+            // Positional arg = dir.
+            let dir = std::path::PathBuf::from(a);
+            return run_with_dir(dir);
+        }
+    }
+    run_with_dir(std::path::PathBuf::from("crates/quench-node-test/node-tests"))
+}
+
+fn run_with_dir(dir: std::path::PathBuf) -> ExitCode {
     if !dir.is_dir() {
         eprintln!("error: {} is not a directory", dir.display());
         return ExitCode::from(2);
@@ -24,6 +40,7 @@ fn main() -> ExitCode {
         eprintln!("error: no `*.js` fixtures under {}", dir.display());
         return ExitCode::from(2);
     }
+    let fixtures = filter_fixtures(fixtures);
     if std::env::args().any(|a| a == "--list") {
         for f in &fixtures {
             println!("{}", f.file_name().unwrap().to_string_lossy());
@@ -43,9 +60,27 @@ fn main() -> ExitCode {
 fn resolve_dir() -> PathBuf {
     std::env::args_os()
         .skip(1)
-        .find(|a| a.to_string_lossy() != "--list")
+        .find(|a| {
+            let s = a.to_string_lossy();
+            s != "--list" && !s.starts_with("--filter")
+        })
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("crates/quench-node-test/node-tests"))
+}
+
+fn filter_fixtures(
+    fixtures: Vec<std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    let args: Vec<String> = std::env::args().collect();
+    let idx = args.iter().position(|a| a == "--filter");
+    let filter = idx.and_then(|i| args.get(i + 1).cloned());
+    match filter {
+        Some(name) => fixtures
+            .into_iter()
+            .filter(|f| f.file_name().unwrap().to_string_lossy().contains(&name))
+            .collect(),
+        None => fixtures,
+    }
 }
 
 struct SuiteSummary {
