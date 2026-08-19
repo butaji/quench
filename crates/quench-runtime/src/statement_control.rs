@@ -90,7 +90,7 @@ pub(crate) fn execute_label(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let completion = crate::execute::execute_completion_in_place(body, registers)?;
-    if matches!(&completion, crate::completion::Completion::Break(Some(label)) if label == name) {
+    if matches!(&completion, crate::completion::Completion::Break { label: Some(label), .. } if label == name) {
         Ok(crate::completion::Completion::Normal)
     } else {
         Ok(completion)

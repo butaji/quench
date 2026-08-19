@@ -153,8 +153,14 @@ fn run_control_op(
         Throw { src } => read_register(registers, *src)
             .map(Completion::Throw)
             .map(Some),
-        Break { label } => Ok(Some(Completion::Break(label.clone()))),
-        Continue { label } => Ok(Some(Completion::Continue(label.clone()))),
+        Break { label } => Ok(Some(Completion::Break {
+            label: label.clone(),
+            value: None,
+        })),
+        Continue { label } => Ok(Some(Completion::Continue {
+            label: label.clone(),
+            value: None,
+        })),
         TailCall { .. } => run_tail_call(registers, op).map(Some),
         Await { .. } => run_await_completion(registers, op),
         Yield { src } => read_register(registers, *src)

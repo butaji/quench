@@ -472,6 +472,7 @@ pub enum Op {
         body: crate::machine::FunctionCode,
         update: crate::machine::FunctionCode,
         post_test: bool,
+        dst: u16,
     },
     ForIn {
         label: Option<String>,

@@ -300,8 +300,8 @@ fn iterate_loop_keys(
         let value = crate::value::Value::String(key);
         let _binding = bind_iteration(slot, value, per_iteration);
         match execute_loop_body(registers, label, body)? {
-            crate::completion::LoopTransition::Continue => {}
-            crate::completion::LoopTransition::Break => {
+            crate::completion::LoopTransition::Continue(_) => {}
+            crate::completion::LoopTransition::Break(_) => {
                 return Ok(crate::completion::Completion::Normal)
             }
             crate::completion::LoopTransition::Propagate(completion) => return Ok(completion),
@@ -360,8 +360,8 @@ fn iterate_loop_values(
         };
         let _binding = bind_iteration(slot, value, per_iteration);
         match execute_loop_body(registers, label, body)? {
-            crate::completion::LoopTransition::Continue => {}
-            crate::completion::LoopTransition::Break => {
+            crate::completion::LoopTransition::Continue(_) => {}
+            crate::completion::LoopTransition::Break(_) => {
                 return crate::collections::iterator::close(
                     iterator,
                     crate::completion::Completion::Normal,
@@ -402,7 +402,7 @@ pub(crate) fn execute(
     registers: &mut Vec<crate::value::Value>,
     op: &crate::ops::Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, init, test, body, update, post_test) = match op {
+    let (label, init, test, body, update, post_test, dst) = match op {
         crate::ops::Op::Loop {
             label,
             init,
@@ -410,7 +410,8 @@ pub(crate) fn execute(
             body,
             update,
             post_test,
-        } => (label, init, test, body, update, post_test),
+            dst,
+        } => (label, init, test, body, update, post_test, *dst),
         _ => return Err(crate::execute::VmError::MissingReturn),
     };
     let Some(body) = body.ops() else {
@@ -425,7 +426,7 @@ pub(crate) fn execute(
     let Some(update) = update.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    run_loop(label, init, test, body, update, *post_test, registers)
+    run_loop(label, init, test, body, update, *post_test, dst, registers)
 }
 
 fn run_loop(
@@ -435,6 +436,7 @@ fn run_loop(
     body: &[Op],
     update: &[Op],
     post_test: bool,
+    dst: u16,
     registers: &mut Vec<crate::value::Value>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     run_fragment(init, registers)?;
@@ -443,9 +445,16 @@ fn run_loop(
             break;
         }
         match execute_loop_body(registers, label, body)? {
-            crate::completion::LoopTransition::Continue => {}
-            crate::completion::LoopTransition::Break => break,
-            crate::completion::LoopTransition::Propagate(completion) => return Ok(completion),
+            crate::completion::LoopTransition::Continue(value) => {
+                store_loop_value(registers, dst, value)?;
+            }
+            crate::completion::LoopTransition::Break(value) => {
+                store_loop_value(registers, dst, value)?;
+                break;
+            }
+            crate::completion::LoopTransition::Propagate(completion) => {
+                return Ok(update_empty_from(registers, dst, completion)?);
+            }
         }
         run_fragment(update, registers)?;
         if post_test && !loop_test(test, registers)? {
@@ -453,6 +462,27 @@ fn run_loop(
         }
     }
     Ok(crate::completion::Completion::Normal)
+}
+
+fn store_loop_value(
+    registers: &mut Vec<crate::value::Value>,
+    dst: u16,
+    value: Option<crate::value::Value>,
+) -> Result<(), crate::execute::VmError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    crate::execute::write_value(registers, dst, value);
+    Ok(())
+}
+
+fn update_empty_from(
+    registers: &[crate::value::Value],
+    dst: u16,
+    completion: crate::completion::Completion,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let value = crate::execute::read_register(registers, dst)?;
+    Ok(completion.update_empty(value))
 }
 
 fn loop_test(
