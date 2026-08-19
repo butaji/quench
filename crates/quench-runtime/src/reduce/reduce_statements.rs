@@ -522,6 +522,7 @@ pub fn reduce_function_declaration(
         slot,
         src: register,
     });
+    store_annex_b_var(ops, identifier.name.as_str(), register, locals, facts);
     Ok(())
 }
 
