@@ -103,10 +103,10 @@ pub(crate) fn execute_get(registers: &mut Vec<Value>, op: &crate::ops::Op) -> Re
             crate::execute::write_value(registers, *dst, value);
             Ok(())
         }
-        crate::ops::Op::GetSuperPropertyDynamic { dst, key } => {
+        crate::ops::Op::GetSuperPropertyDynamic { dst, key, base } => {
             let context = current()?;
             require_initialized_this(&context)?;
-            let prototype = require_super_base(&context.home)?;
+            let prototype = super_base(&context, registers, *base)?;
             let key_value = crate::execute::read_register(registers, *key)?;
             let key_string = crate::properties::dynamic_property_key(&key_value)?;
             let value = get_with_receiver(&prototype, &key_string, &context.receiver)?;
@@ -128,10 +128,10 @@ pub(crate) fn execute_set(registers: &mut [Value], op: &crate::ops::Op) -> Resul
             put_with_receiver(&prototype, key, value, &receiver)?;
             Ok(())
         }
-        crate::ops::Op::SetSuperPropertyDynamic { key, src } => {
+        crate::ops::Op::SetSuperPropertyDynamic { key, src, base } => {
             let context = current()?;
             require_initialized_this(&context)?;
-            let prototype = require_super_base(&context.home)?;
+            let prototype = super_base(&context, registers, *base)?;
             let key_value = crate::execute::read_register(registers, *key)?;
             let key_string = crate::properties::dynamic_property_key(&key_value)?;
             let value = crate::execute::read_register(registers, *src)?.clone();
@@ -253,6 +253,25 @@ pub(crate) fn check_initialized_this() -> Result<(), VmError> {
     require_initialized_this(&context)
 }
 
+pub(crate) fn execute_capture_base(registers: &mut Vec<Value>, dst: u16) -> Result<(), VmError> {
+    let context = current()?;
+    require_initialized_this(&context)?;
+    let prototype = require_super_base(&context.home)?;
+    crate::execute::write_value(registers, dst, prototype);
+    Ok(())
+}
+
+fn super_base(
+    context: &Context,
+    registers: &[Value],
+    base: Option<u16>,
+) -> Result<Value, VmError> {
+    match base {
+        Some(slot) => crate::execute::read_register(registers, slot),
+        None => require_super_base(&context.home),
+    }
+}
+
 fn get_with_receiver(target: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
     let mut current = crate::locals::resolved_replacement(target.clone());
     loop {
@@ -282,6 +301,10 @@ fn super_own_value(holder: &Value, key: &str, receiver: &Value) -> Result<Option
                 return Ok(None);
             };
             return super_own_value(&Value::Object(object), key, receiver);
+        }
+        Value::Builtin(_) => {
+            let value = crate::execute::get_property(holder, key);
+            return Ok((!matches!(value, Value::Undefined)).then_some(value));
         }
         _ => return Ok(None),
     };
