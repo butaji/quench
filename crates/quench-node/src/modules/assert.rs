@@ -140,6 +140,13 @@ pub fn fail(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    // `assert.fail(err)` rethrows the error itself.
+    let first = arg(args, 0);
+    if matches!(first, Value::Object(_))
+        && !matches!(execute::get_property(&first, "message"), Value::Undefined)
+    {
+        return Err(VmError::Thrown(first));
+    }
     let custom = custom_message(args, 0);
     let generated = custom.is_none();
     let message = custom.unwrap_or_else(|| "Failed".to_string());
@@ -174,12 +181,27 @@ pub fn if_error(
     ))
 }
 
-/// Error values render as their message; other values via inspect.
+/// Node's ifError rendering: an object with a `message` property uses
+/// it verbatim (even empty); an error with an empty message falls back
+/// to its name unless the constructor is null/missing; anything else
+/// goes through inspect.
 fn describe(value: &Value) -> String {
-    match execute::get_property(value, "message") {
-        Value::String(message) if !matches!(value, Value::String(_)) => message,
-        _ => rendered(value),
+    if let Value::String(text) = execute::get_property(value, "message") {
+        if !text.is_empty() {
+            return text;
+        }
+        let constructor = execute::get_property(value, "constructor");
+        if matches!(constructor, Value::Null | Value::Undefined) {
+            return text;
+        }
+        if let Value::String(name) = execute::get_property(value, "name") {
+            if !name.is_empty() {
+                return name;
+            }
+        }
+        return text;
     }
+    rendered(value)
 }
 
 fn binary_assert(

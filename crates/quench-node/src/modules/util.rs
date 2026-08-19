@@ -155,15 +155,41 @@ pub fn inspect(value: &Value) -> String {
         Value::Boolean(b) => b.to_string(),
         Value::Null => "null".into(),
         Value::Undefined => "undefined".into(),
-        Value::Object(_) => inspect_object(value),
-        Value::Array(_) => "[Array]".into(),
+        Value::Object(_) => inspect_object(value, 2),
+        Value::Array(_) => inspect_array(value, 2),
         Value::Uint8Array(_) => "[Buffer]".into(),
         _ => "<unknown>".into(),
     }
 }
 
+fn inspect_array(value: &Value, depth: usize) -> String {
+    if depth == 0 {
+        return "[Array]".into();
+    }
+    let mut items = Vec::new();
+    for index in 0..64u32 {
+        let item = quench_runtime::execute::get_property(value, &index.to_string());
+        if matches!(item, Value::Undefined) {
+            break;
+        }
+        items.push(inspect_at(&item, depth - 1));
+    }
+    format!("[ {} ]", items.join(", "))
+}
+
+fn inspect_at(value: &Value, depth: usize) -> String {
+    if depth == 0 {
+        return inspect_shallow(value);
+    }
+    match value {
+        Value::Object(_) => inspect_object(value, depth - 1),
+        Value::Array(_) => inspect_array(value, depth - 1),
+        _ => inspect_shallow(value),
+    }
+}
+
 /// Plain objects render as `{ key: value, ... }` with shallow values.
-fn inspect_object(value: &Value) -> String {
+fn inspect_object(value: &Value, depth: usize) -> String {
     let keys = quench_runtime::execute::own_enumerable_keys(value);
     if keys.is_empty() {
         return "{}".into();
@@ -173,7 +199,7 @@ fn inspect_object(value: &Value) -> String {
         .map(|key| {
             format!(
                 "{key}: {}",
-                inspect_shallow(&quench_runtime::execute::get_property(value, key))
+                inspect_at(&quench_runtime::execute::get_property(value, key), depth)
             )
         })
         .collect::<Vec<_>>()
