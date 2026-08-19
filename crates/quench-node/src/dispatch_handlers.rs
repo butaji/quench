@@ -229,12 +229,36 @@ pub fn internal_util_sleep(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let ms = match args.first() {
-        Some(Value::Number(n)) if n.is_finite() && *n > 0.0 => *n as u64,
-        _ => 0,
+    let msec = args.first().unwrap_or(&Value::Undefined);
+    let Value::Number(ms) = msec else {
+        return Err(sleep_error(
+            "TypeError",
+            &format!(
+                "The \"msec\" argument must be of type number.{}",
+                crate::modules::util::invalid_arg_received(msec)
+            ),
+        ));
     };
-    std::thread::sleep(std::time::Duration::from_millis(ms));
+    if ms.is_nan() || ms.fract() != 0.0 || *ms < 0.0 || *ms > 4_294_967_295.0 {
+        return Err(sleep_error(
+            "RangeError",
+            &format!(
+                "The value of \"msec\" is out of range. It must be >= 0 && <= 4294967295. Received {}",
+                quench_runtime::execute::number_to_js_string(*ms)
+            ),
+        ));
+    }
+    if *ms > 0.0 {
+        std::thread::sleep(std::time::Duration::from_millis(*ms as u64));
+    }
     Ok(Value::Undefined)
+}
+
+fn sleep_error(name: &str, message: &str) -> VmError {
+    VmError::Thrown(quench_runtime::host_api::object(vec![
+        ("name".to_string(), Value::String(name.to_string())),
+        ("message".to_string(), Value::String(message.to_string())),
+    ]))
 }
 
 // ---- buffer ----
@@ -816,4 +840,61 @@ pub fn test_run(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::test::run(state, args)
+}
+
+pub fn util_strip_vt(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let text = quench_runtime::execute::to_js_string(args.first().unwrap_or(&Value::Undefined))?;
+    Ok(Value::String(
+        crate::modules::util_strip::strip_vt_control_characters(&text),
+    ))
+}
+
+pub fn util_format_with_options(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let options = args.first().unwrap_or(&Value::Undefined);
+    let separator = quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
+        options,
+        "numericSeparator",
+    ));
+    Ok(Value::String(crate::modules::util::format_with_options(
+        &args[1..],
+        separator,
+    )))
+}
+
+pub fn test_skip(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::test::skip(state, args)
+}
+
+pub fn util_is_deep_strict_equal(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let left = args.first().unwrap_or(&Value::Undefined);
+    let right = args.get(1).unwrap_or(&Value::Undefined);
+    let skip_prototype = match args.get(2) {
+        Some(Value::Boolean(flag)) => *flag,
+        Some(options) => quench_runtime::execute::is_truthy(
+            &quench_runtime::execute::get_property(options, "skipPrototype"),
+        ),
+        None => false,
+    };
+    Ok(Value::Boolean(crate::modules::deep_equal::deep_equal_opts(
+        left,
+        right,
+        true,
+        skip_prototype,
+    )?))
 }

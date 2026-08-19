@@ -44,12 +44,8 @@ fn prototype_for_value(value: &Value) -> Value {
             | Builtin::DisposableStackPrototype
             | Builtin::AsyncDisposableStackPrototype,
         ) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
-            Value::Builtin(Builtin::TypedArray)
-        }
-        Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => {
-            Value::Builtin(Builtin::TypedArray)
-        }
+        Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => Value::Builtin(Builtin::TypedArray),
+        Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => Value::Builtin(Builtin::TypedArray),
         Value::Builtin(
             Builtin::RangeErrorPrototype
             | Builtin::TypeErrorPrototype
@@ -152,6 +148,11 @@ fn prototype_for_value_tail(value: &Value) -> Value {
 }
 
 fn typed_array_prototype_for_value(value: &Value) -> Value {
+    if let Some(meta) = value.typed_array_meta() {
+        if let Some(prototype) = meta.prototype() {
+            return prototype;
+        }
+    }
     match value {
         Value::Float64Array(_) => Value::Builtin(Builtin::Float64ArrayPrototype),
         Value::Float32Array(_) => Value::Builtin(Builtin::Float32ArrayPrototype),

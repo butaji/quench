@@ -15,13 +15,7 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 
 pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let name = args
-        .iter()
-        .find_map(|arg| match arg {
-            Value::String(name) => Some(name.clone()),
-            _ => None,
-        })
-        .unwrap_or_else(|| "<anonymous>".to_string());
+    let name = test_name(args);
     // `test(name, { skip: ... }, fn)` — a truthy `skip` option skips the run.
     let skipped = args.iter().any(|arg| {
         matches!(arg, Value::Object(_) | Value::ObjectAlias(_))
@@ -42,7 +36,11 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
     let Some(callback) = callback else {
         return Ok(Value::Undefined);
     };
-    match quench_runtime::vm::call_value(callback, &Value::Undefined, &[]) {
+    let context = quench_runtime::host_api::object(vec![(
+        "assert".to_string(),
+        crate::modules::assert::build_value(),
+    )]);
+    match quench_runtime::vm::call_value(callback, &Value::Undefined, &[context]) {
         Ok(_) => {
             report(state, &format!("ok - {name}"));
             Ok(Value::Undefined)
@@ -52,6 +50,21 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
             Err(error)
         }
     }
+}
+
+/// `test.skip` / `it.skip` — report without running the callback.
+pub fn skip(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    report(state, &format!("ok - {} # SKIP", test_name(args)));
+    Ok(Value::Undefined)
+}
+
+fn test_name(args: &[Value]) -> String {
+    args.iter()
+        .find_map(|arg| match arg {
+            Value::String(name) => Some(name.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "<anonymous>".to_string())
 }
 
 fn report(state: &Rc<RefCell<HostState>>, line: &str) {

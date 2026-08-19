@@ -93,6 +93,13 @@ const CAP_URL_FILE_URL_TO_PATH: u16 = 0x0515;
 const CAP_URL_TO_HTTP_OPTIONS: u16 = 0x0516;
 const CAP_URL_DOMAIN_TO_ASCII: u16 = 0x0517;
 const CAP_URL_DOMAIN_TO_UNICODE: u16 = 0x0518;
+const CAP_UTIL_INHERITS: u16 = 0x0304;
+const CAP_UTIL_STRIP_VT: u16 = 0x0305;
+const CAP_UTIL_FORMAT_WITH_OPTIONS: u16 = 0x0306;
+const CAP_UTIL_STYLE_TEXT: u16 = 0x0307;
+const CAP_UTIL_IS_DEEP_STRICT_EQUAL: u16 = 0x0308;
+const CAP_TEXT_DECODER_NEW: u16 = 0x0809;
+const CAP_TEXT_DECODER_DECODE: u16 = 0x080A;
 const CAP_TIMERS_SETTIMEOUT: u16 = 0x0700;
 const CAP_TIMERS_CLEARTIMEOUT: u16 = 0x0701;
 const CAP_TIMERS_SETINTERVAL: u16 = 0x0702;
@@ -201,6 +208,7 @@ const CAP_FETCH: u16 = 0x1f01;
 const CAP_ABORT_CONTROLLER: u16 = 0x1f02;
 const CAP_ABORT_SIGNAL: u16 = 0x1f03;
 const CAP_TEST_RUN: u16 = 0x1b00;
+const CAP_TEST_SKIP: u16 = 0x1b01;
 
 /// Single canonical mapping from capability id to call handler.
 pub fn lookup(cap: u16) -> Option<CallHandler> {
@@ -311,6 +319,12 @@ fn url_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_URL_TO_HTTP_OPTIONS => crate::modules::url_whatwg::url_to_http_options,
         CAP_URL_DOMAIN_TO_ASCII => crate::modules::url_whatwg::domain_to_ascii,
         CAP_URL_DOMAIN_TO_UNICODE => crate::modules::url_whatwg::domain_to_unicode,
+        CAP_UTIL_INHERITS => crate::modules::util_inherits::inherits,
+        CAP_UTIL_STRIP_VT => util_strip_vt,
+        CAP_UTIL_FORMAT_WITH_OPTIONS => util_format_with_options,
+        CAP_UTIL_STYLE_TEXT => crate::modules::util_style_text::style_text,
+        CAP_UTIL_IS_DEEP_STRICT_EQUAL => util_is_deep_strict_equal,
+        CAP_TEXT_DECODER_DECODE => crate::modules::text_decoder::decode,
         _ => return timers_dispatch(cap),
     })
 }
@@ -430,6 +444,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CP_EXECSYNC => cp_exec_sync,
         CAP_CP_EXEC | CAP_CP_SPAWN => cp_async,
         CAP_TEST_RUN => test_run,
+        CAP_TEST_SKIP => test_skip,
         CAP_STRUCTURED_CLONE => structured_clone,
         CAP_FETCH => fetch,
         CAP_VM_RUN_IN_NEW_CONTEXT => crate::modules::vm::run_in_new_context,
@@ -469,6 +484,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_STREAM_TRANSFORM => stream_transform,
         CAP_STRING_DECODER => string_decoder_new,
         CAP_URL_NEW => url_new,
+        CAP_TEXT_DECODER_NEW => crate::modules::text_decoder::new_text_decoder,
         CAP_URL_SEARCH => url_search_params,
         CAP_NET_SERVER => net_create_server,
         CAP_BUFFER_NEW => buffer_new_construct,

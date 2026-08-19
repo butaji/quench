@@ -198,6 +198,8 @@ fn install_with_argv(
     }
     let (url_class, _) = crate::modules::url_whatwg::url_class(&host.state);
     context = context.with_host_value("URL".to_string(), url_class);
+    let text_decoder = crate::host::capability(crate::registry::SPEC_TEXT_DECODER_NEW);
+    context = context.with_host_value("TextDecoder".to_string(), text_decoder);
     (host, context)
 }
 

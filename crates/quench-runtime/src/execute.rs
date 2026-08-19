@@ -163,6 +163,59 @@ pub fn is_symbol(value: &crate::value::Value) -> bool {
     crate::conversion::is_symbol(value)
 }
 
+/// Follow host-side replacement aliases to the current value.
+pub fn resolve_alias(value: &crate::value::Value) -> crate::value::Value {
+    let mut current = value.clone();
+    while let Some(updated) = crate::locals::replacement(&current) {
+        current = updated;
+    }
+    current
+}
+
+/// `Object.getPrototypeOf(value)`.
+pub fn get_prototype_of(value: &crate::value::Value) -> Result<crate::value::Value, VmError> {
+    crate::builtins::object::get_prototype_of(Some(value))
+}
+
+/// Own enumerable symbol keys (symbol payloads are strings here).
+pub fn own_enumerable_symbol_strings(value: &crate::value::Value) -> Vec<String> {
+    let Ok(symbols) = crate::own_keys::symbols(Some(value)) else {
+        return Vec::new();
+    };
+    let crate::value::Value::Array(symbols) = symbols else {
+        return Vec::new();
+    };
+    symbols
+        .snapshot()
+        .into_iter()
+        .filter_map(|symbol| match symbol {
+            crate::value::Value::String(key) if crate::conversion::is_symbol_string(&key) => {
+                Some(key)
+            }
+            _ => None,
+        })
+        .filter(|key| {
+            let descriptor = crate::builtins::object::descriptor(
+                Some(value),
+                Some(&crate::value::Value::String(key.clone())),
+            );
+            match descriptor {
+                Ok(crate::value::Value::Undefined) | Err(_) => true,
+                _ => matches!(
+                    crate::builtins::descriptor_flag(value, key, "enumerable"),
+                    Some(true)
+                ),
+            }
+        })
+        .collect()
+}
+
+/// `JSON.stringify(value)` with no replacer or space; symbols and
+/// `undefined` yield `Value::Undefined`, circular structures throw.
+pub fn json_stringify(value: &crate::value::Value) -> Result<crate::value::Value, VmError> {
+    crate::json::stringify_value(std::slice::from_ref(value))
+}
+
 pub(crate) use crate::vm::{
     execute_completion_in_place, execute_completion_step_in_place, not_callable,
 };
