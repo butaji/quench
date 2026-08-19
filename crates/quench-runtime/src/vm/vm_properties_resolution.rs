@@ -61,11 +61,24 @@ fn function_inherited_property_result(
         .find_map(|(name, value)| {
             (name == "\0function_prototype" || name == "\0prototype").then(|| value.clone())
         })
-        .unwrap_or_else(|| {
-            crate::vm::current_realm_intrinsic(crate::ops::Builtin::FunctionPrototype)
-                .unwrap_or(Value::Builtin(crate::ops::Builtin::FunctionPrototype))
-        });
+        .unwrap_or_else(|| function_kind_prototype(function));
     Some(get_property_with_receiver(&prototype, key, receiver))
+}
+
+fn function_kind_prototype(function: &crate::value::FunctionValue) -> Value {
+    let builtin = match (function.kind, function.is_async) {
+        (crate::ops::FunctionKind::Generator, true) => {
+            crate::ops::Builtin::AsyncGeneratorFunctionPrototype
+        }
+        (crate::ops::FunctionKind::Generator, false) => {
+            crate::ops::Builtin::GeneratorFunctionPrototype
+        }
+        (_, true) => crate::ops::Builtin::AsyncFunctionPrototype,
+        (_, false) => crate::ops::Builtin::FunctionPrototype,
+    };
+    crate::vm::realm_id_for_global_value(&function.captures.get(0))
+        .and_then(|realm| crate::vm::realm::intrinsic(realm, builtin))
+        .unwrap_or(Value::Builtin(builtin))
 }
 
 fn object_inherited_property_result(
