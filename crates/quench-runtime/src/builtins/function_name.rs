@@ -47,10 +47,16 @@ fn symbol_description(key: &Value) -> String {
         .strip_prefix("Symbol.for.")
         .or_else(|| key.strip_prefix("Symbol."))
         .map_or(key.as_str(), |description| description);
-    description
+    let description = description
         .split('\0')
         .next()
-        .map_or_else(String::new, str::to_string)
+        .unwrap_or_default();
+    // Unique `Symbol()` uses U+0001 as a stand-in for an empty description.
+    if description.is_empty() || description == "\u{1}" {
+        String::new()
+    } else {
+        description.to_string()
+    }
 }
 
 fn define_function_name(function: &crate::value::FunctionValue, value: Value) {
