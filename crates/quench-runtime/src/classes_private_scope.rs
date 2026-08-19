@@ -51,6 +51,7 @@ fn finish_class(
     let (constructor, default_constructor) = constructor;
     set_class_name(class, constructor, inferred, body);
     let prototype = configure_class(heritage, constructor, default_constructor, body, next);
+    define_class_prototype(body, next, constructor, prototype);
     let static_fields = reduce_elements(
         class,
         prototype,
@@ -60,7 +61,6 @@ fn finish_class(
         next,
         locals,
     )?;
-    define_class_prototype(body, next, constructor, prototype);
     body.push(Op::SetProperty {
         object: constructor,
         key: "\0home_object".to_string(),
