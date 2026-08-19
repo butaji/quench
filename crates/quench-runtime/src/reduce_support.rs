@@ -150,7 +150,10 @@ pub(crate) fn predeclare_functions(
     next_slot: &mut u16,
     strict: bool,
 ) {
-    predeclare_functions_strict(statements, locals, next_slot, &[], strict);
+    let excluded: Vec<String> = crate::semantic_early::annex_b_lexical_collisions_in(statements)
+        .into_iter()
+        .collect();
+    predeclare_functions_strict(statements, locals, next_slot, &excluded, strict);
 }
 
 pub(crate) fn predeclare_functions_excluding(
