@@ -116,8 +116,7 @@ pub(crate) fn set_resolved(
     if key == "length" && is_boxed_string_target(&target) {
         return Ok(());
     }
-    let updated = crate::proxy::proxy_set(&target, key, &value, None)?;
-    crate::locals::replace_value(&target, &updated);
+    publish_set(&target, key, &value)?;
     Ok(())
 }
 
@@ -355,13 +354,19 @@ fn live_object(value: &Value) -> Value {
     crate::locals::resolved_replacement(value.clone())
 }
 
+/// `[[Set]]` returns a boolean; the live object is the published replacement.
+fn publish_set(target: &Value, key: &str, value: &Value) -> Result<bool, VmError> {
+    let succeeded = crate::proxy::proxy_set(target, key, value, None)?;
+    Ok(crate::execute::is_truthy(&succeeded))
+}
+
 pub(crate) fn set_if_bound(key: &str, value: &Value) -> Result<bool, VmError> {
     let objects = OBJECTS.with(|objects| objects.borrow().clone());
     for (index, object) in objects.iter().enumerate().rev() {
         let object = live_object(object);
         if has_property(&object, key)? && !is_unscopable(&object, key)? {
-            let updated = crate::proxy::proxy_set(&object, key, value, None)?;
-            OBJECTS.with(|objects| objects.borrow_mut()[index] = updated);
+            publish_set(&object, key, value)?;
+            OBJECTS.with(|objects| objects.borrow_mut()[index] = live_object(&object));
             return Ok(true);
         }
     }
