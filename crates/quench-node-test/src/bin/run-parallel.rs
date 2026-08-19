@@ -19,6 +19,18 @@ const MANIFEST: &str = "crates/quench-node-test/node-tests/parallel.txt";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(path) = args
+        .iter()
+        .position(|a| a == "--triage-one")
+        .and_then(|i| args.get(i + 1))
+    {
+        // Child mode: run one fixture so a fatal abort (e.g. stack
+        // overflow) cannot take down the parent triage sweep.
+        return match quench_node_test::NodeTestRunner::new().run_file(&PathBuf::from(path)) {
+            quench_node_test::NodeOutcome::Pass => ExitCode::SUCCESS,
+            _ => ExitCode::from(1),
+        };
+    }
     if args.iter().any(|a| a == "--triage") {
         let filter = args
             .iter()
@@ -87,15 +99,39 @@ fn triage(filter: Option<&String>) -> ExitCode {
         })
         .unwrap_or_default();
     entries.sort();
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("run-parallel"));
     let mut passed = 0;
     for path in &entries {
-        if quench_node_test::NodeTestRunner::new().run_file(path)
-            == quench_node_test::NodeOutcome::Pass
-        {
+        if triage_one(&exe, path) {
             println!("{}", path.file_name().unwrap().to_string_lossy());
             passed += 1;
         }
     }
     eprintln!("triage: {passed} passed of {}", entries.len());
     ExitCode::SUCCESS
+}
+
+/// Run one fixture in a child process (crash isolation) with a
+/// 30-second timeout; report pass only on a clean zero exit.
+fn triage_one(exe: &PathBuf, path: &PathBuf) -> bool {
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new(exe)
+        .arg("--triage-one")
+        .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    for _ in 0..600 {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(_) => return false,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    false
 }
