@@ -87,6 +87,12 @@ fn resolve(spec: &str) -> Option<Value> {
         "test" => Some(crate::host::namespace_object_from_pairs(vec![
             ("test".to_string(), crate::host::capability(crate::registry::NodeSpec::new("test:test", 0x1b00))),
         ])),
+        "stream/web" => Some(crate::host::namespace_object_from_pairs(vec![
+            ("ReadableStream".to_string(), crate::host::capability(crate::registry::NodeSpec::new("stream_web:ReadableStream", 0x1c00))),
+        ])),
+        "stream/consumers" => Some(crate::host::namespace_object_from_pairs(vec![
+            ("text".to_string(), crate::host::capability(crate::registry::NodeSpec::new("stream_consumers:text", 0x1c01))),
+        ])),
         "timers" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
