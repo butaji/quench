@@ -162,7 +162,7 @@ pub fn network_interfaces(
     Ok(host_api::object(out))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn read_ifaddrs() -> Vec<(String, Vec<String>)> {
     use std::ffi::CStr;
     use std::net::Ipv4Addr;
@@ -193,7 +193,7 @@ fn read_ifaddrs() -> Vec<(String, Vec<String>)> {
     out
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 fn read_ifaddrs() -> Vec<(String, Vec<String>)> {
     Vec::new()
 }
