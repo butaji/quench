@@ -56,7 +56,7 @@ operations, and throws on failure. There is no `node:test`
 runner, no `common.mustCall`, and no harness. The host must
 satisfy each script's observable behavior.
 
-Current coverage (18 scripts):
+Current coverage (24 scripts):
 
 - `test-assert.js` — assert.ok function shape
 - `test-buffer.js` — Buffer.from / Buffer.alloc / Buffer.concat
@@ -74,6 +74,12 @@ Current coverage (18 scripts):
 - `test-stream.js` — stream module shape (Readable/Writable/...)
 - `test-util.js` — util.format / util.inspect shape
 - `test-vm.js` — vm + string_decoder shape
+- `test-dgram.js` — dgram shape (createSocket stub)
+- `test-https.js` — https shape (request / get stubs)
+- `test-zlib.js` — zlib + perf_hooks shape
+- `test-tls.js` — tls + cluster shape
+- `test-inspector.js` — inspector + trace_events shape
+- `test-repl.js` — repl + wasi shape
 - `test-timers.js` — setTimeout / setImmediate / setInterval
 - `test-tty.js` — tty.isatty
 - `test-url.js` — url.parse / format
