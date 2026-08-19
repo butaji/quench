@@ -81,6 +81,9 @@ fn resolve(spec: &str) -> Option<Value> {
         "worker_threads" => Some(crate::host::namespace_object_from_pairs(vec![
             ("Worker".to_string(), crate::host::capability(crate::registry::NodeSpec::new("worker_threads:Worker", 0x1900))),
         ])),
+        "sea" => Some(crate::host::namespace_object_from_pairs(vec![
+            ("isSea".to_string(), crate::host::capability(crate::registry::NodeSpec::new("sea:isSea", 0x1a00))),
+        ])),
         "timers" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
