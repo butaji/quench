@@ -285,15 +285,17 @@ fn descriptor(value: Value) -> Value {
 pub(crate) fn execute_eval(
     registers: &mut Vec<Value>,
     input: EvalExecution<'_>,
-) -> Result<(), VmError> {
+) -> Result<Option<crate::completion::TailCallRequest>, VmError> {
     let source = crate::execute::read_register(registers, input.source)?;
     let callee = crate::execute::read_register(registers, input.callee)?;
     if !is_percent_eval(&callee) {
-        let this_value = crate::with_scope::receiver_for_callable(&callee)
-            .unwrap_or(Value::Undefined);
-        let value = crate::functions::execute_target(&callee, &this_value, &[source])?;
-        crate::execute::write_value(registers, input.dst, value);
-        return Ok(());
+        let this_value =
+            crate::with_scope::receiver_for_callable(&callee).unwrap_or(Value::Undefined);
+        return Ok(Some(crate::completion::TailCallRequest {
+            callee,
+            receiver: this_value,
+            arguments: vec![source],
+        }));
     }
     let value = if input.direct {
         evaluate_direct(
@@ -308,7 +310,7 @@ pub(crate) fn execute_eval(
         evaluate(&source, input.strict, None, None)?
     };
     crate::execute::write_value(registers, input.dst, value);
-    Ok(())
+    Ok(None)
 }
 
 fn is_percent_eval(value: &Value) -> bool {
