@@ -119,15 +119,6 @@ fn construct(cap: CapId, state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resu
     Err(VmError::NotCallable)
 }
 
-fn construct_with_new_target(
-    cap: CapId,
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-    _new_target: &Value,
-) -> Result<Value, VmError> {
-    construct(cap, state, args)
-}
-
 /// Build a `VmContext` with the Node host pre-installed and every
 /// standard Node global/module wired in. The single canonical entry
 /// point callers use.
