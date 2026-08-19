@@ -46,6 +46,15 @@ fn function_inherited_property_result(
     if properties.iter().any(|(name, _)| name == key) {
         return None;
     }
+    if matches!(key, "prototype") {
+        return None;
+    }
+    if matches!(key, "caller" | "arguments")
+        && function.strictness == crate::ops::FunctionStrictness::Sloppy
+        && matches!(function.kind, crate::ops::FunctionKind::Ordinary)
+    {
+        return Some(Ok(Value::Undefined));
+    }
     let prototype = properties
         .iter()
         .rev()
