@@ -1,10 +1,11 @@
 //! `node:test` — minimal synchronous test runner.
 //!
-//! `test(name, fn)` executes the callback immediately, reporting
-//! `ok` / `not ok` through the host output sink. A throwing callback
+//! `test(name, fn)` executes the callback, reporting `ok` /
+//! `not ok` through the host output sink. A throwing callback
 //! propagates the error after reporting, failing the whole fixture;
 //! that is the observable contract the conformance runner
-//! classifies on.
+//! classifies on. Async callbacks are awaited through the event-loop
+//! pump: a rejection (or a promise that never settles) fails the run.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -41,7 +42,13 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
         crate::modules::assert::build_value(),
     )]);
     match quench_runtime::vm::call_value(callback, &Value::Undefined, &[context]) {
-        Ok(_) => {
+        Ok(result) => {
+            // Async callbacks return a promise; drive the loop until it
+            // settles so a rejection reports `not ok`, never a vacuous `ok`.
+            if let Err(error) = crate::modules::pump::await_promise(state, &result) {
+                report(state, &format!("not ok - {name}"));
+                return Err(error);
+            }
             report(state, &format!("ok - {name}"));
             Ok(Value::Undefined)
         }

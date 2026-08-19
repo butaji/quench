@@ -76,6 +76,45 @@ pub fn handle_uncaught(state: &Rc<RefCell<HostState>>, error: VmError) -> Result
     Ok(())
 }
 
+/// Drive the loop until a promise settles. Returns the rejection
+/// reason as a thrown error; errors when the loop empties with the
+/// promise still pending (Node would hang — we fail honestly).
+pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<(), VmError> {
+    let Value::Promise(data) = promise else {
+        return Ok(());
+    };
+    loop {
+        if let Some(result) = settled(&data.state.borrow()) {
+            return result;
+        }
+        drain_ticks(state)?;
+        quench_runtime::drain_promise_jobs();
+        fire_due_timers(state)?;
+        drain_immediates(state)?;
+        // Timer/immediate callbacks can queue promise jobs; drain them
+        // before deciding whether any work remains.
+        drain_ticks(state)?;
+        quench_runtime::drain_promise_jobs();
+        if !has_pending(state) {
+            if let Some(result) = settled(&data.state.borrow()) {
+                return result;
+            }
+            let message = Value::String("test did not complete: promise never settled".into());
+            return Err(VmError::Thrown(message));
+        }
+        sleep_until_next(state);
+    }
+}
+
+fn settled(state: &quench_runtime::value::PromiseState) -> Option<Result<(), VmError>> {
+    use quench_runtime::value::PromiseState;
+    match state {
+        PromiseState::Fulfilled(_) => Some(Ok(())),
+        PromiseState::Rejected(reason) => Some(Err(VmError::Thrown(reason.clone()))),
+        PromiseState::Pending => None,
+    }
+}
+
 /// `__quench_uncaught__()` — run the stashed uncaught exception
 /// through the registered handlers. Must be called inside an active
 /// execution frame (the runner drives it like `__quench_run_exit__`).
@@ -138,6 +177,9 @@ fn drain_ticks(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
             .drain(..)
             .collect();
         if snapshot.is_empty() {
+            // No nextTick work: still drain promise jobs queued by
+            // callbacks (timers, immediates) since the last drain.
+            quench_runtime::drain_promise_jobs();
             return Ok(());
         }
         for (cb, args) in snapshot {
