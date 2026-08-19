@@ -266,8 +266,17 @@ pub(crate) fn execute_for_in(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, per_iteration, keys, dst) = unpack_for_in(registers, op)?;
-    iterate_loop_keys(registers, label, slot, body, per_iteration, keys, dst)
+    let (label, slot, body, per_iteration, keys, dst, object) = unpack_for_in(registers, op)?;
+    iterate_loop_keys(
+        registers,
+        label,
+        slot,
+        body,
+        per_iteration,
+        keys,
+        dst,
+        object,
+    )
 }
 
 pub(crate) fn execute_for_of(
@@ -286,6 +295,7 @@ type ForInLoopData<'a> = (
     bool,
     Vec<String>,
     u16,
+    crate::value::Value,
 );
 type ForOfLoopData<'a> = (
     &'a Option<String>,
@@ -311,24 +321,19 @@ fn unpack_for_in<'a>(
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    let keys = for_in_keys(crate::execute::read_register(registers, *object)?);
-    Ok((label, *slot, body, *per_iteration, keys, *dst))
+    let value = crate::execute::read_register(registers, *object)?;
+    let keys = for_in_keys(&value);
+    Ok((label, *slot, body, *per_iteration, keys, *dst, value))
 }
 
-fn for_in_keys(value: crate::value::Value) -> Vec<String> {
+fn for_in_keys(value: &crate::value::Value) -> Vec<String> {
     if matches!(
         value,
-        crate::value::Value::Object(_)
-            | crate::value::Value::ObjectAlias(_)
-            | crate::value::Value::Function(_)
-            | crate::value::Value::BoundFunction(_)
-            | crate::value::Value::Array(_)
-            | crate::value::Value::Builtin(_)
+        crate::value::Value::Null | crate::value::Value::Undefined
     ) {
-        crate::own_keys::enumerable_key_strings(Some(&value))
-    } else {
-        Vec::new()
+        return Vec::new();
     }
+    crate::own_keys::enumerate_object_properties(value)
 }
 
 fn iterate_loop_keys(
@@ -339,11 +344,16 @@ fn iterate_loop_keys(
     per_iteration: bool,
     keys: Vec<String>,
     dst: u16,
+    object: crate::value::Value,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let Some(body) = body.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     for key in keys {
+        let object = crate::locals::resolved_replacement(object.clone());
+        if !crate::own_keys::is_enumerable_property(&object, &key) {
+            continue;
+        }
         let value = crate::value::Value::String(key);
         let _binding = bind_iteration(slot, value, per_iteration);
         match execute_loop_body(registers, label, body)? {

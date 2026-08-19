@@ -15,7 +15,11 @@ pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: 
     if !has_binding_cell_property(&properties, key) {
         let mut values = properties.properties.clone();
         values.retain(|(name, _)| name != &crate::builtins::deleted_key(key));
-        values.push((key.to_string(), Value::BindingCell(Rc::clone(&cell))));
+        if let Some((_, current)) = values.iter_mut().rev().find(|(name, _)| name == key) {
+            *current = Value::BindingCell(Rc::clone(&cell));
+        } else {
+            values.push((key.to_string(), Value::BindingCell(Rc::clone(&cell))));
+        }
         let properties = Rc::new(ObjectData::with_private_slots(
             values,
             Rc::clone(&properties.private_slots),

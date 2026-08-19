@@ -69,7 +69,32 @@ fn descriptor_enumerable_value_opt(descriptor: &Value) -> bool {
     }
 }
 
+fn typed_array_enumerable_keys(value: &Value) -> Option<Vec<String>> {
+    let length = typed_array_length(value)?;
+    Some((0..length).map(|index| index.to_string()).collect())
+}
+
+fn typed_array_length(value: &Value) -> Option<usize> {
+    Some(match value {
+        Value::Float64Array(view) => view.logical_len(),
+        Value::Float32Array(view) => view.logical_len(),
+        Value::Int8Array(view) => view.logical_len(),
+        Value::Int16Array(view) => view.logical_len(),
+        Value::Uint8Array(view) => view.logical_len(),
+        Value::Uint8ClampedArray(view) => view.logical_len(),
+        Value::Uint16Array(view) => view.logical_len(),
+        Value::Int32Array(view) => view.logical_len(),
+        Value::Uint32Array(view) => view.logical_len(),
+        Value::BigInt64Array(view) => view.logical_len(),
+        Value::BigUint64Array(view) => view.logical_len(),
+        _ => return None,
+    })
+}
+
 fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
+    if let Some(keys) = typed_array_enumerable_keys(target) {
+        return keys;
+    }
     match target {
         Value::Object(properties) => object_enumerable_keys(properties),
         Value::ObjectAlias(alias) => alias
@@ -196,6 +221,56 @@ pub(crate) fn enumerable_key_strings(target: Option<&Value>) -> Vec<String> {
         Some(target) => own_enumerable_string_keys(target),
         None => Vec::new(),
     }
+}
+
+/// EnumerateObjectProperties: own enumerable string keys, then the prototype chain.
+pub(crate) fn enumerate_object_properties(target: &Value) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut keys = Vec::new();
+    let mut current = Some(target.clone());
+    while let Some(object) = current {
+        if matches!(object, Value::Null | Value::Undefined) {
+            break;
+        }
+        for key in own_enumerable_string_keys(&object) {
+            if seen.insert(key.clone()) {
+                keys.push(key);
+            }
+        }
+        let next = crate::builtins::object::get_prototype_of(Some(&object)).ok();
+        current = match next {
+            Some(prototype) if prototype != object => Some(prototype),
+            _ => None,
+        };
+    }
+    keys
+}
+
+pub(crate) fn is_enumerable_property(target: &Value, key: &str) -> bool {
+    let mut current = Some(target.clone());
+    while let Some(object) = current {
+        if matches!(object, Value::Null | Value::Undefined) {
+            break;
+        }
+        if owns_string_key(&object, key) {
+            return own_enumerable_string_keys(&object)
+                .iter()
+                .any(|name| name == key);
+        }
+        let next = crate::builtins::object::get_prototype_of(Some(&object)).ok();
+        current = match next {
+            Some(prototype) if prototype != object => Some(prototype),
+            _ => None,
+        };
+    }
+    false
+}
+
+fn owns_string_key(target: &Value, key: &str) -> bool {
+    keys(target, false).iter().any(|name| name == key)
+        || own_enumerable_string_keys(target)
+            .iter()
+            .any(|name| name == key)
 }
 
 fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
@@ -379,11 +454,13 @@ fn ordered(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
         }
     }
     indices.sort_by_key(|(index, _)| *index);
-    indices
-        .into_iter()
-        .map(|(_, key)| key)
-        .chain(strings)
-        .collect()
+    let mut keys: Vec<String> = indices.into_iter().map(|(_, key)| key).collect();
+    for key in strings {
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys
 }
 
 fn array_index(key: &str) -> Option<u32> {

@@ -127,7 +127,7 @@ pub(crate) fn define_own_property(
     }
     validate_descriptor_kind(descriptor)?;
     let key_value = Value::String(key.to_string());
-    let current = crate::builtins::object::descriptor(Some(target), Some(&key_value))?;
+    let current = ordinary_own_descriptor(target, key, &key_value)?;
     if matches!(current, Value::Undefined) && crate::properties::rejects_new_property(target, key) {
         return Err(crate::value::error::throw_type_error(
             "Cannot define a property on a non-extensible object",
@@ -158,6 +158,28 @@ pub(crate) fn define_own_property(
     store_descriptor_metadata(&mut result, key, &descriptor);
     define_array_descriptor(&mut result, key, descriptor);
     Ok(result)
+}
+
+fn ordinary_own_descriptor(
+    target: &Value,
+    key: &str,
+    key_value: &Value,
+) -> Result<Value, crate::execute::VmError> {
+    let current = crate::builtins::object::descriptor(Some(target), Some(key_value))?;
+    if !matches!(current, Value::Undefined) {
+        return Ok(current);
+    }
+    let owned = crate::builtins::object::has_own_property(Some(target), Some(key_value));
+    if owned != Value::Boolean(true) {
+        return Ok(Value::Undefined);
+    }
+    let value = crate::execute::get_property_result(target, key)?;
+    Ok(Value::Object(Rc::new(ObjectData::new(vec![
+        ("value".to_string(), value),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("enumerable".to_string(), Value::Boolean(true)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ]))))
 }
 
 fn validate_descriptor_kind(descriptor: &[(String, Value)]) -> Result<(), crate::execute::VmError> {
@@ -236,5 +258,3 @@ fn define_accessor_placeholder(target: Value, key: &str) -> Value {
 include!("builtins_array.rs");
 include!("builtins_descriptor.rs");
 include!("builtins_define_properties.rs");
-
-
