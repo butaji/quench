@@ -3,7 +3,8 @@
 //! Specifiers recognized:
 //! - `node:http`, `node:events`, `node:buffer`, `node:util`,
 //!   `node:path`, `node:url`, `node:querystring`, `node:os`,
-//!   `node:process`, `node:console`, `node:stream`,
+//!   `node:process`, `node:console`, `node:stream`, `node:assert`,
+//!   `node:assert/strict`,
 //!   `node:string_decoder`, `node:dns`, `node:net`, `node:tty`,
 //!   `node:fs`, `node:timers`, `node:timers/promises`.
 //!
@@ -20,6 +21,20 @@ use crate::host::HostState;
 
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
+    // `node:assert` exports a callable value whose identity is stable
+    // across requires (assert.strict === assert); cache it like a CJS module.
+    if matches!(
+        spec.as_str(),
+        "assert" | "node:assert" | "assert/strict" | "node:assert/strict"
+    ) {
+        let key = "node:assert".to_string();
+        if let Some(cached) = state.borrow().module_cache.get(&key) {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::assert::build_value();
+        state.borrow_mut().module_cache.insert(key, value.clone());
+        return Ok(value);
+    }
     if let Some(ns) = resolve(&spec) {
         return Ok(ns);
     }
@@ -42,7 +57,7 @@ fn load_file_module(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<Value,
 
 fn resolve_path(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<std::path::PathBuf, VmError> {
     if !(spec.starts_with('.') || spec.starts_with('/')) {
-        return Err(VmError::EvalError(format!("Cannot find module '{spec}'")));
+        return Err(not_found(spec));
     }
     let base = state
         .borrow()
@@ -50,17 +65,19 @@ fn resolve_path(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<std::path:
         .last()
         .cloned()
         .unwrap_or_else(|| "/".to_string());
-    let candidate = if spec.starts_with('/') {
-        std::path::PathBuf::from(spec)
-    } else {
-        std::path::Path::new(&base).join(spec)
-    };
-    for path in [candidate.clone(), candidate.with_extension("js")] {
-        if path.is_file() {
-            return path.canonicalize().map_err(|_| not_found(spec));
-        }
-    }
-    Err(not_found(spec))
+    // oxc-resolver handles extension probing (.js), directory index files
+    // (index.js), and package.json mains — the canonical Node resolution
+    // algorithm instead of a hand-rolled loop.
+    let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
+        extensions: vec![".js".into()],
+        main_files: vec!["index".into()],
+        condition_names: vec!["node".into(), "require".into(), "default".into()],
+        ..oxc_resolver::ResolveOptions::default()
+    });
+    resolver
+        .resolve(std::path::Path::new(&base), spec)
+        .map(|resolution| resolution.into_path_buf())
+        .map_err(|_| not_found(spec))
 }
 
 fn not_found(spec: &str) -> VmError {
@@ -87,10 +104,13 @@ fn execute_module(
         dirname,
     });
     let wrapped = format!("__quench_cjs_wrap__(function (exports, require, module, __filename, __dirname) {{\n{source}\n}})");
-    let program = quench_runtime::reduce::reduce_source(&wrapped)
+    let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
     let context = quench_runtime::vm::current_context();
-    quench_runtime::vm::execute_with_context(program.ops(), &context)?;
+    // Re-entrant execution: `execute_with_context` would reset the
+    // runtime's locals state and corrupt the frame that called `require`.
+    let mut registers = Vec::new();
+    quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)?;
     quench_runtime::execute::get_property_result(&module, "exports")
 }
 
@@ -124,10 +144,6 @@ fn resolve(spec: &str) -> Option<Value> {
     match name {
         "console" => Some(crate::modules::console::build_value()),
         "process" => Some(crate::modules::process::build()),
-        "assert" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "ok".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("assert:ok", 0x1400)),
-        )])),
         "buffer" => Some(crate::modules::buffer::build_module()),
         "util" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::util::build(),
@@ -183,13 +199,16 @@ fn resolve(spec: &str) -> Option<Value> {
         "trace_events" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "repl" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "wasi" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "worker_threads" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "Worker".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "worker_threads:Worker",
-                0x1900,
-            )),
-        )])),
+        "worker_threads" => Some(crate::host::namespace_object_from_pairs(vec![
+            ("isMainThread".to_string(), Value::Boolean(true)),
+            (
+                "Worker".to_string(),
+                crate::host::capability(crate::registry::NodeSpec::new(
+                    "worker_threads:Worker",
+                    0x1900,
+                )),
+            ),
+        ])),
         "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
             "isSea".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new("sea:isSea", 0x1a00)),
@@ -234,6 +253,24 @@ fn resolve(spec: &str) -> Option<Value> {
         "timers/promises" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
+        "child_process" => Some(crate::host::namespace_object_from_pairs(vec![
+            (
+                "spawnSync".to_string(),
+                crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
+            ),
+            (
+                "execSync".to_string(),
+                crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
+            ),
+            (
+                "exec".to_string(),
+                crate::host::capability(crate::registry::SPEC_CP_EXEC),
+            ),
+            (
+                "spawn".to_string(),
+                crate::host::capability(crate::registry::SPEC_CP_SPAWN),
+            ),
+        ])),
         _ => None,
     }
 }
