@@ -446,9 +446,9 @@ fn reduce_plain_statement(
         }
         Statement::VariableDeclaration(_)
         | Statement::FunctionDeclaration(_)
-        | Statement::ClassDeclaration(_) => {
+        | Statement::ClassDeclaration(_) => crate::switch::suspend_completion(|| {
             reduce_declaration_statement(statement, ops, facts, next_register, next_slot, locals)
-        }
+        }),
         Statement::ReturnStatement(rs) => {
             control_flow::reduce_return(rs, ops, facts, next_register, locals)
         }

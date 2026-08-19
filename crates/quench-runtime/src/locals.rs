@@ -287,7 +287,6 @@ pub(crate) fn load_resolved_local(
 }
 
 pub(crate) fn load(registers: &mut Vec<Value>, dst: u16, slot: u16) -> Result<(), VmError> {
-    ensure_initialized(slot, "binding")?;
     crate::execute::write_value(registers, dst, current().get(slot));
     Ok(())
 }

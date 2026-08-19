@@ -175,11 +175,9 @@ fn annex_b_function_names_in(statement: &oxc::ast::ast::Statement<'_>) -> Vec<St
             }
             names
         }
-        oxc::ast::ast::Statement::SwitchStatement(statement) => statement
-            .cases
-            .iter()
-            .flat_map(|case| annex_b_function_names(&case.consequent))
-            .collect(),
+        // Annex B.3.3 does not apply to CaseBlock. Functions there are
+        // CaseBlock-lexical only and must not become outer `var` bindings.
+        oxc::ast::ast::Statement::SwitchStatement(_) => Vec::new(),
         oxc::ast::ast::Statement::LabeledStatement(statement) => {
             annex_b_function_names(std::slice::from_ref(&statement.body))
         }
