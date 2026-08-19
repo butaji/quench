@@ -36,11 +36,11 @@ fn declaration_slot(
     if let Some(slot) = locals.get(&format!("\0annex-b-lexical:{name}")) {
         return *slot;
     }
-    if let Some(slot) = locals.get(&format!("\0annex-b-outer:{name}")) {
-        return *slot;
-    }
     if facts.eval_var_barrier.iter().any(|bound| bound == name) {
         return reserve_blocked_function(name, next_slot, locals);
+    }
+    if let Some(slot) = locals.get(&format!("\0annex-b-outer:{name}")) {
+        return *slot;
     }
     if let Some(slot) = locals.get(name) {
         return *slot;
