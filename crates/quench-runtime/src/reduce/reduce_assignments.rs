@@ -44,6 +44,7 @@ pub(crate) enum Place {
     },
     Super {
         key: PlaceKey,
+        base: Option<u16>,
     },
 }
 
@@ -331,7 +332,15 @@ pub(crate) fn prepare_get(place: &mut Place, ops: &mut Vec<Op>, next: &mut u16) 
         } => (Some(*object), key),
         Place::Super {
             key: PlaceKey::Dynamic(key),
-        } => (None, key),
+            base,
+        } => {
+            if base.is_none() {
+                let dst = take_register(next);
+                ops.push(Op::CaptureSuperBase { dst });
+                *base = Some(dst);
+            }
+            (None, key)
+        }
         _ => return,
     };
     if let Some(object) = object {
@@ -386,7 +395,7 @@ fn finish_member_place(object: Option<u16>, key: PlaceKey, strict: bool) -> Opti
             key,
             strict,
         }),
-        None => Some(Place::Super { key }),
+        None => Some(Place::Super { key, base: None }),
     }
 }
 
