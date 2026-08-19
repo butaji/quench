@@ -275,6 +275,8 @@ fn super_base(
 fn get_with_receiver(target: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
     let mut current = crate::locals::resolved_replacement(target.clone());
     loop {
+        // Module namespace [[Get]]: GetModuleExportsList(O) before own lookup.
+        crate::module_bindings::exports(&current, key)?;
         if matches!(current, Value::Proxy(_)) {
             return crate::proxy::proxy_get(&current, key, Some(receiver));
         }
