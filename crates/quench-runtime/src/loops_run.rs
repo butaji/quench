@@ -2,7 +2,7 @@ pub(crate) fn execute(
     registers: &mut Vec<crate::value::Value>,
     op: &crate::ops::Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, init, test, body, update, post_test, dst) = match op {
+    let (label, init, test, body, update, post_test, dst, per_iteration) = match op {
         crate::ops::Op::Loop {
             label,
             init,
@@ -11,7 +11,17 @@ pub(crate) fn execute(
             update,
             post_test,
             dst,
-        } => (label, init, test, body, update, post_test, *dst),
+            per_iteration,
+        } => (
+            label,
+            init,
+            test,
+            body,
+            update,
+            post_test,
+            *dst,
+            per_iteration.as_slice(),
+        ),
         _ => return Err(crate::execute::VmError::MissingReturn),
     };
     let Some(body) = body.ops() else {
@@ -26,7 +36,17 @@ pub(crate) fn execute(
     let Some(update) = update.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
-    run_loop(label, init, test, body, update, *post_test, dst, registers)
+    run_loop(
+        label,
+        init,
+        test,
+        body,
+        update,
+        *post_test,
+        dst,
+        per_iteration,
+        registers,
+    )
 }
 
 fn run_loop(
@@ -37,13 +57,16 @@ fn run_loop(
     update: &[Op],
     post_test: bool,
     dst: u16,
+    per_iteration: &[u16],
     registers: &mut Vec<crate::value::Value>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     run_fragment(init, registers)?;
+    refresh_per_iteration(per_iteration);
     loop {
         if !post_test && !loop_test(test, registers)? {
             break;
         }
+        crate::execute::write_value(registers, dst, crate::value::Value::Undefined);
         match execute_loop_body(registers, label, body)? {
             crate::completion::LoopTransition::Continue(value) => {
                 store_loop_value(registers, dst, value)?;
@@ -56,6 +79,7 @@ fn run_loop(
                 return Ok(update_empty_from(registers, dst, completion)?);
             }
         }
+        refresh_per_iteration(per_iteration);
         run_fragment(update, registers)?;
         if post_test && !loop_test(test, registers)? {
             break;
@@ -103,4 +127,12 @@ fn run_fragment(
     }
     crate::execute::execute_in_place(ops, registers)?;
     Ok(())
+}
+
+fn refresh_per_iteration(slots: &[u16]) {
+    let environment = crate::locals::current();
+    for &slot in slots {
+        let value = environment.get(slot);
+        let _ = environment.replace_slot(slot, value);
+    }
 }

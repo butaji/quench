@@ -1,17 +1,12 @@
 use std::collections::HashMap;
 
-use oxc::{
-    ast::ast::{Expression, ForStatement, ForStatementInit, Statement},
-    syntax::operator::BinaryOperator,
-};
+use oxc::ast::ast::{Expression, ForStatement, ForStatementInit, Statement};
 
 use crate::{
     facts::ProgramDb,
     literal::reduce_literal,
     ops::{Constant, Op},
 };
-
-const STATIC_REDUCTION_BOUND: usize = 1_000;
 
 pub(crate) fn reduce_for(
     statement: &ForStatement<'_>,
@@ -27,24 +22,7 @@ pub(crate) fn reduce_for(
         ops.extend(init);
         return Ok(Some(dst));
     }
-    let Some((name, start, limit, step)) = static_bounds(statement)
-        .filter(|_| !contains_loop_control(&statement.body) && !const_for_init(statement))
-    else {
-        return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals, dst);
-    };
-    if !fits_static_bound(start, limit, step) {
-        return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals, dst);
-    }
-    reduce_static_for(
-        statement,
-        (name, start, limit, step),
-        ops,
-        facts,
-        next_register,
-        next_slot,
-        locals,
-        dst,
-    )
+    reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals, dst)
 }
 
 pub(super) fn reduce_fragment(
@@ -75,63 +53,12 @@ pub(super) fn reduce_fragment(
     Ok(fragment)
 }
 
-fn fits_static_bound(start: f64, limit: f64, step: f64) -> bool {
-    let mut current = start;
-    let mut count = 0;
-    while (step > 0.0 && current < limit) || (step < 0.0 && current > limit) {
-        if count >= STATIC_REDUCTION_BOUND {
-            return false;
-        }
-        current += step;
-        count += 1;
-    }
-    true
-}
-
-fn contains_loop_control(statement: &Statement<'_>) -> bool {
-    match statement {
-        Statement::BreakStatement(_) | Statement::ContinueStatement(_) => true,
-        Statement::BlockStatement(block) => block.body.iter().any(contains_loop_control),
-        Statement::IfStatement(if_statement) => {
-            contains_loop_control(&if_statement.consequent)
-                || if_statement
-                    .alternate
-                    .as_ref()
-                    .is_some_and(contains_loop_control)
-        }
-        Statement::ForStatement(_)
-        | Statement::WhileStatement(_)
-        | Statement::DoWhileStatement(_)
-        | Statement::ForInStatement(_) => true,
-        Statement::TryStatement(try_statement) => {
-            try_statement.block.body.iter().any(contains_loop_control)
-                || try_statement
-                    .handler
-                    .as_ref()
-                    .is_some_and(|handler| handler.body.body.iter().any(contains_loop_control))
-                || try_statement
-                    .finalizer
-                    .as_ref()
-                    .is_some_and(|finalizer| finalizer.body.iter().any(contains_loop_control))
-        }
-        _ => false,
-    }
-}
-
 fn is_literal_false(expression: Option<&Expression<'_>>) -> bool {
     matches!(
         expression
             .and_then(reduce_literal)
             .map(|literal| literal.op),
         Some(Constant::Boolean(false))
-    )
-}
-
-fn const_for_init(statement: &ForStatement<'_>) -> bool {
-    matches!(
-        statement.init.as_ref(),
-        Some(ForStatementInit::VariableDeclaration(declaration))
-            if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Const
     )
 }
 
@@ -144,45 +71,6 @@ fn is_static_false_condition(statement: &ForStatement<'_>) -> bool {
                     .as_ref()
                     .and_then(ForStatementInit::as_expression),
             ))
-}
-
-fn static_bounds(statement: &ForStatement<'_>) -> Option<(String, f64, f64, f64)> {
-    let (name, start) = numeric_init(statement.init.as_ref()).ok()?;
-    let (limit, step) = numeric_test_and_update(statement, &name).ok()?;
-    Some((name, start, limit, step))
-}
-
-fn reduce_static_for(
-    statement: &ForStatement<'_>,
-    (name, start, limit, step): (String, f64, f64, f64),
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    next_slot: &mut u16,
-    locals: &mut HashMap<String, u16>,
-    dst: u16,
-) -> Result<Option<u16>, Vec<String>> {
-    let slot = *next_slot;
-    *next_slot = next_slot.saturating_add(1);
-    locals.insert(name, slot);
-    let mut current = start;
-    let mut count = 0;
-    let mut context = LoopContext {
-        ops,
-        facts,
-        next_register,
-        next_slot,
-        locals,
-    };
-    while (step > 0.0 && current < limit) || (step < 0.0 && current > limit) {
-        if count >= STATIC_REDUCTION_BOUND {
-            return Err(vec!["Static loop exceeds reduction bound".to_string()]);
-        }
-        emit_iteration(statement, current, slot, dst, &mut context)?;
-        current += step;
-        count += 1;
-    }
-    Ok(Some(dst))
 }
 
 fn reduce_dynamic_for(
@@ -235,6 +123,10 @@ fn reduce_dynamic_for(
         crate::machine::FunctionCode::from_ops_many(vec![init, test, body, update])
             .try_into()
             .expect("four loop bodies");
+    let per_iteration = lexical_names
+        .iter()
+        .filter_map(|name| locals.get(name.as_str()).copied())
+        .collect();
     ops.push(Op::Loop {
         label: None,
         init,
@@ -243,6 +135,7 @@ fn reduce_dynamic_for(
         update,
         post_test: false,
         dst,
+        per_iteration,
     });
     if let Some(stack) = stack {
         let loop_op = ops.pop().ok_or_else(|| vec!["missing loop".to_string()])?;
@@ -391,108 +284,4 @@ fn extend_for_barrier(statement: &ForStatement<'_>, facts: &mut ProgramDb) {
                 .flat_map(|declarator| crate::binding_patterns::names(&declarator.id)),
         );
     }
-}
-
-struct LoopContext<'a> {
-    ops: &'a mut Vec<Op>,
-    facts: &'a mut ProgramDb,
-    next_register: &'a mut u16,
-    next_slot: &'a mut u16,
-    locals: &'a mut HashMap<String, u16>,
-}
-
-fn emit_iteration(
-    statement: &ForStatement<'_>,
-    current: f64,
-    slot: u16,
-    dst: u16,
-    context: &mut LoopContext<'_>,
-) -> Result<(), Vec<String>> {
-    let register = *context.next_register;
-    *context.next_register = context.next_register.saturating_add(1);
-    context.ops.push(Op::Const {
-        dst: register,
-        value: Constant::Number(current),
-    });
-    context.ops.push(Op::StoreLocal {
-        slot,
-        src: register,
-    });
-    let barrier_len = context.facts.eval_var_barrier.len();
-    extend_for_barrier(statement, context.facts);
-    let result = crate::loops::reduce_loop_body(
-        &statement.body,
-        context.ops,
-        context.facts,
-        context.next_register,
-        context.next_slot,
-        context.locals,
-        dst,
-    );
-    context.facts.eval_var_barrier.truncate(barrier_len);
-    result.map(|_| ())
-}
-
-fn numeric_init(init: Option<&ForStatementInit<'_>>) -> Result<(String, f64), Vec<String>> {
-    let Some(ForStatementInit::VariableDeclaration(declaration)) = init else {
-        return Err(vec!["Dynamic for initializer is unsupported".to_string()]);
-    };
-    let Some(declarator) = declaration.declarations.first() else {
-        return Err(vec!["Empty for initializer".to_string()]);
-    };
-    let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind
-    else {
-        return Err(vec!["Unsupported for binding".to_string()]);
-    };
-    let Some(Expression::NumericLiteral(number)) = declarator.init.as_ref() else {
-        return Err(vec!["Dynamic for initializer is unsupported".to_string()]);
-    };
-    Ok((identifier.name.to_string(), number.value))
-}
-
-fn numeric_test_and_update(
-    statement: &ForStatement<'_>,
-    name: &str,
-) -> Result<(f64, f64), Vec<String>> {
-    let Some(Expression::BinaryExpression(binary)) = statement.test.as_ref() else {
-        return Err(vec!["Dynamic for test is unsupported".to_string()]);
-    };
-    let Expression::Identifier(identifier) = &binary.left else {
-        return Err(vec!["Unsupported for test target".to_string()]);
-    };
-    if identifier.name != name {
-        return Err(vec!["Mismatched for test target".to_string()]);
-    }
-    let Some(number) = reduce_literal(&binary.right).and_then(|literal| match literal.op {
-        Constant::Number(value) => Some(value),
-        _ => None,
-    }) else {
-        return Err(vec!["Dynamic for limit is unsupported".to_string()]);
-    };
-    let step = update_step(statement)?;
-    let valid = matches!(
-        (binary.operator, step > 0.0),
-        (
-            BinaryOperator::LessThan | BinaryOperator::LessEqualThan,
-            true
-        ) | (
-            BinaryOperator::GreaterThan | BinaryOperator::GreaterEqualThan,
-            false
-        )
-    );
-    if valid {
-        Ok((number, step))
-    } else {
-        Err(vec!["Incompatible for direction".to_string()])
-    }
-}
-
-fn update_step(statement: &ForStatement<'_>) -> Result<f64, Vec<String>> {
-    let Some(Expression::UpdateExpression(update)) = statement.update.as_ref() else {
-        return Err(vec!["Dynamic for update is unsupported".to_string()]);
-    };
-    Ok(match update.operator {
-        oxc::syntax::operator::UpdateOperator::Increment => 1.0,
-        oxc::syntax::operator::UpdateOperator::Decrement => -1.0,
-    })
 }
