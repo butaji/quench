@@ -49,8 +49,28 @@ pub(crate) fn accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
     if let Some(value) = crate::vm::array_accessor(value, key, field) {
         return Some(value);
     }
-    let key = crate::builtins::descriptor_key(key);
-    accessor_value(value, &key, field)
+    if has_own_key(value, key) {
+        return accessor_field_on(value, &crate::builtins::descriptor_key(key), field);
+    }
+    accessor_value(value, &crate::builtins::descriptor_key(key), field)
+}
+
+fn has_own_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(properties) => properties.iter().any(|(name, _)| name == key),
+        Value::Function(function) => function.properties.borrow().iter().any(|(name, _)| name == key),
+        _ => false,
+    }
+}
+
+fn accessor_field_on(value: &Value, descriptor_key: &str, field: &str) -> Option<Value> {
+    match value {
+        Value::Object(properties) => accessor_field(properties, descriptor_key, field),
+        Value::Function(function) => {
+            accessor_field(&function.properties.borrow(), descriptor_key, field)
+        }
+        _ => None,
+    }
 }
 
 fn accessor_value(value: &Value, key: &str, field: &str) -> Option<Value> {

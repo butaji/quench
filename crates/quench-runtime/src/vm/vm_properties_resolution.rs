@@ -48,7 +48,13 @@ fn function_inherited_property_result(
     let prototype = properties
         .iter()
         .rev()
-        .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))?;
+        .find_map(|(name, value)| {
+            (name == "\0function_prototype" || name == "\0prototype").then(|| value.clone())
+        })
+        .unwrap_or_else(|| {
+            crate::vm::current_realm_intrinsic(crate::ops::Builtin::FunctionPrototype)
+                .unwrap_or(Value::Builtin(crate::ops::Builtin::FunctionPrototype))
+        });
     Some(get_property_with_receiver(&prototype, key, receiver))
 }
 
