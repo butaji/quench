@@ -1,0 +1,101 @@
+//! Run real Node.js `test/parallel` fixtures from the `tests/node`
+//! submodule through the host.
+//!
+//! Default mode runs the manifest (one test file name per line, `#`
+//! comments allowed) and fails if any listed test regresses.
+//! `--triage` sweeps the whole `parallel/` directory and prints the
+//! tests that pass — diagnostic output for growing the manifest,
+//! never a conformance gate.
+//!
+//! Usage:
+//!   cargo run -p quench-node-test --bin run-parallel
+//!   cargo run -p quench-node-test --bin run-parallel -- --triage [--filter NAME]
+
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+const PARALLEL_DIR: &str = "tests/node/test/parallel";
+const MANIFEST: &str = "crates/quench-node-test/node-tests/parallel.txt";
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--triage") {
+        let filter = args
+            .iter()
+            .position(|a| a == "--filter")
+            .and_then(|i| args.get(i + 1));
+        return triage(filter);
+    }
+    run_manifest()
+}
+
+fn run_manifest() -> ExitCode {
+    let Ok(manifest) = std::fs::read_to_string(MANIFEST) else {
+        eprintln!("read {MANIFEST}: missing manifest");
+        return ExitCode::from(2);
+    };
+    let names: Vec<String> = manifest
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    let mut failed = Vec::new();
+    for name in &names {
+        let path = PathBuf::from(PARALLEL_DIR).join(name);
+        // Fresh runner per fixture: host state (module cache, exit
+        // handlers, timers) must not leak across tests.
+        match quench_node_test::NodeTestRunner::new().run_file(&path) {
+            quench_node_test::NodeOutcome::Pass => println!("PASS  {name}"),
+            other => {
+                println!("FAIL  {name}");
+                failed.push(format!("{name}: {other:?}"));
+            }
+        }
+    }
+    println!(
+        "parallel: {} passed, {} failed, {} total",
+        names.len() - failed.len(),
+        failed.len(),
+        names.len()
+    );
+    for failure in &failed {
+        println!("  - {failure}");
+    }
+    if failed.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    }
+}
+
+fn triage(filter: Option<&String>) -> ExitCode {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(PARALLEL_DIR)
+        .map(|dir| {
+            dir.filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| {
+                            name.starts_with("test-")
+                                && name.ends_with(".js")
+                                && filter.as_ref().map_or(true, |f| name.contains(f.as_str()))
+                        })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    entries.sort();
+    let mut passed = 0;
+    for path in &entries {
+        if quench_node_test::NodeTestRunner::new().run_file(path)
+            == quench_node_test::NodeOutcome::Pass
+        {
+            println!("{}", path.file_name().unwrap().to_string_lossy());
+            passed += 1;
+        }
+    }
+    eprintln!("triage: {passed} passed of {}", entries.len());
+    ExitCode::SUCCESS
+}
