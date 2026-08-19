@@ -498,7 +498,7 @@ pub fn reduce_function_declaration(
     let Some(body) = function.body.as_ref() else {
         return Err(vec!["Function without body".to_string()]);
     };
-    let slot = declaration_slot(identifier.name.as_str(), next_slot, locals);
+    let slot = declaration_slot(identifier.name.as_str(), next_slot, locals, facts);
     let (body_ops, parameter_count, captures, metadata) =
         reduce_function_body(function, body, facts, locals)?;
     let reserve = *next_register;
