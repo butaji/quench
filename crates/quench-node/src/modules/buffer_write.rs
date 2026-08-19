@@ -32,6 +32,19 @@ pub fn write(
     let count = encoded
         .len()
         .min(length.map_or(available, |l| l.min(available)));
+    // Clamp to whole characters: UCS-2 writes complete 2-byte code
+    // units, UTF-8 never splits a multi-byte sequence.
+    let count = if encoding == "utf16le" {
+        count & !1
+    } else if encoding == "utf8" {
+        let mut n = count;
+        while n > 0 && n < encoded.len() && (encoded[n] & 0xC0) == 0x80 {
+            n -= 1;
+        }
+        n
+    } else {
+        count
+    };
     view.buffer.bytes.borrow_mut()[view.byte_offset + offset..view.byte_offset + offset + count]
         .copy_from_slice(&encoded[..count]);
     Ok(Value::Number(count as f64))

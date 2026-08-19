@@ -141,6 +141,7 @@ pub const SPEC_BUFFER_LAST_INDEX_OF: NodeSpec =
     NodeSpec::new("buffer.prototype:lastIndexOf", 0x081B);
 pub const SPEC_BUFFER_INCLUDES: NodeSpec = NodeSpec::new("buffer.prototype:includes", 0x081C);
 pub const SPEC_BUFFER_WRITE: NodeSpec = NodeSpec::new("buffer.prototype:write", 0x081D);
+pub const SPEC_BUFFER_INSPECT: NodeSpec = NodeSpec::new("buffer.prototype:inspect", 0x081E);
 
 macro_rules! buffer_num_specs {
     ($(($name:ident, $id:expr)),* $(,)?) => {

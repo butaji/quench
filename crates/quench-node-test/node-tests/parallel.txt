@@ -76,6 +76,7 @@ test-util-stripvtcontrolcharacters.js
 test-util-styletext-hex.js
 test-util-styletext.js
 test-util-text-decoder.js
+test-buffer-alloc.js
 test-buffer-ascii.js
 test-buffer-badhex.js
 test-buffer-bigint64.js
