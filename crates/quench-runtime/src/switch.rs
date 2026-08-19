@@ -19,6 +19,13 @@ pub(crate) fn record_completion(ops: &mut Vec<Op>, src: u16) {
     }
 }
 
+pub(crate) fn suspend_completion<T>(reduce: impl FnOnce() -> T) -> T {
+    let previous = COMPLETION.replace(None);
+    let result = reduce();
+    COMPLETION.set(previous);
+    result
+}
+
 pub(crate) fn reduce(
     statement: &SwitchStatement<'_>,
     ops: &mut Vec<Op>,
@@ -120,7 +127,6 @@ fn instantiate_case_block(
         crate::using_scope::emit_tdz(&case.consequent, ops, locals);
         prepare_case_functions(&case.consequent, locals, next_slot, ops);
     }
-    locals.retain(|name, _| !name.starts_with("\0lexical-predeclared:"));
 }
 
 fn prepare_case_functions(

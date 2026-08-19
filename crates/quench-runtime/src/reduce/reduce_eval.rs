@@ -259,11 +259,7 @@ fn reserve_annex_b_statement(
         Statement::IfStatement(statement) => {
             reserve_annex_b_if(statement, locals, next_slot, collisions)
         }
-        Statement::SwitchStatement(statement) => {
-            for case in &statement.cases {
-                reserve_annex_b_bindings(&case.consequent, locals, next_slot, collisions);
-            }
-        }
+        Statement::SwitchStatement(_) => {}
         Statement::LabeledStatement(statement) => reserve_annex_b_bindings(
             std::slice::from_ref(&statement.body),
             locals,

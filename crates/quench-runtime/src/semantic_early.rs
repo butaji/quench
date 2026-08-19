@@ -357,6 +357,7 @@ fn validate_nested(statements: &[Statement<'_>]) -> Result<(), Vec<String>> {
     for statement in statements {
         match statement {
             Statement::BlockStatement(block) => validate_block(&block.body)?,
+            Statement::SwitchStatement(statement) => validate_case_block(statement)?,
             Statement::FunctionDeclaration(function) => validate_function(function)?,
             Statement::ExpressionStatement(statement) => {
                 validate_expression(&statement.expression)?;
@@ -415,6 +416,22 @@ fn validate_expression(expression: &oxc::ast::ast::Expression<'_>) -> Result<(),
         oxc::ast::ast::Expression::CallExpression(call) => validate_expression(&call.callee),
         _ => Ok(()),
     }
+}
+
+fn validate_case_block(statement: &oxc::ast::ast::SwitchStatement<'_>) -> Result<(), Vec<String>> {
+    let mut lexical = HashSet::new();
+    let mut variables = HashSet::new();
+    for case in &statement.cases {
+        lexical.extend(lexical_names(&case.consequent));
+        variables.extend(variable_names(&case.consequent));
+        validate_nested(&case.consequent)?;
+    }
+    if let Some(name) = lexical.intersection(&variables).next() {
+        return Err(vec![format!(
+            "SyntaxError: block lexical declaration conflicts with var `{name}`"
+        )]);
+    }
+    Ok(())
 }
 
 fn validate_block(statements: &[Statement<'_>]) -> Result<(), Vec<String>> {

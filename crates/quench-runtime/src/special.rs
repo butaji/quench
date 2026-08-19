@@ -27,15 +27,15 @@ fn reduce_primary(
         Expression::LogicalExpression(value) => {
             crate::logical::reduce_expression(value, ops, facts, next_register, locals)
         }
-        Expression::FunctionExpression(value) => {
+        Expression::FunctionExpression(value) => crate::switch::suspend_completion(|| {
             crate::functions::reduce_expression(value, ops, facts, next_register, locals)
-        }
+        }),
         Expression::ClassExpression(value) => {
             crate::classes::reduce_expression(value, ops, facts, next_register, locals)
         }
-        Expression::ArrowFunctionExpression(value) => {
+        Expression::ArrowFunctionExpression(value) => crate::switch::suspend_completion(|| {
             crate::functions::reduce_arrow(value, ops, facts, next_register, locals)
-        }
+        }),
         Expression::ObjectExpression(value) => {
             crate::objects::reduce(value, ops, facts, next_register, locals)
         }

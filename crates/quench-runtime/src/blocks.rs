@@ -36,10 +36,22 @@ fn reduce_body(
     crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, next_slot);
     let stack = crate::using_scope::reserve(&block.body, &mut block_locals, next_slot);
     crate::using_scope::emit_tdz(&block.body, ops, &block_locals);
-    block_locals.retain(|name, _| !name.starts_with("\0lexical-predeclared:"));
     let mut body = Vec::new();
-    let last = reduce_block_statements(block, &mut body, facts, next_register, next_slot, &mut block_locals)?;
-    emit_wrapped(ops, body, stack, crate::using_scope::has_await_using(&block.body), next_register)?;
+    let last = reduce_block_statements(
+        block,
+        &mut body,
+        facts,
+        next_register,
+        next_slot,
+        &mut block_locals,
+    )?;
+    emit_wrapped(
+        ops,
+        body,
+        stack,
+        crate::using_scope::has_await_using(&block.body),
+        next_register,
+    )?;
     Ok(last)
 }
 
