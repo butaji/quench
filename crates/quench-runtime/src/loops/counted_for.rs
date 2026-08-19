@@ -20,19 +20,20 @@ pub(crate) fn reduce_for(
     next_register: &mut u16,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
-) -> Result<(), Vec<String>> {
+) -> Result<Option<u16>, Vec<String>> {
+    let dst = crate::reduce_support::emit_undefined(ops, next_register);
     if is_static_false_condition(statement) {
         let init = reduce_for_init(statement, facts, next_register, next_slot, locals)?;
         ops.extend(init);
-        return Ok(());
+        return Ok(Some(dst));
     }
     let Some((name, start, limit, step)) =
         static_bounds(statement).filter(|_| !contains_loop_control(&statement.body))
     else {
-        return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals);
+        return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals, dst);
     };
     if !fits_static_bound(start, limit, step) {
-        return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals);
+        return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals, dst);
     }
     reduce_static_for(
         statement,
@@ -42,6 +43,7 @@ pub(crate) fn reduce_for(
         next_register,
         next_slot,
         locals,
+        dst,
     )
 }
 
@@ -150,7 +152,8 @@ fn reduce_static_for(
     next_register: &mut u16,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
-) -> Result<(), Vec<String>> {
+    dst: u16,
+) -> Result<Option<u16>, Vec<String>> {
     let slot = *next_slot;
     *next_slot = next_slot.saturating_add(1);
     locals.insert(name, slot);
@@ -167,11 +170,11 @@ fn reduce_static_for(
         if count >= STATIC_REDUCTION_BOUND {
             return Err(vec!["Static loop exceeds reduction bound".to_string()]);
         }
-        emit_iteration(statement, current, slot, &mut context)?;
+        emit_iteration(statement, current, slot, dst, &mut context)?;
         current += step;
         count += 1;
     }
-    Ok(())
+    Ok(Some(dst))
 }
 
 fn reduce_dynamic_for(
@@ -181,7 +184,8 @@ fn reduce_dynamic_for(
     next_register: &mut u16,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
-) -> Result<(), Vec<String>> {
+    dst: u16,
+) -> Result<Option<u16>, Vec<String>> {
     let await_using = crate::using_scope::for_init_kind(statement.init.as_ref())
         .is_some_and(|kind| kind == oxc::ast::ast::VariableDeclarationKind::AwaitUsing);
     let stack = crate::using_scope::for_init_kind(statement.init.as_ref()).map(|_| {
@@ -216,14 +220,13 @@ fn reduce_dynamic_for(
     let test = super::reduce_fragment(statement.test.as_ref(), ops, facts, next_register, locals)?;
     let var_names = body_var_names(&statement.body);
     propagate_body_vars(locals, next_slot, &var_names);
-    let body = reduce_body_fragment(statement, ops, facts, next_register, next_slot, locals)?;
+    let body = reduce_body_fragment(statement, ops, facts, next_register, next_slot, locals, dst)?;
     let update =
         super::reduce_fragment(statement.update.as_ref(), ops, facts, next_register, locals)?;
     let [init, test, body, update] =
         crate::machine::FunctionCode::from_ops_many(vec![init, test, body, update])
             .try_into()
             .expect("four loop bodies");
-    let dst = crate::reduce_support::emit_undefined(ops, next_register);
     ops.push(Op::Loop {
         label: None,
         init,
@@ -252,7 +255,7 @@ fn reduce_dynamic_for(
             }
         }
     }
-    Ok(())
+    Ok(Some(dst))
 }
 
 fn body_var_names(statement: &Statement<'_>) -> Vec<String> {
@@ -350,6 +353,7 @@ fn reduce_body_fragment(
     next_register: &mut u16,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
+    dst: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
     let mut fragment = Vec::new();
     let barrier_len = facts.eval_var_barrier.len();
@@ -361,7 +365,7 @@ fn reduce_body_fragment(
         next_register,
         next_slot,
         locals,
-        0,
+        dst,
     );
     facts.eval_var_barrier.truncate(barrier_len);
     result.map(|_| fragment)
@@ -393,6 +397,7 @@ fn emit_iteration(
     statement: &ForStatement<'_>,
     current: f64,
     slot: u16,
+    dst: u16,
     context: &mut LoopContext<'_>,
 ) -> Result<(), Vec<String>> {
     let register = *context.next_register;
@@ -414,7 +419,7 @@ fn emit_iteration(
         context.next_register,
         context.next_slot,
         context.locals,
-        0,
+        dst,
     );
     context.facts.eval_var_barrier.truncate(barrier_len);
     result.map(|_| ())
