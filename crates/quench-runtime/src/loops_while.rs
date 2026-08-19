@@ -76,6 +76,7 @@ fn reduce_counted_loop(
         update,
         post_test,
         dst,
+        per_iteration: Vec::new(),
     });
     Ok(Some(dst))
 }
