@@ -50,7 +50,8 @@ cargo run -p quench-node-test --bin run -- crates/quench-node-test/node-tests/te
 ## Suite
 
 The compat suite is a plain directory of Node compat API
-scripts under `node-tests/`. Each test is a self-contained file:
+scripts under `node-tests/` (currently 26 scripts). Each test
+is a self-contained file:
 it requires the relevant `node:` module, runs a small set of
 operations, and throws on failure. There is no `node:test`
 runner, no `common.mustCall`, and no harness. The host must
