@@ -12,6 +12,11 @@ use crate::host::HostState;
 pub struct ProcessState {
     pub argv: Vec<String>,
     pub exit_handlers: Vec<Value>,
+    pub before_exit_handlers: Vec<Value>,
+    /// `(handler, once)` — `once` handlers fire a single time.
+    pub uncaught_exception_handlers: Vec<(Value, bool)>,
+    pub warning_handlers: Vec<(Value, bool)>,
+    pub exit_handlers_ran: bool,
     pub exec_path: String,
     pub version: String,
     pub versions: Vec<(String, String)>,
@@ -21,13 +26,12 @@ pub struct ProcessState {
 
 impl Default for ProcessState {
     fn default() -> Self {
-        Self::new()
+        Self::new(std::env::args().collect())
     }
 }
 
 impl ProcessState {
-    pub fn new() -> Self {
-        let argv: Vec<String> = std::env::args().collect();
+    pub fn new(argv: Vec<String>) -> Self {
         let exec_path = std::env::current_exe()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
@@ -39,6 +43,10 @@ impl ProcessState {
         Self {
             argv,
             exit_handlers: Vec::new(),
+            before_exit_handlers: Vec::new(),
+            uncaught_exception_handlers: Vec::new(),
+            warning_handlers: Vec::new(),
+            exit_handlers_ran: false,
             exec_path,
             version: "v22.0.0".into(),
             versions,
@@ -48,9 +56,18 @@ impl ProcessState {
     }
 }
 
-pub fn build() -> Value {
-    let props: Vec<(&str, Value)> = vec![
-        ("argv", host_api::array(argv_values())),
+pub fn build(argv: &[String]) -> Value {
+    let mut props = info_props(argv);
+    props.extend(method_props());
+    crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()))
+}
+
+fn info_props(argv: &[String]) -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "argv",
+            host_api::array(argv.iter().cloned().map(Value::String).collect()),
+        ),
         ("env", env_object()),
         (
             "config",
@@ -62,6 +79,19 @@ pub fn build() -> Value {
             "versions",
             crate::host::namespace_object_from_pairs(versions_props()),
         ),
+        (
+            "platform",
+            Value::String(std_env("QUENCH_PLATFORM", current_platform())),
+        ),
+        ("arch", Value::String(current_arch().to_string())),
+        ("pid", Value::Number(std::process::id() as f64)),
+        ("execArgv", host_api::array(vec![])),
+        ("features", host_api::object(vec![])),
+    ]
+}
+
+fn method_props() -> Vec<(&'static str, Value)> {
+    vec![
         (
             "cwd",
             crate::host::capability(crate::registry::SPEC_PROCESS_CWD),
@@ -83,14 +113,6 @@ pub fn build() -> Value {
             crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME),
         ),
         (
-            "platform",
-            Value::String(std_env("QUENCH_PLATFORM", current_platform())),
-        ),
-        ("arch", Value::String(current_arch().to_string())),
-        ("pid", Value::Number(std::process::id() as f64)),
-        ("execArgv", host_api::array(vec![])),
-        ("features", host_api::object(vec![])),
-        (
             "umask",
             crate::host::capability(crate::registry::SPEC_PROCESS_UMASK),
         ),
@@ -98,12 +120,11 @@ pub fn build() -> Value {
             "on",
             crate::host::capability(crate::registry::SPEC_PROCESS_ON),
         ),
-    ];
-    crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()))
-}
-
-pub fn argv_values() -> Vec<Value> {
-    std::env::args().map(Value::String).collect()
+        (
+            "once",
+            crate::host::capability(crate::registry::SPEC_PROCESS_ONCE),
+        ),
+    ]
 }
 
 /// `process.env` — a snapshot of the host environment at startup.
@@ -121,10 +142,13 @@ pub fn versions_props() -> Vec<(String, Value)> {
     ]
 }
 
+/// `process.exit(code)` — records the exit code and unwinds the VM
+/// with a non-catchable error; the runner maps it to the run outcome
+/// after `exit` handlers run. Never kills the host process.
 pub fn exit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let code = args.first().map(value_to_i32).unwrap_or(0);
     state.borrow_mut().process.exit_code = Some(code);
-    std::process::exit(code);
+    Err(VmError::EvalError(format!("process.exit({code})")))
 }
 
 pub fn cwd(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
@@ -195,6 +219,32 @@ fn std_env(name: &str, default: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| default.into())
 }
 
+/// `process.once(event, handler)` — handler fires a single time.
+pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let (Some(Value::String(event)), Some(handler)) = (args.first(), args.get(1)) {
+        match event.as_str() {
+            "exit" | "beforeExit" => {
+                on(state, args)?;
+            }
+            "uncaughtException" | "warning" => push_handler(state, handler, event.as_str(), true),
+            _ => {}
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+fn push_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, once: bool) {
+    let mut guard = state.borrow_mut();
+    let process = &mut guard.process;
+    match event {
+        "uncaughtException" => process
+            .uncaught_exception_handlers
+            .push((handler.clone(), once)),
+        "warning" => process.warning_handlers.push((handler.clone(), once)),
+        _ => {}
+    }
+}
+
 fn value_to_string(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
@@ -218,16 +268,23 @@ pub fn umask(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, 
 }
 
 /// `process.on(event, handler)` — registers lifecycle handlers.
-/// Handlers are stored on the process state; `exit` handlers run
-/// when the host drains the run.
+/// `exit`/`beforeExit` handlers run when the host drains the run.
 pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     if let (Some(Value::String(event)), Some(handler)) = (args.first(), args.get(1)) {
-        if event == "exit" {
-            state
+        match event.as_str() {
+            "exit" => state
                 .borrow_mut()
                 .process
                 .exit_handlers
-                .push(handler.clone());
+                .push(handler.clone()),
+            "beforeExit" => state
+                .borrow_mut()
+                .process
+                .before_exit_handlers
+                .push(handler.clone()),
+            "uncaughtException" => push_handler(state, handler, "uncaughtException", false),
+            "warning" => push_handler(state, handler, "warning", false),
+            _ => {}
         }
     }
     Ok(Value::Undefined)

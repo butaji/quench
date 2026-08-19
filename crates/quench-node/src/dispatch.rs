@@ -45,6 +45,13 @@ const CAP_TIMERS_CLEARINTERVAL: u16 = 0x0703;
 const CAP_TIMERS_SETIMMEDIATE: u16 = 0x0704;
 const CAP_TIMERS_CLEARIMMEDIATE: u16 = 0x0705;
 const CAP_TIMERS_TICK: u16 = 0x0706;
+const CAP_TIMERS_UNREF: u16 = 0x0708;
+const CAP_TIMERS_REF: u16 = 0x0709;
+const CAP_TIMERS_HASREF: u16 = 0x070A;
+const CAP_TIMERS_REFRESH: u16 = 0x070B;
+const CAP_RUN_LOOP: u16 = 0x070C;
+const CAP_RUN_EXIT: u16 = 0x070D;
+const CAP_INTERNAL_UTIL_SLEEP: u16 = 0x070E;
 const CAP_BUFFER_FROM: u16 = 0x0800;
 const CAP_BUFFER_ALLOC: u16 = 0x0801;
 const CAP_BUFFER_BYTELENGTH: u16 = 0x0802;
@@ -126,6 +133,7 @@ const CAP_CP_EXEC: u16 = 0x1e02;
 const CAP_CP_SPAWN: u16 = 0x1e03;
 const CAP_PROCESS_UMASK: u16 = 0x0A06;
 const CAP_PROCESS_ON: u16 = 0x0A07;
+const CAP_PROCESS_ONCE: u16 = 0x0A08;
 const CAP_NET_GET_ASF_TIMEOUT: u16 = 0x1005;
 const CAP_NET_SET_ASF_TIMEOUT: u16 = 0x1006;
 const CAP_STRUCTURED_CLONE: u16 = 0x1f00;
@@ -168,6 +176,13 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_TIMERS_SETIMMEDIATE => timers_set_immediate,
         CAP_TIMERS_CLEARIMMEDIATE => timers_clear_immediate,
         CAP_TIMERS_TICK => timers_tick,
+        CAP_TIMERS_UNREF => timers_method_unref,
+        CAP_TIMERS_REF => timers_method_ref,
+        CAP_TIMERS_HASREF => timers_method_has_ref,
+        CAP_TIMERS_REFRESH => timers_method_refresh,
+        CAP_RUN_LOOP => timers_run_loop,
+        CAP_RUN_EXIT => timers_run_exit,
+        CAP_INTERNAL_UTIL_SLEEP => internal_util_sleep,
         _ => return os_buffer_dispatch(cap),
     };
     Some(h)
@@ -197,6 +212,7 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_HRTIME => process_hrtime,
         CAP_PROCESS_UMASK => process_umask,
         CAP_PROCESS_ON => process_on,
+        CAP_PROCESS_ONCE => process_once,
         _ => return os_dispatch(cap),
     })
 }

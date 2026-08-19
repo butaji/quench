@@ -35,7 +35,7 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         state.borrow_mut().module_cache.insert(key, value.clone());
         return Ok(value);
     }
-    if let Some(ns) = resolve(&spec) {
+    if let Some(ns) = resolve(state, &spec) {
         return Ok(ns);
     }
     load_file_module(state, &spec)
@@ -139,15 +139,19 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     result
 }
 
-fn resolve(spec: &str) -> Option<Value> {
+fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
     let name = spec.strip_prefix("node:").unwrap_or(spec);
     match name {
         "console" => Some(crate::modules::console::build_value()),
-        "process" => Some(crate::modules::process::build()),
+        "process" => Some(crate::modules::process::build(&state.borrow().process.argv)),
         "buffer" => Some(crate::modules::buffer::build_module()),
         "util" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::util::build(),
         )),
+        "internal/util" => Some(crate::host::namespace_object_from_pairs(vec![(
+            "sleep".to_string(),
+            crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
+        )])),
         "path" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::path::build(),
         )),

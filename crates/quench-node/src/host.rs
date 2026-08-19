@@ -47,11 +47,11 @@ pub struct PendingModule {
 }
 
 impl NodeHost {
-    pub fn new(realm: RealmId) -> Self {
+    pub fn new(realm: RealmId, argv: Vec<String>) -> Self {
         let state = HostState {
             timers: crate::modules::timers::TimerRegistry::new(),
             event_loop: crate::modules::events::EventLoop::new(),
-            process: crate::modules::process::ProcessState::new(),
+            process: crate::modules::process::ProcessState::new(argv),
             fs: crate::modules::fs::FsState::new(),
             net: crate::modules::net::NetState::new(),
             http: crate::modules::http::HttpState::new(),
@@ -79,6 +79,11 @@ impl NodeHost {
     /// Seed the CJS loader with the main script's directory.
     pub fn set_main_dir(&self, dir: String) {
         self.state.borrow_mut().dir_stack = vec![dir];
+    }
+
+    /// Exit code recorded by `process.exit`, if any.
+    pub fn exit_code(&self) -> Option<i32> {
+        self.state.borrow().process.exit_code
     }
 }
 
@@ -148,15 +153,36 @@ pub fn install(realm: RealmId) -> (Rc<NodeHost>, VmContext) {
     install_with_sink(realm, std::sync::Arc::new(|_| {}))
 }
 
+/// Install the host as if invoked as `node <script>`: `process.argv`
+/// becomes `[execPath, scriptPath]`.
+pub fn install_script(
+    realm: RealmId,
+    sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+    script: &str,
+) -> (Rc<NodeHost>, VmContext) {
+    let exec_path = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    install_with_argv(realm, sink, vec![exec_path, script.to_string()])
+}
+
 /// Same as `install`, but provides a host-side output sink that
 /// receives `console.log/info/...` lines.
 pub fn install_with_sink(
     realm: RealmId,
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
 ) -> (Rc<NodeHost>, VmContext) {
-    let host = Rc::new(NodeHost::new(realm).with_output_sink(sink));
+    install_with_argv(realm, sink, std::env::args().collect())
+}
+
+fn install_with_argv(
+    realm: RealmId,
+    sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+    argv: Vec<String>,
+) -> (Rc<NodeHost>, VmContext) {
+    let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink));
     let mut context = VmContext::default().with_host(host.clone());
-    let bindings = crate::registry::namespace_bindings();
+    let bindings = crate::registry::namespace_bindings(&host.state.borrow().process.argv);
     for (name, value) in bindings {
         context = context.with_host_value(name, value);
     }
