@@ -9,12 +9,14 @@ test-events-listener-count-with-listener.js
 test-events-static-geteventlisteners.js
 test-events-uncaught-exception-stack.js
 test-eventsource-disabled.js
+test-fs-exists.js
 test-fs-existssync-false.js
 test-fs-fmap.js
 test-fs-make-callback.js
 test-fs-makeStatsCallback.js
 test-fs-mkdtemp-prefix-check.js
 test-fs-operations-with-surrogate-pairs.js
+test-fs-promises-readfile-empty.js
 test-fs-read-file-assert-encoding.js
 test-fs-readfile-empty.js
 test-fs-readfile-unlink.js
