@@ -36,7 +36,7 @@ fn declaration_slot(
     if let Some(slot) = locals.get(&format!("\0annex-b-lexical:{name}")) {
         return *slot;
     }
-    if facts.eval_var_barrier.iter().any(|bound| bound == name) {
+    if is_eval_barrier(facts, name) {
         return reserve_blocked_function(name, next_slot, locals);
     }
     if let Some(slot) = locals.get(&format!("\0annex-b-outer:{name}")) {
@@ -55,13 +55,18 @@ fn store_annex_b_var(
     locals: &HashMap<String, u16>,
     facts: &crate::facts::ProgramDb,
 ) {
-    if facts.eval_var_barrier.iter().any(|bound| bound == name) {
+    if is_eval_barrier(facts, name) {
         return;
     }
     let Some(&outer) = locals.get(&format!("\0annex-b-outer:{name}")) else {
         return;
     };
     ops.push(Op::StoreLocal { slot: outer, src });
+}
+
+fn is_eval_barrier(facts: &crate::facts::ProgramDb, name: &str) -> bool {
+    facts.eval_var_barrier.iter().any(|bound| bound == name)
+        || facts.eval_formals.iter().any(|bound| bound == name)
 }
 
 fn reserve_blocked_function(
