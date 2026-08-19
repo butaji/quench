@@ -5,6 +5,11 @@
 pub mod assert;
 pub mod assert_validate;
 pub mod buffer;
+pub mod buffer_enc;
+pub mod buffer_methods;
+pub mod buffer_proto;
+pub mod buffer_rw;
+pub mod buffer_write;
 pub mod clone;
 pub mod console;
 pub mod deep_equal;
