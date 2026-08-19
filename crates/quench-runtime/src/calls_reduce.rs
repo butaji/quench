@@ -160,6 +160,7 @@ fn reduce_direct_eval(
         strict: facts.strict,
         global: !facts.in_function,
         direct: true,
+        tail: false,
         bindings,
         reusable_var_names,
         forbidden_var_names,
