@@ -16,6 +16,7 @@
 
 pub mod dispatch;
 pub mod dispatch_buffer;
+pub mod dispatch_fs;
 pub mod dispatch_handlers;
 pub mod envelope;
 pub mod host;

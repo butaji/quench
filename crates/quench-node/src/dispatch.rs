@@ -5,6 +5,7 @@
 //! new Node API is a one-line entry in the appropriate per-domain
 //! table; no plumbing changes.
 
+use crate::dispatch_fs::fs_dispatch;
 use crate::dispatch_handlers as handlers;
 
 pub use crate::dispatch_handlers::{CallHandler, ConstructHandler};
@@ -153,19 +154,6 @@ const CAP_NET_SERVER: u16 = 0x1001;
 const CAP_NET_ISIP: u16 = 0x1002;
 const CAP_NET_ISIPV4: u16 = 0x1003;
 const CAP_NET_ISIPV6: u16 = 0x1004;
-const CAP_FS_READFILE: u16 = 0x1100;
-const CAP_FS_WRITEFILE: u16 = 0x1101;
-const CAP_FS_STAT: u16 = 0x1102;
-const CAP_FS_READDIR: u16 = 0x1103;
-const CAP_FS_EXISTS: u16 = 0x1104;
-const CAP_FS_MKDIR: u16 = 0x1105;
-const CAP_FS_UNLINK: u16 = 0x1106;
-const CAP_FS_READFILESYNC: u16 = 0x1107;
-const CAP_FS_WRITEFILESYNC: u16 = 0x1108;
-const CAP_FS_STATSYNC: u16 = 0x1109;
-const CAP_FS_READDIRSYNC: u16 = 0x110A;
-const CAP_FS_EXISTSSYNC: u16 = 0x110B;
-const CAP_FS_REALSYNC: u16 = 0x110C;
 const CAP_REQUIRE: u16 = 0x1200;
 const CAP_READLINE: u16 = 0x1300;
 const CAP_ASSERT_OK: u16 = 0x1400;
@@ -403,19 +391,6 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_REQUEST => http_request,
         CAP_HTTP_GET => http_get,
         CAP_HTTP_SERVER => http_create_server,
-        CAP_FS_READFILE => fs_read_file,
-        CAP_FS_WRITEFILE => fs_write_file,
-        CAP_FS_STAT => fs_stat,
-        CAP_FS_READDIR => fs_readdir,
-        CAP_FS_EXISTS => fs_exists,
-        CAP_FS_MKDIR => fs_mkdir,
-        CAP_FS_UNLINK => fs_unlink,
-        CAP_FS_READFILESYNC => fs_read_file_sync,
-        CAP_FS_WRITEFILESYNC => fs_write_file_sync,
-        CAP_FS_STATSYNC => fs_stat_sync,
-        CAP_FS_READDIRSYNC => fs_readdir_sync,
-        CAP_FS_EXISTSSYNC => fs_exists_sync,
-        CAP_FS_REALSYNC => fs_realpath_sync,
         CAP_NET_CONNECT => net_connect,
         CAP_NET_ISIP => net_is_ip,
         CAP_NET_ISIPV4 => net_is_ipv4,
@@ -436,11 +411,11 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STRUCTURED_CLONE => structured_clone,
         CAP_FETCH => fetch,
         CAP_VM_RUN_IN_NEW_CONTEXT => crate::modules::vm::run_in_new_context,
-        _ => return assert_dispatch(cap),
+        _ => return fs_dispatch(cap),
     })
 }
 
-fn assert_dispatch(cap: u16) -> Option<CallHandler> {
+pub fn assert_dispatch(cap: u16) -> Option<CallHandler> {
     use crate::modules::{assert, assert_validate};
     Some(match cap {
         CAP_ASSERT_OK => assert::ok,
