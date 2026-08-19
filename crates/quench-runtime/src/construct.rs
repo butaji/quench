@@ -355,15 +355,7 @@ fn construct_function(
         let _context = crate::super_scope::Guard::install(function, &Value::Undefined);
         let (result, final_this) =
             crate::functions::execute_construct(function, &Value::Undefined, target, arguments)?;
-        if crate::value::is_object(&result) {
-            return Ok(crate::locals::resolved_replacement(result));
-        }
-        if crate::value::is_object(&final_this) {
-            return Ok(crate::locals::resolved_replacement(final_this));
-        }
-        return Err(crate::value::error::throw_reference_error(
-            "Derived constructor did not initialize this",
-        ));
+        return finish_derived_construct(result, final_this);
     }
     let object = initialize_instance_fields(function, constructor_receiver(target))?;
     let (result, final_this) =
@@ -375,6 +367,26 @@ fn construct_function(
     } else {
         Ok(crate::locals::resolved_replacement(object))
     }
+}
+
+fn finish_derived_construct(
+    result: Value,
+    final_this: Value,
+) -> Result<Value, crate::execute::VmError> {
+    if crate::value::is_object(&result) {
+        return Ok(crate::locals::resolved_replacement(result));
+    }
+    if !matches!(result, Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Derived constructor returned a non-object value",
+        ));
+    }
+    if crate::value::is_object(&final_this) {
+        return Ok(crate::locals::resolved_replacement(final_this));
+    }
+    Err(crate::value::error::throw_reference_error(
+        "Derived constructor did not initialize this",
+    ))
 }
 
 pub(crate) fn initialize_instance_fields(
