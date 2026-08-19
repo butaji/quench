@@ -276,6 +276,13 @@ pub fn namespace_bindings(argv: &[String]) -> Vec<(String, quench_runtime::value
         crate::host::capability(crate::registry::SPEC_RUN_EXIT),
     ));
     out.push((
+        "__quench_uncaught__".to_string(),
+        crate::host::capability(crate::registry::NodeSpec::new(
+            "__quench_uncaught__",
+            0x0117,
+        )),
+    ));
+    out.push((
         "structuredClone".to_string(),
         crate::host::capability(crate::registry::SPEC_STRUCTURED_CLONE),
     ));
@@ -290,6 +297,10 @@ pub fn namespace_bindings(argv: &[String]) -> Vec<(String, quench_runtime::value
     out.push((
         "AbortSignal".to_string(),
         crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL),
+    ));
+    out.push((
+        "EventTarget".to_string(),
+        crate::host::capability(crate::registry::NodeSpec::new("events:EventTarget", 0x0116)),
     ));
     out.push((
         "atob".to_string(),

@@ -284,6 +284,14 @@ pub fn timers_run_loop(
     crate::modules::pump::run_event_loop(state)?;
     Ok(Value::Undefined)
 }
+pub fn uncaught_dispatch(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::pump::run_uncaught(state)?;
+    Ok(Value::Undefined)
+}
 pub fn timers_run_exit(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
@@ -849,8 +857,13 @@ pub fn abort_controller_new(
     _state: &Rc<RefCell<HostState>>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    let signal =
-        quench_runtime::host_api::object(vec![("aborted".to_string(), Value::Boolean(false))]);
+    let signal = quench_runtime::host_api::object(vec![
+        ("aborted".to_string(), Value::Boolean(false)),
+        (
+            crate::modules::event_target::ABORT_SIGNAL_BRAND.to_string(),
+            Value::Boolean(true),
+        ),
+    ]);
     Ok(quench_runtime::host_api::object(vec![(
         "signal".to_string(),
         signal,

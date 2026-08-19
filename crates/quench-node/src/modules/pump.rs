@@ -39,14 +39,51 @@ fn call_guarded(
     {
         return Err(VmError::Thrown(thrown));
     }
+    run_uncaught_handlers(state, &thrown)
+}
+
+/// Run the registered `uncaughtException` handlers for one thrown
+/// value; `once` handlers fire a single time.
+fn run_uncaught_handlers(state: &Rc<RefCell<HostState>>, thrown: &Value) -> Result<(), VmError> {
     let handlers = crate::modules::timers::take_once_handlers(
         state,
         crate::modules::timers::HandlerKind::UncaughtException,
     );
     for handler in handlers {
-        call_callback(&handler, &Value::Undefined, std::slice::from_ref(&thrown))?;
+        call_callback(&handler, &Value::Undefined, std::slice::from_ref(thrown))?;
     }
     Ok(())
+}
+
+/// Route an uncaught exception the way Node does: when
+/// `uncaughtException` handlers are registered, the thrown value is
+/// stashed as pending and the caller drives `__quench_uncaught__()`
+/// inside an active VM frame to run them; the process then
+/// continues. Without handlers the error unwinds the run.
+pub fn handle_uncaught(state: &Rc<RefCell<HostState>>, error: VmError) -> Result<(), VmError> {
+    let VmError::Thrown(thrown) = error else {
+        return Err(error);
+    };
+    if state
+        .borrow()
+        .process
+        .uncaught_exception_handlers
+        .is_empty()
+    {
+        return Err(VmError::Thrown(thrown));
+    }
+    state.borrow_mut().pending_uncaught = Some(thrown);
+    Ok(())
+}
+
+/// `__quench_uncaught__()` — run the stashed uncaught exception
+/// through the registered handlers. Must be called inside an active
+/// execution frame (the runner drives it like `__quench_run_exit__`).
+pub fn run_uncaught(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let Some(thrown) = state.borrow_mut().pending_uncaught.take() else {
+        return Ok(());
+    };
+    run_uncaught_handlers(state, &thrown)
 }
 
 /// Drive the event loop until no referenced work remains, then run
