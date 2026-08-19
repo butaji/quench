@@ -202,20 +202,20 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
     out.push(("type".to_string(), Value::String(type_str())));
     out.push(("release".to_string(), Value::String(release())));
     out.push(("EOL".to_string(), Value::String(eol())));
-    out.push((
-        "homedir".to_string(),
-        Value::String(std::env::var("HOME").unwrap_or_else(|_| "/".into())),
-    ));
-    out.push((
-        "tmpdir".to_string(),
-        Value::String(std::env::temp_dir().to_string_lossy().into_owned()),
-    ));
 }
 
 fn os_capability_props(out: &mut Vec<(String, Value)>) {
     out.push((
         "uptime".to_string(),
         crate::host::capability(crate::registry::SPEC_OS_UPTIME),
+    ));
+    out.push((
+        "homedir".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_HOMEDIR),
+    ));
+    out.push((
+        "tmpdir".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_TMPDIR),
     ));
     out.push((
         "totalmem".to_string(),
