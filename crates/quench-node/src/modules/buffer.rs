@@ -36,6 +36,10 @@ const STATIC_METHODS: &[(&str, crate::registry::NodeSpec)] = &[
     ("isAscii", crate::registry::SPEC_BUFFER_ISASCII),
     ("compare", crate::registry::SPEC_BUFFER_COMPARE_STATIC),
     ("concat", crate::registry::SPEC_BUFFER_CONCAT),
+    (
+        "copyBytesFrom",
+        crate::registry::SPEC_BUFFER_COPY_BYTES_FROM,
+    ),
 ];
 
 /// The non-method static properties of the `Buffer` constructor.
@@ -113,110 +117,6 @@ fn size_arg(value: Option<&Value>, name: &str) -> Result<usize, VmError> {
     Ok(n.trunc() as usize)
 }
 
-pub fn from_handler(
-    state: &Rc<RefCell<crate::host::HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    from(state, args)
-}
-
-pub fn from(
-    _state: &Rc<RefCell<crate::host::HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let first = args.first().cloned().unwrap_or(Value::Undefined);
-    match &first {
-        Value::Uint8Array(arr) => {
-            let bytes =
-                arr.buffer.bytes.borrow()[arr.byte_offset..arr.byte_offset + arr.length].to_vec();
-            Ok(crate::modules::buffer_proto::make_buffer(&bytes))
-        }
-        Value::String(_) | Value::StringUnits(_) => {
-            let encoding = encoding_name(args.get(1))?;
-            Ok(crate::modules::buffer_proto::make_buffer(
-                &enc::encode_value(&first, &encoding)?,
-            ))
-        }
-        Value::Array(_) | Value::Object(_) => from_array_like(&first),
-        Value::ArrayBuffer(buf) => from_array_buffer(buf, args),
-        Value::Number(_) | Value::Boolean(_) | Value::Undefined | Value::Null => {
-            Err(enc::invalid_arg_type(format!(
-                "The first argument must be of type string or an instance of Buffer, \
-                 ArrayBuffer, or Array or an Array-like Object.{}",
-                crate::modules::util::invalid_arg_received(&first)
-            )))
-        }
-        // Other typed-array views are interpreted as arrays of
-        // integers modulo 256 (Node's `fromArrayLike`).
-        _ if is_typed_view(&first) => from_array_like(&first),
-        _ => Ok(crate::modules::buffer_proto::make_buffer(&[])),
-    }
-}
-
-fn is_typed_view(value: &Value) -> bool {
-    matches!(
-        value,
-        Value::Int8Array(_)
-            | Value::Int16Array(_)
-            | Value::Int32Array(_)
-            | Value::Uint16Array(_)
-            | Value::Uint32Array(_)
-            | Value::Uint8ClampedArray(_)
-            | Value::Float32Array(_)
-            | Value::Float64Array(_)
-            | Value::BigInt64Array(_)
-            | Value::BigUint64Array(_)
-            | Value::DataView(_)
-    )
-}
-
-fn from_array_buffer(
-    buf: &Rc<quench_runtime::value::ArrayBufferData>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let length = buf.bytes.borrow().len() as f64;
-    let offset = match args.get(1) {
-        Some(value) => crate::modules::buffer_methods::to_offset(Some(value)),
-        None => 0.0,
-    };
-    if offset < 0.0 || offset > length {
-        return Err(enc::buffer_out_of_bounds(
-            "\"offset\" is outside of buffer bounds",
-        ));
-    }
-    let view_length = match args.get(2) {
-        Some(value) => crate::modules::buffer_methods::to_offset(Some(value)),
-        None => length - offset,
-    };
-    if view_length < 0.0 || offset + view_length > length {
-        return Err(enc::buffer_out_of_bounds(
-            "\"length\" is outside of buffer bounds",
-        ));
-    }
-    Ok(crate::modules::buffer_proto::make_view(
-        buf.clone(),
-        offset as usize,
-        view_length as usize,
-    ))
-}
-
-fn from_array_like(value: &Value) -> Result<Value, VmError> {
-    let length = match get_property(value, "length") {
-        Value::Number(n) if n.is_finite() && n > 0.0 => n.trunc().min(u32::MAX as f64) as u32,
-        _ => u32::MAX,
-    };
-    let mut bytes = Vec::new();
-    for i in 0..length {
-        let v = get_property(value, &i.to_string());
-        if matches!(v, Value::Undefined) && length == u32::MAX {
-            break;
-        }
-        let n = to_number(&v);
-        bytes.push(if n.is_nan() { 0 } else { n as u8 });
-    }
-    Ok(crate::modules::buffer_proto::make_buffer(&bytes))
-}
-
 /// `Buffer.alloc(size[, fill[, encoding]])` and `allocUnsafe*` fill-0
 /// variants.
 pub fn alloc(
@@ -291,11 +191,26 @@ pub fn byte_length(
     let v = args.first().cloned().unwrap_or(Value::Undefined);
     let n = match &v {
         Value::String(_) | Value::StringUnits(_) => {
-            let encoding = encoding_name(args.get(1))?;
-            enc::encode_value(&v, &encoding)?.len()
+            // byteLength treats unrecognized encodings as utf8.
+            let encoding = match args.get(1) {
+                Some(Value::String(s)) => enc::canonical_encoding(s).unwrap_or("utf8"),
+                _ => "utf8",
+            };
+            enc::encode_value(&v, encoding)?.len()
         }
         Value::Uint8Array(arr) => arr.length,
         Value::ArrayBuffer(buf) => buf.bytes.borrow().len(),
+        Value::DataView(view) => view.byte_length,
+        Value::Int8Array(v) => v.length,
+        Value::Uint8ClampedArray(v) => v.length,
+        Value::Int16Array(v) => v.length * 2,
+        Value::Uint16Array(v) => v.length * 2,
+        Value::Int32Array(v) => v.length * 4,
+        Value::Uint32Array(v) => v.length * 4,
+        Value::Float32Array(v) => v.length * 4,
+        Value::Float64Array(v) => v.length * 8,
+        Value::BigInt64Array(v) => v.length * 8,
+        Value::BigUint64Array(v) => v.length * 8,
         _ => {
             return Err(enc::invalid_arg_type(format!(
                 "The \"string\" argument must be of type string or an instance of \
@@ -362,7 +277,7 @@ pub fn concat(
     Ok(crate::modules::buffer_proto::make_buffer(&all))
 }
 
-fn encoding_name(arg: Option<&Value>) -> Result<String, VmError> {
+pub(crate) fn encoding_name(arg: Option<&Value>) -> Result<String, VmError> {
     match arg {
         None | Some(Value::Undefined) => Ok("utf8".into()),
         Some(Value::String(s)) => enc::canonical_encoding(s)
@@ -372,16 +287,6 @@ fn encoding_name(arg: Option<&Value>) -> Result<String, VmError> {
             "The \"encoding\" argument must be of type string.{}",
             crate::modules::util::invalid_arg_received(other)
         ))),
-    }
-}
-
-fn to_number(value: &Value) -> f64 {
-    match value {
-        Value::Number(n) => *n,
-        Value::String(s) => s.parse().unwrap_or(0.0),
-        Value::Boolean(true) => 1.0,
-        Value::Boolean(false) => 0.0,
-        _ => 0.0,
     }
 }
 

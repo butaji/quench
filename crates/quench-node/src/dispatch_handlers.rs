@@ -267,7 +267,7 @@ pub fn buffer_from(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::buffer::from(state, args)
+    crate::modules::buffer_from::from(state, args)
 }
 pub fn buffer_alloc(
     state: &Rc<RefCell<HostState>>,
@@ -307,7 +307,7 @@ pub fn buffer_new(
     if matches!(args.first(), Some(Value::Number(_))) {
         crate::modules::buffer::alloc(state, args)
     } else {
-        crate::modules::buffer::from(state, args)
+        crate::modules::buffer_from::from(state, args)
     }
 }
 pub fn buffer_alloc_unsafe(
@@ -346,7 +346,12 @@ pub fn buffer_new_construct(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::buffer::from(state, args)
+    // `new Buffer(value)`: numbers allocate, everything else is `from`.
+    if matches!(args.first(), Some(Value::Number(_))) {
+        crate::modules::buffer::alloc(state, args)
+    } else {
+        crate::modules::buffer_from::from(state, args)
+    }
 }
 
 // ---- tty ----

@@ -35,6 +35,18 @@ const BUFFER_TABLE: &[(u16, CallHandler)] = &[
     (0x081C, m::includes),
     (0x081D, w::write),
     (0x081E, m::inspect),
+    (0x081F, |state, _receiver, args| {
+        crate::modules::buffer_from::copy_bytes_from(state, args)
+    }),
+    (0x084C, |state, _receiver, args| {
+        crate::modules::text_encoder::new_text_encoder(state, args)
+    }),
+    (0x084D, |state, receiver, args| {
+        crate::modules::text_encoder::encode(state, receiver, args)
+    }),
+    (0x084E, |state, receiver, args| {
+        crate::modules::text_encoder::encode_into(state, receiver, args)
+    }),
     (0x0820, rw::read_uint8),
     (0x0821, rw::write_uint8),
     (0x0822, rw::read_uint16_le),
