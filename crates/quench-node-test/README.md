@@ -9,9 +9,67 @@ Test runner for the [`quench-node`](../quench-node) host. Owns:
 - the completion classifier that maps a host run to pass / fail /
   skip / crash.
 
-**Boundary:** this crate never modifies the upstream fixture
-tree, never shims or rewrites Node harness behavior, and never
-depends on the Node API surface in a way that influences fixture
-outcomes. The host (`quench-node`) is forbidden from knowing
-about this crate, the runner, the fixtures, or Node test policy.
-See [`../../docs/adr/0002-quench-node-scope.md`](../../docs/adr/0002-quench-node-scope.md).
+## Boundaries
+
+The runner never:
+
+- re-implements Node's test runner, harness, or assertion library;
+- shims or rewrites Node's `common` test helper;
+- depends on the Node API surface in a way that influences
+  fixture outcomes.
+
+It is a pure-JS-execution pipeline: each fixture is parsed
+and reduced by `quench-runtime` and executed by `quench-node`.
+
+## Usage
+
+Run the full compat suite:
+
+```sh
+cargo run -p quench-node-test --bin run-compat
+```
+
+Enumerate the suite:
+
+```sh
+cargo run -p quench-node-test --bin run-compat -- --list
+```
+
+Subset by name substring:
+
+```sh
+cargo run -p quench-node-test --bin run-compat -- --filter os
+```
+
+Run a single ad-hoc script through the host:
+
+```sh
+cargo run -p quench-node-test --bin run -- crates/quench-node-test/node-tests/test-os.js
+```
+
+## Suite
+
+The compat suite is a plain directory of Node compat API
+scripts under `node-tests/`. Each test is a self-contained file:
+it requires the relevant `node:` module, runs a small set of
+operations, and throws on failure. There is no `node:test`
+runner, no `common.mustCall`, and no harness. The host must
+satisfy each script's observable behavior.
+
+Current coverage (14 scripts):
+
+- `test-buffer.js` — Buffer.from / Buffer.alloc / Buffer.concat
+- `test-console.js` — console.log/info/warn/error/debug/trace
+- `test-dns.js` — dns.lookup (callback)
+- `test-events.js` — events.EventEmitter round-trip
+- `test-fs.js` — fs.readFileSync / readdirSync
+- `test-modules.js` — every v1 `node:` module resolves
+- `test-net.js` — net.isIP / isIPv4 / isIPv6
+- `test-os.js` — os.cpus / totalmem / freemem / networkInterfaces
+- `test-path.js` — path.join / normalize / dirname / basename /
+  extname / isAbsolute / relative
+- `test-process.js` — process.version / platform / arch / pid
+- `test-querystring.js` — querystring.parse / stringify / escape
+- `test-timers.js` — setTimeout / setImmediate / setInterval
+- `test-tty.js` — tty.isatty
+- `test-url.js` — url.parse / format
