@@ -94,9 +94,9 @@ fn function_prototype(function: &crate::value::FunctionValue) -> Value {
         {
             return prototype.clone();
         }
-        return crate::vm::realm_id_for_global_value(&function.captures.get(0))
-            .map(|realm| crate::vm::realm_intrinsic_for(realm, Builtin::AsyncFunctionPrototype))
-            .unwrap_or(Value::Builtin(Builtin::AsyncFunctionPrototype));
+        let realm = crate::vm::realm_id_for_global_value(&function.captures.get(0))
+            .unwrap_or_else(|| crate::vm::current_context_or_default().realm());
+        return crate::vm::realm_intrinsic_for(realm, Builtin::AsyncFunctionPrototype);
     }
     internal_prototype(&function.properties.borrow(), Builtin::FunctionPrototype)
 }

@@ -291,11 +291,9 @@ pub(crate) fn execute_eval(
     if !is_percent_eval(&callee) {
         let this_value =
             crate::with_scope::receiver_for_callable(&callee).unwrap_or(Value::Undefined);
-        return Ok(Some(crate::completion::TailCallRequest {
-            callee,
-            receiver: this_value,
-            arguments: vec![source],
-        }));
+        let value = crate::functions::execute_target(&callee, &this_value, &[source])?;
+        crate::execute::write_value(registers, input.dst, value);
+        return Ok(None);
     }
     let value = if input.direct {
         evaluate_direct(
@@ -314,10 +312,13 @@ pub(crate) fn execute_eval(
 }
 
 fn is_percent_eval(value: &Value) -> bool {
+    let current = crate::vm::current_context_or_default().realm();
     match value {
-        Value::Builtin(crate::ops::Builtin::Eval) => true,
-        Value::BoundFunction(bound) => {
-            matches!(bound.target, Value::Builtin(crate::ops::Builtin::Eval))
+        Value::Builtin(crate::ops::Builtin::Eval) => current == crate::ops::RealmId::ROOT,
+        Value::BoundFunction(bound)
+            if matches!(bound.target, Value::Builtin(crate::ops::Builtin::Eval)) =>
+        {
+            bound.realm == current
         }
         _ => false,
     }
