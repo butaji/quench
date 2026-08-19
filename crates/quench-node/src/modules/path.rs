@@ -184,6 +184,61 @@ fn normalize_posix(input: &str) -> String {
 
 pub fn build() -> Vec<(String, Value)> {
     use crate::registry::*;
+    let mut out = path_caps();
+    push_subnamespaces(&mut out);
+    out
+}
+
+fn path_caps() -> Vec<(String, Value)> {
+    use crate::registry::*;
+    vec![
+        ("join".to_string(), crate::host::capability(SPEC_PATH_JOIN)),
+        (
+            "resolve".to_string(),
+            crate::host::capability(SPEC_PATH_RESOLVE),
+        ),
+        (
+            "normalize".to_string(),
+            crate::host::capability(SPEC_PATH_NORMALIZE),
+        ),
+        (
+            "dirname".to_string(),
+            crate::host::capability(SPEC_PATH_DIRNAME),
+        ),
+        (
+            "basename".to_string(),
+            crate::host::capability(SPEC_PATH_BASENAME),
+        ),
+        (
+            "extname".to_string(),
+            crate::host::capability(SPEC_PATH_EXTNAME),
+        ),
+        (
+            "isAbsolute".to_string(),
+            crate::host::capability(SPEC_PATH_ISABSOLUTE),
+        ),
+        (
+            "relative".to_string(),
+            crate::host::capability(SPEC_PATH_RELATIVE),
+        ),
+    ]
+}
+
+fn push_subnamespaces(out: &mut Vec<(String, Value)>) {
+    out.push((
+        "posix".to_string(),
+        crate::host::namespace_object_from_pairs(build_posix()),
+    ));
+    out.push((
+        "win32".to_string(),
+        crate::host::namespace_object_from_pairs(build_win32()),
+    ));
+    out.push(("sep".to_string(), Value::String("/".into())));
+    out.push(("delimiter".to_string(), Value::String(":".into())));
+}
+
+pub fn build_posix() -> Vec<(String, Value)> {
+    use crate::registry::*;
     vec![
         ("join".to_string(), crate::host::capability(SPEC_PATH_JOIN)),
         (
@@ -216,5 +271,45 @@ pub fn build() -> Vec<(String, Value)> {
         ),
         ("sep".to_string(), Value::String("/".into())),
         ("delimiter".to_string(), Value::String(":".into())),
+    ]
+}
+
+pub fn build_win32() -> Vec<(String, Value)> {
+    // Win32 separators; the underlying operations still use the
+    // POSIX path engine for now (the host's tiny PATH scope is
+    // not Windows-correct). This slice covers the namespace shape.
+    use crate::registry::*;
+    vec![
+        ("join".to_string(), crate::host::capability(SPEC_PATH_JOIN)),
+        (
+            "resolve".to_string(),
+            crate::host::capability(SPEC_PATH_RESOLVE),
+        ),
+        (
+            "normalize".to_string(),
+            crate::host::capability(SPEC_PATH_NORMALIZE),
+        ),
+        (
+            "dirname".to_string(),
+            crate::host::capability(SPEC_PATH_DIRNAME),
+        ),
+        (
+            "basename".to_string(),
+            crate::host::capability(SPEC_PATH_BASENAME),
+        ),
+        (
+            "extname".to_string(),
+            crate::host::capability(SPEC_PATH_EXTNAME),
+        ),
+        (
+            "isAbsolute".to_string(),
+            crate::host::capability(SPEC_PATH_ISABSOLUTE),
+        ),
+        (
+            "relative".to_string(),
+            crate::host::capability(SPEC_PATH_RELATIVE),
+        ),
+        ("sep".to_string(), Value::String("\\".into())),
+        ("delimiter".to_string(), Value::String(";".into())),
     ]
 }
