@@ -137,11 +137,7 @@ fn create_var(
         .as_ref()
         .is_some_and(|descriptor| !descriptor.configurable)
     {
-        // The property already exists and is non-configurable: per spec the
-        // declaration is a no-op, but the slot must still alias the existing
-        // global binding so reads and writes reach it.
-        binding_cell(name, slot, None);
-        return Ok(());
+        return alias_existing_global(registers, name, slot, current.as_ref().unwrap());
     }
     let cell = binding_cell(name, slot, current.as_ref().map(|value| &value.value));
     // Per spec, global var bindings are non-configurable.
@@ -151,6 +147,19 @@ fn create_var(
         None => data_descriptor(cell, true, true, deletable),
     };
     define_global(registers, name, descriptor)
+}
+
+fn alias_existing_global(
+    registers: &mut Vec<Value>,
+    name: &str,
+    slot: u16,
+    current: &Descriptor,
+) -> Result<(), VmError> {
+    let cell = binding_cell(name, slot, Some(&current.value));
+    if !current.writable {
+        return Ok(());
+    }
+    define_global(registers, name, descriptor_with_flags(cell, current))
 }
 
 fn create_function(
