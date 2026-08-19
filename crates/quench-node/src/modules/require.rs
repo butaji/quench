@@ -252,10 +252,20 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             "isSea".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new("sea:isSea", 0x1a00)),
         )])),
-        "test" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "test".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("test:test", 0x1b00)),
-        )])),
+        // `node:test` exports the callable `test` function itself, with
+        // `test`, `describe`, and `it` aliases plus `.skip` variants.
+        "test" => {
+            use quench_runtime::execute::set_callable_property as attach;
+            let test_fn = crate::host::capability(crate::registry::SPEC_TEST);
+            let skip_fn = crate::host::capability(crate::registry::SPEC_TEST_SKIP);
+            let _ = attach(&test_fn, "skip", skip_fn.clone());
+            for alias in ["test", "describe", "it"] {
+                let entry = crate::host::capability(crate::registry::SPEC_TEST);
+                let _ = attach(&entry, "skip", skip_fn.clone());
+                let _ = attach(&test_fn, alias, entry);
+            }
+            Some(test_fn)
+        }
         "stream/web" => Some(crate::host::namespace_object_from_pairs(vec![(
             "ReadableStream".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new(

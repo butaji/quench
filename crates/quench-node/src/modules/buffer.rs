@@ -204,12 +204,35 @@ pub fn concat(
     Ok(make_buffer(&all))
 }
 
+thread_local! {
+    /// Shared `Buffer.prototype` stand-in: an empty object whose own
+    /// prototype is `Uint8Array.prototype`, so Buffers differ from plain
+    /// Uint8Arrays under `Object.getPrototypeOf` while inheriting lookups.
+    static BUFFER_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+fn buffer_prototype() -> Value {
+    BUFFER_PROTOTYPE.with(|slot| {
+        if let Some(prototype) = &*slot.borrow() {
+            return prototype.clone();
+        }
+        let prototype = quench_runtime::host_api::object(Vec::new());
+        let _ = quench_runtime::execute::set_prototype_of(
+            &prototype,
+            &Value::Builtin(quench_runtime::ops::Builtin::Uint8ArrayPrototype),
+        );
+        slot.borrow_mut().replace(prototype.clone());
+        prototype
+    })
+}
+
 fn make_buffer(bytes: &[u8]) -> Value {
     let buf = Rc::new(ArrayBufferData::new(bytes.len()));
     buf.bytes.borrow_mut().copy_from_slice(bytes);
     let ba = Rc::new(buf.transfer_to_immutable());
     let view = Rc::new(Uint8ArrayData::new(ba, 0, bytes.len()));
     let view = Value::Uint8Array(view);
+    quench_runtime::execute::set_property(view.clone(), "\0prototype", buffer_prototype());
     quench_runtime::execute::set_property(
         view,
         "toString",

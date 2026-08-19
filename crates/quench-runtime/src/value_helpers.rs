@@ -26,3 +26,23 @@ impl BoundFunctionValue {
         }
     }
 }
+
+impl Value {
+    /// The extra-property metadata shared by all typed-array views.
+    pub(crate) fn typed_array_meta(&self) -> Option<&TypedArrayMeta> {
+        match self {
+            Self::Float64Array(view) => Some(&view.meta),
+            Self::Float32Array(view) => Some(&view.meta),
+            Self::Int8Array(view) => Some(&view.meta),
+            Self::Int16Array(view) => Some(&view.meta),
+            Self::Int32Array(view) => Some(&view.meta),
+            Self::BigInt64Array(view) => Some(&view.meta),
+            Self::BigUint64Array(view) => Some(&view.meta),
+            Self::Uint32Array(view) => Some(&view.meta),
+            Self::Uint8Array(view) => Some(&view.meta),
+            Self::Uint8ClampedArray(view) => Some(&view.meta),
+            Self::Uint16Array(view) => Some(&view.meta),
+            _ => None,
+        }
+    }
+}
