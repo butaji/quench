@@ -201,11 +201,7 @@ fn nested_var_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
             }
             names
         }
-        oxc::ast::ast::Statement::SwitchStatement(statement) => statement
-            .cases
-            .iter()
-            .flat_map(|case| annex_b_function_names(&case.consequent))
-            .collect(),
+        oxc::ast::ast::Statement::SwitchStatement(statement) => switch_var_names(statement),
         oxc::ast::ast::Statement::LabeledStatement(statement) => {
             annex_b_function_names(std::slice::from_ref(&statement.body))
         }
