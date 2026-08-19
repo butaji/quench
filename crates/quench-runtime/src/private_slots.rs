@@ -30,7 +30,50 @@ pub(crate) fn define_accessor(
     get: Option<Value>,
     set: Option<Value>,
 ) -> Result<(), VmError> {
-    define_slot(value, name, PrivateSlot::Accessor { get, set })
+    let value = crate::locals::resolved_replacement(value.clone());
+    ensure_extensible(&value)?;
+    let slots = slots(&value)?;
+    let mut slots = slots.borrow_mut();
+    if let Some((_, existing)) = slots.iter_mut().find(|(id, _)| id == &name) {
+        return merge_accessor(existing, get, set);
+    }
+    slots.push((name, PrivateSlot::Accessor { get, set }));
+    Ok(())
+}
+
+fn merge_accessor(
+    existing: &mut PrivateSlot,
+    get: Option<Value>,
+    set: Option<Value>,
+) -> Result<(), VmError> {
+    let PrivateSlot::Accessor {
+        get: old_get,
+        set: old_set,
+    } = existing
+    else {
+        return Err(private_brand_error());
+    };
+    if get.is_some() && old_get.is_some() || set.is_some() && old_set.is_some() {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot add private method to an object that already has it",
+        ));
+    }
+    if get.is_some() {
+        *old_get = get;
+    }
+    if set.is_some() {
+        *old_set = set;
+    }
+    Ok(())
+}
+
+fn ensure_extensible(value: &Value) -> Result<(), VmError> {
+    if crate::properties::object_is_extensible(value) {
+        return Ok(());
+    }
+    Err(crate::value::error::throw_type_error(
+        "Cannot add private field to a non-extensible object",
+    ))
 }
 
 pub(crate) fn define_method(
@@ -88,11 +131,7 @@ pub(crate) fn define(value: &Value, name: PrivateName, initial: Value) -> Result
 
 fn define_slot(value: &Value, name: PrivateName, slot: PrivateSlot) -> Result<(), VmError> {
     let value = crate::locals::resolved_replacement(value.clone());
-    if !crate::properties::object_is_extensible(&value) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot add private field to a non-extensible object",
-        ));
-    }
+    ensure_extensible(&value)?;
     let slots = slots(&value)?;
     let mut slots = slots.borrow_mut();
     if slots.iter().any(|(id, _)| id == &name) {
