@@ -112,6 +112,9 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "lastIndexOf" => Some(crate::ops::Builtin::StringLastIndexOf),
         "slice" => Some(crate::ops::Builtin::StringSlice),
         "substring" => Some(crate::ops::Builtin::StringSubstring),
+        "substr" => Some(crate::ops::Builtin::StringSubstr),
+        "sub" => Some(crate::ops::Builtin::StringSub),
+        "sup" => Some(crate::ops::Builtin::StringSup),
         "concat" => Some(crate::ops::Builtin::StringConcat),
         "split" => Some(crate::ops::Builtin::StringSplit),
         "padStart" => Some(crate::ops::Builtin::StringPadStart),
@@ -212,6 +215,54 @@ pub(crate) fn substring(receiver: Option<&Value>, arguments: &[Value]) -> Value 
         .map_or(length, |value| substring_index(Some(value), length));
     let range = start.min(end) as usize..end.max(start) as usize;
     from_units(units[range].to_vec())
+}
+
+pub(crate) fn substr(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
+    let text = string_receiver(receiver)?;
+    let units: Vec<u16> = text.encode_utf16().collect();
+    let size = units.len() as f64;
+    let start = substr_start(to_integer_or_infinity(arguments.first())?, size);
+    let length = substr_length(arguments.get(1))?;
+    let result_len = length.max(0.0).min(size - start);
+    if result_len <= 0.0 {
+        return Ok(Value::String(String::new()));
+    }
+    let begin = start as usize;
+    let end = (start + result_len) as usize;
+    Ok(from_units(units[begin..end].to_vec()))
+}
+
+fn to_integer_or_infinity(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
+    let number = value.map_or(Ok(0.0), crate::conversion::to_number)?;
+    if number.is_nan() {
+        return Ok(0.0);
+    }
+    Ok(if number.is_infinite() {
+        number
+    } else {
+        number.trunc()
+    })
+}
+
+fn substr_start(int_start: f64, size: f64) -> f64 {
+    if int_start == f64::NEG_INFINITY {
+        return 0.0;
+    }
+    if int_start < 0.0 {
+        (size + int_start).max(0.0)
+    } else {
+        int_start.min(size)
+    }
+}
+
+fn substr_length(value: Option<&Value>) -> Result<f64, crate::execute::VmError> {
+    match value {
+        None | Some(Value::Undefined) => Ok(f64::INFINITY),
+        Some(value) => to_integer_or_infinity(Some(value)),
+    }
 }
 
 fn string_index(value: Option<&Value>, length: isize) -> isize {
