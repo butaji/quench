@@ -56,17 +56,11 @@ fn assignment_condition(
 }
 
 fn nullish_condition(left: u16, ops: &mut Vec<Op>, next: &mut u16) -> u16 {
-    let null = take_register(next);
-    ops.push(Op::Const {
-        dst: null,
-        value: crate::ops::Constant::Null,
-    });
     let dst = take_register(next);
-    ops.push(Op::Binary {
+    ops.push(Op::Unary {
         dst,
-        operator: crate::ops::BinaryOp::Equal,
-        lhs: left,
-        rhs: null,
+        operator: crate::ops::UnaryOp::IsNullish,
+        src: left,
     });
     dst
 }
