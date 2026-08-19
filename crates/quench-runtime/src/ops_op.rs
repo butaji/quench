@@ -467,6 +467,8 @@ pub enum Op {
         handler: Option<crate::machine::FunctionCode>,
         finalizer: Option<crate::machine::FunctionCode>,
         catch_slot: Option<u16>,
+        dst: u16,
+        finally_dst: Option<u16>,
     },
     /// Execute a binding pattern and close its iterator with the body's exact completion.
     IteratorBinding {
@@ -490,6 +492,7 @@ pub enum Op {
         slot: u16,
         body: crate::machine::FunctionCode,
         per_iteration: bool,
+        dst: u16,
     },
     ForOf {
         label: Option<String>,
@@ -497,10 +500,14 @@ pub enum Op {
         slot: u16,
         body: crate::machine::FunctionCode,
         per_iteration: bool,
+        dst: u16,
     },
     Switch {
         discriminant: u16,
-        cases: Vec<(Option<crate::machine::FunctionCode>, crate::machine::FunctionCode)>,
+        cases: Vec<(
+            Option<crate::machine::FunctionCode>,
+            crate::machine::FunctionCode,
+        )>,
         dst: u16,
     },
     Conditional {
