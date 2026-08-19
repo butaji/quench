@@ -75,6 +75,7 @@ fn reduce_counted_loop(
         body,
         update,
         post_test,
+        dst,
     });
     Ok(Some(dst))
 }
