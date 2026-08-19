@@ -341,7 +341,8 @@ pub(crate) fn reduce_expression_kind(
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let (parameters, parameter_count) =
         crate::function_parameters::bindings(&function.params).ok()?;
-    let tail_calls = tail_calls_enabled(strictness, function_kind(function), function.r#async);
+    let emitted_kind = kind.unwrap_or_else(|| function_kind(function));
+    let tail_calls = tail_calls_enabled(strictness, emitted_kind, function.r#async);
     let inherited = enter_function(facts, strictness, tail_calls);
     let reduced = reduce_function_ops_named(
         &body.statements,
@@ -361,7 +362,7 @@ pub(crate) fn reduce_expression_kind(
         parameter_count,
         captures,
         FunctionMetadata {
-            kind: kind.unwrap_or_else(|| function_kind(function)),
+            kind: emitted_kind,
             length: crate::function_parameters::expected_argument_count(&function.params),
             strictness,
             is_async: function.r#async,
@@ -437,7 +438,10 @@ pub(super) fn make(
     metadata: FunctionMetadata,
 ) -> crate::value::Value {
     let has_prototype = matches!(metadata.kind, FunctionKind::Generator)
-        || matches!(metadata.kind, FunctionKind::Ordinary) && !metadata.is_async;
+        || matches!(
+            metadata.kind,
+            FunctionKind::Ordinary | FunctionKind::ClassConstructor
+        ) && !metadata.is_async;
     let value = make_function_value(code, params, captures, length, metadata);
     attach_lexical_super(&value, metadata.kind);
     if has_prototype {

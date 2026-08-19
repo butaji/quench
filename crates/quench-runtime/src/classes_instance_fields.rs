@@ -51,6 +51,7 @@ pub(crate) fn execute_static_block(
     let mut block_registers = Vec::new();
     crate::functions::write_op(&mut block_registers, &function);
     let block = crate::execute::read_register(&block_registers, 0)?;
+    crate::super_scope::attach_home(&block, &receiver);
     crate::functions::execute_target(&block, &receiver, &[])?;
     Ok(crate::completion::Completion::Normal)
 }
