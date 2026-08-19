@@ -36,6 +36,14 @@ fn reduce_body(
     crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, next_slot);
     let stack = crate::using_scope::reserve(&block.body, &mut block_locals, next_slot);
     crate::using_scope::emit_tdz(&block.body, ops, &block_locals);
+    instantiate_block_functions(
+        &block.body,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        &mut block_locals,
+    )?;
     let mut body = Vec::new();
     let last = reduce_block_statements(
         block,
@@ -63,20 +71,64 @@ fn reduce_block_statements(
     next_slot: &mut u16,
     block_locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
+    let own_functions = block_function_names(&block.body);
     let mut last = None;
     for statement in &block.body {
-        if let Some(value) = reduce_statement(
+        if matches!(statement, oxc::ast::ast::Statement::FunctionDeclaration(_)) {
+            continue;
+        }
+        let barrier = facts.eval_var_barrier.len();
+        facts.eval_var_barrier.extend(own_functions.iter().cloned());
+        let value = reduce_statement(
             statement,
             ops,
             facts,
             next_register,
             next_slot,
             block_locals,
-        )? {
+        )?;
+        facts.eval_var_barrier.truncate(barrier);
+        if let Some(value) = value {
             last = Some(value);
         }
     }
     Ok(last)
+}
+
+fn block_function_names(statements: &[oxc::ast::ast::Statement<'_>]) -> Vec<String> {
+    statements
+        .iter()
+        .filter_map(|statement| {
+            let oxc::ast::ast::Statement::FunctionDeclaration(function) = statement else {
+                return None;
+            };
+            crate::reduce_support::annex_b_plain_function_name(function)
+        })
+        .collect()
+}
+
+fn instantiate_block_functions(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> Result<(), Vec<String>> {
+    for statement in statements {
+        let oxc::ast::ast::Statement::FunctionDeclaration(function) = statement else {
+            continue;
+        };
+        crate::reduce::reduce_function_declaration(
+            function,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            locals,
+        )?;
+    }
+    Ok(())
 }
 
 fn emit_wrapped(
