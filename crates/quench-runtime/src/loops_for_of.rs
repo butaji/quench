@@ -94,11 +94,67 @@ fn named_slot(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> (u16, bool) {
-    if let Some(slot) = locals.get(name) {
-        return (*slot, per_iteration);
+    if !per_iteration {
+        if let Some(slot) = locals.get(name) {
+            return (*slot, per_iteration);
+        }
     }
     let slot = *next_slot;
     *next_slot = next_slot.saturating_add(1);
     locals.insert(name.to_string(), slot);
     (slot, per_iteration)
+}
+
+fn emit_for_head_tdz(
+    left: &oxc::ast::ast::ForStatementLeft<'_>,
+    ops: &mut Vec<Op>,
+    locals: &HashMap<String, u16>,
+) {
+    if !for_left_lexical(left) {
+        return;
+    }
+    for name in for_declaration_names(left) {
+        let Some(&slot) = locals.get(&name) else {
+            continue;
+        };
+        ops.push(Op::MarkUninitialized { slot, shared: true });
+    }
+}
+
+fn refresh_iteration_locals(
+    left: &oxc::ast::ast::ForStatementLeft<'_>,
+    next_slot: &mut u16,
+    locals: &mut HashMap<String, u16>,
+) -> u16 {
+    let mut first = None;
+    for name in for_declaration_names(left) {
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        locals.insert(name.clone(), slot);
+        locals.insert(format!("\0lexical-predeclared:{name}"), slot);
+        first.get_or_insert(slot);
+    }
+    first.unwrap_or_else(|| {
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        slot
+    })
+}
+
+fn for_left_lexical(left: &oxc::ast::ast::ForStatementLeft<'_>) -> bool {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        return false;
+    };
+    declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var
+}
+
+fn for_declaration_names(left: &oxc::ast::ast::ForStatementLeft<'_>) -> Vec<String> {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        return Vec::new();
+    };
+    declaration
+        .declarations
+        .iter()
+        .flat_map(|declarator| crate::binding_patterns::names(&declarator.id))
+        .collect()
 }
