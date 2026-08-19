@@ -90,11 +90,11 @@ pub fn url_parse(
     crate::modules::url::parse(state, args)
 }
 pub fn url_format(
-    _state: &Rc<RefCell<HostState>>,
-    _receiver: Option<&Value>,
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::String(crate::modules::url::format(args)))
+    crate::modules::url::format(state, receiver, args)
 }
 pub fn url_resolve(
     state: &Rc<RefCell<HostState>>,
@@ -104,7 +104,7 @@ pub fn url_resolve(
     crate::modules::url::resolve(state, args)
 }
 pub fn url_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    crate::modules::url::new_url(state, args)
+    crate::modules::url_whatwg::new_url(state, args)
 }
 pub fn url_search_params(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::url::new_search_params(state, args)
@@ -722,7 +722,7 @@ pub fn url_path_to_file_url(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::url::path_to_file_url(state, args)
+    crate::modules::url_file::path_to_file_url(state, None, args)
 }
 
 pub fn process_umask(

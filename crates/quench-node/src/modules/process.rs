@@ -74,7 +74,13 @@ fn info_props(argv: &[String]) -> Vec<(&'static str, Value)> {
         ("env", env_object()),
         (
             "config",
-            host_api::object(vec![("variables".to_string(), host_api::object(vec![]))]),
+            host_api::object(vec![(
+                "variables".to_string(),
+                host_api::object(vec![(
+                    "v8_enable_i18n_support".to_string(),
+                    Value::Number(1.0),
+                )]),
+            )]),
         ),
         ("execPath", Value::String("/usr/bin/env".into())),
         ("version", Value::String("v22.0.0".into())),

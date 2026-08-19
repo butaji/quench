@@ -190,7 +190,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             Value::String("kWeakHandler\0quench".to_string()),
         )])),
         "path" => Some(crate::modules::path::build()),
-        "url" => Some(crate::modules::url::build_root()),
+        "url" => Some(crate::modules::url::build_root(state)),
         "querystring" => Some(crate::modules::querystring::build()),
         "os" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::os::build(),

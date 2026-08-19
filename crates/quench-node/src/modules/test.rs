@@ -22,6 +22,17 @@ pub fn run(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
             _ => None,
         })
         .unwrap_or_else(|| "<anonymous>".to_string());
+    // `test(name, { skip: ... }, fn)` — a truthy `skip` option skips the run.
+    let skipped = args.iter().any(|arg| {
+        matches!(arg, Value::Object(_) | Value::ObjectAlias(_))
+            && quench_runtime::execute::is_truthy(&quench_runtime::execute::get_property(
+                arg, "skip",
+            ))
+    });
+    if skipped {
+        report(state, &format!("ok - {name} # SKIP"));
+        return Ok(Value::Undefined);
+    }
     let callback = args.iter().find(|arg| {
         matches!(
             arg,
