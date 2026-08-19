@@ -4,10 +4,21 @@ use crate::{
     ops::{Constant, Op},
     value::Value,
 };
+use std::cell::Cell;
 use oxc::ast::ast::SwitchStatement;
 use std::collections::HashMap;
 
 type SwitchCases = Vec<(Option<Constant>, crate::machine::FunctionCode)>;
+
+thread_local! {
+    static COMPLETION: Cell<Option<u16>> = const { Cell::new(None) };
+}
+
+pub(crate) fn record_completion(ops: &mut Vec<Op>, src: u16) {
+    if let Some(dst) = COMPLETION.get() {
+        ops.push(Op::Move { dst, src });
+    }
+}
 
 pub(crate) fn reduce(
     statement: &SwitchStatement<'_>,
@@ -15,7 +26,7 @@ pub(crate) fn reduce(
     facts: &mut ProgramDb,
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
-) -> Result<(), Vec<String>> {
+) -> Result<Option<u16>, Vec<String>> {
     let discriminant = crate::reduce::reduce_expression(
         &statement.discriminant,
         ops,
@@ -24,12 +35,27 @@ pub(crate) fn reduce(
         locals,
     )
     .ok_or_else(|| vec!["Unsupported switch discriminant".to_string()])?;
-    let cases = reduce_cases(statement, facts, next_register, locals)?;
+    let dst = take_switch_register(next_register);
+    ops.push(Op::Const {
+        dst,
+        value: Constant::Undefined,
+    });
+    let previous = COMPLETION.replace(Some(dst));
+    let cases = reduce_cases(statement, facts, next_register, locals, dst);
+    COMPLETION.set(previous);
+    let cases = cases?;
     ops.push(Op::Switch {
         discriminant,
         cases,
+        dst,
     });
-    Ok(())
+    Ok(Some(dst))
+}
+
+fn take_switch_register(next: &mut u16) -> u16 {
+    let dst = *next;
+    *next = next.saturating_add(1);
+    dst
 }
 
 fn reduce_cases(
@@ -37,6 +63,7 @@ fn reduce_cases(
     facts: &mut ProgramDb,
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
+    _completion: u16,
 ) -> Result<SwitchCases, Vec<String>> {
     let mut cases = Vec::new();
     for case in &statement.cases {
@@ -114,6 +141,7 @@ pub(crate) fn execute(
     let Op::Switch {
         discriminant,
         cases,
+        dst,
     } = op
     else {
         return Err(crate::execute::VmError::MissingReturn);
@@ -135,6 +163,10 @@ pub(crate) fn execute(
             crate::completion::Completion::Normal => continue,
             crate::completion::Completion::Break { label: None, .. } => {
                 return Ok(crate::completion::Completion::Normal);
+            }
+            crate::completion::Completion::Continue { label, value: None } => {
+                let value = crate::execute::read_register(registers, *dst).ok();
+                return Ok(crate::completion::Completion::Continue { label, value });
             }
             completion => return Ok(completion),
         }
