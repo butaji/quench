@@ -240,12 +240,6 @@ fn os_capability_props(out: &mut Vec<(String, Value)>) {
 // `os` data. We construct one per call so the host stays
 // stateless; the kernel call is cheap.
 
-fn sysinfo_n_cpus() -> Option<u64> {
-    let mut s = sysinfo::System::new();
-    s.refresh_all();
-    Some(s.cpus().len() as u64)
-}
-
 fn sysinfo_total() -> u64 {
     sysinfo::System::new_all().total_memory()
 }
