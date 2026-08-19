@@ -20,9 +20,12 @@ pub(super) fn set_object_property(properties: Rc<ObjectData>, key: &str, value: 
         } else {
             values.push((key.to_string(), Value::BindingCell(Rc::clone(&cell))));
         }
-        let properties = Rc::new(ObjectData::with_private_slots(
+        let mut created = properties.created.clone();
+        crate::builtins::object_alias::record_created(&mut created, key);
+        let properties = Rc::new(ObjectData::with_creation_order(
             values,
             Rc::clone(&properties.private_slots),
+            created,
         ));
         *cell.borrow_mut() = public_value(value);
         return Value::Object(properties);
