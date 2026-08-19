@@ -78,6 +78,9 @@ fn resolve(spec: &str) -> Option<Value> {
         "trace_events" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "repl" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "wasi" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "worker_threads" => Some(crate::host::namespace_object_from_pairs(vec![
+            ("Worker".to_string(), crate::host::capability(crate::registry::NodeSpec::new("worker_threads:Worker", 0x1900))),
+        ])),
         "timers" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
