@@ -107,16 +107,19 @@ pub(crate) fn reduce_for_in(
         locals,
         facts.strict,
     )?;
+    if per_iteration {
+        emit_for_head_tdz(&statement.left, ops, locals);
+    }
     let object =
         crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported for-in object".to_string()])?;
     let dst = crate::switch::take_completion_register(ops, next_register);
     let mut body_locals = locals.clone();
-    if per_iteration {
-        if let Some(name) = for_in_name(&statement.left) {
-            body_locals.insert(format!("\0lexical-predeclared:{name}"), slot);
-        }
-    }
+    let slot = if per_iteration {
+        refresh_iteration_locals(&statement.left, next_slot, &mut body_locals)
+    } else {
+        slot
+    };
     let (mut body, _) = crate::switch::with_completion(dst, || {
         crate::branch::reduce(&statement.body, facts, &body_locals)
     })?;
@@ -181,18 +184,6 @@ fn emit_for_in_initializer(
     Ok(())
 }
 
-fn for_in_name(left: &oxc::ast::ast::ForStatementLeft<'_>) -> Option<String> {
-    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
-        return None;
-    };
-    let declarator = declaration.declarations.first()?;
-    let oxc::ast::ast::BindingPatternKind::BindingIdentifier(identifier) = &declarator.id.kind
-    else {
-        return None;
-    };
-    Some(identifier.name.to_string())
-}
-
 pub(crate) fn reduce_for_of(
     statement: &ForOfStatement<'_>,
     ops: &mut Vec<Op>,
@@ -203,21 +194,19 @@ pub(crate) fn reduce_for_of(
 ) -> Result<Option<u16>, Vec<String>> {
     let outer_locals = locals.clone();
     let (slot, per_iteration, pattern) = for_of_slot(&statement.left, next_slot, locals)?;
-    let iterable = crate::reduce::reduce_expression(
-        &statement.right,
-        ops,
-        facts,
-        next_register,
-        &outer_locals,
-    )
-    .ok_or_else(|| vec!["Unsupported for-of iterable".to_string()])?;
+    if per_iteration {
+        emit_for_head_tdz(&statement.left, ops, locals);
+    }
+    let iterable =
+        crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported for-of iterable".to_string()])?;
     let dst = crate::switch::take_completion_register(ops, next_register);
     let mut body_locals = locals.clone();
-    if per_iteration {
-        if let Some(name) = for_in_name(&statement.left) {
-            body_locals.insert(format!("\0lexical-predeclared:{name}"), slot);
-        }
-    }
+    let slot = if per_iteration {
+        refresh_iteration_locals(&statement.left, next_slot, &mut body_locals)
+    } else {
+        slot
+    };
     let (mut body, _) = crate::switch::with_completion(dst, || {
         crate::branch::reduce(&statement.body, facts, &body_locals)
     })?;
