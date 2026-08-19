@@ -46,6 +46,7 @@ pub(crate) fn execute_completion_in_place(
 
 pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, VmError> {
     crate::locals::reset_replacements();
+    crate::locals::reset_environments();
     crate::private_environment::reset();
     reset_evaluation_globals();
     crate::promise::drain_microtasks_all();
