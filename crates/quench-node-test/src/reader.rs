@@ -85,7 +85,11 @@ impl NodeRunner {
         if let Some(dir) = fixture.path.parent() {
             self.host.set_main_dir(dir.to_string_lossy().into_owned());
         }
-        let ops = match reduce_script(&fixture.source) {
+        // The main script runs as a CJS module: `__filename`,
+        // `__dirname`, `require`, `module`/`exports` are in scope.
+        let source =
+            quench_node::modules::require::wrap_cjs(&self.host.state(), &script, &fixture.source);
+        let ops = match reduce_script(&source) {
             Ok(ops) => ops,
             Err(error) => {
                 return NodeOutcome::Fail {
