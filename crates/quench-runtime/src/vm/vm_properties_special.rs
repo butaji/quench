@@ -56,12 +56,21 @@ fn constructor_property(builtin: Builtin, key: &str, property: Value) -> Option<
     })
 }
 
+fn inherit_prototype_property(builtin: Builtin, key: &str) -> Value {
+    let prototype = crate::builtins::object::get_prototype_of(Some(&Value::Builtin(builtin)))
+        .unwrap_or(Value::Builtin(Builtin::ObjectPrototype));
+    if matches!(prototype, Value::Builtin(parent) if parent == builtin) {
+        return crate::builtins::property(Builtin::ObjectPrototype, key);
+    }
+    get_property(&prototype, key)
+}
+
 fn callable_fallback(value: &Value, builtin: Builtin, key: &str) -> Value {
     if builtin != Builtin::FunctionPrototype && matches!(key, "apply" | "call" | "bind") {
         return bind_function_property(value, key);
     }
     if crate::builtin_meta::is_prototype(builtin) || builtin == Builtin::Temporal {
-        return crate::builtins::property(Builtin::ObjectPrototype, key);
+        return inherit_prototype_property(builtin, key);
     }
     let inherited = crate::builtins::property(Builtin::FunctionPrototype, key);
     if !matches!(inherited, Value::Undefined) {
@@ -392,4 +401,3 @@ fn primitive_property_receiver(value: &Value, receiver: &Value) -> bool {
     }
 }
 include!("vm_object_properties.rs");
-

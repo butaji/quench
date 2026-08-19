@@ -102,21 +102,18 @@ fn function_prototype(function: &crate::value::FunctionValue) -> Value {
 }
 
 fn intrinsic_bound_prototype(bound: &crate::value::BoundFunctionValue) -> Value {
-    match &bound.target {
-        Value::Builtin(Builtin::AsyncFunction) => {
-            crate::vm::realm_intrinsic_for(bound.realm, Builtin::Function)
+    let prototype = match &bound.target {
+        Value::Builtin(Builtin::GeneratorFunction) => {
+            Value::Builtin(Builtin::GeneratorFunctionPrototype)
         }
-        Value::Builtin(Builtin::GeneratorFunction | Builtin::AsyncGeneratorFunction) => {
-            let prototype = match bound.target {
-                Value::Builtin(Builtin::GeneratorFunction) => Builtin::GeneratorFunctionPrototype,
-                _ => Builtin::AsyncGeneratorFunctionPrototype,
-            };
-            crate::vm::realm_intrinsic_for(bound.realm, prototype)
+        Value::Builtin(Builtin::AsyncGeneratorFunction) => {
+            Value::Builtin(Builtin::AsyncGeneratorFunctionPrototype)
         }
-        Value::Builtin(builtin) if is_intrinsic_prototype(*builtin) => {
-            crate::vm::realm_intrinsic_for(bound.realm, Builtin::ObjectPrototype)
-        }
-        _ => Value::Builtin(Builtin::FunctionPrototype),
+        target => prototype_for_value(target),
+    };
+    match prototype {
+        Value::Builtin(builtin) => crate::vm::realm_intrinsic_for(bound.realm, builtin),
+        other => other,
     }
 }
 
@@ -142,7 +139,9 @@ fn prototype_for_value_tail(value: &Value) -> Value {
         Value::Generator(generator) => generator_prototype(generator),
         Value::Iterator(_) => crate::collections::iterator::prototype_of(value),
         Value::Array(values) if values.is_arguments() => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Array(values) => values.prototype().unwrap_or(Value::Builtin(Builtin::ArrayPrototype)),
+        Value::Array(values) => values
+            .prototype()
+            .unwrap_or(Value::Builtin(Builtin::ArrayPrototype)),
         Value::String(value) if crate::conversion::is_symbol_string(value) => {
             Value::Builtin(Builtin::SymbolPrototype)
         }
