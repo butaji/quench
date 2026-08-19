@@ -76,6 +76,8 @@ fn resolve(spec: &str) -> Option<Value> {
         "cluster" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "inspector" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "trace_events" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "repl" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "wasi" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "timers" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
