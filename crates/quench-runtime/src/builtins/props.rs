@@ -291,6 +291,12 @@ fn typed_array_property(builtin: Builtin, key: &str) -> Option<Builtin> {
             (is_typed_array_prototype(builtin) && key == "keys").then_some(Builtin::ArrayKeys)
         })
         .or_else(|| {
+            (is_typed_array_prototype(builtin) && key == "entries").then_some(Builtin::ArrayEntries)
+        })
+        .or_else(|| {
+            (is_typed_array_prototype(builtin) && key == "set").then_some(Builtin::TypedArraySet)
+        })
+        .or_else(|| {
             (is_typed_array_prototype(builtin) && key == "toLocaleString")
                 .then_some(Builtin::ArrayToLocaleString)
         })

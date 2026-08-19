@@ -34,6 +34,7 @@ const BUFFER_TABLE: &[(u16, CallHandler)] = &[
     (0x081B, m::last_index_of),
     (0x081C, m::includes),
     (0x081D, w::write),
+    (0x081E, m::inspect),
     (0x0820, rw::read_uint8),
     (0x0821, rw::write_uint8),
     (0x0822, rw::read_uint16_le),

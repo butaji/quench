@@ -185,13 +185,10 @@ fn validate_callable(
     user_message: Option<String>,
 ) -> Result<Value, VmError> {
     let expected_name = name_of(expected);
-    // A callable with a `prototype` property is treated as an error
-    // constructor: the thrown value must carry its name. Other
-    // callables are validation functions invoked with the error.
-    if !matches!(
-        execute::get_property(expected, "prototype"),
-        Value::Undefined
-    ) {
+    // Only genuine Error constructors take the instanceof path; other
+    // callables (including ones that happen to have a `prototype`
+    // property, like common.mustCall wrappers) are validation functions.
+    if is_error_constructor(expected) {
         if !expected_name.is_empty() && expected_name == name_of(error) {
             return Ok(Value::Undefined);
         }
@@ -212,6 +209,32 @@ fn validate_callable(
         )),
         Err(internal) => Err(internal),
     }
+}
+
+fn is_error_constructor(expected: &Value) -> bool {
+    use quench_runtime::ops::Builtin;
+    let mut proto = execute::get_property(expected, "prototype");
+    for _ in 0..8 {
+        proto = match &proto {
+            Value::Builtin(
+                Builtin::ErrorPrototype
+                | Builtin::RangeErrorPrototype
+                | Builtin::TypeErrorPrototype
+                | Builtin::EvalErrorPrototype
+                | Builtin::ReferenceErrorPrototype
+                | Builtin::SyntaxErrorPrototype
+                | Builtin::URIErrorPrototype
+                | Builtin::AggregateErrorPrototype
+                | Builtin::SuppressedErrorPrototype,
+            ) => return true,
+            Value::Object(_) => match execute::get_prototype_of(&proto) {
+                Ok(next) => next,
+                Err(_) => return false,
+            },
+            _ => return false,
+        };
+    }
+    false
 }
 
 fn name_of(value: &Value) -> String {

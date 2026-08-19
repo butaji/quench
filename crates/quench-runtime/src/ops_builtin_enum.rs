@@ -200,7 +200,7 @@ pub enum Builtin {
     ArrayPop, ArrayUnshift,
     ArrayFill, ArrayCopyWithin,
     ArrayToSorted, ArraySplice,
-    TypedArrayFill, Uint8ArrayFromBase64,
+    TypedArrayFill, TypedArraySet, Uint8ArrayFromBase64,
     Uint8ArrayFromHex, Uint8ArraySetFromBase64,
     Uint8ArraySetFromHex, Uint8ArrayToBase64,
     Uint8ArrayToHex, Uint8ArraySubarray,
