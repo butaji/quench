@@ -37,6 +37,7 @@ const PROTOTYPE_METHODS: &[(&str, NodeSpec)] = &[
     ("lastIndexOf", r::SPEC_BUFFER_LAST_INDEX_OF),
     ("includes", r::SPEC_BUFFER_INCLUDES),
     ("toLocaleString", r::SPEC_BUFFER_TOSTRING),
+    ("inspect", r::SPEC_BUFFER_INSPECT),
     ("readUInt8", r::SPEC_BUF_READ_UINT8),
     ("readUint8", r::SPEC_BUF_READ_UINT8),
     ("readUInt16LE", r::SPEC_BUF_READ_UINT16_LE),
@@ -106,9 +107,21 @@ pub fn buffer_prototype() -> Value {
         if let Some(prototype) = &*slot.borrow() {
             return prototype.clone();
         }
+        let mut to_string_fn: Option<Value> = None;
         let methods: Vec<(&str, Value)> = PROTOTYPE_METHODS
             .iter()
-            .map(|(name, spec)| (*name, crate::host::capability(*spec)))
+            .map(|(name, spec)| {
+                // `toLocaleString` must be the same function object as
+                // `toString` (identity is observable).
+                let value = if spec.cap == r::SPEC_BUFFER_TOSTRING.cap {
+                    to_string_fn
+                        .get_or_insert_with(|| crate::host::capability(*spec))
+                        .clone()
+                } else {
+                    crate::host::capability(*spec)
+                };
+                (*name, value)
+            })
             .collect();
         let prototype = crate::host::namespace_object(methods)
             .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
