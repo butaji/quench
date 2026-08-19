@@ -31,6 +31,12 @@ pub struct StringDecoder {
     pub buffer: Vec<u8>,
 }
 
+impl Default for StringDecoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StringDecoder {
     pub fn new() -> Self {
         Self { buffer: Vec::new() }

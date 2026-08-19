@@ -348,11 +348,7 @@ fn run_fixture_batch(
                 harness,
             )
         } else {
-            runner.run_test_with_cache_and_metadata(
-                &fixture.source,
-                &fixture.metadata,
-                harness,
-            )
+            runner.run_test_with_cache_and_metadata(&fixture.source, &fixture.metadata, harness)
         };
         let (category, reason) = match outcome {
             Ok(TestOutcome::Pass) => (String::from("pass"), None),

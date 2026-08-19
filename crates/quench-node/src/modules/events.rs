@@ -23,6 +23,12 @@ pub struct EventEmitter {
     pub max: usize,
 }
 
+impl Default for EventEmitter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventEmitter {
     pub fn new() -> Self {
         Self {
@@ -53,6 +59,12 @@ pub struct EmitterRegistry {
     emitters: HashMap<EmitterId, Rc<RefCell<EventEmitter>>>,
 }
 
+impl Default for EmitterRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EmitterRegistry {
     pub fn new() -> Self {
         Self {
@@ -76,6 +88,12 @@ impl EmitterRegistry {
 pub struct EventLoop {
     pub microtasks: RefCell<Vec<(Value, Vec<Value>)>>,
     pub immediates: RefCell<Vec<(Value, Vec<Value>)>>,
+}
+
+impl Default for EventLoop {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EventLoop {
@@ -181,16 +199,17 @@ fn cap(name: &'static str, id: u16) -> Value {
 
 pub fn from(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let target = args.first().cloned().unwrap_or(Value::Undefined);
-    let mut out = Vec::new();
-    out.push((
-        "on".to_string(),
-        crate::host::capability(crate::registry::NodeSpec::new("events:on:method", 0x0102)),
-    ));
-    out.push((
-        "emit".to_string(),
-        crate::host::capability(crate::registry::NodeSpec::new("events:emit:method", 0x0103)),
-    ));
-    out.push(("target".to_string(), target));
+    let out = vec![
+        (
+            "on".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:on:method", 0x0102)),
+        ),
+        (
+            "emit".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new("events:emit:method", 0x0103)),
+        ),
+        ("target".to_string(), target),
+    ];
     Ok(host_api::object(out))
 }
 

@@ -54,13 +54,16 @@ pub fn cpus(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, V
         out.push(host_api::object(vec![
             ("model".to_string(), Value::String(cpu.brand)),
             ("speed".to_string(), Value::Number(cpu.frequency as f64)),
-            ("times".to_string(), host_api::object(vec![
-                ("user".to_string(), Value::Number(cpu.user_jiffies as f64)),
-                ("nice".to_string(), Value::Number(cpu.nice_jiffies as f64)),
-                ("sys".to_string(), Value::Number(cpu.system_jiffies as f64)),
-                ("idle".to_string(), Value::Number(cpu.idle_jiffies as f64)),
-                ("irq".to_string(), Value::Number(0.0)),
-            ])),
+            (
+                "times".to_string(),
+                host_api::object(vec![
+                    ("user".to_string(), Value::Number(cpu.user_jiffies as f64)),
+                    ("nice".to_string(), Value::Number(cpu.nice_jiffies as f64)),
+                    ("sys".to_string(), Value::Number(cpu.system_jiffies as f64)),
+                    ("idle".to_string(), Value::Number(cpu.idle_jiffies as f64)),
+                    ("irq".to_string(), Value::Number(0.0)),
+                ]),
+            ),
         ]));
     }
     Ok(host_api::array(out))
@@ -99,10 +102,7 @@ pub fn freemem(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value
     Ok(Value::Number(sysinfo_avail() as f64))
 }
 
-pub fn loadavg(
-    _state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn loadavg(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     let (a, b, c) = sysinfo_loadavg();
     Ok(host_api::array(vec![
         Value::Number(a),
@@ -111,33 +111,21 @@ pub fn loadavg(
     ]))
 }
 
-pub fn uptime(
-    _state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn uptime(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     Ok(Value::Number(sysinfo_uptime() as f64))
 }
 
-pub fn hostname(
-    _state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn hostname(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     let name = sysinfo_hostname().unwrap_or_else(|| "quench-node".into());
     Ok(Value::String(name))
 }
 
-pub fn homedir(
-    _state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn homedir(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     let dir = std::env::var("HOME").unwrap_or_else(|_| "/".into());
     Ok(Value::String(dir))
 }
 
-pub fn tmpdir(
-    _state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn tmpdir(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     let dir = std::env::temp_dir().to_string_lossy().into_owned();
     Ok(Value::String(dir))
 }
@@ -189,7 +177,9 @@ fn read_ifaddrs() -> Vec<(String, Vec<String>)> {
             p = ifa.ifa_next;
         }
     }
-    unsafe { freeifaddrs(raw); }
+    unsafe {
+        freeifaddrs(raw);
+    }
     out
 }
 
@@ -223,11 +213,26 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
 }
 
 fn os_capability_props(out: &mut Vec<(String, Value)>) {
-    out.push(("uptime".to_string(), crate::host::capability(crate::registry::SPEC_OS_UPTIME)));
-    out.push(("totalmem".to_string(), crate::host::capability(crate::registry::SPEC_OS_TOTALMEM)));
-    out.push(("freemem".to_string(), crate::host::capability(crate::registry::SPEC_OS_FREEMEM)));
-    out.push(("cpus".to_string(), crate::host::capability(crate::registry::SPEC_OS_CPUS)));
-    out.push(("loadavg".to_string(), crate::host::capability(crate::registry::SPEC_OS_LOADAVG)));
+    out.push((
+        "uptime".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_UPTIME),
+    ));
+    out.push((
+        "totalmem".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_TOTALMEM),
+    ));
+    out.push((
+        "freemem".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_FREEMEM),
+    ));
+    out.push((
+        "cpus".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_CPUS),
+    ));
+    out.push((
+        "loadavg".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_LOADAVG),
+    ));
     out.push((
         "networkInterfaces".to_string(),
         crate::host::capability(crate::registry::SPEC_OS_NETWORKINTERFACES),

@@ -47,6 +47,12 @@ pub struct NodeRunner {
     pub context: VmContext,
 }
 
+impl Default for NodeRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NodeRunner {
     pub fn new() -> Self {
         let realm = RealmId::ROOT;
@@ -61,6 +67,9 @@ impl NodeRunner {
 
     /// Run one fixture and classify the completion.
     pub fn run(&mut self, fixture: &NodeFixture) -> NodeOutcome {
+        if let Some(dir) = fixture.path.parent() {
+            self.host.set_main_dir(dir.to_string_lossy().into_owned());
+        }
         let ops = match reduce_script(&fixture.source) {
             Ok(ops) => ops,
             Err(error) => {

@@ -13,6 +13,12 @@ use crate::host::HostState;
 
 pub struct NetState;
 
+impl Default for NetState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetState {
     pub fn new() -> Self {
         Self

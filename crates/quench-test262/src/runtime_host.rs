@@ -76,13 +76,17 @@ impl LinkedModuleGraph {
             .or_else(|| graph.entry())
             .ok_or_else(|| "module graph missing entry".to_string())?;
         let order = graph.dependency_order(root)?;
-        bind_imports(&units, graph, &order, |binding| binding.imported == "source")?;
+        bind_imports(&units, graph, &order, |binding| {
+            binding.imported == "source"
+        })?;
         for _ in 0..units.len() {
             for id in &order {
                 link_reexports(graph, &units, *id)?;
             }
         }
-        bind_imports(&units, graph, &order, |binding| binding.imported != "source")?;
+        bind_imports(&units, graph, &order, |binding| {
+            binding.imported != "source"
+        })?;
         Ok(Self { units })
     }
 
@@ -123,7 +127,11 @@ impl LinkedModuleGraph {
         ));
         let result = evaluate_module(self, graph, entry, true);
         quench_runtime::module_bindings::drain_jobs();
-        let result = match self.units.get(&entry).and_then(|unit| unit.thrown.borrow().clone()) {
+        let result = match self
+            .units
+            .get(&entry)
+            .and_then(|unit| unit.thrown.borrow().clone())
+        {
             Some(thrown) => {
                 quench_runtime::module_bindings::request_ensure_throw(thrown.clone());
                 Err(format!(
@@ -312,7 +320,6 @@ impl LinkedModule {
     fn is_ambiguous_export(&self, name: &str) -> bool {
         self.ambiguous_exports.borrow().contains(name)
     }
-
 }
 
 thread_local! {

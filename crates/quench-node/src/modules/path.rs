@@ -183,7 +183,6 @@ fn normalize_posix(input: &str) -> String {
 }
 
 pub fn build() -> Vec<(String, Value)> {
-    use crate::registry::*;
     let mut out = path_caps();
     push_subnamespaces(&mut out);
     out

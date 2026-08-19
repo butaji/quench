@@ -15,7 +15,9 @@ pub(crate) fn lookup(builtin: Builtin, key: &str) -> Value {
     if let Some(value) = iterator_property(builtin, key) {
         return value;
     }
-    if let Some(value) = crate::builtin_meta::collections::iterator_prototype_property_callable(builtin, key) {
+    if let Some(value) =
+        crate::builtin_meta::collections::iterator_prototype_property_callable(builtin, key)
+    {
         return value;
     }
     if let Some(value) = typed_array_prototype_tag(builtin, key) {

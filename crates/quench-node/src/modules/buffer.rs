@@ -49,7 +49,6 @@ pub fn from(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let first = args.first().cloned().unwrap_or(Value::Undefined);
-    let first = args.first().cloned().unwrap_or(Value::Undefined);
     match first {
         Value::Uint8Array(arr) => Ok(Value::Uint8Array(arr)),
         Value::String(s) => {
@@ -175,13 +174,8 @@ fn to_number(value: &Value) -> f64 {
     match value {
         Value::Number(n) => *n,
         Value::String(s) => s.parse().unwrap_or(0.0),
-        Value::Boolean(b) => {
-            if *b {
-                1.0
-            } else {
-                0.0
-            }
-        }
+        Value::Boolean(true) => 1.0,
+        Value::Boolean(false) => 0.0,
         _ => 0.0,
     }
 }

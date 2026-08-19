@@ -208,9 +208,8 @@ fn reduce_dynamic_for(
 ) -> Result<(), Vec<String>> {
     let await_using = crate::using_scope::for_init_kind(statement.init.as_ref())
         .is_some_and(|kind| kind == oxc::ast::ast::VariableDeclarationKind::AwaitUsing);
-    let stack = crate::using_scope::for_init_kind(statement.init.as_ref()).map(|_| {
-        crate::using_scope::reserve_slot(locals, next_slot)
-    });
+    let stack = crate::using_scope::for_init_kind(statement.init.as_ref())
+        .map(|_| crate::using_scope::reserve_slot(locals, next_slot));
     if let Some(stack) = stack {
         crate::using_scope::emit_create(ops, stack, await_using, next_register);
     }
