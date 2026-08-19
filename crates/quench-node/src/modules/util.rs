@@ -375,42 +375,7 @@ fn json_string(value: &Value) -> String {
     }
 }
 
-/// Node's `ERR_INVALID_ARG_TYPE` "Received …" suffix.
-pub fn invalid_arg_received(value: &Value) -> String {
-    match value {
-        Value::Null => " Received null".into(),
-        Value::Undefined => " Received undefined".into(),
-        Value::Object(_) => {
-            let name = quench_runtime::execute::get_property(value, "constructor");
-            let name = quench_runtime::execute::get_property(&name, "name");
-            match name {
-                Value::String(name) if !name.is_empty() => {
-                    format!(" Received an instance of {name}")
-                }
-                _ => " Received [object Object]".into(),
-            }
-        }
-        Value::Function(_) | Value::BoundFunction(_) => {
-            let name = quench_runtime::execute::get_property(value, "name");
-            match name {
-                Value::String(name) => format!(" Received function {name}"),
-                _ => " Received function".into(),
-            }
-        }
-        Value::Boolean(_) => format!(" Received type boolean ({})", inspect(value)),
-        Value::Number(_) | Value::BigInt(_) => format!(
-            " Received type {} ({})",
-            if matches!(value, Value::Number(_)) {
-                "number"
-            } else {
-                "bigint"
-            },
-            inspect(value)
-        ),
-        Value::String(_) => format!(" Received type string ({})", inspect(value)),
-        _ => format!(" Received {}", inspect(value)),
-    }
-}
+pub use crate::modules::buffer_enc::invalid_arg_received;
 
 /// `util.inspect` — string-only, sufficient for fixtures.
 pub fn inspect(value: &Value) -> String {
@@ -430,6 +395,7 @@ fn inspect_depth(value: &Value, depth: usize) -> String {
         Value::Object(_) | Value::ObjectAlias(_) => inspect_object(value, depth),
         Value::Array(_) => inspect_array(value, depth),
         Value::Uint8Array(_) => "[Buffer]".into(),
+        Value::BigInt(digits) => format!("{digits}n"),
         _ => "<unknown>".into(),
     }
 }
@@ -465,9 +431,17 @@ fn inspect_at(value: &Value, depth: usize) -> String {
 
 /// Plain objects render as `{ key: value, ... }` with shallow values.
 fn inspect_object(value: &Value, depth: usize) -> String {
+    let null_prototype = matches!(
+        quench_runtime::execute::get_prototype_of(value),
+        Ok(Value::Null)
+    );
     let keys = quench_runtime::execute::own_enumerable_keys(value);
     if keys.is_empty() {
-        return "{}".into();
+        return if null_prototype {
+            "[Object: null prototype] {}".into()
+        } else {
+            "{}".into()
+        };
     }
     let body = keys
         .iter()
@@ -479,6 +453,9 @@ fn inspect_object(value: &Value, depth: usize) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ");
+    if null_prototype {
+        return format!("[Object: null prototype] {{ {body} }}");
+    }
     format!("{{ {body} }}")
 }
 

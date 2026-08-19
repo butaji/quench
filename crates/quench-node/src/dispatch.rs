@@ -100,6 +100,7 @@ const CAP_UTIL_STYLE_TEXT: u16 = 0x0307;
 const CAP_UTIL_IS_DEEP_STRICT_EQUAL: u16 = 0x0308;
 const CAP_TEXT_DECODER_NEW: u16 = 0x0809;
 const CAP_TEXT_DECODER_DECODE: u16 = 0x080A;
+const CAP_TEXT_ENCODER_NEW: u16 = 0x084C;
 const CAP_TIMERS_SETTIMEOUT: u16 = 0x0700;
 const CAP_TIMERS_CLEARTIMEOUT: u16 = 0x0701;
 const CAP_TIMERS_SETINTERVAL: u16 = 0x0702;
@@ -472,6 +473,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_STRING_DECODER => string_decoder_new,
         CAP_URL_NEW => url_new,
         CAP_TEXT_DECODER_NEW => crate::modules::text_decoder::new_text_decoder,
+        CAP_TEXT_ENCODER_NEW => crate::modules::text_encoder::new_text_encoder,
         CAP_URL_SEARCH => url_search_params,
         CAP_NET_SERVER => net_create_server,
         CAP_BUFFER_NEW => buffer_new_construct,

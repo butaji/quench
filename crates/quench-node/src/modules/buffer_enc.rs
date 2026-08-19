@@ -5,6 +5,8 @@
 use quench_runtime::execute::VmError;
 use quench_runtime::value::Value;
 
+use crate::modules::util::inspect;
+
 /// Canonical encoding names accepted by `Buffer.isEncoding`.
 pub fn canonical_encoding(name: &str) -> Option<&'static str> {
     match name.to_lowercase().as_str() {
@@ -262,5 +264,52 @@ pub fn is_ascii(value: &Value) -> bool {
         }
         Value::ArrayBuffer(buf) => buf.bytes.borrow().is_ascii(),
         _ => false,
+    }
+}
+
+/// Node's `ERR_INVALID_ARG_TYPE` "Received …" suffix.
+pub fn invalid_arg_received(value: &Value) -> String {
+    match value {
+        Value::Null => " Received null".into(),
+        Value::Undefined => " Received undefined".into(),
+        Value::Object(_) => invalid_arg_object(value),
+        Value::Function(_) | Value::BoundFunction(_) => {
+            let name = quench_runtime::execute::get_property(value, "name");
+            match name {
+                Value::String(name) => format!(" Received function {name}"),
+                _ => " Received function".into(),
+            }
+        }
+        Value::Boolean(_) => format!(" Received type boolean ({})", inspect(value)),
+        Value::Number(_) | Value::BigInt(_) => format!(
+            " Received type {} ({})",
+            if matches!(value, Value::Number(_)) {
+                "number"
+            } else {
+                "bigint"
+            },
+            inspect(value)
+        ),
+        Value::String(s) if s.starts_with("Symbol.") || s.starts_with("Symbol.for.") => {
+            format!(" Received type symbol ({})", inspect(value))
+        }
+        Value::String(_) => format!(" Received type string ({})", inspect(value)),
+        _ => format!(" Received {}", inspect(value)),
+    }
+}
+
+fn invalid_arg_object(value: &Value) -> String {
+    let name = quench_runtime::execute::get_property(value, "constructor");
+    let name = quench_runtime::execute::get_property(&name, "name");
+    match name {
+        Value::String(name) if !name.is_empty() => format!(" Received an instance of {name}"),
+        _ if matches!(
+            quench_runtime::execute::get_prototype_of(value),
+            Ok(Value::Null)
+        ) =>
+        {
+            " Received [Object: null prototype] {}".into()
+        }
+        _ => " Received [object Object]".into(),
     }
 }

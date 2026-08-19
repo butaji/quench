@@ -145,6 +145,12 @@ impl Drop for ContextGuard {
     }
 }
 
+/// Run `f` with `context` installed as this thread's current context.
+pub fn with_current_context<T>(context: &VmContext, f: impl FnOnce() -> T) -> T {
+    let _guard = ContextGuard::install(context);
+    f()
+}
+
 impl VmContext {
     pub fn with_output_sink(output_sink: OutputSink) -> Self {
         Self {
