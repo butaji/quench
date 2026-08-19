@@ -90,7 +90,28 @@ fn info_props(argv: &[String]) -> Vec<(&'static str, Value)> {
         ("pid", Value::Number(std::process::id() as f64)),
         ("execArgv", host_api::array(vec![])),
         ("features", host_api::object(vec![])),
+        ("stdout", std_stream(false)),
+        ("stderr", std_stream(true)),
     ]
+}
+
+/// `process.stdout` / `process.stderr` — non-TTY write streams.
+fn std_stream(is_error: bool) -> Value {
+    crate::host::namespace_object_from_pairs(vec![
+        ("isTTY".to_string(), Value::Boolean(false)),
+        ("isRawTTY".to_string(), Value::Boolean(false)),
+        (
+            "write".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                if is_error {
+                    "process:stderrWrite"
+                } else {
+                    "process:stdoutWrite"
+                },
+                if is_error { 0x0A0A } else { 0x0A09 },
+            )),
+        ),
+    ])
 }
 
 fn method_props() -> Vec<(&'static str, Value)> {
@@ -262,6 +283,21 @@ fn value_to_i32(value: &Value) -> i32 {
         Value::String(s) => s.parse().unwrap_or(0),
         _ => 0,
     }
+}
+
+/// `process.stdout.write(chunk)` / `process.stderr.write(chunk)` —
+/// writes the chunk to the host output sink and returns true.
+pub fn stream_write(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let chunk = match args.first() {
+        Some(Value::String(s)) => s.clone(),
+        Some(value) => crate::modules::util::inspect(value),
+        None => String::new(),
+    };
+    let guard = state.borrow();
+    if let Some(sink) = &guard.output {
+        sink(&chunk);
+    }
+    Ok(Value::Boolean(true))
 }
 
 /// `process.umask([mask])` — accepts an optional new mask, returns the
