@@ -160,9 +160,7 @@ fn define_property_value(target: Value, key: &str, value: Value) -> Value {
             }
             Value::Function(function)
         }
-        Value::BoundFunction(bound)
-            if bound.target == Value::Builtin(crate::ops::Builtin::AbstractModuleSource) =>
-        {
+        Value::BoundFunction(bound) => {
             {
                 let mut properties = bound.properties.borrow_mut();
                 let deleted = crate::builtins::deleted_key(key);

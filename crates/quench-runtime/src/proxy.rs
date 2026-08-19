@@ -155,7 +155,11 @@ fn proxy_target_property(
             },
         )));
     }
-    crate::vm::get_property_with_receiver(&proxy.target, prop, receiver)
+    crate::vm::get_property_with_receiver(
+        &crate::locals::resolved_replacement(proxy.target.clone()),
+        prop,
+        receiver,
+    )
 }
 
 pub(crate) fn proxy_has(target: &Value, prop: &str) -> Result<Value, VmError> {
