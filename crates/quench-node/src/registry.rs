@@ -47,6 +47,15 @@ pub const SPEC_UTIL_TYPES: NodeSpec = NodeSpec::new("util:types", 0x0302);
 pub const SPEC_UTIL_GETCALLSITES: NodeSpec = NodeSpec::new("util:getCallSites", 0x0303);
 pub const SPEC_UTIL_IS: NodeSpec = NodeSpec::new("util:is", 0x0303);
 pub const SPEC_UTIL_INHERITS: NodeSpec = NodeSpec::new("util:inherits", 0x0304);
+pub const SPEC_UTIL_STRIP_VT: NodeSpec = NodeSpec::new("util:stripVTControlCharacters", 0x0305);
+pub const SPEC_UTIL_FORMAT_WITH_OPTIONS: NodeSpec = NodeSpec::new("util:formatWithOptions", 0x0306);
+pub const SPEC_UTIL_STYLE_TEXT: NodeSpec = NodeSpec::new("util:styleText", 0x0307);
+pub const SPEC_UTIL_IS_DEEP_STRICT_EQUAL: NodeSpec =
+    NodeSpec::new("util:isDeepStrictEqual", 0x0308);
+pub const SPEC_TEXT_DECODER_NEW: NodeSpec = NodeSpec::new("TextDecoder:new", 0x0809);
+pub const SPEC_TEXT_DECODER_DECODE: NodeSpec = NodeSpec::new("TextDecoder:decode", 0x080A);
+pub const SPEC_TEST: NodeSpec = NodeSpec::new("test:test", 0x1b00);
+pub const SPEC_TEST_SKIP: NodeSpec = NodeSpec::new("test:skip", 0x1b01);
 
 pub const SPEC_PATH_JOIN: NodeSpec = NodeSpec::new("path:join", 0x0400);
 pub const SPEC_PATH_RESOLVE: NodeSpec = NodeSpec::new("path:resolve", 0x0401);

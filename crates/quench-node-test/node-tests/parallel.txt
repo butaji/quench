@@ -68,3 +68,11 @@ test-url-invalid-file-url-path-input.js
 test-url-pathtofileurl.js
 test-url-revokeobjecturl.js
 test-url-urltooptions.js
+test-util-inherits.js
+test-util-isDeepStrictEqual.js
+test-util-primordial-monkeypatching.js
+test-util-sleep.js
+test-util-stripvtcontrolcharacters.js
+test-util-styletext-hex.js
+test-util-styletext.js
+test-util-text-decoder.js
