@@ -53,7 +53,7 @@ fn set_prototype_slot(target: &Value, key: &str, value: Value) -> Option<Value> 
             data.set_prototype(value);
             Value::Promise(data.clone())
         }
-        other => return set_typed_array_prototype(other, value),
+        other => return set_typed_array_prototype(other.clone(), value),
     })
 }
 
