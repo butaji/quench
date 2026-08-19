@@ -369,11 +369,17 @@ fn update_machine_frame(generator: &GeneratorData, state: &GeneratorState) -> Re
 }
 
 fn push_nested_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<bool, VmError> {
-    if suspended_try(generator, state).is_some() {
+    let iterator = push_iterator_frame(generator, state)?;
+    if suspended_try(generator, state).is_some()
+        && !matches!(
+            generator.machine.borrow().frames.frames.last(),
+            Some(crate::machine::Frame::Try { .. })
+        )
+    {
         push_try_frame(generator, state)?;
         return Ok(true);
     }
-    if push_iterator_frame(generator, state)? {
+    if iterator {
         return Ok(true);
     }
     if suspended_conditional(generator, state).is_some() {
@@ -396,6 +402,15 @@ fn resume_suspended_contexts(
         return resume_machine_frame(generator, state, completion).map(Some);
     }
     if let Some(completion) = resume_try_frame(generator, state, completion.clone())? {
+        if completion.is_suspension() {
+            return resume_machine_frame(generator, state, completion).map(Some);
+        }
+        if let Some(completion) = resume_iterator_frame(generator, state, completion.clone())? {
+            return resume_machine_frame(generator, state, completion).map(Some);
+        }
+        return resume_machine_frame(generator, state, completion).map(Some);
+    }
+    if let Some(completion) = resume_iterator_frame(generator, state, completion.clone())? {
         return resume_machine_frame(generator, state, completion).map(Some);
     }
     if let Some(completion) = resume_branch_frame(generator, state, completion.clone())? {
