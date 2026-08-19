@@ -435,10 +435,11 @@ pub fn reduce_unary(
     };
     let unresolved_typeof = operator == crate::ops::UnaryOp::Typeof
         && crate::unary::is_unresolved_identifier(&unary.argument, locals);
-    let src = if unresolved_typeof && dynamic_binding_may_exist(ops) {
+    // An unresolved identifier may still be bound by the host at runtime
+    // (installed globals, module environments), so `typeof x` must emit a
+    // real lookup; folding to `undefined` is only sound for known locals.
+    let src = if unresolved_typeof {
         emit_optional_name_lookup(&unary.argument, ops, next_register)?
-    } else if unresolved_typeof {
-        crate::reduce_support::emit_undefined(ops, next_register)
     } else {
         reduce_expression(&unary.argument, ops, facts, next_register, locals)?
     };
@@ -468,32 +469,6 @@ fn emit_optional_name_lookup(
     Some(dst)
 }
 
-fn dynamic_binding_may_exist(ops: &[Op]) -> bool {
-    ops.iter().any(op_may_invoke_eval)
-}
-
-fn op_may_invoke_eval(op: &Op) -> bool {
-    matches!(
-        op,
-        Op::Eval { .. }
-            | Op::Call { .. }
-            | Op::OptionalCall { .. }
-            | Op::CallMethod { .. }
-            | Op::CallSuperMethod { .. }
-            | Op::Construct { .. }
-            | Op::Await { .. }
-            | Op::Yield { .. }
-            | Op::Branch { .. }
-            | Op::Label { .. }
-            | Op::With { .. }
-            | Op::Try { .. }
-            | Op::Loop { .. }
-            | Op::ForIn { .. }
-            | Op::ForOf { .. }
-            | Op::Switch { .. }
-            | Op::Conditional { .. }
-    )
-}
 pub fn reduce_call(
     call: &oxc::ast::ast::CallExpression<'_>,
     ops: &mut Vec<Op>,

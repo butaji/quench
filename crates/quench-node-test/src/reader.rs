@@ -24,6 +24,7 @@ impl NodeFixture {
     pub fn from_path(path: PathBuf) -> Result<Self, String> {
         let source =
             std::fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        let path = path.canonicalize().unwrap_or(path);
         Ok(Self { path, source })
     }
 

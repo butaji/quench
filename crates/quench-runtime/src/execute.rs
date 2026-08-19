@@ -104,6 +104,35 @@ pub fn set_callable_property(
 pub fn replace_value(old: &crate::value::Value, new: &crate::value::Value) {
     crate::locals::replace_value(old, new);
 }
+/// Canonical strict equality (`===`) for host code. The VM and host
+/// modules share this single semantic owner.
+pub fn strict_equal(left: &crate::value::Value, right: &crate::value::Value) -> bool {
+    crate::equality::strict_equal(left, right)
+}
+
+/// Canonical abstract equality (`==`) for host code.
+pub fn abstract_equal(
+    left: &crate::value::Value,
+    right: &crate::value::Value,
+) -> Result<bool, VmError> {
+    crate::equality::abstract_equal(left, right)
+}
+
+/// Canonical `Object.is` comparison for host code.
+pub fn same_value(left: &crate::value::Value, right: &crate::value::Value) -> bool {
+    crate::builtins::same_value(Some(left), Some(right))
+}
+
+/// Throw a canonical `TypeError` from host code.
+pub fn type_error(message: &str) -> VmError {
+    crate::value::error::throw_type_error(message)
+}
+
+/// Own enumerable string keys of a value, in property order.
+pub fn own_enumerable_keys(value: &crate::value::Value) -> Vec<String> {
+    crate::own_keys::enumerable_key_strings(Some(value))
+}
+
 pub(crate) use crate::vm::{
     execute_completion_in_place, execute_completion_step_in_place, not_callable,
 };
