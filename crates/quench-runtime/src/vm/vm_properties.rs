@@ -94,13 +94,22 @@ fn get_property_value_tail(value: &Value, key: &str) -> Value {
 fn get_property_value_object_tail(value: &Value, key: &str) -> Value {
     use Value::*;
     match value {
-        Function(_) if matches!(key, "apply" | "call" | "bind") => {
-            bind_function_property(value, key)
+        Function(function) if matches!(key, "apply" | "call" | "bind") => {
+            function_prototype_method(key).unwrap_or_else(|| function_property(function, key))
         }
         Function(function) => function_property(function, key),
         BoundFunction(bound) => bound_function_property(value, bound, key),
         _ => get_property_value_collection_tail(value, key),
     }
+}
+
+fn function_prototype_method(key: &str) -> Option<Value> {
+    Some(Value::Builtin(match key {
+        "apply" => Builtin::FunctionApply,
+        "call" => Builtin::FunctionCall,
+        "bind" => Builtin::FunctionBind,
+        _ => return None,
+    }))
 }
 
 fn get_property_value_collection_tail(value: &Value, key: &str) -> Value {

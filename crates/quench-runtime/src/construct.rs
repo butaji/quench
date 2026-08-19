@@ -87,7 +87,9 @@ fn construct_with_new_target(
     new_target: &Value,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    match target {
+    let target = peel_construct_value(target);
+    let new_target = peel_construct_value(new_target);
+    match &target {
         Value::HostCapability(capability) => {
             let value = crate::vm::current_context_or_default()
                 .construct_host_with_new_target(
@@ -96,17 +98,17 @@ fn construct_with_new_target(
                         kind: capability.descriptor.kind,
                     },
                     arguments,
-                    new_target,
+                    &new_target,
                 )
                 .unwrap_or(Err(crate::vm::not_callable()))?;
-            with_new_target_prototype(value, target, new_target)
+            with_new_target_prototype(value, &target, &new_target)
         }
         Value::Builtin(builtin) => {
-            construct_builtin_target(*builtin, target, new_target, arguments)
+            construct_builtin_target(*builtin, &target, &new_target, arguments)
         }
-        Value::Function(function) => construct_function(function, new_target, arguments),
-        Value::BoundFunction(bound) => construct_bound(bound, target, new_target, arguments),
-        Value::Proxy(_) => crate::proxy::proxy_construct(target, arguments, Some(new_target)),
+        Value::Function(function) => construct_function(function, &new_target, arguments),
+        Value::BoundFunction(bound) => construct_bound(bound, &target, &new_target, arguments),
+        Value::Proxy(_) => crate::proxy::proxy_construct(&target, arguments, Some(&new_target)),
         _ => Err(crate::vm::not_callable()),
     }
 }
@@ -260,12 +262,7 @@ fn construct_bound(
 ) -> Result<Value, crate::execute::VmError> {
     let mut combined = bound.arguments.clone();
     combined.extend_from_slice(arguments);
-    let same = crate::builtins::same_value(Some(target), Some(new_target));
-    let new_target = if same {
-        bound.target.clone()
-    } else {
-        new_target.to_owned()
-    };
+    let new_target = bound_construct_new_target(target, new_target);
     let value = construct_bound_target(bound, &bound.target, &new_target, &combined)?;
     if let Value::HostCapability(capability) = &bound.receiver {
         // Host-created objects are owned by the host implementation. Adding
