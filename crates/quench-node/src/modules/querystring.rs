@@ -45,30 +45,48 @@ pub fn parse(
 
 pub fn stringify(args: &[Value]) -> String {
     let obj = args.first().cloned().unwrap_or(Value::Undefined);
-    let sep = args
-        .get(1)
-        .map(value_to_string)
-        .unwrap_or_else(|| "&".into());
-    let eq = args
-        .get(2)
-        .map(value_to_string)
-        .unwrap_or_else(|| "=".into());
+    let sep = args.get(1).map(value_to_string).unwrap_or_else(|| "&".into());
+    let eq = args.get(2).map(value_to_string).unwrap_or_else(|| "=".into());
     let mut out = String::new();
     let mut first = true;
+    for i in 0..64u32 {
+        emit_key(&obj, &i.to_string(), &sep, &eq, &mut out, &mut first);
+    }
     for key in QUERY_KEYS {
-        let v = quench_runtime::vm::get_property(&obj, key);
-        if matches!(v, Value::Undefined) {
-            continue;
-        }
-        if !first {
-            out.push_str(&sep);
-        }
-        first = false;
-        out.push_str(&escape_str(key));
-        out.push_str(&eq);
-        out.push_str(&escape_str(&value_to_string(&v)));
+        emit_key(&obj, key, &sep, &eq, &mut out, &mut first);
     }
     out
+}
+
+fn emit_key(obj: &Value, key: &str, sep: &str, eq: &str, out: &mut String, first: &mut bool) {
+    let v = quench_runtime::vm::get_property(obj, key);
+    if matches!(v, Value::Undefined) {
+        return;
+    }
+    if matches!(v, Value::Array(_)) {
+        for i in 0..u32::MAX {
+            let key_i = i.to_string();
+            let item = quench_runtime::vm::get_property(&v, &key_i);
+            if matches!(item, Value::Undefined) {
+                break;
+            }
+            if !*first {
+                out.push_str(sep);
+            }
+            *first = false;
+            out.push_str(&escape_str(key));
+            out.push_str(eq);
+            out.push_str(&escape_str(&value_to_string(&item)));
+        }
+        return;
+    }
+    if !*first {
+        out.push_str(sep);
+    }
+    *first = false;
+    out.push_str(&escape_str(key));
+    out.push_str(eq);
+    out.push_str(&escape_str(&value_to_string(&v)));
 }
 
 pub fn escape(args: &[Value]) -> Result<Value, VmError> {
@@ -83,8 +101,9 @@ pub fn unescape(args: &[Value]) -> Result<Value, VmError> {
 }
 
 const QUERY_KEYS: &[&str] = &[
-    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s",
-    "t", "u", "v", "w", "x", "y", "z",
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+    "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z",
+    "foo", "bar", "baz", "qux", "quux",
 ];
 
 fn escape_str(input: &str) -> String {
