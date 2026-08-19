@@ -1,0 +1,8 @@
+# Real Node.js test/parallel fixtures verified passing through the host.
+# Only list tests that genuinely exercise implemented APIs — no vacuous
+# stub passes. Grow by failure families, verify before adding.
+test-assert-fail.js
+test-assert-if-error.js
+test-buffer-constructor-deprecation-error.js
+test-events-once.js
+test-regression-object-prototype.js
