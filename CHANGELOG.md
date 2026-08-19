@@ -3,7 +3,7 @@
 ## 2026-08 — Node API host slice
 
 - `quench-node` is a pure-Rust Node API compatibility host built
-  on top of `quench-runtime`. It exposes 27 modules (assert,
+  on top of `quench-runtime`. It exposes 28 modules (assert,
   buffer, cluster, console, dgram, dns, events, fs, https,
   inspector, net, os, path, perf_hooks, process, querystring,
   repl, sea, stream, test, timers, tls, trace_events, tty, url,
