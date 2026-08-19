@@ -68,7 +68,8 @@ Current coverage (28 scripts):
 - `test-events.js` — events.EventEmitter round-trip
 - `test-fs.js` — fs.readFileSync / readdirSync
 - `test-modules.js` — every v1 `node:` module resolves
-- `test-net.js` — net.isIP / isIPv4 / isIPv6
+- `test-net.js` — net.isIP family + real loopback TCP (server.listen,
+  socket write/read echo, close) through the event-loop pump
 - `test-os.js` — os.cpus / totalmem / freemem / networkInterfaces
 - `test-path.js` — path.join / normalize / dirname / basename /
   extname / isAbsolute / relative + posix/win32 subnamespaces
