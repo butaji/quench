@@ -45,7 +45,11 @@ pub(crate) fn execute_completion_in_place(
 }
 
 pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, VmError> {
-    crate::locals::reset_replacements();
+    // The replacement log is the heap's forwarding table for copy-on-write
+    // object snapshots: it must outlive any single top-level entry so that
+    // references stashed in heap slots (event-loop callbacks, timers) still
+    // resolve to the latest snapshot. Hosts running independent programs on
+    // one thread call `execute::reset_replacements` between programs.
     let result = execute_with_registers_context(ops, Vec::new(), context);
     // Drive the promise microtask queue so `.then`/`.catch` reactions and
     // synchronously-settling promise chains run to completion. Reinstall
@@ -181,4 +185,31 @@ pub(crate) fn execute_indirect_eval_in_realm(
     ops: &[Op],
 ) -> Result<Value, VmError> {
     realm::execute(realm_id, ops)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use crate::value::{ObjectData, Value};
+
+    /// Bug reproducer: the replacement log is the forwarding table that
+    /// keeps heap-resident object references (event-loop callbacks, timers)
+    /// pointing at the latest copy-on-write snapshot. Re-entering the VM
+    /// for another top-level execution of the same program must not clear
+    /// it — otherwise those references silently revert to stale snapshots.
+    #[test]
+    fn execute_with_context_preserves_replacements() {
+        let old = Value::Object(Rc::new(ObjectData::new(vec![])));
+        let new = Value::Object(Rc::new(ObjectData::new(vec![])));
+        crate::locals::replace_value(&old, &new);
+        let program = crate::reduce::reduce_source("0;").expect("source reduces");
+        crate::vm::execute_with_context(program.ops(), &crate::vm::VmContext::default())
+            .expect("program runs");
+        let resolved = crate::locals::resolved_replacement(old);
+        let (Value::Object(resolved), Value::Object(expected)) = (resolved, new) else {
+            panic!("replacement must resolve to the new snapshot");
+        };
+        assert!(Rc::ptr_eq(&resolved, &expected));
+    }
 }
