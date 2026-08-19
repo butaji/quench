@@ -238,8 +238,9 @@ pub fn strict_equal(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    // Node's `strictEqual` is `Object.is`, not `===` (NaN equals NaN).
     binary_assert(args, "strictEqual", true, |a, b| {
-        Ok(execute::strict_equal(a, b))
+        Ok(execute::same_value(a, b))
     })
 }
 
@@ -249,7 +250,7 @@ pub fn not_strict_equal(
     args: &[Value],
 ) -> Result<Value, VmError> {
     binary_assert(args, "notStrictEqual", false, |a, b| {
-        Ok(execute::strict_equal(a, b))
+        Ok(execute::same_value(a, b))
     })
 }
 
