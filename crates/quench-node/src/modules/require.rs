@@ -66,6 +66,12 @@ fn resolve(spec: &str) -> Option<Value> {
             ("request".to_string(), crate::host::capability(crate::registry::NodeSpec::new("https:request", 0x1600))),
             ("get".to_string(), crate::host::capability(crate::registry::NodeSpec::new("https:get", 0x1601))),
         ])),
+        "zlib" => Some(crate::host::namespace_object_from_pairs(vec![
+            ("gzip".to_string(), crate::host::capability(crate::registry::NodeSpec::new("zlib:gzip", 0x1700))),
+        ])),
+        "perf_hooks" => Some(crate::host::namespace_object_from_pairs(vec![
+            ("performance".to_string(), crate::host::capability(crate::registry::NodeSpec::new("perf_hooks:performance", 0x1800))),
+        ])),
         "timers" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
