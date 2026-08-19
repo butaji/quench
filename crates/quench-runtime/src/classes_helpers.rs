@@ -16,7 +16,7 @@ fn emit_default_constructor(ops: &mut Vec<Op>, next: &mut u16) -> u16 {
         ]),
         params: 0,
         captures: 0,
-        kind: FunctionKind::Ordinary,
+        kind: FunctionKind::ClassConstructor,
         length: 0,
         strictness: FunctionStrictness::Strict,
         is_async: false,
@@ -39,16 +39,18 @@ fn emit_string(ops: &mut Vec<Op>, next: &mut u16, value: String) -> u16 {
 
 fn define_class_prototype(
     ops: &mut Vec<Op>,
-    _next: &mut u16,
+    next: &mut u16,
     constructor: u16,
     prototype: u16,
 ) {
-    ops.push(Op::SetProperty {
-        object: constructor,
-        key: "prototype".to_string(),
-        src: prototype,
-        strict: true,
-    });
+    define_static_key(
+        ops,
+        next,
+        constructor,
+        "prototype",
+        prototype,
+        PropertyDefinitionKind::Data,
+    );
 }
 
 fn define_static_key(
