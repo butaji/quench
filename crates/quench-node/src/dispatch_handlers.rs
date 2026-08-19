@@ -225,7 +225,7 @@ pub fn timers_clear_interval(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::timers::clear_interval(state, args)
+    crate::modules::timers::clear_timeout(state, args)
 }
 pub fn timers_set_immediate(
     state: &Rc<RefCell<HostState>>,
@@ -247,6 +247,64 @@ pub fn timers_tick(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::timers::tick(state, args)
+}
+pub fn timers_method_unref(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::timers::method_unref(state, receiver))
+}
+pub fn timers_method_ref(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::timers::method_ref(state, receiver))
+}
+pub fn timers_method_has_ref(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::timers::method_has_ref(state, receiver))
+}
+pub fn timers_method_refresh(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(crate::modules::timers::method_refresh(state, receiver))
+}
+pub fn timers_run_loop(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::pump::run_event_loop(state)?;
+    Ok(Value::Undefined)
+}
+pub fn timers_run_exit(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::pump::run_exit_handlers(state)?;
+    Ok(Value::Undefined)
+}
+/// `internal/util.sleep(ms)` — synchronous sleep used by Node's own
+/// tests to assert timer ordering.
+pub fn internal_util_sleep(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let ms = match args.first() {
+        Some(Value::Number(n)) if n.is_finite() && *n > 0.0 => *n as u64,
+        _ => 0,
+    };
+    std::thread::sleep(std::time::Duration::from_millis(ms));
+    Ok(Value::Undefined)
 }
 
 // ---- buffer ----
@@ -808,6 +866,13 @@ pub fn process_on(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::process::on(state, args)
+}
+pub fn process_once(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::once(state, args)
 }
 
 pub fn test_run(

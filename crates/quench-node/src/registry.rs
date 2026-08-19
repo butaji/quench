@@ -77,6 +77,13 @@ pub const SPEC_TIMERS_CLEARINTERVAL: NodeSpec = NodeSpec::new("timers:clearInter
 pub const SPEC_TIMERS_SETIMMEDIATE: NodeSpec = NodeSpec::new("timers:setImmediate", 0x0704);
 pub const SPEC_TIMERS_CLEARIMMEDIATE: NodeSpec = NodeSpec::new("timers:clearImmediate", 0x0705);
 pub const SPEC_TIMERS_TICK: NodeSpec = NodeSpec::new("timers:tick", 0x0706);
+pub const SPEC_TIMERS_UNREF: NodeSpec = NodeSpec::new("timers:unref", 0x0708);
+pub const SPEC_TIMERS_REF: NodeSpec = NodeSpec::new("timers:ref", 0x0709);
+pub const SPEC_TIMERS_HASREF: NodeSpec = NodeSpec::new("timers:hasRef", 0x070A);
+pub const SPEC_TIMERS_REFRESH: NodeSpec = NodeSpec::new("timers:refresh", 0x070B);
+pub const SPEC_RUN_LOOP: NodeSpec = NodeSpec::new("__quench_run_loop__", 0x070C);
+pub const SPEC_RUN_EXIT: NodeSpec = NodeSpec::new("__quench_run_exit__", 0x070D);
+pub const SPEC_INTERNAL_UTIL_SLEEP: NodeSpec = NodeSpec::new("internal/util:sleep", 0x070E);
 
 pub const SPEC_BUFFER_FROM: NodeSpec = NodeSpec::new("buffer:from", 0x0800);
 pub const SPEC_BUFFER_ALLOC: NodeSpec = NodeSpec::new("buffer:alloc", 0x0801);
@@ -97,6 +104,7 @@ pub const SPEC_PROCESS_NEXT_TICK: NodeSpec = NodeSpec::new("process:nextTick", 0
 pub const SPEC_PROCESS_HRTIME: NodeSpec = NodeSpec::new("process:hrtime", 0x0A05);
 pub const SPEC_PROCESS_UMASK: NodeSpec = NodeSpec::new("process:umask", 0x0A06);
 pub const SPEC_PROCESS_ON: NodeSpec = NodeSpec::new("process:on", 0x0A07);
+pub const SPEC_PROCESS_ONCE: NodeSpec = NodeSpec::new("process:once", 0x0A08);
 
 pub const SPEC_OS_PLATFORM: NodeSpec = NodeSpec::new("os:platform", 0x0B00);
 pub const SPEC_OS_ARCH: NodeSpec = NodeSpec::new("os:arch", 0x0B01);
@@ -219,9 +227,9 @@ impl<T: 'static + crate::envelope::NodeAny> BoundNode<T> {
 /// Canonical namespace wiring. Returns the `(name, value)` pairs
 /// the host installs into the `VmContext` via
 /// `with_host_value`. Single source of truth for the global table.
-pub fn namespace_bindings() -> Vec<(String, quench_runtime::value::Value)> {
+pub fn namespace_bindings(argv: &[String]) -> Vec<(String, quench_runtime::value::Value)> {
     let mut out = Vec::new();
-    push_bindings(&mut out);
+    push_bindings(&mut out, argv);
     out.push(timers_binding(
         "setTimeout",
         crate::registry::SPEC_TIMERS_SETTIMEOUT,
@@ -259,6 +267,14 @@ pub fn namespace_bindings() -> Vec<(String, quench_runtime::value::Value)> {
         crate::host::capability(crate::registry::SPEC_CJS_WRAP),
     ));
     out.push((
+        "__quench_run_loop__".to_string(),
+        crate::host::capability(crate::registry::SPEC_RUN_LOOP),
+    ));
+    out.push((
+        "__quench_run_exit__".to_string(),
+        crate::host::capability(crate::registry::SPEC_RUN_EXIT),
+    ));
+    out.push((
         "structuredClone".to_string(),
         crate::host::capability(crate::registry::SPEC_STRUCTURED_CLONE),
     ));
@@ -289,12 +305,12 @@ pub fn namespace_bindings() -> Vec<(String, quench_runtime::value::Value)> {
     out
 }
 
-fn push_bindings(out: &mut Vec<(String, quench_runtime::value::Value)>) {
+fn push_bindings(out: &mut Vec<(String, quench_runtime::value::Value)>, argv: &[String]) {
     out.push((
         "console".to_string(),
         crate::modules::console::build_value(),
     ));
-    out.push(("process".to_string(), crate::modules::process::build()));
+    out.push(("process".to_string(), crate::modules::process::build(argv)));
     out.push((
         "Buffer".to_string(),
         crate::host::namespace_object_from_pairs(crate::modules::buffer::build()),

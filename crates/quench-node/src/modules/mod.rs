@@ -16,6 +16,7 @@ pub mod net;
 pub mod os;
 pub mod path;
 pub mod process;
+pub mod pump;
 pub mod querystring;
 pub mod readline;
 pub mod require;
