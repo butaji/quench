@@ -238,8 +238,7 @@ fn finish_set_property(
             }
         }
     }
-    finish_property_write(registers, object, target, key, value);
-    Ok(())
+    ordinary_set(registers, object, target, key, value, strict)
 }
 
 fn inherits_error_prototype(target: &crate::value::Value) -> bool {
@@ -295,18 +294,6 @@ fn set_property_parts(
         )),
         _ => Err(crate::execute::VmError::MissingReturn),
     }
-}
-fn finish_property_write(
-    registers: &mut Vec<crate::value::Value>,
-    object: u16,
-    target: &crate::value::Value,
-    key: &str,
-    value: crate::value::Value,
-) {
-    let result = crate::builtins::set_property(target.clone(), key, value);
-    crate::locals::replace_value(target, &result);
-    crate::vm::synchronize_global_object(registers, target, &result);
-    crate::execute::write_value(registers, object, result);
 }
 fn finish_primitive_set(
     target: &crate::value::Value,

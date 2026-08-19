@@ -249,6 +249,7 @@ fn define_accessor_placeholder(target: Value, key: &str) -> Value {
             | Value::Promise(_)
             | Value::BoundFunction(_)
             | Value::ArrayBuffer(_)
+            | Value::Array(_)
     ) {
         return define_property_value(target, key, Value::Undefined);
     }

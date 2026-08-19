@@ -94,7 +94,8 @@ fn set_receiver_data(
     } else if rejects_new_property(receiver, key) {
         return Ok(false);
     }
-    let descriptor = receiver_data_descriptor(value, matches!(current, crate::value::Value::Undefined));
+    let descriptor =
+        receiver_data_descriptor(value, matches!(current, crate::value::Value::Undefined));
     let updated = crate::builtins::define_own_property(receiver, key, &descriptor)?;
     crate::locals::replace_value(receiver, &updated);
     Ok(true)
@@ -109,8 +110,29 @@ fn receiver_data_descriptor(
         descriptor.extend([
             ("writable".to_string(), crate::value::Value::Boolean(true)),
             ("enumerable".to_string(), crate::value::Value::Boolean(true)),
-            ("configurable".to_string(), crate::value::Value::Boolean(true)),
+            (
+                "configurable".to_string(),
+                crate::value::Value::Boolean(true),
+            ),
         ]);
     }
     descriptor
+}
+
+fn ordinary_set(
+    registers: &mut Vec<crate::value::Value>,
+    object: u16,
+    target: &crate::value::Value,
+    key: &str,
+    value: crate::value::Value,
+    strict: bool,
+) -> Result<(), crate::execute::VmError> {
+    if !set_with_receiver(target, key, &value, target)? {
+        return write_failure(strict);
+    }
+    if let Some(updated) = crate::locals::replacement(target) {
+        crate::execute::write_value(registers, object, updated.clone());
+        crate::vm::synchronize_global_object(registers, target, &updated);
+    }
+    Ok(())
 }

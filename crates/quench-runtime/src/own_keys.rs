@@ -101,7 +101,7 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
             .0
             .borrow()
             .upgrade()
-            .map_or_else(Vec::new, |properties| enumerable_ordered(&properties)),
+            .map_or_else(Vec::new, |properties| object_enumerable_keys(&properties)),
         Value::Function(function) => {
             let properties = function.properties.borrow();
             enumerable_ordered(&properties)
@@ -122,7 +122,8 @@ fn own_enumerable_string_keys(target: &Value) -> Vec<String> {
     }
 }
 
-fn object_enumerable_keys(properties: &[(String, Value)]) -> Vec<String> {
+fn object_enumerable_keys(data: &crate::value::ObjectData) -> Vec<String> {
+    let properties: &[(String, Value)] = data;
     if is_boxed_primitive(properties) {
         return enumerable_ordered(properties)
             .into_iter()
@@ -130,7 +131,7 @@ fn object_enumerable_keys(properties: &[(String, Value)]) -> Vec<String> {
             .collect();
     }
     let Some((_, value)) = properties.iter().find(|(key, _)| key == "_value") else {
-        return enumerable_ordered(properties)
+        return enumerable_created(data)
             .into_iter()
             .filter(|key| key != "timeValue")
             .collect();
@@ -157,6 +158,17 @@ fn is_boxed_primitive(properties: &[(String, Value)]) -> bool {
     let has_value = properties.iter().any(|(key, _)| key == "_value");
     let has_constructor = properties.iter().any(|(key, _)| key == "constructor");
     has_value && has_constructor
+}
+
+fn enumerable_created(data: &crate::value::ObjectData) -> Vec<String> {
+    let properties: Vec<(String, Value)> = data
+        .created
+        .iter()
+        .filter(|key| !key.starts_with('\0'))
+        .filter(|key| descriptor_enumerable(data, key))
+        .map(|key| (key.clone(), Value::Undefined))
+        .collect();
+    ordered(&properties, false)
 }
 
 fn enumerable_ordered(properties: &[(String, Value)]) -> Vec<String> {
