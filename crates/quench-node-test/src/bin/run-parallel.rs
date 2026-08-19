@@ -41,20 +41,29 @@ fn main() -> ExitCode {
     run_manifest()
 }
 
-fn run_manifest() -> ExitCode {
-    let Ok(manifest) = std::fs::read_to_string(MANIFEST) else {
-        eprintln!("read {MANIFEST}: missing manifest");
-        return ExitCode::from(2);
-    };
-    let names: Vec<String> = manifest
+fn manifest_names() -> Vec<String> {
+    let manifest = std::fs::read_to_string(MANIFEST).unwrap_or_default();
+    manifest
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(str::to_string)
-        .collect();
+        .collect()
+}
+
+fn run_manifest() -> ExitCode {
+    let names = manifest_names();
+    if names.is_empty() {
+        eprintln!("read {MANIFEST}: missing or empty manifest");
+        return ExitCode::from(2);
+    }
     let mut failed = Vec::new();
+    // Resolve fixture paths against the startup CWD: a fixture may call
+    // process.chdir (e.g. tmpdir cleanup), which moves the process CWD
+    // shared by all fixtures in this process.
+    let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     for name in &names {
-        let path = PathBuf::from(PARALLEL_DIR).join(name);
+        let path = root.join(PARALLEL_DIR).join(name);
         // Fresh runner per fixture: host state (module cache, exit
         // handlers, timers) must not leak across tests.
         match quench_node_test::NodeTestRunner::new().run_file(&path) {
