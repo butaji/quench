@@ -65,7 +65,12 @@ impl Op {
             Self::Loop { init, test, body, update, .. } => {
                 visit_many([init, test, body, update], visitor)
             }
-            Self::Switch { cases, .. } => cases.iter().for_each(|(_, body)| visitor(body)),
+            Self::Switch { cases, .. } => cases.iter().for_each(|(test, body)| {
+                if let Some(test) = test {
+                    visitor(test);
+                }
+                visitor(body);
+            }),
             _ => {}
         }
     }
@@ -83,11 +88,16 @@ fn rehome_loop(
 }
 
 fn rehome_cases(
-    cases: &mut Vec<(Option<Constant>, crate::machine::FunctionCode)>,
+    cases: &mut Vec<(Option<crate::machine::FunctionCode>, crate::machine::FunctionCode)>,
     arena: &mut crate::machine::CodeArena,
     store: &std::rc::Rc<std::sync::OnceLock<std::rc::Rc<crate::machine::CodeStore>>>,
 ) {
-    for (_, body) in cases { body.rehome(arena, store); }
+    for (test, body) in cases {
+        if let Some(test) = test {
+            test.rehome(arena, store);
+        }
+        body.rehome(arena, store);
+    }
 }
 
 fn rehome_optional(
