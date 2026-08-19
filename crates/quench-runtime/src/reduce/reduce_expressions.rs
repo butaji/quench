@@ -190,7 +190,7 @@ pub fn reduce_declaration(
 ) -> Result<(), Vec<String>> {
     for declarator in &declaration.declarations {
         allocate_pattern_slots(&declarator.id, declaration.kind, next_slot, locals, facts);
-        if crate::using_scope::is_using_kind(declaration.kind) {
+        if declaration.kind != VariableDeclarationKind::Var {
             crate::using_scope::mark_binding_tdz(&declarator.id, ops, locals);
         }
         if declaration.kind == VariableDeclarationKind::Var && declarator.init.is_none() {
