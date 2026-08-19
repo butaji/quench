@@ -71,9 +71,9 @@ fn should_skip_if_function(statement: &Statement<'_>, facts: &ProgramDb) -> bool
         return false;
     };
     function.id.as_ref().is_some_and(|identifier| {
-        facts
-            .eval_var_barrier
-            .contains(&identifier.name.to_string())
+        let name = identifier.name.as_str();
+        facts.eval_var_barrier.iter().any(|bound| bound == name)
+            || facts.eval_formals.iter().any(|bound| bound == name)
     })
 }
 

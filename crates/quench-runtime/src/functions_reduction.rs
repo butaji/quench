@@ -130,12 +130,11 @@ fn reduce_function_body_inner(
     )?;
     let local_count = function_local_count(&body_locals, layout, rest, arrow_expression.is_some());
     let inherited_barrier = facts.eval_var_barrier.clone();
-    facts
-        .eval_var_barrier
-        .extend(crate::function_parameters::eval_var_barrier(
-            formal,
-            arrow_expression.is_none(),
-        ));
+    let inherited_formals = facts.eval_formals.clone();
+    facts.eval_formals.extend(crate::function_parameters::eval_var_barrier(
+        formal,
+        arrow_expression.is_none(),
+    ));
     let body_ops = reduce_selected_body(
         statements,
         &ordered,
@@ -145,6 +144,7 @@ fn reduce_function_body_inner(
         arrow_expression.unwrap_or(false),
     );
     facts.eval_var_barrier = inherited_barrier;
+    facts.eval_formals = inherited_formals;
     prefix.extend((!prefix.is_empty()).then_some(Op::ParameterEnd));
     prefix.extend(body_ops?);
     Some(prefix)

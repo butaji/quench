@@ -91,6 +91,7 @@ pub struct ProgramDb {
     pub(crate) inferred_name: Option<String>,
     pub(crate) tail_calls: bool,
     pub(crate) eval_var_barrier: Vec<String>,
+    pub(crate) eval_formals: Vec<String>,
     pub(crate) eval_var_scope_start: u16,
     pub(crate) eval_arrow_scope: bool,
     pub(crate) eval_deletable: Vec<(String, u16)>,
