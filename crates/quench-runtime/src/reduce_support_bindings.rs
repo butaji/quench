@@ -187,8 +187,20 @@ fn annex_b_function_names_in(statement: &oxc::ast::ast::Statement<'_>) -> Vec<St
         oxc::ast::ast::Statement::DoWhileStatement(statement) => {
             annex_b_function_names(std::slice::from_ref(&statement.body))
         }
+        oxc::ast::ast::Statement::TryStatement(statement) => annex_b_try_function_names(statement),
         _ => Vec::new(),
     }
+}
+
+fn annex_b_try_function_names(statement: &oxc::ast::ast::TryStatement<'_>) -> Vec<String> {
+    let mut names = annex_b_function_names(&statement.block.body);
+    if let Some(handler) = &statement.handler {
+        names.extend(annex_b_function_names(&handler.body.body));
+    }
+    if let Some(finalizer) = &statement.finalizer {
+        names.extend(annex_b_function_names(&finalizer.body));
+    }
+    names
 }
 
 pub(crate) fn declared_names_in(statements: &[oxc::ast::ast::Statement<'_>]) -> Vec<String> {
