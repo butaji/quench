@@ -12,6 +12,8 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
         handler,
         finalizer,
         catch_slot,
+        dst,
+        finally_dst,
     } = op
     else {
         return Err(VmError::MissingReturn);
@@ -37,9 +39,23 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<Completion,
         completion => completion,
     };
     if let Some(abrupt) = run_finalizer(finalizer, registers)? {
-        return Ok(abrupt);
+        return finish_abrupt_finally(registers, *dst, *finally_dst, abrupt);
     }
-    Ok(completion)
+    Ok(completion.update_empty(Value::Undefined))
+}
+
+fn finish_abrupt_finally(
+    registers: &mut Vec<Value>,
+    dst: u16,
+    finally_dst: Option<u16>,
+    abrupt: Completion,
+) -> Result<Completion, VmError> {
+    let value = match finally_dst {
+        Some(slot) => crate::execute::read_register(registers, slot)?,
+        None => Value::Undefined,
+    };
+    crate::execute::write_value(registers, dst, value.clone());
+    Ok(abrupt.update_empty(value))
 }
 
 fn run_finalizer(

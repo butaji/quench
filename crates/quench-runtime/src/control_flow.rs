@@ -183,18 +183,22 @@ pub(crate) fn reduce_try(
     ops: &mut Vec<Op>,
     facts: &mut crate::facts::ProgramDb,
     locals: &mut HashMap<String, u16>,
+    dst: u16,
+    finally_dst: Option<u16>,
 ) -> Result<(), Vec<String>> {
     let (try_locals, next_slot) = hoisted_try_locals(statement, locals);
     locals.clone_from(&try_locals);
     let body = reduce_try_body(statement, facts, &try_locals, next_slot)?;
     let (handler, catch_slot) = reduce_try_handler(statement, facts, &try_locals)?;
-    let finalizer = reduce_try_finalizer(statement, facts, &try_locals, next_slot)?;
+    let finalizer = reduce_try_finalizer(statement, facts, &try_locals, next_slot, finally_dst)?;
     let (body, handler, finalizer) = materialize_try_bodies(body, handler, finalizer)?;
     ops.push(Op::Try {
         body,
         handler,
         finalizer,
         catch_slot,
+        dst,
+        finally_dst,
     });
     Ok(())
 }
@@ -315,11 +319,17 @@ fn reduce_try_finalizer(
     facts: &mut ProgramDb,
     locals: &HashMap<String, u16>,
     next_slot: u16,
+    finally_dst: Option<u16>,
 ) -> Result<Option<Vec<Op>>, Vec<String>> {
     let Some(finalizer) = statement.finalizer.as_ref() else {
         return Ok(None);
     };
-    reduce_isolated_block(finalizer, facts, locals, next_slot).map(Some)
+    let reduce = || reduce_isolated_block(finalizer, facts, locals, next_slot);
+    match finally_dst {
+        Some(dst) => crate::switch::with_completion(dst, reduce),
+        None => crate::switch::suspend_completion(reduce),
+    }
+    .map(Some)
 }
 
 fn handler_locals(
@@ -364,9 +374,18 @@ pub(crate) fn reduce_try_statement(
     statement: &oxc::ast::ast::TryStatement<'_>,
     ops: &mut Vec<Op>,
     facts: &mut crate::facts::ProgramDb,
+    next_register: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    reduce_try(statement, ops, facts, locals).map(|_| None)
+    let dst = crate::switch::take_completion_register(ops, next_register);
+    let finally_dst = statement
+        .finalizer
+        .as_ref()
+        .map(|_| crate::switch::take_completion_register(ops, next_register));
+    crate::switch::with_completion(dst, || {
+        reduce_try(statement, ops, facts, locals, dst, finally_dst)
+    })?;
+    Ok(Some(dst))
 }
 
 include!("control_flow_collect.rs");

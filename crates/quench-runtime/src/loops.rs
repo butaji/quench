@@ -95,7 +95,7 @@ pub(crate) fn reduce_for_in(
     next_register: &mut u16,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
-) -> Result<(), Vec<String>> {
+) -> Result<Option<u16>, Vec<String>> {
     let outer_locals = locals.clone();
     let (slot, per_iteration, pattern) = for_of_slot(&statement.left, next_slot, locals)?;
     emit_for_in_initializer(
@@ -107,21 +107,19 @@ pub(crate) fn reduce_for_in(
         locals,
         facts.strict,
     )?;
-    let object = crate::reduce::reduce_expression(
-        &statement.right,
-        ops,
-        facts,
-        next_register,
-        locals,
-    )
-    .ok_or_else(|| vec!["Unsupported for-in object".to_string()])?;
+    let object =
+        crate::reduce::reduce_expression(&statement.right, ops, facts, next_register, locals)
+            .ok_or_else(|| vec!["Unsupported for-in object".to_string()])?;
+    let dst = crate::switch::take_completion_register(ops, next_register);
     let mut body_locals = locals.clone();
     if per_iteration {
         if let Some(name) = for_in_name(&statement.left) {
             body_locals.insert(format!("\0lexical-predeclared:{name}"), slot);
         }
     }
-    let (mut body, _) = crate::branch::reduce(&statement.body, facts, &body_locals)?;
+    let (mut body, _) = crate::switch::with_completion(dst, || {
+        crate::branch::reduce(&statement.body, facts, &body_locals)
+    })?;
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
     }
@@ -135,8 +133,9 @@ pub(crate) fn reduce_for_in(
         slot,
         body: crate::machine::FunctionCode::from_ops(body),
         per_iteration,
+        dst,
     });
-    Ok(())
+    Ok(Some(dst))
 }
 
 fn for_left_immutable(left: &oxc::ast::ast::ForStatementLeft<'_>) -> bool {
@@ -169,7 +168,11 @@ fn emit_for_in_initializer(
     if declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var {
         return Ok(());
     }
-    let Some(init) = declaration.declarations.first().and_then(|d| d.init.as_ref()) else {
+    let Some(init) = declaration
+        .declarations
+        .first()
+        .and_then(|d| d.init.as_ref())
+    else {
         return Ok(());
     };
     let src = crate::reduce::reduce_expression(init, ops, facts, next_register, locals)
@@ -197,7 +200,7 @@ pub(crate) fn reduce_for_of(
     next_register: &mut u16,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
-) -> Result<(), Vec<String>> {
+) -> Result<Option<u16>, Vec<String>> {
     let outer_locals = locals.clone();
     let (slot, per_iteration, pattern) = for_of_slot(&statement.left, next_slot, locals)?;
     let iterable = crate::reduce::reduce_expression(
@@ -208,13 +211,16 @@ pub(crate) fn reduce_for_of(
         &outer_locals,
     )
     .ok_or_else(|| vec!["Unsupported for-of iterable".to_string()])?;
+    let dst = crate::switch::take_completion_register(ops, next_register);
     let mut body_locals = locals.clone();
     if per_iteration {
         if let Some(name) = for_in_name(&statement.left) {
             body_locals.insert(format!("\0lexical-predeclared:{name}"), slot);
         }
     }
-    let (mut body, _) = crate::branch::reduce(&statement.body, facts, &body_locals)?;
+    let (mut body, _) = crate::switch::with_completion(dst, || {
+        crate::branch::reduce(&statement.body, facts, &body_locals)
+    })?;
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
     }
@@ -228,8 +234,9 @@ pub(crate) fn reduce_for_of(
         slot,
         body: crate::machine::FunctionCode::from_ops(body),
         per_iteration,
+        dst,
     });
-    Ok(())
+    Ok(Some(dst))
 }
 
 fn for_in_slot(
@@ -270,17 +277,17 @@ pub(crate) fn execute_for_in(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, per_iteration, keys) = unpack_for_in(registers, op)?;
-    iterate_loop_keys(registers, label, slot, body, per_iteration, keys)
+    let (label, slot, body, per_iteration, keys, dst) = unpack_for_in(registers, op)?;
+    iterate_loop_keys(registers, label, slot, body, per_iteration, keys, dst)
 }
 
 pub(crate) fn execute_for_of(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, per_iteration, iterable) = unpack_for_of(registers, op)?;
+    let (label, slot, body, per_iteration, iterable, dst) = unpack_for_of(registers, op)?;
     let iterator = crate::collections::iterator::open(iterable)?;
-    iterate_loop_values(registers, label, slot, body, per_iteration, iterator)
+    iterate_loop_values(registers, label, slot, body, per_iteration, iterator, dst)
 }
 
 type ForInLoopData<'a> = (
@@ -289,6 +296,7 @@ type ForInLoopData<'a> = (
     &'a crate::machine::FunctionCode,
     bool,
     Vec<String>,
+    u16,
 );
 type ForOfLoopData<'a> = (
     &'a Option<String>,
@@ -296,6 +304,7 @@ type ForOfLoopData<'a> = (
     &'a crate::machine::FunctionCode,
     bool,
     crate::value::Value,
+    u16,
 );
 
 fn unpack_for_in<'a>(
@@ -308,12 +317,13 @@ fn unpack_for_in<'a>(
         slot,
         body,
         per_iteration,
+        dst,
     } = op
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let keys = for_in_keys(crate::execute::read_register(registers, *object)?);
-    Ok((label, *slot, body, *per_iteration, keys))
+    Ok((label, *slot, body, *per_iteration, keys, *dst))
 }
 
 fn for_in_keys(value: crate::value::Value) -> Vec<String> {
@@ -339,6 +349,7 @@ fn iterate_loop_keys(
     body: &crate::machine::FunctionCode,
     per_iteration: bool,
     keys: Vec<String>,
+    dst: u16,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let Some(body) = body.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
@@ -351,10 +362,21 @@ fn iterate_loop_keys(
             crate::completion::LoopTransition::Break(_) => {
                 return Ok(crate::completion::Completion::Normal)
             }
-            crate::completion::LoopTransition::Propagate(completion) => return Ok(completion),
+            crate::completion::LoopTransition::Propagate(completion) => {
+                return attach_loop_completion(registers, dst, completion);
+            }
         }
     }
     Ok(crate::completion::Completion::Normal)
+}
+
+fn attach_loop_completion(
+    registers: &[crate::value::Value],
+    dst: u16,
+    completion: crate::completion::Completion,
+) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let value = crate::execute::read_register(registers, dst)?;
+    Ok(completion.update_empty(value))
 }
 
 fn unpack_for_of<'a>(
@@ -367,12 +389,13 @@ fn unpack_for_of<'a>(
         slot,
         body,
         per_iteration,
+        dst,
     } = op
     else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     let iterable = crate::execute::read_register(registers, *iterable)?;
-    Ok((label, *slot, body, *per_iteration, iterable))
+    Ok((label, *slot, body, *per_iteration, iterable, *dst))
 }
 
 fn iterate_loop_values(
@@ -382,6 +405,7 @@ fn iterate_loop_values(
     body: &crate::machine::FunctionCode,
     per_iteration: bool,
     iterator: crate::value::Value,
+    dst: u16,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
     let Some(body) = body.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
@@ -415,6 +439,7 @@ fn iterate_loop_values(
                 );
             }
             crate::completion::LoopTransition::Propagate(completion) => {
+                let completion = attach_loop_completion(registers, dst, completion)?;
                 return crate::collections::iterator::close(iterator, completion);
             }
         }

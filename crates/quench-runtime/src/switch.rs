@@ -3,11 +3,14 @@ use crate::{
     ops::{Constant, Op},
     value::Value,
 };
-use std::cell::Cell;
 use oxc::ast::ast::SwitchStatement;
+use std::cell::Cell;
 use std::collections::HashMap;
 
-type SwitchCases = Vec<(Option<crate::machine::FunctionCode>, crate::machine::FunctionCode)>;
+type SwitchCases = Vec<(
+    Option<crate::machine::FunctionCode>,
+    crate::machine::FunctionCode,
+)>;
 
 thread_local! {
     static COMPLETION: Cell<Option<u16>> = const { Cell::new(None) };
@@ -24,6 +27,23 @@ pub(crate) fn suspend_completion<T>(reduce: impl FnOnce() -> T) -> T {
     let result = reduce();
     COMPLETION.set(previous);
     result
+}
+
+pub(crate) fn with_completion<T>(dst: u16, reduce: impl FnOnce() -> T) -> T {
+    let previous = COMPLETION.replace(Some(dst));
+    let result = reduce();
+    COMPLETION.set(previous);
+    result
+}
+
+pub(crate) fn take_completion_register(ops: &mut Vec<Op>, next: &mut u16) -> u16 {
+    let dst = *next;
+    *next = next.saturating_add(1);
+    ops.push(Op::Const {
+        dst,
+        value: Constant::Undefined,
+    });
+    dst
 }
 
 pub(crate) fn reduce(
@@ -50,7 +70,13 @@ pub(crate) fn reduce(
     let mut block_locals = locals.clone();
     instantiate_case_block(statement, ops, &mut block_locals, &mut next_slot);
     let previous = COMPLETION.replace(Some(dst));
-    let cases = reduce_cases(statement, facts, next_register, &mut next_slot, &mut block_locals);
+    let cases = reduce_cases(
+        statement,
+        facts,
+        next_register,
+        &mut next_slot,
+        &mut block_locals,
+    );
     COMPLETION.set(previous);
     let cases = cases?;
     ops.push(Op::Switch {
@@ -153,10 +179,7 @@ fn prepare_case_functions(
         *next_slot = next_slot.saturating_add(1);
         locals.insert(name.to_string(), slot);
         locals.insert(format!("\0annex-b-lexical:{name}"), slot);
-        ops.push(Op::MarkUninitialized {
-            slot,
-            shared: true,
-        });
+        ops.push(Op::MarkUninitialized { slot, shared: true });
     }
 }
 
@@ -197,7 +220,10 @@ pub(crate) fn execute(
 }
 
 fn match_case(
-    cases: &[(Option<crate::machine::FunctionCode>, crate::machine::FunctionCode)],
+    cases: &[(
+        Option<crate::machine::FunctionCode>,
+        crate::machine::FunctionCode,
+    )],
     value: &Value,
     registers: &mut Vec<Value>,
 ) -> Result<Option<usize>, crate::execute::VmError> {
