@@ -88,6 +88,7 @@ test-url-invalid-file-url-path-input.js
 test-url-pathtofileurl.js
 test-url-revokeobjecturl.js
 test-url-urltooptions.js
+test-whatwg-url-custom-deepequal.js
 test-util-inherits.js
 test-util-isDeepStrictEqual.js
 test-util-primordial-monkeypatching.js
@@ -119,7 +120,9 @@ test-buffer-safe-unsafe.js
 test-buffer-sharedarraybuffer.js
 test-buffer-swap.js
 test-buffer-tostring-4gb.js
+test-buffer-tostring.js
 test-buffer-writedouble.js
 test-buffer-writefloat.js
 test-buffer-zero-fill-cli.js
 test-buffer-zero-fill.js
+test-os-constants-signals.js
