@@ -34,12 +34,12 @@ impl ArrayData {
             mapped: Vec::new(),
             deleted: Vec::new(),
             prototype: std::cell::RefCell::new(None),
-        argument_live: Some(Rc::new(RefCell::new(ArgumentLive {
-            values: live_values,
-            length,
-            mapped: Vec::new(),
-            deleted: Vec::new(),
-        }))),
+            argument_live: Some(Rc::new(RefCell::new(ArgumentLive {
+                values: live_values,
+                length,
+                mapped: Vec::new(),
+                deleted: Vec::new(),
+            }))),
         }
     }
 
@@ -179,10 +179,13 @@ impl ArrayData {
         (start..dense_end)
             .find(|&index| self.has_index(index))
             .or_else(|| {
-                self.properties.iter().filter_map(|(key, _)| {
-                    let index = crate::arrays::array_index(key)? as usize;
-                    (index >= start && index < length && self.has_index(index)).then_some(index)
-                }).min()
+                self.properties
+                    .iter()
+                    .filter_map(|(key, _)| {
+                        let index = crate::arrays::array_index(key)? as usize;
+                        (index >= start && index < length && self.has_index(index)).then_some(index)
+                    })
+                    .min()
             })
     }
 
@@ -221,12 +224,23 @@ impl ArrayData {
     }
 
     pub(crate) fn define_descriptor(&mut self, key: &str, descriptor: Value) {
-        self.descriptors.retain(|(name, _)| name != key);
+        if let Some((_, current)) = self
+            .descriptors
+            .iter_mut()
+            .rev()
+            .find(|(name, _)| name == key)
+        {
+            *current = descriptor;
+            return;
+        }
         self.descriptors.push((key.to_string(), descriptor));
     }
 
     pub(crate) fn descriptor_keys(&self) -> Vec<String> {
-        self.descriptors.iter().map(|(key, _)| key.clone()).collect()
+        self.descriptors
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect()
     }
 
     pub(crate) fn property(&self, key: &str) -> Option<Value> {
@@ -301,7 +315,8 @@ fn set_live_index(live: &mut ArgumentLive, index: usize, value: Value) {
         *binding.borrow_mut() = value.clone();
     }
     if live.values.len() <= index {
-        live.values.resize(index.saturating_add(1), Value::Undefined);
+        live.values
+            .resize(index.saturating_add(1), Value::Undefined);
     }
     live.values[index] = value;
     if live.deleted.len() <= index {
