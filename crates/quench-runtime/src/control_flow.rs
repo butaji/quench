@@ -350,9 +350,13 @@ fn handler_locals(
     (result, Some(slot), next_slot)
 }
 
-fn preserve_annex_b_outer(locals: &mut HashMap<String, u16>, name: &str) {
+pub(crate) fn preserve_annex_b_outer(locals: &mut HashMap<String, u16>, name: &str) {
+    let key = format!("\0annex-b-outer:{name}");
+    if locals.contains_key(&key) {
+        return;
+    }
     if let Some(slot) = locals.get(name).copied() {
-        locals.insert(format!("\0annex-b-outer:{name}"), slot);
+        locals.insert(key, slot);
     }
 }
 

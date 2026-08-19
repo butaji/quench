@@ -204,7 +204,11 @@ fn nested_var_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
             }
             names
         }
-        oxc::ast::ast::Statement::SwitchStatement(statement) => switch_var_names(statement),
+        oxc::ast::ast::Statement::SwitchStatement(statement) => {
+            let mut names = switch_var_names(statement);
+            names.extend(annex_b_switch_function_names(statement));
+            names
+        }
         oxc::ast::ast::Statement::LabeledStatement(statement) => {
             annex_b_function_names(std::slice::from_ref(&statement.body))
         }
