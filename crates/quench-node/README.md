@@ -15,3 +15,20 @@ allowed to know what "Node" is.
 fixtures / runner / classifier live in
 [`../quench-node-test`](../quench-node-test). This crate knows
 about Node; it knows nothing about the Node test runner.
+
+## CLI
+
+The `quench-node` binary runs a script through the host like a Node
+binary, with genuine `process.argv` / `process.execPath` and exit
+code semantics. This is the entry point real npm apps launch under:
+
+```sh
+cargo run -p quench-node -- <script.js> [args...]
+# or, from a built tree:
+target/debug/quench-node <script.js> [args...]
+```
+
+Internals: the harness lives in `src/run.rs`
+(`quench_node::run::run_script`) — the single canonical owner of the
+`node <script>` pipeline (install host, run script as CJS, pump the
+event loop, run `exit` handlers, resolve the exit code).

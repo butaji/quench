@@ -382,9 +382,12 @@ impl<T: 'static + crate::envelope::NodeAny> BoundNode<T> {
 /// Canonical namespace wiring. Returns the `(name, value)` pairs
 /// the host installs into the `VmContext` via
 /// `with_host_value`. Single source of truth for the global table.
-pub fn namespace_bindings(argv: &[String]) -> Vec<(String, quench_runtime::value::Value)> {
+pub fn namespace_bindings(
+    argv: &[String],
+    exec_path: &str,
+) -> Vec<(String, quench_runtime::value::Value)> {
     let mut out = Vec::new();
-    push_bindings(&mut out, argv);
+    push_bindings(&mut out, argv, exec_path);
     out.push(timers_binding(
         "setTimeout",
         crate::registry::SPEC_TIMERS_SETTIMEOUT,
@@ -471,12 +474,19 @@ pub fn namespace_bindings(argv: &[String]) -> Vec<(String, quench_runtime::value
     out
 }
 
-fn push_bindings(out: &mut Vec<(String, quench_runtime::value::Value)>, argv: &[String]) {
+fn push_bindings(
+    out: &mut Vec<(String, quench_runtime::value::Value)>,
+    argv: &[String],
+    exec_path: &str,
+) {
     out.push((
         "console".to_string(),
         crate::modules::console::build_value(),
     ));
-    out.push(("process".to_string(), crate::modules::process::build(argv)));
+    out.push((
+        "process".to_string(),
+        crate::modules::process::build(argv, exec_path),
+    ));
     out.push(("Buffer".to_string(), crate::modules::buffer::build_object()));
 }
 
