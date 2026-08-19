@@ -36,6 +36,7 @@ fn reduce_body(
     crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, next_slot);
     let stack = crate::using_scope::reserve(&block.body, &mut block_locals, next_slot);
     crate::using_scope::emit_tdz(&block.body, ops, &block_locals);
+    prepare_block_functions(&block.body, &mut block_locals, next_slot, ops);
     instantiate_block_functions(
         &block.body,
         ops,
@@ -105,6 +106,28 @@ fn block_function_names(statements: &[oxc::ast::ast::Statement<'_>]) -> Vec<Stri
             crate::reduce_support::annex_b_plain_function_name(function)
         })
         .collect()
+}
+
+fn prepare_block_functions(
+    statements: &[oxc::ast::ast::Statement<'_>],
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+    ops: &mut Vec<Op>,
+) {
+    for name in block_function_names(statements) {
+        crate::control_flow::preserve_annex_b_outer(locals, &name);
+        if locals.contains_key(&format!("\0annex-b-lexical:{name}")) {
+            continue;
+        }
+        let slot = *next_slot;
+        *next_slot = next_slot.saturating_add(1);
+        locals.insert(name.clone(), slot);
+        locals.insert(format!("\0annex-b-lexical:{name}"), slot);
+        ops.push(Op::MarkUninitialized {
+            slot,
+            shared: true,
+        });
+    }
 }
 
 fn instantiate_block_functions(
