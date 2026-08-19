@@ -59,13 +59,13 @@ impl ProcessState {
     }
 }
 
-pub fn build(argv: &[String]) -> Value {
-    let mut props = info_props(argv);
+pub fn build(argv: &[String], exec_path: &str) -> Value {
+    let mut props = info_props(argv, exec_path);
     props.extend(method_props());
     crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()))
 }
 
-fn info_props(argv: &[String]) -> Vec<(&'static str, Value)> {
+fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
     vec![
         (
             "argv",
@@ -82,7 +82,7 @@ fn info_props(argv: &[String]) -> Vec<(&'static str, Value)> {
                 )]),
             )]),
         ),
-        ("execPath", Value::String("/usr/bin/env".into())),
+        ("execPath", Value::String(exec_path.to_string())),
         ("version", Value::String("v22.0.0".into())),
         (
             "versions",
