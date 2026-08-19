@@ -53,6 +53,29 @@ fn set_prototype_slot(target: &Value, key: &str, value: Value) -> Option<Value> 
             data.set_prototype(value);
             Value::Promise(data.clone())
         }
+        other => return set_typed_array_prototype(other, value),
+    })
+}
+
+fn set_typed_array_prototype(target: Value, value: Value) -> Option<Value> {
+    macro_rules! set_view {
+        ($variant:ident, $view:ident) => {{
+            $view.set_prototype(value);
+            Value::$variant($view)
+        }};
+    }
+    Some(match target {
+        Value::Float64Array(view) => set_view!(Float64Array, view),
+        Value::Float32Array(view) => set_view!(Float32Array, view),
+        Value::Int8Array(view) => set_view!(Int8Array, view),
+        Value::Int16Array(view) => set_view!(Int16Array, view),
+        Value::Int32Array(view) => set_view!(Int32Array, view),
+        Value::Uint8Array(view) => set_view!(Uint8Array, view),
+        Value::Uint16Array(view) => set_view!(Uint16Array, view),
+        Value::Uint32Array(view) => set_view!(Uint32Array, view),
+        Value::Uint8ClampedArray(view) => set_view!(Uint8ClampedArray, view),
+        Value::BigInt64Array(view) => set_view!(BigInt64Array, view),
+        Value::BigUint64Array(view) => set_view!(BigUint64Array, view),
         _ => return None,
     })
 }

@@ -133,22 +133,11 @@ pub(crate) fn number_value_of(receiver: Option<&Value>) -> Result<Value, VmError
         Some(Value::Builtin(Builtin::NumberPrototype)) => Ok(Value::Number(0.0)),
         Some(Value::Number(value)) => Ok(Value::Number(*value)),
         Some(value @ Value::Object(_)) => {
-            let constructor = crate::execute::get_property_result(value, "constructor")?;
-            let prototype = crate::execute::get_property(value, "\0prototype");
-            if constructor != Value::Builtin(Builtin::Number)
-                && prototype != Value::Builtin(Builtin::NumberPrototype)
-            {
-                return Err(crate::value::error::throw_type_error(
+            match crate::execute::get_property_result(value, "_value")? {
+                wrapped @ Value::Number(_) => Ok(wrapped),
+                _ => Err(crate::value::error::throw_type_error(
                     "Number.prototype.valueOf called on incompatible receiver",
-                ));
-            }
-            let value = crate::execute::get_property_result(value, "_value")?;
-            if let Value::Number(_) = value {
-                Ok(value)
-            } else {
-                Err(crate::value::error::throw_type_error(
-                    "Number.prototype.valueOf called on incompatible receiver",
-                ))
+                )),
             }
         }
         _ => Err(crate::value::error::throw_type_error(
