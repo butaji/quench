@@ -1,6 +1,5 @@
 use crate::{
     facts::ProgramDb,
-    literal::reduce_literal,
     ops::{Constant, Op},
     value::Value,
 };
@@ -8,7 +7,7 @@ use std::cell::Cell;
 use oxc::ast::ast::SwitchStatement;
 use std::collections::HashMap;
 
-type SwitchCases = Vec<(Option<Constant>, crate::machine::FunctionCode)>;
+type SwitchCases = Vec<(Option<crate::machine::FunctionCode>, crate::machine::FunctionCode)>;
 
 thread_local! {
     static COMPLETION: Cell<Option<u16>> = const { Cell::new(None) };
@@ -40,8 +39,11 @@ pub(crate) fn reduce(
         dst,
         value: Constant::Undefined,
     });
+    let mut next_slot = crate::reduce_support::register_base(locals);
+    let mut block_locals = locals.clone();
+    instantiate_case_block(statement, ops, &mut block_locals, &mut next_slot);
     let previous = COMPLETION.replace(Some(dst));
-    let cases = reduce_cases(statement, facts, next_register, locals, dst);
+    let cases = reduce_cases(statement, facts, next_register, &mut next_slot, &mut block_locals);
     COMPLETION.set(previous);
     let cases = cases?;
     ops.push(Op::Switch {
@@ -62,59 +64,70 @@ fn reduce_cases(
     statement: &SwitchStatement<'_>,
     facts: &mut ProgramDb,
     next_register: &mut u16,
-    locals: &HashMap<String, u16>,
-    _completion: u16,
+    next_slot: &mut u16,
+    block_locals: &mut HashMap<String, u16>,
 ) -> Result<SwitchCases, Vec<String>> {
     let mut cases = Vec::new();
     for case in &statement.cases {
         let test = case
             .test
             .as_ref()
-            .map(|test| {
-                reduce_literal(test)
-                    .map(|literal| literal.op)
-                    .ok_or_else(|| vec!["Dynamic switch case is unsupported".to_string()])
-            })
+            .map(|test| reduce_case_test(test, facts, next_register, block_locals))
             .transpose()?;
         let mut body = Vec::new();
-        let mut next_slot = crate::reduce_support::register_base(locals);
-        let mut body_locals = locals.clone();
-        prepare_case_locals(&case.consequent, &mut body_locals, &mut next_slot);
         for statement in &case.consequent {
-            if skip_annex_b_function(statement, facts) {
-                continue;
-            }
             crate::reduce::reduce_statement(
                 statement,
                 &mut body,
                 facts,
                 next_register,
-                &mut next_slot,
-                &mut body_locals,
+                next_slot,
+                block_locals,
             )?;
         }
         cases.push((test, body));
     }
     let (tests, bodies): (Vec<_>, Vec<_>) = cases.into_iter().unzip();
+    let tests = tests
+        .into_iter()
+        .map(|test| test.map(crate::machine::FunctionCode::from_ops))
+        .collect::<Vec<_>>();
     let stores = crate::machine::FunctionCode::from_ops_many(bodies);
     Ok(tests.into_iter().zip(stores).collect())
 }
 
-fn skip_annex_b_function(statement: &oxc::ast::ast::Statement<'_>, facts: &ProgramDb) -> bool {
-    let oxc::ast::ast::Statement::FunctionDeclaration(function) = statement else {
-        return false;
-    };
-    function.id.as_ref().is_some_and(|identifier| {
-        facts
-            .eval_var_barrier
-            .contains(&identifier.name.to_string())
-    })
+fn reduce_case_test(
+    test: &oxc::ast::ast::Expression<'_>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Result<Vec<Op>, Vec<String>> {
+    let mut ops = Vec::new();
+    let src = crate::reduce::reduce_expression(test, &mut ops, facts, next_register, locals)
+        .ok_or_else(|| vec!["Unsupported switch case".to_string()])?;
+    ops.push(Op::Return { src });
+    Ok(ops)
 }
 
-fn prepare_case_locals(
+fn instantiate_case_block(
+    statement: &SwitchStatement<'_>,
+    ops: &mut Vec<Op>,
+    locals: &mut HashMap<String, u16>,
+    next_slot: &mut u16,
+) {
+    for case in &statement.cases {
+        crate::reduce_support::predeclare_lexicals(&case.consequent, locals, next_slot);
+        crate::using_scope::emit_tdz(&case.consequent, ops, locals);
+        prepare_case_functions(&case.consequent, locals, next_slot, ops);
+    }
+    locals.retain(|name, _| !name.starts_with("\0lexical-predeclared:"));
+}
+
+fn prepare_case_functions(
     statements: &[oxc::ast::ast::Statement<'_>],
     locals: &mut HashMap<String, u16>,
     next_slot: &mut u16,
+    ops: &mut Vec<Op>,
 ) {
     for statement in statements {
         let oxc::ast::ast::Statement::FunctionDeclaration(function) = statement else {
@@ -124,13 +137,16 @@ fn prepare_case_locals(
             continue;
         };
         let name = identifier.name.as_str();
-        if let Some(slot) = locals.get(name).copied() {
-            locals
-                .entry(format!("\0annex-b-outer:{name}"))
-                .or_insert(slot);
+        if locals.contains_key(name) {
+            continue;
         }
-        locals.insert(name.to_string(), *next_slot);
+        let slot = *next_slot;
         *next_slot = next_slot.saturating_add(1);
+        locals.insert(name.to_string(), slot);
+        ops.push(Op::MarkUninitialized {
+            slot,
+            shared: true,
+        });
     }
 }
 
@@ -147,12 +163,8 @@ pub(crate) fn execute(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let value = crate::execute::read_register(registers, *discriminant)?;
-    let exact = cases.iter().position(|(test, _)| {
-        test.as_ref()
-            .is_some_and(|test| same_constant(&value, test))
-    });
-    let default = cases.iter().position(|(test, _)| test.is_none());
-    let Some(start) = exact.or(default) else {
+    let start = match_case(cases, &value, registers)?;
+    let Some(start) = start else {
         return Ok(crate::completion::Completion::Normal);
     };
     for (_, body) in &cases[start..] {
@@ -174,12 +186,35 @@ pub(crate) fn execute(
     Ok(crate::completion::Completion::Normal)
 }
 
-fn same_constant(value: &Value, constant: &Constant) -> bool {
-    match (value, constant) {
-        (Value::Number(left), Constant::Number(right)) => left == right,
-        (Value::Boolean(left), Constant::Boolean(right)) => left == right,
-        (Value::String(left), Constant::String(right)) => left == right,
-        (Value::Null, Constant::Null) | (Value::Undefined, Constant::Undefined) => true,
-        _ => false,
+fn match_case(
+    cases: &[(Option<crate::machine::FunctionCode>, crate::machine::FunctionCode)],
+    value: &Value,
+    registers: &mut Vec<Value>,
+) -> Result<Option<usize>, crate::execute::VmError> {
+    let mut default = None;
+    for (index, (test, _)) in cases.iter().enumerate() {
+        let Some(test) = test else {
+            default = Some(index);
+            continue;
+        };
+        if crate::equality::strict_equal(&evaluate_case_test(test, registers)?, value) {
+            return Ok(Some(index));
+        }
+    }
+    Ok(default)
+}
+
+fn evaluate_case_test(
+    test: &crate::machine::FunctionCode,
+    registers: &mut Vec<Value>,
+) -> Result<Value, crate::execute::VmError> {
+    let Some(ops) = test.ops() else {
+        return Err(crate::execute::VmError::MissingReturn);
+    };
+    match crate::execute::execute_completion_in_place(ops, registers)? {
+        crate::completion::Completion::Return(value) => Ok(value),
+        crate::completion::Completion::Normal => Ok(Value::Undefined),
+        crate::completion::Completion::Throw(value) => Err(crate::execute::VmError::Thrown(value)),
+        _ => Err(crate::execute::VmError::MissingReturn),
     }
 }
