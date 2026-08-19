@@ -27,8 +27,8 @@ pub(crate) fn reduce_for(
         ops.extend(init);
         return Ok(Some(dst));
     }
-    let Some((name, start, limit, step)) =
-        static_bounds(statement).filter(|_| !contains_loop_control(&statement.body))
+    let Some((name, start, limit, step)) = static_bounds(statement)
+        .filter(|_| !contains_loop_control(&statement.body) && !const_for_init(statement))
     else {
         return reduce_dynamic_for(statement, ops, facts, next_register, next_slot, locals, dst);
     };
@@ -124,6 +124,14 @@ fn is_literal_false(expression: Option<&Expression<'_>>) -> bool {
             .and_then(reduce_literal)
             .map(|literal| literal.op),
         Some(Constant::Boolean(false))
+    )
+}
+
+fn const_for_init(statement: &ForStatement<'_>) -> bool {
+    matches!(
+        statement.init.as_ref(),
+        Some(ForStatementInit::VariableDeclaration(declaration))
+            if declaration.kind == oxc::ast::ast::VariableDeclarationKind::Const
     )
 }
 
