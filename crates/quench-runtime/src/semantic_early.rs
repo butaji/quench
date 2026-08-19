@@ -371,6 +371,9 @@ fn validate_nested(statements: &[Statement<'_>]) -> Result<(), Vec<String>> {
             Statement::LabeledStatement(statement) => {
                 validate_nested(std::slice::from_ref(&statement.body))?;
             }
+            Statement::TryStatement(statement) => {
+                crate::semantic_catch::validate_try(statement, validate_nested)?;
+            }
             _ => {}
         }
     }
