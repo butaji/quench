@@ -36,6 +36,7 @@ const CAP_PATH_DIRNAME: u16 = 0x0403;
 const CAP_PATH_BASENAME: u16 = 0x0404;
 const CAP_PATH_EXTNAME: u16 = 0x0405;
 const CAP_PATH_ISABSOLUTE: u16 = 0x0406;
+const CAP_PATH_RELATIVE: u16 = 0x0409;
 const CAP_URL_PARSE: u16 = 0x0500;
 const CAP_URL_FORMAT: u16 = 0x0501;
 const CAP_URL_RESOLVE: u16 = 0x0502;
@@ -129,6 +130,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_PATH_BASENAME => path_basename,
         CAP_PATH_EXTNAME => path_extname,
         CAP_PATH_ISABSOLUTE => path_is_absolute,
+        CAP_PATH_RELATIVE => path_relative,
         CAP_URL_PARSE => url_parse,
         CAP_URL_FORMAT => url_format,
         CAP_URL_RESOLVE => url_resolve,
