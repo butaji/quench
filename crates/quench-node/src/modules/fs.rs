@@ -12,6 +12,12 @@ use crate::host::HostState;
 
 pub struct FsState;
 
+impl Default for FsState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FsState {
     pub fn new() -> Self {
         Self
@@ -40,12 +46,12 @@ pub fn unlink(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value,
     Ok(Value::Undefined)
 }
 
-pub fn read_file_sync(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+pub fn read_file_sync(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let path = args.first().map(value_to_string).unwrap_or_default();
     let buf = std::fs::read(PathBuf::from(&path)).map_err(|_| VmError::NotCallable)?;
     Ok(Value::String(unsafe { String::from_utf8_unchecked(buf) }))
 }
-pub fn write_file_sync(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+pub fn write_file_sync(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let path = args.first().map(value_to_string).unwrap_or_default();
     let data = args.get(1).map(value_to_string).unwrap_or_default();
     std::fs::write(PathBuf::from(&path), data.as_bytes()).map_err(|_| VmError::NotCallable)?;

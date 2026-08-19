@@ -5,15 +5,7 @@
 //! new Node API is a one-line entry in the appropriate per-domain
 //! table; no plumbing changes.
 
-#[path = "dispatch_handlers.rs"]
-pub mod handlers;
-
-use crate::host::HostState;
-use std::cell::RefCell;
-use std::rc::Rc;
-
-use quench_runtime::execute::VmError;
-use quench_runtime::value::Value;
+use crate::dispatch_handlers as handlers;
 
 pub use crate::dispatch_handlers::{CallHandler, ConstructHandler};
 
@@ -110,6 +102,7 @@ const CAP_FS_EXISTSSYNC: u16 = 0x110B;
 const CAP_FS_REALSYNC: u16 = 0x110C;
 const CAP_REQUIRE: u16 = 0x1200;
 const CAP_READLINE: u16 = 0x1300;
+const CAP_CJS_WRAP: u16 = 0x1d00;
 
 /// Single canonical mapping from capability id to call handler.
 pub fn lookup(cap: u16) -> Option<CallHandler> {
@@ -223,6 +216,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_ISIPV4 => net_is_ipv4,
         CAP_NET_ISIPV6 => net_is_ipv6,
         CAP_REQUIRE => node_require,
+        CAP_CJS_WRAP => cjs_wrap,
         _ => return None,
     })
 }

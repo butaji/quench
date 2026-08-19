@@ -59,15 +59,15 @@ pub(crate) fn next(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
             "Iterator.prototype.next called on incompatible receiver",
         ));
     };
-    if is_helper_iter(&**data) {
-        if *(**data).executing.borrow() || *(**data).in_return.borrow() {
+    if is_helper_iter(data) {
+        if *data.executing.borrow() || *data.in_return.borrow() {
             return Err(crate::value::error::throw_type_error(
                 "Iterator is already executing",
             ));
         }
-        *(**data).executing.borrow_mut() = true;
+        *data.executing.borrow_mut() = true;
         let stepped = step_value(iterator);
-        *(**data).executing.borrow_mut() = false;
+        *data.executing.borrow_mut() = false;
         return match stepped {
             Ok(Some(value)) => Ok(result(value, false)),
             Ok(None) => Ok(result(Value::Undefined, true)),
@@ -283,15 +283,13 @@ pub(crate) fn make_regexp_string(
     global: bool,
     unicode: bool,
 ) -> Value {
-    Value::Iterator(Rc::new(IteratorData::new(
-        IteratorState::RegExpString {
-            regexp,
-            input,
-            global,
-            unicode,
-            done: false,
-        },
-    )))
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::RegExpString {
+        regexp,
+        input,
+        global,
+        unicode,
+        done: false,
+    })))
 }
 
 fn make_set(data: Rc<crate::value::SetData>, kind: u8) -> Value {

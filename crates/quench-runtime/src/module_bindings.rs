@@ -1,22 +1,22 @@
-use std::{
-    cell::RefCell,
-    collections::HashMap,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{execute::VmError, value::Value};
 
+/// Host-registered namespace evaluators, keyed by object identity.
+type Evaluators = RefCell<HashMap<*const crate::value::ObjectData, Rc<dyn Fn()>>>;
+/// Host resolver for `import()` / `import.defer()`.
+type DynamicImportResolver = Rc<dyn Fn(&str, bool) -> Option<Value>>;
+
 thread_local! {
-    static EVALUATORS: RefCell<HashMap<*const crate::value::ObjectData, Rc<dyn Fn()>>> =
-        RefCell::new(HashMap::new());
+    static EVALUATORS: Evaluators = RefCell::new(HashMap::new());
     static PENDING_TYPE_ERROR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static PENDING_THROW: RefCell<Option<Value>> = const { RefCell::new(None) };
-    static DYNAMIC_IMPORT: RefCell<Option<Rc<dyn Fn(&str, bool) -> Option<Value>>>> =
+    static DYNAMIC_IMPORT: RefCell<Option<DynamicImportResolver>> =
         const { RefCell::new(None) };
 }
 
 /// Host-owned GetModuleNamespace for `import()` / `import.defer()`.
-pub fn install_dynamic_import(resolve: Rc<dyn Fn(&str, bool) -> Option<Value>>) -> DynamicImportGuard {
+pub fn install_dynamic_import(resolve: DynamicImportResolver) -> DynamicImportGuard {
     DYNAMIC_IMPORT.with(|slot| slot.replace(Some(resolve)));
     DynamicImportGuard
 }
@@ -66,9 +66,7 @@ pub fn exports(value: &Value, key: &str) -> Result<(), VmError> {
 }
 
 fn skips_deferred_evaluation(key: &str) -> bool {
-    key == "then"
-        || key.starts_with('#')
-        || crate::conversion::is_symbol_string(key)
+    key == "then" || key.starts_with('#') || crate::conversion::is_symbol_string(key)
 }
 
 pub fn request_ensure_throw(value: Value) {
@@ -276,10 +274,7 @@ mod tests {
         let object = Value::object(Vec::new());
         let hits = Rc::new(Cell::new(0));
         let count = hits.clone();
-        super::attach_evaluator(
-            &object,
-            Rc::new(move || count.set(count.get() + 1)),
-        );
+        super::attach_evaluator(&object, Rc::new(move || count.set(count.get() + 1)));
         super::exports(&object, "foo").expect("exports");
         super::exports(&object, "then").expect("then is symbol-like");
         assert_eq!(hits.get(), 1);

@@ -200,12 +200,7 @@ pub fn reduce_declaration(
             next_register,
             locals,
         );
-        crate::using_scope::mark_binding_immutable(
-            declaration.kind,
-            &declarator.id,
-            ops,
-            locals,
-        );
+        crate::using_scope::mark_binding_immutable(declaration.kind, &declarator.id, ops, locals);
     }
     Ok(())
 }

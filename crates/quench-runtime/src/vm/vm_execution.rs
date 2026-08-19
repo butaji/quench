@@ -53,6 +53,21 @@ pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, Vm
     result
 }
 
+/// The context currently active on this thread, or a default one.
+/// Hosts use this to re-enter the VM from inside a capability call.
+pub fn current_context() -> VmContext {
+    current_context_or_default()
+}
+
+/// Call a function value from host code through the current context.
+pub fn call_value(
+    target: &Value,
+    receiver: &Value,
+    arguments: &[Value],
+) -> Result<Value, VmError> {
+    crate::functions::execute_target(target, receiver, arguments)
+}
+
 pub fn execute_with_registers_context(
     ops: &[Op],
     mut registers: Vec<Value>,
