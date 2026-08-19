@@ -40,7 +40,7 @@ pub(crate) fn eval_bindings(
     prefix.extend(
         lexical
             .into_iter()
-            .map(|(_, slot)| Op::MarkUninitialized { slot }),
+            .map(|(_, slot)| Op::MarkUninitialized { slot, shared: true }),
     );
     (locals, next_slot, prefix, behavior, deletable)
 }
