@@ -3,7 +3,6 @@
 //! points (`from`, `toString`, `write`, `byteLength`) delegate here.
 
 use quench_runtime::execute::VmError;
-use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
 /// Canonical encoding names accepted by `Buffer.isEncoding`.
@@ -44,17 +43,25 @@ pub fn invalid_arg_type(message: String) -> VmError {
     coded_error("TypeError", "ERR_INVALID_ARG_TYPE", &message)
 }
 
+/// `ERR_INVALID_ARG_VALUE` coded `TypeError`.
+pub fn invalid_arg_value(message: String) -> VmError {
+    coded_error("TypeError", "ERR_INVALID_ARG_VALUE", &message)
+}
+
 /// `ERR_BUFFER_OUT_OF_BOUNDS` coded `RangeError`.
 pub fn buffer_out_of_bounds(message: &str) -> VmError {
     coded_error("RangeError", "ERR_BUFFER_OUT_OF_BOUNDS", message)
 }
 
 fn coded_error(name: &str, code: &str, message: &str) -> VmError {
-    VmError::Thrown(host_api::object(vec![
-        ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), Value::String(message.to_string())),
-        ("code".to_string(), Value::String(code.to_string())),
-    ]))
+    let builtin = match name {
+        "RangeError" => quench_runtime::ops::Builtin::RangeError,
+        _ => quench_runtime::ops::Builtin::TypeError,
+    };
+    let error = quench_runtime::builtins::error(builtin, &[Value::String(message.to_string())]);
+    let error =
+        quench_runtime::execute::set_property(error, "code", Value::String(code.to_string()));
+    VmError::Thrown(error)
 }
 
 /// Format a number the way Node prints it in error messages.

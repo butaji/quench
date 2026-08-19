@@ -103,14 +103,14 @@ fn size_arg(value: Option<&Value>, name: &str) -> Result<usize, VmError> {
             crate::modules::util::invalid_arg_received(&value)
         )));
     };
-    if !(0.0..=MAX_LENGTH).contains(&n) || n.fract() != 0.0 {
+    if !(0.0..=MAX_LENGTH).contains(&n) {
         return Err(enc::out_of_range(
             "size",
             &format!(">= 0 && <= {}", MAX_LENGTH as u64),
             &enc::fmt_num(n),
         ));
     }
-    Ok(n as usize)
+    Ok(n.trunc() as usize)
 }
 
 pub fn from_handler(
@@ -141,7 +141,7 @@ pub fn from(
         Value::ArrayBuffer(buf) => from_array_buffer(buf, args),
         Value::Number(_) | Value::Boolean(_) | Value::Undefined | Value::Null => {
             Err(enc::invalid_arg_type(format!(
-                "The \"value\" argument must be of type string or an instance of Buffer, \
+                "The first argument must be of type string or an instance of Buffer, \
                  ArrayBuffer, or Array or an Array-like Object.{}",
                 crate::modules::util::invalid_arg_received(&first)
             )))
@@ -174,27 +174,41 @@ fn from_array_buffer(
     buf: &Rc<quench_runtime::value::ArrayBufferData>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let length = buf.bytes.borrow().len();
-    let to_index = |i: usize, default: usize| match args.get(i) {
-        Some(_) => {
-            (crate::modules::buffer_methods::to_offset(args.get(i)).max(0.0) as usize).min(length)
-        }
-        None => default,
+    let length = buf.bytes.borrow().len() as f64;
+    let offset = match args.get(1) {
+        Some(value) => crate::modules::buffer_methods::to_offset(Some(value)),
+        None => 0.0,
     };
-    let offset = to_index(1, 0);
-    let end = to_index(2, length);
+    if offset < 0.0 || offset > length {
+        return Err(enc::buffer_out_of_bounds(
+            "\"offset\" is outside of buffer bounds",
+        ));
+    }
+    let view_length = match args.get(2) {
+        Some(value) => crate::modules::buffer_methods::to_offset(Some(value)),
+        None => length - offset,
+    };
+    if view_length < 0.0 || offset + view_length > length {
+        return Err(enc::buffer_out_of_bounds(
+            "\"length\" is outside of buffer bounds",
+        ));
+    }
     Ok(crate::modules::buffer_proto::make_view(
         buf.clone(),
-        offset,
-        end.saturating_sub(offset),
+        offset as usize,
+        view_length as usize,
     ))
 }
 
 fn from_array_like(value: &Value) -> Result<Value, VmError> {
+    let length = match get_property(value, "length") {
+        Value::Number(n) if n.is_finite() && n > 0.0 => n.trunc().min(u32::MAX as f64) as u32,
+        _ => u32::MAX,
+    };
     let mut bytes = Vec::new();
-    for i in 0..u32::MAX {
+    for i in 0..length {
         let v = get_property(value, &i.to_string());
-        if matches!(v, Value::Undefined) {
+        if matches!(v, Value::Undefined) && length == u32::MAX {
             break;
         }
         let n = to_number(&v);
@@ -243,7 +257,7 @@ fn apply_fill(bytes: &mut [u8], args: &[Value]) -> Result<(), VmError> {
             let encoding = encoding_name(args.get(2))?;
             let encoded = enc::encode_value(&fill, &encoding)?;
             if encoded.is_empty() {
-                return Err(enc::invalid_arg_type(format!(
+                return Err(enc::invalid_arg_value(format!(
                     "The argument 'value' is invalid.{}",
                     crate::modules::util::invalid_arg_received(&fill)
                 )));
@@ -251,6 +265,12 @@ fn apply_fill(bytes: &mut [u8], args: &[Value]) -> Result<(), VmError> {
             encoded
         }
         Value::Uint8Array(view) => {
+            if view.length == 0 {
+                return Err(enc::invalid_arg_value(format!(
+                    "The argument 'value' is invalid.{}",
+                    crate::modules::util::invalid_arg_received(&fill)
+                )));
+            }
             view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
         }
         _ => Vec::new(),

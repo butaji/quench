@@ -14,6 +14,26 @@ use crate::modules::buffer_enc as enc;
 
 type HandlerResult = Result<Value, VmError>;
 
+/// `buf.inspect()` — `<Buffer aa bb ...>` hex dump (INSPECT_MAX_BYTES 50).
+pub fn inspect(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> HandlerResult {
+    const MAX: usize = 50;
+    let view = this_view(receiver)?;
+    let bytes = view_bytes(&view);
+    let shown: Vec<String> = bytes.iter().take(MAX).map(|b| format!("{b:02x}")).collect();
+    let mut out = format!("<Buffer {}", shown.join(" "));
+    if bytes.len() > MAX {
+        let rest = bytes.len() - MAX;
+        let plural = if rest == 1 { "" } else { "s" };
+        out.push_str(&format!(" ... {rest} more byte{plural}"));
+    }
+    out.push('>');
+    Ok(Value::String(out))
+}
+
 /// Extract the receiver as a `Uint8Array` view (`ERR_INVALID_THIS`).
 pub(crate) fn this_view(receiver: Option<&Value>) -> Result<Rc<Uint8ArrayData>, VmError> {
     match receiver {
@@ -176,6 +196,17 @@ pub fn copy(
         )));
     };
     let target_start = to_offset(args.get(1)).max(0.0) as usize;
+    // Node rejects indexes that do not fit in a 32-bit size_t.
+    for (at, name) in [(2, "sourceStart"), (3, "sourceEnd")] {
+        let raw = to_offset(args.get(at));
+        if args.get(at).is_some() && raw > u32::MAX as f64 {
+            return Err(enc::out_of_range(
+                name,
+                &format!(">= 0 && <= {}", u32::MAX),
+                &enc::fmt_num(raw),
+            ));
+        }
+    }
     let source_start = clamp_bounds(args, 2, view.length, 0.0);
     let source_end = clamp_bounds(args, 3, view.length, view.length as f64);
     if target_start >= target.length || source_start >= source_end {
