@@ -48,6 +48,17 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         state.borrow_mut().module_cache.insert(spec, ns.clone());
         return Ok(ns);
     }
+    if matches!(spec.as_str(), "stream" | "node:stream") {
+        if let Some(cached) = state.borrow().module_cache.get("stream") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::stream::build(state)?;
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("stream".to_string(), value.clone());
+        return Ok(value);
+    }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
         return Ok(cached.clone());
     }
@@ -196,7 +207,6 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
             crate::modules::os::build(),
         )),
         "events" => Some(crate::modules::events::build()),
-        "stream" => Some(crate::modules::stream::build()),
         "string_decoder" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::string_decoder::build(),
         )),

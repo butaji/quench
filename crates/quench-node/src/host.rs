@@ -44,6 +44,9 @@ pub struct HostState {
     /// Shared `URL` class pair (constructor, prototype), built on first use
     /// so `instanceof URL` has one canonical prototype per realm.
     pub url_class: Option<(Value, Value)>,
+    /// `require('stream')` module value, evaluated once from the
+    /// embedded JS prelude (`modules/stream_prelude.js`).
+    pub stream_module: Option<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -71,6 +74,7 @@ impl NodeHost {
             pending_module: None,
             pending_uncaught: None,
             url_class: None,
+            stream_module: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),
