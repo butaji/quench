@@ -87,6 +87,7 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
         if let Some(result) = settled(&data.state.borrow()) {
             return result;
         }
+        crate::modules::net::poll(state)?;
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         fire_due_timers(state)?;
@@ -130,6 +131,7 @@ pub fn run_uncaught(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
 /// mirroring Node's uncaught-exception exit.
 pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     loop {
+        crate::modules::net::poll(state)?;
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         fire_due_timers(state)?;
@@ -277,6 +279,7 @@ fn has_pending(state: &Rc<RefCell<HostState>>) -> bool {
             .timers
             .values()
             .any(|t| t.referenced && t.active)
+        || crate::modules::net::has_work(state)
 }
 
 fn sleep_until_next(state: &Rc<RefCell<HostState>>) {
@@ -288,11 +291,16 @@ fn sleep_until_next(state: &Rc<RefCell<HostState>>) {
         .filter(|t| t.active)
         .map(|t| t.fire_at)
         .min();
-    let Some(next) = next else {
+    if let Some(next) = next {
+        let now = super::timers::monotonic_ms();
+        if next > now {
+            std::thread::sleep(std::time::Duration::from_millis(next - now));
+        }
         return;
-    };
-    let now = super::timers::monotonic_ms();
-    if next > now {
-        std::thread::sleep(std::time::Duration::from_millis(next - now));
+    }
+    // No timers, but net I/O may keep the loop alive: poll at a small
+    // fixed cadence instead of busy-spinning.
+    if crate::modules::net::has_work(state) {
+        std::thread::sleep(std::time::Duration::from_millis(4));
     }
 }
