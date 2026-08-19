@@ -45,7 +45,7 @@ pub(crate) fn emit_tdz(
             let Some(&slot) = locals.get(&name) else {
                 continue;
             };
-            ops.push(Op::MarkUninitialized { slot });
+            ops.push(Op::MarkUninitialized { slot, shared: true });
             if crate::reduce_support::lexical_declaration(statement).is_some_and(|declaration| {
                 matches!(
                     declaration.kind,
@@ -153,7 +153,7 @@ pub(crate) fn mark_binding_tdz(
 ) {
     for name in crate::binding_patterns::names(pattern) {
         if let Some(&slot) = locals.get(&name) {
-            ops.push(Op::MarkUninitialized { slot });
+            ops.push(Op::MarkUninitialized { slot, shared: true });
         }
     }
 }

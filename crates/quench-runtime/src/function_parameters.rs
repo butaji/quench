@@ -72,7 +72,7 @@ fn reduce_prefix(
         mark_later_parameters(formal, index, captures, &mut ops);
         mark_later_bindings(formal, index, locals, &mut ops);
         let slot = captures.saturating_add(u16::try_from(index).ok()?);
-        ops.push(Op::MarkUninitialized { slot });
+        ops.push(Op::MarkUninitialized { slot, shared: false });
         let source = load_parameter(&mut ops, &mut next, slot);
         crate::binding_patterns::bind(
             &parameter.pattern,
@@ -98,6 +98,7 @@ fn mark_later_parameters(
         if let Ok(offset) = u16::try_from(later) {
             ops.push(Op::MarkUninitialized {
                 slot: captures.saturating_add(offset),
+                shared: false,
             });
         }
     }
@@ -112,7 +113,10 @@ fn mark_later_bindings(
     for parameter in formal.items.iter().skip(index) {
         for name in crate::binding_patterns::names(&parameter.pattern) {
             if let Some(slot) = locals.get(&name) {
-                ops.push(Op::MarkUninitialized { slot: *slot });
+                ops.push(Op::MarkUninitialized {
+                    slot: *slot,
+                    shared: false,
+                });
             }
         }
     }

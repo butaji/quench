@@ -52,16 +52,17 @@ fn finish_class(
         next,
         locals,
     )?;
+    define_class_prototype(body, next, constructor, prototype);
     body.push(Op::SetProperty {
         object: constructor,
-        key: "prototype".to_string(),
+        key: "\0home_object".to_string(),
         src: prototype,
         strict: true,
     });
     body.push(Op::SetProperty {
         object: constructor,
-        key: "\0home_object".to_string(),
-        src: prototype,
+        key: "\0class_constructor".to_string(),
+        src: constructor,
         strict: true,
     });
     body.extend(static_fields);

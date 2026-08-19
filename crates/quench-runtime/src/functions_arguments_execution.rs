@@ -45,6 +45,11 @@ pub(crate) fn execute(
         this_value.clone(),
         arguments.to_vec(),
     );
+    if is_class_constructor(function) {
+        return Err(crate::value::error::throw_type_error(
+            "Class constructor cannot be invoked without 'new'",
+        ));
+    }
     if matches!(function.kind, FunctionKind::Generator) {
         return crate::generator::create(function, &frame.receiver, arguments);
     }
