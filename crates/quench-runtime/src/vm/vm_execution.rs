@@ -46,6 +46,9 @@ pub(crate) fn execute_completion_in_place(
 
 pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, VmError> {
     crate::locals::reset_replacements();
+    crate::private_environment::reset();
+    reset_evaluation_globals();
+    crate::promise::drain_microtasks_all();
     let result = execute_with_registers_context(ops, Vec::new(), context);
     // Drive the promise microtask queue so `.then`/`.catch` reactions and
     // synchronously-settling promise chains run to completion.
@@ -161,4 +164,21 @@ pub(crate) fn execute_indirect_eval_in_realm(
     ops: &[Op],
 ) -> Result<Value, VmError> {
     realm::execute(realm_id, ops)
+}
+
+#[cfg(test)]
+mod isolation_tests {
+    #[test]
+    fn isolated_evaluations_do_not_share_var_bindings() {
+        let first = crate::reduce::reduce_source("var __quench_leak = 1;")
+            .expect("first script reduces");
+        crate::vm::execute_with_context(first.ops(), &crate::vm::VmContext::isolated())
+            .expect("first script runs");
+        let second = crate::reduce::reduce_source(
+            "if (typeof __quench_leak !== 'undefined') { throw __quench_leak; }",
+        )
+        .expect("second script reduces");
+        crate::vm::execute_with_context(second.ops(), &crate::vm::VmContext::isolated())
+            .expect("second script must not see the first script's var");
+    }
 }

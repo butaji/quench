@@ -8,7 +8,6 @@ use std::{
 };
 
 use quench_runtime::module_bindings::ModuleBindingCell;
-use quench_runtime::ops::{HostCapabilityKind, HostCapabilityRef, RealmId};
 use quench_runtime::reduce::{
     inspect_module_source, reduce_module_sequence, reduce_module_source, reduce_script_sources,
     reduce_source, ScriptSource,
@@ -76,13 +75,17 @@ impl LinkedModuleGraph {
             .or_else(|| graph.entry())
             .ok_or_else(|| "module graph missing entry".to_string())?;
         let order = graph.dependency_order(root)?;
-        bind_imports(&units, graph, &order, |binding| binding.imported == "source")?;
+        bind_imports(&units, graph, &order, |binding| {
+            binding.imported == "source"
+        })?;
         for _ in 0..units.len() {
             for id in &order {
                 link_reexports(graph, &units, *id)?;
             }
         }
-        bind_imports(&units, graph, &order, |binding| binding.imported != "source")?;
+        bind_imports(&units, graph, &order, |binding| {
+            binding.imported != "source"
+        })?;
         Ok(Self { units })
     }
 
@@ -123,7 +126,11 @@ impl LinkedModuleGraph {
         ));
         let result = evaluate_module(self, graph, entry, true);
         quench_runtime::module_bindings::drain_jobs();
-        let result = match self.units.get(&entry).and_then(|unit| unit.thrown.borrow().clone()) {
+        let result = match self
+            .units
+            .get(&entry)
+            .and_then(|unit| unit.thrown.borrow().clone())
+        {
             Some(thrown) => {
                 quench_runtime::module_bindings::request_ensure_throw(thrown.clone());
                 Err(format!(
@@ -312,7 +319,6 @@ impl LinkedModule {
     fn is_ambiguous_export(&self, name: &str) -> bool {
         self.ambiguous_exports.borrow().contains(name)
     }
-
 }
 
 thread_local! {
@@ -399,11 +405,6 @@ fn execute_program(program: &quench_runtime::reduce::ResidualProgram) -> Result<
         .map_err(|error| format!("residual VM error: {}", error.render()))
 }
 
-fn run_module_source(source: &str) -> Result<(), String> {
-    let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
-    execute_program(&program)
-}
-
 fn host_context() -> &'static VmContext {
     thread_local! {
         static CONTEXT: std::cell::OnceCell<&'static VmContext> = const { std::cell::OnceCell::new() };
@@ -412,24 +413,29 @@ fn host_context() -> &'static VmContext {
         *context.get_or_init(|| {
             Box::leak(Box::new(
                 VmContext::for_realm(
-                    RealmId::ROOT,
+                    quench_runtime::ops::RealmId::ROOT,
                     vec![
-                        HostCapabilityKind::GetGlobal,
-                        HostCapabilityKind::CreateRealm,
-                        HostCapabilityKind::EvalScript,
-                        HostCapabilityKind::DetachArrayBuffer,
+                        quench_runtime::ops::HostCapabilityKind::GetGlobal,
+                        quench_runtime::ops::HostCapabilityKind::CreateRealm,
+                        quench_runtime::ops::HostCapabilityKind::EvalScript,
+                        quench_runtime::ops::HostCapabilityKind::DetachArrayBuffer,
                     ],
                 )
                 .with_host_capability(
                     "$262",
-                    HostCapabilityRef {
-                        realm: RealmId::ROOT,
-                        kind: HostCapabilityKind::GetGlobal,
+                    quench_runtime::ops::HostCapabilityRef {
+                        realm: quench_runtime::ops::RealmId::ROOT,
+                        kind: quench_runtime::ops::HostCapabilityKind::GetGlobal,
                     },
                 ),
             ))
         })
     })
+}
+
+fn run_module_source(source: &str) -> Result<(), String> {
+    let program = reduce_module_source(source).map_err(|errors| errors.join("; "))?;
+    execute_program(&program)
 }
 
 #[cfg(test)]

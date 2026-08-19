@@ -84,6 +84,11 @@ impl Drop for Guard {
 }
 
 /// Returns an Rc-backed snapshot so nested scopes can copy the lexical mapping.
+pub(crate) fn reset() {
+    CURRENT.with(|current| current.replace(None));
+    SUSPENDED.with(|slot| slot.replace(None));
+}
+
 pub(crate) fn current() -> PrivateEnvironment {
     CURRENT
         .with(|current| current.borrow().clone())
