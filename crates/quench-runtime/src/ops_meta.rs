@@ -18,6 +18,8 @@ pub enum PropertyDefinitionKind {
     Data,
     Get,
     Set,
+    /// Class `F.prototype`: writable false, enumerable false, configurable false.
+    ClassPrototype,
 }
 
 /// Opaque identity for a host realm.

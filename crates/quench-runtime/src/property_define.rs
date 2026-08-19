@@ -37,11 +37,16 @@ fn descriptor(
             ("value".to_string(), value),
             ("writable".to_string(), Value::Boolean(true)),
         ],
+        PropertyDefinitionKind::ClassPrototype => vec![
+            ("value".to_string(), value),
+            ("writable".to_string(), Value::Boolean(false)),
+        ],
         PropertyDefinitionKind::Get => vec![("get".to_string(), value)],
         PropertyDefinitionKind::Set => vec![("set".to_string(), value)],
     };
+    let configurable = !matches!(kind, PropertyDefinitionKind::ClassPrototype);
     fields.push(("enumerable".to_string(), Value::Boolean(enumerable)));
-    fields.push(("configurable".to_string(), Value::Boolean(true)));
+    fields.push(("configurable".to_string(), Value::Boolean(configurable)));
     fields
 }
 

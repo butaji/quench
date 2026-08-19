@@ -49,7 +49,7 @@ fn define_class_prototype(
         constructor,
         "prototype",
         prototype,
-        PropertyDefinitionKind::Data,
+        PropertyDefinitionKind::ClassPrototype,
     );
 }
 
