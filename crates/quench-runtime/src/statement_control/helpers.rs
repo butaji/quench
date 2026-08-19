@@ -121,7 +121,7 @@ pub(super) fn reduce_control_statement(
             statement, ops, facts, locals,
         )),
         Statement::SwitchStatement(statement) => {
-            Some(crate::switch::reduce(statement, ops, facts, next_register, locals).map(|_| None))
+            Some(crate::switch::reduce(statement, ops, facts, next_register, locals))
         }
         Statement::BreakStatement(statement) => Some(reduce_break(statement, ops)),
         Statement::ContinueStatement(statement) => Some(reduce_continue(statement, ops)),
