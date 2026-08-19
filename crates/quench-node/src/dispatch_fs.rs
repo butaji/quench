@@ -1,0 +1,105 @@
+//! `fs` capability dispatch table — one arm per operation.
+
+use crate::dispatch_handlers::CallHandler;
+use crate::modules::{fs_async, fs_stats, fs_sync};
+
+const CAP_FS_READFILE: u16 = 0x1100;
+const CAP_FS_WRITEFILE: u16 = 0x1101;
+const CAP_FS_STAT: u16 = 0x1102;
+const CAP_FS_READDIR: u16 = 0x1103;
+const CAP_FS_EXISTS: u16 = 0x1104;
+const CAP_FS_MKDIR: u16 = 0x1105;
+const CAP_FS_UNLINK: u16 = 0x1106;
+const CAP_FS_READFILESYNC: u16 = 0x1107;
+const CAP_FS_WRITEFILESYNC: u16 = 0x1108;
+const CAP_FS_STATSYNC: u16 = 0x1109;
+const CAP_FS_READDIRSYNC: u16 = 0x110A;
+const CAP_FS_EXISTSSYNC: u16 = 0x110B;
+const CAP_FS_REALSYNC: u16 = 0x110C;
+const CAP_FS_LSTAT: u16 = 0x110D;
+const CAP_FS_ACCESS: u16 = 0x110E;
+const CAP_FS_RMDIR: u16 = 0x110F;
+const CAP_FS_RM: u16 = 0x1110;
+const CAP_FS_RENAME: u16 = 0x1111;
+const CAP_FS_APPENDFILE: u16 = 0x1112;
+const CAP_FS_COPYFILE: u16 = 0x1113;
+const CAP_FS_MKDTEMP: u16 = 0x1114;
+const CAP_FS_READLINK: u16 = 0x1115;
+const CAP_FS_CHMOD: u16 = 0x1116;
+const CAP_FS_TRUNCATE: u16 = 0x1117;
+const CAP_FS_LSTATSYNC: u16 = 0x1118;
+const CAP_FS_ACCESSSYNC: u16 = 0x1119;
+const CAP_FS_RMDIRSYNC: u16 = 0x111A;
+const CAP_FS_RMSYNC: u16 = 0x111B;
+const CAP_FS_RENAMESYNC: u16 = 0x111C;
+const CAP_FS_APPENDFILESYNC: u16 = 0x111D;
+const CAP_FS_COPYFILESYNC: u16 = 0x111E;
+const CAP_FS_MKDTEMPSYNC: u16 = 0x111F;
+const CAP_FS_READLINKSYNC: u16 = 0x1120;
+const CAP_FS_CHMODSYNC: u16 = 0x1121;
+const CAP_FS_TRUNCATESYNC: u16 = 0x1122;
+const CAP_FS_MKDIRSYNC: u16 = 0x1123;
+const CAP_FS_UNLINKSYNC: u16 = 0x1124;
+const CAP_FS_STAT_ISFILE: u16 = 0x1130;
+const CAP_FS_STAT_ISDIR: u16 = 0x1131;
+const CAP_FS_STAT_ISSYMLINK: u16 = 0x1132;
+const CAP_FS_STAT_ISBLOCK: u16 = 0x1133;
+const CAP_FS_STAT_ISCHAR: u16 = 0x1134;
+const CAP_FS_STAT_ISFIFO: u16 = 0x1135;
+const CAP_FS_STAT_ISSOCKET: u16 = 0x1136;
+
+pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
+    Some(match cap {
+        CAP_FS_READFILE => fs_async::read_file,
+        CAP_FS_WRITEFILE => fs_async::write_file,
+        CAP_FS_STAT => fs_async::stat,
+        CAP_FS_READDIR => fs_async::readdir,
+        CAP_FS_EXISTS => fs_async::exists,
+        CAP_FS_MKDIR => fs_async::mkdir,
+        CAP_FS_UNLINK => fs_async::unlink,
+        CAP_FS_READFILESYNC => fs_sync::read_file_sync,
+        CAP_FS_WRITEFILESYNC => fs_sync::write_file_sync,
+        CAP_FS_STATSYNC => fs_sync::stat_sync,
+        CAP_FS_READDIRSYNC => fs_sync::readdir_sync,
+        CAP_FS_EXISTSSYNC => fs_sync::exists_sync,
+        CAP_FS_REALSYNC => fs_sync::realpath_sync,
+        _ => return fs_dispatch_more(cap),
+    })
+}
+
+fn fs_dispatch_more(cap: u16) -> Option<CallHandler> {
+    Some(match cap {
+        CAP_FS_LSTAT => fs_async::lstat,
+        CAP_FS_ACCESS => fs_async::access,
+        CAP_FS_RMDIR => fs_async::rmdir,
+        CAP_FS_RM => fs_async::rm,
+        CAP_FS_RENAME => fs_async::rename,
+        CAP_FS_APPENDFILE => fs_async::append_file,
+        CAP_FS_COPYFILE => fs_async::copy_file,
+        CAP_FS_MKDTEMP => fs_async::mkdtemp,
+        CAP_FS_READLINK => fs_async::readlink,
+        CAP_FS_CHMOD => fs_async::chmod,
+        CAP_FS_TRUNCATE => fs_async::truncate,
+        CAP_FS_LSTATSYNC => fs_sync::lstat_sync,
+        CAP_FS_ACCESSSYNC => fs_sync::access_sync,
+        CAP_FS_RMDIRSYNC => fs_sync::rmdir_sync,
+        CAP_FS_RMSYNC => fs_sync::rm_sync,
+        CAP_FS_RENAMESYNC => fs_sync::rename_sync,
+        CAP_FS_APPENDFILESYNC => fs_sync::append_file_sync,
+        CAP_FS_COPYFILESYNC => fs_sync::copy_file_sync,
+        CAP_FS_MKDTEMPSYNC => fs_sync::mkdtemp_sync,
+        CAP_FS_READLINKSYNC => fs_sync::readlink_sync,
+        CAP_FS_CHMODSYNC => fs_sync::chmod_sync,
+        CAP_FS_TRUNCATESYNC => fs_sync::truncate_sync,
+        CAP_FS_MKDIRSYNC => fs_sync::mkdir_sync,
+        CAP_FS_UNLINKSYNC => fs_sync::unlink_sync,
+        CAP_FS_STAT_ISFILE => fs_stats::is_file,
+        CAP_FS_STAT_ISDIR => fs_stats::is_dir,
+        CAP_FS_STAT_ISSYMLINK => fs_stats::is_symlink,
+        CAP_FS_STAT_ISBLOCK => fs_stats::is_block,
+        CAP_FS_STAT_ISCHAR => fs_stats::is_char,
+        CAP_FS_STAT_ISFIFO => fs_stats::is_fifo,
+        CAP_FS_STAT_ISSOCKET => fs_stats::is_socket,
+        _ => return crate::dispatch::assert_dispatch(cap),
+    })
+}
