@@ -55,14 +55,22 @@ pub(crate) fn script_properties(ops: &mut Vec<Op>, next_register: &mut u16) -> V
         .collect()
 }
 
-fn script_property_names() -> [&'static str; 45] {
-    [
+fn script_property_names() -> &'static [&'static str] {
+    &[
         "Object",
         "Function",
         "Array",
         "Promise",
         "RegExp",
         "Date",
+        "Map",
+        "Set",
+        "JSON",
+        "Reflect",
+        "Proxy",
+        "ArrayBuffer",
+        "DataView",
+        "Intl",
         "DisposableStack",
         "AsyncDisposableStack",
         "Error",
