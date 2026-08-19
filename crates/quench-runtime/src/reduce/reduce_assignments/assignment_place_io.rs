@@ -21,13 +21,19 @@ pub(crate) fn get(place: &Place, ops: &mut Vec<Op>, next: &mut u16) -> Option<u1
         }),
         Place::Super {
             key: PlaceKey::Static(key),
+            ..
         } => ops.push(Op::GetSuperProperty {
             dst,
             key: key.clone(),
         }),
         Place::Super {
             key: PlaceKey::Dynamic(key),
-        } => ops.push(Op::GetSuperPropertyDynamic { dst, key: *key }),
+            base,
+        } => ops.push(Op::GetSuperPropertyDynamic {
+            dst,
+            key: *key,
+            base: *base,
+        }),
     }
     Some(dst)
 }
@@ -111,7 +117,7 @@ fn put_tail(place: Place, value: u16, ops: &mut Vec<Op>) {
             name,
             src: value,
         }),
-        Place::Super { key } => emit_super_put(ops, key, value),
+        Place::Super { key, base } => emit_super_put(ops, key, base, value),
         _ => {}
     }
 }
@@ -140,10 +146,14 @@ fn put_name(ops: &mut Vec<Op>, name: String, strict: bool, target: Option<u16>, 
     }
 }
 
-fn emit_super_put(ops: &mut Vec<Op>, key: PlaceKey, value: u16) {
+fn emit_super_put(ops: &mut Vec<Op>, key: PlaceKey, base: Option<u16>, value: u16) {
     match key {
         PlaceKey::Static(key) => ops.push(Op::SetSuperProperty { key, src: value }),
-        PlaceKey::Dynamic(key) => ops.push(Op::SetSuperPropertyDynamic { key, src: value }),
+        PlaceKey::Dynamic(key) => ops.push(Op::SetSuperPropertyDynamic {
+            key,
+            src: value,
+            base,
+        }),
     }
 }
 
