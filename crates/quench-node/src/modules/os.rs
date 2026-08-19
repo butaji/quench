@@ -48,8 +48,47 @@ pub fn eol() -> String {
 }
 
 pub fn cpus(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    let n = sysinfo_n_cpus().unwrap_or(1);
-    Ok(host_api::array(vec![Value::Number(n as f64)]))
+    let cpus = sysinfo_cpus();
+    let mut out = Vec::new();
+    for cpu in cpus {
+        out.push(host_api::object(vec![
+            ("model".to_string(), Value::String(cpu.brand)),
+            ("speed".to_string(), Value::Number(cpu.frequency as f64)),
+            ("times".to_string(), host_api::object(vec![
+                ("user".to_string(), Value::Number(cpu.user_jiffies as f64)),
+                ("nice".to_string(), Value::Number(cpu.nice_jiffies as f64)),
+                ("sys".to_string(), Value::Number(cpu.system_jiffies as f64)),
+                ("idle".to_string(), Value::Number(cpu.idle_jiffies as f64)),
+                ("irq".to_string(), Value::Number(0.0)),
+            ])),
+        ]));
+    }
+    Ok(host_api::array(out))
+}
+
+struct CpuInfo {
+    brand: String,
+    frequency: u64,
+    user_jiffies: u64,
+    nice_jiffies: u64,
+    system_jiffies: u64,
+    idle_jiffies: u64,
+}
+
+fn sysinfo_cpus() -> Vec<CpuInfo> {
+    let mut s = sysinfo::System::new();
+    s.refresh_cpu_all();
+    s.cpus()
+        .iter()
+        .map(|cpu| CpuInfo {
+            brand: cpu.brand().to_string(),
+            frequency: cpu.frequency(),
+            user_jiffies: cpu.cpu_usage() as u64,
+            nice_jiffies: 0,
+            system_jiffies: 0,
+            idle_jiffies: 0,
+        })
+        .collect()
 }
 
 pub fn totalmem(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
