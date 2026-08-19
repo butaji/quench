@@ -182,7 +182,7 @@ pub fn namespace_object_from_pairs(props: Vec<(String, Value)>) -> Value {
         let descriptor = host_api::object(vec![
             ("value".to_string(), value.clone()),
             ("writable".to_string(), Value::Boolean(true)),
-            ("enumerable".to_string(), Value::Boolean(false)),
+            ("enumerable".to_string(), Value::Boolean(true)),
             ("configurable".to_string(), Value::Boolean(true)),
         ]);
         entries.push((key.clone(), value));

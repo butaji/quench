@@ -88,7 +88,7 @@ pub fn process_hrtime(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>,
 
 // ---- os ----
 pub fn os_platform(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::String(crate::modules::os::platform())) }
-pub fn os_arch(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::String(crate::modules::os::arch())) }
+pub fn os_arch(_: &Rc<RefCell<HostState>>, _: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(Value::String(crate::modules::os::arch())) }
 pub fn os_type(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::String(crate::modules::os::type_str())) }
 pub fn os_release(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::String(crate::modules::os::release())) }
 pub fn os_cpus(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { crate::modules::os::cpus(state, args) }
@@ -96,8 +96,8 @@ pub fn os_tmpdir(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args
 pub fn os_homedir(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { crate::modules::os::homedir(state, args) }
 pub fn os_eol(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::String(crate::modules::os::eol())) }
 pub fn os_uptime(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { crate::modules::os::uptime(state, args) }
-pub fn os_freemem(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::Number(crate::modules::os::freemem())) }
-pub fn os_totalmem(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { Ok(Value::Number(crate::modules::os::totalmem())) }
+pub fn os_freemem(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> { crate::modules::os::freemem(state, _args) }
+pub fn os_totalmem(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> { crate::modules::os::totalmem(state, _args) }
 pub fn os_loadavg(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { crate::modules::os::loadavg(state, args) }
 pub fn os_network_interfaces(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { crate::modules::os::network_interfaces(state, args) }
 pub fn os_hostname(state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> { crate::modules::os::hostname(state, args) }
