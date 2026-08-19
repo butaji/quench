@@ -14,6 +14,16 @@ use quench_node_test::reader::NodeOutcome;
 use quench_node_test::stages::discover_fixtures;
 
 fn main() -> ExitCode {
+    if std::env::args().any(|a| a == "--help" || a == "-h") {
+        println!("run-compat: walk a Node compat test directory through the host");
+        println!();
+        println!("usage: run-compat [--list] [--filter NAME] [--quiet] [DIR]");
+        println!("  --list           enumerate the suite instead of running it");
+        println!("  --filter NAME    only run scripts whose name contains NAME");
+        println!("  --quiet          skip per-test output, only the summary");
+        println!("  DIR              compat suite root (default: crates/quench-node-test/node-tests)");
+        return ExitCode::SUCCESS;
+    }
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         if a == "--list" {
