@@ -180,6 +180,7 @@ pub(crate) fn slots(value: &Value) -> Result<PrivateSlots, VmError> {
         Value::BindingCell(cell) => slots(&cell.borrow()),
         Value::Function(function) => Ok(function.private_slots.clone()),
         Value::Object(object) => Ok(object.private_slots.clone()),
+        Value::Proxy(proxy) => Ok(proxy.private_slots.clone()),
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()

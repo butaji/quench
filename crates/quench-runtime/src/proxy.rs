@@ -15,6 +15,7 @@ pub(crate) fn proxy_new(arguments: &[Value]) -> Result<Value, VmError> {
         target: target.clone(),
         handler: handler.clone(),
         revoked,
+        private_slots: Rc::new(std::cell::RefCell::new(Vec::new())),
     })))
 }
 pub(crate) fn proxy_revocable(arguments: &[Value]) -> Result<Value, VmError> {
@@ -26,6 +27,7 @@ pub(crate) fn proxy_revocable(arguments: &[Value]) -> Result<Value, VmError> {
         target: target.clone(),
         handler: handler.clone(),
         revoked: revoked.clone(),
+        private_slots: Rc::new(std::cell::RefCell::new(Vec::new())),
     }));
     let revoke = create_revoke_function(proxy.clone());
     Ok(Value::Object(Rc::new(crate::value::ObjectData::new(vec![
