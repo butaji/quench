@@ -85,13 +85,22 @@ fn run_class_prototype(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmErro
         return Ok(());
     };
     let heritage = crate::execute::read_register(registers, *heritage)?;
-    let prototype = if matches!(heritage, Value::Null) {
-        Value::Null
-    } else {
-        crate::execute::get_property_result(&heritage, "prototype")?
-    };
+    let prototype = class_heritage_prototype(&heritage)?;
     write_value(registers, *dst, prototype);
     Ok(())
+}
+
+fn class_heritage_prototype(heritage: &Value) -> Result<Value, VmError> {
+    if matches!(heritage, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let prototype = crate::execute::get_property_result(heritage, "prototype")?;
+    if matches!(prototype, Value::Null) || crate::value::is_object(&prototype) {
+        return Ok(prototype);
+    }
+    Err(crate::value::error::throw_type_error(
+        "Class extends value does not have a valid prototype",
+    ))
 }
 
 fn run_optional_call(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {

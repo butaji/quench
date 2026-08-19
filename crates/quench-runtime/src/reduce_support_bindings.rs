@@ -1,3 +1,12 @@
+pub(crate) fn eval_bindings_without_program(
+    bindings: &[(String, u16)],
+    reusable_var_names: &[String],
+    strict: bool,
+    global: bool,
+) -> EvalBindings {
+    finish_eval_bindings(bindings, reusable_var_names, &[], &[], strict, global)
+}
+
 pub(crate) fn eval_bindings(
     program: &oxc::ast::ast::Program<'_>,
     bindings: &[(String, u16)],
@@ -5,8 +14,6 @@ pub(crate) fn eval_bindings(
     strict: bool,
     global: bool,
 ) -> EvalBindings {
-    let mut locals = bindings.iter().cloned().collect::<HashMap<String, u16>>();
-    let mut next_slot = register_base(&locals);
     let collisions = crate::semantic_early::annex_b_lexical_collisions(program);
     let names = crate::semantic_early::var_declared_names(program)
         .into_iter()
@@ -14,6 +21,27 @@ pub(crate) fn eval_bindings(
             !collisions.contains(name) || bindings.iter().any(|(bound, _)| bound == name)
         })
         .collect::<Vec<_>>();
+    let lexical_names = crate::semantic_early::lexically_declared_names(program);
+    finish_eval_bindings(
+        bindings,
+        reusable_var_names,
+        &names,
+        &lexical_names,
+        strict,
+        global,
+    )
+}
+
+fn finish_eval_bindings(
+    bindings: &[(String, u16)],
+    reusable_var_names: &[String],
+    names: &[String],
+    lexical_names: &[String],
+    strict: bool,
+    global: bool,
+) -> EvalBindings {
+    let mut locals = bindings.iter().cloned().collect::<HashMap<String, u16>>();
+    let mut next_slot = register_base(&locals);
     let declared = if strict {
         shadow_names(&names, &mut locals, &mut next_slot);
         Vec::new()
@@ -35,8 +63,7 @@ pub(crate) fn eval_bindings(
         Vec::new()
     };
     let mut prefix = eval_binding_prefix(&deletable);
-    let lexical_names = crate::semantic_early::lexically_declared_names(program);
-    let lexical = shadow_names(&lexical_names, &mut locals, &mut next_slot);
+    let lexical = shadow_names(lexical_names, &mut locals, &mut next_slot);
     prefix.extend(
         lexical
             .into_iter()

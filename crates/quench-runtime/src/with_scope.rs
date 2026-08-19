@@ -215,6 +215,11 @@ fn delete_from_global(key: &str) -> Option<bool> {
 }
 
 fn resolve_name(registers: &mut Vec<Value>, dst: u16, key: &str) -> Result<(), VmError> {
+    if crate::locals::is_initializing_class_name(key) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access '{key}' before initialization"
+        )));
+    }
     let global = crate::vm::current_global_object();
     let binding = resolve_binding(key)?;
     let immutable = crate::globals::immutable_value(key);
