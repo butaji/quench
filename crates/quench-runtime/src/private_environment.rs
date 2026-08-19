@@ -8,23 +8,45 @@ use crate::{
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PrivateEnvironment {
     names: Rc<HashMap<PrivateNameId, PrivateName>>,
+    labels: Rc<HashMap<String, PrivateNameId>>,
 }
 
 impl PrivateEnvironment {
-    fn extend(&self, definitions: &[PrivateNameId]) -> Self {
+    fn extend(&self, definitions: &[PrivateNameId], labels: &[String]) -> Self {
         let mut names = self.names.as_ref().clone();
-        for definition in definitions {
+        let mut by_label = self.labels.as_ref().clone();
+        for (index, definition) in definitions.iter().enumerate() {
             names
                 .entry(*definition)
                 .or_insert_with(|| PrivateName::new(*definition));
+            if let Some(label) = labels.get(index) {
+                by_label.insert(label.clone(), *definition);
+            }
         }
         Self {
             names: Rc::new(names),
+            labels: Rc::new(by_label),
         }
     }
 
     pub(crate) fn resolve(&self, name: PrivateNameId) -> Option<PrivateName> {
         self.names.get(&name).cloned()
+    }
+
+    pub(crate) fn id_for_label(&self, label: &str) -> Option<PrivateNameId> {
+        self.labels.get(label).copied().or_else(|| self.only_id())
+    }
+
+    pub(crate) fn has_names(&self) -> bool {
+        !self.names.is_empty()
+    }
+
+    fn only_id(&self) -> Option<PrivateNameId> {
+        if self.names.len() == 1 {
+            self.names.keys().next().copied()
+        } else {
+            None
+        }
     }
 }
 
@@ -44,8 +66,8 @@ pub(crate) struct Guard {
 }
 
 impl Guard {
-    pub(crate) fn install(definitions: &[PrivateNameId]) -> Self {
-        let environment = current().extend(definitions);
+    pub(crate) fn install(definitions: &[PrivateNameId], labels: &[String]) -> Self {
+        let environment = current().extend(definitions, labels);
         Self::install_environment(environment)
     }
 
@@ -78,6 +100,7 @@ pub(crate) fn execute_scope(
 ) -> Result<Completion, VmError> {
     let Op::PrivateScope {
         names,
+        labels,
         class_name,
         body,
     } = op
@@ -87,7 +110,7 @@ pub(crate) fn execute_scope(
     let Some(body) = body.ops() else {
         return Err(VmError::MissingReturn);
     };
-    let _scope = Guard::install(names);
+    let _scope = Guard::install(names, labels);
     let _class_name = class_name.as_deref().map(ClassNameGuard::install);
     let completion = crate::execute::execute_completion_in_place(body, registers)?;
     if completion.is_suspension() {

@@ -446,6 +446,7 @@ pub enum Op {
     },
     PrivateScope {
         names: Vec<crate::facts::PrivateNameId>,
+        labels: Vec<String>,
         class_name: Option<String>,
         body: crate::machine::FunctionCode,
     },

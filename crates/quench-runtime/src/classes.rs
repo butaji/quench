@@ -71,7 +71,7 @@ fn set_internal_prototype(ops: &mut Vec<Op>, object: u16, src: u16) {
 pub(crate) fn validate_heritage(
     value: &crate::value::Value,
 ) -> Result<(), crate::execute::VmError> {
-    if matches!(value, crate::value::Value::Null) || is_constructible_heritage(value) {
+    if matches!(value, crate::value::Value::Null) || is_constructor(value) {
         return Ok(());
     }
     Err(crate::value::error::throw_type_error(
@@ -79,11 +79,16 @@ pub(crate) fn validate_heritage(
     ))
 }
 
-fn is_constructible_heritage(value: &crate::value::Value) -> bool {
+fn is_constructor(value: &crate::value::Value) -> bool {
     match value {
         crate::value::Value::Function(function) => crate::functions::is_constructible(function),
-        crate::value::Value::BoundFunction(_) | crate::value::Value::Builtin(_) => {
-            crate::conversion::is_callable(value)
+        crate::value::Value::BoundFunction(bound) => is_constructor(&bound.target),
+        crate::value::Value::Builtin(builtin) => {
+            crate::builtin_meta::constructor_name(*builtin).is_some()
+        }
+        crate::value::Value::Proxy(proxy) => {
+            crate::proxy::get_handler_trap(proxy, "construct").is_some()
+                || is_constructor(&proxy.target)
         }
         _ => false,
     }
