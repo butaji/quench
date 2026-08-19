@@ -116,7 +116,7 @@ fn resume_suspended_private_scope(
         Some(environment) => {
             crate::private_environment::Guard::install_environment(environment.clone())
         }
-        None => crate::private_environment::Guard::install(names),
+        None => crate::private_environment::Guard::install(names, &[]),
     };
     let suffix = &body[index + 1..];
     let step = execute_with_generator_registers(generator, |registers| {
