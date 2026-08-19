@@ -137,9 +137,10 @@ fn reduce_static_if(
             Ok(None)
         }
         Statement::FunctionDeclaration(function) => {
+            let mut if_locals = locals.clone();
             crate::blocks::prepare_block_functions(
                 std::slice::from_ref(selected),
-                locals,
+                &mut if_locals,
                 next_slot,
                 ops,
             );
@@ -149,7 +150,7 @@ fn reduce_static_if(
                 facts,
                 next_register,
                 next_slot,
-                locals,
+                &mut if_locals,
             )?;
             Ok(None)
         }
