@@ -211,6 +211,7 @@ pub enum Op {
     GetSuperPropertyDynamic {
         dst: u16,
         key: u16,
+        base: Option<u16>,
     },
     SetSuperProperty {
         key: String,
@@ -219,6 +220,10 @@ pub enum Op {
     SetSuperPropertyDynamic {
         key: u16,
         src: u16,
+        base: Option<u16>,
+    },
+    CaptureSuperBase {
+        dst: u16,
     },
     ResolveGlobal {
         dst: u16,

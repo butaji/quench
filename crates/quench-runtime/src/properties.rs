@@ -45,7 +45,11 @@ fn reduce_computed_get(
         )?;
         let dst = *next_register;
         *next_register = next_register.saturating_add(1);
-        ops.push(Op::GetSuperPropertyDynamic { dst, key });
+        ops.push(Op::GetSuperPropertyDynamic {
+            dst,
+            key,
+            base: None,
+        });
         return Some(dst);
     }
     let object =
@@ -350,12 +354,7 @@ fn finish_primitive_set(
                 Ok(crate::value::Value::Undefined)
             );
             if has_setter {
-                let succeeded = crate::proxy::proxy_set(
-                    &home_proto,
-                    key,
-                    &value,
-                    Some(&receiver),
-                )?;
+                let succeeded = crate::proxy::proxy_set(&home_proto, key, &value, Some(&receiver))?;
                 let ok = matches!(succeeded, crate::value::Value::Boolean(true));
                 if !ok && strict {
                     return Err(crate::value::error::throw_type_error(
@@ -378,14 +377,8 @@ fn finish_primitive_set(
             }
             let own = vec![
                 ("value".to_string(), value),
-                (
-                    "writable".to_string(),
-                    crate::value::Value::Boolean(true),
-                ),
-                (
-                    "enumerable".to_string(),
-                    crate::value::Value::Boolean(true),
-                ),
+                ("writable".to_string(), crate::value::Value::Boolean(true)),
+                ("enumerable".to_string(), crate::value::Value::Boolean(true)),
                 (
                     "configurable".to_string(),
                     crate::value::Value::Boolean(true),
@@ -400,15 +393,18 @@ fn finish_primitive_set(
         ("value".to_string(), value),
         ("writable".to_string(), crate::value::Value::Boolean(true)),
         ("enumerable".to_string(), crate::value::Value::Boolean(true)),
-        ("configurable".to_string(), crate::value::Value::Boolean(true)),
+        (
+            "configurable".to_string(),
+            crate::value::Value::Boolean(true),
+        ),
     ];
     let _ = crate::builtins::define_own_property(&receiver, key, &own)?;
     Ok(())
 }
 
 fn primitive_prototype_for(value: &crate::value::Value) -> crate::value::Value {
-    use crate::value::Value;
     use crate::ops::Builtin;
+    use crate::value::Value;
     match value {
         Value::Number(_) => crate::vm::realm_intrinsic(Builtin::NumberPrototype),
         Value::Boolean(_) => crate::vm::realm_intrinsic(Builtin::BooleanPrototype),
