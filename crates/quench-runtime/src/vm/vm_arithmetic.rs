@@ -21,7 +21,7 @@ pub(crate) fn execute_unary(
         UnaryOp::BitwiseNot => bitwise_not(&value)?,
         UnaryOp::Void => Value::Undefined,
         UnaryOp::Typeof => Value::String(type_of(&value).to_string()),
-        UnaryOp::ToString => Value::String(crate::conversion::to_string(&value)?),
+        UnaryOp::ToString => to_string_value(&value)?,
         UnaryOp::ToNumeric => to_numeric(&value)?,
         UnaryOp::Delete => Value::Boolean(true),
         UnaryOp::IsNullish => Value::Boolean(matches!(value, Value::Null | Value::Undefined)),
@@ -29,6 +29,16 @@ pub(crate) fn execute_unary(
     write_value(registers, dst, result);
     Ok(())
 }
+
+/// `ToString` is the identity on string primitives, preserving lone
+/// surrogates carried as raw UTF-16 units.
+fn to_string_value(value: &Value) -> Result<Value, VmError> {
+    if matches!(value, Value::String(_) | Value::StringUnits(_)) {
+        return Ok(value.clone());
+    }
+    Ok(Value::String(crate::conversion::to_string(value)?))
+}
+
 fn numeric_unary(value: &Value, transform: fn(f64) -> f64) -> Result<Value, VmError> {
     Ok(Value::Number(transform(crate::conversion::to_number(
         value,
