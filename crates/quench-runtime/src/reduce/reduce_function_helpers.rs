@@ -33,6 +33,9 @@ fn declaration_slot(
     locals: &mut HashMap<String, u16>,
     facts: &crate::facts::ProgramDb,
 ) -> u16 {
+    if let Some(slot) = locals.get(&format!("\0annex-b-lexical:{name}")) {
+        return *slot;
+    }
     if let Some(slot) = locals.get(&format!("\0annex-b-outer:{name}")) {
         return *slot;
     }
@@ -43,6 +46,22 @@ fn declaration_slot(
         return *slot;
     }
     reserve_blocked_function(name, next_slot, locals)
+}
+
+fn store_annex_b_var(
+    ops: &mut Vec<Op>,
+    name: &str,
+    src: u16,
+    locals: &HashMap<String, u16>,
+    facts: &crate::facts::ProgramDb,
+) {
+    if facts.eval_var_barrier.iter().any(|bound| bound == name) {
+        return;
+    }
+    let Some(&outer) = locals.get(&format!("\0annex-b-outer:{name}")) else {
+        return;
+    };
+    ops.push(Op::StoreLocal { slot: outer, src });
 }
 
 fn reserve_blocked_function(

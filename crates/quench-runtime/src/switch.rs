@@ -122,6 +122,9 @@ fn instantiate_case_block(
     locals: &mut HashMap<String, u16>,
     next_slot: &mut u16,
 ) {
+    for name in crate::reduce_support::annex_b_switch_function_names(statement) {
+        crate::control_flow::preserve_annex_b_outer(locals, &name);
+    }
     for case in &statement.cases {
         crate::reduce_support::predeclare_lexicals(&case.consequent, locals, next_slot);
         crate::using_scope::emit_tdz(&case.consequent, ops, locals);
@@ -143,12 +146,13 @@ fn prepare_case_functions(
             continue;
         };
         let name = identifier.name.as_str();
-        if locals.contains_key(name) {
+        if locals.contains_key(&format!("\0annex-b-lexical:{name}")) {
             continue;
         }
         let slot = *next_slot;
         *next_slot = next_slot.saturating_add(1);
         locals.insert(name.to_string(), slot);
+        locals.insert(format!("\0annex-b-lexical:{name}"), slot);
         ops.push(Op::MarkUninitialized {
             slot,
             shared: true,

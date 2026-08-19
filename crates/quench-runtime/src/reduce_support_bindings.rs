@@ -162,11 +162,9 @@ pub(crate) fn annex_b_function_names(statements: &[oxc::ast::ast::Statement<'_>]
 
 fn annex_b_function_names_in(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
     match statement {
-        oxc::ast::ast::Statement::FunctionDeclaration(function) => function
-            .id
-            .as_ref()
-            .map(|identifier| vec![identifier.name.to_string()])
-            .unwrap_or_default(),
+        oxc::ast::ast::Statement::FunctionDeclaration(function) => annex_b_plain_function_name(function)
+            .into_iter()
+            .collect(),
         oxc::ast::ast::Statement::BlockStatement(block) => annex_b_function_names(&block.body),
         oxc::ast::ast::Statement::IfStatement(statement) => {
             let mut names = annex_b_function_names(std::slice::from_ref(&statement.consequent));
@@ -175,9 +173,9 @@ fn annex_b_function_names_in(statement: &oxc::ast::ast::Statement<'_>) -> Vec<St
             }
             names
         }
-        // Annex B.3.3 does not apply to CaseBlock. Functions there are
-        // CaseBlock-lexical only and must not become outer `var` bindings.
-        oxc::ast::ast::Statement::SwitchStatement(_) => Vec::new(),
+        oxc::ast::ast::Statement::SwitchStatement(statement) => {
+            annex_b_switch_function_names(statement)
+        }
         oxc::ast::ast::Statement::LabeledStatement(statement) => {
             annex_b_function_names(std::slice::from_ref(&statement.body))
         }
@@ -190,6 +188,25 @@ fn annex_b_function_names_in(statement: &oxc::ast::ast::Statement<'_>) -> Vec<St
         oxc::ast::ast::Statement::TryStatement(statement) => annex_b_try_function_names(statement),
         _ => Vec::new(),
     }
+}
+
+pub(crate) fn annex_b_plain_function_name(
+    function: &oxc::ast::ast::Function<'_>,
+) -> Option<String> {
+    if function.r#async || function.generator {
+        return None;
+    }
+    function.id.as_ref().map(|identifier| identifier.name.to_string())
+}
+
+pub(crate) fn annex_b_switch_function_names(
+    statement: &oxc::ast::ast::SwitchStatement<'_>,
+) -> Vec<String> {
+    statement
+        .cases
+        .iter()
+        .flat_map(|case| annex_b_function_names(&case.consequent))
+        .collect()
 }
 
 fn annex_b_try_function_names(statement: &oxc::ast::ast::TryStatement<'_>) -> Vec<String> {

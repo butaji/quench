@@ -255,16 +255,20 @@ fn reserve_annex_b_statement(
             reserve_annex_b_bindings(&block.body, locals, next_slot, collisions)
         }
         Statement::FunctionDeclaration(function) => {
-            if let Some(identifier) = &function.id {
-                if !collisions.contains(identifier.name.as_str()) {
-                    reserve_annex_b_name(identifier.name.as_str(), locals, next_slot);
+            if let Some(name) = crate::reduce_support::annex_b_plain_function_name(function) {
+                if !collisions.contains(name.as_str()) {
+                    reserve_annex_b_name(&name, locals, next_slot);
                 }
             }
         }
         Statement::IfStatement(statement) => {
             reserve_annex_b_if(statement, locals, next_slot, collisions)
         }
-        Statement::SwitchStatement(_) => {}
+        Statement::SwitchStatement(statement) => {
+            for case in &statement.cases {
+                reserve_annex_b_bindings(&case.consequent, locals, next_slot, collisions);
+            }
+        }
         Statement::LabeledStatement(statement) => reserve_annex_b_bindings(
             std::slice::from_ref(&statement.body),
             locals,
