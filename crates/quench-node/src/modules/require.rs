@@ -72,6 +72,8 @@ fn resolve(spec: &str) -> Option<Value> {
         "perf_hooks" => Some(crate::host::namespace_object_from_pairs(vec![
             ("performance".to_string(), crate::host::capability(crate::registry::NodeSpec::new("perf_hooks:performance", 0x1800))),
         ])),
+        "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "cluster" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "timers" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
