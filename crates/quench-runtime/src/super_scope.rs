@@ -176,6 +176,11 @@ pub(crate) fn execute_constructor(
     let context = current()?;
     let arguments = crate::vm::vm_ops::collect_call_arguments(registers, args, spreads)?;
     let superclass = crate::construct::derived_constructor(&context.function)?;
+    if !super_is_constructor(&superclass) {
+        return Err(crate::value::error::throw_type_error(
+            "Super constructor is not a constructor",
+        ));
+    }
     let this_slot = context
         .function
         .captures
@@ -195,6 +200,16 @@ pub(crate) fn execute_constructor(
     crate::locals::write(this_slot, receiver.clone());
     crate::execute::write_value(registers, *dst, receiver);
     Ok(())
+}
+
+fn super_is_constructor(value: &Value) -> bool {
+    match value {
+        Value::Function(function) => crate::functions::is_constructible(function),
+        Value::BoundFunction(bound) => super_is_constructor(&bound.target),
+        Value::Builtin(builtin) => crate::builtin_meta::constructor_name(*builtin).is_some(),
+        Value::Proxy(proxy) => super_is_constructor(&proxy.target),
+        _ => false,
+    }
 }
 
 fn current() -> Result<Context, VmError> {
@@ -239,16 +254,59 @@ pub(crate) fn check_initialized_this() -> Result<(), VmError> {
 }
 
 fn get_with_receiver(target: &Value, key: &str, receiver: &Value) -> Result<Value, VmError> {
-    if matches!(target, Value::Proxy(_)) {
-        return crate::proxy::proxy_get(target, key, Some(receiver));
+    let mut current = crate::locals::resolved_replacement(target.clone());
+    loop {
+        if matches!(current, Value::Proxy(_)) {
+            return crate::proxy::proxy_get(&current, key, Some(receiver));
+        }
+        if let Some(value) = super_own_value(&current, key, receiver)? {
+            return Ok(value);
+        }
+        let prototype = crate::builtins::object::get_prototype_of(Some(&current))?;
+        let prototype = crate::locals::resolved_replacement(prototype);
+        if matches!(prototype, Value::Null | Value::Undefined)
+            || crate::equality::strict_equal(&prototype, &current)
+        {
+            return Ok(Value::Undefined);
+        }
+        current = prototype;
     }
-    let Some(getter) = crate::property_define::accessor(target, key, "get") else {
-        return Ok(crate::execute::get_property(target, key));
+}
+
+fn super_own_value(holder: &Value, key: &str, receiver: &Value) -> Result<Option<Value>, VmError> {
+    let properties: Vec<(String, Value)> = match holder {
+        Value::Object(properties) => properties.iter().cloned().collect(),
+        Value::Function(function) => function.properties.borrow().clone(),
+        Value::ObjectAlias(alias) => {
+            let Some(object) = alias.0.borrow().upgrade() else {
+                return Ok(None);
+            };
+            return super_own_value(&Value::Object(object), key, receiver);
+        }
+        _ => return Ok(None),
     };
-    if matches!(getter, Value::Undefined) {
-        return Ok(Value::Undefined);
+    if !properties.iter().any(|(name, _)| name == key) {
+        return Ok(None);
     }
-    crate::functions::execute_target(&getter, receiver, &[])
+    let descriptor_key = crate::builtins::descriptor_key(key);
+    if let Some((_, Value::Object(descriptor))) = properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == &descriptor_key)
+    {
+        if !descriptor.iter().any(|(name, _)| name == "value") {
+            if let Some((_, getter)) = descriptor.iter().rev().find(|(name, _)| name == "get") {
+                if crate::conversion::is_callable(getter) {
+                    return crate::functions::execute_target(getter, receiver, &[]).map(Some);
+                }
+            }
+        }
+    }
+    Ok(properties
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)
+        .map(|(_, value)| value.clone()))
 }
 
 fn put_with_receiver(
@@ -302,7 +360,9 @@ fn require_super_base(home: &Value) -> Result<Value, VmError> {
             .unwrap_or(Value::Null),
         home => home.clone(),
     };
+    let prototype = crate::locals::resolved_replacement(prototype);
     let prototype = crate::builtins::object::get_prototype_of(Some(&prototype))?;
+    let prototype = crate::locals::resolved_replacement(prototype);
     match prototype {
         Value::Null | Value::Undefined => Err(crate::value::error::throw_type_error(
             "Super has no prototype",

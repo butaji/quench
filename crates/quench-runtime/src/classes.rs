@@ -50,6 +50,12 @@ fn configure_heritage(
     set_internal_prototype(ops, constructor, constructor_parent);
     ops.push(Op::SetProperty {
         object: constructor,
+        key: "\0function_prototype".to_string(),
+        src: constructor_parent,
+        strict: true,
+    });
+    ops.push(Op::SetProperty {
+        object: constructor,
         key: "\0derived_constructor".to_string(),
         src: heritage,
         strict: true,
