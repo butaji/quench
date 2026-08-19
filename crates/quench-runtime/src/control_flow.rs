@@ -24,12 +24,23 @@ pub(crate) fn reduce_return(
         })
         .or_else(|| Some(crate::reduce_support::emit_undefined(ops, next_register)));
     if let Some(register) = register {
-        if facts.tail_calls && promote_tail_call(ops, register) {
-            return Ok(None);
+        if facts.tail_calls {
+            mark_eval_tail(ops, register);
+            if promote_tail_call(ops, register) {
+                return Ok(None);
+            }
         }
         ops.push(Op::Return { src: register });
     }
     Ok(None)
+}
+
+fn mark_eval_tail(ops: &mut [Op], returned: u16) {
+    if let Some(Op::Eval { dst, tail, .. }) = ops.last_mut() {
+        if *dst == returned {
+            *tail = true;
+        }
+    }
 }
 
 fn promote_tail_call(ops: &mut Vec<Op>, returned: u16) -> bool {
@@ -143,6 +154,7 @@ fn promote_branch_tail(ops: &mut Vec<Op>) -> bool {
     let Some(Op::Return { src }) = ops.pop() else {
         return false;
     };
+    mark_eval_tail(ops, src);
     if promote_tail_call(ops, src) {
         return true;
     }
