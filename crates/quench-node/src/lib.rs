@@ -22,6 +22,7 @@ pub mod envelope;
 pub mod host;
 pub mod modules;
 pub mod registry;
+pub mod run;
 
 pub use envelope::{NodeObject, NodeShared};
 pub use host::{install, NodeHost};
