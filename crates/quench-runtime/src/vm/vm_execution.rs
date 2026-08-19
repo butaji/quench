@@ -48,8 +48,13 @@ pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, Vm
     crate::locals::reset_replacements();
     let result = execute_with_registers_context(ops, Vec::new(), context);
     // Drive the promise microtask queue so `.then`/`.catch` reactions and
-    // synchronously-settling promise chains run to completion.
-    crate::promise::drain_microtasks_all();
+    // synchronously-settling promise chains run to completion. Reinstall
+    // the realm: reactions may call host capabilities (console.log) and
+    // read globals, both of which require an active execution context.
+    let realm = context.realm();
+    if realm::with_realm(realm, crate::promise::drain_microtasks_all).is_none() {
+        crate::vm::with_current_context(context, crate::promise::drain_microtasks_all);
+    }
     result
 }
 
