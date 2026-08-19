@@ -80,13 +80,31 @@ fn rejected_promise(reason: Value) -> Value {
 }
 
 fn run_class_prototype(registers: &mut Vec<Value>, op: &Op) -> Result<(), VmError> {
-    let Op::GetClassPrototype { dst, heritage } = op else {
+    let Op::GetClassPrototype {
+        dst,
+        constructor_dst,
+        heritage,
+    } = op
+    else {
         return Ok(());
     };
     let heritage = crate::execute::read_register(registers, *heritage)?;
     let prototype = class_heritage_prototype(&heritage)?;
     write_value(registers, *dst, prototype);
+    write_value(
+        registers,
+        *constructor_dst,
+        class_constructor_parent(&heritage),
+    );
     Ok(())
+}
+
+fn class_constructor_parent(heritage: &Value) -> Value {
+    if matches!(heritage, Value::Null) {
+        Value::Builtin(crate::ops::Builtin::FunctionPrototype)
+    } else {
+        heritage.clone()
+    }
 }
 
 fn class_heritage_prototype(heritage: &Value) -> Result<Value, VmError> {

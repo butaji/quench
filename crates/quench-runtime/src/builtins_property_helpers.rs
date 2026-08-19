@@ -115,6 +115,16 @@ pub(crate) fn define_own_property(
     key: &str,
     descriptor: &[(String, Value)],
 ) -> Result<Value, crate::execute::VmError> {
+    if matches!(target, Value::Proxy(_)) {
+        let desc = Value::Object(Rc::new(ObjectData::new(descriptor.to_vec())));
+        let result = crate::proxy::proxy_define_property(target, key, &desc)?;
+        if !crate::execute::is_truthy(&result) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy defineProperty returned false",
+            ));
+        }
+        return Ok(target.clone());
+    }
     validate_descriptor_kind(descriptor)?;
     let key_value = Value::String(key.to_string());
     let current = crate::builtins::object::descriptor(Some(target), Some(&key_value))?;

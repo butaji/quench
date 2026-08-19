@@ -14,6 +14,7 @@ use crate::{
 include!("classes_private_scope.rs");
 include!("classes_name.rs");
 include!("classes_method_name.rs");
+include!("classes_static.rs");
 
 fn reduce_heritage(
     class: &Class<'_>,
@@ -39,12 +40,14 @@ fn configure_heritage(
 ) {
     let Some(heritage) = heritage else { return };
     let parent_prototype = take_register(next);
+    let constructor_parent = take_register(next);
     ops.push(Op::GetClassPrototype {
         dst: parent_prototype,
+        constructor_dst: constructor_parent,
         heritage,
     });
     set_internal_prototype(ops, prototype, parent_prototype);
-    set_internal_prototype(ops, constructor, heritage);
+    set_internal_prototype(ops, constructor, constructor_parent);
     ops.push(Op::SetProperty {
         object: constructor,
         key: "\0derived_constructor".to_string(),
@@ -207,36 +210,6 @@ fn reduce_class_element(
         _ => {}
     }
     Some(())
-}
-
-fn reduce_static_block(
-    block: &oxc::ast::ast::StaticBlock<'_>,
-    constructor: u16,
-    facts: &mut ProgramDb,
-    locals: &HashMap<String, u16>,
-) -> Option<Op> {
-    let captures = crate::reduce_support::register_base(locals);
-    let mut block_locals = locals.clone();
-    block_locals.insert("this".to_string(), captures.saturating_add(1));
-    let mut next_slot = captures.saturating_add(2);
-    crate::reduce_support::predeclare_lexicals(&block.body, &mut block_locals, &mut next_slot);
-    block_locals.retain(|name, _| !name.starts_with("\0lexical-predeclared:"));
-    let inherited = (facts.strict, facts.in_function);
-    facts.strict = true;
-    facts.in_function = true;
-    let body = crate::reduce::reduce_expression_statements_with_locals(
-        &block.body,
-        facts,
-        block_locals,
-        next_slot,
-    );
-    (facts.strict, facts.in_function) = inherited;
-    let body = body.ok()?;
-    Some(Op::StaticBlock {
-        constructor,
-        captures,
-        body: crate::machine::FunctionCode::from_ops(body),
-    })
 }
 
 fn reduce_class_method(
@@ -463,8 +436,11 @@ fn reduce_method(
 }
 
 fn method_function_kind(method: &MethodDefinition<'_>) -> Option<FunctionKind> {
-    if method.kind == MethodDefinitionKind::Constructor || method.value.generator {
+    if method.value.generator {
         return None;
+    }
+    if method.kind == MethodDefinitionKind::Constructor {
+        return Some(FunctionKind::ClassConstructor);
     }
     Some(FunctionKind::Method)
 }
