@@ -161,8 +161,8 @@ fn simple_prelude(
 
 fn wrapped_string(value: &Value) -> Result<Value, crate::execute::VmError> {
     match crate::execute::get_property_result(value, "_value")? {
-        wrapped @ Value::String(ref text) if !crate::conversion::is_symbol_string(text) => {
-            Ok(wrapped)
+        Value::String(text) if !crate::conversion::is_symbol_string(&text) => {
+            Ok(Value::String(text))
         }
         _ => Err(crate::value::error::throw_type_error(
             "String.prototype.valueOf called on incompatible receiver",
