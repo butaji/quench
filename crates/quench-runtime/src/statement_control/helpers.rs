@@ -60,10 +60,14 @@ fn reduce_counted_loop(
     locals: &mut Locals,
 ) -> Option<ReduceResult> {
     match statement {
-        Statement::ForStatement(statement) => Some(loop_result(
-            crate::loops::reduce_for(statement, ops, facts, next_register, next_slot, locals)
-                .map(|_| None),
-        )),
+        Statement::ForStatement(statement) => Some(loop_result(crate::loops::reduce_for(
+            statement,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            locals,
+        ))),
         Statement::WhileStatement(statement) => Some(loop_result(crate::loops::reduce_while(
             statement,
             ops,
