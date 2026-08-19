@@ -184,7 +184,18 @@ fn uint8_array_property(view: &crate::value::Uint8ArrayData, key: &str) -> Value
         "BYTES_PER_ELEMENT" => {
             Value::Number(crate::value::Uint8ArrayData::BYTES_PER_ELEMENT as f64)
         }
-        _ => crate::builtins::property(Builtin::Uint8ArrayPrototype, key),
+        _ => {
+            // Ordinary [[Get]]: a custom prototype (e.g. Node's
+            // Buffer.prototype stand-in) participates in the chain
+            // before the built-in typed-array prototype.
+            if let Some(prototype) = view.meta.prototype() {
+                let inherited = crate::vm::get_property(&prototype, key);
+                if !matches!(inherited, Value::Undefined) {
+                    return inherited;
+                }
+            }
+            crate::builtins::property(Builtin::Uint8ArrayPrototype, key)
+        }
     }
 }
 fn uint32_array_property(view: &crate::value::Uint32ArrayData, key: &str) -> Value {

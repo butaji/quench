@@ -302,11 +302,45 @@ pub fn buffer_new(
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if matches!(args.first(), Some(Value::String(_))) {
-        crate::modules::buffer::from(state, args)
-    } else {
+    // Deprecated `Buffer(value)` constructor: numbers allocate,
+    // everything else follows `Buffer.from`.
+    if matches!(args.first(), Some(Value::Number(_))) {
         crate::modules::buffer::alloc(state, args)
+    } else {
+        crate::modules::buffer::from(state, args)
     }
+}
+pub fn buffer_alloc_unsafe(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::buffer::alloc_unsafe(state, args)
+}
+pub fn buffer_is_encoding(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(crate::modules::buffer::is_encoding(args)))
+}
+pub fn buffer_is_utf8(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(crate::modules::buffer_enc::is_utf8(
+        args.first().unwrap_or(&Value::Undefined),
+    )))
+}
+pub fn buffer_is_ascii(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(crate::modules::buffer_enc::is_ascii(
+        args.first().unwrap_or(&Value::Undefined),
+    )))
 }
 pub fn buffer_new_construct(
     state: &Rc<RefCell<HostState>>,
