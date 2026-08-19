@@ -62,6 +62,10 @@ fn resolve(spec: &str) -> Option<Value> {
         "dgram" => Some(crate::host::namespace_object_from_pairs(vec![
             ("createSocket".to_string(), crate::host::capability(crate::registry::NodeSpec::new("dgram:createSocket", 0x1500))),
         ])),
+        "https" => Some(crate::host::namespace_object_from_pairs(vec![
+            ("request".to_string(), crate::host::capability(crate::registry::NodeSpec::new("https:request", 0x1600))),
+            ("get".to_string(), crate::host::capability(crate::registry::NodeSpec::new("https:get", 0x1601))),
+        ])),
         "timers" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
