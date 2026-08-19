@@ -56,3 +56,7 @@ test-path-resolve.js
 test-path-win32-exists.js
 test-path-zero-length-strings.js
 test-path.js
+test-querystring-escape.js
+test-querystring-maxKeys-non-finite.js
+test-querystring-multichar-separator.js
+test-querystring.js

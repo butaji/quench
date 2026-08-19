@@ -209,7 +209,41 @@ fn make_buffer(bytes: &[u8]) -> Value {
     buf.bytes.borrow_mut().copy_from_slice(bytes);
     let ba = Rc::new(buf.transfer_to_immutable());
     let view = Rc::new(Uint8ArrayData::new(ba, 0, bytes.len()));
-    Value::Uint8Array(view)
+    let view = Value::Uint8Array(view);
+    quench_runtime::execute::set_property(
+        view,
+        "toString",
+        crate::host::capability(crate::registry::SPEC_BUFFER_TOSTRING),
+    )
+}
+
+/// Construct a Buffer value from raw bytes (Node's `Buffer.from(bytes)`).
+pub(crate) fn buffer_from_bytes(bytes: &[u8]) -> Value {
+    make_buffer(bytes)
+}
+
+/// `Buffer.prototype.toString([encoding])` — decode the receiver's bytes.
+pub fn to_string(
+    _state: &Rc<RefCell<crate::host::HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(Value::Uint8Array(view)) = receiver else {
+        return Err(quench_runtime::execute::type_error(
+            "Buffer.prototype.toString called on an incompatible receiver",
+        ));
+    };
+    let bytes = view.buffer.bytes.borrow();
+    let slice = &bytes[view.byte_offset..view.byte_offset + view.length];
+    Ok(Value::String(decode(slice, &encoding_name(args.first()))))
+}
+
+fn decode(bytes: &[u8], encoding: &str) -> String {
+    match encoding {
+        "hex" => bytes.iter().map(|b| format!("{b:02x}")).collect(),
+        "latin1" | "binary" => bytes.iter().map(|b| *b as char).collect(),
+        _ => String::from_utf8_lossy(bytes).into_owned(),
+    }
 }
 
 fn encoding_name(arg: Option<&Value>) -> String {
