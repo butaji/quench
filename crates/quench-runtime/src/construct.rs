@@ -406,6 +406,12 @@ include!("construct_instance_fields.rs");
 pub(crate) fn derived_constructor(
     function: &crate::value::FunctionValue,
 ) -> Result<Value, crate::execute::VmError> {
+    let proto = crate::builtins::object::get_prototype_of(Some(&crate::value::Value::Function(
+        std::rc::Rc::new(function.clone()),
+    )))?;
+    if !is_bare_function_prototype(&proto) {
+        return Ok(proto);
+    }
     function
         .properties
         .borrow()
@@ -413,6 +419,13 @@ pub(crate) fn derived_constructor(
         .rev()
         .find_map(|(name, value)| (name == "\0prototype").then(|| value.clone()))
         .ok_or_else(|| crate::value::error::throw_reference_error("super is unavailable"))
+}
+
+fn is_bare_function_prototype(value: &crate::value::Value) -> bool {
+    matches!(
+        value,
+        crate::value::Value::Builtin(crate::ops::Builtin::FunctionPrototype)
+    )
 }
 
 include!("construct_tail.rs");
