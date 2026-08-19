@@ -163,13 +163,21 @@ fn name_field_value(
 }
 
 fn constructor_receiver(target: &crate::value::Value) -> crate::value::Value {
-    let prototype = crate::construct::get_prototype_from_constructor(target, |realm| {
+    let target = bound_construct_target(target);
+    let prototype = crate::construct::get_prototype_from_constructor(&target, |realm| {
         crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::ObjectPrototype)
     });
     crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(vec![(
         "\0prototype".to_string(),
         prototype,
     )])))
+}
+
+fn bound_construct_target(target: &crate::value::Value) -> crate::value::Value {
+    match target {
+        crate::value::Value::BoundFunction(bound) => bound_construct_target(&bound.target),
+        target => target.clone(),
+    }
 }
 
 fn builtin_default_prototype(target: &crate::value::Value) -> Option<crate::value::Value> {
