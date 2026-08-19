@@ -473,6 +473,7 @@ pub enum Op {
         update: crate::machine::FunctionCode,
         post_test: bool,
         dst: u16,
+        per_iteration: Vec<u16>,
     },
     ForIn {
         label: Option<String>,
