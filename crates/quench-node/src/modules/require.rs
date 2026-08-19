@@ -84,6 +84,9 @@ fn resolve(spec: &str) -> Option<Value> {
         "sea" => Some(crate::host::namespace_object_from_pairs(vec![
             ("isSea".to_string(), crate::host::capability(crate::registry::NodeSpec::new("sea:isSea", 0x1a00))),
         ])),
+        "test" => Some(crate::host::namespace_object_from_pairs(vec![
+            ("test".to_string(), crate::host::capability(crate::registry::NodeSpec::new("test:test", 0x1b00))),
+        ])),
         "timers" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
