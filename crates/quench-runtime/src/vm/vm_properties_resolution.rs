@@ -1,6 +1,7 @@
 pub fn get_property_result(value: &Value, key: &str) -> Result<Value, VmError> {
     let value = crate::locals::resolved_replacement(value.clone());
-    get_property_with_receiver(&value, key, &value)
+    let result = get_property_with_receiver(&value, key, &value)?;
+    Ok(crate::locals::resolved_replacement(result))
 }
 
 pub(crate) fn get_property_with_receiver(
