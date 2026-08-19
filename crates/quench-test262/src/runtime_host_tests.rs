@@ -163,13 +163,13 @@ fn function_var_is_per_activation() {
         "void 0;\n",
     );
     let program = quench_runtime::reduce::reduce_source(source).expect("reduce");
-    let _ = quench_runtime::vm::execute_with_context(program.ops(), super::host_context())
+    let _ = quench_runtime::vm::execute_with_context(program.ops(), &quench_runtime::vm::VmContext::isolated())
         .expect("execute");
     let again = quench_runtime::reduce::reduce_source(
         "function f(){ var x; if(x===undefined){x=0;}else{x=1;} return x; } return [f(), f()];",
     )
     .expect("reduce2");
-    let value = quench_runtime::vm::execute_with_context(again.ops(), super::host_context())
+    let value = quench_runtime::vm::execute_with_context(again.ops(), &quench_runtime::vm::VmContext::isolated())
         .expect("execute2");
     let Value::Array(items) = value else {
         panic!("expected array, got {value:?}");
@@ -235,6 +235,27 @@ fn module_throw_statement_fails_execute() {
         module.execute().is_err(),
         "throw statement must fail LinkedModule::execute"
     );
+}
+
+#[test]
+fn sequential_harnessed_scripts_do_not_share_bindings() {
+    let mut runner = crate::Test262Runner::new(super::RuntimeHost);
+    let mut cache = crate::HarnessCache::new(PathBuf::from("tests/test262/harness"));
+    let leak = "/*---\nflags: [raw]\n---*/\nvar __quench_batch_leak = 1;\n";
+    let probe = concat!(
+        "/*---\nflags: [raw]\n---*/\n",
+        "if (typeof __quench_batch_leak !== 'undefined') {\n",
+        "  throw new Error('leaked');\n",
+        "}\n",
+    );
+    match runner.run_test_with_cache(leak, &mut cache) {
+        Ok(crate::TestOutcome::Pass) => {}
+        other => panic!("leak script must pass: {other:?}"),
+    }
+    match runner.run_test_with_cache(probe, &mut cache) {
+        Ok(crate::TestOutcome::Pass) => {}
+        other => panic!("probe must not see the prior script binding: {other:?}"),
+    }
 }
 
 #[test]
