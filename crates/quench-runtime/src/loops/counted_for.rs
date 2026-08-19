@@ -223,6 +223,7 @@ fn reduce_dynamic_for(
         crate::machine::FunctionCode::from_ops_many(vec![init, test, body, update])
             .try_into()
             .expect("four loop bodies");
+    let dst = crate::reduce_support::emit_undefined(ops, next_register);
     ops.push(Op::Loop {
         label: None,
         init,
@@ -230,6 +231,7 @@ fn reduce_dynamic_for(
         body,
         update,
         post_test: false,
+        dst,
     });
     if let Some(stack) = stack {
         let loop_op = ops.pop().ok_or_else(|| vec!["missing loop".to_string()])?;

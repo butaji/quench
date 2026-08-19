@@ -133,7 +133,7 @@ pub(crate) fn execute(
         };
         match crate::execute::execute_completion_in_place(body, registers)? {
             crate::completion::Completion::Normal => continue,
-            crate::completion::Completion::Break(None) => {
+            crate::completion::Completion::Break { label: None, .. } => {
                 return Ok(crate::completion::Completion::Normal);
             }
             completion => return Ok(completion),
