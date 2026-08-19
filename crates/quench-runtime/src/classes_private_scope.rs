@@ -9,19 +9,26 @@ pub(crate) fn reduce_expression(
     let inferred = facts.inferred_name.clone();
     let mut body = Vec::new();
     let class_locals = class_scope_locals(class, locals);
-    let heritage = reduce_heritage(class, &mut body, facts, next, &class_locals)?;
-    let (constructor, default_constructor) =
-        reduce_constructor(class, &mut body, facts, next, &class_locals)?;
-    finish_class(
-        class,
-        heritage,
-        (constructor, default_constructor),
-        &mut body,
-        facts,
-        next,
-        &class_locals,
-        inferred.as_deref(),
-    )?;
+    let inherited_strict = facts.strict;
+    facts.strict = true;
+    let heritage = reduce_heritage(class, &mut body, facts, next, &class_locals);
+    let constructor = heritage.and_then(|heritage| {
+        let (constructor, default_constructor) =
+            reduce_constructor(class, &mut body, facts, next, &class_locals)?;
+        finish_class(
+            class,
+            heritage,
+            (constructor, default_constructor),
+            &mut body,
+            facts,
+            next,
+            &class_locals,
+            inferred.as_deref(),
+        )?;
+        Some((constructor, heritage))
+    });
+    facts.strict = inherited_strict;
+    let (constructor, _) = constructor?;
     ops.push(Op::PrivateScope {
         names,
         labels,
