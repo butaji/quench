@@ -110,6 +110,9 @@ pub(crate) fn same_value(left: Option<&Value>, right: Option<&Value>) -> bool {
 }
 
 pub(crate) fn set_property(target: Value, key: &str, value: Value) -> Value {
+    if crate::builtins::descriptor_flag(&target, key, "writable") == Some(false) {
+        return target;
+    }
     if let Some(result) = crate::typed_array_prototype::set(&target, key, value.clone()) {
         return result;
     }
