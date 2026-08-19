@@ -32,6 +32,9 @@ fn resolve(spec: &str) -> Option<Value> {
     match name {
         "console" => Some(crate::modules::console::build_value()),
         "process" => Some(crate::modules::process::build()),
+        "assert" => Some(crate::host::namespace_object_from_pairs(vec![
+            ("ok".to_string(), crate::host::capability(crate::registry::NodeSpec::new("assert:ok", 0x1400))),
+        ])),
         "buffer" => Some(crate::modules::buffer::build_module()),
         "util" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::util::build(),
