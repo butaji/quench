@@ -35,25 +35,6 @@ fn promote_tail_call(ops: &mut Vec<Op>, returned: u16) -> bool {
     if promote_conditional_tail(ops, returned) {
         return true;
     }
-    if let Some(Op::Eval {
-        dst,
-        callee,
-        source,
-        ..
-    }) = ops.last()
-    {
-        if *dst != returned {
-            return false;
-        }
-        let tail_call = Op::TailCall {
-            callee: *callee,
-            args: vec![*source],
-            spreads: vec![false],
-        };
-        let _ = ops.pop();
-        ops.push(tail_call);
-        return true;
-    }
     let Some(Op::Call {
         dst,
         callee,

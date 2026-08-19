@@ -132,9 +132,8 @@ pub(crate) fn reduce_arguments(
     Some((args, spreads))
 }
 
-fn is_direct_eval(call: &CallExpression<'_>, locals: &HashMap<String, u16>) -> bool {
+fn is_direct_eval(call: &CallExpression<'_>, _locals: &HashMap<String, u16>) -> bool {
     matches!(&call.callee, Expression::Identifier(identifier) if identifier.name == "eval")
-        && !locals.contains_key("eval")
 }
 
 fn reduce_direct_eval(
