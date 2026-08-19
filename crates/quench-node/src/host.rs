@@ -22,12 +22,13 @@ pub struct NodeHost {
 
 pub struct HostState {
     pub timers: crate::modules::timers::TimerRegistry,
-    pub event_loop: crate::modules::events::EventLoop,
+    pub event_loop: crate::modules::event_loop::EventLoop,
     pub process: crate::modules::process::ProcessState,
     pub fs: crate::modules::fs::FsState,
     pub net: crate::modules::net::NetState,
     pub http: crate::modules::http::HttpState,
-    pub emitters: crate::modules::events::EmitterRegistry,
+    pub emitters: crate::modules::emitter::EmitterRegistry,
+    pub targets: crate::modules::event_target::TargetRegistry,
     pub output: Option<OutputSink>,
     pub realm: RealmId,
     /// Directory stack for the CJS loader: top is the requiring module's dir.
@@ -37,6 +38,9 @@ pub struct HostState {
     /// Module record handed to `__quench_cjs_wrap__` for the file
     /// currently being loaded by `require`.
     pub pending_module: Option<PendingModule>,
+    /// Thrown value stashed by `pump::handle_uncaught`, dispatched by
+    /// the `__quench_uncaught__` capability inside an active frame.
+    pub pending_uncaught: Option<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -50,17 +54,19 @@ impl NodeHost {
     pub fn new(realm: RealmId, argv: Vec<String>) -> Self {
         let state = HostState {
             timers: crate::modules::timers::TimerRegistry::new(),
-            event_loop: crate::modules::events::EventLoop::new(),
+            event_loop: crate::modules::event_loop::EventLoop::new(),
             process: crate::modules::process::ProcessState::new(argv),
             fs: crate::modules::fs::FsState::new(),
             net: crate::modules::net::NetState::new(),
             http: crate::modules::http::HttpState::new(),
-            emitters: crate::modules::events::EmitterRegistry::new(),
+            emitters: crate::modules::emitter::EmitterRegistry::new(),
+            targets: crate::modules::event_target::TargetRegistry::new(),
             output: None,
             realm,
             dir_stack: Vec::new(),
             module_cache: std::collections::HashMap::new(),
             pending_module: None,
+            pending_uncaught: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),
