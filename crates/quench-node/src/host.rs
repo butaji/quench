@@ -200,6 +200,8 @@ fn install_with_argv(
     context = context.with_host_value("URL".to_string(), url_class);
     let text_decoder = crate::host::capability(crate::registry::SPEC_TEXT_DECODER_NEW);
     context = context.with_host_value("TextDecoder".to_string(), text_decoder);
+    let text_encoder = crate::host::capability(crate::registry::SPEC_TEXT_ENCODER_NEW);
+    context = context.with_host_value("TextEncoder".to_string(), text_encoder);
     (host, context)
 }
 
