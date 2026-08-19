@@ -60,3 +60,11 @@ test-querystring-escape.js
 test-querystring-maxKeys-non-finite.js
 test-querystring-multichar-separator.js
 test-querystring.js
+test-url-domain-ascii-unicode.js
+test-url-fileurltopath.js
+test-url-format-invalid-input.js
+test-url-format-whatwg.js
+test-url-invalid-file-url-path-input.js
+test-url-pathtofileurl.js
+test-url-revokeobjecturl.js
+test-url-urltooptions.js

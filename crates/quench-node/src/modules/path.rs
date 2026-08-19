@@ -20,7 +20,7 @@ pub const WINDOWS: bool = cfg!(target_os = "windows");
 /// `validateString` — coded `TypeError` (`ERR_INVALID_ARG_TYPE`).
 pub fn validate_string(value: &Value, name: &str) -> Result<String, VmError> {
     match value {
-        Value::String(s) => Ok(s.clone()),
+        Value::String(s) if !quench_runtime::execute::is_symbol(value) => Ok(s.clone()),
         other => Err(invalid_arg_type(name, other)),
     }
 }

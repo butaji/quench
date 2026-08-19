@@ -8,6 +8,8 @@ license = "MIT"
 [dependencies]
 oxc_resolver = "11.24.2"
 quench-runtime = { path = "../quench-runtime" }
+idna = "1"
+url = "2"
 
 [dependencies.sysinfo]
 version = "0.32"

@@ -41,6 +41,9 @@ pub struct HostState {
     /// Thrown value stashed by `pump::handle_uncaught`, dispatched by
     /// the `__quench_uncaught__` capability inside an active frame.
     pub pending_uncaught: Option<Value>,
+    /// Shared `URL` class pair (constructor, prototype), built on first use
+    /// so `instanceof URL` has one canonical prototype per realm.
+    pub url_class: Option<(Value, Value)>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -67,6 +70,7 @@ impl NodeHost {
             module_cache: std::collections::HashMap::new(),
             pending_module: None,
             pending_uncaught: None,
+            url_class: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),
@@ -187,11 +191,13 @@ fn install_with_argv(
     argv: Vec<String>,
 ) -> (Rc<NodeHost>, VmContext) {
     let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink));
-    let mut context = VmContext::default().with_host(host.clone());
     let bindings = crate::registry::namespace_bindings(&host.state.borrow().process.argv);
+    let mut context = VmContext::default().with_host(host.clone());
     for (name, value) in bindings {
         context = context.with_host_value(name, value);
     }
+    let (url_class, _) = crate::modules::url_whatwg::url_class(&host.state);
+    context = context.with_host_value("URL".to_string(), url_class);
     (host, context)
 }
 

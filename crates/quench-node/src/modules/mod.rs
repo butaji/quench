@@ -37,5 +37,7 @@ pub mod test;
 pub mod timers;
 pub mod tty;
 pub mod url;
+pub mod url_file;
+pub mod url_whatwg;
 pub mod util;
 pub mod vm;
