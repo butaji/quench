@@ -48,6 +48,22 @@ const CAP_PATH_BASENAME: u16 = 0x0404;
 const CAP_PATH_EXTNAME: u16 = 0x0405;
 const CAP_PATH_ISABSOLUTE: u16 = 0x0406;
 const CAP_PATH_RELATIVE: u16 = 0x0409;
+const CAP_PATH_PARSE: u16 = 0x040A;
+const CAP_PATH_FORMAT: u16 = 0x040B;
+const CAP_PATH_TO_NAMESPACED: u16 = 0x040C;
+const CAP_PATH_MATCHES_GLOB: u16 = 0x040D;
+const CAP_PATH_WIN32_JOIN: u16 = 0x0410;
+const CAP_PATH_WIN32_RESOLVE: u16 = 0x0411;
+const CAP_PATH_WIN32_NORMALIZE: u16 = 0x0412;
+const CAP_PATH_WIN32_DIRNAME: u16 = 0x0413;
+const CAP_PATH_WIN32_BASENAME: u16 = 0x0414;
+const CAP_PATH_WIN32_EXTNAME: u16 = 0x0415;
+const CAP_PATH_WIN32_ISABSOLUTE: u16 = 0x0416;
+const CAP_PATH_WIN32_RELATIVE: u16 = 0x0417;
+const CAP_PATH_WIN32_PARSE: u16 = 0x0418;
+const CAP_PATH_WIN32_FORMAT: u16 = 0x0419;
+const CAP_PATH_WIN32_TO_NAMESPACED: u16 = 0x041A;
+const CAP_PATH_WIN32_MATCHES_GLOB: u16 = 0x041B;
 const CAP_URL_PARSE: u16 = 0x0500;
 const CAP_URL_FORMAT: u16 = 0x0501;
 const CAP_URL_RESOLVE: u16 = 0x0502;
@@ -206,16 +222,46 @@ fn events_dispatch(cap: u16) -> Option<CallHandler> {
 }
 
 fn path_dispatch(cap: u16) -> Option<CallHandler> {
+    use crate::modules::path_posix as posix;
+    Some(match cap {
+        CAP_PATH_JOIN => posix::join,
+        CAP_PATH_RESOLVE => posix::resolve,
+        CAP_PATH_NORMALIZE => posix::normalize,
+        CAP_PATH_DIRNAME => posix::dirname,
+        CAP_PATH_BASENAME => posix::basename,
+        CAP_PATH_EXTNAME => posix::extname,
+        CAP_PATH_ISABSOLUTE => posix::is_absolute,
+        CAP_PATH_RELATIVE => posix::relative,
+        CAP_PATH_PARSE => posix::parse,
+        CAP_PATH_FORMAT => posix::format,
+        CAP_PATH_TO_NAMESPACED => posix::to_namespaced_path,
+        CAP_PATH_MATCHES_GLOB => posix::matches_glob,
+        _ => return path_win32_dispatch(cap),
+    })
+}
+
+fn path_win32_dispatch(cap: u16) -> Option<CallHandler> {
+    use crate::modules::{path_win32 as win32, path_win32_extra as wextra};
+    Some(match cap {
+        CAP_PATH_WIN32_JOIN => wextra::join,
+        CAP_PATH_WIN32_RESOLVE => win32::resolve,
+        CAP_PATH_WIN32_NORMALIZE => crate::modules::path_win32_normalize::normalize,
+        CAP_PATH_WIN32_DIRNAME => wextra::dirname,
+        CAP_PATH_WIN32_BASENAME => wextra::basename,
+        CAP_PATH_WIN32_EXTNAME => wextra::extname,
+        CAP_PATH_WIN32_ISABSOLUTE => win32::is_absolute,
+        CAP_PATH_WIN32_RELATIVE => wextra::relative,
+        CAP_PATH_WIN32_PARSE => wextra::parse,
+        CAP_PATH_WIN32_FORMAT => wextra::format,
+        CAP_PATH_WIN32_TO_NAMESPACED => win32::to_namespaced_path,
+        CAP_PATH_WIN32_MATCHES_GLOB => wextra::matches_glob,
+        _ => return url_dispatch(cap),
+    })
+}
+
+fn url_dispatch(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     Some(match cap {
-        CAP_PATH_JOIN => path_join,
-        CAP_PATH_RESOLVE => path_resolve,
-        CAP_PATH_NORMALIZE => path_normalize,
-        CAP_PATH_DIRNAME => path_dirname,
-        CAP_PATH_BASENAME => path_basename,
-        CAP_PATH_EXTNAME => path_extname,
-        CAP_PATH_ISABSOLUTE => path_is_absolute,
-        CAP_PATH_RELATIVE => path_relative,
         CAP_URL_PARSE => url_parse,
         CAP_URL_FORMAT => url_format,
         CAP_URL_RESOLVE => url_resolve,

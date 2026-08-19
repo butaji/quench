@@ -147,6 +147,43 @@ fn json_string(value: &Value) -> String {
     std::string::ToString::to_string(&format!("{:?}", value))
 }
 
+/// Node's `ERR_INVALID_ARG_TYPE` "Received …" suffix.
+pub fn invalid_arg_received(value: &Value) -> String {
+    match value {
+        Value::Null => " Received null".into(),
+        Value::Undefined => " Received undefined".into(),
+        Value::Object(_) => {
+            let name = quench_runtime::execute::get_property(value, "constructor");
+            let name = quench_runtime::execute::get_property(&name, "name");
+            match name {
+                Value::String(name) if !name.is_empty() => {
+                    format!(" Received an instance of {name}")
+                }
+                _ => " Received [object Object]".into(),
+            }
+        }
+        Value::Function(_) | Value::BoundFunction(_) => {
+            let name = quench_runtime::execute::get_property(value, "name");
+            match name {
+                Value::String(name) => format!(" Received function {name}"),
+                _ => " Received function".into(),
+            }
+        }
+        Value::Boolean(_) => format!(" Received type boolean ({})", inspect(value)),
+        Value::Number(_) | Value::BigInt(_) => format!(
+            " Received type {} ({})",
+            if matches!(value, Value::Number(_)) {
+                "number"
+            } else {
+                "bigint"
+            },
+            inspect(value)
+        ),
+        Value::String(_) => format!(" Received type string ({})", inspect(value)),
+        _ => format!(" Received {}", inspect(value)),
+    }
+}
+
 /// `util.inspect` — string-only, sufficient for fixtures.
 pub fn inspect(value: &Value) -> String {
     match value {
