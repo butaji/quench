@@ -361,10 +361,42 @@ fn validate_nested(statements: &[Statement<'_>]) -> Result<(), Vec<String>> {
             Statement::ExpressionStatement(statement) => {
                 validate_expression(&statement.expression)?;
             }
+            Statement::WhileStatement(statement) => validate_loop_body(&statement.body)?,
+            Statement::DoWhileStatement(statement) => validate_loop_body(&statement.body)?,
+            Statement::ForStatement(statement) => validate_loop_body(&statement.body)?,
+            Statement::ForInStatement(statement) => validate_loop_body(&statement.body)?,
+            Statement::ForOfStatement(statement) => validate_loop_body(&statement.body)?,
+            Statement::LabeledStatement(statement) => {
+                validate_nested(std::slice::from_ref(&statement.body))?;
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+fn validate_loop_body(body: &Statement<'_>) -> Result<(), Vec<String>> {
+    if is_labelled_function(body) {
+        return Err(vec![
+            "SyntaxError: labelled functions are not allowed as loop bodies".to_string(),
+        ]);
+    }
+    validate_nested(std::slice::from_ref(body))
+}
+
+fn is_labelled_function(statement: &Statement<'_>) -> bool {
+    let Statement::LabeledStatement(labelled) = statement else {
+        return false;
+    };
+    unwraps_to_function(&labelled.body)
+}
+
+fn unwraps_to_function(statement: &Statement<'_>) -> bool {
+    match statement {
+        Statement::FunctionDeclaration(_) => true,
+        Statement::LabeledStatement(labelled) => unwraps_to_function(&labelled.body),
+        _ => false,
+    }
 }
 
 fn validate_function(function: &oxc::ast::ast::Function<'_>) -> Result<(), Vec<String>> {

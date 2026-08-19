@@ -40,26 +40,30 @@ pub fn reduce_if_statement(
         test => reduce_expression(test, ops, facts, next_register, locals)
             .ok_or_else(|| vec!["Unsupported branch condition".to_string()])?,
     };
-    let then_ops = reduce_if_branch(&statement.consequent, facts, locals)?;
+    let dst = crate::reduce_support::emit_undefined(ops, next_register);
+    let then_ops = reduce_if_branch(&statement.consequent, dst, facts, locals)?;
     let else_ops = statement
         .alternate
         .as_ref()
-        .map(|alternate| reduce_if_branch(alternate, facts, locals))
+        .map(|alternate| reduce_if_branch(alternate, dst, facts, locals))
         .transpose()?
         .unwrap_or_default();
     push_branch(ops, condition, then_ops, else_ops)?;
-    Ok(None)
+    Ok(Some(dst))
 }
 
 fn reduce_if_branch(
     statement: &Statement<'_>,
+    dst: u16,
     facts: &mut ProgramDb,
     locals: &HashMap<String, u16>,
 ) -> Result<Vec<Op>, Vec<String>> {
     if should_skip_if_function(statement, facts) {
         return Ok(Vec::new());
     }
-    crate::branch::reduce(statement, facts, locals)
+    let (mut ops, last) = crate::branch::reduce(statement, facts, locals)?;
+    crate::reduce_support::seal_completion(&mut ops, dst, last);
+    Ok(ops)
 }
 
 fn should_skip_if_function(statement: &Statement<'_>, facts: &ProgramDb) -> bool {
@@ -105,13 +109,22 @@ fn reduce_static_if(
         statement.alternate.as_ref()
     };
     let Some(selected) = selected else {
-        return Ok(None);
+        return Ok(Some(crate::reduce_support::emit_undefined(
+            ops,
+            next_register,
+        )));
     };
     if should_skip_if_function(selected, facts) {
-        return Ok(None);
+        return Ok(Some(crate::reduce_support::emit_undefined(
+            ops,
+            next_register,
+        )));
     }
     match selected {
-        Statement::EmptyStatement(_) => Ok(None),
+        Statement::EmptyStatement(_) => Ok(Some(crate::reduce_support::emit_undefined(
+            ops,
+            next_register,
+        ))),
         Statement::BlockStatement(_) => {
             crate::reduce::reduce_statement(selected, ops, facts, next_register, next_slot, locals)
         }

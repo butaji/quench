@@ -10,7 +10,7 @@ use crate::{
     ops::{Constant, Op},
 };
 
-use counted_for::{reduce_body, reduce_fragment};
+use counted_for::reduce_fragment;
 
 pub(crate) use counted_for::reduce_for;
 
@@ -112,7 +112,7 @@ pub(crate) fn reduce_for_in(
             body_locals.insert(format!("\0lexical-predeclared:{name}"), slot);
         }
     }
-    let body = crate::branch::reduce(&statement.body, facts, &body_locals)?;
+    let (body, _) = crate::branch::reduce(&statement.body, facts, &body_locals)?;
     *locals = outer_locals;
     ops.push(Op::ForIn {
         label: None,
@@ -167,7 +167,7 @@ pub(crate) fn reduce_for_of(
             body_locals.insert(format!("\0lexical-predeclared:{name}"), slot);
         }
     }
-    let mut body = crate::branch::reduce(&statement.body, facts, &body_locals)?;
+    let (mut body, _) = crate::branch::reduce(&statement.body, facts, &body_locals)?;
     if let Some(pattern) = pattern {
         prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
     }
@@ -475,4 +475,5 @@ fn run_fragment(
     Ok(())
 }
 
+include!("loops_body.rs");
 include!("loops_while.rs");

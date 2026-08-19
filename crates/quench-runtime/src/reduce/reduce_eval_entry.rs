@@ -112,6 +112,7 @@ fn reduce_eval_body(
             directive_completion,
         },
     )
+    .map(|(ops, _)| ops)
 }
 
 fn eval_facts(analysis: &crate::semantic::Analysis, strict: bool) -> ProgramDb {

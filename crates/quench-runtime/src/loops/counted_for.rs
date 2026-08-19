@@ -73,30 +73,6 @@ pub(super) fn reduce_fragment(
     Ok(fragment)
 }
 
-pub(super) fn reduce_body(
-    statement: &Statement<'_>,
-    ops: &mut Vec<Op>,
-    facts: &mut ProgramDb,
-    next_register: &mut u16,
-    next_slot: &mut u16,
-    locals: &mut HashMap<String, u16>,
-) -> Result<(), Vec<String>> {
-    let mut block_locals = locals.clone();
-    let statements = match statement {
-        Statement::BlockStatement(block) => &block.body,
-        _ => std::slice::from_ref(statement),
-    };
-    let locals = if matches!(statement, Statement::BlockStatement(_)) {
-        &mut block_locals
-    } else {
-        locals
-    };
-    for statement in statements {
-        crate::reduce::reduce_statement(statement, ops, facts, next_register, next_slot, locals)?;
-    }
-    Ok(())
-}
-
 fn fits_static_bound(start: f64, limit: f64, step: f64) -> bool {
     let mut current = start;
     let mut count = 0;
@@ -376,16 +352,17 @@ fn reduce_body_fragment(
     let mut fragment = Vec::new();
     let barrier_len = facts.eval_var_barrier.len();
     extend_for_barrier(statement, facts);
-    let result = super::reduce_body(
+    let result = crate::loops::reduce_loop_body(
         &statement.body,
         &mut fragment,
         facts,
         next_register,
         next_slot,
         locals,
+        0,
     );
     facts.eval_var_barrier.truncate(barrier_len);
-    result.map(|()| fragment)
+    result.map(|_| fragment)
 }
 
 fn extend_for_barrier(statement: &ForStatement<'_>, facts: &mut ProgramDb) {
@@ -428,16 +405,17 @@ fn emit_iteration(
     });
     let barrier_len = context.facts.eval_var_barrier.len();
     extend_for_barrier(statement, context.facts);
-    let result = super::reduce_body(
+    let result = crate::loops::reduce_loop_body(
         &statement.body,
         context.ops,
         context.facts,
         context.next_register,
         context.next_slot,
         context.locals,
+        0,
     );
     context.facts.eval_var_barrier.truncate(barrier_len);
-    result
+    result.map(|_| ())
 }
 
 fn numeric_init(init: Option<&ForStatementInit<'_>>) -> Result<(String, f64), Vec<String>> {

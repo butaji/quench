@@ -445,3 +445,20 @@ pub(crate) fn emit_undefined(ops: &mut Vec<Op>, next_register: &mut u16) -> u16 
     });
     register
 }
+
+pub(crate) fn emit_move(ops: &mut Vec<Op>, dst: u16, src: u16) {
+    if dst != src {
+        ops.push(Op::Move { dst, src });
+    }
+}
+
+/// Write `last` (or `undefined`) into `dst` so the statement has a completion.
+pub(crate) fn seal_completion(ops: &mut Vec<Op>, dst: u16, last: Option<u16>) {
+    match last {
+        Some(src) => emit_move(ops, dst, src),
+        None => ops.push(Op::Const {
+            dst,
+            value: Constant::Undefined,
+        }),
+    }
+}
