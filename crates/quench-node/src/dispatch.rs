@@ -115,11 +115,6 @@ const CAP_RUN_LOOP: u16 = 0x070C;
 const CAP_RUN_EXIT: u16 = 0x070D;
 const CAP_INTERNAL_UTIL_SLEEP: u16 = 0x070E;
 const CAP_TIMERS_CLOSE: u16 = 0x070F;
-const CAP_BUFFER_FROM: u16 = 0x0800;
-const CAP_BUFFER_ALLOC: u16 = 0x0801;
-const CAP_BUFFER_BYTELENGTH: u16 = 0x0802;
-const CAP_BUFFER_ISBUFFER: u16 = 0x0803;
-const CAP_BUFFER_CONCAT: u16 = 0x0804;
 const CAP_BUFFER_NEW: u16 = 0x0805;
 const CAP_TTY_ISATTY: u16 = 0x0900;
 const CAP_PROCESS_EXIT: u16 = 0x0A01;
@@ -189,7 +184,6 @@ const CAP_CJS_WRAP: u16 = 0x1d00;
 const CAP_UTIL_GETCALLSITES: u16 = 0x0303;
 const CAP_BUFFER_ATOB: u16 = 0x0806;
 const CAP_BUFFER_BTOA: u16 = 0x0807;
-const CAP_BUFFER_TOSTRING: u16 = 0x0808;
 const CAP_VM_RUN_IN_NEW_CONTEXT: u16 = 0x1600;
 const CAP_URL_PATH_TO_FILE_URL: u16 = 0x0505;
 const CAP_CP_SPAWNSYNC: u16 = 0x1e00;
@@ -355,15 +349,8 @@ fn timers_dispatch(cap: u16) -> Option<CallHandler> {
 fn os_buffer_dispatch(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     Some(match cap {
-        CAP_BUFFER_FROM => buffer_from,
-        CAP_BUFFER_ALLOC => buffer_alloc,
-        CAP_BUFFER_BYTELENGTH => buffer_byte_length,
-        CAP_BUFFER_ISBUFFER => buffer_is_buffer,
-        CAP_BUFFER_CONCAT => buffer_concat,
-        CAP_BUFFER_NEW => buffer_new,
-        CAP_BUFFER_TOSTRING => crate::modules::buffer::to_string,
         CAP_TTY_ISATTY => tty_isatty,
-        _ => return process_dispatch(cap),
+        _ => return crate::dispatch_buffer::buffer_dispatch(cap).or_else(|| process_dispatch(cap)),
     })
 }
 
