@@ -288,6 +288,23 @@ pub(crate) fn execute_for_of(
     iterate_loop_values(registers, label, slot, body, per_iteration, iterator, dst)
 }
 
+thread_local! {
+    static LIVE_FOR_OF: std::cell::RefCell<Vec<crate::value::Value>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn remember_for_of(iterator: crate::value::Value) {
+    LIVE_FOR_OF.with(|live| live.borrow_mut().push(iterator));
+}
+
+pub(crate) fn live_for_of() -> Option<crate::value::Value> {
+    LIVE_FOR_OF.with(|live| live.borrow().last().cloned())
+}
+
+pub(crate) fn take_live_for_of() -> Option<crate::value::Value> {
+    LIVE_FOR_OF.with(|live| live.borrow_mut().pop())
+}
+
 type ForInLoopData<'a> = (
     &'a Option<String>,
     u16,
@@ -418,10 +435,7 @@ fn iterate_loop_values(
         let value = match crate::collections::iterator::step_value(&iterator) {
             Ok(value) => value,
             Err(crate::execute::VmError::Thrown(reason)) => {
-                return crate::collections::iterator::close(
-                    iterator,
-                    crate::completion::Completion::Throw(reason),
-                );
+                return Ok(crate::completion::Completion::Throw(reason));
             }
             Err(error) => return Err(error),
         };
@@ -438,6 +452,10 @@ fn iterate_loop_values(
                 );
             }
             crate::completion::LoopTransition::Propagate(completion) => {
+                if completion.is_suspension() {
+                    remember_for_of(iterator);
+                    return Ok(completion);
+                }
                 let completion = attach_loop_completion(registers, dst, completion)?;
                 return crate::collections::iterator::close(iterator, completion);
             }
