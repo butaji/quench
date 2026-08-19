@@ -392,12 +392,15 @@ fn construct_string(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
 }
 
 fn boxed_primitive(value: Value, constructor: crate::ops::Builtin) -> Value {
-    let mut properties = vec![("_value".to_string(), value)];
+    let mut properties = vec![("_value".to_string(), value.clone())];
     if let Some(prototype) = crate::builtin_meta::instance_prototype(constructor) {
         properties.push(("\0prototype".to_string(), Value::Builtin(prototype)));
     }
-    Value::Object(std::rc::Rc::new(ObjectData::new(properties)))
+    let boxed = Value::Object(std::rc::Rc::new(ObjectData::new(properties)));
+    define_string_length(&boxed, &value, constructor).unwrap_or(boxed)
 }
+
+include!("construct_string_box.rs");
 
 fn construct_error(
     builtin: &crate::ops::Builtin,

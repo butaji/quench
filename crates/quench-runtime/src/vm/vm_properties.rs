@@ -22,6 +22,9 @@ pub fn get_property(value: &Value, key: &str) -> Value {
     if let Value::BindingCell(cell) = value {
         return get_property(&cell.borrow(), key);
     }
+    if matches!(value, Value::Proxy(_)) {
+        return crate::proxy::proxy_get(value, key, Some(value)).unwrap_or(Value::Undefined);
+    }
     direct_or_primitive_property(value, key)
 }
 
@@ -292,12 +295,12 @@ fn generator_property(value: &Value, key: &str) -> Value {
 }
 
 fn function_property(function: &crate::value::FunctionValue, key: &str) -> Value {
-    if key == "constructor" {
-        return function_realm_intrinsic(function, function_constructor(function));
-    }
     let properties = function.properties.borrow();
     if let Some((_, value)) = properties.iter().rev().find(|(name, _)| name == key) {
         return property_value(value);
+    }
+    if key == "constructor" {
+        return function_realm_intrinsic(function, function_constructor(function));
     }
     function_inherited_property(function, &properties, key)
 }

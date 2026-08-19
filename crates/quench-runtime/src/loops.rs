@@ -97,7 +97,7 @@ pub(crate) fn reduce_for_in(
     locals: &mut HashMap<String, u16>,
 ) -> Result<(), Vec<String>> {
     let outer_locals = locals.clone();
-    let (slot, per_iteration) = for_in_slot(&statement.left, next_slot, locals)?;
+    let (slot, per_iteration, pattern) = for_of_slot(&statement.left, next_slot, locals)?;
     let object = crate::reduce::reduce_expression(
         &statement.right,
         ops,
@@ -113,6 +113,9 @@ pub(crate) fn reduce_for_in(
         }
     }
     let (mut body, _) = crate::branch::reduce(&statement.body, facts, &body_locals)?;
+    if let Some(pattern) = pattern {
+        prepend_for_of_binding(pattern, slot, &mut body, facts, next_register, &body_locals)?;
+    }
     if for_left_immutable(&statement.left) {
         body.insert(0, Op::MarkImmutable { slot });
     }

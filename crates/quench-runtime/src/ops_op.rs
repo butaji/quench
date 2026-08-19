@@ -290,6 +290,7 @@ pub enum Op {
     },
     GetClassPrototype {
         dst: u16,
+        constructor_dst: u16,
         heritage: u16,
     },
     CheckSuperThis,

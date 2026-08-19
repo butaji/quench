@@ -4,6 +4,7 @@ pub enum FunctionKind {
     Arrow,
     Generator,
     Method,
+    ClassConstructor,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

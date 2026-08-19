@@ -57,10 +57,12 @@ pub(crate) fn is_class_constructor(function: &crate::value::FunctionValue) -> bo
 pub(crate) fn is_constructible(function: &crate::value::FunctionValue) -> bool {
     match (function.kind, function.strictness, function.is_async) {
         (FunctionKind::Ordinary, FunctionStrictness::Sloppy, false)
-        | (FunctionKind::Ordinary, FunctionStrictness::Strict, false) => true,
+        | (FunctionKind::Ordinary, FunctionStrictness::Strict, false)
+        | (FunctionKind::ClassConstructor, _, false) => true,
         (FunctionKind::Arrow, _, _)
         | (FunctionKind::Generator, _, _)
         | (FunctionKind::Method, _, _)
-        | (FunctionKind::Ordinary, _, true) => false,
+        | (FunctionKind::Ordinary, _, true)
+        | (FunctionKind::ClassConstructor, _, true) => false,
     }
 }

@@ -24,9 +24,11 @@ fn array_buffer_property(buffer: &crate::value::ArrayBufferData, key: &str) -> V
         "transfer" => Value::Builtin(Builtin::ArrayBufferTransfer),
         "transferToFixedLength" => Value::Builtin(Builtin::ArrayBufferTransferToFixedLength),
         "sliceToImmutable" => Value::Builtin(Builtin::ArrayBufferSliceToImmutable),
-        "constructor" | "Symbol.toStringTag" => {
-            crate::builtins::property(Builtin::ArrayBufferPrototype, key)
-        }
+        "constructor" | "Symbol.toStringTag" => buffer
+            .prototype()
+            .map(|prototype| get_property(&prototype, key))
+            .filter(|value| !matches!(value, Value::Undefined))
+            .unwrap_or_else(|| crate::builtins::property(Builtin::ArrayBufferPrototype, key)),
         _ => crate::builtins::property(Builtin::ArrayBuffer, key),
     }
 }
