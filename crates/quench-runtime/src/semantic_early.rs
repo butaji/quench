@@ -36,7 +36,8 @@ pub(crate) fn annex_b_lexical_collisions(program: &oxc::ast::ast::Program<'_>) -
 
 pub(crate) fn annex_b_lexical_collisions_in(statements: &[Statement<'_>]) -> HashSet<String> {
     let mut collisions = HashSet::new();
-    collect_annex_b_collisions(statements, &[], &mut collisions);
+    let visible = lexically_declared_names_in(statements);
+    collect_annex_b_collisions(statements, &visible, &mut collisions);
     collisions
 }
 

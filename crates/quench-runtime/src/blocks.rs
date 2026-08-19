@@ -127,7 +127,11 @@ pub(crate) fn hoist_var_names(
     } else {
         crate::semantic_early::var_declared_names_in(&block.body)
     };
+    let skip = crate::semantic_early::annex_b_lexical_collisions_in(&block.body);
     for name in hoisted {
+        if skip.contains(&name) {
+            continue;
+        }
         locals.entry(name).or_insert_with(|| {
             let slot = *next_slot;
             *next_slot = next_slot.saturating_add(1);
