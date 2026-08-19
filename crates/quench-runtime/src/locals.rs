@@ -196,7 +196,7 @@ pub(crate) fn load_binding(
         return Ok(());
     }
     ensure_initialized(slot, name)?;
-    if dynamic {
+    if dynamic && current().eval_name_aliases_slot(name, slot) {
         if let Some(value) = resolve_eval_name(name) {
             crate::execute::write_value(registers, dst, value);
             return Ok(());
