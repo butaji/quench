@@ -261,6 +261,7 @@ pub struct ObjectData {
     pub(crate) properties: ObjectProperties,
     pub(crate) private_slots: PrivateSlots,
     original_prototype: RefCell<Option<Value>>,
+    pub(crate) created: Vec<String>,
 }
 
 impl ObjectData {
@@ -272,11 +273,11 @@ impl ObjectData {
         properties: ObjectProperties,
         private_slots: PrivateSlots,
     ) -> Self {
-        Self {
-            properties,
+        Self::with_creation_order(
+            properties.clone(),
             private_slots,
-            original_prototype: RefCell::new(None),
-        }
+            creation_order(&properties),
+        )
     }
 
     pub(crate) fn original_prototype(&self) -> Option<Value> {
@@ -285,6 +286,19 @@ impl ObjectData {
 
     pub(crate) fn set_original_prototype(&self, value: Value) {
         self.original_prototype.replace(Some(value));
+    }
+
+    pub(crate) fn with_creation_order(
+        properties: ObjectProperties,
+        private_slots: PrivateSlots,
+        created: Vec<String>,
+    ) -> Self {
+        Self {
+            properties,
+            private_slots,
+            original_prototype: RefCell::new(None),
+            created,
+        }
     }
 }
 
@@ -300,6 +314,17 @@ impl std::ops::DerefMut for ObjectData {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.properties
     }
+}
+
+fn creation_order(properties: &[(String, Value)]) -> Vec<String> {
+    let mut created = Vec::new();
+    for (key, _) in properties {
+        if key.starts_with('\0') || created.iter().any(|name| name == key) {
+            continue;
+        }
+        created.push(key.clone());
+    }
+    created
 }
 
 impl PartialEq for ObjectData {

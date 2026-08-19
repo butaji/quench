@@ -20,9 +20,18 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         }
         sync_descriptor_value(&mut values, key);
         reattach_function_homes(&values, weak);
-        ObjectData::with_private_slots(values, Rc::clone(&properties.private_slots))
+        let mut created = properties.created.clone();
+        record_created(&mut created, key);
+        ObjectData::with_creation_order(values, Rc::clone(&properties.private_slots), created)
     });
     Value::Object(object)
+}
+
+pub(crate) fn record_created(created: &mut Vec<String>, key: &str) {
+    if key.starts_with('\0') || created.iter().any(|name| name == key) {
+        return;
+    }
+    created.push(key.to_string());
 }
 
 fn sync_descriptor_value(values: &mut [(String, Value)], key: &str) {
