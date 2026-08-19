@@ -39,6 +39,7 @@ pub fn format_template(template: &str, args: &[Value]) -> String {
     let mut out = String::new();
     let mut iter = template.chars().peekable();
     let mut index = 1usize;
+    let mut extra = false;
     while let Some(c) = iter.next() {
         if c != '%' {
             out.push(c);
@@ -55,6 +56,16 @@ pub fn format_template(template: &str, args: &[Value]) -> String {
         let arg = args.get(index).cloned().unwrap_or(Value::Undefined);
         index += 1;
         out.push_str(&format_spec(spec, &arg));
+        extra = true;
+    }
+    // Node's util.format appends remaining positional args separated
+    // by spaces, mirroring console.log's behavior.
+    for arg in args.iter().skip(index) {
+        if extra {
+            out.push(' ');
+        }
+        extra = true;
+        out.push_str(&format_spec('s', arg));
     }
     out
 }
