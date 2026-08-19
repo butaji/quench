@@ -185,6 +185,15 @@ thread_local! {
     static SHARED_GLOBAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
+pub(crate) fn reset_evaluation_globals() {
+    GLOBAL_DECLARATION_BASE.with(|slot| slot.replace(None));
+    GLOBAL_DECLARATION_BATCH.with(|slot| slot.replace(None));
+    GLOBAL_OBJECT.with(|slot| slot.replace(None));
+    if let Some(token) = realm::token(crate::ops::RealmId::ROOT) {
+        realm::register_global(&token, std::rc::Rc::new(ObjectData::new(Vec::new())));
+    }
+}
+
 /// Keep one global object alive across nested residual executions.
 pub struct SharedGlobal {
     previous: Option<ObjectProperties>,

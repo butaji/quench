@@ -213,6 +213,28 @@ impl VmContext {
         }
     }
 
+    /// A new realm and host bindings for one top-level evaluation.
+    pub fn isolated() -> Self {
+        let parent = Self::for_realm(
+            RealmId::ROOT,
+            vec![
+                HostCapabilityKind::GetGlobal,
+                HostCapabilityKind::CreateRealm,
+                HostCapabilityKind::EvalScript,
+                HostCapabilityKind::DetachArrayBuffer,
+            ],
+        );
+        let realm = realm::create(&parent);
+        let context = realm::context(realm).unwrap_or(parent);
+        context.with_host_capability(
+            "$262",
+            HostCapabilityRef {
+                realm,
+                kind: HostCapabilityKind::GetGlobal,
+            },
+        )
+    }
+
     pub fn realm(&self) -> RealmId {
         self.realm
     }
