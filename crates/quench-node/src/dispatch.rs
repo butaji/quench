@@ -52,6 +52,7 @@ const CAP_TIMERS_REFRESH: u16 = 0x070B;
 const CAP_RUN_LOOP: u16 = 0x070C;
 const CAP_RUN_EXIT: u16 = 0x070D;
 const CAP_INTERNAL_UTIL_SLEEP: u16 = 0x070E;
+const CAP_TIMERS_CLOSE: u16 = 0x070F;
 const CAP_BUFFER_FROM: u16 = 0x0800;
 const CAP_BUFFER_ALLOC: u16 = 0x0801;
 const CAP_BUFFER_BYTELENGTH: u16 = 0x0802;
@@ -183,6 +184,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_RUN_LOOP => timers_run_loop,
         CAP_RUN_EXIT => timers_run_exit,
         CAP_INTERNAL_UTIL_SLEEP => internal_util_sleep,
+        CAP_TIMERS_CLOSE => timers_method_close,
         _ => return os_buffer_dispatch(cap),
     };
     Some(h)
