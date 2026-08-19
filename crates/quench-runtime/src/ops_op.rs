@@ -71,6 +71,7 @@ pub enum Op {
     },
     MarkUninitialized {
         slot: u16,
+        shared: bool,
     },
     MarkImmutable {
         slot: u16,

@@ -37,6 +37,20 @@ fn emit_string(ops: &mut Vec<Op>, next: &mut u16, value: String) -> u16 {
     dst
 }
 
+fn define_class_prototype(
+    ops: &mut Vec<Op>,
+    _next: &mut u16,
+    constructor: u16,
+    prototype: u16,
+) {
+    ops.push(Op::SetProperty {
+        object: constructor,
+        key: "prototype".to_string(),
+        src: prototype,
+        strict: true,
+    });
+}
+
 fn define_static_key(
     ops: &mut Vec<Op>, next: &mut u16, object: u16, key: &str, value: u16,
     kind: PropertyDefinitionKind,

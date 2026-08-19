@@ -326,6 +326,17 @@ pub(crate) fn reduce_expression(
     next_register: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
+    reduce_expression_kind(function, ops, facts, next_register, locals, None)
+}
+
+pub(crate) fn reduce_expression_kind(
+    function: &oxc::ast::ast::Function<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+    kind: Option<FunctionKind>,
+) -> Option<u16> {
     let body = function.body.as_ref()?;
     let strictness = crate::reduce_support::function_strictness(body, facts.strict);
     let (parameters, parameter_count) =
@@ -350,7 +361,7 @@ pub(crate) fn reduce_expression(
         parameter_count,
         captures,
         FunctionMetadata {
-            kind: function_kind(function),
+            kind: kind.unwrap_or_else(|| function_kind(function)),
             length: crate::function_parameters::expected_argument_count(&function.params),
             strictness,
             is_async: function.r#async,

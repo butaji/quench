@@ -589,9 +589,17 @@ fn reduce_this_atom(
         .or_else(|| locals.get("globalThis"))
         .copied()
     {
-        return emit_load_local(ops, next_register, slot);
+        return emit_load_this(ops, next_register, slot);
     }
     crate::reduce_support::emit_undefined(ops, next_register)
+}
+
+fn emit_load_this(ops: &mut Vec<Op>, next_register: &mut u16, slot: u16) -> u16 {
+    ops.push(Op::CheckInitialized {
+        slot,
+        name: "this".to_string(),
+    });
+    emit_load_local(ops, next_register, slot)
 }
 
 fn emit_load_local(ops: &mut Vec<Op>, next_register: &mut u16, slot: u16) -> u16 {

@@ -445,9 +445,24 @@ fn reduce_method(
 ) -> Option<u16> {
     let inherited = facts.strict;
     facts.strict = true;
-    let result = crate::functions::reduce_expression(&method.value, ops, facts, next, locals);
+    let kind = method_function_kind(method);
+    let result = crate::functions::reduce_expression_kind(
+        &method.value,
+        ops,
+        facts,
+        next,
+        locals,
+        kind,
+    );
     facts.strict = inherited;
     result
+}
+
+fn method_function_kind(method: &MethodDefinition<'_>) -> Option<FunctionKind> {
+    if method.kind == MethodDefinitionKind::Constructor || method.value.generator {
+        return None;
+    }
+    Some(FunctionKind::Method)
 }
 
 fn reduce_method_key(

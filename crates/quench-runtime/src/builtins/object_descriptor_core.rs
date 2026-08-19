@@ -40,13 +40,8 @@ fn function_descriptor(function: &crate::value::FunctionValue, key: &str) -> Opt
         .rev()
         .find_map(|(name, value)| (name == key).then(|| value.clone()))?;
     if key == "prototype" {
-        // Per ES spec §25.2.5, Function.prototype is the only data property
-        // every function gets; its descriptor attributes default to
-        // {writable: true, enumerable: false, configurable: false}. Earlier
-        // this synthesised writable=false which made inherited_write_blocked
-        // reject legitimate assignment to the slot (e.g. ClassDefinitionEvaluation
-        // installing C.prototype via Op::SetProperty).
-        return Some(descriptor_object_with_flags(value, true, false, false));
+        let writable = !crate::functions::is_class_constructor(function);
+        return Some(descriptor_object_with_flags(value, writable, false, false));
     }
     Some(descriptor_object(&value))
 }

@@ -3,6 +3,7 @@ pub enum FunctionKind {
     Ordinary,
     Arrow,
     Generator,
+    Method,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
