@@ -29,10 +29,13 @@ pub fn create_server(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result
 
 pub fn is_ip(args: &[Value]) -> i32 {
     let s = args.first().map(value_to_string).unwrap_or_default();
-    match IpAddr::from_str(&s) {
-        Ok(_) => 4,
-        Err(_) => 0,
+    if std::net::Ipv4Addr::from_str(&s).is_ok() {
+        return 4;
     }
+    if std::net::Ipv6Addr::from_str(&s).is_ok() {
+        return 6;
+    }
+    0
 }
 
 pub fn is_ipv4(args: &[Value]) -> bool {
