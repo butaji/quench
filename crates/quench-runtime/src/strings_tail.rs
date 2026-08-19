@@ -3,6 +3,12 @@ pub(crate) fn search(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let value = string_receiver(receiver)?;
+    let pattern = arguments.first().cloned().unwrap_or(Value::Undefined);
+    if let Some(result) =
+        invoke_symbol_method(&pattern, "Symbol.search", &[Value::String(value.clone())])?
+    {
+        return Ok(result);
+    }
     if let Some(Value::Object(pattern)) = arguments.first() {
         let pattern = Value::Object(pattern.clone());
         if let Ok(Value::Array(result)) =
@@ -19,6 +25,26 @@ pub(crate) fn search(
     Ok(Value::Number(
         value.find(&pattern).map_or(-1.0, |index| index as f64),
     ))
+}
+
+fn invoke_symbol_method(
+    pattern: &Value,
+    key: &str,
+    arguments: &[Value],
+) -> Result<Option<Value>, crate::execute::VmError> {
+    if matches!(pattern, Value::Undefined | Value::Null) || !crate::value::is_object(pattern) {
+        return Ok(None);
+    }
+    let method = crate::execute::get_property_result(pattern, key)?;
+    if matches!(method, Value::Undefined | Value::Null) {
+        return Ok(None);
+    }
+    if !crate::conversion::is_callable(&method) {
+        return Err(crate::value::error::throw_type_error(
+            "String method is not callable",
+        ));
+    }
+    crate::functions::execute_target(&method, pattern, arguments).map(Some)
 }
 
 fn string_match(

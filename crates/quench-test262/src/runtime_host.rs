@@ -419,6 +419,7 @@ fn host_context() -> &'static VmContext {
                         quench_runtime::ops::HostCapabilityKind::CreateRealm,
                         quench_runtime::ops::HostCapabilityKind::EvalScript,
                         quench_runtime::ops::HostCapabilityKind::DetachArrayBuffer,
+                        quench_runtime::ops::HostCapabilityKind::IsHTMLDDA,
                     ],
                 )
                 .with_host_capability(

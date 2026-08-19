@@ -45,6 +45,8 @@ pub enum HostCapabilityKind {
     CreateRealm,
     EvalScript,
     DetachArrayBuffer,
+    /// Host `$262.IsHTMLDDA`: callable object with an [[IsHTMLDDA]] slot.
+    IsHTMLDDA,
     /// Capability-owned operation implemented by the embedding host.
     Custom(u16),
 }
