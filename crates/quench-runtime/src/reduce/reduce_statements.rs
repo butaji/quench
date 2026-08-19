@@ -413,7 +413,7 @@ pub fn reduce_statement(
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
 ) -> Result<Option<u16>, Vec<String>> {
-    if statement.is_module_declaration() {
+    let last = if statement.is_module_declaration() {
         super::reduce_module::reduce_module_declaration(
             statement,
             ops,
@@ -421,10 +421,14 @@ pub fn reduce_statement(
             next_register,
             next_slot,
             locals,
-        )
+        )?
     } else {
-        reduce_plain_statement(statement, ops, facts, next_register, next_slot, locals)
+        reduce_plain_statement(statement, ops, facts, next_register, next_slot, locals)?
+    };
+    if let Some(value) = last {
+        crate::switch::record_completion(ops, value);
     }
+    Ok(last)
 }
 
 fn reduce_plain_statement(
