@@ -548,6 +548,15 @@ pub fn net_is_ipv6(
 pub fn net_create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::net::create_server(state, args)
 }
+/// `net.createServer(...)` is also invocable as a plain function (the
+/// construct path handles `new net.createServer(...)`).
+pub fn net_create_server_call(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::net::create_server(state, args)
+}
 
 // ---- http ----
 pub fn http_request(
