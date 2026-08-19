@@ -173,7 +173,17 @@ pub(crate) fn split(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
-    let units = receiver_units(receiver)?;
+    let input = string_receiver(receiver)?;
+    let pattern = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let limit = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    if let Some(result) = invoke_symbol_method(
+        &pattern,
+        "Symbol.split",
+        &[Value::String(input.clone()), limit],
+    )? {
+        return Ok(result);
+    }
+    let units = input.encode_utf16().collect::<Vec<_>>();
     let limit = split_limit(arguments)?;
     let pattern = match arguments.first() {
         None | Some(Value::Undefined) => None,
