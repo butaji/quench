@@ -73,6 +73,7 @@ const CAP_QS_PARSE: u16 = 0x0600;
 const CAP_QS_STRINGIFY: u16 = 0x0601;
 const CAP_QS_ESCAPE: u16 = 0x0602;
 const CAP_QS_UNESCAPE: u16 = 0x0603;
+const CAP_QS_UNESCAPE_BUFFER: u16 = 0x0604;
 const CAP_TIMERS_SETTIMEOUT: u16 = 0x0700;
 const CAP_TIMERS_CLEARTIMEOUT: u16 = 0x0701;
 const CAP_TIMERS_SETINTERVAL: u16 = 0x0702;
@@ -162,6 +163,8 @@ const CAP_CJS_WRAP: u16 = 0x1d00;
 const CAP_UTIL_GETCALLSITES: u16 = 0x0303;
 const CAP_BUFFER_ATOB: u16 = 0x0806;
 const CAP_BUFFER_BTOA: u16 = 0x0807;
+const CAP_BUFFER_TOSTRING: u16 = 0x0808;
+const CAP_VM_RUN_IN_NEW_CONTEXT: u16 = 0x1600;
 const CAP_URL_PATH_TO_FILE_URL: u16 = 0x0505;
 const CAP_CP_SPAWNSYNC: u16 = 0x1e00;
 const CAP_CP_EXECSYNC: u16 = 0x1e01;
@@ -265,10 +268,11 @@ fn url_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_URL_PARSE => url_parse,
         CAP_URL_FORMAT => url_format,
         CAP_URL_RESOLVE => url_resolve,
-        CAP_QS_PARSE => qs_parse,
-        CAP_QS_STRINGIFY => qs_stringify,
-        CAP_QS_ESCAPE => qs_escape,
-        CAP_QS_UNESCAPE => qs_unescape,
+        CAP_QS_PARSE => crate::modules::querystring_parse::parse,
+        CAP_QS_STRINGIFY => crate::modules::querystring_stringify::stringify,
+        CAP_QS_ESCAPE => crate::modules::querystring::escape,
+        CAP_QS_UNESCAPE => crate::modules::querystring::unescape,
+        CAP_QS_UNESCAPE_BUFFER => crate::modules::querystring::unescape_buffer,
         _ => return timers_dispatch(cap),
     })
 }
@@ -305,6 +309,7 @@ fn os_buffer_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_BUFFER_ISBUFFER => buffer_is_buffer,
         CAP_BUFFER_CONCAT => buffer_concat,
         CAP_BUFFER_NEW => buffer_new,
+        CAP_BUFFER_TOSTRING => crate::modules::buffer::to_string,
         CAP_TTY_ISATTY => tty_isatty,
         _ => return process_dispatch(cap),
     })
@@ -389,6 +394,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_TEST_RUN => test_run,
         CAP_STRUCTURED_CLONE => structured_clone,
         CAP_FETCH => fetch,
+        CAP_VM_RUN_IN_NEW_CONTEXT => crate::modules::vm::run_in_new_context,
         _ => return assert_dispatch(cap),
     })
 }
