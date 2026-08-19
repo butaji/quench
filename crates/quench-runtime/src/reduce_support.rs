@@ -196,10 +196,17 @@ fn predeclare_functions_strict(
 fn nested_var_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
     match statement {
         oxc::ast::ast::Statement::FunctionDeclaration(_) => Vec::new(),
-        oxc::ast::ast::Statement::BlockStatement(block) => annex_b_function_names(&block.body),
-        oxc::ast::ast::Statement::IfStatement(statement) => {
-            let mut names = annex_b_function_names(std::slice::from_ref(&statement.consequent));
-            if let Some(alternate) = &statement.alternate {
+        oxc::ast::ast::Statement::BlockStatement(block) => {
+            let mut names = declared_names(statement);
+            names.extend(annex_b_function_names(&block.body));
+            names
+        }
+        oxc::ast::ast::Statement::IfStatement(if_statement) => {
+            let mut names = declared_names(statement);
+            names.extend(annex_b_function_names(std::slice::from_ref(
+                &if_statement.consequent,
+            )));
+            if let Some(alternate) = &if_statement.alternate {
                 names.extend(annex_b_function_names(std::slice::from_ref(alternate)));
             }
             names
@@ -212,13 +219,25 @@ fn nested_var_names(statement: &oxc::ast::ast::Statement<'_>) -> Vec<String> {
         oxc::ast::ast::Statement::LabeledStatement(statement) => {
             annex_b_function_names(std::slice::from_ref(&statement.body))
         }
-        oxc::ast::ast::Statement::WhileStatement(statement) => {
-            annex_b_function_names(std::slice::from_ref(&statement.body))
+        oxc::ast::ast::Statement::WhileStatement(while_statement) => {
+            let mut names = declared_names(statement);
+            names.extend(annex_b_function_names(std::slice::from_ref(
+                &while_statement.body,
+            )));
+            names
         }
-        oxc::ast::ast::Statement::DoWhileStatement(statement) => {
-            annex_b_function_names(std::slice::from_ref(&statement.body))
+        oxc::ast::ast::Statement::DoWhileStatement(do_statement) => {
+            let mut names = declared_names(statement);
+            names.extend(annex_b_function_names(std::slice::from_ref(
+                &do_statement.body,
+            )));
+            names
         }
-        oxc::ast::ast::Statement::TryStatement(statement) => annex_b_try_function_names(statement),
+        oxc::ast::ast::Statement::TryStatement(try_statement) => {
+            let mut names = declared_names(statement);
+            names.extend(annex_b_try_function_names(try_statement));
+            names
+        }
         _ => declared_names(statement),
     }
 }

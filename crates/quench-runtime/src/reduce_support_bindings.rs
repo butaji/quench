@@ -371,8 +371,45 @@ fn collect_declared_names(statement: &oxc::ast::ast::Statement<'_>, names: &mut 
         oxc::ast::ast::Statement::DoWhileStatement(statement) => {
             collect_declared_names(&statement.body, names);
         }
+        oxc::ast::ast::Statement::TryStatement(statement) => {
+            collect_try_declared_names(statement, names);
+        }
+        oxc::ast::ast::Statement::ForInStatement(statement) => {
+            collect_for_left_declared_names(&statement.left, names);
+            collect_declared_names(&statement.body, names);
+        }
+        oxc::ast::ast::Statement::ForOfStatement(statement) => {
+            collect_for_left_declared_names(&statement.left, names);
+            collect_declared_names(&statement.body, names);
+        }
         _ => {}
     }
+}
+
+fn collect_try_declared_names(
+    statement: &oxc::ast::ast::TryStatement<'_>,
+    names: &mut Vec<String>,
+) {
+    collect_statement_names(&statement.block.body, names);
+    if let Some(handler) = &statement.handler {
+        collect_statement_names(&handler.body.body, names);
+    }
+    if let Some(finalizer) = &statement.finalizer {
+        collect_statement_names(&finalizer.body, names);
+    }
+}
+
+fn collect_for_left_declared_names(
+    left: &oxc::ast::ast::ForStatementLeft<'_>,
+    names: &mut Vec<String>,
+) {
+    let oxc::ast::ast::ForStatementLeft::VariableDeclaration(declaration) = left else {
+        return;
+    };
+    if declaration.kind != oxc::ast::ast::VariableDeclarationKind::Var {
+        return;
+    }
+    collect_declaration_names(declaration, names);
 }
 
 fn collect_nested_declared_names(
