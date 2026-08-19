@@ -352,10 +352,8 @@ fn handler_locals(
     next_slot = next_slot.saturating_add(1);
     for name in crate::binding_patterns::names(&parameter.pattern) {
         preserve_annex_b_outer(&mut result, &name);
-        if let std::collections::hash_map::Entry::Vacant(entry) = result.entry(name) {
-            entry.insert(next_slot);
-            next_slot = next_slot.saturating_add(1);
-        }
+        result.insert(name, next_slot);
+        next_slot = next_slot.saturating_add(1);
     }
     (result, Some(slot), next_slot)
 }
