@@ -192,9 +192,11 @@ fn slot_prototype(value: &Value) -> Option<Value> {
         } else {
             Builtin::SetPrototype
         })),
-        _ => return None,
+        _ => return typed_array_slot_prototype(value),
     })
 }
+
+include!("object_prototype_typed.rs");
 
 fn generator_prototype(generator: &crate::value::GeneratorData) -> Value {
     crate::construct::get_prototype_from_constructor(

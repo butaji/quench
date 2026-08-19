@@ -8,12 +8,10 @@ fn boolean_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::V
 }
 
 fn wrapped_boolean(value: &Value) -> Result<Value, crate::execute::VmError> {
-    let constructor = crate::execute::get_property_result(value, "constructor")?;
-    let wrapped = crate::execute::get_property_result(value, "_value")?;
-    if constructor == Value::Builtin(Builtin::Boolean) && matches!(wrapped, Value::Boolean(_)) {
-        return Ok(wrapped);
+    match crate::execute::get_property_result(value, "_value")? {
+        wrapped @ Value::Boolean(_) => Ok(wrapped),
+        _ => incompatible_boolean_receiver(),
     }
-    incompatible_boolean_receiver()
 }
 
 fn incompatible_boolean_receiver() -> Result<Value, crate::execute::VmError> {
@@ -33,14 +31,12 @@ fn bigint_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::Vm
 }
 
 fn wrapped_bigint(value: &Value) -> Result<Value, crate::execute::VmError> {
-    let constructor = crate::execute::get_property_result(value, "constructor")?;
-    let wrapped = crate::execute::get_property_result(value, "_value")?;
-    if constructor == Value::Builtin(Builtin::BigInt) && matches!(wrapped, Value::BigInt(_)) {
-        return Ok(wrapped);
+    match crate::execute::get_property_result(value, "_value")? {
+        wrapped @ Value::BigInt(_) => Ok(wrapped),
+        _ => Err(crate::value::error::throw_type_error(
+            "BigInt.prototype.valueOf called on incompatible receiver",
+        )),
     }
-    Err(crate::value::error::throw_type_error(
-        "BigInt.prototype.valueOf called on incompatible receiver",
-    ))
 }
 
 fn symbol_value_of(receiver: Option<&Value>) -> Result<Value, crate::execute::VmError> {
@@ -87,9 +83,8 @@ fn symbol_description(receiver: Option<&Value>) -> Result<Value, crate::execute:
 }
 
 fn wrapped_symbol(value: &Value) -> Result<Value, crate::execute::VmError> {
-    let constructor = crate::execute::get_property_result(value, "constructor")?;
     let wrapped = crate::execute::get_property_result(value, "_value")?;
-    if constructor == Value::Builtin(Builtin::Symbol) && crate::conversion::is_symbol(&wrapped) {
+    if crate::conversion::is_symbol(&wrapped) {
         return Ok(wrapped);
     }
     Err(crate::value::error::throw_type_error(
@@ -165,14 +160,12 @@ fn simple_prelude(
 }
 
 fn wrapped_string(value: &Value) -> Result<Value, crate::execute::VmError> {
-    let constructor = crate::execute::get_property_result(value, "constructor")?;
-    let wrapped = crate::execute::get_property_result(value, "_value")?;
-    if constructor == Value::Builtin(Builtin::String)
-        && matches!(&wrapped, Value::String(value) if !crate::conversion::is_symbol_string(value))
-    {
-        return Ok(wrapped);
+    match crate::execute::get_property_result(value, "_value")? {
+        wrapped @ Value::String(ref text) if !crate::conversion::is_symbol_string(text) => {
+            Ok(wrapped)
+        }
+        _ => Err(crate::value::error::throw_type_error(
+            "String.prototype.valueOf called on incompatible receiver",
+        )),
     }
-    Err(crate::value::error::throw_type_error(
-        "String.prototype.valueOf called on incompatible receiver",
-    ))
 }

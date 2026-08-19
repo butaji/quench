@@ -216,17 +216,25 @@ fn apply_new_target_prototype(
     prototype: Value,
 ) -> Result<Value, crate::execute::VmError> {
     let prototype = if crate::value::is_object(&prototype) {
-        Some(prototype)
+        prototype
     } else {
-        realm_default_prototype(target, new_target)
+        get_prototype_from_constructor(new_target, |realm| {
+            realm_default_prototype(target, new_target).unwrap_or_else(|| {
+                crate::vm::realm_intrinsic_for(realm, crate::ops::Builtin::ObjectPrototype)
+            })
+        })
     };
-    Ok(prototype.map_or(value.clone(), |prototype| {
+    Ok({
         if let crate::value::Value::Array(_) = &value {
-            return crate::builtins::set_property(value, "\0prototype", prototype);
+            return Ok(crate::builtins::set_property(
+                value,
+                "\0prototype",
+                prototype,
+            ));
         }
         let value = crate::builtins::set_property(value, "\0prototype", prototype);
         drop_shadowed_error_constructor(value)
-    }))
+    })
 }
 
 fn drop_shadowed_error_constructor(mut value: Value) -> Value {
