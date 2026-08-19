@@ -97,14 +97,22 @@ fn reduce_enumeration_loop(
     locals: &mut Locals,
 ) -> Option<ReduceResult> {
     match statement {
-        Statement::ForInStatement(statement) => Some(loop_result(
-            crate::loops::reduce_for_in(statement, ops, facts, next_register, next_slot, locals)
-                .map(|_| None),
-        )),
-        Statement::ForOfStatement(statement) => Some(loop_result(
-            crate::loops::reduce_for_of(statement, ops, facts, next_register, next_slot, locals)
-                .map(|_| None),
-        )),
+        Statement::ForInStatement(statement) => Some(loop_result(crate::loops::reduce_for_in(
+            statement,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            locals,
+        ))),
+        Statement::ForOfStatement(statement) => Some(loop_result(crate::loops::reduce_for_of(
+            statement,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            locals,
+        ))),
         _ => None,
     }
 }
@@ -118,11 +126,19 @@ pub(super) fn reduce_control_statement(
 ) -> Option<ReduceResult> {
     match statement {
         Statement::TryStatement(statement) => Some(crate::control_flow::reduce_try_statement(
-            statement, ops, facts, locals,
+            statement,
+            ops,
+            facts,
+            next_register,
+            locals,
         )),
-        Statement::SwitchStatement(statement) => {
-            Some(crate::switch::reduce(statement, ops, facts, next_register, locals))
-        }
+        Statement::SwitchStatement(statement) => Some(crate::switch::reduce(
+            statement,
+            ops,
+            facts,
+            next_register,
+            locals,
+        )),
         Statement::BreakStatement(statement) => Some(reduce_break(statement, ops)),
         Statement::ContinueStatement(statement) => Some(reduce_continue(statement, ops)),
         _ => None,
