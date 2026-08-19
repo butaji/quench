@@ -5,7 +5,7 @@ pub(crate) fn reduce_expression(
     next: &mut u16,
     locals: &HashMap<String, u16>,
 ) -> Option<u16> {
-    let names = private_definitions(class, facts);
+    let (names, labels) = private_definitions(class, facts);
     let inferred = facts.inferred_name.clone();
     let mut body = Vec::new();
     let class_locals = class_scope_locals(class, locals);
@@ -24,6 +24,7 @@ pub(crate) fn reduce_expression(
     )?;
     ops.push(Op::PrivateScope {
         names,
+        labels,
         class_name: class.id.as_ref().map(|id| id.name.to_string()),
         body: crate::machine::FunctionCode::from_ops(body),
     });
@@ -96,8 +97,12 @@ fn configure_class(
     prototype
 }
 
-fn private_definitions(class: &Class<'_>, facts: &ProgramDb) -> Vec<crate::facts::PrivateNameId> {
+fn private_definitions(
+    class: &Class<'_>,
+    facts: &ProgramDb,
+) -> (Vec<crate::facts::PrivateNameId>, Vec<String>) {
     let mut names = Vec::new();
+    let mut labels = Vec::new();
     for element in &class.body.body {
         let key = match element {
             ClassElement::MethodDefinition(method) => Some(&method.key),
@@ -110,8 +115,9 @@ fn private_definitions(class: &Class<'_>, facts: &ProgramDb) -> Vec<crate::facts
         if let Some(id) = facts.private_name(name.span) {
             if !names.contains(&id) {
                 names.push(id);
+                labels.push(name.name.to_string());
             }
         }
     }
-    names
+    (names, labels)
 }

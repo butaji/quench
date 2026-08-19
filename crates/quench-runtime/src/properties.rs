@@ -489,10 +489,11 @@ fn marked_without_key(properties: &[(String, crate::value::Value)], key: &str) -
 }
 
 pub(crate) fn object_is_extensible(target: &crate::value::Value) -> bool {
-    if let crate::value::Value::BindingCell(cell) = target {
+    let target = crate::locals::resolved_replacement(target.clone());
+    if let crate::value::Value::BindingCell(cell) = &target {
         return object_is_extensible(&cell.borrow());
     }
-    match target {
+    match &target {
         crate::value::Value::Builtin(crate::ops::Builtin::ThrowTypeError) => false,
         crate::value::Value::Object(properties) => {
             !properties.iter().any(|(name, _)| name == NON_EXTENSIBLE)

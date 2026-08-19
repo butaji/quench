@@ -55,12 +55,40 @@ fn define_instance_private_field(
     let crate::value::Value::Function(function) = function else {
         return Err(crate::execute::VmError::NotCallable);
     };
-    function
-        .instance_fields
-        .borrow_mut()
-        .push(crate::value::InstanceFieldPlan {
-            key: crate::value::InstanceFieldKey::Private(id),
-            initializer,
-        });
+    merge_or_push_private_plan(function, id, initializer);
     Ok(())
+}
+
+fn merge_or_push_private_plan(
+    function: &std::rc::Rc<crate::value::FunctionValue>,
+    id: crate::facts::PrivateNameId,
+    initializer: crate::value::InstanceFieldInitializer,
+) {
+    let mut fields = function.instance_fields.borrow_mut();
+    if let crate::value::InstanceFieldInitializer::PrivateAccessor { get, set } = &initializer {
+        if let Some(existing) = fields.iter_mut().find(|field| {
+            matches!(
+                field.key,
+                crate::value::InstanceFieldKey::Private(existing) if existing == id
+            )
+        }) {
+            if let crate::value::InstanceFieldInitializer::PrivateAccessor {
+                get: old_get,
+                set: old_set,
+            } = &mut existing.initializer
+            {
+                if get.is_some() {
+                    *old_get = get.clone();
+                }
+                if set.is_some() {
+                    *old_set = set.clone();
+                }
+                return;
+            }
+        }
+    }
+    fields.push(crate::value::InstanceFieldPlan {
+        key: crate::value::InstanceFieldKey::Private(id),
+        initializer,
+    });
 }

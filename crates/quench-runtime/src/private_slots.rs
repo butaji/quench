@@ -32,24 +32,10 @@ pub(crate) fn define_accessor(
 ) -> Result<(), VmError> {
     let slots = slots(value)?;
     let mut slots = slots.borrow_mut();
-    if let Some((
-        _,
-        PrivateSlot::Accessor {
-            get: old_get,
-            set: old_set,
-        },
-    )) = slots.iter_mut().find(|(id, _)| id == &name)
-    {
-        if get.is_some() {
-            *old_get = get;
-        }
-        if set.is_some() {
-            *old_set = set;
-        }
-        return Ok(());
-    }
     if slots.iter().any(|(id, _)| id == &name) {
-        return Err(private_brand_error());
+        return Err(crate::value::error::throw_type_error(
+            "Cannot add private method to an object that already has it",
+        ));
     }
     slots.push((name, PrivateSlot::Accessor { get, set }));
     Ok(())

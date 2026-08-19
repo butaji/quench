@@ -370,7 +370,7 @@ pub(crate) fn finish_class_name(name: &str) {
     end_class_name(name);
 }
 
-fn is_initializing_class_name(name: &str) -> bool {
+pub(crate) fn is_initializing_class_name(name: &str) -> bool {
     INITIALIZING_CLASS_NAMES.with(|names| names.borrow().iter().any(|entry| entry == name))
 }
 

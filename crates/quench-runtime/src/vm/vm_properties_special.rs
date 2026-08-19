@@ -108,7 +108,9 @@ fn bound_function_property(
     if intrinsic_target_is_abstract_module_source(bound) {
         return intrinsic_bound_property(bound, key);
     }
-    if matches!(key, "apply" | "call" | "bind") {
+    if key == "prototype" {
+        Value::Undefined
+    } else if matches!(key, "apply" | "call" | "bind") {
         bind_function_property(value, key)
     } else if key == "length" && !realm::is_intrinsic(bound) {
         match &bound.target {

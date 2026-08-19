@@ -1,3 +1,5 @@
+include!("reduce_eval_private.rs");
+
 pub fn reduce_eval_source(
     source: &str,
     inherited_strict: bool,
@@ -28,8 +30,10 @@ pub(crate) fn reduce_eval_source_in_context(
     let strict_source = inherited_strict.then(|| format!("\"use strict\";\n{source}"));
     let source = strict_source.as_deref().unwrap_or(source);
     let source = crate::reduce_support::prepare_source(source);
+    let wrapped = wrap_eval_for_private(source.as_ref());
+    let source = wrapped.as_deref().unwrap_or(source.as_ref());
     let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, source.as_ref(), SourceType::cjs()).parse();
+    let parsed = Parser::new(&allocator, source, SourceType::cjs()).parse();
     crate::reduce_support::validate_parse(&parsed)?;
     crate::reduce_support::validate_program(&parsed.program)?;
     let analysis = crate::semantic::analyze_eval(&parsed.program, grammar)?;
@@ -38,17 +42,34 @@ pub(crate) fn reduce_eval_source_in_context(
     let directive_completion =
         super::reduce_eval::directive_completion(&parsed.program, inherited_strict);
     let mut facts = eval_facts(&analysis, strict);
-    install_eval_facts(&mut facts, source.as_ref(), &analysis);
-    let (locals, next_slot, prefix, behavior, deletable) = crate::reduce_support::eval_bindings(
-        &parsed.program,
-        bindings,
-        reusable_var_names,
-        strict,
-        global,
-    );
+    install_eval_facts(&mut facts, source, &analysis);
+    if wrapped.is_some() {
+        remap_eval_private_ids(&mut facts, &parsed.program);
+    }
+    let statements = if wrapped.is_some() {
+        wrapped_method_body(&parsed.program).unwrap_or(&parsed.program.body)
+    } else {
+        &parsed.program.body
+    };
+    let (locals, next_slot, prefix, behavior, deletable) = if wrapped.is_some() {
+        crate::reduce_support::eval_bindings_without_program(
+            bindings,
+            reusable_var_names,
+            strict,
+            global,
+        )
+    } else {
+        crate::reduce_support::eval_bindings(
+            &parsed.program,
+            bindings,
+            reusable_var_names,
+            strict,
+            global,
+        )
+    };
     facts.eval_deletable = deletable;
     reduce_eval_program(
-        &parsed.program.body,
+        statements,
         facts,
         prefix,
         locals,
