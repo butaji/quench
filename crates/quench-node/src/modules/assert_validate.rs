@@ -21,7 +21,7 @@ pub fn throws(
         Ok(()) => {
             let suffix = custom_message(args, 2)
                 .map(|message| format!(": {message}"))
-                .unwrap_or_default();
+                .unwrap_or_else(|| ".".to_string());
             return Err(assertion_error(
                 format!("Missing expected exception{suffix}"),
                 "throws",

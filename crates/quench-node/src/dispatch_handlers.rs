@@ -811,9 +811,9 @@ pub fn process_on(
 }
 
 pub fn test_run(
-    _state: &Rc<RefCell<HostState>>,
+    state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::test::run(args)
+    crate::modules::test::run(state, args)
 }
