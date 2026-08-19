@@ -316,25 +316,7 @@ fn emit_warning(state: &Rc<RefCell<HostState>>, name: &str, message: &str) {
     // NaN/negative duration warnings fire once per process; overflow
     // warnings fire per call (Node semantics).
     let once_per_process = matches!(name, "TimeoutNaNWarning" | "TimeoutNegativeWarning");
-    {
-        let mut guard = state.borrow_mut();
-        if guard.process.warnings_emitted.iter().any(|n| n == name) {
-            return;
-        }
-        if once_per_process {
-            guard.process.warnings_emitted.push(name.to_string());
-        }
-    }
-    let warning = host_api::object(vec![
-        ("name".to_string(), Value::String(name.to_string())),
-        ("message".to_string(), Value::String(message.to_string())),
-    ]);
-    for handler in take_once_handlers(state, HandlerKind::Warning) {
-        state
-            .borrow_mut()
-            .event_loop
-            .queue_microtask(handler, vec![warning.clone()]);
-    }
+    crate::modules::process::emit_warning(state, name, message, None, once_per_process);
 }
 
 fn value_to_id(value: &Value) -> Option<u64> {

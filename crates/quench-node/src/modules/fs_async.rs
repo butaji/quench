@@ -25,7 +25,7 @@ fn run(state: &Rc<RefCell<HostState>>, args: &[Value], name: &str) -> Result<Val
         defer(state, &callback, vec![super::fs_error::abort_error()]);
         return Ok(Value::Undefined);
     }
-    let op = super::fs_sync::sync_op(name).ok_or(VmError::NotCallable)?;
+    let op = super::fs::sync_op(name).ok_or(VmError::NotCallable)?;
     let result = op(state, None, leading);
     let error = err_value(&result);
     let value = match result {
@@ -75,18 +75,33 @@ async_op!(mkdtemp, "mkdtemp");
 async_op!(readlink, "readlink");
 async_op!(chmod, "chmod");
 async_op!(truncate, "truncate");
+async_op!(realpath, "realpath");
 
 /// `fs.exists(path, callback)` — never errors; the callback receives
-/// a single boolean. A missing/non-function callback throws
+/// a single boolean. Invalid path types yield `false` (no throw),
+/// matching Node. A missing/non-function callback throws
 /// synchronously (`ERR_INVALID_ARG_TYPE`).
 pub fn exists(
     state: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let path = path_arg(args.first())?;
     let callback = super::fs::require_callback(args.get(1))?;
-    let exists = std::path::Path::new(&path).exists();
+    let exists = match args.first() {
+        Some(Value::String(path)) => std::path::Path::new(path).exists(),
+        other => {
+            if !matches!(other, Some(Value::String(_))) {
+                crate::modules::process::emit_warning(
+                    state,
+                    "DeprecationWarning",
+                    "Passing invalid argument types to fs.exists is deprecated",
+                    Some("DEP0187"),
+                    true,
+                );
+            }
+            false
+        }
+    };
     defer(state, &callback, vec![Value::Boolean(exists)]);
     Ok(Value::Undefined)
 }

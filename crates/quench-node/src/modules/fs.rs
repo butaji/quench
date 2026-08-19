@@ -167,6 +167,7 @@ pub fn build() -> Value {
     ];
     props.extend(sync_props());
     props.push(("constants", constants()));
+    props.push(("promises", promises()));
     crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
 }
 
@@ -219,6 +220,34 @@ fn sync_props_more() -> Vec<(&'static str, Value)> {
             crate::host::capability(SPEC_FS_TRUNCATESYNC),
         ),
     ]
+}
+
+/// `fs.promises` — each op runs the sync implementation and returns
+/// an already-settled Promise (fulfilled with the result, rejected
+/// with the coded error).
+fn promises() -> Value {
+    use crate::registry::*;
+    let props: Vec<(&str, Value)> = vec![
+        ("readFile", crate::host::capability(SPEC_FSP_READFILE)),
+        ("writeFile", crate::host::capability(SPEC_FSP_WRITEFILE)),
+        ("appendFile", crate::host::capability(SPEC_FSP_APPENDFILE)),
+        ("stat", crate::host::capability(SPEC_FSP_STAT)),
+        ("lstat", crate::host::capability(SPEC_FSP_LSTAT)),
+        ("readdir", crate::host::capability(SPEC_FSP_READDIR)),
+        ("mkdir", crate::host::capability(SPEC_FSP_MKDIR)),
+        ("unlink", crate::host::capability(SPEC_FSP_UNLINK)),
+        ("rmdir", crate::host::capability(SPEC_FSP_RMDIR)),
+        ("rm", crate::host::capability(SPEC_FSP_RM)),
+        ("rename", crate::host::capability(SPEC_FSP_RENAME)),
+        ("copyFile", crate::host::capability(SPEC_FSP_COPYFILE)),
+        ("access", crate::host::capability(SPEC_FSP_ACCESS)),
+        ("mkdtemp", crate::host::capability(SPEC_FSP_MKDTEMP)),
+        ("readlink", crate::host::capability(SPEC_FSP_READLINK)),
+        ("chmod", crate::host::capability(SPEC_FSP_CHMOD)),
+        ("truncate", crate::host::capability(SPEC_FSP_TRUNCATE)),
+        ("realpath", crate::host::capability(SPEC_FSP_REALPATH)),
+    ];
+    crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
 }
 
 fn constants() -> Value {
@@ -288,3 +317,32 @@ const CONSTANT_ENTRIES: &[(&str, f64)] = &[
     ("S_IRWXG", 0o70 as f64),
     ("S_IRWXO", 0o7 as f64),
 ];
+
+/// Dispatch table reused by the async and promises families.
+pub(crate) type Op =
+    fn(&Rc<RefCell<HostState>>, Option<&Value>, &[Value]) -> Result<Value, VmError>;
+
+pub(crate) fn sync_op(name: &str) -> Option<Op> {
+    use super::fs_sync as sync;
+    Some(match name {
+        "readFile" => sync::read_file_sync,
+        "writeFile" => sync::write_file_sync,
+        "appendFile" => sync::append_file_sync,
+        "stat" => sync::stat_sync,
+        "lstat" => sync::lstat_sync,
+        "readdir" => sync::readdir_sync,
+        "mkdir" => sync::mkdir_sync,
+        "unlink" => sync::unlink_sync,
+        "rmdir" => sync::rmdir_sync,
+        "rm" => sync::rm_sync,
+        "rename" => sync::rename_sync,
+        "copyFile" => sync::copy_file_sync,
+        "access" => sync::access_sync,
+        "mkdtemp" => sync::mkdtemp_sync,
+        "readlink" => sync::readlink_sync,
+        "chmod" => sync::chmod_sync,
+        "truncate" => sync::truncate_sync,
+        "realpath" => sync::realpath_sync,
+        _ => return None,
+    })
+}

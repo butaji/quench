@@ -13,8 +13,6 @@ use crate::host::HostState;
 
 use super::fs::{parse_options, path_arg, FsOptions};
 
-type Op = fn(&Rc<RefCell<HostState>>, Option<&Value>, &[Value]) -> Result<Value, VmError>;
-
 fn split(args: &[Value]) -> Result<(String, FsOptions), VmError> {
     let path = path_arg(args.first())?;
     let options = parse_options(args.get(1))?;
@@ -224,8 +222,28 @@ pub fn exists_sync(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let path = path_arg(args.first())?;
-    Ok(Value::Boolean(PathBuf::from(&path).exists()))
+    // Node: invalid path types are deprecated but yield `false`.
+    Ok(Value::Boolean(match args.first() {
+        Some(Value::String(path)) => PathBuf::from(path).exists(),
+        other => {
+            deprecation_warning(_s, other);
+            false
+        }
+    }))
+}
+
+/// DEP0187: invalid argument types passed to `fs.exists`/`existsSync`.
+pub(crate) fn deprecation_warning(state: &Rc<RefCell<HostState>>, path: Option<&Value>) {
+    if matches!(path, Some(Value::String(_))) {
+        return;
+    }
+    crate::modules::process::emit_warning(
+        state,
+        "DeprecationWarning",
+        "Passing invalid argument types to fs.existsSync is deprecated",
+        Some("DEP0187"),
+        true,
+    );
 }
 
 pub fn realpath_sync(
@@ -458,28 +476,4 @@ pub fn truncate_sync(
     file.set_len(len)
         .map_err(|e| super::fs_error::fs_error("truncate", Some(&path), &e))?;
     Ok(Value::Undefined)
-}
-
-/// Dispatch table used by the async family to reuse sync logic.
-pub(crate) fn sync_op(name: &str) -> Option<Op> {
-    Some(match name {
-        "readFile" => read_file_sync,
-        "writeFile" => write_file_sync,
-        "appendFile" => append_file_sync,
-        "stat" => stat_sync,
-        "lstat" => lstat_sync,
-        "readdir" => readdir_sync,
-        "mkdir" => mkdir_sync,
-        "unlink" => unlink_sync,
-        "rmdir" => rmdir_sync,
-        "rm" => rm_sync,
-        "rename" => rename_sync,
-        "copyFile" => copy_file_sync,
-        "access" => access_sync,
-        "mkdtemp" => mkdtemp_sync,
-        "readlink" => readlink_sync,
-        "chmod" => chmod_sync,
-        "truncate" => truncate_sync,
-        _ => return None,
-    })
 }
