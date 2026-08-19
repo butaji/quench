@@ -4,7 +4,6 @@
 //! `%o`, `%O`, `%%`. Plus `util.inspect` (string-only; sufficient
 //! for the test262 + Node fixture conformance surface).
 
-use crate::registry::NodeSpec;
 use quench_runtime::value::Value;
 
 /// Module wiring: returns the `(name, value)` pairs the host

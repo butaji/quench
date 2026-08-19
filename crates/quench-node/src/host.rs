@@ -30,6 +30,20 @@ pub struct HostState {
     pub emitters: crate::modules::events::EmitterRegistry,
     pub output: Option<OutputSink>,
     pub realm: RealmId,
+    /// Directory stack for the CJS loader: top is the requiring module's dir.
+    pub dir_stack: Vec<String>,
+    /// CJS module cache keyed by canonical file path.
+    pub module_cache: std::collections::HashMap<String, Value>,
+    /// Module record handed to `__quench_cjs_wrap__` for the file
+    /// currently being loaded by `require`.
+    pub pending_module: Option<PendingModule>,
+}
+
+/// Host-side handoff record for one in-flight CJS module load.
+pub struct PendingModule {
+    pub module: Value,
+    pub filename: String,
+    pub dirname: String,
 }
 
 impl NodeHost {
@@ -44,6 +58,9 @@ impl NodeHost {
             emitters: crate::modules::events::EmitterRegistry::new(),
             output: None,
             realm,
+            dir_stack: Vec::new(),
+            module_cache: std::collections::HashMap::new(),
+            pending_module: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),
@@ -57,6 +74,11 @@ impl NodeHost {
 
     pub fn state(&self) -> Rc<RefCell<HostState>> {
         self.state.clone()
+    }
+
+    /// Seed the CJS loader with the main script's directory.
+    pub fn set_main_dir(&self, dir: String) {
+        self.state.borrow_mut().dir_stack = vec![dir];
     }
 }
 
@@ -90,7 +112,7 @@ impl Host for NodeHost {
         &self,
         capability: HostCapabilityRef,
         arguments: &[Value],
-        new_target: &Value,
+        _new_target: &Value,
     ) -> Result<Value, VmError> {
         let cap = match capability.kind {
             HostCapabilityKind::Custom(c) => c,

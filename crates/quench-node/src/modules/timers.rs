@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
-use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
 use crate::host::HostState;
@@ -24,6 +23,12 @@ pub enum Timer {
     Immediate,
 }
 
+impl Default for TimerRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TimerRegistry {
     pub fn new() -> Self {
         Self {
@@ -33,7 +38,7 @@ impl TimerRegistry {
         }
     }
 
-    pub fn next(&mut self) -> u64 {
+    pub fn next_value(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         id
@@ -43,7 +48,7 @@ impl TimerRegistry {
 pub fn set_timeout(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let delay_ms = args.get(1).map(value_to_u64).unwrap_or(0);
-    let id = state.borrow_mut().timers.next();
+    let id = state.borrow_mut().timers.next_value();
     let fire_at = monotonic_ms().saturating_add(delay_ms);
     state
         .borrow_mut()
@@ -67,7 +72,7 @@ pub fn clear_timeout(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
 pub fn set_interval(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let delay_ms = args.get(1).map(value_to_u64).unwrap_or(0);
-    let id = state.borrow_mut().timers.next();
+    let id = state.borrow_mut().timers.next_value();
     let fire_at = monotonic_ms().saturating_add(delay_ms);
     state.borrow_mut().timers.timers.insert(
         id,
@@ -90,7 +95,7 @@ pub fn clear_interval(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<
 pub fn set_immediate(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let cb = args.first().cloned().unwrap_or(Value::Undefined);
     let rest = args.get(1..).unwrap_or(&[]).to_vec();
-    let id = state.borrow_mut().timers.next();
+    let id = state.borrow_mut().timers.next_value();
     state
         .borrow_mut()
         .timers

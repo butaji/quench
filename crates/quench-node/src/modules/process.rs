@@ -18,6 +18,12 @@ pub struct ProcessState {
     pub cwd: std::path::PathBuf,
 }
 
+impl Default for ProcessState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProcessState {
     pub fn new() -> Self {
         let argv: Vec<String> = std::env::args().collect();
@@ -120,7 +126,7 @@ pub fn next_tick(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
     Ok(Value::Undefined)
 }
 
-pub fn hrtime(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+pub fn hrtime(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())

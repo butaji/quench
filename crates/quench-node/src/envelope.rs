@@ -13,7 +13,7 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use quench_runtime::value::{ObjectData, Value};
+use quench_runtime::value::Value;
 
 /// Trait every host-side Node type implements. Provides a single
 /// canonical `as_any`/`as_any_mut` so callers can recover the

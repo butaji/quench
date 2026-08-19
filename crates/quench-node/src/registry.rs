@@ -146,6 +146,7 @@ pub const SPEC_FS_REALSYNC: NodeSpec = NodeSpec::new("fs:realpathSync", 0x110C);
 
 pub const SPEC_REQUIRE: NodeSpec = NodeSpec::new("require", 0x1200);
 pub const SPEC_READLINE: NodeSpec = NodeSpec::new("readline:createInterface", 0x1300);
+pub const SPEC_CJS_WRAP: NodeSpec = NodeSpec::new("__quench_cjs_wrap__", 0x1d00);
 
 /// Symbolic id for a Node host object stored in a `Value::Object`.
 /// The runtime does not interpret this; the host uses it to map
@@ -219,6 +220,10 @@ pub fn namespace_bindings() -> Vec<(String, quench_runtime::value::Value)> {
     out.push((
         "require".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new("require", 0x1200)),
+    ));
+    out.push((
+        "__quench_cjs_wrap__".to_string(),
+        crate::host::capability(crate::registry::SPEC_CJS_WRAP),
     ));
     out
 }
