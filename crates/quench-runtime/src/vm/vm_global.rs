@@ -104,7 +104,7 @@ pub(crate) fn synchronize_global_object(registers: &mut Vec<Value>, old: &Value,
     if singleton {
         GLOBAL_OBJECT.with(|global| global.replace(Some(new_object.clone())));
     }
-    crate::locals::current().replace_value(old, new);
+    crate::locals::replace_value(old, new);
     replace_register_aliases(registers, old_object, new_object);
 }
 
@@ -116,7 +116,7 @@ pub(crate) fn replace_global_object(old: &Value, new: &Value) {
         replace_realm_global(realm, new_object.clone());
     }
     GLOBAL_OBJECT.with(|global| global.replace(Some(new_object.clone())));
-    crate::locals::current().replace_value(old, new);
+    crate::locals::replace_value(old, new);
 }
 
 fn replace_register_aliases(

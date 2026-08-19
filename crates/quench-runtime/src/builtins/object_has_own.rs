@@ -38,7 +38,8 @@ fn require_object_coercible(receiver: Option<&Value>) -> Result<&Value, VmError>
     }
 }
 fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
-    Ok(match receiver {
+    let receiver = crate::locals::resolved_replacement(receiver.clone());
+    Ok(match &receiver {
         Value::Object(properties) => {
             object_data_owns(properties, key) || boxed_string_owns(properties, key)
         }
@@ -61,7 +62,7 @@ fn owns_property(receiver: &Value, key: &str) -> Result<bool, VmError> {
             .any(|(name, _)| name == key),
         Value::BoundFunction(bound) => bound_function_owns_property(bound, key),
         Value::Proxy(_) => {
-            crate::proxy::proxy_get_own_property_descriptor(receiver, key)? != Value::Undefined
+            crate::proxy::proxy_get_own_property_descriptor(&receiver, key)? != Value::Undefined
         }
         Value::DataView(view) => view.own_property(key).is_some(),
         value if typed_array_owns(value, key) => true,
