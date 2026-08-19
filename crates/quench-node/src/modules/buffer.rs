@@ -1,48 +1,71 @@
 //! `Buffer` module — pure Rust Buffer atop Uint8Array semantics.
 //!
-//! Every Buffer is a `Value::Uint8Array` plus a marker property
-//! (the well-known `Buffer.isBuffer` check). Encodings are
-//! pure Rust; no JS shim.
+//! Every Buffer is a `Value::Uint8Array` whose `\0prototype` is a
+//! shared `Buffer.prototype` stand-in (itself inheriting from
+//! `Uint8Array.prototype`). Static constructors and codecs are pure
+//! Rust; no JS shim.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
 use quench_runtime::host_api;
-use quench_runtime::value::{ArrayBufferData, Uint8ArrayData, Value};
+use quench_runtime::value::Value;
 use quench_runtime::vm::get_property;
 
+use crate::modules::buffer_enc as enc;
+
+/// Node's `buffer.constants.MAX_LENGTH` on 64-bit platforms (2^53-1).
+pub const MAX_LENGTH: f64 = 9_007_199_254_740_991.0;
+/// Node's `buffer.constants.MAX_STRING_LENGTH`.
+pub const MAX_STRING_LENGTH: f64 = 536_870_888.0;
+
+/// Static capability methods of the `Buffer` constructor.
+const STATIC_METHODS: &[(&str, crate::registry::NodeSpec)] = &[
+    ("from", crate::registry::SPEC_BUFFER_FROM),
+    ("alloc", crate::registry::SPEC_BUFFER_ALLOC),
+    ("allocUnsafe", crate::registry::SPEC_BUFFER_ALLOC_UNSAFE),
+    (
+        "allocUnsafeSlow",
+        crate::registry::SPEC_BUFFER_ALLOC_UNSAFE_SLOW,
+    ),
+    ("byteLength", crate::registry::SPEC_BUFFER_BYTELENGTH),
+    ("isBuffer", crate::registry::SPEC_BUFFER_ISBUFFER),
+    ("isEncoding", crate::registry::SPEC_BUFFER_ISENCODING),
+    ("isUtf8", crate::registry::SPEC_BUFFER_ISUTF8),
+    ("isAscii", crate::registry::SPEC_BUFFER_ISASCII),
+    ("compare", crate::registry::SPEC_BUFFER_COMPARE_STATIC),
+    ("concat", crate::registry::SPEC_BUFFER_CONCAT),
+];
+
+/// The non-method static properties of the `Buffer` constructor.
+fn static_pairs() -> Vec<(String, Value)> {
+    let mut pairs: Vec<(String, Value)> = STATIC_METHODS
+        .iter()
+        .map(|(name, spec)| (name.to_string(), crate::host::capability(*spec)))
+        .collect();
+    pairs.push(("poolSize".to_string(), Value::Number(8192.0)));
+    pairs.push(("kMaxLength".to_string(), Value::Number(MAX_LENGTH)));
+    pairs.push((
+        "prototype".to_string(),
+        crate::modules::buffer_proto::buffer_prototype(),
+    ));
+    pairs
+}
+
+/// The `Buffer` constructor as a callable host function carrying the
+/// static methods as own properties.
+pub fn buffer_constructor() -> Value {
+    let constructor = crate::host::capability(crate::registry::SPEC_BUFFER_NEW);
+    for (key, value) in static_pairs() {
+        quench_runtime::execute::set_property(constructor.clone(), &key, value);
+    }
+    constructor
+}
+
+/// Kept for `build_module` compatibility; pairs of the statics.
 pub fn build() -> Vec<(String, Value)> {
-    vec![
-        (
-            "from".to_string(),
-            crate::host::capability(crate::registry::SPEC_BUFFER_FROM),
-        ),
-        (
-            "alloc".to_string(),
-            crate::host::capability(crate::registry::SPEC_BUFFER_ALLOC),
-        ),
-        (
-            "byteLength".to_string(),
-            crate::host::capability(crate::registry::SPEC_BUFFER_BYTELENGTH),
-        ),
-        (
-            "isBuffer".to_string(),
-            crate::host::capability(crate::registry::SPEC_BUFFER_ISBUFFER),
-        ),
-        (
-            "concat".to_string(),
-            crate::host::capability(crate::registry::SPEC_BUFFER_CONCAT),
-        ),
-        (
-            "atob".to_string(),
-            crate::host::capability(crate::registry::SPEC_BUFFER_ATOB),
-        ),
-        (
-            "btoa".to_string(),
-            crate::host::capability(crate::registry::SPEC_BUFFER_BTOA),
-        ),
-    ]
+    static_pairs()
 }
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -52,48 +75,42 @@ pub fn btoa(args: &[Value]) -> String {
         Some(Value::String(s)) => s.bytes().collect(),
         _ => Vec::new(),
     };
-    let mut out = String::new();
-    for chunk in input.chunks(3) {
-        let n =
-            chunk.iter().fold(0u32, |acc, b| (acc << 8) | u32::from(*b)) << (8 * (3 - chunk.len()));
-        out.push(B64[((n >> 18) & 0x3F) as usize] as char);
-        out.push(B64[((n >> 12) & 0x3F) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            B64[((n >> 6) & 0x3F) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            B64[(n & 0x3F) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
+    enc::base64_encode(&input, true, false)
 }
 
 pub fn atob(args: &[Value]) -> Result<String, VmError> {
     let Some(Value::String(input)) = args.first() else {
         return Ok(String::new());
     };
-    let mut out = Vec::new();
-    let mut acc = 0u32;
-    let mut bits = 0u32;
-    for byte in input.bytes().filter(|b| !b.is_ascii_whitespace()) {
-        if byte == b'=' {
-            break;
-        }
-        let Some(digit) = B64.iter().position(|c| *c == byte) else {
-            return Err(VmError::EvalError("InvalidCharacterError".into()));
-        };
-        acc = (acc << 6) | digit as u32;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((acc >> bits) as u8);
-        }
+    if input
+        .bytes()
+        .any(|b| !b.is_ascii_whitespace() && b != b'=' && !B64.contains(&b))
+    {
+        return Err(VmError::EvalError("InvalidCharacterError".into()));
     }
-    Ok(out.into_iter().map(|b| b as char).collect())
+    Ok(enc::base64_decode(input.as_bytes())
+        .into_iter()
+        .map(|b| b as char)
+        .collect())
+}
+
+/// Validate a Buffer size argument; returns the size as `usize`.
+fn size_arg(value: Option<&Value>, name: &str) -> Result<usize, VmError> {
+    let value = value.cloned().unwrap_or(Value::Undefined);
+    let Value::Number(n) = value else {
+        return Err(enc::invalid_arg_type(format!(
+            "The \"{name}\" argument must be of type number.{}",
+            crate::modules::util::invalid_arg_received(&value)
+        )));
+    };
+    if !(0.0..=MAX_LENGTH).contains(&n) || n.fract() != 0.0 {
+        return Err(enc::out_of_range(
+            "size",
+            &format!(">= 0 && <= {}", MAX_LENGTH as u64),
+            &enc::fmt_num(n),
+        ));
+    }
+    Ok(n as usize)
 }
 
 pub fn from_handler(
@@ -108,47 +125,143 @@ pub fn from(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let first = args.first().cloned().unwrap_or(Value::Undefined);
-    match first {
-        Value::Uint8Array(arr) => Ok(Value::Uint8Array(arr)),
-        Value::String(s) => {
-            let encoding = encoding_name(args.get(1));
-            let bytes = encode(&s, &encoding);
-            Ok(make_buffer(&bytes))
+    match &first {
+        Value::Uint8Array(arr) => {
+            let bytes =
+                arr.buffer.bytes.borrow()[arr.byte_offset..arr.byte_offset + arr.length].to_vec();
+            Ok(crate::modules::buffer_proto::make_buffer(&bytes))
         }
-        Value::Array(_) => {
-            let mut bytes = Vec::new();
-            for i in 0..u32::MAX {
-                let key = i.to_string();
-                let v = get_property(&first, &key);
-                if matches!(v, Value::Undefined) {
-                    break;
-                }
-                let n = to_number(&v);
-                bytes.push(if n.is_nan() { 0 } else { n as u8 });
-            }
-            Ok(make_buffer(&bytes))
+        Value::String(_) | Value::StringUnits(_) => {
+            let encoding = encoding_name(args.get(1))?;
+            Ok(crate::modules::buffer_proto::make_buffer(
+                &enc::encode_value(&first, &encoding)?,
+            ))
         }
-        Value::ArrayBuffer(buf) => {
-            let bytes = buf.bytes.borrow().clone();
-            Ok(make_buffer(&bytes))
+        Value::Array(_) | Value::Object(_) => from_array_like(&first),
+        Value::ArrayBuffer(buf) => from_array_buffer(buf, args),
+        Value::Number(_) | Value::Boolean(_) | Value::Undefined | Value::Null => {
+            Err(enc::invalid_arg_type(format!(
+                "The \"value\" argument must be of type string or an instance of Buffer, \
+                 ArrayBuffer, or Array or an Array-like Object.{}",
+                crate::modules::util::invalid_arg_received(&first)
+            )))
         }
-        Value::Number(n) => Ok(make_buffer(&vec![0u8; n as usize])),
-        _ => Ok(make_buffer(&[])),
+        // Other typed-array views are interpreted as arrays of
+        // integers modulo 256 (Node's `fromArrayLike`).
+        _ if is_typed_view(&first) => from_array_like(&first),
+        _ => Ok(crate::modules::buffer_proto::make_buffer(&[])),
     }
 }
 
+fn is_typed_view(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Int8Array(_)
+            | Value::Int16Array(_)
+            | Value::Int32Array(_)
+            | Value::Uint16Array(_)
+            | Value::Uint32Array(_)
+            | Value::Uint8ClampedArray(_)
+            | Value::Float32Array(_)
+            | Value::Float64Array(_)
+            | Value::BigInt64Array(_)
+            | Value::BigUint64Array(_)
+            | Value::DataView(_)
+    )
+}
+
+fn from_array_buffer(
+    buf: &Rc<quench_runtime::value::ArrayBufferData>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let length = buf.bytes.borrow().len();
+    let to_index = |i: usize, default: usize| match args.get(i) {
+        Some(_) => {
+            (crate::modules::buffer_methods::to_offset(args.get(i)).max(0.0) as usize).min(length)
+        }
+        None => default,
+    };
+    let offset = to_index(1, 0);
+    let end = to_index(2, length);
+    Ok(crate::modules::buffer_proto::make_view(
+        buf.clone(),
+        offset,
+        end.saturating_sub(offset),
+    ))
+}
+
+fn from_array_like(value: &Value) -> Result<Value, VmError> {
+    let mut bytes = Vec::new();
+    for i in 0..u32::MAX {
+        let v = get_property(value, &i.to_string());
+        if matches!(v, Value::Undefined) {
+            break;
+        }
+        let n = to_number(&v);
+        bytes.push(if n.is_nan() { 0 } else { n as u8 });
+    }
+    Ok(crate::modules::buffer_proto::make_buffer(&bytes))
+}
+
+/// `Buffer.alloc(size[, fill[, encoding]])` and `allocUnsafe*` fill-0
+/// variants.
 pub fn alloc(
     _state: &Rc<RefCell<crate::host::HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let size = args.first().map(to_usize).unwrap_or(0);
-    let fill = args.get(1).cloned().unwrap_or(Value::Number(0.0));
-    let mut bytes = vec![0u8; size];
-    let value = to_number(&fill) as u8;
-    for b in bytes.iter_mut() {
-        *b = value;
+    alloc_impl(args, true)
+}
+
+pub fn alloc_unsafe(
+    _state: &Rc<RefCell<crate::host::HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    alloc_impl(args, false)
+}
+
+fn alloc_impl(args: &[Value], zero_fill: bool) -> Result<Value, VmError> {
+    let size = size_arg(args.first(), "size")?;
+    // Node defers to the allocator; past a sanity bound, fail the way
+    // an allocation failure surfaces instead of panicking in `vec!`.
+    if size > 1 << 33 {
+        return Err(VmError::EvalError(
+            "Array buffer allocation failed".to_string(),
+        ));
     }
-    Ok(make_buffer(&bytes))
+    let mut bytes = vec![0u8; size];
+    if zero_fill && args.get(1).is_some_and(|v| !matches!(v, Value::Undefined)) {
+        apply_fill(&mut bytes, args)?;
+    }
+    Ok(crate::modules::buffer_proto::make_buffer(&bytes))
+}
+
+fn apply_fill(bytes: &mut [u8], args: &[Value]) -> Result<(), VmError> {
+    let fill = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let pattern: Vec<u8> = match &fill {
+        Value::Number(n) => vec![*n as i64 as u8],
+        Value::String(_) | Value::StringUnits(_) => {
+            let encoding = encoding_name(args.get(2))?;
+            let encoded = enc::encode_value(&fill, &encoding)?;
+            if encoded.is_empty() {
+                return Err(enc::invalid_arg_type(format!(
+                    "The argument 'value' is invalid.{}",
+                    crate::modules::util::invalid_arg_received(&fill)
+                )));
+            }
+            encoded
+        }
+        Value::Uint8Array(view) => {
+            view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
+        }
+        _ => Vec::new(),
+    };
+    if pattern.is_empty() {
+        return Ok(());
+    }
+    for (i, b) in bytes.iter_mut().enumerate() {
+        *b = pattern[i % pattern.len()];
+    }
+    Ok(())
 }
 
 pub fn byte_length(
@@ -156,14 +269,20 @@ pub fn byte_length(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let v = args.first().cloned().unwrap_or(Value::Undefined);
-    let n = match v {
-        Value::String(s) => {
-            let encoding = encoding_name(args.get(1));
-            encode(&s, &encoding).len()
+    let n = match &v {
+        Value::String(_) | Value::StringUnits(_) => {
+            let encoding = encoding_name(args.get(1))?;
+            enc::encode_value(&v, &encoding)?.len()
         }
         Value::Uint8Array(arr) => arr.length,
         Value::ArrayBuffer(buf) => buf.bytes.borrow().len(),
-        _ => 0,
+        _ => {
+            return Err(enc::invalid_arg_type(format!(
+                "The \"string\" argument must be of type string or an instance of \
+                 Buffer or ArrayBuffer.{}",
+                crate::modules::util::invalid_arg_received(&v)
+            )));
+        }
     };
     Ok(Value::Number(n as f64))
 }
@@ -175,114 +294,64 @@ pub fn is_buffer(args: &[Value]) -> bool {
     )
 }
 
+/// `Buffer.isEncoding(name)`.
+pub fn is_encoding(args: &[Value]) -> bool {
+    match args.first() {
+        Some(Value::String(s)) => enc::canonical_encoding(s).is_some(),
+        _ => false,
+    }
+}
+
 pub fn concat(
     _state: &Rc<RefCell<crate::host::HostState>>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let list = args.first().cloned().unwrap_or(Value::Undefined);
-    let total = args.get(1).map(to_usize);
+    if !matches!(list, Value::Array(_)) {
+        return Err(enc::invalid_arg_type(format!(
+            "The \"list\" argument must be an Array of Buffers.{}",
+            crate::modules::util::invalid_arg_received(&list)
+        )));
+    }
+    let total = args
+        .get(1)
+        .map(|v| crate::modules::buffer_methods::to_offset(Some(v)));
     let mut all = Vec::new();
-    if matches!(list, Value::Array(_)) {
-        for i in 0..u32::MAX {
-            let key = i.to_string();
-            let v = get_property(&list, &key);
-            if matches!(v, Value::Undefined) {
-                break;
+    for i in 0..u32::MAX {
+        let v = get_property(&list, &i.to_string());
+        if matches!(v, Value::Undefined) {
+            break;
+        }
+        match v {
+            Value::Uint8Array(arr) => {
+                let b = arr.buffer.bytes.borrow();
+                all.extend_from_slice(&b[arr.byte_offset..arr.byte_offset + arr.length]);
             }
-            match v {
-                Value::Uint8Array(arr) => {
-                    let b = arr.buffer.bytes.borrow();
-                    all.extend_from_slice(&b[arr.byte_offset..arr.byte_offset + arr.length]);
-                }
-                _ => return Ok(Value::Undefined),
+            other => {
+                return Err(enc::invalid_arg_type(format!(
+                    "The \"list[{i}]\" argument must be an instance of Buffer or Uint8Array.{}",
+                    crate::modules::util::invalid_arg_received(&other)
+                )));
             }
         }
     }
     if let Some(t) = total {
-        all.truncate(t);
+        let t = t.max(0.0) as usize;
+        all.truncate(t.min(all.len()));
     }
-    Ok(make_buffer(&all))
+    Ok(crate::modules::buffer_proto::make_buffer(&all))
 }
 
-thread_local! {
-    /// Shared `Buffer.prototype` stand-in: an empty object whose own
-    /// prototype is `Uint8Array.prototype`, so Buffers differ from plain
-    /// Uint8Arrays under `Object.getPrototypeOf` while inheriting lookups.
-    static BUFFER_PROTOTYPE: RefCell<Option<Value>> = const { RefCell::new(None) };
-}
-
-fn buffer_prototype() -> Value {
-    BUFFER_PROTOTYPE.with(|slot| {
-        if let Some(prototype) = &*slot.borrow() {
-            return prototype.clone();
-        }
-        let prototype = quench_runtime::host_api::object(Vec::new());
-        let _ = quench_runtime::execute::set_prototype_of(
-            &prototype,
-            &Value::Builtin(quench_runtime::ops::Builtin::Uint8ArrayPrototype),
-        );
-        slot.borrow_mut().replace(prototype.clone());
-        prototype
-    })
-}
-
-fn make_buffer(bytes: &[u8]) -> Value {
-    let buf = Rc::new(ArrayBufferData::new(bytes.len()));
-    buf.bytes.borrow_mut().copy_from_slice(bytes);
-    let ba = Rc::new(buf.transfer_to_immutable());
-    let view = Rc::new(Uint8ArrayData::new(ba, 0, bytes.len()));
-    let view = Value::Uint8Array(view);
-    quench_runtime::execute::set_property(view.clone(), "\0prototype", buffer_prototype());
-    quench_runtime::execute::set_property(
-        view,
-        "toString",
-        crate::host::capability(crate::registry::SPEC_BUFFER_TOSTRING),
-    )
-}
-
-/// Construct a Buffer value from raw bytes (Node's `Buffer.from(bytes)`).
-pub(crate) fn buffer_from_bytes(bytes: &[u8]) -> Value {
-    make_buffer(bytes)
-}
-
-/// `Buffer.prototype.toString([encoding])` — decode the receiver's bytes.
-pub fn to_string(
-    _state: &Rc<RefCell<crate::host::HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let Some(Value::Uint8Array(view)) = receiver else {
-        return Err(quench_runtime::execute::type_error(
-            "Buffer.prototype.toString called on an incompatible receiver",
-        ));
-    };
-    let bytes = view.buffer.bytes.borrow();
-    let slice = &bytes[view.byte_offset..view.byte_offset + view.length];
-    Ok(Value::String(decode(slice, &encoding_name(args.first()))))
-}
-
-fn decode(bytes: &[u8], encoding: &str) -> String {
-    match encoding {
-        "hex" => bytes.iter().map(|b| format!("{b:02x}")).collect(),
-        "latin1" | "binary" => bytes.iter().map(|b| *b as char).collect(),
-        _ => String::from_utf8_lossy(bytes).into_owned(),
-    }
-}
-
-fn encoding_name(arg: Option<&Value>) -> String {
+fn encoding_name(arg: Option<&Value>) -> Result<String, VmError> {
     match arg {
-        Some(Value::String(s)) => s.to_lowercase(),
-        _ => "utf8".into(),
-    }
-}
-
-fn encode(input: &str, encoding: &str) -> Vec<u8> {
-    match encoding {
-        "utf8" | "utf-8" | "" => input.as_bytes().to_vec(),
-        "ascii" => input.bytes().map(|b| b & 0x7F).collect(),
-        "latin1" | "binary" => input.as_bytes().to_vec(),
-        "hex" => input.as_bytes().to_vec(),
-        _ => input.as_bytes().to_vec(),
+        None | Some(Value::Undefined) => Ok("utf8".into()),
+        Some(Value::String(s)) => enc::canonical_encoding(s)
+            .map(str::to_string)
+            .ok_or_else(|| enc::unknown_encoding(s)),
+        Some(other) => Err(enc::invalid_arg_type(format!(
+            "The \"encoding\" argument must be of type string.{}",
+            crate::modules::util::invalid_arg_received(other)
+        ))),
     }
 }
 
@@ -296,24 +365,48 @@ fn to_number(value: &Value) -> f64 {
     }
 }
 
-fn to_usize(value: &Value) -> usize {
-    to_number(value).max(0.0) as usize
-}
-
 /// Build the `host_api::object` properties for the `Buffer` global.
 pub fn build_object() -> Value {
-    host_api::object(build())
+    buffer_constructor()
 }
 
 /// Build the `node:buffer` module namespace.
 pub fn build_module() -> Value {
-    let mut module_props: Vec<(String, Value)> = build();
-    // The constructor `Buffer` is itself a function with static
-    // methods (`Buffer.from`, `Buffer.alloc`, …). Easiest path
-    // for the host: store the constructor as the `Buffer` key on
-    // the module, and put the static methods on the constructor
-    // by using the same call identifiers.
-    let buffer_constructor = crate::host::namespace_object_from_pairs(build());
-    module_props.push(("Buffer".to_string(), buffer_constructor));
+    let module_props: Vec<(String, Value)> = vec![
+        ("Buffer".to_string(), buffer_constructor()),
+        (
+            "atob".to_string(),
+            crate::host::capability(crate::registry::SPEC_BUFFER_ATOB),
+        ),
+        (
+            "btoa".to_string(),
+            crate::host::capability(crate::registry::SPEC_BUFFER_BTOA),
+        ),
+        (
+            "isAscii".to_string(),
+            crate::host::capability(crate::registry::SPEC_BUFFER_ISASCII),
+        ),
+        (
+            "isUtf8".to_string(),
+            crate::host::capability(crate::registry::SPEC_BUFFER_ISUTF8),
+        ),
+        ("kMaxLength".to_string(), Value::Number(MAX_LENGTH)),
+        (
+            "kStringMaxLength".to_string(),
+            Value::Number(MAX_STRING_LENGTH),
+        ),
+        ("INSPECT_MAX_BYTES".to_string(), Value::Number(50.0)),
+        ("constants".to_string(), constants_object()),
+    ];
     crate::host::namespace_object_from_pairs(module_props)
+}
+
+fn constants_object() -> Value {
+    host_api::object(vec![
+        ("MAX_LENGTH".to_string(), Value::Number(MAX_LENGTH)),
+        (
+            "MAX_STRING_LENGTH".to_string(),
+            Value::Number(MAX_STRING_LENGTH),
+        ),
+    ])
 }

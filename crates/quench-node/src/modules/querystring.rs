@@ -306,7 +306,7 @@ pub fn unescape_buffer(
 ) -> Result<Value, VmError> {
     let units = units_of_value(args.first().unwrap_or(&Value::Undefined))?;
     let decode_spaces = args.get(1).is_some_and(execute::is_truthy);
-    Ok(crate::modules::buffer::buffer_from_bytes(
+    Ok(crate::modules::buffer_proto::make_buffer(
         &unescape_buffer_units(&units, decode_spaces),
     ))
 }
