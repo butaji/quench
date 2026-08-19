@@ -59,6 +59,9 @@ fn resolve(spec: &str) -> Option<Value> {
         "http" => Some(crate::modules::http::build()),
         "readline" => Some(crate::modules::readline::build()),
         "vm" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "dgram" => Some(crate::host::namespace_object_from_pairs(vec![
+            ("createSocket".to_string(), crate::host::capability(crate::registry::NodeSpec::new("dgram:createSocket", 0x1500))),
+        ])),
         "timers" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
