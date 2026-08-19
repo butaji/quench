@@ -199,7 +199,10 @@ fn push_branch_frame(generator: &GeneratorData, state: &GeneratorState) -> Resul
 }
 
 fn push_try_frame(generator: &GeneratorData, state: &GeneratorState) -> Result<(), VmError> {
-    if generator.machine.borrow().frame_count() != 0 {
+    if matches!(
+        generator.machine.borrow().frames.frames.last(),
+        Some(crate::machine::Frame::Try { .. })
+    ) {
         return Ok(());
     }
     let Some((

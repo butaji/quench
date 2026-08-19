@@ -314,6 +314,8 @@ pub enum Frame {
         resume: CodeRange,
         yield_dst: u16,
         close_normal: bool,
+        repeat: bool,
+        slot: u16,
     },
     Await {
         phase: u8,

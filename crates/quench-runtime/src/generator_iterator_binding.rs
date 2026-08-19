@@ -4,54 +4,33 @@ struct IteratorFrameResume {
     resume: crate::machine::CodeRange,
     yield_dst: u16,
     close_normal: bool,
+    repeat: bool,
+    slot: u16,
+    body: crate::machine::CodeRange,
 }
 
 fn iterator_frame_chain(
     generator: &GeneratorData,
     state: &GeneratorState,
 ) -> Result<Option<Vec<crate::machine::Frame>>, VmError> {
-    let index = machine_pc(generator).checked_sub(1).ok_or(VmError::MissingReturn)?;
-    let Some(binding @ Op::IteratorBinding { .. }) = generator.function.ops().get(index) else {
+    let index = machine_pc(generator)
+        .checked_sub(1)
+        .ok_or(VmError::MissingReturn)?;
+    let Some(op) = generator.function.ops().get(index) else {
         return Ok(None);
     };
     let resume = parent_resume_range(generator, state);
     let mut frames = Vec::new();
     let registers = registers(generator);
-    if collect_iterator_frames(binding, resume, &registers, &mut frames)? {
+    if collect_for_of_frames(op, resume, &registers, &mut frames)?
+        || collect_iterator_frames(op, resume, &registers, &mut frames)?
+    {
         return Ok(Some(frames));
     }
     Ok(None)
 }
 
-fn collect_iterator_frames(
-    binding: &Op,
-    resume: crate::machine::CodeRange,
-    registers: &[Value],
-    frames: &mut Vec<crate::machine::Frame>,
-) -> Result<bool, VmError> {
-    let Op::IteratorBinding { iterator, body, close_normal } = binding else {
-        return Ok(false);
-    };
-    let Some(ops) = body.ops() else {
-        return Err(VmError::MissingReturn);
-    };
-    for (index, op) in ops.iter().enumerate() {
-        if let Op::Yield { src } = op {
-            frames.push(iterator_frame(*iterator, body.range, resume, index, *src, *close_normal, registers)?);
-            return Ok(true);
-        }
-        if matches!(op, Op::IteratorBinding { .. }) {
-            let next = range_after_iterator_op(body.range, index);
-            let frame = iterator_frame(*iterator, body.range, resume, index, 0, *close_normal, registers)?;
-            frames.push(frame);
-            if collect_iterator_frames(op, next, registers, frames)? {
-                return Ok(true);
-            }
-            frames.pop();
-        }
-    }
-    Ok(false)
-}
+include!("generator_for_of_frames.rs");
 
 fn iterator_frame(
     binding: u16,
@@ -63,16 +42,42 @@ fn iterator_frame(
     registers: &[Value],
 ) -> Result<crate::machine::Frame, VmError> {
     let iterator = crate::execute::read_register(registers, binding)?;
-    Ok(crate::machine::Frame::Iterator {
+    Ok(iterator_binding_frame(
+        iterator,
+        binding,
+        body,
+        range_after_iterator_op(body, index),
+        resume,
+        yield_dst,
+        close_normal,
+        false,
+        0,
+    ))
+}
+
+fn iterator_binding_frame(
+    iterator: Value,
+    binding: u16,
+    body: crate::machine::CodeRange,
+    body_resume: crate::machine::CodeRange,
+    resume: crate::machine::CodeRange,
+    yield_dst: u16,
+    close_normal: bool,
+    repeat: bool,
+    slot: u16,
+) -> crate::machine::Frame {
+    crate::machine::Frame::Iterator {
         phase: crate::machine::IteratorPhase::Body,
         iterator,
         binding,
         body,
-        body_resume: range_after_iterator_op(body, index),
+        body_resume,
         resume,
         yield_dst,
         close_normal,
-    })
+        repeat,
+        slot,
+    }
 }
 
 fn range_after_iterator_op(
@@ -88,10 +93,30 @@ fn range_after_iterator_op(
 
 fn iterator_frame_resume(generator: &GeneratorData) -> Option<IteratorFrameResume> {
     let frame = generator.machine.borrow().frames.frames.last()?.clone();
-    let crate::machine::Frame::Iterator { iterator, body_resume, resume, yield_dst, close_normal, .. } = frame else {
+    let crate::machine::Frame::Iterator {
+        iterator,
+        body_resume,
+        resume,
+        yield_dst,
+        close_normal,
+        repeat,
+        slot,
+        body,
+        ..
+    } = frame
+    else {
         return None;
     };
-    Some(IteratorFrameResume { iterator, body_resume, resume, yield_dst, close_normal })
+    Some(IteratorFrameResume {
+        iterator,
+        body_resume,
+        resume,
+        yield_dst,
+        close_normal,
+        repeat,
+        slot,
+        body,
+    })
 }
 
 fn resume_iterator_frame(
@@ -107,7 +132,12 @@ fn resume_iterator_frame(
         return finish_iterator_frame(generator, state, &frame, resume).map(Some);
     }
     set_iterator_phase(generator, crate::machine::IteratorPhase::Continue);
-    let store = generator.machine.borrow().store.clone().ok_or(VmError::MissingReturn)?;
+    let store = generator
+        .machine
+        .borrow()
+        .store
+        .clone()
+        .ok_or(VmError::MissingReturn)?;
     let body = store.get(frame.body_resume).ok_or(VmError::MissingReturn)?;
     let step = execute_with_generator_registers(generator, |registers| {
         crate::execute::execute_completion_step_in_place(body, registers)
@@ -128,9 +158,52 @@ fn finish_iterator_frame(
     frame: &IteratorFrameResume,
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
+    if frame.repeat && matches!(completion, crate::completion::Completion::Normal) {
+        return continue_for_of(generator, state, frame);
+    }
     let completion = close_iterator_frame(frame, completion)?;
+    crate::loops::take_live_for_of();
     generator.machine.borrow_mut().pop_frame();
     resume_after_iterator(generator, state, frame.resume, completion)
+}
+
+fn continue_for_of(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    frame: &IteratorFrameResume,
+) -> Result<crate::completion::Completion, VmError> {
+    let store = generator
+        .machine
+        .borrow()
+        .store
+        .clone()
+        .ok_or(VmError::MissingReturn)?;
+    let body = store.get(frame.body).ok_or(VmError::MissingReturn)?;
+    loop {
+        let next = crate::collections::iterator::step_value(&frame.iterator)?;
+        let Some(value) = next else {
+            crate::loops::take_live_for_of();
+            generator.machine.borrow_mut().pop_frame();
+            return resume_after_iterator(
+                generator,
+                state,
+                frame.resume,
+                crate::completion::Completion::Normal,
+            );
+        };
+        let step = execute_with_generator_registers(generator, |registers| {
+            crate::locals::write(frame.slot, value.clone());
+            crate::execute::execute_completion_step_in_place(body, registers)
+        })?;
+        if step.completion.is_suspension() {
+            let _ = advance_frame_after_yield(generator, frame.body, step.next);
+            set_iterator_phase(generator, crate::machine::IteratorPhase::Body);
+            return Ok(step.completion);
+        }
+        if !matches!(step.completion, crate::completion::Completion::Normal) {
+            return finish_iterator_frame(generator, state, frame, step.completion);
+        }
+    }
 }
 
 fn resume_after_iterator(
@@ -157,18 +230,29 @@ fn close_iterator_frame(
 }
 
 fn install_iterator_frame_input(generator: &GeneratorData, input: &Value) -> bool {
-    let Some(frame) = iterator_frame_resume(generator) else {
-        return false;
-    };
-    crate::execute::write_value(&mut registers_mut(generator), frame.yield_dst, input.clone());
-    true
+    let frames = generator.machine.borrow().frames.frames.clone();
+    for frame in frames.iter().rev() {
+        let crate::machine::Frame::Iterator { yield_dst, .. } = frame else {
+            continue;
+        };
+        if *yield_dst == 0 {
+            continue;
+        }
+        crate::execute::write_value(&mut registers_mut(generator), *yield_dst, input.clone());
+        return true;
+    }
+    false
 }
 
 fn suspended_iterator_binding<'a>(
     generator: &'a GeneratorData,
     state: &GeneratorState,
 ) -> Option<(&'a Op, &'a [Op], usize)> {
-    let op @ Op::IteratorBinding { body, .. } = generator.function.ops().get(machine_pc(generator).checked_sub(1)?)? else {
+    let op @ Op::IteratorBinding { body, .. } = generator
+        .function
+        .ops()
+        .get(machine_pc(generator).checked_sub(1)?)?
+    else {
         return None;
     };
     let body = body.ops()?;
@@ -215,8 +299,7 @@ fn resume_iterator_conditional(
     state: &mut GeneratorState,
     resume: crate::completion::Completion,
 ) -> Result<Option<crate::completion::Completion>, VmError> {
-    let Some(suspension) = suspended_iterator_conditional(generator, state)
-    else {
+    let Some(suspension) = suspended_iterator_conditional(generator, state) else {
         return Ok(None);
     };
     if !matches!(resume, crate::completion::Completion::Normal) {
@@ -224,7 +307,8 @@ fn resume_iterator_conditional(
     }
     let completion = execute_with_generator_registers(generator, |registers| {
         crate::execute::execute_completion_in_place(
-            &suspension.branch[suspension.yield_index + 1..], registers,
+            &suspension.branch[suspension.yield_index + 1..],
+            registers,
         )
     })?;
     let crate::completion::Completion::Return(value) = completion else {
@@ -233,7 +317,8 @@ fn resume_iterator_conditional(
     write_conditional_result(suspension.conditional, &mut registers_mut(generator), value)?;
     let completion = execute_with_generator_registers(generator, |registers| {
         crate::execute::execute_completion_in_place(
-            &suspension.body[suspension.body_index + 1..], registers,
+            &suspension.body[suspension.body_index + 1..],
+            registers,
         )
     })?;
     close_iterator_binding(suspension.binding, &registers(generator), completion).map(Some)
@@ -256,16 +341,28 @@ fn close_iterator_binding(
     registers: &[Value],
     completion: crate::completion::Completion,
 ) -> Result<crate::completion::Completion, VmError> {
-    let Op::IteratorBinding { iterator, close_normal, .. } = op else {
+    let Op::IteratorBinding {
+        iterator,
+        close_normal,
+        ..
+    } = op
+    else {
         return Err(VmError::MissingReturn);
     };
     if matches!(completion, crate::completion::Completion::Normal) && !close_normal {
         return Ok(completion);
     }
-    crate::collections::iterator::close(crate::execute::read_register(registers, *iterator)?, completion)
+    crate::collections::iterator::close(
+        crate::execute::read_register(registers, *iterator)?,
+        completion,
+    )
 }
 
-fn install_iterator_binding_input(generator: &GeneratorData, state: &mut GeneratorState, input: &Value) -> bool {
+fn install_iterator_binding_input(
+    generator: &GeneratorData,
+    state: &mut GeneratorState,
+    input: &Value,
+) -> bool {
     if install_iterator_frame_input(generator, input) {
         return true;
     }
@@ -283,11 +380,23 @@ fn suspended_iterator_conditional<'a>(
     generator: &'a GeneratorData,
     _state: &GeneratorState,
 ) -> Option<IteratorConditional<'a>> {
-    let binding @ Op::IteratorBinding { body, .. } = generator.function.ops().get(machine_pc(generator).checked_sub(1)?)? else {
+    let binding @ Op::IteratorBinding { body, .. } = generator
+        .function
+        .ops()
+        .get(machine_pc(generator).checked_sub(1)?)?
+    else {
         return None;
     };
     let body = body.ops()?;
-    let (body_index, conditional @ Op::Conditional { condition, consequent, alternate, .. }) = body
+    let (
+        body_index,
+        conditional @ Op::Conditional {
+            condition,
+            consequent,
+            alternate,
+            ..
+        },
+    ) = body
         .iter()
         .enumerate()
         .find(|(_, op)| matches!(op, Op::Conditional { .. }))?
@@ -295,8 +404,15 @@ fn suspended_iterator_conditional<'a>(
         return None;
     };
     let test = crate::execute::read_register(&registers(generator), *condition).ok()?;
-    let branch = if crate::execute::is_truthy(&test) { consequent } else { alternate }.ops()?;
-    let yield_index = branch.iter().position(|op| matches!(op, Op::Yield { .. }))?;
+    let branch = if crate::execute::is_truthy(&test) {
+        consequent
+    } else {
+        alternate
+    }
+    .ops()?;
+    let yield_index = branch
+        .iter()
+        .position(|op| matches!(op, Op::Yield { .. }))?;
     Some(IteratorConditional {
         binding,
         conditional,
