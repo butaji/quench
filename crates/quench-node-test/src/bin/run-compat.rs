@@ -19,12 +19,18 @@ fn main() -> ExitCode {
         eprintln!("error: {} is not a directory", dir.display());
         return ExitCode::from(2);
     }
-    let mut runner = quench_node_test::NodeTestRunner::new();
     let fixtures = discover_fixtures(&dir);
     if fixtures.is_empty() {
         eprintln!("error: no `*.js` fixtures under {}", dir.display());
         return ExitCode::from(2);
     }
+    if std::env::args().any(|a| a == "--list") {
+        for f in &fixtures {
+            println!("{}", f.file_name().unwrap().to_string_lossy());
+        }
+        return ExitCode::SUCCESS;
+    }
+    let mut runner = quench_node_test::NodeTestRunner::new();
     let summary = run_suite(&mut runner, &fixtures);
     print_summary(&summary, fixtures.len());
     if summary.failed == 0 {
@@ -36,7 +42,8 @@ fn main() -> ExitCode {
 
 fn resolve_dir() -> PathBuf {
     std::env::args_os()
-        .nth(1)
+        .skip(1)
+        .find(|a| a.to_string_lossy() != "--list")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("crates/quench-node-test/node-tests"))
 }
