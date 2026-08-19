@@ -189,13 +189,17 @@ pub fn install_with_sink(
     install_with_argv(realm, sink, std::env::args().collect())
 }
 
-fn install_with_argv(
+pub fn install_with_argv(
     realm: RealmId,
     sink: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
     argv: Vec<String>,
 ) -> (Rc<NodeHost>, VmContext) {
     let host = Rc::new(NodeHost::new(realm, argv).with_output_sink(sink));
-    let bindings = crate::registry::namespace_bindings(&host.state.borrow().process.argv);
+    let (argv, exec_path) = {
+        let state = host.state.borrow();
+        (state.process.argv.clone(), state.process.exec_path.clone())
+    };
+    let bindings = crate::registry::namespace_bindings(&argv, &exec_path);
     let mut context = VmContext::default().with_host(host.clone());
     for (name, value) in bindings {
         context = context.with_host_value(name, value);
