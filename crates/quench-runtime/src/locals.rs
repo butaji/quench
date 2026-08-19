@@ -263,8 +263,7 @@ pub(crate) fn set_resolved_local(
             "{name} is not defined"
         )));
     }
-    let updated = crate::proxy::proxy_set(&target, name, &value, None)?;
-    replace_value(&target, &updated);
+    crate::proxy::proxy_set(&target, name, &value, None)?;
     Ok(())
 }
 
