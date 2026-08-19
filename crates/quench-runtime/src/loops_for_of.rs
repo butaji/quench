@@ -80,18 +80,11 @@ fn assignment_slot<'a>(
     left: &'a oxc::ast::ast::ForStatementLeft<'a>,
     next_slot: &mut u16,
 ) -> Result<Option<ForOfSlot<'a>>, Vec<String>> {
-    if !matches!(
-        left,
-        oxc::ast::ast::ForStatementLeft::ArrayAssignmentTarget(_)
-            | oxc::ast::ast::ForStatementLeft::ObjectAssignmentTarget(_)
-    ) {
+    let Some(target) = left.as_assignment_target() else {
         return Ok(None);
-    }
+    };
     let slot = *next_slot;
     *next_slot = next_slot.saturating_add(1);
-    let target = left
-        .as_assignment_target()
-        .ok_or_else(|| vec!["Unsupported for-of assignment target".to_string()])?;
     Ok(Some((slot, false, Some(ForOfPattern::Assignment(target)))))
 }
 
