@@ -27,20 +27,13 @@ pub(crate) fn reduce_declaration(
             reduce_variable(value, ops, facts, next_register, next_slot, locals)
         }
         oxc::ast::ast::Statement::FunctionDeclaration(value) => {
-            let mut if_locals = locals.clone();
-            crate::blocks::prepare_block_functions(
-                std::slice::from_ref(statement),
-                &mut if_locals,
-                next_slot,
-                ops,
-            );
             crate::reduce::reduce_function_declaration(
                 value,
                 ops,
                 facts,
                 next_register,
                 next_slot,
-                &mut if_locals,
+                locals,
             )
             .map(|_| None)
         }

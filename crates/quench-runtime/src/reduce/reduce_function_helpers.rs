@@ -31,13 +31,10 @@ fn declaration_slot(
     name: &str,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
-    facts: &crate::facts::ProgramDb,
+    _facts: &crate::facts::ProgramDb,
 ) -> u16 {
     if let Some(slot) = locals.get(&format!("\0annex-b-lexical:{name}")) {
         return *slot;
-    }
-    if is_eval_barrier(facts, name) {
-        return reserve_blocked_function(name, next_slot, locals);
     }
     if let Some(slot) = locals.get(&format!("\0annex-b-outer:{name}")) {
         return *slot;
