@@ -117,6 +117,14 @@ pub struct Environment {
     caller: Option<Rc<Self>>,
 }
 
+fn clone_tdz(
+    source: &Option<Rc<RefCell<HashSet<u16>>>>,
+) -> Option<Rc<RefCell<HashSet<u16>>>> {
+    source
+        .as_ref()
+        .map(|slots| Rc::new(RefCell::new(slots.borrow().clone())))
+}
+
 impl Environment {
     pub(crate) fn new() -> Rc<Self> {
         Rc::new(Self::default())
@@ -155,7 +163,7 @@ impl Environment {
         });
         environment
             .uninitialized
-            .replace(captures.uninitialized.borrow().clone());
+            .replace(clone_tdz(&captures.uninitialized.borrow()));
         environment
             .immutable_slots
             .replace(captures.immutable_slots.borrow().clone());
