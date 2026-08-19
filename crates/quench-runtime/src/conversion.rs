@@ -243,7 +243,8 @@ fn call_primitive(method: &Value, receiver: &Value, arguments: &[Value]) -> Resu
     Ok(result)
 }
 
-pub(crate) fn is_callable(value: &Value) -> bool {
+/// `IsCallable` — hosts query this to validate callback arguments.
+pub fn is_callable(value: &Value) -> bool {
     match value {
         Value::Builtin(
             crate::ops::Builtin::Math
