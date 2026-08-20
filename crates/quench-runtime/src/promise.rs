@@ -308,7 +308,7 @@ fn resolve_object_value(promise: Rc<PromiseData>, value: Value) -> Value {
 }
 
 fn bound_settler(target: Builtin, promise: &Rc<PromiseData>) -> Value {
-    let length = Value::Number(2.0);
+    let length = Value::Number(1.0);
     let name = String::new();
     let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("value".to_string(), length.clone()),
@@ -462,7 +462,7 @@ pub fn execute_builtin(
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
     let result = match builtin {
-        Builtin::Promise => Ok(new_promise()),
+        Builtin::Promise => Err(VmError::NotCallable),
         Builtin::PromiseResolve => resolve_receiver(receiver, arguments),
         Builtin::PromiseReject => reject_receiver(receiver, arguments),
         Builtin::PromiseAll => promise_combinator(PromiseAggregateKind::All, receiver, arguments),
