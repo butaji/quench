@@ -4,7 +4,8 @@
 // loopback socket: a `net` client issues one HTTP request and asserts
 // the response the route table produced.
 
-const { createServer } = require('node:http');
+const http = require('node:http');
+const { createServer } = http;
 const net = require('node:net');
 const assert = require('assert');
 
@@ -17,6 +18,9 @@ function createApp() {
     },
     get(path, handler) {
       routes.push({ method: 'GET', path, handler });
+    },
+    post(path, handler) {
+      routes.push({ method: 'POST', path, handler });
     },
     listen(port, cb) {
       const server = createServer((req, res) => app.handle(req, res));
@@ -40,26 +44,42 @@ const app = createApp();
 app.use((req, res) => res.setHeader('x-handled-by', 'quench'));
 app.get('/hello', (req, res) => res.end('{"msg":"hi"}'));
 app.get('/users/1', (req, res) => res.end('{"id":1}'));
-app.get('/missing', (req, res) => res.writeHead(404, { 'Content-Type': 'text/plain' }));
+app.post('/echo', (req, res) => {
+  let body = '';
+  req.on('data', (chunk) => { body += chunk.toString(); });
+  req.on('end', () => res.end('echo:' + body));
+});
 
 const server = app.listen(0, () => {
   const port = server.address().port;
 
+  // GET round-trip.
   const client = net.connect(port, '127.0.0.1', () => {
     client.write('GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n');
   });
   let received = '';
   client.setEncoding('utf8');
-  client.on('data', (chunk) => {
-    received += chunk;
-  });
+  client.on('data', (chunk) => { received += chunk; });
   client.on('end', () => {
     assert.match(received, /^HTTP\/1\.1 200 OK/, 'status line');
     assert.ok(received.endsWith('{"msg":"hi"}'), 'routed body');
     assert.match(received, /x-handled-by: quench/i, 'middleware header');
-    server.close(() => {
-      console.log('express-server: ok (routed %s over real http)', port);
-    });
+
+    // POST round-trip with a request body through the route table.
+    const post = http.request(
+      { host: '127.0.0.1', port, method: 'POST', path: '/echo' },
+      (res) => {
+        let out = '';
+        res.on('data', (chunk) => { out += chunk.toString(); });
+        res.on('end', () => {
+          assert.strictEqual(out, 'echo:payload', 'POST body echoed');
+          server.close(() => {
+            console.log('express-server: ok (GET + POST over real http)');
+          });
+        });
+      }
+    );
+    post.end('payload');
   });
   client.on('error', () => {});
 });
