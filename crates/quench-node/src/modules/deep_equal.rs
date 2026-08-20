@@ -234,16 +234,6 @@ fn same_shape(
     skip_prototype: bool,
     memo: &mut Vec<(*const (), *const ())>,
 ) -> Result<bool, VmError> {
-    if !skip_prototype {
-        let left_proto = execute::get_prototype_of(left)?;
-        let right_proto = execute::get_prototype_of(right)?;
-        if !execute::same_value(&left_proto, &right_proto) {
-            return Ok(false);
-        }
-    }
-    if !same_value_property(left, right, "Symbol.toStringTag") {
-        return Ok(false);
-    }
     let left_boxed = execute::get_property(left, "_value");
     let right_boxed = execute::get_property(right, "_value");
     if !matches!(left_boxed, Value::Undefined) || !matches!(right_boxed, Value::Undefined) {
