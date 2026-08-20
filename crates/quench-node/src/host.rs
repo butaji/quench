@@ -47,6 +47,9 @@ pub struct HostState {
     /// `require('stream')` module value, evaluated once from the
     /// embedded JS prelude (`modules/stream_prelude.js`).
     pub stream_module: Option<Value>,
+    /// `require('async_hooks')` module value, evaluated once from the
+    /// embedded JS factory (`modules/async_hooks.js`).
+    pub async_hooks_module: Option<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -75,6 +78,7 @@ impl NodeHost {
             pending_uncaught: None,
             url_class: None,
             stream_module: None,
+            async_hooks_module: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),

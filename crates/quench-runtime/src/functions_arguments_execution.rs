@@ -40,6 +40,10 @@ pub(crate) fn execute(
     this_value: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
+    // Track the active JS function chain so `Error.captureStackTrace` can
+    // produce real (function-name, module-file) frames. The guard pops on
+    // every exit path, including errors.
+    let _frame = crate::frame_stack::FrameGuard::enter(function);
     let frame = CallFrame::new(
         std::rc::Rc::clone(function),
         this_value.clone(),
