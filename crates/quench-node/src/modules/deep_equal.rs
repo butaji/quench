@@ -242,10 +242,12 @@ fn same_shape(
     if !same_value_property(left, right, "source") || !same_value_property(left, right, "flags") {
         return Ok(false);
     }
-    let left_proto = execute::get_prototype_of(left)?;
-    let right_proto = execute::get_prototype_of(right)?;
-    if !execute::same_value(&left_proto, &right_proto) {
-        return Ok(false);
+    if !skip_prototype {
+        let left_proto = execute::get_prototype_of(left)?;
+        let right_proto = execute::get_prototype_of(right)?;
+        if !execute::same_value(&left_proto, &right_proto) {
+            return Ok(false);
+        }
     }
     Ok(true)
 }
