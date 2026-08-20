@@ -445,17 +445,8 @@ pub fn access_sync(
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
     let mode = match args.get(1) {
-        Some(Value::Number(m)) if m.is_finite() && *m >= 0.0 && *m <= 7.0 => *m as u32,
-        Some(Value::Number(m)) => {
-            return Err(crate::modules::buffer_enc::out_of_range(
-                "mode", ">= 0 && <= 7", &m.to_string(),
-            ));
-        }
-        _ => {
-            return Err(crate::modules::buffer_enc::invalid_arg_type(
-                "The \"mode\" argument must be of type number.".to_string(),
-            ));
-        }
+        Some(Value::Number(m)) => *m as u32,
+        _ => 0,
     };
     check_access(&path, mode).map_err(|e| super::fs_error::fs_error("access", Some(&path), &e))?;
     Ok(Value::Undefined)
