@@ -69,6 +69,17 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .module_cache
             .insert("async_hooks".to_string(), value.clone());
     }
+    if matches!(spec.as_str(), "punycode" | "node:punycode") {
+        if let Some(cached) = state.borrow().module_cache.get("punycode") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::punycode::build(state)?;
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("punycode".to_string(), value.clone());
+        return Ok(value);
+    }
     if matches!(spec.as_str(), "http-errors" | "node:http-errors") {
         if let Some(cached) = state.borrow().module_cache.get("http-errors") {
             return Ok(cached.clone());
@@ -286,6 +297,15 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         "path" => Some(crate::modules::path::build()),
         "url" => Some(crate::modules::url::build_root(state)),
         "querystring" => Some(crate::modules::querystring::build()),
+        "punycode" => {
+            if let Some(cached) = state.borrow().punycode_module.clone() {
+                Some(cached)
+            } else {
+                let value = crate::modules::punycode::build(state).ok()?;
+                state.borrow_mut().punycode_module = Some(value.clone());
+                Some(value)
+            }
+        }
         "os" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::os::build(),
         )),
