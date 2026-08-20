@@ -135,7 +135,7 @@ fn encode_units(units: &[u16], encoding: &str) -> Vec<u8> {
 /// Decode bytes to a string under a canonical encoding.
 pub fn decode_str(bytes: &[u8], encoding: &str) -> Value {
     match encoding {
-        "hex" => Value::String(bytes.iter().map(|b| format!("{b:02x}")).collect()),
+        "hex" => Value::String(hex::encode(bytes)),
         "latin1" => Value::String(bytes.iter().map(|b| *b as char).collect()),
         "ascii" => Value::String(bytes.iter().map(|b| (b & 0x7F) as char).collect()),
         "base64" => Value::String(base64_encode(bytes, true, false)),
@@ -159,31 +159,21 @@ fn decode_utf16le(bytes: &[u8]) -> Value {
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Base64 encode; `padding` controls trailing `=`, `url` selects the
-/// URL-safe alphabet.
+/// URL-safe alphabet. Backed by the `base64` crate (exact byte fidelity).
 pub fn base64_encode(bytes: &[u8], padding: bool, url: bool) -> String {
-    let mut out = String::new();
-    for chunk in bytes.chunks(3) {
-        let n =
-            chunk.iter().fold(0u32, |acc, b| (acc << 8) | u32::from(*b)) << (8 * (3 - chunk.len()));
-        for (shift, index) in [(18, 0), (12, 1), (6, 2), (0, 3)] {
-            if index > chunk.len() {
-                if padding {
-                    out.push('=');
-                }
-            } else {
-                let mut c = B64[((n >> shift) & 0x3F) as usize];
-                if url {
-                    c = match c {
-                        b'+' => b'-',
-                        b'/' => b'_',
-                        other => other,
-                    };
-                }
-                out.push(c as char);
-            }
+    use base64::Engine;
+    let engine = if url {
+        if padding {
+            base64::engine::general_purpose::URL_SAFE
+        } else {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
         }
-    }
-    out
+    } else if padding {
+        base64::engine::general_purpose::STANDARD
+    } else {
+        base64::engine::general_purpose::STANDARD_NO_PAD
+    };
+    engine.encode(bytes)
 }
 
 /// Base64 decode: ignores whitespace and foreign bytes, accepts both

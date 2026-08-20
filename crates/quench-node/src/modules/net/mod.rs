@@ -342,7 +342,7 @@ fn value_to_string(value: &Value) -> String {
 fn data_value(guard: &NetSocket, bytes: &[u8]) -> Value {
     match guard.encoding.as_deref() {
         Some("utf8") | Some("utf-8") => Value::String(String::from_utf8_lossy(bytes).into_owned()),
-        Some("hex") => Value::String(bytes.iter().map(|b| format!("{b:02x}")).collect()),
+        Some("hex") => Value::String(hex::encode(bytes)),
         Some("latin1") | Some("ascii") => Value::String(bytes.iter().map(|&b| b as char).collect()),
         _ => crate::modules::buffer_proto::make_buffer(bytes),
     }
