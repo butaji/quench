@@ -12,5 +12,7 @@ assert.strictEqual(colored.replace(/\u001b/, ''), '[31mred\u001b[39m', 'leading 
 assert.strictEqual(colored.replace(/[0-9]/, 'X'), '\u001b[X1mred\u001b[39m', 'class replace');
 // A string pattern on code-unit text.
 assert.strictEqual('\u001babc'.replace('b', 'X'), '\u001baXc', 'string pattern');
+// replaceAll shares the fixed code-unit path.
+assert.strictEqual('\u001baba'.replaceAll('a', 'X'), '\u001bXbX', 'replaceAll');
 
 console.log('string-replace: ok');
