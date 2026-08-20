@@ -17,6 +17,7 @@ fn error_builtin(
             crate::construct::construct_value(&Value::Builtin(builtin), arguments)
         }
         Builtin::ErrorIsError => Ok(error_is_error(arguments.first())),
+        Builtin::ErrorCaptureStackTrace => capture_stack_trace(arguments),
         Builtin::ErrorPrototypeToString => error_to_string(receiver),
         Builtin::ErrorPrototypeNameGetter => Ok(error_name_getter(receiver)?),
         Builtin::ErrorPrototypeMessageGetter => Ok(error_message_getter(receiver)?),
@@ -217,4 +218,53 @@ fn error_receiver<'a>(receiver: Option<&'a Value>, name: &str) -> Result<&'a Val
         )));
     }
     Ok(value)
+}
+
+/// `Error.captureStackTrace(target)` — attach a `stack` property to `target`.
+///
+/// The host does not retain call-frame history, so it attaches an empty
+/// stack string. This preserves the observable contract real-world modules
+/// depend on (the function exists, is callable, and `target.stack` is a
+/// string) without fabricating call-site data.
+fn capture_stack_trace(arguments: &[Value]) -> Result<Value, VmError> {
+    let Some(target) = arguments.first() else {
+        return Err(crate::value::error::throw_type_error(
+            "The 'target' argument must be an object",
+        ));
+    };
+    if matches!(
+        target,
+        crate::value::Value::Undefined | crate::value::Value::Null
+    ) {
+        return Err(crate::value::error::throw_type_error(
+            "The 'target' argument must be an object",
+        ));
+    }
+    // If a custom `Error.prepareStackTrace` hook is installed, honor it: call
+    // `prepareStackTrace(target, frames)` and use its result as the stack, as
+    // the V8 contract specifies. The engine has no call-frame capture, so the
+    // frames list is empty; consumers that insist on real frames will see an
+    // empty stack rather than a fabricated one.
+    let frame_list = crate::host_api::array(Vec::new());
+    let stack = match crate::execute::get_property(
+        &crate::value::Value::Builtin(crate::ops::Builtin::Error),
+        "prepareStackTrace",
+    ) {
+        candidate if crate::conversion::is_callable(&candidate) => {
+            crate::vm::call_value(&candidate, &crate::value::Value::Undefined, &[
+                target.clone(),
+                frame_list,
+            ])?
+        }
+        _ => crate::value::Value::String(String::from("Error\n")),
+    };
+    let descriptor = crate::host_api::object(vec![
+        ("value".to_string(), stack),
+        ("writable".to_string(), crate::value::Value::Boolean(true)),
+        ("enumerable".to_string(), crate::value::Value::Boolean(false)),
+        ("configurable".to_string(), crate::value::Value::Boolean(true)),
+    ]);
+    let updated = crate::execute::define_property(target.clone(), "stack", descriptor)?;
+    crate::execute::replace_value(target, &updated);
+    Ok(crate::value::Value::Undefined)
 }
