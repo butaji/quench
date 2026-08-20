@@ -321,20 +321,9 @@ fn execute_in_function_realm(
     receiver: &crate::value::Value,
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    let realm = function
-        .properties
-        .borrow()
-        .iter()
-        .rev()
-        .find_map(|(key, value)| {
-            (key == "\0realm").then(|| match value {
-                crate::value::Value::HostCapability(token) => token.realm(),
-                _ => crate::ops::RealmId::ROOT,
-            })
-        });
-    let realm = realm.or_else(|| crate::vm::realm_id_for_global_value(&function.captures.get(0)));
+    let realm = crate::construct::function_realm_id(function);
     match realm {
-        Some(realm) if realm != crate::ops::RealmId::ROOT => {
+        realm if realm != crate::ops::RealmId::ROOT => {
             crate::vm::with_realm(realm, || execute(function, receiver, arguments))
                 .unwrap_or_else(|| execute(function, receiver, arguments))
         }
@@ -359,7 +348,9 @@ fn execute_function_call(
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let receiver = receiver.ok_or(crate::execute::VmError::NotCallable)?;
     let realm = match receiver {
-        crate::value::Value::Function(function) => crate::vm::realm_id_for_global_value(&function.captures.get(0)),
+        crate::value::Value::Function(function) => {
+            Some(crate::construct::function_realm_id(function))
+        }
         crate::value::Value::BoundFunction(bound) => Some(bound.realm),
         _ => None,
     };
@@ -413,20 +404,20 @@ fn bind_function_target(
         .cloned()
         .unwrap_or(crate::value::Value::Undefined);
     let extra = arguments.get(1..).unwrap_or(&[]).to_vec();
-    let mut properties = Vec::new();
     let name = bound_function_name(target)?;
     let length = bound_function_length(target, extra.len() as f64);
-    insert_bound_property(
-        &mut properties,
-        "name",
-        crate::value::Value::String(name.clone()),
-        name_descriptor(&name),
-    );
+    let mut properties = Vec::new();
     insert_bound_property(
         &mut properties,
         "length",
         crate::value::Value::Number(length),
         length_descriptor(length),
+    );
+    insert_bound_property(
+        &mut properties,
+        "name",
+        crate::value::Value::String(name.clone()),
+        name_descriptor(&name),
     );
     Ok(crate::value::Value::BoundFunction(std::rc::Rc::new(
         crate::value::BoundFunctionValue {
