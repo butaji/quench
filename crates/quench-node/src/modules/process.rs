@@ -18,6 +18,9 @@ pub struct ProcessState {
     pub warning_handlers: Vec<(Value, bool)>,
     /// Warning names already emitted; duration warnings fire once per process.
     pub warnings_emitted: Vec<String>,
+    /// Warnings awaiting delivery; handlers registered later in the same
+    /// synchronous block still receive them (Node's nexttick timing).
+    pub pending_warnings: Vec<Value>,
     pub exit_handlers_ran: bool,
     pub exec_path: String,
     pub version: String,
@@ -49,6 +52,7 @@ impl ProcessState {
             uncaught_exception_handlers: Vec::new(),
             warning_handlers: Vec::new(),
             warnings_emitted: Vec::new(),
+            pending_warnings: Vec::new(),
             exit_handlers_ran: false,
             exec_path,
             version: "v22.0.0".into(),
@@ -364,13 +368,29 @@ pub(crate) fn emit_warning(
         props.push(("code".to_string(), Value::String(code.to_string())));
     }
     let warning = host_api::object(props);
-    for handler in crate::modules::timers::take_once_handlers(
-        state,
-        crate::modules::timers::HandlerKind::Warning,
-    ) {
-        state
-            .borrow_mut()
-            .event_loop
-            .queue_microtask(handler, vec![warning.clone()]);
+    // Defer delivery until the current synchronous block completes so
+    // handlers registered afterwards (Node's nexttick timing) receive
+    // it. The pump snapshots handlers at delivery time.
+    state.borrow_mut().process.pending_warnings.push(warning);
+}
+
+/// Deliver queued warnings to the currently-registered `warning`
+/// handlers. `once` handlers are dropped after a single delivery.
+/// Called by the pump before other work each iteration.
+pub(crate) fn deliver_pending_warnings(
+    state: &Rc<RefCell<HostState>>,
+) -> Result<(), VmError> {
+    let warnings: Vec<Value> = state.borrow_mut().process.pending_warnings.drain(..).collect();
+    for warning in warnings {
+        for handler in crate::modules::timers::take_once_handlers(
+            state,
+            crate::modules::timers::HandlerKind::Warning,
+        ) {
+            state
+                .borrow_mut()
+                .event_loop
+                .queue_microtask(handler, vec![warning.clone()]);
+        }
     }
+    Ok(())
 }

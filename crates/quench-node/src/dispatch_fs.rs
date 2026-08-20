@@ -40,6 +40,13 @@ const CAP_FS_CHMODSYNC: u16 = 0x1121;
 const CAP_FS_TRUNCATESYNC: u16 = 0x1122;
 const CAP_FS_MKDIRSYNC: u16 = 0x1123;
 const CAP_FS_UNLINKSYNC: u16 = 0x1124;
+const CAP_FS_OPEN: u16 = 0x1160;
+const CAP_FS_FSTAT: u16 = 0x1161;
+const CAP_FS_CLOSE: u16 = 0x1162;
+const CAP_FS_OPENSYNC: u16 = 0x1163;
+const CAP_FS_FSTATSYNC: u16 = 0x1164;
+const CAP_FS_CLOSESYNC: u16 = 0x1165;
+const CAP_FS_STATS: u16 = 0x1166;
 const CAP_FS_STAT_ISFILE: u16 = 0x1130;
 const CAP_FS_STAT_ISDIR: u16 = 0x1131;
 const CAP_FS_STAT_ISSYMLINK: u16 = 0x1132;
@@ -83,6 +90,10 @@ pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_FS_READDIRSYNC => fs_sync::readdir_sync,
         CAP_FS_EXISTSSYNC => fs_sync::exists_sync,
         CAP_FS_REALSYNC => fs_sync::realpath_sync,
+        CAP_FS_OPENSYNC => fs_sync::open_sync,
+        CAP_FS_FSTATSYNC => fs_sync::fstat_sync,
+        CAP_FS_CLOSESYNC => fs_sync::close_sync,
+        CAP_FS_STATS => fs_sync::stats_constructor,
         _ => return fs_dispatch_more(cap),
     })
 }
@@ -119,6 +130,9 @@ fn fs_dispatch_more(cap: u16) -> Option<CallHandler> {
         CAP_FS_STAT_ISBLOCK => fs_stats::is_block,
         CAP_FS_STAT_ISCHAR => fs_stats::is_char,
         CAP_FS_STAT_ISFIFO => fs_stats::is_fifo,
+        CAP_FS_OPEN => fs_async::open,
+        CAP_FS_FSTAT => fs_async::fstat,
+        CAP_FS_CLOSE => fs_async::close,
         CAP_FS_STAT_ISSOCKET => fs_stats::is_socket,
         _ => return fs_dispatch_promises(cap),
     })

@@ -3,6 +3,8 @@
 //! callbacks run on the host event loop.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fs::File;
 use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
@@ -22,6 +24,39 @@ impl Default for FsState {
 impl FsState {
     pub fn new() -> Self {
         Self
+    }
+}
+thread_local! { static FDS: RefCell<HashMap<i32, File>> = RefCell::new(HashMap::new()); }
+static NEXT_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(100);
+pub(crate) fn fd_open(path: &str, flag: Option<&str>) -> Result<i32, VmError> {
+    let mut opts = std::fs::OpenOptions::new();
+    let f = match flag.unwrap_or("r") { "r" => opts.read(true).open(path), "r+" => opts.read(true).write(true).open(path), "w" => opts.write(true).create(true).truncate(true).open(path), "a" => opts.write(true).create(true).append(true).open(path), _ => opts.read(true).open(path) }.map_err(|e| crate::modules::fs_error::fs_error("open", Some(path), &e))?;
+    let fd = NEXT_FD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    FDS.with(|t| { t.borrow_mut().insert(fd, f); }); Ok(fd)
+}
+pub(crate) fn fd_stat(fd: i32) -> Result<Value, VmError> {
+    if let Some(stream) = std_stream_fd(fd) {
+        return std::fs::metadata(stream)
+            .map(|m| super::fs_stats::stats(&m))
+            .map_err(|e| crate::modules::fs_error::fs_error("fstat", None, &e));
+    }
+    FDS.with(|t| t.borrow().get(&fd).ok_or_else(|| crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())).and_then(|f| f.metadata().map(|m| super::fs_stats::stats(&m)).map_err(|e| crate::modules::fs_error::fs_error("fstat", None, &e))))
+}
+pub(crate) fn fd_close(fd: i32) -> Result<Value, VmError> {
+    if std_stream_fd(fd).is_some() {
+        return Ok(Value::Undefined);
+    }
+    FDS.with(|t| if t.borrow_mut().remove(&fd).is_some() { Ok(Value::Undefined) } else { Err(crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())) })
+}
+
+/// The `/dev/fd/N` path for standard stream descriptors 0/1/2, which are
+/// always-open real fds in Node (stdin/stdout/stderr).
+fn std_stream_fd(fd: i32) -> Option<&'static str> {
+    match fd {
+        0 => Some("/dev/stdin"),
+        1 => Some("/dev/stdout"),
+        2 => Some("/dev/stderr"),
+        _ => None,
     }
 }
 
@@ -161,9 +196,13 @@ pub fn build() -> Value {
         ("copyFile", crate::host::capability(SPEC_FS_COPYFILE)),
         ("access", crate::host::capability(SPEC_FS_ACCESS)),
         ("mkdtemp", crate::host::capability(SPEC_FS_MKDTEMP)),
+        ("open", crate::host::capability(SPEC_FS_OPEN)),
+        ("fstat", crate::host::capability(SPEC_FS_FSTAT)),
+        ("close", crate::host::capability(SPEC_FS_CLOSE)),
         ("readlink", crate::host::capability(SPEC_FS_READLINK)),
         ("chmod", crate::host::capability(SPEC_FS_CHMOD)),
         ("truncate", crate::host::capability(SPEC_FS_TRUNCATE)),
+        ("Stats", crate::host::capability(SPEC_FS_STATS)),
     ];
     props.extend(sync_props());
     props.push(("constants", constants()));
@@ -198,6 +237,9 @@ fn sync_props() -> Vec<(&'static str, Value)> {
 fn sync_props_more() -> Vec<(&'static str, Value)> {
     use crate::registry::*;
     vec![
+        ("openSync", crate::host::capability(SPEC_FS_OPENSYNC)),
+        ("fstatSync", crate::host::capability(SPEC_FS_FSTATSYNC)),
+        ("closeSync", crate::host::capability(SPEC_FS_CLOSESYNC)),
         ("rmSync", crate::host::capability(SPEC_FS_RMSYNC)),
         ("renameSync", crate::host::capability(SPEC_FS_RENAMESYNC)),
         (
