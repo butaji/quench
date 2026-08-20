@@ -50,7 +50,10 @@ fn is_odd_integer(value: f64) -> bool {
 }
 
 pub(crate) fn is_array(value: Option<&Value>) -> Value {
-    Value::Boolean(matches!(value, Some(Value::Array(_))))
+    Value::Boolean(matches!(
+        value,
+        Some(Value::Array(_)) | Some(Value::Builtin(Builtin::ArrayPrototype))
+    ))
 }
 
 pub(crate) fn object(arguments: &[Value]) -> Value {
