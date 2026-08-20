@@ -319,6 +319,7 @@ pub const SPEC_FSP_TRUNCATE: NodeSpec = NodeSpec::new("fs:promises:truncate", 0x
 pub const SPEC_FSP_REALPATH: NodeSpec = NodeSpec::new("fs:promises:realpath", 0x1151);
 
 pub const SPEC_REQUIRE: NodeSpec = NodeSpec::new("require", 0x1200);
+pub const SPEC_REQUIRE_FOR: NodeSpec = NodeSpec::new("__quench_require_for__", 0x1f04);
 pub const SPEC_READLINE: NodeSpec = NodeSpec::new("readline:createInterface", 0x1300);
 
 // zlib sync compression (flate2-backed).
@@ -454,6 +455,10 @@ pub fn namespace_bindings(
     out.push((
         "__quench_cjs_wrap__".to_string(),
         crate::host::capability(crate::registry::SPEC_CJS_WRAP),
+    ));
+    out.push((
+        "__quench_require_for__".to_string(),
+        crate::host::capability(crate::registry::SPEC_REQUIRE_FOR),
     ));
     out.push((
         "__quench_run_loop__".to_string(),

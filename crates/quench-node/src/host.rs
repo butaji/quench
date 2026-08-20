@@ -65,6 +65,7 @@ pub struct HostState {
     /// evaluated once from the embedded JS factory
     /// (`modules/express_request.js`).
     pub express_request_module: Option<Value>,
+    pub mime_db_module: Option<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -98,6 +99,7 @@ impl NodeHost {
             statuses_module: None,
             express_module: None,
             express_request_module: None,
+            mime_db_module: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),

@@ -90,6 +90,14 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .insert("statuses".to_string(), value.clone());
         return Ok(value);
     }
+    if matches!(spec.as_str(), "mime-db") {
+        if let Some(cached) = state.borrow().module_cache.get("mime-db") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::mime_db::build(state)?;
+        state.borrow_mut().module_cache.insert("mime-db".to_string(), value.clone());
+        return Ok(value);
+    }
     if matches!(spec.as_str(), "express" | "node:express") {
         if let Some(cached) = state.borrow().module_cache.get("express") {
             return Ok(cached.clone());
@@ -123,7 +131,7 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
 }
 
 /// CommonJS file loader: resolve, cache, wrap, execute, return exports.
-fn load_file_module(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<Value, VmError> {
+pub(crate) fn load_file_module(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<Value, VmError> {
     let path = resolve_path(state, spec)?;
     let key = path.to_string_lossy().into_owned();
     if let Some(cached) = state.borrow().module_cache.get(&key) {
@@ -220,12 +228,31 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     };
     let exports = quench_runtime::execute::get_property_result(&pending.module, "exports")?;
     state.borrow_mut().dir_stack.push(pending.dirname.clone());
+    // Build a module-scoped `require` closure that captures this
+    // module's dirname AND the require_for host capability as closure
+    // parameters (no global lookup, no context-guard dependency). The
+    // closure is a real JS function returned by reducing a tiny factory
+    // source and calling it with the capability + dir.
+    let require_factory_src = "(function(cap, d) { return function(s) { return cap(d, s); }; })";
+    let factory_ops = quench_runtime::reduce::reduce_global_script_source(require_factory_src)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = Vec::new();
+    let factory = quench_runtime::vm::with_current_context(&context, || {
+        quench_runtime::vm::execute_in_place_context(factory_ops.ops(), &mut registers, &context)
+    })?;
+    let require_for = crate::host::capability(crate::registry::SPEC_REQUIRE_FOR);
+    let require_fn = quench_runtime::vm::call_value(
+        &factory,
+        &Value::Undefined,
+        &[require_for, Value::String(pending.dirname.clone())],
+    )?;
     let result = quench_runtime::vm::call_value(
         function,
         &Value::Undefined,
         &[
             exports,
-            crate::host::capability(crate::registry::SPEC_REQUIRE),
+            require_fn,
             pending.module,
             Value::String(pending.filename),
             Value::String(pending.dirname),
@@ -235,7 +262,7 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     result
 }
 
-fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
+pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
     let name = spec.strip_prefix("node:").unwrap_or(spec);
     match name {
         "console" => Some(crate::modules::console::build_value()),
