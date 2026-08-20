@@ -57,6 +57,11 @@ promise_op!(truncate, "truncate");
 promise_op!(realpath, "realpath");
 promise_op!(chown, "chown");
 promise_op!(utimes, "utimes");
+promise_op!(link, "link");
+promise_op!(symlink, "symlink");
+promise_op!(lutimes, "lutimes");
+promise_op!(lchown, "lchown");
+promise_op!(lchmod, "lchmod");
 
 const FD_PROP: &str = "\0quench:fs:filehandle:fd";
 
