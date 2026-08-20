@@ -2,6 +2,8 @@
 //! objects installed via the runtime's host contract. There is no
 //! self-hosted JavaScript builtin layer.
 
+pub mod async_hooks;
+
 pub mod assert;
 pub mod assert_validate;
 pub mod buffer;

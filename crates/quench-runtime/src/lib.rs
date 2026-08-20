@@ -42,6 +42,7 @@ mod exceptions;
 pub mod execute;
 pub mod facts;
 mod finalization_registry;
+pub mod frame_stack;
 mod function_code;
 mod function_parameters;
 mod functions;

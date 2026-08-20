@@ -18,6 +18,12 @@ fn error_builtin(
         }
         Builtin::ErrorIsError => Ok(error_is_error(arguments.first())),
         Builtin::ErrorCaptureStackTrace => capture_stack_trace(arguments),
+        Builtin::CallSiteGetFileName => call_site_field(receiver, "__file", false),
+        Builtin::CallSiteGetLineNumber => call_site_field(receiver, "__line", true),
+        Builtin::CallSiteGetColumnNumber => call_site_field(receiver, "__column", true),
+        Builtin::CallSiteGetFunctionName => call_site_field(receiver, "__name", false),
+        Builtin::CallSiteIsEval => Ok(crate::value::Value::Boolean(false)),
+        Builtin::CallSiteGetEvalOrigin => Ok(crate::value::Value::Null),
         Builtin::ErrorPrototypeToString => error_to_string(receiver),
         Builtin::ErrorPrototypeNameGetter => Ok(error_name_getter(receiver)?),
         Builtin::ErrorPrototypeMessageGetter => Ok(error_message_getter(receiver)?),
@@ -240,23 +246,32 @@ fn capture_stack_trace(arguments: &[Value]) -> Result<Value, VmError> {
             "The 'target' argument must be an object",
         ));
     }
-    // If a custom `Error.prepareStackTrace` hook is installed, honor it: call
-    // `prepareStackTrace(target, frames)` and use its result as the stack, as
-    // the V8 contract specifies. The engine has no call-frame capture, so the
-    // frames list is empty; consumers that insist on real frames will see an
-    // empty stack rather than a fabricated one.
-    let frame_list = crate::host_api::array(Vec::new());
-    let stack = match crate::execute::get_property(
+    let frames = crate::frame_stack::snapshot();
+    let sites: Vec<Value> = frames.iter().map(build_call_site).collect();
+    let prepared = crate::execute::get_property(
         &crate::value::Value::Builtin(crate::ops::Builtin::Error),
         "prepareStackTrace",
-    ) {
-        candidate if crate::conversion::is_callable(&candidate) => {
-            crate::vm::call_value(&candidate, &crate::value::Value::Undefined, &[
-                target.clone(),
-                frame_list,
-            ])?
+    );
+    let stack = if crate::conversion::is_callable(&prepared) {
+        let frame_list = crate::host_api::array(sites);
+        crate::vm::call_value(&prepared, &crate::value::Value::Undefined, &[
+            target.clone(),
+            frame_list,
+        ])?
+    } else {
+        let mut text = String::from("Error\n");
+        for frame in &frames {
+            text.push_str("\n    at ");
+            if !frame.function.is_empty() {
+                text.push_str(&frame.function);
+                text.push_str(" (");
+                text.push_str(&frame.filename);
+                text.push(')');
+            } else {
+                text.push_str(&frame.filename);
+            }
         }
-        _ => crate::value::Value::String(String::from("Error\n")),
+        crate::value::Value::String(text)
     };
     let descriptor = crate::host_api::object(vec![
         ("value".to_string(), stack),
@@ -267,4 +282,66 @@ fn capture_stack_trace(arguments: &[Value]) -> Result<Value, VmError> {
     let updated = crate::execute::define_property(target.clone(), "stack", descriptor)?;
     crate::execute::replace_value(target, &updated);
     Ok(crate::value::Value::Undefined)
+}
+
+/// Build a `CallSite`-shaped object exposing the V8 `CallSite` read methods
+/// as callable builtins. The object carries its one real frame's data in
+/// hidden `__*` properties the methods read back.
+fn build_call_site(frame: &crate::frame_stack::FrameInfo) -> Value {
+    crate::host_api::object(vec![
+        (
+            "__file".to_string(),
+            crate::value::Value::String(frame.filename.clone()),
+        ),
+        (
+            "__name".to_string(),
+            crate::value::Value::String(frame.function.clone()),
+        ),
+        ("__line".to_string(), crate::value::Value::Number(0.0)),
+        ("__column".to_string(), crate::value::Value::Number(0.0)),
+        (
+            "getFileName".to_string(),
+            crate::value::Value::Builtin(crate::ops::Builtin::CallSiteGetFileName),
+        ),
+        (
+            "getLineNumber".to_string(),
+            crate::value::Value::Builtin(crate::ops::Builtin::CallSiteGetLineNumber),
+        ),
+        (
+            "getColumnNumber".to_string(),
+            crate::value::Value::Builtin(crate::ops::Builtin::CallSiteGetColumnNumber),
+        ),
+        (
+            "getFunctionName".to_string(),
+            crate::value::Value::Builtin(crate::ops::Builtin::CallSiteGetFunctionName),
+        ),
+        (
+            "isEval".to_string(),
+            crate::value::Value::Builtin(crate::ops::Builtin::CallSiteIsEval),
+        ),
+        (
+            "getEvalOrigin".to_string(),
+            crate::value::Value::Builtin(crate::ops::Builtin::CallSiteGetEvalOrigin),
+        ),
+    ])
+}
+
+/// Read a CallSite field off the receiver (`this`). String fields return null
+/// when absent/empty (matching V8); numeric fields return their value.
+fn call_site_field(
+    receiver: Option<&Value>,
+    key: &str,
+    numeric: bool,
+) -> Result<Value, VmError> {
+    let Some(site) = receiver else {
+        return Ok(crate::value::Value::Null);
+    };
+    let value = crate::execute::get_property(site, key);
+    if numeric {
+        return Ok(value);
+    }
+    match value {
+        crate::value::Value::String(text) if !text.is_empty() => Ok(crate::value::Value::String(text)),
+        _ => Ok(crate::value::Value::Null),
+    }
 }
