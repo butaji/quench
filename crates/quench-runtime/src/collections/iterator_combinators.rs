@@ -340,13 +340,14 @@ pub(crate) fn drop(
         .unwrap_or(Value::Undefined);
     let limit = crate::conversion::to_number(&limit)?.trunc();
     let n = if limit.is_nan() || limit < 0.0 { 0.0 } else { limit };
+    let n = n.clamp(0.0, 9_007_199_254_740_991.0) as usize;
     let inner = receiver_iterator(receiver)?;
-    let dropped = consume_count(&inner, n as usize)?;
     Ok(Value::Iterator(Rc::new(IteratorData::new(
         IteratorState::Dropped {
             inner,
-            skipped: dropped,
-            done: dropped < n as usize,
+            skipped: 0,
+            limit: n,
+            done: false,
         },
     ))))
 }
