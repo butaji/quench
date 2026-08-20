@@ -1,0 +1,15 @@
+const p = require('node:perf_hooks');
+if (!p.performance || p.performance.now() < 0 || !(p.performance.timeOrigin > 0)) throw new Error('performance');
+p.performance.clearMarks(); p.performance.clearMeasures();
+let seen = false;
+const o = new p.PerformanceObserver(function (list) { if (list.getEntriesByType('mark').length) seen = true; });
+o.observe({entryTypes:['mark','measure']});
+p.performance.mark('a');
+const before = p.performance.now();
+p.performance.mark('b');
+const m = p.performance.measure('ab','a','b');
+if (m.duration < 0 || m.duration > 1000) throw new Error('duration');
+if (p.performance.getEntries().length !== 3 || p.performance.getEntriesByName('ab')[0] !== m) throw new Error('entries');
+o.disconnect(); p.performance.mark('c');
+if (!seen) throw new Error('observer');
+console.log('perf_hooks: ok');
