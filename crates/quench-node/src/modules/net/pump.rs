@@ -85,8 +85,13 @@ fn accept_one(
         encoding: None,
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
-    if let Some(server) = state.borrow().net.servers.get(&server_id) {
-        let js = server.borrow().js.clone();
+    let server_js = state
+        .borrow()
+        .net
+        .servers
+        .get(&server_id)
+        .map(|server| server.borrow().js.clone());
+    if let Some(js) = server_js {
         emit(state, &js, "connection", vec![object])?;
     }
     Ok(())

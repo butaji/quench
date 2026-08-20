@@ -68,6 +68,8 @@ Current coverage (28 scripts):
 - `test-events.js` — events.EventEmitter round-trip
 - `test-fs.js` — fs.readFileSync / readdirSync
 - `test-modules.js` — every v1 `node:` module resolves
+- `test-http.js` — real HTTP server (createServer/listen) answered by a
+  raw net client request, asserting the parsed req and serialized res
 - `test-net.js` — net.isIP family + real loopback TCP (server.listen,
   socket write/read echo, close) through the event-loop pump
 - `test-os.js` — os.cpus / totalmem / freemem / networkInterfaces
