@@ -103,6 +103,19 @@ fn string_match_all(
         )
         .map(|(result, _)| result);
     }
+    // If pattern is a RegExp, check the flags contain 'g'.
+    if crate::value::is_object(&pattern) {
+        let is_regexp = crate::execute::get_property_result(&pattern, "Symbol.match")?;
+        if crate::execute::is_truthy(&is_regexp) {
+            let flags_value = crate::execute::get_property_result(&pattern, "flags")?;
+            let flags = crate::conversion::to_string(&flags_value)?;
+            if !flags.contains('g') {
+                return Err(crate::value::error::throw_type_error(
+                    "String.prototype.matchAll requires a 'g' flag",
+                ));
+            }
+        }
+    }
     let regex = crate::construct::construct_value(
         &Value::Builtin(crate::ops::Builtin::RegExp),
         &[pattern, Value::String("g".to_string())],
