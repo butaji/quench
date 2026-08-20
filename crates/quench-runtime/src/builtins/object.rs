@@ -75,11 +75,11 @@ fn object_keys_dispatch(target: Option<&Value>) -> Result<Value, VmError> {
     let Some(target) = target else {
         return crate::own_keys::keys_result(None);
     };
-    if let Value::BindingCell(cell) = target {
-        let value = cell.borrow().clone();
-        return object_keys(Some(&value));
+    let mut resolved = target.clone();
+    while let Value::BindingCell(cell) = resolved {
+        resolved = cell.borrow().clone();
     }
-    object_keys(Some(target))
+    object_keys(Some(&resolved))
 }
 
 fn get_own_property_descriptors(arguments: &[Value]) -> Result<Value, VmError> {
