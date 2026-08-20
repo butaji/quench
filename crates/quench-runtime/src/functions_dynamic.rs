@@ -11,7 +11,9 @@ use oxc::{
 };
 
 use crate::{
-    conversion::to_string, execute::VmError, facts::ProgramDb, ops::FunctionKind, value::Value,
+    conversion::to_string, execute::VmError, facts::ProgramDb,
+    ops::{FunctionKind, FunctionStrictness},
+    value::Value,
 };
 
 pub(crate) fn construct(
@@ -81,8 +83,27 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     if has_invalid_private_identifier(body) {
         return Err(syntax_error("Invalid private identifier"));
     }
-    let analysis = crate::semantic::analyze(&parsed.program)
-        .map_err(|_| syntax_error("Invalid function source"))?;
+    let analysis = match crate::semantic::analyze(&parsed.program) {
+        Ok(analysis) => analysis,
+        Err(errors) => {
+            // Non-strict dynamic Function constructor: ES5 allows duplicate
+            // parameter names. The OXC binder always raises a SyntaxError
+            // for them, so skip the analyzer and use an empty Analysis
+            // when the only failure is duplicate parameters.
+            if matches!(strictness, FunctionStrictness::Sloppy)
+                && errors.iter().all(|e| is_duplicate_param_error_str(e))
+            {
+                crate::semantic::Analysis {
+                    scope_count: 0,
+                    symbol_count: 0,
+                    private_names: Vec::new(),
+                    fact_sites: std::collections::HashMap::new(),
+                }
+            } else {
+                return Err(syntax_error("Invalid function source"));
+            }
+        }
+    };
     let mut facts = ProgramDb {
         strict: matches!(strictness, crate::ops::FunctionStrictness::Strict),
         private_names: analysis.private_names.into_iter().collect(),
@@ -320,4 +341,8 @@ fn syntax_error(message: &str) -> VmError {
         crate::ops::Builtin::SyntaxError,
         &[Value::String(message.to_string())],
     ))
+}
+
+fn is_duplicate_param_error_str(message: &str) -> bool {
+    message.contains("has already been declared")
 }
