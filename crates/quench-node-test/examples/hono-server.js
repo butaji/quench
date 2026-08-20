@@ -1,30 +1,54 @@
-// Smallest possible Hono-style server using only the Node API
-// surface that `quench-node` exposes. The host implements each
-// `node:` builtin in pure Rust; this script is plain JavaScript
-// that uses only what the host provides.
+// Smallest possible Hono-style server built only on the `node:` surface
+// `quench-node` exposes. A route table (`app.get`) dispatches each
+// request through a fetch-style handler; `http.createServer` serves it
+// over a real loopback socket, and a `net` client asserts the response.
 
 const { createServer } = require('node:http');
-const { EventEmitter } = require('node:events');
-const { Buffer } = require('node:buffer');
+const net = require('node:net');
 
-const ee = new EventEmitter();
-const bus = new EventEmitter();
+function createHono() {
+  const routes = [];
+  const app = {
+    get(path, handler) {
+      routes.push({ method: 'GET', path, handler });
+    },
+    // Fetch-style dispatch: returns (status, body) for a request.
+    dispatch(req) {
+      for (const r of routes) {
+        if (r.method === req.method && r.path === req.url) {
+          return r.handler({ req });
+        }
+      }
+      return { status: 404, body: 'Not Found' };
+    },
+  };
+  return app;
+}
 
-ee.on('ping', () => bus.emit('pong'));
-ee.emit('ping');
-bus.emit('pong');
+const app = createHono();
+app.get('/', () => ({ status: 200, body: 'hello hono' }));
+app.get('/json', (c) => ({ status: 200, body: '{"ok":true}' }));
 
-console.log('hono-server: started');
-console.log('Buffer: %s', typeof Buffer);
-console.log('Buffer.from: %s', typeof Buffer.from);
-console.log('util.format: %s', require('node:util').format('hi %s', 'there'));
-console.log('path.join: %s', require('node:path').join('/tmp', 'a', 'b.js'));
-console.log('url.query: %s', require('node:url').parse('http://x/y?z=1').query);
-console.log('querystring: %s', require('node:querystring').parse('a=1&b=2').a[0]);
-console.log('os.platform: %s', require('node:os').platform);
-console.log('process.cwd: %s', process.cwd());
-console.log('process.version: %s', process.version);
-console.log('setTimeout id: %s', setTimeout(() => {}, 0));
-console.log('net.isIP: %s', require('node:net').isIP('127.0.0.1'));
-console.log('net.isIPv4: %s', require('node:net').isIPv4('::1'));
-console.log('hono-server: ok');
+const server = createServer((req, res) => {
+  const { status, body } = app.dispatch(req);
+  res.writeHead(status, { 'Content-Type': 'text/plain' });
+  res.end(body);
+});
+
+server.listen(0, () => {
+  const port = server.address().port;
+
+  const client = net.connect(port, '127.0.0.1', () => {
+    client.write('GET /json HTTP/1.1\r\nHost: localhost\r\n\r\n');
+  });
+  let received = '';
+  client.setEncoding('utf8');
+  client.on('data', (chunk) => { received += chunk; });
+  client.on('end', () => {
+    if (!/^HTTP\/1\.1 200 OK/.test(received)) throw new Error('bad status');
+    if (!received.endsWith('{"ok":true}')) throw new Error('bad body');
+    if (!/Content-Type: text\/plain/.test(received)) throw new Error('bad content-type');
+    server.close(() => console.log('hono-server: ok (routed over real http)'));
+  });
+  client.on('error', () => {});
+});
