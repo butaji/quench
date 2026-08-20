@@ -60,3 +60,4 @@ pub mod util_inherits;
 pub mod util_strip;
 pub mod util_style_text;
 pub mod vm;
+pub mod zlib;

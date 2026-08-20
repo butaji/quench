@@ -233,10 +233,7 @@ fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
                 crate::host::capability(crate::registry::NodeSpec::new("https:get", 0x1601)),
             ),
         ])),
-        "zlib" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "gzip".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("zlib:gzip", 0x1700)),
-        )])),
+        "zlib" => Some(crate::modules::zlib::build()),
         "perf_hooks" => Some(crate::host::namespace_object_from_pairs(vec![(
             "performance".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new(

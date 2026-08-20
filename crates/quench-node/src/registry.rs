@@ -320,6 +320,14 @@ pub const SPEC_FSP_REALPATH: NodeSpec = NodeSpec::new("fs:promises:realpath", 0x
 
 pub const SPEC_REQUIRE: NodeSpec = NodeSpec::new("require", 0x1200);
 pub const SPEC_READLINE: NodeSpec = NodeSpec::new("readline:createInterface", 0x1300);
+
+// zlib sync compression (flate2-backed).
+pub const SPEC_ZLIB_GZIP: NodeSpec = NodeSpec::new("zlib:gzipSync", 0x1700);
+pub const SPEC_ZLIB_GUNZIP: NodeSpec = NodeSpec::new("zlib:gunzipSync", 0x1701);
+pub const SPEC_ZLIB_DEFLATE_RAW: NodeSpec = NodeSpec::new("zlib:deflateRawSync", 0x1702);
+pub const SPEC_ZLIB_INFLATE_RAW: NodeSpec = NodeSpec::new("zlib:inflateRawSync", 0x1703);
+pub const SPEC_ZLIB_DEFLATE: NodeSpec = NodeSpec::new("zlib:deflateSync", 0x1704);
+pub const SPEC_ZLIB_INFLATE: NodeSpec = NodeSpec::new("zlib:inflateSync", 0x1705);
 pub const SPEC_CJS_WRAP: NodeSpec = NodeSpec::new("__quench_cjs_wrap__", 0x1d00);
 pub const SPEC_CP_SPAWNSYNC: NodeSpec = NodeSpec::new("child_process:spawnSync", 0x1e00);
 pub const SPEC_CP_EXECSYNC: NodeSpec = NodeSpec::new("child_process:execSync", 0x1e01);
