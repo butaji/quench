@@ -21,21 +21,77 @@ pub fn create_interface(
     let options = args.first().cloned().unwrap_or(Value::Undefined);
     let input = execute::get_property_result(&options, "input")?;
     let lines = input_lines(&input)?;
-    let iface = crate::modules::events::new_emitter_object(state)?;
+    let mut iface = crate::modules::events::new_emitter_object(state)?;
+    let mut stored = Vec::new();
+    for line in &lines {
+        stored.push(Value::String(line.clone()));
+    }
+    iface = execute::set_property(
+        iface,
+        "_readlineLines",
+        quench_runtime::host_api::array(stored),
+    );
+    iface = execute::set_property(
+        iface,
+        "question",
+        crate::host::capability(crate::registry::NodeSpec::new(
+            "readline:question",
+            0x1303,
+        )),
+    );
+    iface = execute::set_property(
+        iface,
+        "write",
+        crate::host::capability(crate::registry::NodeSpec::new(
+            "readline:write",
+            0x1304,
+        )),
+    );
+    iface = execute::set_property(
+        iface,
+        "close",
+        crate::host::capability(crate::registry::NodeSpec::new(
+            "readline:close",
+            0x1305,
+        )),
+    );
     let driver = crate::host::capability(crate::registry::NodeSpec::new("readline:driver", 0x1301));
     let done = crate::host::capability(crate::registry::NodeSpec::new("readline:done", 0x1302));
     for line in lines {
-        state
-            .borrow_mut()
-            .event_loop
-            .queue_microtask(driver.clone(), vec![iface.clone(), Value::String(line)]);
+        state.borrow_mut().event_loop.queue_microtask(driver.clone(), vec![iface.clone(), Value::String(line)]);
     }
-    state
-        .borrow_mut()
-        .event_loop
-        .queue_microtask(done, vec![iface.clone()]);
+    state.borrow_mut().event_loop.queue_microtask(done, vec![iface.clone()]);
     Ok(iface)
 }
+
+pub fn question(
+    state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(rl) = receiver else { return Ok(Value::Undefined); };
+    let lines = execute::get_property_result(rl, "_readlineLines")?;
+    let line = execute::get_property_result(&lines, "0").unwrap_or(Value::String(String::new()));
+    if let Some(cb) = args.get(1).or_else(|| args.get(0)) {
+        if quench_runtime::is_callable(cb) {
+            let cap = crate::host::capability(crate::registry::NodeSpec::new("readline:questionCallback", 0x1306));
+            state.borrow_mut().event_loop.queue_microtask(cap, vec![cb.clone(), line]);
+        }
+    }
+    Ok(Value::Undefined)
+}
+
+pub fn question_callback(
+    _state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> {
+    let cb = args.first().cloned().unwrap_or(Value::Undefined);
+    let line = args.get(1).cloned().unwrap_or(Value::String(String::new()));
+    quench_runtime::vm::call_value(&cb, &Value::Undefined, &[line])
+}
+
+pub fn noop(_state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+    Ok(Value::Undefined)
+}
+
+ 
 
 /// Emit one buffered `'line'` event.
 pub fn driver_handler(
@@ -82,9 +138,12 @@ fn input_lines(input: &Value) -> Result<Vec<String>, VmError> {
 }
 
 pub fn build() -> Value {
-    crate::host::namespace_object(vec![(
-        "createInterface",
-        crate::host::capability(crate::registry::SPEC_READLINE),
-    )])
+    crate::host::namespace_object(vec![
+        ("createInterface", crate::host::capability(crate::registry::SPEC_READLINE)),
+    ])
     .unwrap_or_else(|_| Value::Undefined)
+}
+
+pub fn interface_methods(iface: Value) -> Value {
+    execute::set_property(iface, "question", crate::host::capability(crate::registry::NodeSpec::new("readline:question", 0x1303)))
 }

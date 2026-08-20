@@ -54,4 +54,4 @@
     WRITE_METADATA: 1,
     WRITE_EVENTS: 2
   };
-}(deps));
+});

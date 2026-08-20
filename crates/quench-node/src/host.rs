@@ -50,6 +50,7 @@ pub struct HostState {
     /// `require('async_hooks')` module value, evaluated once from the
     /// embedded JS factory (`modules/async_hooks.js`).
     pub async_hooks_module: Option<Value>,
+    pub node_test_module: Option<Value>,
     /// `require('http-errors')` module value, evaluated once from the
     /// embedded JS factory (`modules/http_errors.js`).
     pub http_errors_module: Option<Value>,
@@ -59,6 +60,8 @@ pub struct HostState {
     /// `require('punycode')` module value, evaluated once from the
     /// embedded JS factory (`modules/punycode.js`).
     pub punycode_module: Option<Value>,
+    pub perf_hooks_module: Option<Value>,
+    pub trace_events_module: Option<Value>,
     /// `require('express')` module value (real Express-compatible
     /// `createApplication` factory), evaluated once from the embedded JS
     /// factory (`modules/express.js`).
@@ -98,10 +101,13 @@ impl NodeHost {
             url_class: None,
             stream_module: None,
             async_hooks_module: None,
+            node_test_module: None,
             punycode_module: None,
             http_errors_module: None,
             statuses_module: None,
             express_module: None,
+            perf_hooks_module: None,
+            trace_events_module: None,
             express_request_module: None,
             mime_db_module: None,
         };
