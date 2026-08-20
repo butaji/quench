@@ -52,11 +52,16 @@ test-events-uncaught-exception-stack.js
 test-eventsource-disabled.js
 test-exception-handler.js
 test-exception-handler2.js
+test-fs-close.js
 test-fs-exists.js
 test-fs-existssync-false.js
 test-fs-fmap.js
 test-fs-make-callback.js
+test-fs-open-numeric-flags.js
+test-fs-read-file-sync-hostname.js
+test-fs-stat.js
 test-fs-makeStatsCallback.js
+test-fs-long-path.js
 test-fs-mkdtemp-prefix-check.js
 test-fs-operations-with-surrogate-pairs.js
 test-fs-promises-file-handle-sync.js

@@ -158,6 +158,53 @@ pub fn stat_sync(
     stat_impl(&path, true, options.throw_if_no_entry)
 }
 
+pub fn open_sync(_s: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    let path = super::fs::path_arg(args.first())?;
+    // Second argument is `flags` (a string) or an options object; mode
+    // (third) is accepted but unused. Matches Node's openSync signature.
+    let flag: String = match args.get(1) {
+        Some(Value::String(s)) => s.clone(),
+        Some(v) => super::fs::parse_options(Some(v))
+            .map(|o| o.flag.unwrap_or_else(|| "r".to_string()))
+            .unwrap_or_else(|_| "r".to_string()),
+        None => "r".to_string(),
+    };
+    super::fs::fd_open(&path, Some(&flag)).map(|n| Value::Number(n as f64))
+}
+pub fn fstat_sync(_s: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    match args.first() { Some(Value::Number(n)) => super::fs::fd_stat(*n as i32), _ => Err(crate::modules::buffer_enc::invalid_arg_type("fd must be a number".into())) }
+}
+pub fn close_sync(_s: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    match args.first() { Some(Value::Number(n)) => super::fs::fd_close(*n as i32), _ => Err(crate::modules::buffer_enc::invalid_arg_type("fd must be a number".into())) }
+}
+
+/// Deprecated `fs.Stats(...)` constructor: builds a `Stats` value from
+/// the 14 date/group fields and emits a DEP0180 deprecation warning.
+pub fn stats_constructor(
+    state: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let n = |i: usize| -> f64 {
+        match args.get(i) {
+            Some(Value::Number(num)) => *num,
+            _ => 0.0,
+        }
+    };
+    let value = super::fs_stats::stats_from_values(
+        n(0), n(1), n(2), n(3), n(4), n(5), n(6), n(7), n(8), n(9), n(10),
+        n(11), n(12), n(13),
+    );
+    super::process::emit_warning(
+        state,
+        "DeprecationWarning",
+        "fs.Stats constructor is deprecated.",
+        Some("DEP0180"),
+        true,
+    );
+    Ok(value)
+}
+
 pub fn lstat_sync(
     _s: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,

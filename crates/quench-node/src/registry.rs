@@ -322,6 +322,13 @@ pub const SPEC_REQUIRE: NodeSpec = NodeSpec::new("require", 0x1200);
 pub const SPEC_REQUIRE_FOR: NodeSpec = NodeSpec::new("__quench_require_for__", 0x1f04);
 pub const SPEC_READLINE: NodeSpec = NodeSpec::new("readline:createInterface", 0x1300);
 
+pub const SPEC_FS_OPEN: NodeSpec = NodeSpec::new("fs:open", 0x1160);
+pub const SPEC_FS_FSTAT: NodeSpec = NodeSpec::new("fs:fstat", 0x1161);
+pub const SPEC_FS_CLOSE: NodeSpec = NodeSpec::new("fs:close", 0x1162);
+pub const SPEC_FS_OPENSYNC: NodeSpec = NodeSpec::new("fs:openSync", 0x1163);
+pub const SPEC_FS_FSTATSYNC: NodeSpec = NodeSpec::new("fs:fstatSync", 0x1164);
+pub const SPEC_FS_CLOSESYNC: NodeSpec = NodeSpec::new("fs:closeSync", 0x1165);
+pub const SPEC_FS_STATS: NodeSpec = NodeSpec::new("fs:Stats", 0x1166);
 // zlib sync compression (flate2-backed).
 pub const SPEC_ZLIB_GZIP: NodeSpec = NodeSpec::new("zlib:gzipSync", 0x1700);
 pub const SPEC_ZLIB_GUNZIP: NodeSpec = NodeSpec::new("zlib:gunzipSync", 0x1701);
