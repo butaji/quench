@@ -403,7 +403,7 @@ pub const SPEC_ASSERT_FAIL: NodeSpec = NodeSpec::new("assert:fail", 0x1409);
 pub const SPEC_ASSERT_IF_ERROR: NodeSpec = NodeSpec::new("assert:ifError", 0x140A);
 pub const SPEC_ASSERT_MATCH: NodeSpec = NodeSpec::new("assert:match", 0x140B);
 pub const SPEC_ASSERT_DOES_NOT_MATCH: NodeSpec = NodeSpec::new("assert:doesNotMatch", 0x140C);
-
+pub const SPEC_ASSERT_REJECTS: NodeSpec = NodeSpec::new("assert:rejects", 0x140D);
 pub const SPEC_VM_RUN_IN_NEW_CONTEXT: NodeSpec = NodeSpec::new("vm:runInNewContext", 0x1600);
 
 /// Symbolic id for a Node host object stored in a `Value::Object`.

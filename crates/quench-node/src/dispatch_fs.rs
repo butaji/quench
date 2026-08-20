@@ -166,6 +166,7 @@ fn fs_dispatch_promises(cap: u16) -> Option<CallHandler> {
         CAP_FSP_STAT => fs_promises::stat,
         CAP_FSP_LSTAT => fs_promises::lstat,
         CAP_FSP_STATFS => fs_promises::statfs,
+        CAP_FSP_OPEN => fs_promises::open,
         CAP_FSP_READDIR => fs_promises::readdir,
         CAP_FSP_MKDIR => fs_promises::mkdir,
         CAP_FSP_UNLINK => fs_promises::unlink,

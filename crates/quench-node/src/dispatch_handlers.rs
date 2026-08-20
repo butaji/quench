@@ -399,6 +399,20 @@ pub fn process_hrtime(
 ) -> Result<Value, VmError> {
     crate::modules::process::hrtime(state, args)
 }
+pub fn process_getuid(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::getuid(state, args)
+}
+pub fn process_getgid(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::getgid(state, args)
+}
 
 // ---- os ----
 pub fn os_platform(
