@@ -126,7 +126,22 @@ fn reduce_static_if(
             next_register,
         ))),
         Statement::BlockStatement(_) => {
-            crate::reduce::reduce_statement(selected, ops, facts, next_register, next_slot, locals)
+            // Always emit the if's V as a dst register holding the
+            // block's last value (or undefined for an empty block).
+            // The plain `reduce_statement` would return None for an
+            // empty block, leaving the body's sequence to inherit the
+            // previous V (which is wrong per ES 13.6.2 step 5.d).
+            let dst = crate::reduce_support::emit_undefined(ops, next_register);
+            let last = crate::reduce::reduce_statement(
+                selected,
+                ops,
+                facts,
+                next_register,
+                next_slot,
+                locals,
+            )?;
+            crate::reduce_support::seal_completion(ops, dst, last);
+            Ok(Some(dst))
         }
         Statement::ExpressionStatement(expression) => {
             reduce_expression_statement(&expression.expression, ops, facts, next_register, locals)

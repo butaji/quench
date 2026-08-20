@@ -532,9 +532,11 @@ pub enum Op {
     },
     Break {
         label: Option<String>,
+        value: Option<u16>,
     },
     Continue {
         label: Option<String>,
+        value: Option<u16>,
     },
     Throw {
         src: u16,

@@ -13,11 +13,16 @@ pub struct ArrayData {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct ArgumentLive {
-    values: Vec<Value>,
-    length: usize,
-    mapped: Vec<Option<Rc<RefCell<Value>>>>,
-    deleted: Vec<bool>,
+pub struct ArgumentLive {
+    pub values: Vec<Value>,
+    pub length: usize,
+    pub mapped: Vec<Option<Rc<RefCell<Value>>>>,
+    pub deleted: Vec<bool>,
+    /// Optional override for `arguments.length`. Per spec 10.6 the property
+    /// is writable: a plain value-property assignment stores the value
+    /// here so that subsequent reads return it verbatim instead of
+    /// coercing through the array's length slot.
+    pub length_override: Option<Value>,
 }
 
 impl ArrayData {
@@ -39,6 +44,7 @@ impl ArrayData {
                 length,
                 mapped: Vec::new(),
                 deleted: Vec::new(),
+                length_override: None,
             }))),
         }
     }
@@ -52,6 +58,7 @@ impl ArrayData {
             length: data.length,
             mapped: data.mapped.clone(),
             deleted: data.deleted.clone(),
+            length_override: None,
         })));
         data
     }
@@ -68,6 +75,43 @@ impl ArrayData {
         self.argument_live
             .as_ref()
             .map_or(self.length, |live| live.borrow().length)
+    }
+
+    /// Return the value of `arguments.length` if a plain-value override
+    /// was written through `SetProperty`/`define_own_property`. When no
+    /// override is set, returns the argument's logical length coerced to
+    /// a number.
+    pub(crate) fn arguments_length_value(&self) -> Value {
+        if let Some(live) = &self.argument_live {
+            if let Some(value) = live.borrow().length_override.clone() {
+                return value;
+            }
+        }
+        Value::Number(self.logical_len() as f64)
+    }
+
+    /// Set the override value of `arguments.length`. Subsequent reads
+    /// return this value verbatim, regardless of the array's actual
+    /// length slot.
+    pub(crate) fn set_arguments_length_override(&self, value: Value) {
+        if let Some(live) = &self.argument_live {
+            live.borrow_mut().length_override = Some(value);
+        }
+    }
+
+    /// Number of physical values currently held. The array's logical
+    /// length may be larger when the runtime has accepted a length
+    /// write that exceeds the existing element count.
+    pub(crate) fn physical_len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Borrow the live argument data without consuming `self`. The
+    /// `argument_live` field is shared between the original and any
+    /// `Rc::make_mut` clones of this data, so overrides stored via
+    /// `set_arguments_length_override` are visible to all references.
+    pub(crate) fn argument_live_view(&self) -> Option<std::cell::Ref<'_, ArgumentLive>> {
+        self.argument_live.as_ref().map(|live| live.borrow())
     }
 
     pub(crate) fn prototype(&self) -> Option<Value> {

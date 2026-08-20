@@ -148,8 +148,28 @@ pub(crate) fn define_own_property(
     let accessor = descriptor
         .iter()
         .any(|(name, _)| matches!(name.as_str(), "get" | "set"));
+    // Per spec 10.2.4 ([[DefineOwnProperty]] for arguments objects),
+    // redefining an index with an accessor (or with writable: false)
+    // disconnects the parameter mapping. Skip the placeholder write in
+    // that case so the placeholder value (`Undefined`) does not flow
+    // through the parameter binding.
+    let is_arguments = matches!(target, Value::Array(values) if values.is_arguments());
+    let needs_disconnect = is_arguments
+        && (accessor
+            || descriptor
+                .iter()
+                .rev()
+                .any(|(name, value)| name == "writable"
+                    && matches!(value, Value::Boolean(false))));
     let mut result = if accessor {
-        define_accessor_placeholder(target.clone(), key)
+        if needs_disconnect {
+            // Skip the placeholder write — the index has been, or is
+            // about to be, disconnected. The descriptor is installed
+            // below.
+            target.clone()
+        } else {
+            define_accessor_placeholder(target.clone(), key)
+        }
     } else if let Some(updated) = crate::typed_array_ops::set_property(target, key, &value) {
         updated?
     } else {

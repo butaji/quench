@@ -160,14 +160,26 @@ fn run_control_op(
         Throw { src } => read_register(registers, *src)
             .map(Completion::Throw)
             .map(Some),
-        Break { label } => Ok(Some(Completion::Break {
-            label: label.clone(),
-            value: None,
-        })),
-        Continue { label } => Ok(Some(Completion::Continue {
-            label: label.clone(),
-            value: None,
-        })),
+        Break { label, value } => {
+            let carried = value
+                .map(|src| read_register(registers, src))
+                .transpose()?
+                .unwrap_or(Value::Undefined);
+            Ok(Some(Completion::Break {
+                label: label.clone(),
+                value: Some(carried),
+            }))
+        }
+        Continue { label, value } => {
+            let carried = value
+                .map(|src| read_register(registers, src))
+                .transpose()?
+                .unwrap_or(Value::Undefined);
+            Ok(Some(Completion::Continue {
+                label: label.clone(),
+                value: Some(carried),
+            }))
+        }
         TailCall { .. } => run_tail_call(registers, op).map(Some),
         Await { .. } => run_await_completion(registers, op),
         Yield { src } => read_register(registers, *src)

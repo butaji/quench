@@ -156,7 +156,11 @@ pub(crate) fn is_symbol(value: &Value) -> bool {
 }
 
 pub(crate) fn is_symbol_string(value: &str) -> bool {
-    value.starts_with("Symbol.")
+    // The runtime stores Symbol values as `Value::String` with the
+    // shape `Symbol.<desc>\0<id>`. Plain description strings that
+    // happen to start with `Symbol.` (e.g. `Symbol.iterator`) do not
+    // have the trailing nul + counter, so we discriminate by that.
+    value.starts_with("Symbol.") && value.contains('\0')
 }
 
 pub(crate) fn ordinary_to_primitive(value: &Value, hint: &str) -> Result<Value, VmError> {

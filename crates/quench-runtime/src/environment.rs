@@ -117,9 +117,7 @@ pub struct Environment {
     caller: Option<Rc<Self>>,
 }
 
-fn clone_tdz(
-    source: &Option<Rc<RefCell<HashSet<u16>>>>,
-) -> Option<Rc<RefCell<HashSet<u16>>>> {
+fn clone_tdz(source: &Option<Rc<RefCell<HashSet<u16>>>>) -> Option<Rc<RefCell<HashSet<u16>>>> {
     source
         .as_ref()
         .map(|slots| Rc::new(RefCell::new(slots.borrow().clone())))

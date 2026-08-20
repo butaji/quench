@@ -283,15 +283,13 @@ pub(crate) fn make_regexp_string(
     global: bool,
     unicode: bool,
 ) -> Value {
-    Value::Iterator(Rc::new(IteratorData::new(
-        IteratorState::RegExpString {
-            regexp,
-            input,
-            global,
-            unicode,
-            done: false,
-        },
-    )))
+    Value::Iterator(Rc::new(IteratorData::new(IteratorState::RegExpString {
+        regexp,
+        input,
+        global,
+        unicode,
+        done: false,
+    })))
 }
 
 fn make_set(data: Rc<crate::value::SetData>, kind: u8) -> Value {

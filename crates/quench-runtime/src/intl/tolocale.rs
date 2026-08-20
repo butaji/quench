@@ -340,6 +340,17 @@ pub(crate) mod symbol {
         })
     }
     fn make_symbol(arguments: &[Value]) -> Result<Value, VmError> {
+        // Per spec step 2: if description is a Symbol value, throw a
+        // TypeError. (The runtime stores Symbols as `Value::String`
+        // starting with "Symbol.", so check for that without coercing
+        // the value via `to_string`.)
+        if let Some(Value::String(value)) = arguments.first() {
+            if crate::conversion::is_symbol_string(value) {
+                return Err(crate::value::error::throw_type_error(
+                    "Symbol may not be used as a description",
+                ));
+            }
+        }
         let description = match arguments.first() {
             None | Some(Value::Undefined) => "\u{1}".to_string(),
             Some(value) => crate::conversion::to_string(value)?,
@@ -353,6 +364,16 @@ pub(crate) mod symbol {
     }
 
     fn symbol_for(arguments: &[Value]) -> Result<Value, VmError> {
+        // Per spec step 1, ToString is called on the key. If the key is
+        // a Symbol value (the runtime stores symbols as `Value::String`
+        // starting with "Symbol."), that conversion throws a TypeError.
+        if let Some(Value::String(value)) = arguments.first() {
+            if crate::conversion::is_symbol_string(value) {
+                return Err(crate::value::error::throw_type_error(
+                    "Cannot convert a Symbol value to a string",
+                ));
+            }
+        }
         let key = crate::conversion::to_string(arguments.first().unwrap_or(&Value::Undefined))?;
         Ok(Value::String(format!("Symbol.for.{key}\0")))
     }
