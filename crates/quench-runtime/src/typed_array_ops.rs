@@ -315,7 +315,11 @@ fn set_offset(arguments: &[Value]) -> Result<usize, VmError> {
         return Ok(0);
     }
     let number = crate::intl::tolocale::value::to_number_result(Some(value))?;
-    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
+    if !number.is_finite()
+        || number < 0.0
+        || number.fract() != 0.0
+        || number > usize::MAX as f64
+    {
         return Err(crate::value::error::throw_range_error(
             "offset is out of bounds",
         ));
