@@ -73,8 +73,8 @@ Legend
 | URL | 🟢 | real | |
 | TextDecoder / TextEncoder | 🟢 | real | |
 | WebAssembly | 🟢 | intrinsic | |
-| URLSearchParams | 🟢 | via module only | no global binding |
-| Blob, FormData, Headers, Request, Response, MessageChannel/Port, BroadcastChannel, CompressionStream, DecompressionStream, ReadableStream{,BYOB}, WritableStream, TransformStream + controllers/readers/strategies, TextDecoder/EncoderStream, SubtleCrypto/Crypto/CryptoKey, CustomEvent, DOMException, performance, Performance* | 🟢/🟡 | missing | not bound as globals |
+| URLSearchParams | 🟢 | real global | wired to native `SPEC_URL_SEARCHPARAMS_NEW` |
+| Blob, FormData, Headers, Request, Response, MessageChannel/Port, BroadcastChannel, CompressionStream, DecompressionStream, ReadableStream{,BYOB}, WritableStream, TransformStream + controllers/readers/strategies, TextDecoder/EncoderStream, SubtleCrypto/Crypto/CryptoKey, CustomEvent, DOMException, performance, Performance* | 🟢/🟡 | missing | runtime primitives not yet available |
 
 ## Verification evidence
 
