@@ -301,9 +301,7 @@ fn run_single_stage(
     let mut report = StageReport::default();
     for path in files {
         report.total += 1;
-        let mut runner = Test262Runner::new(RuntimeHost);
-        let mut harness = HarnessCache::new(root.join("harness"));
-        let outcome = runner.run_file_with_cache(&path, &mut harness)?;
+        let outcome = run_isolated_file(root, &path)?;
         match outcome {
             TestOutcome::Pass => report.passed += 1,
             TestOutcome::Fail { reason } => {
@@ -319,6 +317,21 @@ fn run_single_stage(
         stage.id, stage.path, report.passed
     );
     Ok(report)
+}
+
+fn run_isolated_file(root: &Path, path: &Path) -> Result<TestOutcome, String> {
+    let root = root.to_path_buf();
+    let path = path.to_path_buf();
+    std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(move || {
+            let mut runner = Test262Runner::new(RuntimeHost);
+            let mut harness = HarnessCache::new(root.join("harness"));
+            runner.run_file_with_cache(path, &mut harness)
+        })
+        .map_err(|error| format!("stage worker spawn failed: {error}"))?
+        .join()
+        .map_err(|_| "stage worker panicked".to_string())?
 }
 fn parse_stage_index(value: &str) -> Result<u32, String> {
     value
