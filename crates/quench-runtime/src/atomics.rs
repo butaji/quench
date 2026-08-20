@@ -7,7 +7,10 @@ pub(crate) fn is_lock_free(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
-    if matches!(arguments.first(), Some(Value::BigInt64Array(_))) {
+    if matches!(
+        arguments.first(),
+        Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
+    ) {
         return notify_bigint(arguments);
     }
     let Some(Value::Int32Array(view)) = arguments.first() else {
@@ -34,20 +37,35 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn notify_bigint(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::BigInt64Array(view)) = arguments.first() else {
-        return Err(crate::value::error::throw_type_error(
-            "Atomics.notify requires BigInt64Array",
-        ));
-    };
     let index = atomic_index(arguments.get(1))?;
     let _count = arguments
         .get(2)
         .map(crate::conversion::to_number)
         .transpose()?;
-    if !view.buffer.shared {
-        return Ok(Value::Number(0.0));
-    }
-    if view.get(index).is_none() {
+    let in_range = match arguments.first() {
+        Some(Value::BigInt64Array(view)) => {
+            if !view.buffer.shared {
+                return Err(crate::value::error::throw_type_error(
+                    "Atomics.notify requires a shared buffer",
+                ));
+            }
+            view.get(index).is_some()
+        }
+        Some(Value::BigUint64Array(view)) => {
+            if !view.buffer.shared {
+                return Err(crate::value::error::throw_type_error(
+                    "Atomics.notify requires a shared buffer",
+                ));
+            }
+            view.get(index).is_some()
+        }
+        _ => {
+            return Err(crate::value::error::throw_type_error(
+                "Atomics.notify requires a BigInt64Array or BigUint64Array",
+            ));
+        }
+    };
+    if !in_range {
         return Err(crate::value::error::throw_range_error(
             "Atomics.notify index is out of range",
         ));
@@ -146,11 +164,11 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
     let result = if current != expected {
         Value::String("not-equal".into())
     } else {
-        crate::promise::promise_resolve(&[Value::String("timed-out".into())])
+        Value::String("timed-out".into())
     };
     Ok(crate::value::Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
-            ("async".into(), Value::Boolean(current == expected)),
+            ("async".into(), Value::Boolean(false)),
             ("value".into(), result),
         ]),
     )))
@@ -207,6 +225,17 @@ fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
     let index = atomic_index(args.get(1))?;
     let old = bigint_old(view, index)?;
     let replacement = bigint_result(builtin, args, &old)?;
+    let replacement = match view {
+        Value::BigInt64Array(_) => {
+            let bits = crate::construct::bigint_bits(&Value::BigInt(replacement))?;
+            (bits as i64).to_string()
+        }
+        Value::BigUint64Array(_) => {
+            let bits = crate::construct::bigint_bits(&Value::BigInt(replacement))?;
+            bits.to_string()
+        }
+        _ => replacement,
+    };
     bigint_write(
         view,
         index,
@@ -247,7 +276,7 @@ fn bigint_old(view: &Value, index: usize) -> Result<String, VmError> {
 
 fn bigint_result(builtin: Builtin, args: &[Value], old: &str) -> Result<String, VmError> {
     let old = old
-        .parse::<i128>()
+        .parse::<num_bigint::BigInt>()
         .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt"))?;
     let value = bigint_argument(args.get(2))?;
     let result = if builtin == Builtin::AtomicsCompareExchange {
@@ -258,10 +287,10 @@ fn bigint_result(builtin: Builtin, args: &[Value], old: &str) -> Result<String, 
         }
     } else {
         match builtin {
-            Builtin::AtomicsAdd => old.wrapping_add(value),
+            Builtin::AtomicsAdd => old + value,
             Builtin::AtomicsAnd => old & value,
             Builtin::AtomicsOr => old | value,
-            Builtin::AtomicsSub => old.wrapping_sub(value),
+            Builtin::AtomicsSub => old - value,
             Builtin::AtomicsXor => old ^ value,
             _ => return Err(crate::vm::not_callable()),
         }
@@ -291,7 +320,7 @@ fn bigint_write(view: &Value, index: usize, value: &str, unchanged: bool) -> Res
     Ok(())
 }
 
-fn bigint_argument(value: Option<&Value>) -> Result<i128, VmError> {
+fn bigint_argument(value: Option<&Value>) -> Result<num_bigint::BigInt, VmError> {
     let Some(Value::BigInt(value)) = value else {
         return Err(crate::value::error::throw_type_error(
             "Atomics requires BigInt values",
