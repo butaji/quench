@@ -80,6 +80,8 @@ Current coverage (28 scripts):
   node_modules via package.json main, loads a vendored package, and
   resolves its nested dependency (also manually verified against the
   published `ms` and `strip-ansi`/`ansi-regex` packages)
+- `test-npm-ms.js` — the vendored, real published `ms` package loads and
+  runs under quench-node, with parse/format output matching Node
 - `test-net.js` — net.isIP family + real loopback TCP (server.listen,
   socket write/read echo, close) through the event-loop pump
 - `test-os.js` — os.cpus / totalmem / freemem / networkInterfaces
