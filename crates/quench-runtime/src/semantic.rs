@@ -72,9 +72,7 @@ pub(crate) fn analyze_eval(
     analyze_with_context(program, context)
 }
 
-pub(crate) fn analyze_loose(
-    program: &oxc::ast::ast::Program<'_>,
-) -> Result<Analysis, Vec<String>> {
+pub(crate) fn analyze_loose(program: &oxc::ast::ast::Program<'_>) -> Result<Analysis, Vec<String>> {
     let mut ctx = EvalGrammarContext::default();
     ctx.skip_syntax_error = true;
     analyze_with_context(program, ctx)

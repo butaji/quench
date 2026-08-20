@@ -11,18 +11,21 @@ use oxc::{
 };
 
 use crate::{
-    conversion::to_string, execute::VmError, facts::ProgramDb,
+    conversion::to_string,
+    execute::VmError,
+    facts::ProgramDb,
     ops::{FunctionKind, FunctionStrictness},
     value::Value,
 };
 
-pub(crate) fn construct(
+fn construct(
     arguments: &[Value],
     kind: FunctionKind,
     is_async: bool,
+    realm: Option<crate::ops::RealmId>,
 ) -> Result<Value, VmError> {
     let source = function_source(arguments, kind, is_async)?;
-    let realm = crate::vm::current_context_or_default().realm();
+    let realm = realm.unwrap_or_else(|| crate::vm::current_context_or_default().realm());
     crate::vm::with_realm(realm, || reduce_dynamic(&source, kind, is_async))
         .unwrap_or_else(|| reduce_dynamic(&source, kind, is_async))
 }
@@ -30,6 +33,14 @@ pub(crate) fn construct(
 pub(crate) fn construct_builtin(
     builtin: crate::ops::Builtin,
     arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
+    construct_builtin_in_realm(builtin, arguments, None)
+}
+
+pub(crate) fn construct_builtin_in_realm(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+    realm: Option<crate::ops::RealmId>,
 ) -> Option<Result<Value, VmError>> {
     use crate::ops::Builtin;
     let (kind, is_async) = match builtin {
@@ -39,7 +50,7 @@ pub(crate) fn construct_builtin(
         Builtin::AsyncGeneratorFunction => (FunctionKind::Generator, true),
         _ => return None,
     };
-    Some(construct(arguments, kind, is_async))
+    Some(construct(arguments, kind, is_async, realm))
 }
 
 fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Value, VmError> {
@@ -94,10 +105,9 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
             // the analyzer and use an empty Analysis when the only failures
             // are these historically-permitted parameters.
             if matches!(strictness, FunctionStrictness::Sloppy)
-                && errors.iter().all(|e| {
-                    is_duplicate_param_error_str(e)
-                        || is_strict_only_param_error_str(e)
-                })
+                && errors
+                    .iter()
+                    .all(|e| is_duplicate_param_error_str(e) || is_strict_only_param_error_str(e))
             {
                 crate::semantic::Analysis {
                     scope_count: 0,
@@ -325,7 +335,6 @@ fn normalize_annex_b_comments(source: &str, allow_leading_close: bool) -> String
         })
         .collect::<Vec<_>>()
         .join("\n")
-
 }
 fn mark_dynamic(value: &Value, source: &str) {
     if let Value::Function(function) = value {
@@ -335,7 +344,8 @@ fn mark_dynamic(value: &Value, source: &str) {
             "\0dynamic_source".to_string(),
             Value::String(source.to_string()),
         ));
-        if let Some(token) = crate::vm::realm_token(crate::vm::current_context_or_default().realm()) {
+        if let Some(token) = crate::vm::realm_token(crate::vm::current_context_or_default().realm())
+        {
             properties.push(("\0realm".to_string(), token));
         }
     }
@@ -359,6 +369,5 @@ fn is_duplicate_param_error_str(message: &str) -> bool {
 fn is_strict_only_param_error_str(message: &str) -> bool {
     // OXC's analyzer unconditionally rejects `eval`/`arguments` as parameter
     // names; filter those for non-strict dynamic functions.
-    message.contains("'eval'")
-        || message.contains("'arguments'")
+    message.contains("'eval'") || message.contains("'arguments'")
 }
