@@ -14,7 +14,7 @@ fn construct_then_result(constructor: &Value) -> Result<Value, VmError> {
         return Ok(new_promise());
     }
     let target = Rc::new(PromiseData::default());
-    let executor = bound_settler(Builtin::PromiseResolve, &target);
+    let executor = bound_settler(Builtin::PromiseResolve, &target, 2.0);
     crate::construct::construct_value(constructor, &[executor])
 }
 

@@ -53,10 +53,19 @@ pub(crate) fn function_realm_id(
         .find_map(|(key, value)| {
             (key == "\0realm").then(|| match value {
                 Value::HostCapability(token) => token.realm(),
+                Value::Number(number) => crate::ops::RealmId::new(*number as u64),
                 _ => crate::ops::RealmId::ROOT,
             })
         })
-        .or_else(|| crate::vm::realm_id_for_global_value(&function.captures.get(0)))
+        .or_else(|| {
+            fn global_realm(value: &Value) -> Option<crate::ops::RealmId> {
+                match value {
+                    Value::BindingCell(cell) => global_realm(&cell.borrow()),
+                    value => crate::vm::realm_id_for_global_value(value),
+                }
+            }
+            global_realm(&function.captures.get(0))
+        })
         .unwrap_or(crate::ops::RealmId::ROOT)
 }
 
