@@ -101,6 +101,17 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .insert("express".to_string(), value.clone());
         return Ok(value);
     }
+    if matches!(spec.as_str(), "express/lib/request") || spec == "node:express/request" {
+        if let Some(cached) = state.borrow().module_cache.get("express_request") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::express_request::build(state)?;
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("express_request".to_string(), value.clone());
+        return Ok(value);
+    }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
         return Ok(cached.clone());
     }
