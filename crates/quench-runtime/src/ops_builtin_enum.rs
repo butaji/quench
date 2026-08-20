@@ -324,6 +324,8 @@ pub enum Builtin {
     ReferenceErrorPrototype, SyntaxErrorPrototype, URIErrorPrototype,
     AggregateErrorPrototype,
     ErrorIsError, ErrorPrototypeToString, ErrorCaptureStackTrace,
+    CallSiteGetFileName, CallSiteGetLineNumber, CallSiteGetColumnNumber,
+    CallSiteGetFunctionName, CallSiteIsEval, CallSiteGetEvalOrigin,
     ErrorPrototypeNameGetter, ErrorPrototypeMessageGetter,
     ErrorPrototypeCauseGetter, ErrorPrototypeStackGetter,
     ErrorPrototypeStackSetter, RangeError,
