@@ -53,6 +53,13 @@ pub struct HostState {
     /// `require('http-errors')` module value, evaluated once from the
     /// embedded JS factory (`modules/http_errors.js`).
     pub http_errors_module: Option<Value>,
+    /// `require('statuses')` module value, evaluated once from the
+    /// embedded JS factory (`modules/statuses.js`).
+    pub statuses_module: Option<Value>,
+    /// `require('express')` module value (real Express-compatible
+    /// `createApplication` factory), evaluated once from the embedded JS
+    /// factory (`modules/express.js`).
+    pub express_module: Option<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -83,6 +90,8 @@ impl NodeHost {
             stream_module: None,
             async_hooks_module: None,
             http_errors_module: None,
+            statuses_module: None,
+            express_module: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),

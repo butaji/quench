@@ -1,9 +1,10 @@
 //! Node API modules. Each module is implemented as pure Rust
 //! objects installed via the runtime's host contract. There is no
 //! self-hosted JavaScript builtin layer.
+pub mod express;
 
 pub mod http_errors;
-
+pub mod statuses;
 pub mod assert;
 pub mod async_hooks;
 
