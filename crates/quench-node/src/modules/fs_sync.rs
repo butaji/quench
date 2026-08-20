@@ -18,6 +18,43 @@ fn split(args: &[Value]) -> Result<(String, FsOptions), VmError> {
     let options = parse_options(args.get(1))?;
     Ok((path, options))
 }
+#[cfg(unix)]
+pub fn statfs_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let path = super::fs::path_arg(args.first())?;
+    let cpath = std::ffi::CString::new(path.as_bytes())
+        .map_err(|_| crate::modules::buffer_enc::invalid_arg_value("Path must be a string without null bytes".into()))?;
+    let mut st = unsafe { std::mem::zeroed::<libc::statvfs>() };
+    let rc = unsafe { libc::statvfs(cpath.as_ptr(), &mut st) };
+    if rc != 0 {
+        return Err(crate::modules::fs_error::fs_error(
+            "statfs", Some(&path), &std::io::Error::last_os_error(),
+        ));
+    }
+    let n = |v: u128| Value::Number(v as f64);
+    Ok(host_api::object(vec![
+        ("type".into(), n(st.f_flag as u128)),
+        ("bsize".into(), n(st.f_bsize as u128)),
+        ("frsize".into(), n(st.f_frsize as u128)),
+        ("blocks".into(), n(st.f_blocks as u128)),
+        ("bfree".into(), n(st.f_bfree as u128)),
+        ("bavail".into(), n(st.f_bavail as u128)),
+        ("files".into(), n(st.f_files as u128)),
+        ("ffree".into(), n(st.f_ffree as u128)),
+    ]))
+}
+
+#[cfg(not(unix))]
+pub fn statfs_sync(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Err(crate::modules::buffer_enc::invalid_arg_value("statfs is not supported on this platform".into()))
+}
 
 fn string_data(data: &Value, encoding: Option<&str>) -> Result<Vec<u8>, VmError> {
     match data {

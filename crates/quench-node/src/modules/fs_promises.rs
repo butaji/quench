@@ -40,6 +40,7 @@ promise_op!(read_file, "readFile");
 promise_op!(write_file, "writeFile");
 promise_op!(append_file, "appendFile");
 promise_op!(stat, "stat");
+promise_op!(statfs, "statfs");
 promise_op!(lstat, "lstat");
 promise_op!(readdir, "readdir");
 promise_op!(mkdir, "mkdir");
