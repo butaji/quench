@@ -259,7 +259,12 @@ fn write_snapshot(data: &IteratorData, snapshot: &Snapshot) {
                 *d = *done;
             }
         }
-        Snapshot::Dropped { skipped, limit, done, .. } => {
+        Snapshot::Dropped {
+            skipped,
+            limit,
+            done,
+            ..
+        } => {
             if let IteratorState::Dropped {
                 skipped: sk,
                 limit: lim,
