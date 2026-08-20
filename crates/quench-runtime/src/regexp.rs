@@ -370,7 +370,7 @@ pub(crate) fn is_current_realm(value: &Value) -> bool {
             Value::Number(n) => Some(n as u64),
             _ => None,
         })
-        .is_none_or(|realm| realm == current)
+        .is_some_and(|realm| realm == current)
 }
 fn build_match_result(
     receiver: &Value,
