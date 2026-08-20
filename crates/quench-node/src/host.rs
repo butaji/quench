@@ -283,3 +283,31 @@ pub fn namespace_object_from_pairs(props: Vec<(String, Value)>) -> Value {
 fn descriptor_key(key: &str) -> String {
     format!("\0quench:descriptor:\0{key}")
 }
+
+/// Flip one property's descriptor to enumerable on a namespace object
+/// (the rest keep their non-enumerable default). Node exports like
+/// `fs.promises` are enumerable; record the descriptor slot in place.
+/// Flip one property's descriptor to enumerable on a namespace object,
+/// returning the mutated object. Consumes `object` so the `Rc` is
+/// uniquely owned and mutable in place.
+pub fn make_property_enumerable(mut object: Value, key: &str) -> Value {
+    let Value::Object(data) = &mut object else {
+        return object;
+    };
+    let Some(inner) = Rc::get_mut(data) else {
+        return object;
+    };
+    let dkey = descriptor_key(key);
+    if let Some((_, Value::Object(desc))) = inner.iter_mut().find(|(k, _)| k == &dkey) {
+        let Some(desc_inner) = Rc::get_mut(desc) else {
+            return object;
+        };
+        for (k, v) in desc_inner.iter_mut() {
+            if k == "enumerable" {
+                *v = Value::Boolean(true);
+                return object;
+            }
+        }
+    }
+    object
+}

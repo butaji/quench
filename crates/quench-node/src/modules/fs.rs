@@ -207,7 +207,9 @@ pub fn build() -> Value {
     props.extend(sync_props());
     props.push(("constants", constants()));
     props.push(("promises", promises()));
-    crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
+    let fs = crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined);
+    // Node exports `fs.promises` as enumerable.
+    crate::host::make_property_enumerable(fs, "promises")
 }
 
 fn sync_props() -> Vec<(&'static str, Value)> {
