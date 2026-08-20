@@ -220,13 +220,11 @@ fn run_sequential(root: &Path, files: &[TestSource]) -> Outcomes {
     let start = Instant::now();
     let mut outcomes = Outcomes::default();
     let harness_root = root.join("harness");
-    let mut runner = Test262Runner::new(RuntimeHost);
-    let mut cache = HarnessCache::new(harness_root);
     for fixture in files {
-        // Keep one runner and cache for the complete sequential dispatch. A
-        // timeout worker here would silently turn this mode into isolation
-        // mode and fail to exercise state leakage between tests.
-        let outcome = dispatch_one(&mut runner, &mut cache, fixture);
+        // Bound pathological async tests just as individual and parallel
+        // dispatch do; otherwise one leaked pending job can stall the audit
+        // indefinitely instead of producing a comparable outcome.
+        let outcome = dispatch_with_timeout(&harness_root, fixture.clone());
         record(outcome, &mut outcomes, &fixture.path);
     }
     println!(
