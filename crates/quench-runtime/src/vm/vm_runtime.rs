@@ -107,7 +107,7 @@ pub(crate) fn bare_call_receiver(
         let global = realm
             .and_then(|realm| crate::vm::with_realm(realm, || Some(crate::vm::current_global_object())))
             .flatten()
-            .unwrap_or_else(|| function.captures.get(0));
+            .unwrap_or_else(crate::vm::current_global_object);
         return to_object_value_in_realm(this_value, &global);
     }
     this_value.clone()
@@ -149,12 +149,13 @@ fn to_object_value(this_value: &Value) -> Value {
         | Value::Iterator(_)
         | Value::Generator(_)
         | Value::HostCapability(_) => this_value.clone(),
+        Value::Null | Value::Undefined => crate::vm::current_global_object(),
         Value::Number(_) => boxed_primitive(this_value, crate::ops::Builtin::Number),
         Value::Boolean(_) => boxed_primitive(this_value, crate::ops::Builtin::Boolean),
         Value::String(_) => boxed_primitive(this_value, crate::ops::Builtin::String),
         Value::StringUnits(_) => boxed_primitive(this_value, crate::ops::Builtin::String),
         Value::BigInt(_) => boxed_primitive(this_value, crate::ops::Builtin::BigInt),
-        Value::Null | Value::Undefined | Value::BindingCell(_) => this_value.clone(),
+        Value::BindingCell(_) => this_value.clone(),
     }
 }
 

@@ -364,10 +364,8 @@ fn execute_function_call(
         _ => None,
     };
     if let Some(realm) = realm {
-        return crate::vm::with_realm(realm, || {
-            execute_function_call_in_realm(receiver, arguments)
-        })
-        .unwrap_or_else(|| execute_function_call_in_realm(receiver, arguments));
+        return crate::vm::with_realm(realm, || execute_function_call_in_realm(receiver, arguments))
+            .unwrap_or_else(|| execute_function_call_in_realm(receiver, arguments));
     }
     execute_function_call_in_realm(receiver, arguments)
 }
