@@ -89,6 +89,20 @@ pub fn execute_with_registers_context(
     execute_in_environment(ops, &mut registers, context, environment)
 }
 
+/// Execute a fragment inside the currently installed lexical environment.
+/// Loop tests and updates must mutate the surrounding loop bindings; creating
+/// a child environment would discard those writes when the fragment returns.
+pub fn execute_in_current_context(
+    ops: &[Op],
+    registers: &mut Vec<Value>,
+) -> Result<Value, VmError> {
+    let context = current_context_or_default();
+    if crate::locals::is_installed() {
+        return completion_result(run_ops_completion(ops, registers, &context)?);
+    }
+    execute_in_place_context(ops, registers, &context)
+}
+
 pub fn execute_in_place_context(
     ops: &[Op],
     registers: &mut Vec<Value>,
