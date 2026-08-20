@@ -162,15 +162,23 @@ fn replace_with_exec(
     loop {
         let result = regexp_exec(receiver, input)?;
         let Some((matched, index)) = exec_match(&result)? else { break };
-        output.push_str(&input[next_source..index]);
-        output.push_str(&expand_exec_template(replacement, input, index, &matched));
-        next_source = index + matched.len();
+        // The exec result's `index` is a UTF-16 code-unit count; convert to
+        // a byte offset before slicing `input`.
+        let index = crate::strings::utf16_byte_index(input, index);
+        // Spec §21.2.5.8 step 16.p: a position moving backwards (an ill-
+        // behaving exec/subclass) is ignored — do not consume input past it.
+        if index >= next_source {
+            let index = index.min(input.len());
+            output.push_str(&input[next_source..index]);
+            output.push_str(&expand_exec_template(replacement, input, index, &matched));
+            next_source = (index + matched.len()).min(input.len());
+        }
         if !global {
             break;
         }
         advance_empty_exec(receiver, input, &matched)?;
     }
-    output.push_str(&input[next_source..]);
+    output.push_str(&input[next_source.min(input.len())..]);
     Ok(Value::String(output))
 }
 
