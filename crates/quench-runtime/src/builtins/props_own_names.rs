@@ -179,7 +179,13 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
         Builtin::AsyncGeneratorFunctionPrototype => {
             &["constructor", "prototype", "Symbol.toStringTag"]
         }
-        Builtin::Error => &["length", "name", "prototype", "isError"],
+        Builtin::Error => &[
+            "length",
+            "name",
+            "prototype",
+            "isError",
+            "captureStackTrace",
+        ],
         Builtin::ThrowTypeError => &["length", "name"],
         _ => &[],
     }
