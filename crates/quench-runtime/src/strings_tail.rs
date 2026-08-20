@@ -108,6 +108,11 @@ fn string_match_all(
         let is_regexp = crate::execute::get_property_result(&pattern, "Symbol.match")?;
         if crate::execute::is_truthy(&is_regexp) {
             let flags_value = crate::execute::get_property_result(&pattern, "flags")?;
+            if matches!(flags_value, Value::Undefined | Value::Null) {
+                return Err(crate::value::error::throw_type_error(
+                    "String.prototype.matchAll: flags is undefined or null",
+                ));
+            }
             let flags = crate::conversion::to_string(&flags_value)?;
             if !flags.contains('g') {
                 return Err(crate::value::error::throw_type_error(
