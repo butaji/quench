@@ -88,6 +88,8 @@ Current coverage (28 scripts):
 - `test-process.js` — process.version / platform / arch / pid
 - `test-querystring.js` — querystring.parse / stringify / escape
 - `test-stream.js` — stream module shape (Readable/Writable/...)
+- `test-string-replace.js` — String.prototype.replace works on strings
+  with code-unit/ANSI content (regression for a StringUnits receiver bug)
 - `test-util.js` — util.format / util.inspect shape
 - `test-vm.js` — vm + string_decoder shape
 - `test-dgram.js` — dgram shape (createSocket stub)
