@@ -7,7 +7,19 @@ var workerEnv = proc.env && proc.env.QUENCH_WORKER;
 var workerData = workerEnv ? JSON.parse(proc.env.QUENCH_WORKER_DATA || 'null') : null;
 function emitter(target) {
   var listeners = {};
-  target.on = function (name, fn) { (listeners[name] || (listeners[name] = [])).push(fn); return target; };
+  var pending = target._queueEvents ? [] : null;
+  target.on = function (name, fn) {
+    (listeners[name] || (listeners[name] = [])).push(fn);
+    if (pending) {
+      var keep = [];
+      for (var p = 0; p < pending.length; p++) {
+        if (pending[p][0] === name) fn.apply(target, pending[p][1]);
+        else keep.push(pending[p]);
+      }
+      pending = keep;
+    }
+    return target;
+  };
   target.once = function (name, fn) {
     function once() { target.removeListener(name, once); fn.apply(target, arguments); }
     return target.on(name, once);
@@ -17,6 +29,7 @@ function emitter(target) {
   };
   target.emit = function (name) {
     var a = (listeners[name] || []).slice(), args = Array.prototype.slice.call(arguments, 1);
+    if (pending && a.length === 0) pending.push([name, args]);
     for (var i = 0; i < a.length; i++) a[i].apply(target, args);
     return a.length > 0;
   };
@@ -31,7 +44,7 @@ var api = {
   parentPort: parentPort, MessageChannel: function MessageChannel() {},
   MessagePort: function MessagePort() {},
   Worker: function Worker(filename, options) {
-    var self = emitter({ threadId: 1, exited: false });
+    var self = emitter({ threadId: 1, exited: false, _queueEvents: true });
     options = options || {};
     var env = {};
     var keys = Object.keys(proc.env || {});
@@ -42,7 +55,6 @@ var api = {
     var lines = String(result.stdout || '').split('\n');
     for (var j = 0; j < lines.length; j++) {
       var marker = '__QUENCH_WORKER_MESSAGE__';
-      if (lines[j].slice(0, marker.length) === marker) {
         try { self.emit('message', JSON.parse(lines[j].slice(marker.length))); } catch (_) {}
       }
     }
