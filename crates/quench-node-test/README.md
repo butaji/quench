@@ -74,6 +74,8 @@ Current coverage (28 scripts):
   local http server, parsing the response status and body
 - `test-http-url.js` — http.get accepts a string URL and routes it to a
   local server, echoing the parsed path
+- `test-readline.js` — readline.createInterface emits 'line' per input
+  line then 'close'
 - `test-http-post.js` — the server streams a Content-Length request body
   to req 'data'/'end' and echoes it back to an http.request POST
 - `test-http-keepalive.js` — two requests served over one connection,
