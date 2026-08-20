@@ -192,9 +192,27 @@ pub const SPEC_PROCESS_ONCE: NodeSpec = NodeSpec::new("process:once", 0x0A08);
 pub const SPEC_PROCESS_BINDING: NodeSpec = NodeSpec::new("process:binding", 0x0A0D);
 pub const SPEC_PROCESS_GETUID: NodeSpec = NodeSpec::new("process:getuid", 0x0A0B);
 pub const SPEC_PROCESS_GETGID: NodeSpec = NodeSpec::new("process:getgid", 0x0A0C);
+pub const SPEC_PROCESS_ACTIVE_RESOURCES: NodeSpec = NodeSpec::new("process:activeResourcesInfo", 0x0A0E);
+pub const SPEC_PROCESS_REPORT: NodeSpec = NodeSpec::new("process:report", 0x0A0F);
 pub const SPEC_CRYPTO_RANDOM_BYTES: NodeSpec = NodeSpec::new("crypto:randomBytes", 0x2100);
 pub const SPEC_CRYPTO_RANDOM_FILL_SYNC: NodeSpec = NodeSpec::new("crypto:randomFillSync", 0x2102);
 pub const SPEC_CRYPTO_UNSUPPORTED: NodeSpec = NodeSpec::new("crypto:unsupported", 0x2101);
+pub const SPEC_CRYPTO_CREATE_HASH: NodeSpec = NodeSpec::new("crypto:createHash", 0x2103);
+pub const SPEC_CRYPTO_CREATE_HMAC: NodeSpec = NodeSpec::new("crypto:createHmac", 0x2104);
+pub const SPEC_CRYPTO_TIMING_SAFE_EQUAL: NodeSpec = NodeSpec::new("crypto:timingSafeEqual", 0x2105);
+pub const SPEC_CRYPTO_RANDOM_UUID: NodeSpec = NodeSpec::new("crypto:randomUUID", 0x2106);
+pub const SPEC_CRYPTO_RANDOM_INT: NodeSpec = NodeSpec::new("crypto:randomInt", 0x2107);
+pub const SPEC_CRYPTO_GET_HASHES: NodeSpec = NodeSpec::new("crypto:getHashes", 0x2108);
+pub const SPEC_CRYPTO_GET_CIPHERS: NodeSpec = NodeSpec::new("crypto:getCiphers", 0x2109);
+
+// Reserved node:sqlite capability range. The synchronous backend is exposed
+// directly by modules::sqlite until VM object dispatch is installed.
+pub const SPEC_SQLITE_DATABASE_SYNC: NodeSpec = NodeSpec::new("sqlite:DatabaseSync", 0x2400);
+pub const SPEC_SQLITE_EXEC: NodeSpec = NodeSpec::new("sqlite:exec", 0x2401);
+pub const SPEC_SQLITE_PREPARE: NodeSpec = NodeSpec::new("sqlite:prepare", 0x2402);
+pub const SPEC_SQLITE_RUN: NodeSpec = NodeSpec::new("sqlite:run", 0x2403);
+pub const SPEC_SQLITE_ALL: NodeSpec = NodeSpec::new("sqlite:all", 0x2404);
+pub const SPEC_SQLITE_CLOSE: NodeSpec = NodeSpec::new("sqlite:close", 0x2405);
 
 pub const SPEC_OS_PLATFORM: NodeSpec = NodeSpec::new("os:platform", 0x0B00);
 pub const SPEC_OS_ARCH: NodeSpec = NodeSpec::new("os:arch", 0x0B01);

@@ -373,6 +373,13 @@ pub fn crypto_random_fill_sync(
 pub fn crypto_unsupported(
     state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value],
 ) -> Result<Value, VmError> { crate::modules::crypto::unsupported(state, args) }
+pub fn crypto_create_hash(state: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::unsupported(state, a) }
+pub fn crypto_create_hmac(state: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::unsupported(state, a) }
+pub fn crypto_timing_safe_equal(state: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::unsupported(state, a) }
+pub fn crypto_random_uuid(state: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::unsupported(state, a) }
+pub fn crypto_random_int(state: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::unsupported(state, a) }
+pub fn crypto_get_hashes(state: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::unsupported(state, a) }
+pub fn crypto_get_ciphers(state: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::unsupported(state, a) }
 
 pub fn process_exit(
     state: &Rc<RefCell<HostState>>,
@@ -429,6 +436,22 @@ pub fn process_binding(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::process::binding(state, args)
+}
+
+pub fn process_active_resources(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::active_resources_info(state, args)
+}
+
+pub fn process_report(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::report(state, args)
 }
 
 // ---- os ----
