@@ -75,5 +75,6 @@ pub mod util_style_text;
 pub mod crypto;
 pub mod vm;
 pub mod compat_extra;
+pub mod sqlite;
 pub mod zlib;
 pub mod web_globals;

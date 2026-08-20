@@ -98,10 +98,18 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ),
         ("arch", Value::String(current_arch().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
-        // Bun documents source-map support as unavailable in its Node
-        // compatibility layer. Expose the documented false value rather than
-        // claiming that stack traces are being rewritten.
         ("sourceMapsEnabled", Value::Boolean(false)),
+        (
+            "report",
+            crate::host::namespace_object_from_pairs(vec![(
+                "getReport".to_string(),
+                crate::host::capability(crate::registry::SPEC_PROCESS_REPORT),
+            )]),
+        ),
+        (
+            "activeResourcesInfo",
+            crate::host::capability(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES),
+        ),
         ("execArgv", host_api::array(vec![])),
         ("features", host_api::object(vec![])),
         ("stdout", std_stream(false)),
@@ -351,6 +359,25 @@ pub fn stream_write(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         sink(&chunk);
     }
     Ok(Value::Boolean(true))
+
+}
+pub fn active_resources_info(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(host_api::array(Vec::new()))
+}
+
+/// `process.report.getReport()` — return a stable, useful report shape.
+pub fn report(
+    _state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(host_api::object(vec![
+        ("header".to_string(), host_api::object(vec![])),
+        ("javascriptStack".to_string(), host_api::object(vec![])),
+        ("nativeStack".to_string(), host_api::array(Vec::new())),
+    ]))
 }
 
 /// `process.umask([mask])` — accepts an optional new mask, returns the
