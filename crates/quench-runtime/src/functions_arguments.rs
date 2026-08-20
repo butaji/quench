@@ -305,10 +305,19 @@ pub(crate) fn execute_target(
             let crate::value::Value::Builtin(builtin) = bound.target else {
                 unreachable!()
             };
+            // Host capabilities (BoundFunction wrapping Builtin::HostCapability)
+            // must receive the bound capability token as `receiver` so
+            // `execute_host_capability` finds it. Other builtins keep the
+            // JS call's `this`.
+            let cap_receiver = if matches!(builtin, crate::ops::Builtin::HostCapability(_)) {
+                bound.receiver.clone()
+            } else {
+                receiver.clone()
+            };
             crate::vm::with_realm(bound.realm, || {
-                execute_builtin_target(builtin, Some(receiver), arguments)
+                execute_builtin_target(builtin, Some(&cap_receiver), arguments)
             })
-            .unwrap_or_else(|| execute_builtin_target(builtin, Some(receiver), arguments))
+            .unwrap_or_else(|| execute_builtin_target(builtin, Some(&cap_receiver), arguments))
         }
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(target, receiver, arguments),

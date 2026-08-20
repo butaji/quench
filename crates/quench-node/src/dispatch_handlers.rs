@@ -619,6 +619,31 @@ pub fn node_require(
     crate::modules::require::require(state, args)
 }
 
+pub fn node_require_for(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let dir = match args.first() {
+        Some(quench_runtime::value::Value::String(s)) => s.clone(),
+        _ => return Err(VmError::EvalError("require_for: dir must be a string".into())),
+    };
+    let spec = match args.get(1) {
+        Some(quench_runtime::value::Value::String(s)) => s.clone(),
+        _ => return Err(VmError::EvalError("require_for: spec must be a string".into())),
+    };
+    // Use the canonical require entrypoint so host-module fast paths
+    // (express, async_hooks, http-errors, statuses, etc.) remain active;
+    // the captured directory only scopes file-backed relative/bare resolution.
+    state.borrow_mut().dir_stack.push(dir);
+    let result = crate::modules::require::require(
+        state,
+        &[quench_runtime::value::Value::String(spec)],
+    );
+    state.borrow_mut().dir_stack.pop();
+    result
+}
+
 pub fn cjs_wrap(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
