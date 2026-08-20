@@ -43,7 +43,26 @@ promise_op!(stat, "stat");
 promise_op!(statfs, "statfs");
 promise_op!(lstat, "lstat");
 promise_op!(readdir, "readdir");
-promise_op!(mkdir, "mkdir");
+
+/// Promise mkdir rejects non-boolean `options.recursive` values.
+pub fn mkdir(
+    state: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    if let Some(Value::Object(_)) = args.get(1) {
+        let recursive = quench_runtime::vm::get_property(
+            args.get(1).unwrap(),
+            "recursive",
+        );
+        if !matches!(recursive, Value::Undefined | Value::Boolean(_)) {
+            return Ok(settle(Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"recursive\" argument must be of type boolean.".to_string(),
+            ))));
+        }
+    }
+    run(state, args, "mkdir")
+}
 promise_op!(unlink, "unlink");
 promise_op!(rmdir, "rmdir");
 promise_op!(rm, "rm");
