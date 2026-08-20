@@ -27,6 +27,7 @@ pub mod fs_promises;
 pub mod fs_stats;
 pub mod fs_sync;
 pub mod http;
+pub mod http_client;
 pub mod net;
 pub mod os;
 pub mod path;
