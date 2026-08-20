@@ -143,7 +143,13 @@ pub(crate) fn repeat(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let value = string_receiver(receiver)?;
-    let count = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
+    let count_value = arguments.first().and_then(number).unwrap_or(0.0);
+    if count_value.is_infinite() || count_value.is_nan() {
+        return Err(crate::value::error::throw_range_error(
+            "String.prototype.repeat: count must be finite",
+        ));
+    }
+    let count = count_value.max(0.0) as usize;
     Ok(Value::String(value.repeat(count)))
 }
 
