@@ -380,3 +380,16 @@ fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError>
     }
     Ok(receiver.clone())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::set_offset;
+    use crate::value::Value;
+
+    #[test]
+    fn set_offset_rejects_non_finite_values() {
+        let error = set_offset(&[Value::Undefined, Value::Number(f64::INFINITY)])
+            .expect_err("a non-finite offset must be rejected");
+        assert!(matches!(error, crate::vm::VmError::Thrown(_)));
+    }
+}
