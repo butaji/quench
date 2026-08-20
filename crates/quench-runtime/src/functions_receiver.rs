@@ -12,6 +12,18 @@ pub(crate) fn execute_target_with_receiver(
     };
     let frame = CallFrame::new(std::rc::Rc::clone(function), receiver.clone(), arguments.to_vec());
     if matches!(function.kind, FunctionKind::Generator) || function.is_async {
+        // If the receiver is already an existing generator, resume it instead
+        // of calling generator::create (which would start a fresh generator).
+        // This prevents infinite-generator creation when call_next invokes a
+        // generator-backed protocol iterator under the
+        // ReceiverUpdateGuard (e.g., Array.from(generator-iterator)).
+        if matches!(function.kind, FunctionKind::Generator) {
+            if let crate::value::Value::Generator(generator) = receiver {
+                let next_arg = arguments.first().cloned().unwrap_or(crate::value::Value::Undefined);
+                let result = crate::generator::resume(generator, crate::generator::Resume::Next(next_arg))?;
+                return Ok((result, receiver.clone()));
+            }
+        }
         let result = execute_target(target, receiver, arguments)?;
         return Ok((result, receiver.clone()));
     }
