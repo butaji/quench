@@ -332,6 +332,11 @@ fn bound_settler(target: Builtin, promise: &Rc<PromiseData>, length: f64) -> Val
             (crate::builtins::descriptor_key("length"), descriptor),
             ("name".to_string(), Value::String(name)),
             (crate::builtins::descriptor_key("name"), name_descriptor),
+            (
+                "\0realm".to_string(),
+                crate::vm::realm_token(crate::vm::current_context_or_default().realm())
+                    .unwrap_or(Value::Undefined),
+            ),
         ]),
     }))
 }
