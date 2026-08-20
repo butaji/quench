@@ -140,7 +140,14 @@ fn proxy_integrity_apply(
     target: &crate::value::Value,
     frozen: bool,
 ) -> Result<crate::value::Value, crate::execute::VmError> {
-    crate::proxy::proxy_prevent_extensions(target)?;
+    let result = crate::proxy::proxy_prevent_extensions(target)?;
+    if !crate::execute::is_truthy(&result) {
+        // Per spec: SetIntegrityLevel returns false on a false trap result,
+        // and Object.freeze/Object.seal propagate that as a TypeError.
+        return Err(crate::value::error::throw_type_error(
+            "Proxy preventExtensions returned false",
+        ));
+    }
     let crate::value::Value::Array(keys) = crate::proxy::proxy_own_keys(target)? else {
         return Ok(target.clone());
     };
