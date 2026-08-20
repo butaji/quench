@@ -345,11 +345,7 @@ fn pad(
             "String.prototype.padStart/padEnd called on null or undefined",
         ));
     };
-    let target = arguments
-        .first()
-        .and_then(number)
-        .unwrap_or(0.0)
-        .max(0.0) as usize;
+    let target = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
     // Per spec §String.prototype.pad{Start,End} step 6: if fillString is
     // undefined, use the empty default, which is the single code-unit
     // string " ". Coerce other primitives via ToString.

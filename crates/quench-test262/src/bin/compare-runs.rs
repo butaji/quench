@@ -97,16 +97,9 @@ fn main() -> ExitCode {
         Ok(sources) => sources,
         Err(error) => return fail(format!("load sources: {error}")),
     };
-
-    let async_count = sources.iter().filter(|s| s.metadata.is_async).count();
-    if async_count > 0 {
-        eprintln!(
-            "warning: skipping {async_count} async tests (runner does not yet implement $DONE completion)"
-        );
-    }
     let sources: Vec<TestSource> = sources
         .into_iter()
-        .filter(|s| !s.metadata.is_async && !is_crash_fixture(&s.path))
+        .filter(|source| !is_crash_fixture(&source.path))
         .collect();
 
     let ind_outcome = run_individual(&root, &sources);
