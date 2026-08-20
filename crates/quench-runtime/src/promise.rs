@@ -308,7 +308,7 @@ fn resolve_object_value(promise: Rc<PromiseData>, value: Value) -> Value {
 }
 
 fn bound_settler(target: Builtin, promise: &Rc<PromiseData>) -> Value {
-    let length = Value::Number(2.0);
+    let length = Value::Number(1.0);
     let name = String::new();
     let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("value".to_string(), length.clone()),
