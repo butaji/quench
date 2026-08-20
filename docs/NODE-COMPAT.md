@@ -78,8 +78,8 @@ Legend
 
 ## Verification evidence
 
-- `cargo run -p quench-node-test --bin run-compat` — 45 passed, 0 failed.
-- `cargo run -p quench-node-test --bin run-parallel` — 177 passed, 0 failed
+- `cargo run -p quench-node-test --bin run-compat` — 47 passed, 0 failed.
+- `cargo run -p quench-node-test --bin run-parallel` — 178 passed, 0 failed
   (manifest: `crates/quench-node-test/node-tests/parallel.txt`).
 - Express smoke app runs under `quench-node`: `curl` → `HTTP/1.1 200 OK`.
 - Upstream submodules (`tests/node`, `tests/test262`, `tests/typescript`)
