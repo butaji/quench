@@ -344,11 +344,12 @@ fn pad(
         .and_then(number)
         .unwrap_or(0.0)
         .max(0.0) as usize;
-    let fill_value = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-    let fill = if matches!(fill_value, Value::Undefined) {
-        " ".to_string()
-    } else {
-        crate::conversion::to_string(&fill_value)?
+    // Per spec §String.prototype.pad{Start,End} step 6: if fillString is
+    // undefined, use the empty default, which is the single code-unit
+    // string " ". Coerce other primitives via ToString.
+    let fill = match arguments.get(1) {
+        None | Some(Value::Undefined) => " ".to_string(),
+        Some(value) => crate::conversion::to_string(value)?,
     };
     let count = target.saturating_sub(utf16_len(&value));
     let padding_units: Vec<u16> = fill.encode_utf16().cycle().take(count).collect();
