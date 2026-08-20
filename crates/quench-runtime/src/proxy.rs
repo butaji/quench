@@ -124,21 +124,32 @@ pub(crate) fn proxy_get(
                 Some(&Value::String(prop.to_string())),
             )?;
             if let Value::Object(properties) = &descriptor {
-                let non_configurable = properties.iter().any(|(n, v)| {
-                    n == "configurable" && matches!(v, Value::Boolean(false))
-                });
+                let non_configurable = properties
+                    .iter()
+                    .any(|(n, v)| n == "configurable" && matches!(v, Value::Boolean(false)));
                 if non_configurable {
-                    let value_desc = properties.iter().find_map(|(n, v)| (n == "value").then_some(v));
-                    let writable = properties.iter().find_map(|(n, v)| (n == "writable").then_some(v));
+                    let value_desc = properties
+                        .iter()
+                        .find_map(|(n, v)| (n == "value").then_some(v));
+                    let writable = properties
+                        .iter()
+                        .find_map(|(n, v)| (n == "writable").then_some(v));
                     if matches!(writable, Some(Value::Boolean(false)))
-                        && value_desc.is_some_and(|v| !crate::builtins::same_value(Some(v), Some(&result)))
+                        && value_desc
+                            .is_some_and(|v| !crate::builtins::same_value(Some(v), Some(&result)))
                     {
-                        return Err(crate::value::error::throw_type_error("Proxy get invariant violated"));
+                        return Err(crate::value::error::throw_type_error(
+                            "Proxy get invariant violated",
+                        ));
                     }
-                    if properties.iter().any(|(n, v)| n == "get" && matches!(v, Value::Undefined))
+                    if properties
+                        .iter()
+                        .any(|(n, v)| n == "get" && matches!(v, Value::Undefined))
                         && !matches!(result, Value::Undefined)
                     {
-                        return Err(crate::value::error::throw_type_error("Proxy get invariant violated"));
+                        return Err(crate::value::error::throw_type_error(
+                            "Proxy get invariant violated",
+                        ));
                     }
                 }
             }
@@ -234,7 +245,9 @@ pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError>
                     || (!crate::properties::object_is_extensible(&proxy.target)
                         && !matches!(descriptor, Value::Undefined | Value::Null))
                 {
-                    return Err(crate::value::error::throw_type_error("Proxy delete invariant violated"));
+                    return Err(crate::value::error::throw_type_error(
+                        "Proxy delete invariant violated",
+                    ));
                 }
             }
             return Ok(Value::Boolean(success));

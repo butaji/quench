@@ -492,3 +492,19 @@ fn set_last_index_value(receiver: &Value, value: Value) -> Result<(), VmError> {
 }
 
 include!("regexp_tail.rs");
+
+#[cfg(test)]
+mod tests {
+    use super::has_regexp_internal_slot;
+    use crate::value::{ObjectData, Value};
+
+    #[test]
+    fn regexp_slot_requires_intrinsic_marker() {
+        let plain = Value::Object(ObjectData::new(Vec::new()).into());
+        assert!(!has_regexp_internal_slot(&plain));
+        let regexp = Value::Object(
+            ObjectData::new(vec![("\0regexp".to_string(), Value::Boolean(true))]).into(),
+        );
+        assert!(has_regexp_internal_slot(&regexp));
+    }
+}
