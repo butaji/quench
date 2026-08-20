@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::{drain_microtasks, new_promise, promise_then, reject_promise, resolve_promise};
+    use crate::ops::Builtin;
     use crate::value::{PromiseState, Value};
 
     fn promise_data(value: &Value) -> &std::rc::Rc<crate::value::PromiseData> {
@@ -40,6 +41,35 @@ mod tests {
         assert_eq!(
             data.state.borrow().clone(),
             PromiseState::Fulfilled(Value::Boolean(true))
+        );
+    }
+    #[test]
+    fn promise_prototype_is_cached_per_realm() {
+        let first = crate::vm::VmContext::isolated();
+        let second = crate::vm::VmContext::isolated();
+        let first_prototype = crate::vm::with_realm(first.realm(), || {
+            let promise = new_promise();
+            crate::builtins::object::get_prototype_of(Some(&promise)).unwrap()
+        })
+        .expect("first realm remains registered");
+        let second_prototype = crate::vm::with_realm(second.realm(), || {
+            let promise = new_promise();
+            crate::builtins::object::get_prototype_of(Some(&promise)).unwrap()
+        })
+        .expect("second realm remains registered");
+
+        assert_ne!(first_prototype, second_prototype);
+        assert_eq!(
+            crate::vm::with_realm(first.realm(), || {
+                crate::vm::realm_intrinsic(Builtin::PromisePrototype)
+            }),
+            Some(first_prototype)
+        );
+        assert_eq!(
+            crate::vm::with_realm(second.realm(), || {
+                crate::vm::realm_intrinsic(Builtin::PromisePrototype)
+            }),
+            Some(second_prototype)
         );
     }
 }
