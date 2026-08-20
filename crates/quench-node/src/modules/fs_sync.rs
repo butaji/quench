@@ -577,8 +577,8 @@ pub fn chown_sync(_s: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value
 
 pub fn utimes_sync(_s: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
-    let atime = match args.get(1) { Some(Value::Number(n)) if n.is_finite() => *n, _ => return Err(crate::modules::buffer_enc::invalid_arg_type("The \"atime\" argument must be a number.".into())) };
-    let mtime = match args.get(2) { Some(Value::Number(n)) if n.is_finite() => *n, _ => return Err(crate::modules::buffer_enc::invalid_arg_type("The \"mtime\" argument must be a number.".into())) };
+    let atime = utimes_time(args.get(1), "atime")?;
+    let mtime = utimes_time(args.get(2), "mtime")?;
     #[cfg(unix)] {
         use std::ffi::CString;
         let cpath = CString::new(path.as_bytes()).map_err(|_| crate::modules::buffer_enc::invalid_arg_type("path must not contain null bytes".into()))?;
@@ -608,10 +608,37 @@ pub fn symlink_sync(_s: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Val
     Ok(Value::Undefined)
 }
 
+/// Coerce a `utimes`/`lutimes` time argument (a `Date` or a numeric
+/// seconds value) to seconds since the epoch, matching Node. Rejects
+/// anything else with `ERR_INVALID_ARG_TYPE`.
+pub(crate) fn utimes_time(value: Option<&Value>, name: &str) -> Result<f64, VmError> {
+    match value {
+        Some(Value::Number(n)) if n.is_finite() => Ok(*n),
+        Some(v) => match v {
+            Value::Object(_) => {
+                let ms = quench_runtime::date::extract_time(Some(v));
+                if ms.is_nan() {
+                    Err(crate::modules::buffer_enc::invalid_arg_type(
+                        format!("The {name} argument must be a number or Date"),
+                    ))
+                } else {
+                    Ok(ms / 1000.0)
+                }
+            }
+            _ => Err(crate::modules::buffer_enc::invalid_arg_type(
+                format!("The {name} argument must be a number or Date"),
+            )),
+        },
+        _ => Err(crate::modules::buffer_enc::invalid_arg_type(
+            format!("The {name} argument must be a number or Date"),
+        )),
+    }
+}
+
 pub fn lutimes_sync(_s: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
-    let atime = match args.get(1) { Some(Value::Number(n)) if n.is_finite() => *n, _ => return Err(crate::modules::buffer_enc::invalid_arg_type("The \"atime\" argument must be a number.".into())) };
-    let mtime = match args.get(2) { Some(Value::Number(n)) if n.is_finite() => *n, _ => return Err(crate::modules::buffer_enc::invalid_arg_type("The \"mtime\" argument must be a number.".into())) };
+    let atime = utimes_time(args.get(1), "atime")?;
+    let mtime = utimes_time(args.get(2), "mtime")?;
     #[cfg(unix)] {
         let cpath = std::ffi::CString::new(path.as_bytes()).map_err(|_| crate::modules::buffer_enc::invalid_arg_type("path must not contain null bytes".into()))?;
         let ts = |t: f64| { let sec = t.floor() as libc::time_t; let nsec = ((t - sec as f64) * 1_000_000_000.0) as libc::c_long; libc::timespec { tv_sec: sec, tv_nsec: nsec } };
