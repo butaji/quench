@@ -14,10 +14,7 @@ fn construct_then_result(constructor: &Value) -> Result<Value, VmError> {
         return Ok(new_promise());
     }
     let target = Rc::new(PromiseData::default());
-    let executor = bound_settler(Builtin::PromiseResolve, &target);
-    if let Value::BoundFunction(executor) = &executor {
-        executor.properties.borrow_mut().push(("length".to_string(), Value::Number(2.0)));
-    }
+    let executor = bound_settler(Builtin::PromiseResolve, &target, 2.0);
     crate::construct::construct_value(constructor, &[executor])
 }
 

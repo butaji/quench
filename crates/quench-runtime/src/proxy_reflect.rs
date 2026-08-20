@@ -136,7 +136,9 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
                 std::slice::from_ref(&proxy.target),
                 Some(&proxy.handler),
             )?;
+            let result = own_keys_array_like(&result)?;
             validate_own_keys_result(&result)?;
+            validate_own_keys_invariants(&proxy.target, &result)?;
             return Ok(result);
         }
     }
@@ -150,6 +152,69 @@ pub(crate) fn proxy_own_keys(target: &Value) -> Result<Value, VmError> {
         crate::own_keys::all(target)
     }
 }
+
+fn validate_own_keys_invariants(target: &Value, result: &Value) -> Result<(), VmError> {
+    let Value::Array(returned) = result else { return Ok(()); };
+    let returned: Vec<String> = returned.snapshot().into_iter().filter_map(|v| {
+        if let Value::String(s) = v { Some(s) } else { None }
+    }).collect();
+    let Value::Array(all) = crate::own_keys::all(target)? else { return Ok(()); };
+    let target_keys: Vec<String> = all.snapshot().into_iter().filter_map(|v| {
+        if let Value::String(s) = v { Some(s) } else { None }
+    }).collect();
+    for key in &target_keys {
+        let descriptor = crate::builtins::object::descriptor(
+            Some(target), Some(&Value::String(key.clone())),
+        )?;
+        if is_non_configurable_descriptor(&descriptor) && !returned.contains(key) {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy ownKeys trap omitted non-configurable property",
+            ));
+        }
+    }
+    if !crate::properties::object_is_extensible(target) {
+        if returned.iter().any(|key| !target_keys.contains(key))
+            || target_keys.iter().any(|key| !returned.contains(key))
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy ownKeys trap result does not match non-extensible target",
+            ));
+        }
+    }
+    Ok(())
+}
+fn own_keys_array_like(value: &Value) -> Result<Value, VmError> {
+    // Normalize arrays returned by traps as well: trap-created arrays may have
+    // indexed properties but a stale logical length after copy-on-write.
+    if let Value::Array(array) = value {
+        let property_len = array
+            .property_keys()
+            .into_iter()
+            .chain(array.descriptor_keys())
+            .filter_map(|key| key.parse::<usize>().ok().map(|index| index + 1))
+            .max()
+            .unwrap_or(0);
+        let length = array.physical_len().max(property_len);
+        let values = (0..length)
+            .map(|index| array.get_index(index).unwrap_or(Value::Undefined))
+            .collect();
+        return Ok(Value::array(values));
+    }
+    let length = crate::conversion::to_number(
+        &crate::execute::get_property_result(value, "length")?,
+    )?;
+    let length = if !length.is_finite() || length <= 0.0 {
+        0
+    } else {
+        length.floor().min(usize::MAX as f64) as usize
+    };
+    let mut items = Vec::with_capacity(length);
+    for index in 0..length {
+        items.push(crate::execute::get_property_result(value, &index.to_string())?);
+    }
+    Ok(Value::array(items))
+}
+
 
 fn validate_own_keys_result(value: &Value) -> Result<(), VmError> {
     let Value::Array(keys) = value else {

@@ -355,6 +355,7 @@ impl Test262Host for RuntimeHost {
         source: &str,
         strict: bool,
     ) -> Result<(), String> {
+        // AGENTS.md: harness fidelity is absolute; dispatch exact sources without rewriting.
         let mut scripts = harness
             .iter()
             .map(|source| ScriptSource {
@@ -366,19 +367,19 @@ impl Test262Host for RuntimeHost {
         let program = reduce_script_sources(&scripts).map_err(|errors| errors.join("; "))?;
         execute_program(&program)
     }
-
     fn run_harnessed_module(&mut self, harness: &[&str], source: &str) -> Result<(), String> {
+        // AGENTS.md: harness fidelity is absolute; compose and dispatch exact harness sources.
         let program =
             reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
         execute_program(&program)
     }
-
     fn run_harnessed_module_at(
         &mut self,
         harness: &[&str],
         source: &str,
         path: &Path,
     ) -> Result<(), String> {
+        // AGENTS.md: harness fidelity is absolute; compose and dispatch exact harness sources.
         reduce_module_sequence(harness, source).map_err(|errors| errors.join("; "))?;
         let mut graph = module_graph(path, source)?;
         let entry = graph

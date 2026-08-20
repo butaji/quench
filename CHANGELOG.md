@@ -3,18 +3,12 @@
 ## 2026-08 — Node API host slice
 
 - `quench-node` is a pure-Rust Node API compatibility host built
-  on top of `quench-runtime`. It exposes 28 modules (assert,
-  buffer, cluster, console, dgram, dns, events, fs, https,
-  inspector, net, os, path, perf_hooks, process, querystring,
-  repl, sea, stream, test, timers, tls, trace_events, tty, url,
-  util, wasi, worker_threads, plus require)
-  through a single Host trait implementation + a capability
-  dispatch table. No self-hosted JS builtin layer; no JS bridge.
+  on top of `quench-runtime`. Its supported surface is defined by the
+  accepted v1 scope in `docs/adr/0002-quench-node-scope.md`.
 
 - `quench-node-test` owns the compat suite at
-  `crates/quench-node-test/node-tests/` (a plain directory of
-  17 Node compat API test scripts) and a `run-compat` runner
-  that classifies each as Pass / Fail / Skip.
+  `crates/quench-node-test/node-tests/` and a runner that classifies
+  each script as Pass / Fail / Skip.
 
 - Major slices:
 
@@ -32,4 +26,5 @@
   - `util.format_template` appends trailing positional args
   - `net.isIP` distinguishes v4 and v6 correctly
 
-- Compat suite: 17 / 17 passing locally on macOS.
+- The compat suite has expanded since this entry was written; current
+  script counts and outcomes are intentionally not tracked in the changelog.
