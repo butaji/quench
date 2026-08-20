@@ -175,14 +175,21 @@ pub(crate) fn array_join(receiver: Option<&Value>, arguments: &[Value]) -> Value
     };
     let separator = arguments
         .first()
-        .map_or_else(|| ",".to_string(), value_to_string);
-    Value::String(
-        values
-            .iter()
-            .map(value_to_string)
-            .collect::<Vec<_>>()
-            .join(&separator),
-    )
+        .map_or_else(|| Value::String(",".to_string()), Clone::clone);
+    let separator_units = string_units_for_join(&separator);
+    let mut units = Vec::new();
+    for (index, value) in values.iter().enumerate() {
+        if index > 0 {
+            units.extend_from_slice(&separator_units);
+        }
+        units.extend_from_slice(&string_units_for_join(value));
+    }
+    crate::strings::from_units(units)
+}
+
+fn string_units_for_join(value: &Value) -> Vec<u16> {
+    crate::strings::units_of(value)
+        .unwrap_or_else(|| value_to_string(value).encode_utf16().collect())
 }
 
 pub(crate) fn array_push(receiver: Option<&Value>, arguments: &[Value]) -> Value {
