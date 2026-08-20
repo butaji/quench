@@ -35,9 +35,9 @@ pub struct HostState {
     pub dir_stack: Vec<String>,
     /// CJS module cache keyed by canonical file path.
     pub module_cache: std::collections::HashMap<String, Value>,
-    /// Module record handed to `__quench_cjs_wrap__` for the file
-    /// currently being loaded by `require`.
-    pub pending_module: Option<PendingModule>,
+    /// Stack of module records handed to `__quench_cjs_wrap__`.  A stack is
+    /// required because module evaluation can re-enter the loader.
+    pub pending_modules: Vec<PendingModule>,
     /// Thrown value stashed by `pump::handle_uncaught`, dispatched by
     /// the `__quench_uncaught__` capability inside an active frame.
     pub pending_uncaught: Option<Value>,
@@ -90,7 +90,7 @@ impl NodeHost {
             realm,
             dir_stack: Vec::new(),
             module_cache: std::collections::HashMap::new(),
-            pending_module: None,
+            pending_modules: Vec::new(),
             pending_uncaught: None,
             url_class: None,
             stream_module: None,
