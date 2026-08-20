@@ -60,7 +60,7 @@ pub(crate) fn build_registers(
             parameters.push(crate::value::Value::Function(std::rc::Rc::clone(function)));
         }
     }
-    let environment = crate::environment::Environment::child(&function.captures, parameters);
+    let environment = crate::environment::Environment::in_place_child(&function.captures, parameters);
     let arguments_slot = function.captures.len() as u16 + function.params;
     if matches!(function.kind, FunctionKind::Arrow) {
         let arguments = arguments_object(function, original_arguments, &environment);
