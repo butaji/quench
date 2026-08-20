@@ -224,7 +224,7 @@ fn register_server(
     Ok(id)
 }
 
-fn net_id(receiver: &Value) -> Option<u64> {
+pub(crate) fn net_id(receiver: &Value) -> Option<u64> {
     match quench_runtime::vm::get_property(receiver, NET_ID_PROP) {
         Value::Number(n) if n.is_finite() && n >= 0.0 => Some(n as u64),
         _ => None,
@@ -287,7 +287,7 @@ fn try_flush(guard: &mut std::cell::RefMut<'_, NetSocket>) -> bool {
 
 /// Dispatch one emitter event on a JS object from the host side,
 /// mirroring `events`' emit (once-listeners removed before their call).
-fn emit(
+pub(crate) fn emit(
     state: &Rc<RefCell<HostState>>,
     receiver: &Value,
     event: &str,
