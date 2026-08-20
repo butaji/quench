@@ -222,7 +222,8 @@ fn expand_exec_template(template: &str, input: &str, match_index: usize, matched
                 cursor += 2;
             }
             '\'' => {
-                output.push_str(&input[match_index + matched.len()..]);
+                let suffix_start = (match_index + matched.len()).min(input.len());
+                output.push_str(&input[suffix_start..]);
                 cursor += 2;
             }
             _ => {
