@@ -122,7 +122,11 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
     let Value::Iterator(data) = value else {
         return Value::Builtin(crate::ops::Builtin::ArrayIteratorPrototype);
     };
-    let builtin = match &*data.state.borrow() {
+    Value::Builtin(builtin_for(data))
+}
+
+pub(crate) fn builtin_for(data: &crate::value::IteratorData) -> crate::ops::Builtin {
+    match &*data.state.borrow() {
         IteratorState::RegExpString { .. } => crate::ops::Builtin::RegExpStringIteratorPrototype,
         IteratorState::String { .. } => crate::ops::Builtin::StringIteratorPrototype,
         IteratorState::Set { .. } => crate::ops::Builtin::SetIteratorPrototype,
@@ -137,8 +141,7 @@ pub(crate) fn prototype_of(value: &Value) -> Value {
         IteratorState::Take { .. } => crate::ops::Builtin::ArrayIteratorPrototype,
         IteratorState::Concat { .. } => crate::ops::Builtin::IteratorPrototype,
         IteratorState::Zip { .. } => crate::ops::Builtin::IteratorPrototype,
-    };
-    Value::Builtin(builtin)
+    }
 }
 
 pub(crate) fn property(key: &str) -> Value {
