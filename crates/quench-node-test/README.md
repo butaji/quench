@@ -72,6 +72,8 @@ Current coverage (28 scripts):
   raw net client request, asserting the parsed req and serialized res
 - `test-http-client.js` — http.request client round-trips against a
   local http server, parsing the response status and body
+- `test-http-post.js` — the server streams a Content-Length request body
+  to req 'data'/'end' and echoes it back to an http.request POST
 - `test-net.js` — net.isIP family + real loopback TCP (server.listen,
   socket write/read echo, close) through the event-loop pump
 - `test-os.js` — os.cpus / totalmem / freemem / networkInterfaces
