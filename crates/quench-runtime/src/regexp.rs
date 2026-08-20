@@ -90,26 +90,6 @@ pub(crate) fn compile_method_for_vm(
             "RegExp.prototype.compile requires RegExp",
         ));
     }
-    // Cross-realm RegExp instances must throw: a regex created in another
-    // realm shares the runtime's compiled matcher but its prototype belongs
-    // to the other realm's [[Prototype]], which is forbidden by spec.
-    let current_realm = crate::vm::current_context_or_default().realm().get();
-    let stored = crate::execute::get_property_result(receiver, "\0realm")
-        .ok()
-        .and_then(|v| {
-            if let Value::Number(n) = v {
-                Some(n as u64)
-            } else {
-                None
-            }
-        });
-    if let Some(other) = stored {
-        if other != current_realm {
-            return Err(crate::value::error::throw_type_error(
-                "RegExp.prototype.compile called on incompatible realm",
-            ));
-        }
-    }
     let (pattern, flags) = compile_arguments(arguments)?;
     compile(&pattern, &flags).map_err(|error| crate::value::error::throw_syntax_error(&error))?;
     update_compiled_receiver(receiver, &pattern, &flags)
@@ -374,31 +354,24 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
 }
 
 pub(crate) fn has_regexp_internal_slot(value: &Value) -> bool {
-    // Per spec, RegExp.prototype.compile only accepts the receiver if it is a
-    // direct instance of the realm's RegExp (subclasses throw TypeError because
-    // they lack the [[RegExpMatcher]] internal slot). We use `\0regexp=true`
-    // as a proxy for that slot AND require the prototype to be exactly
-    // RegExp.prototype (so a subclass instance, whose prototype is its
-    // subclass prototype rather than RegExp.prototype, is rejected).
     let Value::Object(properties) = value else {
         return false;
     };
-    let has_marker = properties
+    properties
         .iter()
-        .any(|(name, v)| name == "\0regexp" && matches!(v, Value::Boolean(true)));
-    if !has_marker {
-        return false;
-    }
-    crate::execute::get_property_result(value, "\0prototype")
-        .map(|prototype| {
-            matches!(
-                prototype,
-                Value::Builtin(crate::ops::Builtin::RegExpPrototype)
-            )
-        })
-        .unwrap_or(false)
+        .any(|(name, v)| name == "\0regexp" && matches!(v, Value::Boolean(true)))
 }
 
+pub(crate) fn is_current_realm(value: &Value) -> bool {
+    let current = crate::vm::current_context_or_default().realm().get();
+    crate::execute::get_property_result(value, "\0realm")
+        .ok()
+        .and_then(|v| match v {
+            Value::Number(n) => Some(n as u64),
+            _ => None,
+        })
+        .is_none_or(|realm| realm == current)
+}
 fn build_match_result(
     receiver: &Value,
     s: &str,
