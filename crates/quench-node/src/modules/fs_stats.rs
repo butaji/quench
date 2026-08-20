@@ -54,6 +54,48 @@ pub fn dirent(name: &str, mode: u32) -> Value {
     )
 }
 
+/// Build a `Stats` from constructor arguments (deprecated `fs.Stats`).
+/// Numeric fields are passed through; the four Date fields are given as
+/// epoch-millisecond numbers, matching Node's Stats constructor.
+pub fn stats_from_values(
+    dev: f64,
+    mode: f64,
+    nlink: f64,
+    uid: f64,
+    gid: f64,
+    rdev: f64,
+    blksize: f64,
+    ino: f64,
+    size: f64,
+    blocks: f64,
+    atime_ms: f64,
+    mtime_ms: f64,
+    ctime_ms: f64,
+    birthtime_ms: f64,
+) -> Value {
+    let entries: Vec<(String, Value)> = vec![
+        ("dev".to_string(), Value::Number(dev)),
+        ("mode".to_string(), Value::Number(mode)),
+        ("nlink".to_string(), Value::Number(nlink)),
+        ("uid".to_string(), Value::Number(uid)),
+        ("gid".to_string(), Value::Number(gid)),
+        ("rdev".to_string(), Value::Number(rdev)),
+        ("blksize".to_string(), Value::Number(blksize)),
+        ("ino".to_string(), Value::Number(ino)),
+        ("size".to_string(), Value::Number(size)),
+        ("blocks".to_string(), Value::Number(blocks)),
+        ("atimeMs".to_string(), Value::Number(atime_ms)),
+        ("mtimeMs".to_string(), Value::Number(mtime_ms)),
+        ("ctimeMs".to_string(), Value::Number(ctime_ms)),
+        ("birthtimeMs".to_string(), Value::Number(birthtime_ms)),
+        ("atime".to_string(), quench_runtime::date::instance(atime_ms)),
+        ("mtime".to_string(), quench_runtime::date::instance(mtime_ms)),
+        ("ctime".to_string(), quench_runtime::date::instance(ctime_ms)),
+        ("birthtime".to_string(), quench_runtime::date::instance(birthtime_ms)),
+    ];
+    with_predicates(mode as u32, entries)
+}
+
 /// A `Stats` built from real filesystem metadata.
 pub fn stats(meta: &std::fs::Metadata) -> Value {
     #[cfg(unix)]
