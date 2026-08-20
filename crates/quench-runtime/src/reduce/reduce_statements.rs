@@ -218,7 +218,7 @@ pub fn reduce_statements_with_locals(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    let (mut ops, _) = reduce_statements_opt(
+    let (mut ops, _, _) = reduce_statements_opt(
         statements,
         facts,
         locals,
@@ -253,7 +253,7 @@ pub fn reduce_expression_statements_with_locals(
             directive_completion: None,
         },
     )
-    .map(|(ops, _)| ops)
+    .map(|(ops, _, _)| ops)
 }
 pub fn reduce_statements_no_tail(
     statements: &[Statement<'_>],
@@ -261,7 +261,7 @@ pub fn reduce_statements_no_tail(
     locals: HashMap<String, u16>,
     next_slot: u16,
 ) -> Result<Vec<Op>, Vec<String>> {
-    reduce_statements_no_tail_value(statements, facts, locals, next_slot).map(|(ops, _)| ops)
+    reduce_statements_no_tail_value(statements, facts, locals, next_slot).map(|(ops, _, _)| ops)
 }
 
 pub fn reduce_statements_no_tail_value(
@@ -269,7 +269,7 @@ pub fn reduce_statements_no_tail_value(
     facts: &mut ProgramDb,
     locals: HashMap<String, u16>,
     next_slot: u16,
-) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
+) -> Result<(Vec<Op>, Option<u16>, u16), Vec<String>> {
     reduce_statements_opt(
         statements,
         facts,
@@ -295,7 +295,7 @@ fn reduce_statements_opt(
     mut locals: HashMap<String, u16>,
     mut next_slot: u16,
     options: StatementsOptions,
-) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
+) -> Result<(Vec<Op>, Option<u16>, u16), Vec<String>> {
     let StatementsOptions {
         tail,
         eval_behavior,
@@ -329,7 +329,7 @@ fn reduce_statements_opt(
         None => ops,
     };
     let ops = finish_statements_opt(ops, last_value, tail)?;
-    Ok((ops, last_value))
+    Ok((ops, last_value, next_slot))
 }
 
 fn initialize_statement_reduction(
