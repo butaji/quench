@@ -60,6 +60,11 @@ pub struct HostState {
     /// `createApplication` factory), evaluated once from the embedded JS
     /// factory (`modules/express.js`).
     pub express_module: Option<Value>,
+    /// `require('express/lib/request')` / `node:express/request`
+    /// module value (real Express request prototype factory),
+    /// evaluated once from the embedded JS factory
+    /// (`modules/express_request.js`).
+    pub express_request_module: Option<Value>,
 }
 
 /// Host-side handoff record for one in-flight CJS module load.
@@ -92,6 +97,7 @@ impl NodeHost {
             http_errors_module: None,
             statuses_module: None,
             express_module: None,
+            express_request_module: None,
         };
         Self {
             state: Rc::new(RefCell::new(state)),
