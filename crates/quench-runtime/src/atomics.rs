@@ -45,7 +45,9 @@ fn notify_bigint(arguments: &[Value]) -> Result<Value, VmError> {
         .map(crate::conversion::to_number)
         .transpose()?;
     if !view.buffer.shared {
-        return Ok(Value::Number(0.0));
+        return Err(crate::value::error::throw_type_error(
+            "Atomics.notify requires a shared buffer",
+        ));
     }
     if view.get(index).is_none() {
         return Err(crate::value::error::throw_range_error(
@@ -146,11 +148,11 @@ pub(crate) fn wait_async(arguments: &[Value]) -> Result<Value, VmError> {
     let result = if current != expected {
         Value::String("not-equal".into())
     } else {
-        crate::promise::promise_resolve(&[Value::String("timed-out".into())])
+        Value::String("timed-out".into())
     };
     Ok(crate::value::Value::Object(std::rc::Rc::new(
         crate::value::ObjectData::new(vec![
-            ("async".into(), Value::Boolean(current == expected)),
+            ("async".into(), Value::Boolean(false)),
             ("value".into(), result),
         ]),
     )))
