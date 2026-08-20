@@ -361,6 +361,11 @@ fn promises() -> Value {
         ("chmod", crate::host::capability(SPEC_FSP_CHMOD)),
         ("truncate", crate::host::capability(SPEC_FSP_TRUNCATE)),
         ("realpath", crate::host::capability(SPEC_FSP_REALPATH)),
+        ("link", crate::host::capability(SPEC_FSP_LINK)),
+        ("symlink", crate::host::capability(SPEC_FSP_SYMLINK)),
+        ("lutimes", crate::host::capability(SPEC_FSP_LUTIMES)),
+        ("lchown", crate::host::capability(SPEC_FSP_LCHOWN)),
+        ("lchmod", crate::host::capability(SPEC_FSP_LCHMOD)),
         ("chown", crate::host::capability(SPEC_FSP_CHOWN)),
         ("utimes", crate::host::capability(SPEC_FSP_UTIMES)),
         ("open", crate::host::capability(SPEC_FSP_OPEN)),
@@ -464,6 +469,11 @@ pub(crate) fn sync_op(name: &str) -> Option<Op> {
         "chown" => sync::chown_sync,
         "utimes" => sync::utimes_sync,
         "realpath" => sync::realpath_sync,
+        "link" => sync::link_sync,
+        "symlink" => sync::symlink_sync,
+        "lchown" => sync::lchown_sync,
+        "lutimes" => sync::lutimes_sync,
+        "lchmod" => sync::lchmod_sync,
         _ => return None,
     })
 }
