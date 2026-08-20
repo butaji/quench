@@ -130,6 +130,12 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
             .borrow()
             .upgrade()
             .is_some_and(|left| Rc::ptr_eq(&left, right)),
+        (Value::ObjectAlias(left), Value::ObjectAlias(right)) => {
+            match (left.0.borrow().upgrade(), right.0.borrow().upgrade()) {
+                (Some(left), Some(right)) => Rc::ptr_eq(&left, &right),
+                _ => false,
+            }
+        }
         (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => Rc::ptr_eq(left, right),
         (Value::DataView(left), Value::DataView(right)) => Rc::ptr_eq(left, right),
         (Value::Float32Array(left), Value::Float32Array(right)) => Rc::ptr_eq(left, right),

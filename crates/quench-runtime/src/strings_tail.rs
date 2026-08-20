@@ -152,9 +152,7 @@ pub(crate) fn replace(
     arguments: &[Value],
     all: bool,
 ) -> Result<Value, crate::execute::VmError> {
-    let Some(Value::String(value)) = receiver else {
-        return Ok(Value::String(String::new()));
-    };
+    let value = string_receiver(receiver)?;
     if let Some(pattern) = arguments
         .first()
         .filter(|value| crate::value::is_object(value))
@@ -180,7 +178,7 @@ pub(crate) fn replace(
         return Ok(Value::String(result));
     };
     let result = if crate::conversion::is_callable(replacement) {
-        apply_callable_replacement(value, pattern, replacement, all)?
+        apply_callable_replacement(&value, pattern, replacement, all)?
     } else {
         let template = to_string(replacement);
         if all {

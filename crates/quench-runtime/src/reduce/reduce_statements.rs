@@ -53,7 +53,11 @@ impl ResidualProgram {
 pub fn reduce_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type(source, SourceType::cjs())
 }
-pub(crate) fn reduce_global_script_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
+/// Reduce a script that shares the current global object instead of
+/// minting a fresh one. Hosts use this for re-entrant loads (e.g. CJS
+/// `require`) so `globalThis` inside the loaded code is the running
+/// context's global and sees host-installed values.
+pub fn reduce_global_script_source(source: &str) -> Result<ResidualProgram, Vec<String>> {
     reduce_source_with_type_and_global(source, SourceType::cjs(), true)
 }
 pub fn reduce_module_source(source: &str) -> Result<ResidualProgram, Vec<String>> {

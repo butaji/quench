@@ -29,6 +29,11 @@ pub(crate) fn reduce_method_call(
     if let Some(result) = reduce_super_method_call(call, ops, facts, next_register, locals) {
         return Some(result);
     }
+    if let Expression::ComputedMemberExpression(member) = &call.callee {
+        if computed_method_key(&member.expression).is_none() {
+            return reduce_dynamic_method_call(call, member, ops, facts, next_register, locals);
+        }
+    }
     let (object, key) = match &call.callee {
         Expression::StaticMemberExpression(member) => {
             (&member.object, member.property.name.to_string())
@@ -47,6 +52,37 @@ pub(crate) fn reduce_method_call(
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
     ops.push(Op::CallMethod { dst, object, key, callee: Some(callee), args });
+    Some(dst)
+}
+
+/// Dynamic key (`obj[expr]()`): keep the receiver by emitting a
+/// dynamic property load plus a receiver-preserving call.
+fn reduce_dynamic_method_call(
+    call: &oxc::ast::ast::CallExpression<'_>,
+    member: &oxc::ast::ast::ComputedMemberExpression<'_>,
+    ops: &mut Vec<Op>,
+    facts: &mut ProgramDb,
+    next_register: &mut u16,
+    locals: &HashMap<String, u16>,
+) -> Option<u16> {
+    let object =
+        crate::reduce::reduce_expression(&member.object, ops, facts, next_register, locals)?;
+    let key =
+        crate::reduce::reduce_expression(&member.expression, ops, facts, next_register, locals)?;
+    let callee = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::GetPropertyDynamic { dst: callee, object, key });
+    let (args, spreads) =
+        crate::reduce::reduce_expressions::calls_reduce::reduce_call_arguments(
+            call,
+            ops,
+            facts,
+            next_register,
+            locals,
+        )?;
+    let dst = *next_register;
+    *next_register = next_register.saturating_add(1);
+    ops.push(Op::Call { dst, callee, receiver: Some(object), args, spreads });
     Some(dst)
 }
 

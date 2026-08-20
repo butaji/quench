@@ -12,9 +12,7 @@ pub(crate) fn reduce_while(
         next_register,
         next_slot,
         locals,
-        Some(&statement.test),
-        &statement.body,
-        false,
+        (Some(&statement.test), &statement.body, false),
     )
 }
 
@@ -32,9 +30,7 @@ pub(crate) fn reduce_do_while(
         next_register,
         next_slot,
         locals,
-        Some(&statement.test),
-        &statement.body,
-        true,
+        (Some(&statement.test), &statement.body, true),
     )
 }
 
@@ -44,10 +40,13 @@ fn reduce_counted_loop(
     next_register: &mut u16,
     next_slot: &mut u16,
     locals: &mut HashMap<String, u16>,
-    test: Option<&oxc::ast::ast::Expression<'_>>,
-    body: &oxc::ast::ast::Statement<'_>,
-    post_test: bool,
+    config: (
+        Option<&oxc::ast::ast::Expression<'_>>,
+        &oxc::ast::ast::Statement<'_>,
+        bool,
+    ),
 ) -> Result<Option<u16>, Vec<String>> {
+    let (test, body, post_test) = config;
     let dst = crate::reduce_support::emit_undefined(ops, next_register);
     let test = reduce_fragment(test, ops, facts, next_register, locals)?;
     let mut body_ops = Vec::new();

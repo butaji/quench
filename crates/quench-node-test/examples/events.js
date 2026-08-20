@@ -1,0 +1,10 @@
+const { EventEmitter } = require('node:events');
+const ee = new EventEmitter();
+let fired = 0;
+ee.on('ping', () => { fired += 1; });
+ee.on('ping', () => { fired += 10; });
+const a = ee.emit('ping');
+const b = ee.emit('nope');
+console.log('fired: %s', fired);
+console.log('emit-1: %s', a);
+console.log('emit-2: %s', b);

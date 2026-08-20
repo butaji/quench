@@ -1,0 +1,24 @@
+[package]
+name = "quench-node"
+version = "0.1.0"
+edition = "2021"
+description = "Node.js-API compatibility host on top of quench-runtime"
+license = "MIT"
+
+[dependencies]
+oxc_resolver = "11.24.2"
+quench-runtime = { path = "../quench-runtime" }
+idna = "1"
+url = "2"
+flate2 = "1.1.9"
+base64 = "0.23.1"
+hex = "0.4.3"
+encoding_rs = "0.8.35"
+
+[dependencies.sysinfo]
+version = "0.32"
+default-features = false
+features = ["system"]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
