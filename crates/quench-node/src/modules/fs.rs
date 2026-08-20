@@ -29,8 +29,25 @@ impl FsState {
 thread_local! { static FDS: RefCell<HashMap<i32, File>> = RefCell::new(HashMap::new()); }
 static NEXT_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(100);
 pub(crate) fn fd_open(path: &str, flag: Option<&str>) -> Result<i32, VmError> {
-    let mut opts = std::fs::OpenOptions::new();
-    let f = match flag.unwrap_or("r") { "r" => opts.read(true).open(path), "r+" => opts.read(true).write(true).open(path), "w" => opts.write(true).create(true).truncate(true).open(path), "a" => opts.write(true).create(true).append(true).open(path), _ => opts.read(true).open(path) }.map_err(|e| crate::modules::fs_error::fs_error("open", Some(path), &e))?;
+    let flag = flag.unwrap_or("r");
+    let mut o = std::fs::OpenOptions::new();
+    let f = match flag {
+        "r" => o.read(true).open(path),
+        "r+" => o.read(true).write(true).open(path),
+        "w" => o.write(true).create(true).truncate(true).open(path),
+        "w+" => o.read(true).write(true).create(true).truncate(true).open(path),
+        "a" => o.write(true).create(true).append(true).open(path),
+        "a+" => o.read(true).write(true).create(true).append(true).open(path),
+        // Exclusive-create variants (Node's `wx`/`wx+`/`ax`/`ax+`).
+        "wx" | "xw" => o.write(true).create_new(true).open(path),
+        "wx+" | "xw+" => o.read(true).write(true).create_new(true).open(path),
+        "ax" | "xa" => o.write(true).create_new(true).append(true).open(path),
+        "ax+" | "xa+" => o.read(true).write(true).create_new(true).append(true).open(path),
+        _ => {
+            return Err(crate::modules::fs_error::fs_error("open", Some(path), &std::io::Error::from(std::io::ErrorKind::InvalidInput)));
+        }
+    }
+    .map_err(|e| crate::modules::fs_error::fs_error("open", Some(path), &e))?;
     let fd = NEXT_FD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     FDS.with(|t| { t.borrow_mut().insert(fd, f); }); Ok(fd)
 }

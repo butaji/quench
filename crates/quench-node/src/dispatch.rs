@@ -189,7 +189,7 @@ const CAP_ASSERT_FAIL: u16 = 0x1409;
 const CAP_ASSERT_IF_ERROR: u16 = 0x140A;
 const CAP_ASSERT_MATCH: u16 = 0x140B;
 const CAP_ASSERT_DOES_NOT_MATCH: u16 = 0x140C;
-const CAP_CJS_WRAP: u16 = 0x1d00;
+const CAP_ASSERT_REJECTS: u16 = 0x140D;
 const CAP_UTIL_GETCALLSITES: u16 = 0x0303;
 const CAP_BUFFER_ATOB: u16 = 0x0806;
 const CAP_BUFFER_BTOA: u16 = 0x0807;
@@ -506,6 +506,7 @@ pub fn assert_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_ASSERT_IF_ERROR => assert::if_error,
         CAP_ASSERT_MATCH => assert_validate::matches,
         CAP_ASSERT_DOES_NOT_MATCH => assert_validate::does_not_match,
+        CAP_ASSERT_REJECTS => assert::rejects,
         _ => return None,
     })
 }
