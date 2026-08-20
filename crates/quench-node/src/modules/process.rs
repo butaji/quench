@@ -158,7 +158,33 @@ fn method_props() -> Vec<(&'static str, Value)> {
             "once",
             crate::host::capability(crate::registry::SPEC_PROCESS_ONCE),
         ),
+        (
+            "getuid",
+            crate::host::capability(crate::registry::SPEC_PROCESS_GETUID),
+        ),
+        (
+            "getgid",
+            crate::host::capability(crate::registry::SPEC_PROCESS_GETGID),
+        ),
     ]
+}
+
+/// `process.getuid()` — return the effective Unix user ID, or zero on non-Unix.
+pub fn getuid(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    #[cfg(unix)]
+    let uid = unsafe { libc::getuid() as u64 };
+    #[cfg(not(unix))]
+    let uid = 0;
+    Ok(Value::Number(uid as f64))
+}
+
+/// `process.getgid()` — return the effective Unix group ID, or zero on non-Unix.
+pub fn getgid(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    #[cfg(unix)]
+    let gid = unsafe { libc::getgid() as u64 };
+    #[cfg(not(unix))]
+    let gid = 0;
+    Ok(Value::Number(gid as f64))
 }
 
 /// `process.env` — a snapshot of the host environment at startup.
