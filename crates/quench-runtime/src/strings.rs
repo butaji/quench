@@ -315,27 +315,48 @@ pub(crate) fn locale_compare(
     )))
 }
 
-pub(crate) fn pad_start(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+pub(crate) fn pad_start(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
     pad(receiver, arguments, true)
 }
 
-pub(crate) fn pad_end(receiver: Option<&Value>, arguments: &[Value]) -> Value {
+pub(crate) fn pad_end(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Result<Value, crate::execute::VmError> {
     pad(receiver, arguments, false)
 }
 
-fn pad(receiver: Option<&Value>, arguments: &[Value], start: bool) -> Value {
-    let Some(value) = receiver.and_then(lossy) else {
-        return Value::String(String::new());
+fn pad(
+    receiver: Option<&Value>,
+    arguments: &[Value],
+    start: bool,
+) -> Result<Value, crate::execute::VmError> {
+    let Some(value) = string_receiver(receiver).ok() else {
+        return Err(crate::value::error::throw_type_error(
+            "String.prototype.padStart/padEnd called on null or undefined",
+        ));
     };
-    let target = arguments.first().and_then(number).unwrap_or(0.0).max(0.0) as usize;
-    let fill = arguments.get(1).map_or_else(|| " ".to_string(), to_string);
+    let target = arguments
+        .first()
+        .and_then(number)
+        .unwrap_or(0.0)
+        .max(0.0) as usize;
+    let fill_value = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    let fill = if matches!(fill_value, Value::Undefined) {
+        " ".to_string()
+    } else {
+        crate::conversion::to_string(&fill_value)?
+    };
     let count = target.saturating_sub(utf16_len(&value));
     let padding_units: Vec<u16> = fill.encode_utf16().cycle().take(count).collect();
     let padding = String::from_utf16_lossy(&padding_units);
     if start {
-        Value::String(format!("{padding}{value}"))
+        Ok(Value::String(format!("{padding}{value}")))
     } else {
-        Value::String(format!("{value}{padding}"))
+        Ok(Value::String(format!("{value}{padding}")))
     }
 }
 
