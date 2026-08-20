@@ -76,6 +76,9 @@ Current coverage (28 scripts):
   local server, echoing the parsed path
 - `test-http-post.js` — the server streams a Content-Length request body
   to req 'data'/'end' and echoes it back to an http.request POST
+- `test-npm-require.js` — require() resolves a bare specifier through
+  node_modules via package.json main, loading a vendored package (also
+  manually verified against the published `ms` package)
 - `test-net.js` — net.isIP family + real loopback TCP (server.listen,
   socket write/read echo, close) through the event-loop pump
 - `test-os.js` — os.cpus / totalmem / freemem / networkInterfaces
