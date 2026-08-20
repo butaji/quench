@@ -340,7 +340,7 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
         ))?;
         source_length.max(0.0) as usize
     };
-    if offset + source_length > target_length {
+    if offset > target_length || source_length > target_length - offset {
         return Err(crate::value::error::throw_range_error(
             "offset is out of bounds",
         ));
