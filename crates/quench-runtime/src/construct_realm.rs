@@ -82,10 +82,10 @@ pub(crate) fn function_realm_id(
         .rev()
         .find_map(|(key, value)| {
             (key == "\0realm").then(|| match value {
-                Value::HostCapability(token) => token.realm(),
-                Value::Number(number) => crate::ops::RealmId::new(*number as u64),
-                _ => crate::ops::RealmId::ROOT,
-            })
+                Value::HostCapability(token) => Some(token.realm()),
+                Value::Number(number) => Some(crate::ops::RealmId::new(*number as u64)),
+                _ => None,
+            })?
         })
         .or_else(|| global_realm(&function.captures.get(0)))
         .unwrap_or(crate::ops::RealmId::ROOT)
@@ -104,6 +104,14 @@ pub(crate) fn generator_kind_prototype(
 
 fn realm_default_prototype(target: &Value, new_target: &Value) -> Option<Value> {
     if let Value::Function(function) = new_target {
+        if let Value::Builtin(builtin) = target {
+            if let Some(prototype) = crate::builtin_meta::instance_prototype(*builtin) {
+                return Some(crate::vm::realm_intrinsic_for(
+                    function_realm_id(function),
+                    prototype,
+                ));
+            }
+        }
         let global = function.captures.get(0);
         if let Some(prototype) = default_prototype_from_constructor(target, &global) {
             return Some(prototype);
@@ -113,26 +121,28 @@ fn realm_default_prototype(target: &Value, new_target: &Value) -> Option<Value> 
         }
     }
     if let Value::BoundFunction(bound) = new_target {
-        if let Value::HostCapability(capability) = &bound.receiver {
+        if let Value::Function(function) = &bound.target {
             if let Value::Builtin(builtin) = target {
                 if let Some(prototype) = crate::builtin_meta::instance_prototype(*builtin) {
-                    return Some(crate::vm::realm_intrinsic_for(capability.realm(), prototype));
+                    return Some(crate::vm::realm_intrinsic_for(
+                        function_realm_id(function),
+                        prototype,
+                    ));
                 }
             }
-            if let Some(Some(value)) = crate::vm::with_realm(capability.realm(), || {
-                let global = crate::vm::current_global_object();
-                default_prototype_from_constructor(target, &global)
-            }) {
-                return Some(value);
-            }
-        }
-        if let Value::Function(function) = &bound.target {
             let global = function.captures.get(0);
             if let Some(prototype) = default_prototype_from_constructor(target, &global) {
                 return Some(prototype);
             }
             if !matches!(target, Value::Builtin(_)) {
                 return object_default_prototype(&global);
+            }
+        }
+        if let Value::HostCapability(capability) = &bound.receiver {
+            if let Value::Builtin(builtin) = target {
+                if let Some(prototype) = crate::builtin_meta::instance_prototype(*builtin) {
+                    return Some(crate::vm::realm_intrinsic_for(capability.realm(), prototype));
+                }
             }
         }
     }
