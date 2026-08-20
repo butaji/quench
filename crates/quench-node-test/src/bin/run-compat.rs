@@ -27,24 +27,28 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let mut args = std::env::args().skip(1);
+    let mut quiet = false;
     while let Some(a) = args.next() {
         if a == "--list" {
             // Handled in discover_fixtures; skip.
         } else if a == "--filter" {
             // Skip the value too.
             args.next();
+        } else if a == "--quiet" {
+            quiet = true;
         } else {
             // Positional arg = dir.
             let dir = std::path::PathBuf::from(a);
-            return run_with_dir(dir);
+            return run_with_dir(dir, quiet);
         }
     }
-    run_with_dir(std::path::PathBuf::from(
-        "crates/quench-node-test/node-tests",
-    ))
+    run_with_dir(
+        std::path::PathBuf::from("crates/quench-node-test/node-tests"),
+        quiet,
+    )
 }
 
-fn run_with_dir(dir: std::path::PathBuf) -> ExitCode {
+fn run_with_dir(dir: std::path::PathBuf, quiet: bool) -> ExitCode {
     if !dir.is_dir() {
         eprintln!("error: {} is not a directory", dir.display());
         return ExitCode::from(2);
@@ -62,7 +66,7 @@ fn run_with_dir(dir: std::path::PathBuf) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let mut runner = quench_node_test::NodeTestRunner::new();
-    let summary = run_suite(&mut runner, &fixtures);
+    let summary = run_suite(&mut runner, &fixtures, quiet);
     print_summary(&summary, fixtures.len());
     if summary.failed == 0 {
         ExitCode::SUCCESS
@@ -90,7 +94,11 @@ struct SuiteSummary {
     failed_names: Vec<String>,
 }
 
-fn run_suite(runner: &mut quench_node_test::NodeTestRunner, fixtures: &[PathBuf]) -> SuiteSummary {
+fn run_suite(
+    runner: &mut quench_node_test::NodeTestRunner,
+    fixtures: &[PathBuf],
+    quiet: bool,
+) -> SuiteSummary {
     let mut summary = SuiteSummary {
         passed: 0,
         failed: 0,
@@ -100,11 +108,15 @@ fn run_suite(runner: &mut quench_node_test::NodeTestRunner, fixtures: &[PathBuf]
         let outcome = runner.run_file(fixture);
         match outcome {
             NodeOutcome::Pass => {
-                println!("PASS  {}", fixture.display());
+                if !quiet {
+                    println!("PASS  {}", fixture.display());
+                }
                 summary.passed += 1;
             }
             NodeOutcome::Skip { reason } => {
-                println!("SKIP  {}: {reason}", fixture.display());
+                if !quiet {
+                    println!("SKIP  {}: {reason}", fixture.display());
+                }
             }
             NodeOutcome::Fail { reason } => {
                 println!("FAIL  {}: {reason}", fixture.display());
