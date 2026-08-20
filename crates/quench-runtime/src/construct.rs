@@ -125,10 +125,21 @@ fn construct_builtin_target(
         return construct_shared_array_buffer_with_target(builtin, target, new_target, arguments);
     }
     let needs_new_target = !crate::builtins::same_value(Some(target), Some(new_target));
+    // Promise checks that its executor is callable before GetPrototypeFromConstructor.
+    // Fetching the prototype first would incorrectly expose a prototype getter error
+    // when the executor is not callable.
+    if builtin == crate::ops::Builtin::Promise && needs_new_target {
+        let value = construct_builtin(builtin, arguments)?;
+        let prototype = crate::execute::get_property_result(new_target, "prototype")?;
+        let value = apply_new_target_prototype(value, target, new_target, prototype)?;
+        validate_data_view(&value)?;
+        return Ok(value);
+    }
     if builtin == crate::ops::Builtin::DataView && needs_new_target {
         let value = construct_data_view(arguments)?;
         let prototype = crate::execute::get_property_result(new_target, "prototype")?;
         let value = apply_new_target_prototype(value, target, new_target, prototype)?;
+        let value = value;
         validate_data_view(&value)?;
         return Ok(value);
     }
