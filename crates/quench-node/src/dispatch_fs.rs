@@ -61,6 +61,7 @@ const CAP_FSP_WRITEFILE: u16 = 0x1141;
 const CAP_FSP_APPENDFILE: u16 = 0x1142;
 const CAP_FSP_STAT: u16 = 0x1143;
 const CAP_FSP_LSTAT: u16 = 0x1144;
+const CAP_FSP_STATFS: u16 = 0x1152;
 const CAP_FSP_READDIR: u16 = 0x1145;
 const CAP_FSP_MKDIR: u16 = 0x1146;
 const CAP_FSP_UNLINK: u16 = 0x1147;
@@ -159,6 +160,7 @@ fn fs_dispatch_promises(cap: u16) -> Option<CallHandler> {
         CAP_FSP_APPENDFILE => fs_promises::append_file,
         CAP_FSP_STAT => fs_promises::stat,
         CAP_FSP_LSTAT => fs_promises::lstat,
+        CAP_FSP_STATFS => fs_promises::statfs,
         CAP_FSP_READDIR => fs_promises::readdir,
         CAP_FSP_MKDIR => fs_promises::mkdir,
         CAP_FSP_UNLINK => fs_promises::unlink,
