@@ -92,6 +92,12 @@ fn object_inherited_property_result(
     if properties.iter().any(|(name, _)| name == key) {
         return None;
     }
+    // Per spec §GetV for boxed primitives: an exotic String object exposes
+    // its [[StringData]] as virtual indexed properties. Resolve the tag
+    // before walking the prototype chain.
+    if let Some(value) = boxed_string_property(properties, key) {
+        return Some(Ok(value));
+    }
     let prototype = properties
         .iter()
         .rev()
