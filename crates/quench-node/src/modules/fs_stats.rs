@@ -64,7 +64,13 @@ pub fn stats(meta: &std::fs::Metadata) -> Value {
     {
         with_predicates(
             mode_fallback(meta),
-            vec![("size".to_string(), Value::Number(meta.len() as f64))],
+            vec![
+                ("size".to_string(), Value::Number(meta.len() as f64)),
+                ("mtime".to_string(), quench_runtime::date::instance(0.0)),
+                ("atime".to_string(), quench_runtime::date::instance(0.0)),
+                ("ctime".to_string(), quench_runtime::date::instance(0.0)),
+                ("birthtime".to_string(), quench_runtime::date::instance(0.0)),
+            ],
         )
     }
 }
@@ -96,6 +102,10 @@ fn stats_unix(meta: &std::fs::Metadata) -> Value {
             Value::Number(ms(meta.ctime(), meta.ctime_nsec())),
         ),
         ("birthtimeMs".to_string(), Value::Number(created_ms(meta))),
+        ("atime".to_string(), quench_runtime::date::instance(ms(meta.atime(), meta.atime_nsec()))),
+        ("mtime".to_string(), quench_runtime::date::instance(ms(meta.mtime(), meta.mtime_nsec()))),
+        ("ctime".to_string(), quench_runtime::date::instance(ms(meta.ctime(), meta.ctime_nsec()))),
+        ("birthtime".to_string(), quench_runtime::date::instance(created_ms(meta))),
     ];
     with_predicates(meta.mode(), entries)
 }
