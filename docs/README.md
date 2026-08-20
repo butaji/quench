@@ -53,7 +53,6 @@ The implementation must enforce these boundaries:
 - Generic semantics precede guards; every guard falls back to the same generic
   operation without changing ordering or observability.
 
-See [`architecture.md`](architecture.md) for the target layering and
-[`../tasks/architecture.md`](../tasks/architecture.md) for the implementation
-work items. The task file is a design backlog, not a progress ledger; test
-results remain ephemeral.
+See [`architecture.md`](architecture.md) for the target layering. Stage
+definitions live in [`STAGES.md`](STAGES.md) and [`NODE-STAGES.md`](NODE-STAGES.md);
+they are not progress ledgers. Test results remain ephemeral.

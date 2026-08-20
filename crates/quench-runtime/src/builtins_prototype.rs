@@ -283,7 +283,7 @@ fn dynamic_function_source(function: &crate::value::FunctionValue) -> Option<Str
 }
 
 fn native_function_source() -> Value {
-    Value::String("function () {{ [native code] }}".to_string())
+    Value::String("function () { [native code] }".to_string())
 }
 
 pub(crate) fn function_prototype_value_of(receiver: Option<&Value>) -> Value {

@@ -19,15 +19,34 @@ fn attach_prototype(value: &crate::value::Value) {
         if function.kind == FunctionKind::Generator {
             return attach_generator_prototype(function);
         }
-    }
-    let prototype = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
-        vec![("constructor".to_string(), value.clone())],
-    )));
-    if let crate::value::Value::Function(function) = value {
-        function
-            .properties
-            .borrow_mut()
-            .push(("prototype".to_string(), prototype));
+        let realm = crate::vm::realm_id_for_global_value(&function.captures.get(0));
+        let prototype = realm
+            .and_then(|realm| {
+                crate::vm::with_realm(realm, || {
+                    Some(crate::value::Value::Object(std::rc::Rc::new(
+                        crate::value::ObjectData::new(vec![
+                            (
+                                "\0prototype".to_string(),
+                                crate::vm::realm_intrinsic(crate::ops::Builtin::ObjectPrototype),
+                            ),
+                            ("constructor".to_string(), value.clone()),
+                        ]),
+                    )))
+                })
+            })
+            .flatten()
+            .unwrap_or_else(|| {
+                crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
+                    vec![
+                        (
+                            "\0prototype".to_string(),
+                            crate::vm::realm_intrinsic(crate::ops::Builtin::ObjectPrototype),
+                        ),
+                        ("constructor".to_string(), value.clone()),
+                    ],
+                )))
+            });
+        function.properties.borrow_mut().push(("prototype".to_string(), prototype));
     }
 }
 

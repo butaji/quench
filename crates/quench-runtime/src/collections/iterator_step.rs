@@ -136,6 +136,7 @@ enum Snapshot {
     Dropped {
         inner: Value,
         skipped: usize,
+        limit: usize,
         done: bool,
     },
     Take {
@@ -190,10 +191,12 @@ fn snapshot_reentry(data: &IteratorData) -> Option<Snapshot> {
         IteratorState::Dropped {
             inner,
             skipped,
+            limit,
             done,
         } => Snapshot::Dropped {
             inner: inner.clone(),
             skipped: *skipped,
+            limit: *limit,
             done: *done,
         },
         IteratorState::Take { inner, remaining } => Snapshot::Take {
@@ -256,14 +259,16 @@ fn write_snapshot(data: &IteratorData, snapshot: &Snapshot) {
                 *d = *done;
             }
         }
-        Snapshot::Dropped { skipped, done, .. } => {
+        Snapshot::Dropped { skipped, limit, done, .. } => {
             if let IteratorState::Dropped {
                 skipped: sk,
+                limit: lim,
                 done: d,
                 ..
             } = &mut *state
             {
                 *sk = *skipped;
+                *lim = *limit;
                 *d = *done;
             }
         }
@@ -308,8 +313,9 @@ fn user_step_target(data: &IteratorData) -> Result<Option<StepTarget>, crate::ex
         Snapshot::Dropped {
             inner,
             skipped,
+            limit,
             done,
-        } => dropped_step(inner, skipped, done).map(StepTarget::Value)?,
+        } => dropped_step(inner, skipped, *limit, done).map(StepTarget::Value)?,
         Snapshot::Take { inner, remaining } => {
             take_step(inner, remaining).map(StepTarget::Value)?
         }
@@ -575,23 +581,31 @@ fn flat_mapped_step(
 fn dropped_step(
     inner: &Value,
     skipped: &mut usize,
+    limit: usize,
     done: &mut bool,
 ) -> Result<Option<Value>, crate::execute::VmError> {
     if *done {
         return Ok(None);
     }
-    let value = match super::step_value(inner) {
-        Ok(Some(value)) => value,
+    while *skipped < limit {
+        match super::step_value(inner) {
+            Ok(Some(_)) => *skipped += 1,
+            Ok(None) => {
+                *done = true;
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    match super::step_value(inner) {
+        Ok(Some(value)) => Ok(Some(value)),
         Ok(None) => {
             *done = true;
-            return Ok(None);
+            Ok(None)
         }
-        Err(error) => return Err(error),
-    };
-    *skipped += 1;
-    Ok(Some(value))
+        Err(error) => Err(error),
+    }
 }
-
 fn take_step(inner: &Value, remaining: &mut u64) -> Result<Option<Value>, crate::execute::VmError> {
     if *remaining == 0 {
         return Ok(None);
@@ -606,11 +620,10 @@ fn take_step(inner: &Value, remaining: &mut u64) -> Result<Option<Value>, crate:
 }
 
 fn open_iterator(value: Value) -> Result<Option<Value>, crate::execute::VmError> {
-    if matches!(value, Value::Undefined | Value::Null) {
-        return Ok(None);
-    }
     if !crate::value::is_object(&value) {
-        return Ok(None);
+        return Err(crate::value::error::throw_type_error(
+            "Iterator.prototype.flatMap mapper result is not iterable",
+        ));
     }
     if matches!(value, Value::Iterator(_) | Value::Generator(_)) {
         return Ok(Some(value));
