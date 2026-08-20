@@ -305,14 +305,25 @@ impl<H: Test262Host> Test262Runner<H> {
     }
 
     /// Read one test262 file and compose its requested harness files.
-    pub fn run_file_with_harness<P, F>(&mut self, path: P, load: F) -> Result<TestOutcome, String>
+    pub fn run_file_with_harness<P, F>(
+        &mut self,
+        path: P,
+        mut load: F,
+    ) -> Result<TestOutcome, String>
     where
         P: AsRef<Path>,
         F: FnMut(&str) -> Result<String, String>,
     {
-        let source = std::fs::read_to_string(path.as_ref())
+        let path = path.as_ref();
+        let source = std::fs::read_to_string(path)
             .map_err(|error| format!("test262 read failed: {error}"))?;
-        self.run_test_with_harness(&source, load)
+        let metadata = TestMetadata::parse(&source)?;
+        let harness = runner_support::harness(&metadata, &mut load)?;
+        let harness = harness.iter().map(String::as_str).collect::<Vec<_>>();
+        Ok(runner_support::negative(
+            self.dispatch_test_at(&harness, &source, &metadata, Some(path)),
+            &metadata,
+        ))
     }
 
     /// Read one test262 file and compose it with cached harness sources.
