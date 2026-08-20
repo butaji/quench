@@ -80,10 +80,15 @@ fn object_keys_dispatch(target: Option<&Value>) -> Result<Value, VmError> {
             "Cannot convert undefined or null to object",
         ));
     }
-    let keys = if matches!(target, Value::Proxy(_)) {
-        crate::proxy::proxy_own_keys(target)?
+    let keys = if matches!(target, Value::Object(_) | Value::Array(_) | Value::Function(_) | Value::BoundFunction(_)) {
+        if matches!(target, Value::Proxy(_)) {
+            crate::proxy::proxy_own_keys(target)?
+        } else {
+            crate::own_keys::all(target)?
+        }
     } else {
-        crate::own_keys::all(target)?
+        // Primitives (Number, Boolean, String, Symbol) have no own enumerable keys.
+        return Ok(Value::Array(Rc::new(crate::value::ArrayData::new(Vec::new()))));
     };
     let Value::Array(keys) = keys else {
         return Err(crate::vm::not_callable());
