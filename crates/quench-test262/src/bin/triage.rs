@@ -145,16 +145,6 @@ fn main() -> ExitCode {
         Ok(sources) => sources,
         Err(error) => return fail(&error),
     };
-    let async_count = sources.iter().filter(|s| s.metadata.is_async).count();
-    if async_count > 0 {
-        eprintln!(
-            "warning: skipping {async_count} async tests (runner does not yet implement $DONE completion)"
-        );
-    }
-    let sources: Vec<TestSource> = sources
-        .into_iter()
-        .filter(|s| !s.metadata.is_async)
-        .collect();
     println!("selected={} discovered={discovered_count}", files.len());
     let threads = args.threads.max(1).min(files.len());
     let emit_outcomes = args.json.is_some();
