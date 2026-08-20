@@ -137,7 +137,7 @@ fn global_object_property(properties: &Rc<crate::value::ObjectData>, key: &str) 
     })
 }
 
-fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
+pub(crate) fn boxed_string_property(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
     let Some((_, Value::String(value))) = properties.iter().find(|(name, _)| name == "_value")
     else {
         return None;
