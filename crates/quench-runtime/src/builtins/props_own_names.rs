@@ -180,10 +180,23 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
             &["constructor", "prototype", "Symbol.toStringTag"]
         }
         Builtin::Error => &["length", "name", "prototype", "isError"],
+        Builtin::Promise => &[
+            "length",
+            "name",
+            "prototype",
+            "resolve",
+            "reject",
+            "all",
+            "allSettled",
+            "any",
+            "race",
+            "withResolvers",
+            "try",
+        ],
         Builtin::ThrowTypeError => &["length", "name"],
         _ => &[],
-    }
-}
+     }
+ }
 
 fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str] {
     match builtin {
