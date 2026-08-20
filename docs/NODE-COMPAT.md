@@ -34,13 +34,13 @@ Legend
 | url | 🟢 | real | upstream selects green |
 | zlib | 🟢 | real | sync flate2; async missing |
 | http2 | 🟡 | capability error | recognized; requires an HTTP/2 transport backend not present in current architecture |
-| sqlite | 🟡 | capability error | recognized; requires a SQLite library dependency and host bindings |
+| sqlite | 🟢 | real partial | bundled rusqlite DatabaseSync memory/open/exec/prepare/run/all/close; focused fixture green |
 | quic | 🟡 | capability error | recognized; requires a QUIC transport backend not present in current architecture |
 | diagnostics_channel | 🟡 | missing | not resolvable |
 | trace_events | 🟢 | partial | category enable/disable/getEnabledCategories; focused fixture green |
 | async_hooks | 🟡 | stub | minimal JS factory |
 | child_process | 🟡 | partial | spawn/spawnSync/exec/execSync |
-| cluster | 🟡 | missing | empty namespace |
+| cluster | 🟡 | partial | single-process lifecycle/worker handle; child IPC remains |
 | crypto | 🟡 | partial | `randomBytes` and in-place `randomFillSync` use OS randomness; constants are exposed; hash/cipher/key APIs explicitly unsupported |
 | domain | 🟡 | missing | not resolvable |
 | module | 🟡 | partial | CJS require; ESM APIs missing |
@@ -78,7 +78,7 @@ Legend
 
 ## Verification evidence
 
-- `cargo run -p quench-node-test --bin run-compat` — 49 passed, 0 failed.
+- `cargo run -p quench-node-test --bin run-compat` — 50 passed, 0 failed.
 - `cargo run -p quench-node-test --bin run-parallel` — 178 passed, 0 failed
   (manifest: `crates/quench-node-test/node-tests/parallel.txt`).
 - Express smoke app runs under `quench-node`: `curl` → `HTTP/1.1 200 OK`.
