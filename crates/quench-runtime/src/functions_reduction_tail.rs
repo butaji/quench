@@ -21,7 +21,13 @@ fn attach_prototype(value: &crate::value::Value) {
         }
     }
     let prototype = crate::value::Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(
-        vec![("constructor".to_string(), value.clone())],
+        vec![
+            (
+                "\0prototype".to_string(),
+                crate::vm::realm_intrinsic(crate::ops::Builtin::ObjectPrototype),
+            ),
+            ("constructor".to_string(), value.clone()),
+        ],
     )));
     if let crate::value::Value::Function(function) = value {
         function
