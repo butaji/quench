@@ -144,12 +144,6 @@ pub(crate) fn is_installed() -> bool {
     CURRENT_ENVIRONMENT.with(|current| current.borrow().is_some())
 }
 
-pub(crate) fn reset_environments() {
-    CURRENT_ENVIRONMENT.with(|current| current.replace(None));
-    GLOBAL_LEXICAL_ENVIRONMENT.with(|global| global.replace(None));
-    GLOBAL_LEXICAL_REALM.with(|realm| realm.replace(None));
-}
-
 pub(crate) fn store(registers: &[Value], slot: u16, source: u16) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, source)?;
     if current().is_immutable_slot(slot) && !current().is_uninitialized(slot) {

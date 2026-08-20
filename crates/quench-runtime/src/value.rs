@@ -123,6 +123,10 @@ impl TypedArrayMeta {
             properties.push((key.to_string(), value));
         }
     }
+
+    pub(crate) fn own_properties(&self) -> Vec<(String, Value)> {
+        self.properties.borrow().clone()
+    }
 }
 
 /// Heap-allocated Promise data.

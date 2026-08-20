@@ -289,3 +289,43 @@ and numeric kernels, Date, URI/JSON, then selected ECMA-402 components. Steps
 `staging` and proposal-specific tests are never treated as stable conformance
 claims, while `intl402` remains a first-class ECMA-402 domain rather than a
 runner exception.
+
+## Node host
+
+`quench-node` is a Node.js-API compatibility host built **on top of**
+`quench-runtime`. The runtime is unchanged by this work; the host
+crate is the only piece of the workspace allowed to know what "Node"
+is. The full design, scope, and acceptance bar are in
+[`docs/adr/0002-quench-node-scope.md`](adr/0002-quench-node-scope.md);
+the ordered plan is in [`docs/NODE-STAGES.md`](NODE-STAGES.md). This
+section records the layering rule so the boundary is mechanically
+checkable.
+
+```text
+quench-node-test   ->  quench-node   ->  quench-runtime
+   (fixtures, runner,    (host,           (pure JS engine,
+    classification)       Node builtins)   test262-only)
+```
+
+Boundaries:
+
+- `quench-runtime` gains no Node-shaped dependencies, no host policy,
+  and no awareness of `quench-node` or `quench-node-test`. The runtime
+  is what it has always been: a pure JavaScript engine, test262-only.
+- `quench-node` depends on `quench-runtime` and on the kernel crates
+  it owns (`mio`, `httparse`, `h2`, `rustls`, `rusqlite`, `flate2`).
+  It knows about Node; it knows nothing about the Node test runner,
+  fixtures, or upstream `node-tests/` policy.
+- `quench-node-test` depends on `quench-node`. It owns the upstream
+  Node fixture submodule at `crates/quench-node-test/node-tests/`,
+  the runner, and the completion classifier. It never modifies the
+  fixture tree and never shims or rewrites Node harness behavior.
+
+Node builtins follow the same `builtin!` / `value!` / `heap!`
+discipline the runtime already uses. They are described as **data +
+patterns + machines + effects** and lowered into generated Rust by
+the `node!` macro; the generated code is checked in under
+`crates/quench-node/src/generated/`. Readable Rust owns the
+algorithms — the HTTP parser, the WHATWG URL parser, the
+`Buffer.from` argument-shape dispatch, the `zlib` stream state. No
+self-hosted JavaScript builtin layer.

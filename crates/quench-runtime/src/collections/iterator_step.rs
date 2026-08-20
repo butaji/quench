@@ -42,25 +42,19 @@ fn step_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmErro
 }
 
 fn concat_target(data: &IteratorData) -> Result<StepTarget, crate::execute::VmError> {
-    let (items, mut opened_clone, mut index, mut current, done) = {
+    let (items, mut index, mut current, done) = {
         let state = data.state.borrow();
         let IteratorState::Concat {
             items,
-            opened,
             index,
             current,
             done,
+            ..
         } = &*state
         else {
             return Ok(StepTarget::Value(None));
         };
-        (
-            items.clone(),
-            opened.clone(),
-            *index,
-            current.clone(),
-            *done,
-        )
+        (items.clone(), *index, current.clone(), *done)
     };
     if done {
         return Ok(StepTarget::Value(None));

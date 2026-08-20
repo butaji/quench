@@ -94,7 +94,7 @@ fn execute_callee(
                 arguments,
             )?
         }
-        Value::BoundFunction(bound) => crate::functions::execute_bound(&bound, arguments)?,
+        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments)?,
         Value::Undefined => return Err(crate::vm::not_callable()),
         _ => return Err(crate::vm::not_callable()),
     };

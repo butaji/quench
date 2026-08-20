@@ -43,12 +43,12 @@ fn finish_eval_bindings(
     let mut locals = bindings.iter().cloned().collect::<HashMap<String, u16>>();
     let mut next_slot = register_base(&locals);
     let declared = if strict {
-        shadow_names(&names, &mut locals, &mut next_slot);
+        shadow_names(names, &mut locals, &mut next_slot);
         Vec::new()
     } else if global {
-        reserve_names(&names, &mut locals, &mut next_slot)
+        reserve_names(names, &mut locals, &mut next_slot)
     } else {
-        shadow_eval_names(&names, reusable_var_names, &mut locals, &mut next_slot)
+        shadow_eval_names(names, reusable_var_names, &mut locals, &mut next_slot)
     };
     let behavior = if strict {
         EvalBehavior::Strict

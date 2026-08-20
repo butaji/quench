@@ -42,9 +42,7 @@ pub(crate) fn execute(
         test,
         body,
         update,
-        *post_test,
-        dst,
-        per_iteration,
+        (*post_test, dst, per_iteration),
         registers,
     )
 }
@@ -55,11 +53,10 @@ fn run_loop(
     test: &[Op],
     body: &[Op],
     update: &[Op],
-    post_test: bool,
-    dst: u16,
-    per_iteration: &[u16],
+    config: (bool, u16, &[u16]),
     registers: &mut Vec<crate::value::Value>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let (post_test, dst, per_iteration) = config;
     run_fragment(init, registers)?;
     refresh_per_iteration(per_iteration);
     loop {
@@ -76,7 +73,7 @@ fn run_loop(
                 break;
             }
             crate::completion::LoopTransition::Propagate(completion) => {
-                return Ok(update_empty_from(registers, dst, completion)?);
+                return update_empty_from(registers, dst, completion);
             }
         }
         refresh_per_iteration(per_iteration);

@@ -104,6 +104,126 @@ pub fn set_callable_property(
 pub fn replace_value(old: &crate::value::Value, new: &crate::value::Value) {
     crate::locals::replace_value(old, new);
 }
+
+/// Drop every forwarded replacement. Only for hosts that run several
+/// independent programs on one thread: call it between programs, never
+/// between re-entrant executions of one program, or heap-resident
+/// references revert to stale snapshots.
+pub fn reset_replacements() {
+    crate::locals::reset_replacements();
+}
+/// Canonical strict equality (`===`) for host code. The VM and host
+/// modules share this single semantic owner.
+pub fn strict_equal(left: &crate::value::Value, right: &crate::value::Value) -> bool {
+    crate::equality::strict_equal(left, right)
+}
+
+/// Canonical abstract equality (`==`) for host code.
+pub fn abstract_equal(
+    left: &crate::value::Value,
+    right: &crate::value::Value,
+) -> Result<bool, VmError> {
+    crate::equality::abstract_equal(left, right)
+}
+
+/// Canonical `Object.is` comparison for host code.
+pub fn same_value(left: &crate::value::Value, right: &crate::value::Value) -> bool {
+    crate::builtins::same_value(Some(left), Some(right))
+}
+
+/// Throw a canonical `TypeError` from host code.
+pub fn type_error(message: &str) -> VmError {
+    crate::value::error::throw_type_error(message)
+}
+
+/// Own enumerable string keys of a value, in property order.
+pub fn own_enumerable_keys(value: &crate::value::Value) -> Vec<String> {
+    crate::own_keys::enumerable_key_strings(Some(value))
+}
+
+/// Canonical JavaScript `ToString` (may run user `toString`/`valueOf`).
+pub fn to_js_string(value: &crate::value::Value) -> Result<String, VmError> {
+    crate::conversion::to_string(value)
+}
+
+/// Canonical `Number::toString` (radix 10) for host code.
+pub fn number_to_js_string(value: f64) -> String {
+    crate::conversion::number_to_string(value)
+}
+
+/// UTF-16 code units of a string value, preserving lone surrogates.
+pub fn string_units(value: &crate::value::Value) -> Option<Vec<u16>> {
+    crate::strings::units_of(value)
+}
+
+/// Build a string value from UTF-16 code units, preserving lone surrogates.
+pub fn string_from_units(units: Vec<u16>) -> crate::value::Value {
+    crate::strings::from_units(units)
+}
+
+/// Canonical `decodeURIComponent` semantics for host code.
+pub fn decode_uri_component(value: &crate::value::Value) -> Result<crate::value::Value, VmError> {
+    crate::builtins::decode_uri(Some(value), false)
+}
+
+/// Whether a value is a symbol (symbols are raw `desc\0id` strings here).
+pub fn is_symbol(value: &crate::value::Value) -> bool {
+    crate::conversion::is_symbol(value)
+}
+
+/// Follow host-side replacement aliases to the current value.
+pub fn resolve_alias(value: &crate::value::Value) -> crate::value::Value {
+    let mut current = value.clone();
+    while let Some(updated) = crate::locals::replacement(&current) {
+        current = updated;
+    }
+    current
+}
+
+/// `Object.getPrototypeOf(value)`.
+pub fn get_prototype_of(value: &crate::value::Value) -> Result<crate::value::Value, VmError> {
+    crate::builtins::object::get_prototype_of(Some(value))
+}
+
+/// Own enumerable symbol keys (symbol payloads are strings here).
+pub fn own_enumerable_symbol_strings(value: &crate::value::Value) -> Vec<String> {
+    let Ok(symbols) = crate::own_keys::symbols(Some(value)) else {
+        return Vec::new();
+    };
+    let crate::value::Value::Array(symbols) = symbols else {
+        return Vec::new();
+    };
+    symbols
+        .snapshot()
+        .into_iter()
+        .filter_map(|symbol| match symbol {
+            crate::value::Value::String(key) if crate::conversion::is_symbol_string(&key) => {
+                Some(key)
+            }
+            _ => None,
+        })
+        .filter(|key| {
+            let descriptor = crate::builtins::object::descriptor(
+                Some(value),
+                Some(&crate::value::Value::String(key.clone())),
+            );
+            match descriptor {
+                Ok(crate::value::Value::Undefined) | Err(_) => true,
+                _ => matches!(
+                    crate::builtins::descriptor_flag(value, key, "enumerable"),
+                    Some(true)
+                ),
+            }
+        })
+        .collect()
+}
+
+/// `JSON.stringify(value)` with no replacer or space; symbols and
+/// `undefined` yield `Value::Undefined`, circular structures throw.
+pub fn json_stringify(value: &crate::value::Value) -> Result<crate::value::Value, VmError> {
+    crate::json::stringify_value(std::slice::from_ref(value))
+}
+
 pub(crate) use crate::vm::{
     execute_completion_in_place, execute_completion_step_in_place, not_callable,
 };

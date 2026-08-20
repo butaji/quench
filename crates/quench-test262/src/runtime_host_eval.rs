@@ -228,7 +228,7 @@ fn settle_wave(units: &LinkedModuleGraph, ids: &[ModuleId]) {
             units
                 .units
                 .get(id)
-                .is_none_or(|unit| unit.evaluated.get() || unit.thrown.borrow().is_some())
+                .map_or(true, |unit| unit.evaluated.get() || unit.thrown.borrow().is_some())
         }) {
             return;
         }

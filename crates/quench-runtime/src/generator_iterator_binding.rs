@@ -2,7 +2,6 @@ struct IteratorFrameResume {
     iterator: Value,
     body_resume: crate::machine::CodeRange,
     resume: crate::machine::CodeRange,
-    yield_dst: u16,
     close_normal: bool,
     repeat: bool,
     slot: u16,
@@ -48,10 +47,7 @@ fn iterator_frame(
         body,
         range_after_iterator_op(body, index),
         resume,
-        yield_dst,
-        close_normal,
-        false,
-        0,
+        (yield_dst, close_normal, false, 0),
     ))
 }
 
@@ -61,10 +57,7 @@ fn iterator_binding_frame(
     body: crate::machine::CodeRange,
     body_resume: crate::machine::CodeRange,
     resume: crate::machine::CodeRange,
-    yield_dst: u16,
-    close_normal: bool,
-    repeat: bool,
-    slot: u16,
+    config: (u16, bool, bool, u16),
 ) -> crate::machine::Frame {
     crate::machine::Frame::Iterator {
         phase: crate::machine::IteratorPhase::Body,
@@ -73,10 +66,10 @@ fn iterator_binding_frame(
         body,
         body_resume,
         resume,
-        yield_dst,
-        close_normal,
-        repeat,
-        slot,
+        yield_dst: config.0,
+        close_normal: config.1,
+        repeat: config.2,
+        slot: config.3,
     }
 }
 
@@ -97,7 +90,6 @@ fn iterator_frame_resume(generator: &GeneratorData) -> Option<IteratorFrameResum
         iterator,
         body_resume,
         resume,
-        yield_dst,
         close_normal,
         repeat,
         slot,
@@ -111,7 +103,6 @@ fn iterator_frame_resume(generator: &GeneratorData) -> Option<IteratorFrameResum
         iterator,
         body_resume,
         resume,
-        yield_dst,
         close_normal,
         repeat,
         slot,

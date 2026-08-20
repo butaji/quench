@@ -10,6 +10,11 @@ include!("json/serialize.rs");
 
 const RAW_JSON_KEY: &str = "\0rawjson";
 
+/// `JSON.stringify` entry point reused by host integrations.
+pub fn stringify_value(arguments: &[Value]) -> Result<Value, VmError> {
+    stringify(arguments)
+}
+
 /// Parse JSON into the runtime's canonical JavaScript values.
 pub fn parse(source: &str) -> Result<Value, serde_json::Error> {
     serde_json::from_str(source).map(from_json)

@@ -18,12 +18,11 @@ pub(crate) fn reduce_expression(
         finish_class(
             class,
             heritage,
-            (constructor, default_constructor),
+            (constructor, default_constructor, inferred.as_deref()),
             &mut body,
             facts,
             next,
             &class_locals,
-            inferred.as_deref(),
         )?;
         Some((constructor, heritage))
     });
@@ -41,14 +40,13 @@ pub(crate) fn reduce_expression(
 fn finish_class(
     class: &Class<'_>,
     heritage: Option<u16>,
-    constructor: (u16, bool),
+    constructor: (u16, bool, Option<&str>),
     body: &mut Vec<Op>,
     facts: &mut ProgramDb,
     next: &mut u16,
     locals: &HashMap<String, u16>,
-    inferred: Option<&str>,
 ) -> Option<()> {
-    let (constructor, default_constructor) = constructor;
+    let (constructor, default_constructor, inferred) = constructor;
     set_class_name(class, constructor, inferred, body);
     let prototype = configure_class(heritage, constructor, default_constructor, body, next);
     define_class_prototype(body, next, constructor, prototype);

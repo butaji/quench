@@ -48,15 +48,6 @@ fn raw(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
     Ok(Value::String(result))
 }
 
-/// The lossy UTF-8 view of a string value (lone surrogates become U+FFFD).
-pub(crate) fn lossy(value: &Value) -> Option<String> {
-    match value {
-        Value::String(value) => Some(value.clone()),
-        Value::StringUnits(units) => Some(String::from_utf16_lossy(units)),
-        _ => None,
-    }
-}
-
 pub(crate) fn source_text(value: &Value) -> Option<String> {
     let units = units_of(value)?;
     let mut source = String::new();

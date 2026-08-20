@@ -1,0 +1,10 @@
+[package]
+name = "quench-node-test"
+version = "0.1.0"
+edition = "2021"
+description = "Node.js test runner for a Node-API compatibility host"
+license = "MIT"
+
+[dependencies]
+quench-node = { path = "../quench-node" }
+quench-runtime = { path = "../quench-runtime" }

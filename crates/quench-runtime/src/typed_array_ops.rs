@@ -151,6 +151,7 @@ pub(crate) fn execute(
 ) -> Option<Result<Value, VmError>> {
     match builtin {
         Builtin::TypedArrayFill => Some(fill(receiver, arguments)),
+        Builtin::TypedArraySet => Some(set(receiver, arguments)),
         Builtin::ArrayBufferResize => Some(resize_buffer(receiver, arguments)),
         Builtin::Uint8ArrayFromBase64
         | Builtin::Uint8ArrayFromHex
@@ -279,6 +280,73 @@ fn resize_buffer(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value,
     buffer
         .resize(length)
         .map_err(|_| crate::value::error::throw_range_error("Invalid ArrayBuffer resize"))?;
+    Ok(Value::Undefined)
+}
+
+fn view_length(value: &Value) -> Option<usize> {
+    macro_rules! len {
+        ($($variant:ident),+) => {
+            match value {
+                $(Value::$variant(view) => view.length,)+
+                _ => return None,
+            }
+        };
+    }
+    Some(len!(
+        Float64Array,
+        Float32Array,
+        Int8Array,
+        Int16Array,
+        Int32Array,
+        BigInt64Array,
+        BigUint64Array,
+        Uint32Array,
+        Uint8Array,
+        Uint8ClampedArray,
+        Uint16Array
+    ))
+}
+
+fn set_offset(arguments: &[Value]) -> Result<usize, VmError> {
+    let Some(value) = arguments.get(1) else {
+        return Ok(0);
+    };
+    if matches!(value, Value::Undefined) {
+        return Ok(0);
+    }
+    let number = crate::intl::tolocale::value::to_number_result(Some(value))?;
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
+        return Err(crate::value::error::throw_range_error(
+            "offset is out of bounds",
+        ));
+    }
+    Ok(number as usize)
+}
+
+fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
+    let target = receiver.ok_or_else(crate::vm::not_callable)?;
+    let Some(target_length) = view_length(target) else {
+        return Err(crate::value::error::throw_type_error(
+            "set requires a TypedArray",
+        ));
+    };
+    let source = arguments.first().cloned().unwrap_or(Value::Undefined);
+    let offset = set_offset(arguments)?;
+    let source_length = crate::intl::tolocale::value::to_number_result(Some(
+        &crate::execute::get_property_result(&source, "length")?,
+    ))?;
+    let source_length = source_length.max(0.0) as usize;
+    if offset + source_length > target_length {
+        return Err(crate::value::error::throw_range_error(
+            "offset is out of bounds",
+        ));
+    }
+    for index in 0..source_length {
+        let value = crate::execute::get_property_result(&source, &index.to_string())?;
+        if let Some(result) = set_property(target, &(offset + index).to_string(), &value) {
+            result?;
+        }
+    }
     Ok(Value::Undefined)
 }
 
