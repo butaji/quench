@@ -172,12 +172,14 @@ fn validate_own_keys_invariants(target: &Value, result: &Value) -> Result<(), Vm
             ));
         }
     }
-    if !crate::properties::object_is_extensible(target)
-        && returned.iter().any(|key| !target_keys.contains(key))
-    {
-        return Err(crate::value::error::throw_type_error(
-            "Proxy ownKeys trap returned extra property",
-        ));
+    if !crate::properties::object_is_extensible(target) {
+        if returned.iter().any(|key| !target_keys.contains(key))
+            || target_keys.iter().any(|key| !returned.contains(key))
+        {
+            return Err(crate::value::error::throw_type_error(
+                "Proxy ownKeys trap result does not match non-extensible target",
+            ));
+        }
     }
     Ok(())
 }
