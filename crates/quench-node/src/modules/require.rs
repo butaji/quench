@@ -84,9 +84,6 @@ fn load_file_module(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<Value,
 }
 
 fn resolve_path(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<std::path::PathBuf, VmError> {
-    if !(spec.starts_with('.') || spec.starts_with('/')) {
-        return Err(not_found(spec));
-    }
     let base = state
         .borrow()
         .dir_stack
@@ -94,8 +91,10 @@ fn resolve_path(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<std::path:
         .cloned()
         .unwrap_or_else(|| "/".to_string());
     // oxc-resolver handles extension probing (.js), directory index files
-    // (index.js), and package.json mains — the canonical Node resolution
-    // algorithm instead of a hand-rolled loop.
+    // (index.js), package.json mains, and the node_modules walk (with the
+    // `exports`/`imports` maps and conditional exports) — the canonical
+    // Node resolution algorithm. Relative and bare (npm package)
+    // specifiers both resolve from the requiring module's directory.
     let resolver = oxc_resolver::Resolver::new(oxc_resolver::ResolveOptions {
         extensions: vec![".js".into()],
         main_files: vec!["index".into()],
