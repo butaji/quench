@@ -13,9 +13,9 @@ mod iterator_values;
 pub(crate) use iterator_protocol::{should_update_protocol_receiver, ReceiverUpdateGuard};
 pub(crate) use iterator_step::step_value;
 pub(crate) use iterator_values::{
-    from_map, from_map_keys, from_map_values, from_set, from_set_entries, make, make_array,
-    make_regexp_string, make_string, make_typed, make_typed_keys, next, next_map, next_set,
-    property_for, prototype_of, result,
+    builtin_for, from_map, from_map_keys, from_map_values, from_set, from_set_entries, make,
+    make_array, make_regexp_string, make_string, make_typed, make_typed_keys, next, next_map,
+    next_set, property_for, prototype_of, result,
 };
 
 pub(crate) fn concat(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
