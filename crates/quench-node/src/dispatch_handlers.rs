@@ -364,6 +364,13 @@ pub fn tty_isatty(
 }
 
 // ---- process ----
+pub fn crypto_random_bytes(
+    state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> { crate::modules::crypto::random_bytes(state, args) }
+pub fn crypto_unsupported(
+    state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> { crate::modules::crypto::unsupported(state, args) }
+
 pub fn process_exit(
     state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
