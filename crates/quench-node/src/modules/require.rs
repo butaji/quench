@@ -375,10 +375,6 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         "http" => Some(crate::modules::http::build()),
         "readline" => Some(crate::modules::readline::build()),
         "vm" => Some(crate::modules::vm::build()),
-        "cluster" => crate::modules::compat_extra::cluster(state).ok(),
-        "domain" => crate::modules::compat_extra::domain(state).ok(),
-        "v8" => crate::modules::compat_extra::v8(state).ok(),
-        "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         "dgram" => Some(crate::host::namespace_object_from_pairs(vec![(
             "createSocket".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new("dgram:createSocket", 0x1500)),
@@ -404,20 +400,13 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
             }
         },
         "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "cluster" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "cluster" => crate::modules::compat_extra::cluster(state).ok(),
+        "domain" => crate::modules::compat_extra::domain(state).ok(),
+        "v8" => crate::modules::compat_extra::v8(state).ok(),
         "inspector" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "repl" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "wasi" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "worker_threads" => Some(crate::host::namespace_object_from_pairs(vec![
-            ("isMainThread".to_string(), Value::Boolean(true)),
-            (
-                "Worker".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "worker_threads:Worker",
-                    0x1900,
-                )),
-            ),
-        ])),
+        "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
             "isSea".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new("sea:isSea", 0x1a00)),
