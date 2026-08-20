@@ -148,22 +148,22 @@ pub(crate) fn array_filter(
             "Array.prototype.filter called on null or undefined",
         ));
     }
-    let values = match receiver {
-        Value::Array(values) => values,
-        _ => return Err(crate::value::error::throw_type_error(
-            "Array.prototype.filter called on a non-object",
-        )),
-    };
     let Some(callback) = arguments.first() else {
-        return Ok(Value::Array(values.clone()));
+        return Err(crate::value::error::throw_type_error(
+            "Array.prototype.filter callback is not callable",
+        ));
     };
-    let mut filtered = Vec::new();
+    let length = map_length(receiver)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    for (index, value) in values.iter().enumerate() {
-        let args = [value.clone(), Value::Number(index as f64), Value::Undefined];
+    let mut filtered = Vec::new();
+    for index in 0..length {
+        let Some(value) = map_value(receiver, index)? else {
+            continue;
+        };
+        let args = [value.clone(), Value::Number(index as f64), receiver.clone()];
         let result = crate::functions::execute_target(callback, this_arg, &args)?;
         if crate::execute::is_truthy(&result) {
-            filtered.push(value.clone());
+            filtered.push(value);
         }
     }
     Ok(Value::array(filtered))
