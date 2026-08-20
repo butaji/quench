@@ -129,7 +129,7 @@ fn construct_builtin_target(
     // Fetching the prototype first would incorrectly expose a prototype getter error
     // when the executor is not callable.
     if builtin == crate::ops::Builtin::Promise && needs_new_target {
-        let value = construct_builtin(builtin, arguments)?;
+        let value = construct_builtin_in_realm(builtin, arguments, new_target)?;
         let prototype = crate::execute::get_property_result(new_target, "prototype")?;
         let value = apply_new_target_prototype(value, target, new_target, prototype)?;
         validate_data_view(&value)?;
@@ -146,7 +146,7 @@ fn construct_builtin_target(
     let prototype = needs_new_target
         .then(|| crate::execute::get_property_result(new_target, "prototype"))
         .transpose()?;
-    let value = construct_builtin(builtin, arguments)?;
+    let value = construct_builtin_in_realm(builtin, arguments, new_target)?;
     let value = if let Some(prototype) = prototype {
         apply_new_target_prototype(value, target, new_target, prototype)?
     } else {
@@ -354,6 +354,20 @@ fn construct_builtin(
 }
 
 include!("construct_builtins.rs");
+
+fn construct_builtin_in_realm(
+    builtin: crate::ops::Builtin,
+    arguments: &[Value],
+    new_target: &Value,
+) -> Result<Value, crate::execute::VmError> {
+    let realm = Some(constructor_realm(new_target));
+    if let Some(result) =
+        crate::functions_dynamic::construct_builtin_in_realm(builtin, arguments, realm)
+    {
+        return result;
+    }
+    construct_builtin(builtin, arguments)
+}
 fn construct_function(
     function: &std::rc::Rc<crate::value::FunctionValue>,
     target: &Value,

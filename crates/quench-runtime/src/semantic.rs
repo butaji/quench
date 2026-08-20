@@ -12,7 +12,6 @@ pub(crate) struct EvalGrammarContext {
     pub(crate) new_target: bool,
     pub(crate) super_property: bool,
     pub(crate) arguments: bool,
-    pub(crate) skip_syntax_error: bool,
 }
 
 pub(crate) struct Analysis {
@@ -72,26 +71,14 @@ pub(crate) fn analyze_eval(
     analyze_with_context(program, context)
 }
 
-pub(crate) fn analyze_loose(
-    program: &oxc::ast::ast::Program<'_>,
-) -> Result<Analysis, Vec<String>> {
-    let mut ctx = EvalGrammarContext::default();
-    ctx.skip_syntax_error = true;
-    analyze_with_context(program, ctx)
-}
-
 fn analyze_with_context(
     program: &oxc::ast::ast::Program<'_>,
     context: EvalGrammarContext,
 ) -> Result<Analysis, Vec<String>> {
     crate::semantic_early::validate(program)?;
-    let builder = SemanticBuilder::new();
-    let builder = if context.skip_syntax_error {
-        builder
-    } else {
-        builder.with_check_syntax_error(true)
-    };
-    let semantic = builder.build(program);
+    let semantic = SemanticBuilder::new()
+        .with_check_syntax_error(true)
+        .build(program);
     let mut errors = semantic
         .errors
         .iter()
