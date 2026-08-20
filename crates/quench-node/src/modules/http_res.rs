@@ -12,6 +12,7 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 
 use super::http::{chunk_bytes, Res, RES_ID_PROP};
+use crate::modules::net;
 
 fn res_state(receiver: Option<&Value>) -> Option<u64> {
     let receiver = receiver?;
@@ -127,7 +128,7 @@ pub fn res_end(
             res_write(state, receiver, std::slice::from_ref(data))?;
         }
     }
-    let (status, text, headers, body, socket) = {
+    let (status, text, headers, body, socket, keep_alive) = {
         let guard = state.borrow();
         let Some(res) = guard.http.res.get(&id) else {
             return Ok(receiver.cloned().unwrap_or(Value::Undefined));
@@ -138,12 +139,23 @@ pub fn res_end(
             res.headers.clone(),
             res.body.clone(),
             res.socket.clone(),
+            res.keep_alive,
         )
     };
     let status = status_code(receiver, status);
-    let payload = host_api::bytes(&compose(status, &text, &headers, &body));
+    let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive));
     crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
-    crate::modules::net::socket_end(state, Some(&socket), &[])?;
+    if keep_alive {
+        // Leave the socket open and let the connection parser reset for the
+        // next request on the same connection.
+        if let Some(socket_id) = net::net_id(&socket) {
+            if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
+                conn.response_done = true;
+            }
+        }
+    } else {
+        crate::modules::net::socket_end(state, Some(&socket), &[])?;
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
@@ -159,14 +171,22 @@ fn status_code(receiver: Option<&Value>, default: u16) -> u16 {
 }
 
 /// Serialize an HTTP/1.1 response.
-fn compose(status: u16, text: &str, headers: &[(String, String)], body: &[u8]) -> Vec<u8> {
+fn compose(
+    status: u16,
+    text: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+    keep_alive: bool,
+) -> Vec<u8> {
     let text = if text.is_empty() { "OK" } else { text };
     let mut out = format!("HTTP/1.1 {status} {text}\r\n").into_bytes();
     out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
     for (key, value) in headers {
         out.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
     }
-    out.extend_from_slice(b"Connection: close\r\n\r\n");
+    let connection = if keep_alive { "keep-alive" } else { "close" };
+    out.extend_from_slice(format!("Connection: {connection}\r\n").as_bytes());
+    out.extend_from_slice(b"\r\n");
     out.extend_from_slice(body);
     out
 }

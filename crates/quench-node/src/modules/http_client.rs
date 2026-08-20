@@ -156,7 +156,8 @@ fn send_request(
     {
         head.push_str(&format!("Content-Length: {}\r\n", body.len()));
     }
-    head.push_str("\r\n");
+    // One-shot clients: ask the server to close so the response ends.
+    head.push_str("Connection: close\r\n\r\n");
     let mut payload = head.into_bytes();
     payload.extend_from_slice(body);
     let payload = host_api::bytes(&payload);
