@@ -80,6 +80,8 @@ const CAP_FSP_FILEHANDLE_CLOSE: u16 = 0x1172;
 const CAP_FSP_FILEHANDLE_TRUNCATE: u16 = 0x1173;
 const CAP_FSP_FILEHANDLE_DATASYNC: u16 = 0x1174;
 const CAP_FSP_FILEHANDLE_SYNC: u16 = 0x1175;
+const CAP_FSP_FILEHANDLE_WRITE: u16 = 0x1176;
+const CAP_FSP_FILEHANDLE_READ: u16 = 0x1177;
  
 
 pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
@@ -168,9 +170,10 @@ fn fs_dispatch_promises(cap: u16) -> Option<CallHandler> {
         CAP_FSP_OPEN => fs_promises::open,
         CAP_FSP_FILEHANDLE_STAT => fs_promises::filehandle_stat,
         CAP_FSP_FILEHANDLE_CLOSE => fs_promises::filehandle_close,
-        CAP_FSP_FILEHANDLE_TRUNCATE => fs_promises::filehandle_truncate,
         CAP_FSP_FILEHANDLE_DATASYNC => fs_promises::filehandle_datasync,
         CAP_FSP_FILEHANDLE_SYNC => fs_promises::filehandle_sync,
+        CAP_FSP_FILEHANDLE_WRITE => fs_promises::filehandle_write,
+        CAP_FSP_FILEHANDLE_READ => fs_promises::filehandle_read,
         _ => return crate::dispatch::assert_dispatch(cap),
     })
 }
