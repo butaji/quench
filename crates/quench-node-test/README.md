@@ -90,7 +90,8 @@ Current coverage (28 scripts):
   runs under quench-node, with parse/format output matching Node
 - `test-net.js` — net.isIP family + real loopback TCP (server.listen,
   socket write/read echo, close) through the event-loop pump
-- `test-os.js` — os.cpus / totalmem / freemem / networkInterfaces
+- `test-os.js` — os.cpus / totalmem / freemem / networkInterfaces plus
+  real type / platform / arch / release / hostname callables
 - `test-path.js` — path.join / normalize / dirname / basename /
   extname / isAbsolute / relative + posix/win32 subnamespaces
 - `test-process.js` — process.version / platform / arch / pid

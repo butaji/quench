@@ -32,11 +32,19 @@ pub fn arch() -> String {
 }
 
 pub fn type_str() -> String {
-    platform()
+    if cfg!(target_os = "macos") {
+        "Darwin".into()
+    } else if cfg!(target_os = "linux") {
+        "Linux".into()
+    } else if cfg!(target_os = "windows") {
+        "Windows_NT".into()
+    } else {
+        "Unknown".into()
+    }
 }
 
 pub fn release() -> String {
-    "quench-0.1.0".into()
+    sysinfo_release().unwrap_or_else(|| "unknown".into())
 }
 
 pub fn eol() -> String {
@@ -196,15 +204,32 @@ pub fn build() -> Vec<(String, Value)> {
 }
 
 fn os_static_props(out: &mut Vec<(String, Value)>) {
-    out.push(("platform".to_string(), Value::String(platform())));
-    out.push(("arch".to_string(), Value::String(arch())));
-    out.push(("hostname".to_string(), Value::String("quench-node".into())));
-    out.push(("type".to_string(), Value::String(type_str())));
-    out.push(("release".to_string(), Value::String(release())));
+    // Node exposes type/platform/arch/release/hostname as functions (see
+    // os_capability_props); only the constant `EOL` is a property.
     out.push(("EOL".to_string(), Value::String(eol())));
 }
 
 fn os_capability_props(out: &mut Vec<(String, Value)>) {
+    out.push((
+        "platform".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_PLATFORM),
+    ));
+    out.push((
+        "arch".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_ARCH),
+    ));
+    out.push((
+        "hostname".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_HOSTNAME),
+    ));
+    out.push((
+        "type".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_TYPE),
+    ));
+    out.push((
+        "release".to_string(),
+        crate::host::capability(crate::registry::SPEC_OS_RELEASE),
+    ));
     out.push((
         "uptime".to_string(),
         crate::host::capability(crate::registry::SPEC_OS_UPTIME),
@@ -264,4 +289,8 @@ fn sysinfo_uptime() -> u64 {
 
 fn sysinfo_hostname() -> Option<String> {
     sysinfo::System::host_name()
+}
+
+fn sysinfo_release() -> Option<String> {
+    sysinfo::System::kernel_version()
 }
