@@ -62,6 +62,15 @@ fn manifest_names(manifest_path: &Path) -> Result<Vec<String>, String> {
         .collect())
 }
 
+fn report_manifest_failure(
+    name: &str,
+    outcome: quench_node_test::NodeOutcome,
+    failed: &mut Vec<String>,
+) {
+    println!("FAIL  {name}");
+    failed.push(format!("{name}: {outcome:?}"));
+}
+
 fn run_manifest() -> ExitCode {
     let root = repo_root();
     let manifest_path = root.join(MANIFEST_REL);
@@ -82,10 +91,7 @@ fn run_manifest() -> ExitCode {
         let path = parallel_dir.join(name);
         match quench_node_test::NodeTestRunner::new().run_file(&path) {
             quench_node_test::NodeOutcome::Pass => println!("PASS  {name}"),
-            other => {
-                println!("FAIL  {name}");
-                failed.push(format!("{name}: {other:?}"));
-            }
+            other => report_manifest_failure(name, other, &mut failed),
         }
     }
     println!(
