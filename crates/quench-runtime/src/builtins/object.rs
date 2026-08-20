@@ -59,7 +59,7 @@ fn execute_special_tail(
         Builtin::ObjectGetOwnPropertyDescriptors => get_own_property_descriptors(arguments),
         Builtin::ObjectGetOwnPropertyNames => object_proxy_names(arguments.first(), false),
         Builtin::ObjectGetOwnPropertySymbols => object_proxy_names(arguments.first(), true),
-        Builtin::ObjectKeys => object_keys(arguments.first()),
+        Builtin::ObjectKeys => object_keys_dispatch(arguments.first()),
         Builtin::ObjectValues => object_values_entries(arguments.first(), false),
         Builtin::ObjectEntries => object_values_entries(arguments.first(), true),
         Builtin::ObjectAssign => assign(arguments),
@@ -69,6 +69,45 @@ fn execute_special_tail(
         Builtin::ObjectSetPrototypeOf => set_prototype_of(arguments),
         _ => legacy_accessor_special(builtin, receiver, arguments),
     }
+}
+
+fn object_keys_dispatch(target: Option<&Value>) -> Result<Value, VmError> {
+    let target = target.ok_or_else(|| {
+        crate::value::error::throw_type_error("Object.keys requires an object")
+    })?;
+    if matches!(target, Value::Null | Value::Undefined) {
+        return Err(crate::value::error::throw_type_error(
+            "Cannot convert undefined or null to object",
+        ));
+    }
+    let keys = if matches!(target, Value::Proxy(_)) {
+        crate::proxy::proxy_own_keys(target)?
+    } else {
+        crate::own_keys::all(target)?
+    };
+    let Value::Array(keys) = keys else {
+        return Err(crate::vm::not_callable());
+    };
+    let mut result = Vec::new();
+    for key in keys.snapshot() {
+        let Value::String(key) = key else {
+            continue;
+        };
+        if key.contains('\0') {
+            continue;
+        }
+        let descriptor = if matches!(target, Value::Proxy(_)) {
+            crate::proxy::proxy_get_own_property_descriptor(target, &key)?
+        } else {
+            descriptor(Some(target), Some(&Value::String(key.clone())))?
+        };
+        if crate::execute::is_truthy(
+            &crate::execute::get_property_result(&descriptor, "enumerable")?,
+        ) {
+            result.push(Value::String(key));
+        }
+    }
+    Ok(Value::array(result))
 }
 
 fn get_own_property_descriptors(arguments: &[Value]) -> Result<Value, VmError> {
