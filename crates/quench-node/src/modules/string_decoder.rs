@@ -44,8 +44,27 @@ impl StringDecoder {
 }
 
 pub fn build() -> Vec<(String, Value)> {
-    vec![(
-        "StringDecoder".to_string(),
-        crate::host::capability(crate::registry::SPEC_STRING_DECODER),
-    )]
+    let constructor = crate::host::capability(crate::registry::SPEC_STRING_DECODER);
+    let prototype = host_api::object(vec![
+        (
+            "write".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                "string_decoder:write",
+                0x0D01,
+            )),
+        ),
+        (
+            "end".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                "string_decoder:end",
+                0x0D02,
+            )),
+        ),
+    ]);
+    let _ = quench_runtime::execute::set_callable_property(
+        &constructor,
+        "prototype",
+        prototype,
+    );
+    vec![("StringDecoder".to_string(), constructor)]
 }
