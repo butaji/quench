@@ -87,11 +87,15 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
         Ok(analysis) => analysis,
         Err(errors) => {
             // Non-strict dynamic Function constructor: ES5 allows duplicate
-            // parameter names. The OXC binder always raises a SyntaxError
-            // for them, so skip the analyzer and use an empty Analysis
-            // when the only failure is duplicate parameters.
+            // parameter names and the `eval`/`arguments` parameter names.
+            // The OXC binder always raises a SyntaxError for them, so skip
+            // the analyzer and use an empty Analysis when the only failures
+            // are these historically-permitted parameters.
             if matches!(strictness, FunctionStrictness::Sloppy)
-                && errors.iter().all(|e| is_duplicate_param_error_str(e))
+                && errors.iter().all(|e| {
+                    is_duplicate_param_error_str(e)
+                        || is_strict_only_param_error_str(e)
+                })
             {
                 crate::semantic::Analysis {
                     scope_count: 0,
@@ -345,4 +349,11 @@ fn syntax_error(message: &str) -> VmError {
 
 fn is_duplicate_param_error_str(message: &str) -> bool {
     message.contains("has already been declared")
+}
+
+fn is_strict_only_param_error_str(message: &str) -> bool {
+    // OXC's analyzer unconditionally rejects `eval`/`arguments` as parameter
+    // names; filter those for non-strict dynamic functions.
+    message.contains("'eval'")
+        || message.contains("'arguments'")
 }
