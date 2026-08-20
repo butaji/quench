@@ -72,7 +72,14 @@ fn execute_special_tail(
 }
 
 fn object_keys_dispatch(target: Option<&Value>) -> Result<Value, VmError> {
-    object_keys(target)
+    let Some(target) = target else {
+        return crate::own_keys::keys_result(None);
+    };
+    if let Value::BindingCell(cell) = target {
+        let value = cell.borrow().clone();
+        return object_keys(Some(&value));
+    }
+    object_keys(Some(target))
 }
 
 fn get_own_property_descriptors(arguments: &[Value]) -> Result<Value, VmError> {
