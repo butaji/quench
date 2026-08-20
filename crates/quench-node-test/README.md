@@ -76,6 +76,8 @@ Current coverage (28 scripts):
   local server, echoing the parsed path
 - `test-http-post.js` — the server streams a Content-Length request body
   to req 'data'/'end' and echoes it back to an http.request POST
+- `test-http-keepalive.js` — two requests served over one connection,
+  framed by Content-Length with Connection: keep-alive on each response
 - `test-npm-require.js` — require() resolves a bare specifier through
   node_modules via package.json main, loads a vendored package, and
   resolves its nested dependency (also manually verified against the

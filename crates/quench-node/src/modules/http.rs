@@ -40,6 +40,10 @@ pub struct Conn {
     pub body_done: bool,
     /// Whether the request head has been consumed.
     pub head_parsed: bool,
+    /// Whether the response already ended (request handler called res.end).
+    pub response_done: bool,
+    /// Whether the peer keeps this connection alive for the next request.
+    pub keep_alive: bool,
 }
 
 /// One pending response, keyed by `RES_ID_PROP` on the `res` object.
@@ -49,6 +53,7 @@ pub struct Res {
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
     pub socket: Value,
+    pub keep_alive: bool,
 }
 
 impl Default for HttpState {
@@ -113,6 +118,8 @@ pub fn connection_handler(
             body_remaining: 0,
             body_done: true,
             head_parsed: false,
+            response_done: false,
+            keep_alive: true,
         },
     );
     let data_cap = crate::host::capability(crate::registry::NodeSpec::new("http:data", 0x0F08));
@@ -250,6 +257,28 @@ fn emit_request(
             .unwrap_or(Value::Undefined)
     };
     net::emit(state, &server, "request", vec![req, res])?;
+    // With keep-alive, reset the connection so the next pipelined request
+    // on the same socket parses; otherwise the net layer's socket_end
+    // closes it after the response.
+    let reset = {
+        let guard = state.borrow();
+        guard
+            .http
+            .conns
+            .get(&socket_id)
+            .map(|conn| conn.response_done && conn.keep_alive)
+            .unwrap_or(false)
+    };
+    if reset {
+        let mut guard = state.borrow_mut();
+        if let Some(conn) = guard.http.conns.get_mut(&socket_id) {
+            conn.req = None;
+            conn.body_remaining = 0;
+            conn.body_done = true;
+            conn.head_parsed = false;
+            conn.response_done = false;
+        }
+    }
     Ok(Value::Undefined)
 }
 
@@ -258,23 +287,25 @@ fn build_req_res(
     socket_id: u64,
     head: &[u8],
 ) -> Result<(Value, Value), VmError> {
-    let (req, content_length) = build_req(state, head)?;
+    let (req, content_length, keep_alive) = build_req(state, head)?;
     let (res, id) = build_res_object(state)?;
-    insert_response(state, socket_id, id);
+    insert_response(state, socket_id, id, keep_alive);
     {
         let mut guard = state.borrow_mut();
         if let Some(conn) = guard.http.conns.get_mut(&socket_id) {
             conn.req = Some(req.clone());
             conn.body_remaining = content_length;
             conn.body_done = content_length == 0;
+            conn.response_done = false;
+            conn.keep_alive = keep_alive;
         }
     }
     Ok((req, res))
 }
 
 /// Build the `req` emitter from the parsed head.
-fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usize), VmError> {
-    let (method, url, version, headers, content_length) = parse_request_head(head);
+fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usize, bool), VmError> {
+    let (method, url, version, headers, content_length, keep_alive) = parse_request_head(head);
     let req = crate::modules::events::new_emitter_object(state)?;
     let req = install_req_props(
         req,
@@ -285,11 +316,11 @@ fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usiz
             ("headers".to_string(), host_api::object(headers)),
         ],
     )?;
-    Ok((req, content_length))
+    Ok((req, content_length, keep_alive))
 }
 
 /// Register a fresh response for the socket.
-fn insert_response(state: &Rc<RefCell<HostState>>, socket_id: u64, id: u64) {
+fn insert_response(state: &Rc<RefCell<HostState>>, socket_id: u64, id: u64, keep_alive: bool) {
     let socket = state
         .borrow()
         .http
@@ -305,6 +336,7 @@ fn insert_response(state: &Rc<RefCell<HostState>>, socket_id: u64, id: u64) {
             headers: Vec::new(),
             body: Vec::new(),
             socket,
+            keep_alive,
         },
     );
 }
@@ -323,7 +355,7 @@ fn install_req_props(mut object: Value, props: Vec<(String, Value)>) -> Result<V
 }
 
 /// Parse the request line and headers; return the declared Content-Length.
-fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Value)>, usize) {
+fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Value)>, usize, bool) {
     let head_str = String::from_utf8_lossy(head);
     let parts: Vec<&str> = head_str.split("\r\n").collect();
     let mut fields = parts[0].split_whitespace();
@@ -336,6 +368,7 @@ fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Valu
 
     let mut headers: Vec<(String, Value)> = Vec::new();
     let mut content_length = 0usize;
+    let mut connection = String::new();
     for line in parts.iter().skip(1) {
         if line.is_empty() {
             break;
@@ -346,10 +379,25 @@ fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Valu
             if key == "content-length" {
                 content_length = value.parse().unwrap_or(0);
             }
+            if key == "connection" {
+                connection = value.to_lowercase();
+            }
             headers.push((key, Value::String(value.to_string())));
         }
     }
-    (method, url, version.to_string(), headers, content_length)
+    // HTTP/1.1 defaults to keep-alive unless `Connection: close`; HTTP/1.0
+    // defaults to close unless the client asks to keep the connection.
+    let http10 = version == "1.0";
+    let keep_alive =
+        !connection.contains("close") && (!http10 || connection.contains("keep-alive"));
+    (
+        method,
+        url,
+        version.to_string(),
+        headers,
+        content_length,
+        keep_alive,
+    )
 }
 
 fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmError> {
