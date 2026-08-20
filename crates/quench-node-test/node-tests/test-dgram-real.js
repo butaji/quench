@@ -1,0 +1,11 @@
+const dgram = require('node:dgram');
+const receiver = dgram.createSocket('udp4');
+receiver.bind(34123, '127.0.0.1');
+const address = receiver.address();
+if (!address || address.port !== 34123) throw new Error('dgram address');
+const sender = dgram.createSocket('udp4');
+sender.bind(34124, '127.0.0.1');
+sender.send('ping', 34123, '127.0.0.1');
+sender.close();
+receiver.close();
+console.log('dgram-real: ok');
