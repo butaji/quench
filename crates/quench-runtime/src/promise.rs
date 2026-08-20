@@ -308,9 +308,16 @@ fn resolve_object_value(promise: Rc<PromiseData>, value: Value) -> Value {
 }
 
 fn bound_settler(target: Builtin, promise: &Rc<PromiseData>) -> Value {
-    let length = Value::Number(1.0);
+    let length = Value::Number(2.0);
+    let name = String::new();
     let descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("value".to_string(), length.clone()),
+        ("writable".to_string(), Value::Boolean(false)),
+        ("enumerable".to_string(), Value::Boolean(false)),
+        ("configurable".to_string(), Value::Boolean(true)),
+    ])));
+    let name_descriptor = Value::Object(Rc::new(crate::value::ObjectData::new(vec![
+        ("value".to_string(), Value::String(name.clone())),
         ("writable".to_string(), Value::Boolean(false)),
         ("enumerable".to_string(), Value::Boolean(false)),
         ("configurable".to_string(), Value::Boolean(true)),
@@ -323,8 +330,28 @@ fn bound_settler(target: Builtin, promise: &Rc<PromiseData>) -> Value {
         properties: RefCell::new(vec![
             ("length".to_string(), length),
             (crate::builtins::descriptor_key("length"), descriptor),
+            ("name".to_string(), Value::String(name)),
+            (crate::builtins::descriptor_key("name"), name_descriptor),
         ]),
     }))
+}
+
+pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
+    if !crate::conversion::is_callable(executor) {
+        return Err(VmError::NotCallable);
+    }
+    let promise = new_promise();
+    let Value::Promise(promise_data) = &promise else {
+        return Err(VmError::NotCallable);
+    };
+    let resolve = bound_settler(Builtin::PromiseResolve, promise_data);
+    let reject = bound_settler(Builtin::PromiseReject, promise_data);
+    if let Err(VmError::Thrown(reason)) =
+        crate::functions::execute_target(executor, &Value::Undefined, &[resolve, reject])
+    {
+        reject_promise(promise_data, reason);
+    }
+    Ok(promise)
 }
 
 fn resolve_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
@@ -389,20 +416,6 @@ fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
     }
 }
 
-pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
-    let promise = new_promise();
-    let Value::Promise(promise_data) = &promise else {
-        return Err(VmError::NotCallable);
-    };
-    let resolve = bound_settler(Builtin::PromiseResolve, promise_data);
-    let reject = bound_settler(Builtin::PromiseReject, promise_data);
-    if let Err(VmError::Thrown(reason)) =
-        crate::functions::execute_target(executor, &Value::Undefined, &[resolve, reject])
-    {
-        reject_promise(promise_data, reason);
-    }
-    Ok(promise)
-}
 
 fn maybe_handler(arguments: &[Value], index: usize) -> Option<Value> {
     arguments
