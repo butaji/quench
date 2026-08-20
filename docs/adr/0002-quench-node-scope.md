@@ -251,7 +251,6 @@ optimize for perf at the expense of conformance.
   `builtin_table!` example, the kernels table.
 - `docs/STAGES.md` — test262 stage map (template for
   `docs/NODE-STAGES.md`).
-- `tasks/architecture.md` — the existing design backlog.
 - Bun's `nodejs-compat` matrix,
   <https://bun.com/docs/runtime/nodejs-compat> (Node v26) — the
   source of the v1 module and global set.
