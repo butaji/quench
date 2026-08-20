@@ -144,6 +144,7 @@ fn own_property_names_standard(builtin: Builtin) -> &'static [&'static str] {
         | Builtin::BigIntPrototype
         | Builtin::FunctionPrototype
         | Builtin::Error
+        | Builtin::Promise
         | Builtin::ThrowTypeError => own_property_names_standard_core(builtin),
         _ => own_property_names_standard_tail(builtin),
     }
@@ -186,10 +187,23 @@ fn own_property_names_standard_core(builtin: Builtin) -> &'static [&'static str]
             "isError",
             "captureStackTrace",
         ],
+        Builtin::Promise => &[
+            "length",
+            "name",
+            "prototype",
+            "resolve",
+            "reject",
+            "all",
+            "allSettled",
+            "any",
+            "race",
+            "withResolvers",
+            "try",
+        ],
         Builtin::ThrowTypeError => &["length", "name"],
         _ => &[],
-    }
-}
+     }
+ }
 
 fn own_property_names_standard_tail(builtin: Builtin) -> &'static [&'static str] {
     match builtin {

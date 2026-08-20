@@ -51,6 +51,7 @@ pub enum IteratorState {
     Dropped {
         inner: Value,
         skipped: usize,
+        limit: usize,
         done: bool,
     },
     Take {

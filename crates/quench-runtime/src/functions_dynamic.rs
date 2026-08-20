@@ -11,7 +11,9 @@ use oxc::{
 };
 
 use crate::{
-    conversion::to_string, execute::VmError, facts::ProgramDb, ops::FunctionKind, value::Value,
+    conversion::to_string, execute::VmError, facts::ProgramDb,
+    ops::{FunctionKind, FunctionStrictness},
+    value::Value,
 };
 
 pub(crate) fn construct(
@@ -20,7 +22,9 @@ pub(crate) fn construct(
     is_async: bool,
 ) -> Result<Value, VmError> {
     let source = function_source(arguments, kind, is_async)?;
-    reduce_dynamic(&source, kind, is_async)
+    let realm = crate::vm::current_context_or_default().realm();
+    crate::vm::with_realm(realm, || reduce_dynamic(&source, kind, is_async))
+        .unwrap_or_else(|| reduce_dynamic(&source, kind, is_async))
 }
 
 pub(crate) fn construct_builtin(
@@ -81,8 +85,31 @@ fn reduce_dynamic(source: &str, kind: FunctionKind, is_async: bool) -> Result<Va
     if has_invalid_private_identifier(body) {
         return Err(syntax_error("Invalid private identifier"));
     }
-    let analysis = crate::semantic::analyze(&parsed.program)
-        .map_err(|_| syntax_error("Invalid function source"))?;
+    let analysis = match crate::semantic::analyze(&parsed.program) {
+        Ok(analysis) => analysis,
+        Err(errors) => {
+            // Non-strict dynamic Function constructor: ES5 allows duplicate
+            // parameter names and the `eval`/`arguments` parameter names.
+            // The OXC binder always raises a SyntaxError for them, so skip
+            // the analyzer and use an empty Analysis when the only failures
+            // are these historically-permitted parameters.
+            if matches!(strictness, FunctionStrictness::Sloppy)
+                && errors.iter().all(|e| {
+                    is_duplicate_param_error_str(e)
+                        || is_strict_only_param_error_str(e)
+                })
+            {
+                crate::semantic::Analysis {
+                    scope_count: 0,
+                    symbol_count: 0,
+                    private_names: Vec::new(),
+                    fact_sites: std::collections::HashMap::new(),
+                }
+            } else {
+                return Err(syntax_error("Invalid function source"));
+            }
+        }
+    };
     let mut facts = ProgramDb {
         strict: matches!(strictness, crate::ops::FunctionStrictness::Strict),
         private_names: analysis.private_names.into_iter().collect(),
@@ -280,7 +307,7 @@ fn function_source(
         (_, true) => "async function",
         (_, false) => "function",
     };
-    Ok(format!("{prefix} anonymous({parameters}\n) {{\n{body}\n}}"))
+    Ok(format!("{prefix} anonymous({parameters}) {{\n{body}\n}}"))
 }
 
 fn normalize_annex_b_comments(source: &str, allow_leading_close: bool) -> String {
@@ -298,8 +325,8 @@ fn normalize_annex_b_comments(source: &str, allow_leading_close: bool) -> String
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
 
+}
 fn mark_dynamic(value: &Value, source: &str) {
     if let Value::Function(function) = value {
         let mut properties = function.properties.borrow_mut();
@@ -308,6 +335,9 @@ fn mark_dynamic(value: &Value, source: &str) {
             "\0dynamic_source".to_string(),
             Value::String(source.to_string()),
         ));
+        if let Some(token) = crate::vm::realm_token(crate::vm::current_context_or_default().realm()) {
+            properties.push(("\0realm".to_string(), token));
+        }
     }
 }
 
@@ -320,4 +350,15 @@ fn syntax_error(message: &str) -> VmError {
         crate::ops::Builtin::SyntaxError,
         &[Value::String(message.to_string())],
     ))
+}
+
+fn is_duplicate_param_error_str(message: &str) -> bool {
+    message.contains("has already been declared")
+}
+
+fn is_strict_only_param_error_str(message: &str) -> bool {
+    // OXC's analyzer unconditionally rejects `eval`/`arguments` as parameter
+    // names; filter those for non-strict dynamic functions.
+    message.contains("'eval'")
+        || message.contains("'arguments'")
 }

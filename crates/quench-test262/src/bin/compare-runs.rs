@@ -221,6 +221,9 @@ fn run_sequential(root: &Path, files: &[TestSource]) -> Outcomes {
     let mut outcomes = Outcomes::default();
     let harness_root = root.join("harness");
     for fixture in files {
+        // Bound pathological async tests just as individual and parallel
+        // dispatch do; otherwise one leaked pending job can stall the audit
+        // indefinitely instead of producing a comparable outcome.
         let outcome = dispatch_with_timeout(&harness_root, fixture.clone());
         record(outcome, &mut outcomes, &fixture.path);
     }

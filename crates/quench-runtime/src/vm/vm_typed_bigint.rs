@@ -9,8 +9,11 @@ macro_rules! bigint_property {
                     .map(|value| Value::BigInt(value.to_string()))
                     .unwrap_or(Value::Undefined);
             }
-            let out = view.length != usize::MAX
-                && view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length());
+            let out = if view.length == usize::MAX {
+                view.buffer.byte_length() < view.byte_offset
+            } else {
+                view.buffer.byte_length() < view.byte_offset.saturating_add(view.byte_length())
+            };
             match key {
                 "buffer" => Value::ArrayBuffer(view.buffer.clone()),
                 "byteLength" => Value::Number(if out { 0 } else { view.byte_length() } as f64),

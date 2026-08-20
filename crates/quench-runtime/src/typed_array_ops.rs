@@ -332,10 +332,14 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
     };
     let source = arguments.first().cloned().unwrap_or(Value::Undefined);
     let offset = set_offset(arguments)?;
-    let source_length = crate::intl::tolocale::value::to_number_result(Some(
-        &crate::execute::get_property_result(&source, "length")?,
-    ))?;
-    let source_length = source_length.max(0.0) as usize;
+    let source_length = if let Some(length) = view_length(&source) {
+        length
+    } else {
+        let source_length = crate::intl::tolocale::value::to_number_result(Some(
+            &crate::execute::get_property_result(&source, "length")?,
+        ))?;
+        source_length.max(0.0) as usize
+    };
     if offset + source_length > target_length {
         return Err(crate::value::error::throw_range_error(
             "offset is out of bounds",
@@ -352,6 +356,15 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
 
 fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = receiver.ok_or_else(crate::vm::not_callable)?;
+    if matches!(receiver, Value::BigInt64Array(_) | Value::BigUint64Array(_)) {
+        let bits = crate::construct::bigint_bits(arguments.first().unwrap_or(&Value::Undefined))?;
+        match receiver {
+            Value::BigInt64Array(view) => fill_view!(view, bits, |value| value as i64),
+            Value::BigUint64Array(view) => fill_view!(view, bits, |value| value),
+            _ => unreachable!(),
+        }
+        return Ok(receiver.clone());
+    }
     let number = crate::intl::tolocale::value::to_number_result(arguments.first())?;
     match receiver {
         Value::Float64Array(view) => fill_view!(view, number, |value| value),
