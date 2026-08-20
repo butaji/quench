@@ -266,17 +266,8 @@ pub(crate) fn execute_for_in(
     registers: &mut Vec<crate::value::Value>,
     op: &Op,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
-    let (label, slot, body, per_iteration, keys, dst, object) = unpack_for_in(registers, op)?;
-    iterate_loop_keys(
-        registers,
-        label,
-        slot,
-        body,
-        per_iteration,
-        keys,
-        dst,
-        object,
-    )
+    let data = unpack_for_in(registers, op)?;
+    iterate_loop_keys(registers, data)
 }
 
 pub(crate) fn execute_for_of(
@@ -355,20 +346,15 @@ fn for_in_keys(value: &crate::value::Value) -> Vec<String> {
 
 fn iterate_loop_keys(
     registers: &mut Vec<crate::value::Value>,
-    label: &Option<String>,
-    slot: u16,
-    body: &crate::machine::FunctionCode,
-    per_iteration: bool,
-    keys: Vec<String>,
-    dst: u16,
-    object: crate::value::Value,
+    data: ForInLoopData<'_>,
 ) -> Result<crate::completion::Completion, crate::execute::VmError> {
+    let (label, slot, body, per_iteration, keys, dst, object) = data;
     let Some(body) = body.ops() else {
         return Err(crate::execute::VmError::MissingReturn);
     };
     for key in keys {
-        let object = crate::locals::resolved_replacement(object.clone());
-        if !crate::own_keys::is_enumerable_property(&object, &key) {
+        let resolved = crate::locals::resolved_replacement(object.clone());
+        if !crate::own_keys::is_enumerable_property(&resolved, &key) {
             continue;
         }
         let value = crate::value::Value::String(key);

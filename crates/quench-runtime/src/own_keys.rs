@@ -366,7 +366,10 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
             string_keys(value, symbols)
         }
         Value::Builtin(builtin) => builtin_keys(*builtin, symbols),
-        _ => Vec::new(),
+        value => value
+            .typed_array_meta()
+            .map(|meta| ordered(&meta.own_properties(), symbols))
+            .unwrap_or_default(),
     }
 }
 

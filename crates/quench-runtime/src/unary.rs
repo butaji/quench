@@ -19,19 +19,6 @@ pub(crate) fn is_unresolved_identifier(
     }
 }
 
-pub(crate) fn is_unbound_identifier(
-    expression: &Expression<'_>,
-    locals: &HashMap<String, u16>,
-) -> bool {
-    match expression {
-        Expression::Identifier(identifier) => !locals.contains_key(identifier.name.as_str()),
-        Expression::ParenthesizedExpression(parenthesized) => {
-            is_unbound_identifier(&parenthesized.expression, locals)
-        }
-        _ => false,
-    }
-}
-
 pub(crate) fn reduce_delete(
     expression: &Expression<'_>,
     ops: &mut Vec<Op>,

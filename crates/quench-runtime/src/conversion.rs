@@ -261,7 +261,8 @@ pub(crate) fn is_html_dda(value: &Value) -> bool {
     }
 }
 
-pub(crate) fn is_callable(value: &Value) -> bool {
+/// `IsCallable` — hosts query this to validate callback arguments.
+pub fn is_callable(value: &Value) -> bool {
     match value {
         Value::Builtin(
             crate::ops::Builtin::Math

@@ -145,6 +145,12 @@ impl Drop for ContextGuard {
     }
 }
 
+/// Run `f` with `context` installed as this thread's current context.
+pub fn with_current_context<T>(context: &VmContext, f: impl FnOnce() -> T) -> T {
+    let _guard = ContextGuard::install(context);
+    f()
+}
+
 impl VmContext {
     pub fn with_output_sink(output_sink: OutputSink) -> Self {
         Self {
@@ -226,14 +232,7 @@ impl VmContext {
             ],
         );
         let realm = realm::create(&parent);
-        let context = realm::context(realm).unwrap_or(parent);
-        context.with_host_capability(
-            "$262",
-            HostCapabilityRef {
-                realm,
-                kind: HostCapabilityKind::GetGlobal,
-            },
-        )
+        realm::context(realm).unwrap_or(parent)
     }
 
     pub fn realm(&self) -> RealmId {

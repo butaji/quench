@@ -1,0 +1,114 @@
+//! Coded `fs` errors — real `Error` instances with Node's `code`,
+//! `errno`, `syscall`, and `path` properties.
+
+use quench_runtime::execute::VmError;
+use quench_runtime::host_api;
+use quench_runtime::value::Value;
+
+/// `fs` system errors are plain `Error` instances with extra props.
+pub fn fs_error(syscall: &str, path: Option<&str>, error: &std::io::Error) -> VmError {
+    let (code, errno) = code_for(error);
+    let detail = strerror(code);
+    let message = match path {
+        Some(p) => format!("{code}: {detail}, {syscall} '{p}'"),
+        None => format!("{code}: {detail}, {syscall}"),
+    };
+    let mut props = vec![
+        ("name".to_string(), Value::String("Error".to_string())),
+        ("message".to_string(), Value::String(message)),
+        ("code".to_string(), Value::String(code.to_string())),
+        ("errno".to_string(), Value::Number(errno as f64)),
+        ("syscall".to_string(), Value::String(syscall.to_string())),
+    ];
+    if let Some(p) = path {
+        props.push(("path".to_string(), Value::String(p.to_string())));
+    }
+    VmError::Thrown(host_api::object(props))
+}
+
+/// Node/libuv-style code and (negative) errno for an I/O error.
+fn code_for(error: &std::io::Error) -> (&'static str, i32) {
+    if let Some(raw) = error.raw_os_error() {
+        return (code_name(raw), -raw);
+    }
+    use std::io::ErrorKind::*;
+    match error.kind() {
+        NotFound => ("ENOENT", -2),
+        PermissionDenied => ("EACCES", -13),
+        AlreadyExists => ("EEXIST", -17),
+        _ => ("EIO", -5),
+    }
+}
+
+#[cfg(unix)]
+fn code_name(raw: i32) -> &'static str {
+    match raw {
+        1 => "EPERM",
+        2 => "ENOENT",
+        13 => "EACCES",
+        16 => "EBUSY",
+        17 => "EEXIST",
+        18 => "EXDEV",
+        20 => "ENOTDIR",
+        21 => "EISDIR",
+        22 => "EINVAL",
+        27 => "EFBIG",
+        28 => "ENOSPC",
+        30 => "EROFS",
+        31 => "EMLINK",
+        62 => "ELOOP",
+        63 => "ENAMETOOLONG",
+        66 => "ENOTEMPTY",
+        78 => "ENOSYS",
+        _ => "EIO",
+    }
+}
+
+#[cfg(not(unix))]
+fn code_name(raw: i32) -> &'static str {
+    match raw {
+        2 => "ENOENT",
+        5 => "EIO",
+        13 => "EACCES",
+        17 => "EEXIST",
+        20 => "ENOTDIR",
+        21 => "EISDIR",
+        22 => "EINVAL",
+        _ => "EIO",
+    }
+}
+
+fn strerror(code: &str) -> &'static str {
+    match code {
+        "EPERM" => "operation not permitted",
+        "ENOENT" => "no such file or directory",
+        "EACCES" => "permission denied",
+        "EBUSY" => "resource busy or locked",
+        "EEXIST" => "file already exists",
+        "EXDEV" => "cross-device link not permitted",
+        "ENOTDIR" => "not a directory",
+        "EISDIR" => "illegal operation on a directory",
+        "EINVAL" => "invalid argument",
+        "EFBIG" => "file too large",
+        "ENOSPC" => "no space left on device",
+        "EROFS" => "read-only file system",
+        "EMLINK" => "too many links",
+        "ELOOP" => "too many levels of symbolic links",
+        "ENAMETOOLONG" => "name too long",
+        "ENOTEMPTY" => "directory not empty",
+        "ENOSYS" => "function not implemented",
+        _ => "I/O error",
+    }
+}
+
+/// `AbortError` for an operation cancelled by an `AbortSignal`.
+pub fn abort_error() -> Value {
+    host_api::object(vec![
+        ("name".to_string(), Value::String("AbortError".to_string())),
+        (
+            "message".to_string(),
+            Value::String("The operation was aborted".to_string()),
+        ),
+        ("code".to_string(), Value::String("ABORT_ERR".to_string())),
+    ])
+}

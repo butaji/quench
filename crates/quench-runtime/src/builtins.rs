@@ -373,7 +373,7 @@ pub(crate) fn math_pow(arguments: &[Value]) -> Result<Value, crate::execute::VmE
 }
 
 include!("builtins_object_core.rs");
-pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
+pub fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     let (name, constructor, prototype) = error_parts(builtin);
     let constructor_builtin = constructor;
     let constructor = crate::vm::current_realm_intrinsic(constructor_builtin)
@@ -383,12 +383,25 @@ pub(crate) fn error(builtin: Builtin, arguments: &[Value]) -> Value {
     let prototype = crate::vm::current_realm_intrinsic(prototype_builtin)
         .unwrap_or(Value::Builtin(prototype_builtin));
     let message = arguments.first().map_or_else(String::new, value_to_string);
+    let non_enum = |key: &str| {
+        (
+            descriptor_key(key),
+            Value::Object(Rc::new(ObjectData::new(vec![
+                ("writable".to_string(), Value::Boolean(true)),
+                ("enumerable".to_string(), Value::Boolean(false)),
+                ("configurable".to_string(), Value::Boolean(true)),
+            ]))),
+        )
+    };
     let mut properties = vec![
         ("name".to_string(), Value::String(name.to_string())),
         ("message".to_string(), Value::String(message)),
         ("constructor".to_string(), constructor),
         (ERROR_SLOT.to_string(), Value::Boolean(true)),
         ("\0prototype".to_string(), prototype),
+        non_enum("name"),
+        non_enum("message"),
+        non_enum("constructor"),
     ];
     if let Some(Value::Object(existing)) = arguments.first() {
         properties.extend(existing.properties.clone());

@@ -1,0 +1,77 @@
+//! The canonical Node test runner entry points.
+//!
+//! `run_file` is the single command-line entry point used by the
+//! `run-stages` / `run-all` / `triage` binaries. The runner never
+//! forks, never rewrites the host, and never inspects the host
+//! state directly.
+//!
+//! Each fixture runs on a dedicated thread so engine thread-local
+//! state (realm globals, promise queues) starts clean for every
+//! test, mirroring node's own runner which spawns a child process
+//! per test file.
+
+use std::path::Path;
+use std::sync::Arc;
+
+use quench_runtime::vm::OutputSink;
+
+use crate::reader::{NodeFixture, NodeOutcome, NodeRunner};
+
+/// Thread stack for fixture runs; deeply recursive fixtures need
+/// more than the default spawned-thread stack.
+const FIXTURE_STACK_SIZE: usize = 256 * 1024 * 1024;
+
+pub struct NodeTestRunner {
+    sink: OutputSink,
+}
+
+impl Default for NodeTestRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NodeTestRunner {
+    pub fn new() -> Self {
+        let sink: OutputSink = Arc::new(|line| {
+            println!("{line}");
+        });
+        Self { sink }
+    }
+
+    pub fn run_file(&mut self, path: &Path) -> NodeOutcome {
+        let fixture = match NodeFixture::from_path(path.to_path_buf()) {
+            Ok(f) => f,
+            Err(e) => return NodeOutcome::Fail { reason: e },
+        };
+        self.run_fixture(fixture)
+    }
+
+    pub fn run_source(&mut self, source: &str) -> NodeOutcome {
+        let fixture =
+            NodeFixture::from_source(std::path::PathBuf::from("<source>"), source.to_string());
+        self.run_fixture(fixture)
+    }
+
+    fn run_fixture(&mut self, fixture: NodeFixture) -> NodeOutcome {
+        let sink = self.sink.clone();
+        let handle = std::thread::Builder::new()
+            .stack_size(FIXTURE_STACK_SIZE)
+            .spawn(move || NodeRunner::new().with_output_sink(sink).run(&fixture));
+        match handle {
+            Ok(join) => match join.join() {
+                Ok(outcome) => outcome,
+                Err(_) => NodeOutcome::Fail {
+                    reason: "fixture thread panicked".to_string(),
+                },
+            },
+            Err(error) => NodeOutcome::Fail {
+                reason: format!("spawn fixture thread: {error}"),
+            },
+        }
+    }
+}
+
+pub fn run_file(path: &Path) -> NodeOutcome {
+    NodeTestRunner::new().run_file(path)
+}
