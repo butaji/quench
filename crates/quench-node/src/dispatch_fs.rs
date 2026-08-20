@@ -88,6 +88,11 @@ const CAP_FSP_FILEHANDLE_CHOWN: u16 = 0x1179;
 const CAP_FSP_FILEHANDLE_UTIMES: u16 = 0x117A;
 const CAP_FSP_CHOWN: u16 = 0x117B;
 const CAP_FSP_UTIMES: u16 = 0x117C;
+const CAP_FSP_LINK: u16 = 0x117D;
+const CAP_FSP_SYMLINK: u16 = 0x117E;
+const CAP_FSP_LUTIMES: u16 = 0x117F;
+const CAP_FSP_LCHOWN: u16 = 0x1180;
+const CAP_FSP_LCHMOD: u16 = 0x1181;
 
 pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
     Some(match cap {
@@ -176,7 +181,11 @@ fn fs_dispatch_promises(cap: u16) -> Option<CallHandler> {
         CAP_FSP_REALPATH => fs_promises::realpath,
         CAP_FSP_CHOWN => fs_promises::chown,
         CAP_FSP_UTIMES => fs_promises::utimes,
-        CAP_FSP_OPEN => fs_promises::open,
+        CAP_FSP_LINK => fs_promises::link,
+        CAP_FSP_SYMLINK => fs_promises::symlink,
+        CAP_FSP_LUTIMES => fs_promises::lutimes,
+        CAP_FSP_LCHOWN => fs_promises::lchown,
+        CAP_FSP_LCHMOD => fs_promises::lchmod,
         CAP_FSP_FILEHANDLE_STAT => fs_promises::filehandle_stat,
         CAP_FSP_FILEHANDLE_CLOSE => fs_promises::filehandle_close,
         CAP_FSP_FILEHANDLE_TRUNCATE => fs_promises::filehandle_truncate,
