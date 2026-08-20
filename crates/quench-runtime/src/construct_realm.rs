@@ -37,7 +37,22 @@ pub(crate) fn get_prototype_from_constructor(
 fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
     match constructor {
         Value::Function(function) => function_realm_id(function),
-        Value::BoundFunction(bound) => bound.realm,
+        Value::BoundFunction(bound) => bound
+            .properties
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(key, value)| {
+                (key == "\0realm").then(|| match value {
+                    Value::HostCapability(token) => token.realm(),
+                    Value::Number(number) => crate::ops::RealmId::new(*number as u64),
+                    _ => bound.realm,
+                })
+            })
+            .unwrap_or_else(|| match &bound.receiver {
+                Value::HostCapability(capability) => capability.realm(),
+                _ => bound.realm,
+            }),
         _ => crate::ops::RealmId::ROOT,
     }
 }
@@ -92,6 +107,11 @@ fn realm_default_prototype(target: &Value, new_target: &Value) -> Option<Value> 
     }
     if let Value::BoundFunction(bound) = new_target {
         if let Value::HostCapability(capability) = &bound.receiver {
+            if let Value::Builtin(builtin) = target {
+                if let Some(prototype) = crate::builtin_meta::instance_prototype(*builtin) {
+                    return Some(crate::vm::realm_intrinsic_for(capability.realm(), prototype));
+                }
+            }
             if let Some(Some(value)) = crate::vm::with_realm(capability.realm(), || {
                 let global = crate::vm::current_global_object();
                 default_prototype_from_constructor(target, &global)
