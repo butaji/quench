@@ -22,7 +22,9 @@ pub(crate) fn construct(
     is_async: bool,
 ) -> Result<Value, VmError> {
     let source = function_source(arguments, kind, is_async)?;
-    reduce_dynamic(&source, kind, is_async)
+    let realm = crate::vm::current_context_or_default().realm();
+    crate::vm::with_realm(realm, || reduce_dynamic(&source, kind, is_async))
+        .unwrap_or_else(|| reduce_dynamic(&source, kind, is_async))
 }
 
 pub(crate) fn construct_builtin(
@@ -323,8 +325,8 @@ fn normalize_annex_b_comments(source: &str, allow_leading_close: bool) -> String
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
 
+}
 fn mark_dynamic(value: &Value, source: &str) {
     if let Value::Function(function) = value {
         let mut properties = function.properties.borrow_mut();
@@ -333,6 +335,9 @@ fn mark_dynamic(value: &Value, source: &str) {
             "\0dynamic_source".to_string(),
             Value::String(source.to_string()),
         ));
+        if let Some(token) = crate::vm::realm_token(crate::vm::current_context_or_default().realm()) {
+            properties.push(("\0realm".to_string(), token));
+        }
     }
 }
 
