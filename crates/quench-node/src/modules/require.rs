@@ -119,6 +119,23 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .module_cache
             .insert("http-errors".to_string(), value.clone());
     }
+    // These builtins are intentionally recognized even though this host cannot
+    // provide their native backends yet. Returning a capability error is more
+    // useful (and more Node-compatible) than pretending the module is absent:
+    // callers can distinguish an unavailable feature from a bad specifier.
+    if matches!(
+        spec.as_str(),
+        "http2" | "node:http2" | "sqlite" | "node:sqlite" | "quic" | "node:quic"
+    ) {
+        return Err(VmError::EvalError(format!(
+            "Builtin module '{spec}' is unavailable: quench-node has no supported {} backend",
+            match spec.as_str() {
+                "http2" | "node:http2" => "HTTP/2 transport",
+                "sqlite" | "node:sqlite" => "SQLite library",
+                _ => "QUIC transport",
+            }
+        )));
+    }
     if matches!(spec.as_str(), "statuses") {
         if let Some(cached) = state.borrow().module_cache.get("statuses") {
             return Ok(cached.clone());
@@ -310,6 +327,7 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
             &state.borrow().process.argv,
             &state.borrow().process.exec_path,
         )),
+        "crypto" => Some(crate::modules::crypto::build()),
         "buffer" => Some(crate::modules::buffer::build_module()),
         "util" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::util::build(),
@@ -357,6 +375,10 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         "http" => Some(crate::modules::http::build()),
         "readline" => Some(crate::modules::readline::build()),
         "vm" => Some(crate::modules::vm::build()),
+        "cluster" => crate::modules::compat_extra::cluster(state).ok(),
+        "domain" => crate::modules::compat_extra::domain(state).ok(),
+        "v8" => crate::modules::compat_extra::v8(state).ok(),
+        "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         "dgram" => Some(crate::host::namespace_object_from_pairs(vec![(
             "createSocket".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new("dgram:createSocket", 0x1500)),
