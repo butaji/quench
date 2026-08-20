@@ -52,6 +52,29 @@ pub(crate) fn fd_close(fd: i32) -> Result<Value, VmError> {
 pub(crate) fn fd_truncate(fd: i32, len: u64) -> Result<Value, VmError> {
     FDS.with(|t| t.borrow().get(&fd).ok_or_else(|| crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())).and_then(|f| f.set_len(len).map(|_| Value::Undefined).map_err(|e| crate::modules::fs_error::fs_error("ftruncate", None, &e))))
 }
+pub(crate) fn fd_write(fd: i32, data: &[u8], offset: usize, length: usize, position: Option<u64>) -> Result<usize, VmError> {
+    use std::io::{Seek, SeekFrom, Write};
+    FDS.with(|t| {
+        let mut table = t.borrow_mut();
+        let file = table.get_mut(&fd).ok_or_else(|| crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into()))?;
+        if let Some(pos) = position { file.seek(SeekFrom::Start(pos)).map_err(|e| crate::modules::fs_error::fs_error("write", None, &e))?; }
+        file.write(&data[offset..offset.saturating_add(length).min(data.len())])
+            .map_err(|e| crate::modules::fs_error::fs_error("write", None, &e))
+    })
+}
+
+pub(crate) fn fd_read(fd: i32, out: &mut [u8], offset: usize, length: usize, position: Option<u64>) -> Result<usize, VmError> {
+    use std::io::{Read, Seek, SeekFrom};
+    FDS.with(|t| {
+        let mut table = t.borrow_mut();
+        let file = table.get_mut(&fd).ok_or_else(|| crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into()))?;
+        if let Some(pos) = position { file.seek(SeekFrom::Start(pos)).map_err(|e| crate::modules::fs_error::fs_error("read", None, &e))?; }
+        let end = offset.saturating_add(length).min(out.len());
+        let start = offset.min(out.len());
+        file.read(&mut out[start..end])
+            .map_err(|e| crate::modules::fs_error::fs_error("read", None, &e))
+    })
+}
 
 /// The `/dev/fd/N` path for standard stream descriptors 0/1/2, which are
 /// always-open real fds in Node (stdin/stdout/stderr).

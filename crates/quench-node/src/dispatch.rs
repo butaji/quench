@@ -218,6 +218,7 @@ const CAP_NET_SOCKET_SET_KEEP_ALIVE: u16 = 0x100F;
 const CAP_NET_SOCKET_SET_ENCODING: u16 = 0x1010;
 const CAP_NET_SOCKET_PAUSE: u16 = 0x1011;
 const CAP_NET_SOCKET_RESUME: u16 = 0x1012;
+const CAP_NET_SOCKET_SET_TIMEOUT: u16 = 0x1013;
 const CAP_STRUCTURED_CLONE: u16 = 0x1f00;
 const CAP_FETCH: u16 = 0x1f01;
 const CAP_ABORT_CONTROLLER: u16 = 0x1f02;
@@ -455,6 +456,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_SOCKET_SET_KEEP_ALIVE => crate::modules::net::socket_set_keep_alive,
         CAP_NET_SOCKET_SET_ENCODING => crate::modules::net::socket_set_encoding,
         CAP_NET_SOCKET_PAUSE => crate::modules::net::socket_pause,
+        CAP_NET_SOCKET_SET_TIMEOUT => crate::modules::net::socket_set_timeout,
         CAP_NET_SOCKET_RESUME => crate::modules::net::socket_resume,
         CAP_REQUIRE => node_require,
         CAP_REQUIRE_FOR => node_require_for,

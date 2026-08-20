@@ -253,6 +253,8 @@ pub const SPEC_NET_SOCKET_SET_KEEP_ALIVE: NodeSpec =
 pub const SPEC_NET_SOCKET_SET_ENCODING: NodeSpec = NodeSpec::new("net:socket:setEncoding", 0x1010);
 pub const SPEC_NET_SOCKET_PAUSE: NodeSpec = NodeSpec::new("net:socket:pause", 0x1011);
 pub const SPEC_NET_SOCKET_RESUME: NodeSpec = NodeSpec::new("net:socket:resume", 0x1012);
+pub const SPEC_NET_SOCKET_SET_TIMEOUT: NodeSpec =
+    NodeSpec::new("net:socket:setTimeout", 0x1013);
 
 pub const SPEC_FS_READFILE: NodeSpec = NodeSpec::new("fs:readFile", 0x1100);
 pub const SPEC_FS_WRITEFILE: NodeSpec = NodeSpec::new("fs:writeFile", 0x1101);
@@ -323,6 +325,8 @@ pub const SPEC_FSP_FILEHANDLE_CLOSE: NodeSpec = NodeSpec::new("fs:promises:FileH
 pub const SPEC_FSP_FILEHANDLE_TRUNCATE: NodeSpec = NodeSpec::new("fs:promises:FileHandle:truncate", 0x1173);
 pub const SPEC_FSP_FILEHANDLE_DATASYNC: NodeSpec = NodeSpec::new("fs:promises:FileHandle:datasync", 0x1174);
 pub const SPEC_FSP_FILEHANDLE_SYNC: NodeSpec = NodeSpec::new("fs:promises:FileHandle:sync", 0x1175);
+pub const SPEC_FSP_FILEHANDLE_WRITE: NodeSpec = NodeSpec::new("fs:promises:FileHandle:write", 0x1176);
+pub const SPEC_FSP_FILEHANDLE_READ: NodeSpec = NodeSpec::new("fs:promises:FileHandle:read", 0x1177);
 
 pub const SPEC_REQUIRE: NodeSpec = NodeSpec::new("require", 0x1200);
 pub const SPEC_REQUIRE_FOR: NodeSpec = NodeSpec::new("__quench_require_for__", 0x1f04);

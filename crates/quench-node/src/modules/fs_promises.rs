@@ -72,6 +72,8 @@ fn file_handle(fd: i32) -> Result<Value, VmError> {
         ("truncate", crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_TRUNCATE)),
         ("datasync", crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_DATASYNC)),
         ("sync", crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_SYNC)),
+        ("write", crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_WRITE)),
+        ("read", crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_READ)),
     ] {
         let desc = quench_runtime::host_api::object(vec![
             ("value".to_string(), cap), ("writable".to_string(), Value::Boolean(true)),
@@ -96,5 +98,34 @@ pub fn filehandle_close(_state: &Rc<RefCell<HostState>>, receiver: Option<&Value
     Ok(settle(fd(receiver).and_then(super::fs::fd_close)))
 }
 pub fn filehandle_truncate(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { let n = match a.first() { Some(Value::Number(n)) if *n >= 0.0 => *n as u64, _ => 0 }; Ok(settle(fd(r).and_then(|x| super::fs::fd_truncate(x,n)))) }
+fn num_arg(args: &[Value], index: usize, default: usize) -> usize {
+    match args.get(index) { Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => *n as usize, _ => default }
+}
+
+pub fn filehandle_write(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> {
+    let fd = fd(r)?;
+    let data = match a.first() { Some(Value::Uint8Array(v)) => v.buffer.bytes.borrow()[v.byte_offset..v.byte_offset + v.length].to_vec(), _ => return Ok(settle(Err(crate::modules::buffer_enc::invalid_arg_type("The \"buffer\" argument must be an instance of Buffer or Uint8Array".into())))) };
+    let offset = num_arg(a, 1, 0);
+    let length = num_arg(a, 2, data.len().saturating_sub(offset));
+    let position = match a.get(3) { Some(Value::Number(n)) if *n >= 0.0 => Some(*n as u64), _ => None };
+    let result = super::fs::fd_write(fd, &data, offset.min(data.len()), length, position).map(|n| {
+        quench_runtime::host_api::object(vec![("bytesWritten".into(), Value::Number(n as f64)), ("buffer".into(), a[0].clone())])
+    });
+    Ok(settle(result))
+}
+
+pub fn filehandle_read(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> {
+    let fd = fd(r)?;
+    let buffer = match a.first() { Some(Value::Uint8Array(v)) => v.clone(), _ => return Ok(settle(Err(crate::modules::buffer_enc::invalid_arg_type("The \"buffer\" argument must be an instance of Buffer or Uint8Array".into())))) };
+    let offset = num_arg(a, 1, 0).min(buffer.length);
+    let length = num_arg(a, 2, buffer.length.saturating_sub(offset));
+    let position = match a.get(3) { Some(Value::Number(n)) if *n >= 0.0 => Some(*n as u64), _ => None };
+    let mut bytes = buffer.buffer.bytes.borrow_mut();
+    let result = super::fs::fd_read(fd, &mut bytes, buffer.byte_offset + offset, length, position).map(|n| {
+        quench_runtime::host_api::object(vec![("bytesRead".into(), Value::Number(n as f64)), ("buffer".into(), Value::Uint8Array(buffer.clone()))])
+    });
+    drop(bytes);
+    Ok(settle(result))
+}
 pub fn filehandle_datasync(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, _a: &[Value]) -> Result<Value, VmError> { Ok(settle(fd(r).map(|_| Value::Undefined))) }
 pub fn filehandle_sync(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, _a: &[Value]) -> Result<Value, VmError> { Ok(settle(fd(r).map(|_| Value::Undefined))) }
