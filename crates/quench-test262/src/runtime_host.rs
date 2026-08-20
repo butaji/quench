@@ -103,6 +103,10 @@ impl LinkedModuleGraph {
                 CURRENT_MODULE_ID.with(|id| {
                     let from = id.get().or_else(|| unsafe { &*modules_ptr }.entry())?;
                     let target = unsafe { &*modules_ptr }.resolve(from, specifier)?;
+                    if unsafe { &*modules_ptr }.has_deferred_resolution_error(target) {
+                        quench_runtime::module_bindings::request_ensure_type_error();
+                        return None;
+                    }
                     if !deferred {
                         let _ = evaluate_module(
                             unsafe { &*graph_ptr },
