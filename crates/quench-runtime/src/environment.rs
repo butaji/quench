@@ -7,6 +7,10 @@ use std::{
 use crate::module_bindings::ModuleBindingCell;
 use crate::value::Value;
 
+/// Shared set of binding cells removed by direct-eval `delete`; matched by
+/// cell identity so a reused slot number never shadows a live binding.
+type DeletedCells = Rc<RefCell<Vec<Rc<RefCell<Value>>>>>;
+
 #[derive(Debug, Default, PartialEq)]
 struct SlotStore {
     values: RefCell<Vec<Value>>,
@@ -114,6 +118,7 @@ pub struct Environment {
     immutable_names: RefCell<Option<HashSet<String>>>,
     immutable_slots: RefCell<Option<HashSet<u16>>>,
     uninitialized: RefCell<Option<Rc<RefCell<HashSet<u16>>>>>,
+    deleted_cells: RefCell<Option<DeletedCells>>,
     caller: Option<Rc<Self>>,
 }
 
@@ -142,6 +147,7 @@ impl Environment {
             immutable_names: RefCell::new(environment.immutable_names.borrow().clone()),
             immutable_slots: RefCell::new(environment.immutable_slots.borrow().clone()),
             uninitialized: RefCell::new(environment.uninitialized.borrow().clone()),
+            deleted_cells: RefCell::new(environment.deleted_cells.borrow().clone()),
             caller: Some(Rc::clone(environment)),
         })
     }
@@ -157,11 +163,15 @@ impl Environment {
             immutable_names: RefCell::new(None),
             immutable_slots: RefCell::new(None),
             uninitialized: RefCell::new(None),
+            deleted_cells: RefCell::new(None),
             caller: Some(Rc::clone(captures)),
         });
         environment
             .uninitialized
             .replace(clone_tdz(&captures.uninitialized.borrow()));
+        environment
+            .deleted_cells
+            .replace(captures.deleted_cells.borrow().clone());
         environment
             .immutable_slots
             .replace(captures.immutable_slots.borrow().clone());
@@ -222,6 +232,7 @@ impl Environment {
             return false;
         };
         let binding = self.ensure_slot(slot);
+        caller.clear_deleted_cell(&binding.cell());
         caller
             .eval_names
             .borrow_mut()
@@ -370,7 +381,7 @@ impl Environment {
         };
         let removed = caller.remove_own_eval_alias(name, &binding);
         if removed {
-            self.shared_tdz().borrow_mut().insert(slot);
+            caller.mark_deleted_cell(binding.cell());
         }
         removed
     }
@@ -379,10 +390,33 @@ impl Environment {
         self.ensure_slot(slot);
         self.writable_tdz().borrow_mut().insert(slot);
     }
-
     pub(crate) fn mark_uninitialized_shared(&self, slot: u16) {
         self.ensure_slot(slot);
         self.shared_tdz().borrow_mut().insert(slot);
+    }
+    pub(crate) fn is_deleted(&self, cell: &Rc<RefCell<Value>>) -> bool {
+        self.deleted_cells.borrow().as_ref().is_some_and(|cells| {
+            cells
+                .borrow()
+                .iter()
+                .any(|candidate| Rc::ptr_eq(candidate, cell))
+        }) || self
+            .caller
+            .as_ref()
+            .is_some_and(|caller| caller.is_deleted(cell))
+    }
+
+    fn mark_deleted_cell(&self, cell: Rc<RefCell<Value>>) {
+        let mut state = self.deleted_cells.borrow_mut();
+        let cells = state.get_or_insert_with(|| Rc::new(RefCell::new(Vec::new())));
+        cells.borrow_mut().push(cell);
+    }
+    fn clear_deleted_cell(&self, cell: &Rc<RefCell<Value>>) {
+        if let Some(cells) = self.deleted_cells.borrow().as_ref() {
+            cells
+                .borrow_mut()
+                .retain(|candidate| !Rc::ptr_eq(candidate, cell));
+        }
     }
 
     fn writable_tdz(&self) -> Rc<RefCell<HashSet<u16>>> {
