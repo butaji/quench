@@ -36,6 +36,7 @@ pub fn build() -> Vec<(String, Value)> {
         pair("match", SPEC_ASSERT_MATCH),
         pair("doesNotMatch", SPEC_ASSERT_DOES_NOT_MATCH),
         pair("rejects", SPEC_ASSERT_REJECTS),
+        pair_value("AssertionError", assertion_error_type()),
     ]
 }
 
@@ -52,6 +53,9 @@ pub fn build_value() -> Value {
 
 fn pair(name: &str, spec: NodeSpec) -> (String, Value) {
     (name.to_string(), crate::host::capability(spec))
+}
+fn pair_value(name: &str, value: Value) -> (String, Value) {
+    (name.to_string(), value)
 }
 
 fn assertion_error_type() -> Value {
