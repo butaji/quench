@@ -211,6 +211,11 @@ fn validate_array_length_descriptor(
     if !matches!(target, Value::Array(_)) || key != "length" {
         return Ok(());
     }
+    // arguments.length is a plain value property, not an array length;
+    // skip the array-length validation entirely.
+    if matches!(target, Value::Array(values) if values.is_arguments()) {
+        return Ok(());
+    }
     let Some(value) = descriptor
         .iter()
         .rev()
@@ -258,9 +263,21 @@ fn prepare_array_length_definition(
     let Some(Value::Number(new_length)) = array_descriptor_value(descriptor, "value") else {
         return Ok(None);
     };
-    let old_length = values.logical_len();
+    // The "length" of an Array object can be set to a number that exceeds
+    // the number of actually-stored elements. In that case there is
+    // nothing to delete below the physical length, so the iteration must
+    // be bounded by the physical length, not the logical one.
+    let old_length = values.physical_len();
     let new_length = new_length as usize;
     if new_length >= old_length {
+        if array_descriptor_flag(values, key, "writable") != Some(false) {
+            let mut values = Rc::clone(values);
+            Rc::make_mut(&mut values).set_length(new_length);
+            let mut partial = Value::Array(values);
+            store_descriptor_metadata(&mut partial, key, descriptor);
+            define_array_descriptor(&mut partial, key, descriptor.to_vec());
+            crate::locals::replace_value(target, &partial);
+        }
         return Ok(None);
     }
     if array_descriptor_flag(values, key, "writable") == Some(false) {
@@ -342,10 +359,12 @@ fn set_array_property(mut values: Rc<crate::value::ArrayData>, key: &str, value:
     }
     if key == "length" {
         if values.is_arguments() {
-            let length = array_length_number(&value) as usize;
-            let data = Rc::make_mut(&mut values);
-            data.set_length(length);
-            data.set_property(key, value);
+            // Per spec 10.6 / Annex 10.6, arguments.length's descriptor is
+            // { DontEnum } (writable defaults to true). The assignment to
+            // arguments.length is a plain value-property write — store
+            // the value verbatim on the live argument data so every
+            // reference to the arguments object observes the override.
+            Rc::make_mut(&mut values).set_arguments_length_override(value.clone());
             return Value::Array(values);
         }
         let length = array_length_number(&value) as usize;

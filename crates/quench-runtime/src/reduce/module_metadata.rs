@@ -101,7 +101,10 @@ impl ModuleMetadata {
                             .push((source.clone(), format!("{key}={}", entry.value.value)));
                     }
                 }
-                if import.specifiers.as_ref().is_none_or(|specifiers| specifiers.is_empty())
+                if import
+                    .specifiers
+                    .as_ref()
+                    .is_none_or(|specifiers| specifiers.is_empty())
                 {
                     self.imports.push(ImportBinding {
                         source: source.clone(),
@@ -343,7 +346,12 @@ fn statement_has_tla(statement: &Statement<'_>) -> bool {
         fn visit_await_expression(&mut self, _: &oxc::ast::ast::AwaitExpression<'a>) {
             self.found = true;
         }
-        fn visit_function(&mut self, _: &oxc::ast::ast::Function<'a>, _: oxc::syntax::scope::ScopeFlags) {}
+        fn visit_function(
+            &mut self,
+            _: &oxc::ast::ast::Function<'a>,
+            _: oxc::syntax::scope::ScopeFlags,
+        ) {
+        }
         fn visit_arrow_function_expression(
             &mut self,
             _: &oxc::ast::ast::ArrowFunctionExpression<'a>,

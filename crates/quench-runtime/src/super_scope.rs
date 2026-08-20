@@ -261,11 +261,7 @@ pub(crate) fn execute_capture_base(registers: &mut Vec<Value>, dst: u16) -> Resu
     Ok(())
 }
 
-fn super_base(
-    context: &Context,
-    registers: &[Value],
-    base: Option<u16>,
-) -> Result<Value, VmError> {
+fn super_base(context: &Context, registers: &[Value], base: Option<u16>) -> Result<Value, VmError> {
     match base {
         Some(slot) => crate::execute::read_register(registers, slot),
         None => require_super_base(&context.home),
