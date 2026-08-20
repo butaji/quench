@@ -45,20 +45,42 @@ pub(crate) fn execute(
         this_value.clone(),
         arguments.to_vec(),
     );
-    if is_class_constructor(function) {
-        return Err(crate::value::error::throw_type_error(
-            "Class constructor cannot be invoked without 'new'",
-        ));
+    let run = || {
+        if is_class_constructor(function) {
+            return Err(crate::value::error::throw_type_error(
+                "Class constructor cannot be invoked without 'new'",
+            ));
+        }
+        if matches!(function.kind, FunctionKind::Generator) {
+            return crate::generator::create(function, &frame.receiver, arguments);
+        }
+        if function.is_async {
+            return Ok(crate::promise::from_async_completion(execute_frame_value(
+                &frame,
+            )));
+        }
+        execute_frames(frame)
+    };
+    let realm = function
+        .properties
+        .borrow()
+        .iter()
+        .find_map(|(key, value)| {
+            (key == "\0realm").then(|| crate::vm::intrinsic_realm(value, crate::ops::Builtin::ObjectPrototype))
+        })
+        .flatten()
+        .or_else(|| crate::vm::realm_id_for_global_value(&function.captures.get(0)));
+    match realm {
+        Some(realm) => crate::vm::with_realm(realm, run).unwrap_or_else(|| {
+            let frame = CallFrame::new(
+                std::rc::Rc::clone(function),
+                this_value.clone(),
+                arguments.to_vec(),
+            );
+            execute_frames(frame)
+        }),
+        None => run(),
     }
-    if matches!(function.kind, FunctionKind::Generator) {
-        return crate::generator::create(function, &frame.receiver, arguments);
-    }
-    if function.is_async {
-        return Ok(crate::promise::from_async_completion(execute_frame_value(
-            &frame,
-        )));
-    }
-    execute_frames(frame)
 }
 
 struct CallFrame {
