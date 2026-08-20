@@ -94,20 +94,11 @@ pub(crate) fn call_trap(
     arguments: &[Value],
     receiver: Option<&Value>,
 ) -> Result<Value, VmError> {
-    match trap {
-        Value::Function(_) => crate::functions::execute_target(
-            trap,
-            receiver.unwrap_or(&crate::value::Value::Undefined),
-            arguments,
-        ),
-        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
-        Value::Proxy(_) => proxy_apply(
-            trap,
-            receiver.unwrap_or(&crate::value::Value::Undefined),
-            arguments,
-        ),
-        _ => Err(crate::vm::not_callable()),
-    }
+    crate::functions::execute_target(
+        trap,
+        receiver.unwrap_or(&crate::value::Value::Undefined),
+        arguments,
+    )
 }
 
 pub(crate) fn proxy_get(
@@ -206,8 +197,8 @@ pub(crate) fn proxy_delete(target: &Value, prop: &str) -> Result<Value, VmError>
         if let Some(trap) = get_handler_trap(proxy, "deleteProperty") {
             return call_trap(
                 &trap,
-                &[target.clone(), Value::String(prop.to_string())],
-                None,
+                &[proxy.target.clone(), Value::String(prop.to_string())],
+                Some(&proxy.handler),
             );
         }
     }
