@@ -315,11 +315,7 @@ fn set_offset(arguments: &[Value]) -> Result<usize, VmError> {
         return Ok(0);
     }
     let number = crate::intl::tolocale::value::to_number_result(Some(value))?;
-    if !number.is_finite()
-        || number < 0.0
-        || number.fract() != 0.0
-        || number > usize::MAX as f64
-    {
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > usize::MAX as f64 {
         return Err(crate::value::error::throw_range_error(
             "offset is out of bounds",
         ));
@@ -349,9 +345,13 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
             "offset is out of bounds",
         ));
     }
-    for index in 0..source_length {
-        let value = crate::execute::get_property_result(&source, &index.to_string())?;
-        if let Some(result) = set_property(target, &(offset + index).to_string(), &value) {
+    // TypedArray.prototype.set reads all source elements before writing any
+    // target element.  This is observable when source and target overlap.
+    let values = (0..source_length)
+        .map(|index| crate::execute::get_property_result(&source, &index.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    for (index, value) in values.iter().enumerate() {
+        if let Some(result) = set_property(target, &(offset + index).to_string(), value) {
             result?;
         }
     }
