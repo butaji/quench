@@ -29,11 +29,17 @@ pub(crate) fn reduce(
 ) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
     match statement {
         oxc::ast::ast::Statement::BlockStatement(block) => {
-            let next_slot = crate::reduce_support::register_base(locals);
+            let mut next_slot = crate::reduce_support::register_base(locals);
+            let mut block_locals = locals.clone();
+            crate::reduce_support::predeclare_lexicals(
+                &block.body,
+                &mut block_locals,
+                &mut next_slot,
+            );
             let (ops, last) = crate::reduce::reduce_statements_no_tail_value(
                 &block.body,
                 facts,
-                locals.clone(),
+                block_locals,
                 next_slot,
             )?;
             Ok((ops, last))
