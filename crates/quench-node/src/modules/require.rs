@@ -134,13 +134,24 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .module_cache
             .insert("http-errors".to_string(), value.clone());
     }
+    if matches!(spec.as_str(), "sqlite" | "node:sqlite") {
+        if let Some(cached) = state.borrow().module_cache.get("node:sqlite") {
+            return Ok(cached.clone());
+        }
+        let value = host_api::object(vec![(
+            "DatabaseSync".to_string(),
+            crate::host::capability(crate::registry::SPEC_SQLITE_DATABASE_SYNC),
+        )]);
+        state.borrow_mut().module_cache.insert("node:sqlite".to_string(), value.clone());
+        return Ok(value);
+    }
     // These builtins are intentionally recognized even though this host cannot
     // provide their native backends yet. Returning a capability error is more
     // useful (and more Node-compatible) than pretending the module is absent:
     // callers can distinguish an unavailable feature from a bad specifier.
     if matches!(
         spec.as_str(),
-        "http2" | "node:http2" | "sqlite" | "node:sqlite" | "quic" | "node:quic"
+        "http2" | "node:http2" | "quic" | "node:quic"
     ) {
         return Err(VmError::EvalError(format!(
             "Builtin module '{spec}' is unavailable: quench-node has no supported {} backend",

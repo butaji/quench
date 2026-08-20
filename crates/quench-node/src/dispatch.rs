@@ -269,6 +269,11 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_STRING_DECODER => string_decoder_call,
         CAP_STRING_DECODER_WRITE => string_decoder_write,
         CAP_STRING_DECODER_END => string_decoder_end,
+        0x2401 => crate::modules::sqlite::exec,
+        0x2402 => crate::modules::sqlite::prepare,
+        0x2403 => crate::modules::sqlite::run,
+        0x2404 => crate::modules::sqlite::all,
+        0x2405 => crate::modules::sqlite::close,
         _ => return events_dispatch(cap),
     };
     Some(h)
@@ -568,8 +573,6 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_STREAM_READABLE => stream_readable,
         CAP_STREAM_WRITABLE => stream_writable,
         CAP_STREAM_DUPLEX => stream_duplex,
-        CAP_STREAM_TRANSFORM => stream_transform,
-        CAP_STRING_DECODER => string_decoder_new,
         CAP_URL_NEW => url_new,
         CAP_TEXT_DECODER_NEW => crate::modules::text_decoder::new_text_decoder,
         CAP_TEXT_ENCODER_NEW => crate::modules::text_encoder::new_text_encoder,
@@ -578,6 +581,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_NET_SERVER => net_create_server,
         CAP_BUFFER_NEW => buffer_new_construct,
         CAP_ABORT_SIGNAL => abort_signal_new,
+        0x2400 => crate::modules::sqlite::construct,
         _ => return None,
     })
 }
