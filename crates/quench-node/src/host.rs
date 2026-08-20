@@ -56,6 +56,9 @@ pub struct HostState {
     /// `require('statuses')` module value, evaluated once from the
     /// embedded JS factory (`modules/statuses.js`).
     pub statuses_module: Option<Value>,
+    /// `require('punycode')` module value, evaluated once from the
+    /// embedded JS factory (`modules/punycode.js`).
+    pub punycode_module: Option<Value>,
     /// `require('express')` module value (real Express-compatible
     /// `createApplication` factory), evaluated once from the embedded JS
     /// factory (`modules/express.js`).
@@ -95,6 +98,7 @@ impl NodeHost {
             url_class: None,
             stream_module: None,
             async_hooks_module: None,
+            punycode_module: None,
             http_errors_module: None,
             statuses_module: None,
             express_module: None,
