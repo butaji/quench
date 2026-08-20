@@ -74,6 +74,9 @@ fn file_handle(fd: i32) -> Result<Value, VmError> {
         ("sync", crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_SYNC)),
         ("write", crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_WRITE)),
         ("read", crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_READ)),
+        ("chmod", crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_CHMOD)),
+        ("chown", crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_CHOWN)),
+        ("utimes", crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_UTIMES)),
     ] {
         let desc = quench_runtime::host_api::object(vec![
             ("value".to_string(), cap), ("writable".to_string(), Value::Boolean(true)),
@@ -126,6 +129,22 @@ pub fn filehandle_read(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Valu
     });
     drop(bytes);
     Ok(settle(result))
+}
+pub fn filehandle_chmod(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> {
+    let mode = match a.first() { Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => *n as u32, _ => return Ok(settle(Err(crate::modules::buffer_enc::invalid_arg_type("The \"mode\" argument must be a number".into())))) };
+    Ok(settle(fd(r).and_then(|x| super::fs::fd_chmod(x, mode))))
+}
+pub fn filehandle_chown(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> {
+    let parse = |v: Option<&Value>| match v { Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => Ok(*n as u32), _ => Err(crate::modules::buffer_enc::invalid_arg_type("uid and gid must be numbers".into())) };
+    let uid = match parse(a.first()) { Ok(v) => v, Err(e) => return Ok(settle(Err(e))) };
+    let gid = match parse(a.get(1)) { Ok(v) => v, Err(e) => return Ok(settle(Err(e))) };
+    Ok(settle(fd(r).and_then(|x| super::fs::fd_chown(x, uid, gid))))
+}
+pub fn filehandle_utimes(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> {
+    let parse = |v: Option<&Value>| match v { Some(Value::Number(n)) if n.is_finite() => Ok(*n), _ => Err(crate::modules::buffer_enc::invalid_arg_type("atime and mtime must be numbers".into())) };
+    let atime = match parse(a.first()) { Ok(v) => v, Err(e) => return Ok(settle(Err(e))) };
+    let mtime = match parse(a.get(1)) { Ok(v) => v, Err(e) => return Ok(settle(Err(e))) };
+    Ok(settle(fd(r).and_then(|x| super::fs::fd_utimes(x, atime, mtime))))
 }
 pub fn filehandle_datasync(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, _a: &[Value]) -> Result<Value, VmError> { Ok(settle(fd(r).map(|_| Value::Undefined))) }
 pub fn filehandle_sync(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, _a: &[Value]) -> Result<Value, VmError> { Ok(settle(fd(r).map(|_| Value::Undefined))) }
