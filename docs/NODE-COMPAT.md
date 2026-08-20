@@ -44,7 +44,7 @@ Legend
 | crypto | 🟡 | partial | `randomBytes` and in-place `randomFillSync` use OS randomness; constants are exposed; hash/cipher/key APIs explicitly unsupported |
 | domain | 🟡 | missing | not resolvable |
 | module | 🟡 | partial | CJS require; ESM APIs missing |
-| process | 🟡 | partial | properties + basic; signals/lifecycle gaps |
+| process | 🟡 | partial | core properties/basic lifecycle; `sourceMapsEnabled` is documented false; `binding(name)` is present but explicitly errors because no internal-binding ABI exists; signals/report/capture callback APIs remain unavailable |
 | util | 🟡 | real | upstream selects green; missing diff, transferableAbort* |
 | tls | 🟡 | stub | empty namespace (Bun also partial) |
 | v8 | 🟡 | missing | not resolvable |
