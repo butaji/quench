@@ -338,10 +338,7 @@ pub(crate) fn construct_promise(executor: &Value) -> Result<Value, VmError> {
     let reject = bound_settler(Builtin::PromiseReject, promise_data, 1.0);
     let receiver = match executor {
         Value::Function(function)
-            if matches!(
-                function.strictness,
-                crate::ops::FunctionStrictness::Sloppy
-            ) =>
+            if matches!(function.strictness, crate::ops::FunctionStrictness::Sloppy) =>
         {
             crate::vm::current_global_object()
         }
@@ -416,7 +413,6 @@ fn reject_receiver(receiver: Option<&Value>, arguments: &[Value]) -> Result<Valu
         None => Ok(promise_reject(arguments)),
     }
 }
-
 
 fn maybe_handler(arguments: &[Value], index: usize) -> Option<Value> {
     arguments

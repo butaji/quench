@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::{execute::VmError, value::Value};
 
 pub(crate) fn names(target: Option<&Value>) -> Result<Value, VmError> {
@@ -374,13 +376,17 @@ fn keys(target: &Value, symbols: bool) -> Vec<String> {
 }
 
 fn builtin_keys(builtin: crate::ops::Builtin, symbols: bool) -> Vec<String> {
-    let mut keys: Vec<String> = crate::builtins::own_property_names(builtin)
+    let mut keys = Vec::new();
+    let mut seen = HashSet::new();
+    for key in crate::builtins::own_property_names(builtin)
         .iter()
         .map(|key| (*key).to_string())
-        .collect();
-    keys.extend(crate::builtins::intrinsic_override_keys(builtin));
-    keys.sort();
-    keys.dedup();
+        .chain(crate::builtins::intrinsic_override_keys(builtin))
+    {
+        if seen.insert(key.clone()) {
+            keys.push(key);
+        }
+    }
     keys.into_iter()
         .filter(|key| key.contains('\0') == symbols)
         .filter(

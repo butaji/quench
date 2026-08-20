@@ -144,9 +144,6 @@ fn require_normal_parameter_completion(
     }
 }
 pub(crate) fn next(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
-    if std::env::var_os("QDEBUG").is_some() {
-        eprintln!("generator::next entry");
-    }
     let generator = generator_handle(receiver, "next")?;
     let completion = resume(&generator, Resume::Next(first_argument(arguments)));
     if generator.function.is_async {
@@ -293,16 +290,6 @@ pub(crate) fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value,
 }
 
 fn resume_inner(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
-    if std::env::var_os("QDEBUG").is_some() {
-        let pc = machine_pc(generator);
-        let op = generator.function.ops().get(pc).map(std::mem::discriminant);
-        eprintln!(
-            "resume_inner async={} done={} pc={} op={op:?}",
-            generator.function.is_async,
-            *generator.done.borrow(),
-            pc
-        );
-    }
     if *generator.done.borrow() {
         return completed_resume(resume);
     }

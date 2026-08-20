@@ -315,7 +315,7 @@ fn set_offset(arguments: &[Value]) -> Result<usize, VmError> {
         return Ok(0);
     }
     let number = crate::intl::tolocale::value::to_number_result(Some(value))?;
-    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
+    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 || number > usize::MAX as f64 {
         return Err(crate::value::error::throw_range_error(
             "offset is out of bounds",
         ));
@@ -340,14 +340,18 @@ fn set(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> 
         ))?;
         source_length.max(0.0) as usize
     };
-    if offset + source_length > target_length {
+    if offset > target_length || source_length > target_length - offset {
         return Err(crate::value::error::throw_range_error(
             "offset is out of bounds",
         ));
     }
-    for index in 0..source_length {
-        let value = crate::execute::get_property_result(&source, &index.to_string())?;
-        if let Some(result) = set_property(target, &(offset + index).to_string(), &value) {
+    // TypedArray.prototype.set reads all source elements before writing any
+    // target element.  This is observable when source and target overlap.
+    let values = (0..source_length)
+        .map(|index| crate::execute::get_property_result(&source, &index.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    for (index, value) in values.iter().enumerate() {
+        if let Some(result) = set_property(target, &(offset + index).to_string(), value) {
             result?;
         }
     }
@@ -379,4 +383,17 @@ fn fill(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError>
         _ => return Err(crate::vm::not_callable()),
     }
     Ok(receiver.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::set_offset;
+    use crate::value::Value;
+
+    #[test]
+    fn set_offset_rejects_non_finite_values() {
+        let error = set_offset(&[Value::Undefined, Value::Number(f64::INFINITY)])
+            .expect_err("a non-finite offset must be rejected");
+        assert!(matches!(error, crate::vm::VmError::Thrown(_)));
+    }
 }
