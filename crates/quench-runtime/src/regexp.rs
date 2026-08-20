@@ -354,13 +354,29 @@ pub fn exec(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmEr
 }
 
 pub(crate) fn has_regexp_internal_slot(value: &Value) -> bool {
-    matches!(
-        value,
-        Value::Object(properties)
-            if properties
-                .iter()
-                .any(|(name, value)| name == "\0regexp" && matches!(value, Value::Boolean(true)))
-    )
+    // Per spec, RegExp.prototype.compile only accepts the receiver if it is a
+    // direct instance of the realm's RegExp (subclasses throw TypeError because
+    // they lack the [[RegExpMatcher]] internal slot). We use `\0regexp=true`
+    // as a proxy for that slot AND require the prototype to be exactly
+    // RegExp.prototype (so a subclass instance, whose prototype is its
+    // subclass prototype rather than RegExp.prototype, is rejected).
+    let Value::Object(properties) = value else {
+        return false;
+    };
+    let has_marker = properties
+        .iter()
+        .any(|(name, v)| name == "\0regexp" && matches!(v, Value::Boolean(true)));
+    if !has_marker {
+        return false;
+    }
+    crate::execute::get_property_result(value, "\0prototype")
+        .map(|prototype| {
+            matches!(
+                prototype,
+                Value::Builtin(crate::ops::Builtin::RegExpPrototype)
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn build_match_result(
