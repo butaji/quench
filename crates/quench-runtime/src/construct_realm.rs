@@ -35,31 +35,46 @@ pub(crate) fn get_prototype_from_constructor(
 }
 
 fn constructor_realm(constructor: &Value) -> crate::ops::RealmId {
-    match constructor {
-        Value::Function(function) => function_realm_id(function),
-        Value::BoundFunction(bound) => bound
-            .properties
-            .borrow()
-            .iter()
-            .rev()
-            .find_map(|(key, value)| {
-                (key == "\0realm").then(|| match value {
-                    Value::HostCapability(token) => token.realm(),
-                    Value::Number(number) => crate::ops::RealmId::new(*number as u64),
-                    _ => bound.realm,
+    fn value_realm(value: &Value) -> Option<crate::ops::RealmId> {
+        match value {
+            Value::Function(function) => Some(function_realm_id(function)),
+            Value::BoundFunction(bound) => bound
+                .properties
+                .borrow()
+                .iter()
+                .rev()
+                .find_map(|(key, value)| {
+                    (key == "\0realm").then(|| match value {
+                        Value::HostCapability(token) => Some(token.realm()),
+                        Value::Number(number) => Some(crate::ops::RealmId::new(*number as u64)),
+                        _ => None,
+                    })?
                 })
-            })
-            .unwrap_or_else(|| match &bound.receiver {
-                Value::HostCapability(capability) => capability.realm(),
-                _ => bound.realm,
-            }),
-        _ => crate::ops::RealmId::ROOT,
+                .or_else(|| match &bound.receiver {
+                    Value::HostCapability(capability) => Some(capability.realm()),
+                    receiver => value_realm(receiver),
+                })
+                .or_else(|| value_realm(&bound.target)),
+            _ => None,
+        }
     }
+    value_realm(constructor).unwrap_or(crate::ops::RealmId::ROOT)
 }
 
 pub(crate) fn function_realm_id(
     function: &crate::value::FunctionValue,
 ) -> crate::ops::RealmId {
+    fn global_realm(value: &Value) -> Option<crate::ops::RealmId> {
+        match value {
+            Value::BindingCell(cell) => global_realm(&cell.borrow()),
+            Value::ObjectAlias(alias) => alias
+                .0
+                .borrow()
+                .upgrade()
+                .and_then(|object| crate::vm::realm_id_for_global_value(&Value::Object(object))),
+            value => crate::vm::realm_id_for_global_value(value),
+        }
+    }
     function
         .properties
         .borrow()
@@ -72,15 +87,7 @@ pub(crate) fn function_realm_id(
                 _ => crate::ops::RealmId::ROOT,
             })
         })
-        .or_else(|| {
-            fn global_realm(value: &Value) -> Option<crate::ops::RealmId> {
-                match value {
-                    Value::BindingCell(cell) => global_realm(&cell.borrow()),
-                    value => crate::vm::realm_id_for_global_value(value),
-                }
-            }
-            global_realm(&function.captures.get(0))
-        })
+        .or_else(|| global_realm(&function.captures.get(0)))
         .unwrap_or(crate::ops::RealmId::ROOT)
 }
 
@@ -127,6 +134,14 @@ fn realm_default_prototype(target: &Value, new_target: &Value) -> Option<Value> 
             if !matches!(target, Value::Builtin(_)) {
                 return object_default_prototype(&global);
             }
+        }
+    }
+    if let Value::Builtin(builtin) = target {
+        if let Some(prototype) = crate::builtin_meta::instance_prototype(*builtin) {
+            return Some(crate::vm::realm_intrinsic_for(
+                constructor_realm(new_target),
+                prototype,
+            ));
         }
     }
     builtin_default_prototype(target)

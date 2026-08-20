@@ -485,7 +485,10 @@ fn validate_define_invariant(
 
 pub fn builtin(builtin: Builtin, arguments: &[Value]) -> Result<Value, VmError> {
     match builtin {
-        Builtin::Proxy => proxy_new(arguments),
+        // Proxy is a constructor only; invoking it without `new` must throw.
+        Builtin::Proxy => Err(crate::value::error::throw_type_error(
+            "Proxy constructor must be called with new",
+        )),
         Builtin::ProxyRevocable => proxy_revocable(arguments),
         Builtin::ReflectGet => reflect_get(arguments),
         Builtin::ReflectSet => reflect_set(arguments),

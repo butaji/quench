@@ -358,8 +358,13 @@ fn execute_function_call(
     arguments: &[crate::value::Value],
 ) -> Result<crate::value::Value, crate::execute::VmError> {
     let receiver = receiver.ok_or(crate::execute::VmError::NotCallable)?;
-    if let crate::value::Value::BoundFunction(bound) = receiver {
-        return crate::vm::with_realm(bound.realm, || {
+    let realm = match receiver {
+        crate::value::Value::Function(function) => crate::vm::realm_id_for_global_value(&function.captures.get(0)),
+        crate::value::Value::BoundFunction(bound) => Some(bound.realm),
+        _ => None,
+    };
+    if let Some(realm) = realm {
+        return crate::vm::with_realm(realm, || {
             execute_function_call_in_realm(receiver, arguments)
         })
         .unwrap_or_else(|| execute_function_call_in_realm(receiver, arguments));
