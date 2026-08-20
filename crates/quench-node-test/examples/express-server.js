@@ -1,12 +1,12 @@
-// Smallest possible Express-style app using only the Node API
-// surface that `quench-node` exposes. `node:http`'s createServer
-// is currently a shape stub in the host: it returns an object
-// whose `listen`/`close` are `undefined` and it never stores the
-// request handler or serves a socket. So this example detects
-// that and simulates the request/response cycle in-process,
-// dispatching fake req/res objects through the route table.
+// Smallest possible Express-style app using only the Node API surface
+// that `quench-node` exposes. `node:http`'s createServer is real, so
+// the app builds a route table and serves actual requests over a
+// loopback socket: a `net` client issues one HTTP request and asserts
+// the response the route table produced.
 
 const { createServer } = require('node:http');
+const net = require('node:net');
+const assert = require('assert');
 
 function createApp() {
   const middlewares = [];
@@ -20,12 +20,7 @@ function createApp() {
     },
     listen(port, cb) {
       const server = createServer((req, res) => app.handle(req, res));
-      if (server && typeof server.listen === 'function') {
-        return server.listen(port, cb); // real host someday
-      }
-      // Stub host: no sockets. Run cb so callers see "listening".
-      if (cb) cb();
-      return server;
+      return server.listen(port, cb);
     },
     handle(req, res) {
       for (const mw of middlewares) mw(req, res);
@@ -42,43 +37,29 @@ function createApp() {
 }
 
 const app = createApp();
-app.use((req) => console.log('mw: %s %s', req.method, req.url));
+app.use((req, res) => res.setHeader('x-handled-by', 'quench'));
 app.get('/hello', (req, res) => res.end('{"msg":"hi"}'));
 app.get('/users/1', (req, res) => res.end('{"id":1}'));
+app.get('/missing', (req, res) => res.writeHead(404, { 'Content-Type': 'text/plain' }));
 
-const results = [];
-function fakeRes(req) {
-  return {
-    statusCode: 200,
-    end(body) {
-      results.push(req.method + ' ' + req.url + ' -> ' + this.statusCode + ' ' + body);
-    },
-  };
-}
+const server = app.listen(0, () => {
+  const port = server.address().port;
 
-const server = app.listen(3000, () => console.log('listening on 3000 (simulated)'));
-for (const req of [
-  { method: 'GET', url: '/hello' },
-  { method: 'GET', url: '/users/1' },
-  { method: 'GET', url: '/missing' },
-]) {
-  app.handle(req, fakeRes(req));
-}
-
-const expected = [
-  'GET /hello -> 200 {"msg":"hi"}',
-  'GET /users/1 -> 200 {"id":1}',
-  'GET /missing -> 404 not found',
-];
-let ok = 0;
-for (let i = 0; i < expected.length; i++) {
-  if (results[i] === expected[i]) {
-    ok += 1;
-    console.log('OK %s', results[i]);
-  } else {
-    console.log('MISMATCH want=%s got=%s', expected[i], results[i]);
-  }
-}
-console.log('express-server: server shape %s', typeof server);
-if (ok !== expected.length) process.exit(1);
-console.log('express-server: ok');
+  const client = net.connect(port, '127.0.0.1', () => {
+    client.write('GET /hello HTTP/1.1\r\nHost: localhost\r\n\r\n');
+  });
+  let received = '';
+  client.setEncoding('utf8');
+  client.on('data', (chunk) => {
+    received += chunk;
+  });
+  client.on('end', () => {
+    assert.match(received, /^HTTP\/1\.1 200 OK/, 'status line');
+    assert.ok(received.endsWith('{"msg":"hi"}'), 'routed body');
+    assert.match(received, /x-handled-by: quench/i, 'middleware header');
+    server.close(() => {
+      console.log('express-server: ok (routed %s over real http)', port);
+    });
+  });
+  client.on('error', () => {});
+});
