@@ -372,8 +372,10 @@ fn trim_reason(reason: &str) -> String {
 
 fn write_mode(out_dir: &Path, label: &str, outcomes: &Outcomes) {
     let path = out_dir.join(format!("{label}.txt"));
+    let mut entries = outcomes.per_test.clone();
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
     let mut text = String::new();
-    for (path, outcome) in &outcomes.per_test {
+    for (path, outcome) in &entries {
         match outcome {
             TestOutcome::Pass => text.push_str(&format!("PASS\t{}\n", path.display())),
             TestOutcome::Fail { reason } => {
