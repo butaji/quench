@@ -74,6 +74,13 @@ const CAP_FSP_READLINK: u16 = 0x114E;
 const CAP_FSP_CHMOD: u16 = 0x114F;
 const CAP_FSP_TRUNCATE: u16 = 0x1150;
 const CAP_FSP_REALPATH: u16 = 0x1151;
+const CAP_FSP_OPEN: u16 = 0x1170;
+const CAP_FSP_FILEHANDLE_STAT: u16 = 0x1171;
+const CAP_FSP_FILEHANDLE_CLOSE: u16 = 0x1172;
+const CAP_FSP_FILEHANDLE_TRUNCATE: u16 = 0x1173;
+const CAP_FSP_FILEHANDLE_DATASYNC: u16 = 0x1174;
+const CAP_FSP_FILEHANDLE_SYNC: u16 = 0x1175;
+ 
 
 pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
     Some(match cap {
@@ -157,8 +164,13 @@ fn fs_dispatch_promises(cap: u16) -> Option<CallHandler> {
         CAP_FSP_MKDTEMP => fs_promises::mkdtemp,
         CAP_FSP_READLINK => fs_promises::readlink,
         CAP_FSP_CHMOD => fs_promises::chmod,
-        CAP_FSP_TRUNCATE => fs_promises::truncate,
         CAP_FSP_REALPATH => fs_promises::realpath,
+        CAP_FSP_OPEN => fs_promises::open,
+        CAP_FSP_FILEHANDLE_STAT => fs_promises::filehandle_stat,
+        CAP_FSP_FILEHANDLE_CLOSE => fs_promises::filehandle_close,
+        CAP_FSP_FILEHANDLE_TRUNCATE => fs_promises::filehandle_truncate,
+        CAP_FSP_FILEHANDLE_DATASYNC => fs_promises::filehandle_datasync,
+        CAP_FSP_FILEHANDLE_SYNC => fs_promises::filehandle_sync,
         _ => return crate::dispatch::assert_dispatch(cap),
     })
 }
