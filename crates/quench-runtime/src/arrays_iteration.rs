@@ -3,10 +3,11 @@ pub(crate) fn some(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = expect_array_like(receiver, "Array.prototype.some")?;
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
     let values = array_indexed_values(&receiver);
-    let Some(callback) = arguments.first() else {
-        return Ok(Value::Boolean(false));
-    };
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
     for (index, value) in values.iter().enumerate() {
         let args = [
@@ -27,14 +28,18 @@ pub(crate) fn every(
     arguments: &[Value],
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = expect_array_like(receiver, "Array.prototype.every")?;
-    let values = array_indexed_values(&receiver);
-    let Some(callback) = arguments.first() else {
-        return Ok(Value::Boolean(true));
-    };
+    let callback = arguments.first().ok_or_else(crate::vm::not_callable)?;
+    if !crate::conversion::is_callable(callback) {
+        return Err(crate::vm::not_callable());
+    }
+    let length = crate::builtins::map_length(&receiver)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
-    for (index, value) in values.iter().enumerate() {
+    for index in 0..length {
+        let Some(value) = crate::builtins::map_value(&receiver, index)? else {
+            continue;
+        };
         let args = [
-            value.clone(),
+            value,
             Value::Number(index as f64),
             receiver.clone(),
         ];
