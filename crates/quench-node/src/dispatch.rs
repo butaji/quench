@@ -10,6 +10,11 @@ use crate::dispatch_handlers as handlers;
 
 pub use crate::dispatch_handlers::{CallHandler, ConstructHandler};
 
+const CAP_DGRAM_CREATE:u16=0x2300;
+const CAP_DGRAM_BIND:u16=0x2301;
+const CAP_DGRAM_SEND:u16=0x2302;
+const CAP_DGRAM_CLOSE:u16=0x2303;
+const CAP_DGRAM_ADDRESS:u16=0x2304;
 const CAP_EVENTS_NEW: u16 = 0x0100;
 const CAP_EVENTS_FROM: u16 = 0x0101;
 const CAP_EVENTS_ON: u16 = 0x0102;
@@ -457,6 +462,11 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_REQ_END => crate::modules::http_client::req_end,
         CAP_HTTP_RESDATA => crate::modules::http_client::data_handler,
         CAP_HTTP_RESEND => crate::modules::http_client::res_end_handler,
+        CAP_DGRAM_CREATE => dgram_create,
+        CAP_DGRAM_BIND => dgram_bind,
+        CAP_DGRAM_SEND => dgram_send,
+        CAP_DGRAM_CLOSE => dgram_close,
+        CAP_DGRAM_ADDRESS => dgram_address,
         CAP_NET_CONNECT => net_connect,
         CAP_NET_SERVER => net_create_server_call,
         CAP_NET_ISIP => net_is_ip,
