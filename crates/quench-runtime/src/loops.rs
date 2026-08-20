@@ -375,8 +375,14 @@ fn iterate_loop_keys(
         let _binding = bind_iteration(slot, value, per_iteration);
         match execute_loop_body(registers, label, body)? {
             crate::completion::LoopTransition::Continue(_) => {}
-            crate::completion::LoopTransition::Break(_) => {
-                return Ok(crate::completion::Completion::Normal)
+            crate::completion::LoopTransition::Break(value) => {
+                // Per spec §13.7.5.13, a `break` produces a normal
+                // completion whose value is V (undefined) unless a value
+                // was supplied. Write the value into dst so callers can
+                // read it as the loop's completion.
+                let value = value.unwrap_or(crate::value::Value::Undefined);
+                crate::execute::write_value(registers, dst, value.clone());
+                return Ok(crate::completion::Completion::Normal);
             }
             crate::completion::LoopTransition::Propagate(completion) => {
                 return attach_loop_completion(registers, dst, completion);
