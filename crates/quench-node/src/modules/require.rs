@@ -70,16 +70,25 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .insert("async_hooks".to_string(), value.clone());
     }
     if matches!(spec.as_str(), "test" | "node:test") {
-        if let Some(cached) = state.borrow().module_cache.get("test") { return Ok(cached.clone()); }
+        if let Some(cached) = state.borrow().module_cache.get("test") {
+            return Ok(cached.clone());
+        }
         let value = crate::modules::node_test::build(state)?;
-        state.borrow_mut().module_cache.insert("test".to_string(), value.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("test".to_string(), value.clone());
         return Ok(value);
     }
-    if matches!(spec.as_str(), "readline/promises" | "node:readline/promises") {
+    if matches!(
+        spec.as_str(),
+        "readline/promises" | "node:readline/promises"
+    ) {
         let value = crate::host::namespace_object(vec![(
             "createInterface",
             crate::host::capability(crate::registry::SPEC_READLINE),
-        )]).unwrap_or(Value::Undefined);
+        )])
+        .unwrap_or(Value::Undefined);
         return Ok(value);
     }
     if matches!(spec.as_str(), "punycode" | "node:punycode") {
@@ -98,7 +107,10 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             return Ok(cached.clone());
         }
         let value = crate::modules::perf_hooks::build(state)?;
-        state.borrow_mut().module_cache.insert("perf_hooks".to_string(), value.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("perf_hooks".to_string(), value.clone());
         return Ok(value);
     }
     if matches!(spec.as_str(), "trace_events" | "node:trace_events") {
@@ -106,7 +118,10 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             return Ok(cached.clone());
         }
         let value = crate::modules::trace_events::build(state)?;
-        state.borrow_mut().module_cache.insert("trace_events".to_string(), value.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("trace_events".to_string(), value.clone());
         return Ok(value);
     }
     if matches!(spec.as_str(), "http-errors" | "node:http-errors") {
@@ -152,7 +167,10 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             return Ok(cached.clone());
         }
         let value = crate::modules::mime_db::build(state)?;
-        state.borrow_mut().module_cache.insert("mime-db".to_string(), value.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("mime-db".to_string(), value.clone());
         return Ok(value);
     }
     if matches!(spec.as_str(), "express" | "node:express") {
@@ -177,6 +195,28 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .insert("express_request".to_string(), value.clone());
         return Ok(value);
     }
+    if matches!(spec.as_str(), "koa" | "node:koa") {
+        if let Some(cached) = state.borrow().module_cache.get("koa") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::koa::build(state)?;
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("koa".to_string(), value.clone());
+        return Ok(value);
+    }
+    if matches!(spec.as_str(), "fastify" | "node:fastify") {
+        if let Some(cached) = state.borrow().module_cache.get("fastify") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::fastify::build(state)?;
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("fastify".to_string(), value.clone());
+        return Ok(value);
+    }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
         return Ok(cached.clone());
     }
@@ -188,7 +228,10 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
 }
 
 /// CommonJS file loader: resolve, cache, wrap, execute, return exports.
-pub(crate) fn load_file_module(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<Value, VmError> {
+pub(crate) fn load_file_module(
+    state: &Rc<RefCell<HostState>>,
+    spec: &str,
+) -> Result<Value, VmError> {
     let path = resolve_path(state, spec)?;
     let key = path.to_string_lossy().into_owned();
     if let Some(cached) = state.borrow().module_cache.get(&key) {
@@ -267,11 +310,14 @@ pub fn wrap_cjs(state: &Rc<RefCell<HostState>>, filename: &str, source: &str) ->
         .parent()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| "/".to_string());
-    state.borrow_mut().pending_modules.push(crate::host::PendingModule {
-        module,
-        filename: filename.to_string(),
-        dirname,
-    });
+    state
+        .borrow_mut()
+        .pending_modules
+        .push(crate::host::PendingModule {
+            module,
+            filename: filename.to_string(),
+            dirname,
+        });
     format!("__quench_cjs_wrap__(function (exports, require, module, __filename, __dirname) {{\n{source}\n}})")
 }
 
@@ -285,25 +331,7 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     };
     let exports = quench_runtime::execute::get_property_result(&pending.module, "exports")?;
     state.borrow_mut().dir_stack.push(pending.dirname.clone());
-    // Build a module-scoped `require` closure that captures this
-    // module's dirname AND the require_for host capability as closure
-    // parameters (no global lookup, no context-guard dependency). The
-    // closure is a real JS function returned by reducing a tiny factory
-    // source and calling it with the capability + dir.
-    let require_factory_src = "(function(cap, d) { return function(s) { return cap(d, s); }; })";
-    let factory_ops = quench_runtime::reduce::reduce_global_script_source(require_factory_src)
-        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
-    let context = quench_runtime::vm::current_context();
-    let mut registers = Vec::new();
-    let factory = quench_runtime::vm::with_current_context(&context, || {
-        quench_runtime::vm::execute_in_place_context(factory_ops.ops(), &mut registers, &context)
-    })?;
-    let require_for = crate::host::capability(crate::registry::SPEC_REQUIRE_FOR);
-    let require_fn = quench_runtime::vm::call_value(
-        &factory,
-        &Value::Undefined,
-        &[require_for, Value::String(pending.dirname.clone())],
-    )?;
+    let require_fn = module_require(state, &pending.dirname)?;
     let result = quench_runtime::vm::call_value(
         function,
         &Value::Undefined,
@@ -317,6 +345,23 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     );
     state.borrow_mut().dir_stack.pop();
     result
+}
+
+fn module_require(_state: &Rc<RefCell<HostState>>, dirname: &str) -> Result<Value, VmError> {
+    let source = "(function(cap, d) { return function(s) { return cap(d, s); }; })";
+    let ops = quench_runtime::reduce::reduce_global_script_source(source)
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = Vec::new();
+    let factory = quench_runtime::vm::with_current_context(&context, || {
+        quench_runtime::vm::execute_in_place_context(ops.ops(), &mut registers, &context)
+    })?;
+    let require_for = crate::host::capability(crate::registry::SPEC_REQUIRE_FOR);
+    quench_runtime::vm::call_value(
+        &factory,
+        &Value::Undefined,
+        &[require_for, Value::String(dirname.to_string())],
+    )
 }
 
 pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
@@ -336,7 +381,6 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
             "sleep".to_string(),
             crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
         )])),
-        // `internal/event_target` — only the public-test-facing symbol.
         "internal/event_target" => Some(crate::host::namespace_object_from_pairs(vec![(
             "kWeakHandler".to_string(),
             Value::String("kWeakHandler\0quench".to_string()),
@@ -345,8 +389,12 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         "url" => Some(crate::modules::url::build_root(state)),
         "querystring" => Some(crate::modules::querystring::build()),
         "test" => {
-            if let Some(cached) = state.borrow().node_test_module.clone() { Some(cached) }
-            else { let value = crate::modules::node_test::build(state).ok()?; Some(value) }
+            if let Some(cached) = state.borrow().node_test_module.clone() {
+                Some(cached)
+            } else {
+                let value = crate::modules::node_test::build(state).ok()?;
+                Some(value)
+            }
         }
         "punycode" => {
             if let Some(cached) = state.borrow().punycode_module.clone() {
@@ -358,8 +406,12 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
             }
         }
         "trace_events" => {
-            if let Some(cached) = state.borrow().trace_events_module.clone() { Some(cached) }
-            else { let value = crate::modules::trace_events::build(state).ok()?; Some(value) }
+            if let Some(cached) = state.borrow().trace_events_module.clone() {
+                Some(cached)
+            } else {
+                let value = crate::modules::trace_events::build(state).ok()?;
+                Some(value)
+            }
         }
         "os" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::os::build(),
@@ -398,7 +450,7 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
                 state.borrow_mut().perf_hooks_module = Some(value.clone());
                 Some(value)
             }
-        },
+        }
         "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
         "cluster" => crate::modules::compat_extra::cluster(state).ok(),
         "domain" => crate::modules::compat_extra::domain(state).ok(),
