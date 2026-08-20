@@ -237,8 +237,21 @@ impl Environment {
             .eval_names
             .borrow_mut()
             .get_or_insert_with(HashMap::new)
-            .insert(name.to_string(), binding);
+            .insert(name.to_string(), binding.clone());
+        if name == "arguments" {
+            caller.alias_eval_binding(name, binding);
+        }
         true
+    }
+
+    fn alias_eval_binding(&self, name: &str, binding: BindingRef) {
+        self.eval_names
+            .borrow_mut()
+            .get_or_insert_with(HashMap::new)
+            .insert(name.to_string(), binding.clone());
+        if let Some(caller) = &self.caller {
+            caller.alias_eval_binding(name, binding);
+        }
     }
 
     pub(crate) fn alias_binding(&self, name: &str, binding: Rc<RefCell<Value>>) {
