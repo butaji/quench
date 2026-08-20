@@ -18,7 +18,7 @@ Legend
 | assert | 🟢 | real | 40/40 compat + upstream selects green |
 | buffer | 🟢 | real | upstream selects green |
 | console | 🟢 | real | upstream selects green |
-| dgram | 🟢 | stub | createSocket cap only; needs dgram socket impl |
+| dgram | 🟢 | partial | real UDP bind/send/close/address; focused fixture green |
 | punycode | 🟢 | real | RFC 3492 encode/decode/toASCII/toUnicode/ucs2; compat fixture green |
 | events | 🟢 | real | upstream selects green |
 | fs | 🟢 | real | upstream selects green; edge cases remain |
@@ -74,11 +74,11 @@ Legend
 | TextDecoder / TextEncoder | 🟢 | real | |
 | WebAssembly | 🟢 | intrinsic | |
 | URLSearchParams | 🟢 | real global | wired to native `SPEC_URL_SEARCHPARAMS_NEW` |
-| Blob, FormData, Headers, Request, Response, MessageChannel/Port, BroadcastChannel, CompressionStream, DecompressionStream, ReadableStream{,BYOB}, WritableStream, TransformStream + controllers/readers/strategies, TextDecoder/EncoderStream, SubtleCrypto/Crypto/CryptoKey, CustomEvent, DOMException, performance, Performance* | 🟢/🟡 | missing | runtime primitives not yet available |
+| Blob, FormData, Headers, Request, Response, MessageChannel/Port, BroadcastChannel, CompressionStream, DecompressionStream, ReadableStream{,BYOB}, WritableStream, TransformStream + controllers/readers/strategies, TextDecoder/EncoderStream, SubtleCrypto/Crypto/CryptoKey, CustomEvent, DOMException, performance, Performance* | 🟢/🟡 | partial | Headers/FormData/Blob/Request/Response/CustomEvent/DOMException/MessageChannel are embedded-JS; remaining primitives unavailable |
 
 ## Verification evidence
 
-- `cargo run -p quench-node-test --bin run-compat` — 47 passed, 0 failed.
+- `cargo run -p quench-node-test --bin run-compat` — 49 passed, 0 failed.
 - `cargo run -p quench-node-test --bin run-parallel` — 178 passed, 0 failed
   (manifest: `crates/quench-node-test/node-tests/parallel.txt`).
 - Express smoke app runs under `quench-node`: `curl` → `HTTP/1.1 200 OK`.
