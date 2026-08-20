@@ -279,7 +279,7 @@ fn dynamic_value(
 ) -> Value {
     let captures = crate::environment::Environment::new();
     captures.set(0, crate::vm::current_global_object());
-    crate::functions::make(
+    let value = crate::functions::make(
         crate::machine::FunctionCode::from_ops(ops),
         count,
         length,
@@ -291,7 +291,17 @@ fn dynamic_value(
             is_async,
             mapped_arguments: true,
         },
-    )
+    );
+    if let Value::Function(function) = &value {
+        if let Some(token) = crate::vm::realm_token(crate::vm::current_context_or_default().realm())
+        {
+            function
+                .properties
+                .borrow_mut()
+                .push(("\0realm".to_string(), token));
+        }
+    }
+    value
 }
 
 fn function_source(
