@@ -16,8 +16,8 @@ fn with_resolvers(receiver: Option<&Value>) -> Result<Value, VmError> {
             promise.set_prototype(prototype);
         }
     }
-    let resolve = bound_settler(Builtin::PromiseResolve, &promise);
-    let reject = bound_settler(Builtin::PromiseReject, &promise);
+    let resolve = bound_settler(Builtin::PromiseResolve, &promise, 1.0);
+    let reject = bound_settler(Builtin::PromiseReject, &promise, 1.0);
     Ok(Value::Object(Rc::new(crate::value::ObjectData::new(vec![
         ("promise".to_string(), Value::Promise(promise)),
         ("resolve".to_string(), resolve),
