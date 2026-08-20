@@ -220,6 +220,7 @@ const CAP_STRUCTURED_CLONE: u16 = 0x1f00;
 const CAP_FETCH: u16 = 0x1f01;
 const CAP_ABORT_CONTROLLER: u16 = 0x1f02;
 const CAP_ABORT_SIGNAL: u16 = 0x1f03;
+const CAP_REQUIRE_FOR: u16 = 0x1f04;
 const CAP_TEST_RUN: u16 = 0x1b00;
 const CAP_TEST_SKIP: u16 = 0x1b01;
 
@@ -451,6 +452,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_NET_SOCKET_PAUSE => crate::modules::net::socket_pause,
         CAP_NET_SOCKET_RESUME => crate::modules::net::socket_resume,
         CAP_REQUIRE => node_require,
+        CAP_REQUIRE_FOR => node_require_for,
         CAP_CJS_WRAP => cjs_wrap,
         CAP_UTIL_GETCALLSITES => util_get_call_sites,
         CAP_BUFFER_ATOB => buffer_atob,

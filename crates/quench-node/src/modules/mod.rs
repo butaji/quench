@@ -5,6 +5,7 @@ pub mod express;
 pub mod express_request;
 
 pub mod http_errors;
+pub mod mime_db;
 pub mod statuses;
 pub mod assert;
 pub mod async_hooks;
