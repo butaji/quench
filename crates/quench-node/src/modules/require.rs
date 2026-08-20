@@ -78,6 +78,27 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .borrow_mut()
             .module_cache
             .insert("http-errors".to_string(), value.clone());
+    }
+    if matches!(spec.as_str(), "statuses") {
+        if let Some(cached) = state.borrow().module_cache.get("statuses") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::statuses::build(state)?;
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("statuses".to_string(), value.clone());
+        return Ok(value);
+    }
+    if matches!(spec.as_str(), "express" | "node:express") {
+        if let Some(cached) = state.borrow().module_cache.get("express") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::express::build(state)?;
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("express".to_string(), value.clone());
         return Ok(value);
     }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
