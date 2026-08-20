@@ -15,7 +15,7 @@ use crate::host::HostState;
 use crate::modules::net;
 
 /// Hidden property mapping a `res` object to its host-side state.
-const RES_ID_PROP: &str = "\0quench:http:res:id";
+pub(crate) const RES_ID_PROP: &str = "\0quench:http:res:id";
 
 pub struct HttpState {
     next_res: u64,
@@ -32,6 +32,14 @@ pub struct Conn {
     pub server: Value,
     pub socket: Value,
     pub buffer: Vec<u8>,
+    /// The parsed `req` value, while this connection streams a request body.
+    pub req: Option<Value>,
+    /// Bytes of the request body still expected (from Content-Length).
+    pub body_remaining: usize,
+    /// Whether the request body fully arrived (`'end'` was emitted).
+    pub body_done: bool,
+    /// Whether the request head has been consumed.
+    pub head_parsed: bool,
 }
 
 /// One pending response, keyed by `RES_ID_PROP` on the `res` object.
@@ -101,6 +109,10 @@ pub fn connection_handler(
             server: receiver.cloned().unwrap_or(Value::Undefined),
             socket: socket.clone(),
             buffer: Vec::new(),
+            req: None,
+            body_remaining: 0,
+            body_done: true,
+            head_parsed: false,
         },
     );
     let data_cap = crate::host::capability(crate::registry::NodeSpec::new("http:data", 0x0F08));
@@ -112,7 +124,7 @@ pub fn connection_handler(
     Ok(Value::Undefined)
 }
 
-/// `'data'` handler: buffer bytes and parse a request head.
+/// `'data'` handler: buffer bytes, then parse the head and stream body.
 pub fn data_handler(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
@@ -128,10 +140,77 @@ pub fn data_handler(
             conn.buffer.extend_from_slice(&bytes);
         }
     }
-    try_parse(state, socket_id)
+    feed_conn(state, socket_id)
 }
 
-fn chunk_bytes(value: Option<&Value>) -> Vec<u8> {
+/// Try to consume a head, then stream whatever body bytes are buffered.
+fn feed_conn(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<Value, VmError> {
+    if !conn_has_head(state, socket_id) {
+        if let Some(head) = take_head(state, socket_id) {
+            emit_request(state, socket_id, &head)?;
+        }
+    }
+    drain_body(state, socket_id)?;
+    Ok(Value::Undefined)
+}
+
+fn conn_has_head(state: &Rc<RefCell<HostState>>, socket_id: u64) -> bool {
+    state
+        .borrow()
+        .http
+        .conns
+        .get(&socket_id)
+        .map(|conn| conn.head_parsed)
+        .unwrap_or(false)
+}
+
+/// Extract a buffered request head terminator, leaving the body behind.
+fn take_head(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Option<Vec<u8>> {
+    let mut guard = state.borrow_mut();
+    let conn = guard.http.conns.get_mut(&socket_id)?;
+    let (idx, len) = head_end(&conn.buffer)?;
+    let head = conn.buffer[..idx].to_vec();
+    conn.buffer.drain(..idx + len);
+    conn.head_parsed = true;
+    Some(head)
+}
+
+/// Emit buffered request-body bytes as `'data'`, then `'end'` once the
+/// declared Content-Length arrives.
+fn drain_body(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<(), VmError> {
+    let (req, data, done) = {
+        let mut guard = state.borrow_mut();
+        let Some(conn) = guard.http.conns.get_mut(&socket_id) else {
+            return Ok(());
+        };
+        if conn.req.is_none() || conn.body_done {
+            return Ok(());
+        }
+        let take = conn.buffer.len().min(conn.body_remaining);
+        let data = conn.buffer[..take].to_vec();
+        conn.buffer.drain(..take);
+        conn.body_remaining -= take;
+        (conn.req.clone(), data, conn.body_remaining == 0)
+    };
+    if let Some(req) = req {
+        if !data.is_empty() {
+            net::emit(state, &req, "data", vec![make_buffer(&data)])?;
+        }
+        if done {
+            if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
+                conn.body_done = true;
+            }
+            net::emit(state, &req, "end", Vec::new())?;
+        }
+    }
+    Ok(())
+}
+
+fn make_buffer(bytes: &[u8]) -> Value {
+    crate::modules::buffer_proto::make_buffer(bytes)
+}
+
+pub(crate) fn chunk_bytes(value: Option<&Value>) -> Vec<u8> {
     match value {
         Some(Value::String(s)) => s.as_bytes().to_vec(),
         Some(Value::Uint8Array(view)) => {
@@ -139,29 +218,6 @@ fn chunk_bytes(value: Option<&Value>) -> Vec<u8> {
         }
         _ => Vec::new(),
     }
-}
-
-/// If a full request head is buffered, parse and dispatch `'request'`.
-fn try_parse(state: &Rc<RefCell<HostState>>, socket_id: u64) -> Result<Value, VmError> {
-    let head = {
-        let mut guard = state.borrow_mut();
-        let Some(conn) = guard.http.conns.get_mut(&socket_id) else {
-            return Ok(Value::Undefined);
-        };
-        match head_end(&conn.buffer) {
-            Some((idx, len)) => {
-                let head = conn.buffer[..idx].to_vec();
-                let rest: Vec<u8> = conn.buffer[idx + len..].to_vec();
-                conn.buffer = rest;
-                Some(head)
-            }
-            None => None,
-        }
-    };
-    let Some(head) = head else {
-        return Ok(Value::Undefined);
-    };
-    emit_request(state, socket_id, &head)
 }
 
 /// Locate the header/body terminator (`\r\n\r\n` or `\n\n`).
@@ -202,27 +258,45 @@ fn build_req_res(
     socket_id: u64,
     head: &[u8],
 ) -> Result<(Value, Value), VmError> {
-    let (method, url, version, headers) = parse_request_head(head);
-    let req = host_api::object(vec![
-        ("method".to_string(), Value::String(method)),
-        ("url".to_string(), Value::String(url)),
-        (
-            "httpVersion".to_string(),
-            Value::String(version.to_string()),
-        ),
-        ("headers".to_string(), host_api::object(headers)),
-    ]);
-
+    let (req, content_length) = build_req(state, head)?;
     let (res, id) = build_res_object(state)?;
-    let socket = {
-        let guard = state.borrow();
-        guard
-            .http
-            .conns
-            .get(&socket_id)
-            .map(|conn| conn.socket.clone())
-            .unwrap_or(Value::Undefined)
-    };
+    insert_response(state, socket_id, id);
+    {
+        let mut guard = state.borrow_mut();
+        if let Some(conn) = guard.http.conns.get_mut(&socket_id) {
+            conn.req = Some(req.clone());
+            conn.body_remaining = content_length;
+            conn.body_done = content_length == 0;
+        }
+    }
+    Ok((req, res))
+}
+
+/// Build the `req` emitter from the parsed head.
+fn build_req(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<(Value, usize), VmError> {
+    let (method, url, version, headers, content_length) = parse_request_head(head);
+    let req = crate::modules::events::new_emitter_object(state)?;
+    let req = install_req_props(
+        req,
+        vec![
+            ("method".to_string(), Value::String(method)),
+            ("url".to_string(), Value::String(url)),
+            ("httpVersion".to_string(), Value::String(version)),
+            ("headers".to_string(), host_api::object(headers)),
+        ],
+    )?;
+    Ok((req, content_length))
+}
+
+/// Register a fresh response for the socket.
+fn insert_response(state: &Rc<RefCell<HostState>>, socket_id: u64, id: u64) {
+    let socket = state
+        .borrow()
+        .http
+        .conns
+        .get(&socket_id)
+        .map(|conn| conn.socket.clone())
+        .unwrap_or(Value::Undefined);
     state.borrow_mut().http.res.insert(
         id,
         Res {
@@ -233,11 +307,23 @@ fn build_req_res(
             socket,
         },
     );
-    Ok((req, res))
 }
 
-/// Parse the request line and headers from a request head.
-fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Value)>) {
+fn install_req_props(mut object: Value, props: Vec<(String, Value)>) -> Result<Value, VmError> {
+    for (key, value) in props {
+        let descriptor = host_api::object(vec![
+            ("value".to_string(), value),
+            ("writable".to_string(), Value::Boolean(true)),
+            ("enumerable".to_string(), Value::Boolean(true)),
+            ("configurable".to_string(), Value::Boolean(true)),
+        ]);
+        object = execute::define_property(object, &key, descriptor)?;
+    }
+    Ok(object)
+}
+
+/// Parse the request line and headers; return the declared Content-Length.
+fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Value)>, usize) {
     let head_str = String::from_utf8_lossy(head);
     let parts: Vec<&str> = head_str.split("\r\n").collect();
     let mut fields = parts[0].split_whitespace();
@@ -249,6 +335,7 @@ fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Valu
         .unwrap_or("1.1");
 
     let mut headers: Vec<(String, Value)> = Vec::new();
+    let mut content_length = 0usize;
     for line in parts.iter().skip(1) {
         if line.is_empty() {
             break;
@@ -256,10 +343,13 @@ fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Valu
         if let Some(colon) = line.find(':') {
             let key = line[..colon].trim().to_lowercase();
             let value = line[colon + 1..].trim();
+            if key == "content-length" {
+                content_length = value.parse().unwrap_or(0);
+            }
             headers.push((key, Value::String(value.to_string())));
         }
     }
-    (method, url, version.to_string(), headers)
+    (method, url, version.to_string(), headers, content_length)
 }
 
 fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmError> {
@@ -296,172 +386,8 @@ fn res_cap(spec: crate::registry::NodeSpec) -> Value {
     crate::host::capability(spec)
 }
 
-// ---- response methods ----
-
-fn res_state(receiver: Option<&Value>) -> Option<u64> {
-    let receiver = receiver?;
-    match quench_runtime::vm::get_property(receiver, RES_ID_PROP) {
-        Value::Number(n) if n.is_finite() && n >= 0.0 => Some(n as u64),
-        _ => None,
-    }
-}
-
-/// `res.setHeader(name, value)` — replace any existing header of that name.
-pub fn res_set_header(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let Some(id) = res_state(receiver) else {
-        return Ok(Value::Undefined);
-    };
-    let name = args.first().map(execute::to_js_string).transpose()?;
-    let value = args.get(1).map(execute::to_js_string).transpose()?;
-    let Some((name, value)) = name.zip(value) else {
-        return Ok(Value::Undefined);
-    };
-    let mut guard = state.borrow_mut();
-    if let Some(res) = guard.http.res.get_mut(&id) {
-        res.headers.retain(|(key, _)| key != &name);
-        res.headers.push((name, value));
-    }
-    Ok(Value::Undefined)
-}
-
-/// `res.writeHead(statusCode[, reasonPhrase][, headers])`.
-pub fn res_write_head(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let Some(id) = res_state(receiver) else {
-        return Ok(Value::Undefined);
-    };
-    let status = args.first().and_then(number).unwrap_or(200).clamp(100, 599);
-    let mut text = String::new();
-    if let Some(Value::String(s)) = args.get(1) {
-        text = s.clone();
-    } else if let Some(obj) = args.get(1) {
-        if matches!(obj, Value::Object(_)) {
-            let mut guard = state.borrow_mut();
-            if let Some(res) = guard.http.res.get_mut(&id) {
-                res.status = status;
-                merge_headers(res, obj)?;
-            }
-            return Ok(Value::Undefined);
-        }
-    }
-    let mut guard = state.borrow_mut();
-    if let Some(res) = guard.http.res.get_mut(&id) {
-        res.status = status;
-        if !text.is_empty() {
-            res.text = text;
-        }
-    }
-    Ok(Value::Undefined)
-}
-
-fn merge_headers(res: &mut Res, object: &Value) -> Result<(), VmError> {
-    res.headers.clear();
-    for key in execute::own_enumerable_keys(object) {
-        if let Ok(item) = execute::get_property_result(object, &key) {
-            if let Ok(value) = execute::to_js_string(&item) {
-                res.headers.push((key, value));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// `res.write(chunk)` — buffer a body fragment.
-pub fn res_write(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let Some(id) = res_state(receiver) else {
-        return Ok(Value::Undefined);
-    };
-    let bytes = if matches!(args.first(), Some(Value::Undefined)) {
-        Vec::new()
-    } else {
-        let value = args
-            .first()
-            .ok_or_else(|| execute::type_error("chunk required"))?;
-        chunk_bytes(Some(value))
-    };
-    let mut guard = state.borrow_mut();
-    if let Some(res) = guard.http.res.get_mut(&id) {
-        res.body.extend_from_slice(&bytes);
-    }
-    Ok(receiver.cloned().unwrap_or(Value::Undefined))
-}
-
-/// `res.end([chunk])` — compose and send the response, then close the
-/// socket.
-pub fn res_end(
-    state: &Rc<RefCell<HostState>>,
-    receiver: Option<&Value>,
-    args: &[Value],
-) -> Result<Value, VmError> {
-    let Some(id) = res_state(receiver) else {
-        return Ok(receiver.cloned().unwrap_or(Value::Undefined));
-    };
-    if let Some(data) = args.first() {
-        if !matches!(data, Value::Undefined) {
-            res_write(state, receiver, std::slice::from_ref(data))?;
-        }
-    }
-    let (status, text, headers, body, socket) = {
-        let guard = state.borrow();
-        let Some(res) = guard.http.res.get(&id) else {
-            return Ok(receiver.cloned().unwrap_or(Value::Undefined));
-        };
-        (
-            res.status,
-            res.text.clone(),
-            res.headers.clone(),
-            res.body.clone(),
-            res.socket.clone(),
-        )
-    };
-    let status = status_code(receiver, status);
-    let payload = host_api::bytes(&compose(status, &text, &headers, &body));
-    crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
-    crate::modules::net::socket_end(state, Some(&socket), &[])?;
-    Ok(receiver.cloned().unwrap_or(Value::Undefined))
-}
-
-/// The effective status code, honoring a `res.statusCode = n` write.
-fn status_code(receiver: Option<&Value>, default: u16) -> u16 {
-    let Some(receiver) = receiver else {
-        return default;
-    };
-    match quench_runtime::vm::get_property(receiver, "statusCode") {
-        Value::Number(n) if n.is_finite() && (100.0..600.0).contains(&n) => n as u16,
-        _ => default,
-    }
-}
-
-/// Serialize an HTTP/1.1 response.
-fn compose(status: u16, text: &str, headers: &[(String, String)], body: &[u8]) -> Vec<u8> {
-    let text = if text.is_empty() { "OK" } else { text };
-    let mut out = format!("HTTP/1.1 {status} {text}\r\n").into_bytes();
-    out.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
-    for (key, value) in headers {
-        out.extend_from_slice(format!("{key}: {value}\r\n").as_bytes());
-    }
-    out.extend_from_slice(b"Connection: close\r\n\r\n");
-    out.extend_from_slice(body);
-    out
-}
-
-fn number(value: &Value) -> Option<u16> {
-    match value {
-        Value::Number(n) if n.is_finite() => Some(*n as u16),
-        _ => None,
-    }
-}
+// Response methods live in `http_res`; re-exported here for dispatch.
+pub use crate::modules::http_res::{res_end, res_set_header, res_write, res_write_head};
 
 /// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
