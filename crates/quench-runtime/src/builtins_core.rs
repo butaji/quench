@@ -66,7 +66,7 @@ pub(crate) fn array_map(
     }
     Ok(mapped)
 }
-fn map_length(receiver: &Value) -> Result<usize, crate::execute::VmError> {
+pub(crate) fn map_length(receiver: &Value) -> Result<usize, crate::execute::VmError> {
     if let Value::Array(values) = receiver {
         return Ok(values.logical_len());
     }
@@ -77,7 +77,10 @@ fn map_length(receiver: &Value) -> Result<usize, crate::execute::VmError> {
     }
     Ok(number.floor().min(9_007_199_254_740_991.0) as usize)
 }
-fn map_value(receiver: &Value, index: usize) -> Result<Option<Value>, crate::execute::VmError> {
+pub(crate) fn map_value(
+    receiver: &Value,
+    index: usize,
+) -> Result<Option<Value>, crate::execute::VmError> {
     if let Value::Array(values) = receiver {
         return Ok(values
             .has_index(index)
