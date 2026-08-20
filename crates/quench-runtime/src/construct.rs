@@ -360,7 +360,7 @@ fn construct_builtin_in_realm(
     arguments: &[Value],
     new_target: &Value,
 ) -> Result<Value, crate::execute::VmError> {
-    let realm = crate::vm::value_realm(new_target, builtin);
+    let realm = Some(constructor_realm(new_target));
     if let Some(result) =
         crate::functions_dynamic::construct_builtin_in_realm(builtin, arguments, realm)
     {
