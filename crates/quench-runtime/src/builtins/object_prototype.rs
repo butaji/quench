@@ -423,7 +423,16 @@ fn grouped_values(
 pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
     matches!(
         builtin,
-        Builtin::NumberPrototype
+        Builtin::ObjectPrototype
+            | Builtin::ArrayPrototype
+            | Builtin::FunctionPrototype
+            | Builtin::DatePrototype
+            | Builtin::RegExpPrototype
+            | Builtin::PromisePrototype
+            | Builtin::IteratorPrototype
+            | Builtin::ArrayBufferPrototype
+            | Builtin::DataViewPrototype
+            | Builtin::NumberPrototype
             | Builtin::BooleanPrototype
             | Builtin::StringPrototype
             | Builtin::MapPrototype
