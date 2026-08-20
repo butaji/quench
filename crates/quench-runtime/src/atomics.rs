@@ -7,7 +7,10 @@ pub(crate) fn is_lock_free(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
-    if matches!(arguments.first(), Some(Value::BigInt64Array(_))) {
+    if matches!(
+        arguments.first(),
+        Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
+    ) {
         return notify_bigint(arguments);
     }
     let Some(Value::Int32Array(view)) = arguments.first() else {
@@ -34,22 +37,35 @@ pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn notify_bigint(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::BigInt64Array(view)) = arguments.first() else {
-        return Err(crate::value::error::throw_type_error(
-            "Atomics.notify requires BigInt64Array",
-        ));
-    };
     let index = atomic_index(arguments.get(1))?;
     let _count = arguments
         .get(2)
         .map(crate::conversion::to_number)
         .transpose()?;
-    if !view.buffer.shared {
-        return Err(crate::value::error::throw_type_error(
-            "Atomics.notify requires a shared buffer",
-        ));
-    }
-    if view.get(index).is_none() {
+    let in_range = match arguments.first() {
+        Some(Value::BigInt64Array(view)) => {
+            if !view.buffer.shared {
+                return Err(crate::value::error::throw_type_error(
+                    "Atomics.notify requires a shared buffer",
+                ));
+            }
+            view.get(index).is_some()
+        }
+        Some(Value::BigUint64Array(view)) => {
+            if !view.buffer.shared {
+                return Err(crate::value::error::throw_type_error(
+                    "Atomics.notify requires a shared buffer",
+                ));
+            }
+            view.get(index).is_some()
+        }
+        _ => {
+            return Err(crate::value::error::throw_type_error(
+                "Atomics.notify requires a BigInt64Array or BigUint64Array",
+            ));
+        }
+    };
+    if !in_range {
         return Err(crate::value::error::throw_range_error(
             "Atomics.notify index is out of range",
         ));
