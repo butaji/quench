@@ -90,6 +90,26 @@ pub(crate) fn compile_method_for_vm(
             "RegExp.prototype.compile requires RegExp",
         ));
     }
+    // Cross-realm RegExp instances must throw: a regex created in another
+    // realm shares the runtime's compiled matcher but its prototype belongs
+    // to the other realm's [[Prototype]], which is forbidden by spec.
+    let current_realm = crate::vm::current_context_or_default().realm().get();
+    let stored = crate::execute::get_property_result(receiver, "\0realm")
+        .ok()
+        .and_then(|v| {
+            if let Value::Number(n) = v {
+                Some(n as u64)
+            } else {
+                None
+            }
+        });
+    if let Some(other) = stored {
+        if other != current_realm {
+            return Err(crate::value::error::throw_type_error(
+                "RegExp.prototype.compile called on incompatible realm",
+            ));
+        }
+    }
     let (pattern, flags) = compile_arguments(arguments)?;
     compile(&pattern, &flags).map_err(|error| crate::value::error::throw_syntax_error(&error))?;
     update_compiled_receiver(receiver, &pattern, &flags)
