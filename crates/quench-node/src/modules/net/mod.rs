@@ -27,7 +27,7 @@ mod pump;
 pub use methods::{
     connect, create_server, server_address, server_close, server_listen, socket_address,
     socket_destroy, socket_end, socket_pause, socket_resume, socket_set_encoding,
-    socket_set_keep_alive, socket_set_no_delay, socket_write,
+    socket_set_keep_alive, socket_set_no_delay, socket_set_timeout, socket_write,
 };
 pub use pump::{finalize, poll};
 
@@ -168,6 +168,11 @@ fn server_props() -> Vec<(&'static str, Value)> {
         ("listen", cap(crate::registry::SPEC_NET_SERVER_LISTEN)),
         ("close", cap(crate::registry::SPEC_NET_SERVER_CLOSE)),
         ("address", cap(crate::registry::SPEC_NET_SERVER_ADDRESS)),
+        ("timeout", Value::Number(0.0)),
+        ("keepAliveTimeout", Value::Number(5000.0)),
+        ("headersTimeout", Value::Number(60000.0)),
+        ("requestTimeout", Value::Number(0.0)),
+        ("connectionsCheckingInterval", Value::Number(30000.0)),
     ]
 }
 
@@ -189,10 +194,13 @@ fn socket_props() -> Vec<(&'static str, Value)> {
             "setEncoding",
             cap(crate::registry::SPEC_NET_SOCKET_SET_ENCODING),
         ),
+        ("setTimeout", cap(crate::registry::SPEC_NET_SOCKET_SET_TIMEOUT)),
+        ("timeout", Value::Number(0.0)),
         ("pause", cap(crate::registry::SPEC_NET_SOCKET_PAUSE)),
         ("resume", cap(crate::registry::SPEC_NET_SOCKET_RESUME)),
     ]
 }
+
 
 fn cap(spec: crate::registry::NodeSpec) -> Value {
     crate::host::capability(spec)

@@ -347,6 +347,28 @@ pub fn socket_set_keep_alive(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
+/// `socket.setTimeout(milliseconds[, callback])` stores the configured timeout.
+pub fn socket_set_timeout(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let timeout = args.first().cloned().unwrap_or(Value::Number(0.0));
+    if let Some(socket) = receiver {
+        let _ = execute::set_property(socket.clone(), "timeout", timeout.clone());
+        if let Some(callback) = args.get(1) {
+            if quench_runtime::is_callable(callback) {
+                crate::modules::events::method_on(
+                    state,
+                    Some(socket),
+                    &[Value::String("timeout".to_string()), callback.clone()],
+                )?;
+            }
+        }
+    }
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
+}
+
 /// `socket.setEncoding(encoding)` — decode `'data'` chunks to strings.
 pub fn socket_set_encoding(
     state: &Rc<RefCell<HostState>>,
