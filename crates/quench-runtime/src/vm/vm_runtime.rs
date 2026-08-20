@@ -108,9 +108,6 @@ pub(crate) fn bare_call_receiver(
             .and_then(|realm| crate::vm::with_realm(realm, || Some(crate::vm::current_global_object())))
             .flatten()
             .unwrap_or_else(|| function.captures.get(0));
-        if matches!(this_value, Value::Undefined | Value::Null) {
-            return global;
-        }
         return to_object_value_in_realm(this_value, &global);
     }
     this_value.clone()
