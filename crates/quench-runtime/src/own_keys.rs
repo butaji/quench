@@ -289,20 +289,40 @@ fn owns_string_key(target: &Value, key: &str) -> bool {
 
 fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
     let Some((_, Value::String(value))) = properties.iter().find(|(key, _)| key == "_value") else {
-        return ordered(properties, symbols)
+        let keys = ordered(properties, symbols)
             .into_iter()
             .filter(|key| key != "_value" && key != "timeValue")
             .collect();
+        return filter_namespace_symbol_name(properties, symbols, keys);
     };
+
     if crate::conversion::is_symbol_string(value) {
         // Boxed Symbol: enumerable indices are not meaningful. Only the
         // own data properties (other than `_value`) are visible.
-        return ordered(properties, symbols)
+        let keys = ordered(properties, symbols)
             .into_iter()
             .filter(|key| key != "_value")
             .collect();
+        return filter_namespace_symbol_name(properties, symbols, keys);
     }
     boxed_string_keys(properties, value, symbols)
+}
+
+fn filter_namespace_symbol_name(
+    properties: &[(String, Value)],
+    symbols: bool,
+    keys: Vec<String>,
+) -> Vec<String> {
+    let namespace = properties.iter().any(|(key, value)| {
+        key == "\0quench:module_namespace" && matches!(value, Value::Boolean(true))
+    });
+    if namespace && !symbols {
+        keys.into_iter()
+            .filter(|key| key != "Symbol.toStringTag")
+            .collect()
+    } else {
+        keys
+    }
 }
 
 fn boxed_string_keys(properties: &[(String, Value)], value: &str, symbols: bool) -> Vec<String> {
