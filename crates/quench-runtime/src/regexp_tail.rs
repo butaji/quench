@@ -167,11 +167,18 @@ fn replace_with_exec(
         let index = crate::strings::utf16_byte_index(input, index);
         // Spec §21.2.5.8 step 16.p: a position moving backwards (an ill-
         // behaving exec/subclass) is ignored — do not consume input past it.
-        if index >= next_source {
-            let index = index.min(input.len());
-            output.push_str(&input[next_source..index]);
-            output.push_str(&expand_exec_template(replacement, input, index, &matched));
-            next_source = (index + matched.len()).min(input.len());
+        // A hostile exec result may also report a position beyond the input;
+        // clamp it before slicing and avoid a reversed byte range.
+        let clamped_index = index.min(input.len());
+        if index >= next_source && next_source <= input.len() {
+            output.push_str(&input[next_source..clamped_index]);
+            output.push_str(&expand_exec_template(
+                replacement,
+                input,
+                clamped_index,
+                &matched,
+            ));
+            next_source = (clamped_index + matched.len()).min(input.len());
         }
         if !global {
             break;
