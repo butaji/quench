@@ -158,6 +158,9 @@ fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
     if builtin == Builtin::Error && key == "isError" {
         return Some(Value::Builtin(Builtin::ErrorIsError));
     }
+    if builtin == Builtin::Error && key == "captureStackTrace" {
+        return Some(Value::Builtin(Builtin::ErrorCaptureStackTrace));
+    }
     None
 }
 
