@@ -14,6 +14,7 @@ pub(crate) fn cached_harness<'a>(
     metadata: &TestMetadata,
     cache: &'a mut HarnessCache,
 ) -> Result<Vec<&'a str>, String> {
+    // AGENTS.md: harness fidelity is absolute; load only exact declared sources.
     cache.sources(&names(metadata))
 }
 
@@ -31,6 +32,7 @@ pub(crate) fn harness<F>(metadata: &TestMetadata, load: &mut F) -> Result<Vec<St
 where
     F: FnMut(&str) -> Result<String, String>,
 {
+    // AGENTS.md: harness fidelity is absolute; compose only exact declared sources.
     names(metadata).into_iter().map(load).collect()
 }
 
