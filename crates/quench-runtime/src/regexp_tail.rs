@@ -362,8 +362,13 @@ fn groups_at<'a>(m: &'a regress::Match) -> impl Iterator<Item = Option<(usize, u
 fn symbol_match_all(receiver: Option<&Value>, arguments: &[Value]) -> Result<Value, VmError> {
     let receiver = regex_receiver(receiver, "@@matchAll")?;
     let input = to_string_argument(arguments)?;
-    let last_index = match_all_start(receiver, &input)?;
     let flags = match_all_flags(receiver)?;
+    if !flags.contains('g') {
+        return Err(crate::value::error::throw_type_error(
+            "RegExp.prototype[@@matchAll] requires a 'g' flag",
+        ));
+    }
+    let last_index = match_all_start(receiver, &input)?;
     let matcher = match_all_matcher(receiver, &flags)?;
     let matcher = crate::builtins::set_property(
         matcher,
