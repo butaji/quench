@@ -126,7 +126,8 @@ fn create(arguments: &[Value]) -> Result<Value, VmError> {
         .get(1)
         .filter(|value| !matches!(value, Value::Undefined))
     {
-        return crate::builtins::define_properties(&[object, descriptors.clone()]);
+        let coerced = crate::construct::to_object(descriptors)?;
+        return crate::builtins::define_properties(&[object, coerced]);
     }
     Ok(object)
 }
