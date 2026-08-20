@@ -360,6 +360,8 @@ fn promises() -> Value {
         ("chmod", crate::host::capability(SPEC_FSP_CHMOD)),
         ("truncate", crate::host::capability(SPEC_FSP_TRUNCATE)),
         ("realpath", crate::host::capability(SPEC_FSP_REALPATH)),
+        ("chown", crate::host::capability(SPEC_FSP_CHOWN)),
+        ("utimes", crate::host::capability(SPEC_FSP_UTIMES)),
         ("open", crate::host::capability(SPEC_FSP_OPEN)),
     ];
     crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
@@ -457,6 +459,8 @@ pub(crate) fn sync_op(name: &str) -> Option<Op> {
         "readlink" => sync::readlink_sync,
         "chmod" => sync::chmod_sync,
         "truncate" => sync::truncate_sync,
+        "chown" => sync::chown_sync,
+        "utimes" => sync::utimes_sync,
         "realpath" => sync::realpath_sync,
         _ => return None,
     })

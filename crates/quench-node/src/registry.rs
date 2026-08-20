@@ -330,6 +330,8 @@ pub const SPEC_FSP_FILEHANDLE_READ: NodeSpec = NodeSpec::new("fs:promises:FileHa
 pub const SPEC_FSP_FILEHANDLE_CHMOD: NodeSpec = NodeSpec::new("fs:promises:FileHandle:chmod", 0x1178);
 pub const SPEC_FSP_FILEHANDLE_CHOWN: NodeSpec = NodeSpec::new("fs:promises:FileHandle:chown", 0x1179);
 pub const SPEC_FSP_FILEHANDLE_UTIMES: NodeSpec = NodeSpec::new("fs:promises:FileHandle:utimes", 0x117A);
+pub const SPEC_FSP_CHOWN: NodeSpec = NodeSpec::new("fs:promises:chown", 0x117B);
+pub const SPEC_FSP_UTIMES: NodeSpec = NodeSpec::new("fs:promises:utimes", 0x117C);
 
 pub const SPEC_REQUIRE: NodeSpec = NodeSpec::new("require", 0x1200);
 pub const SPEC_REQUIRE_FOR: NodeSpec = NodeSpec::new("__quench_require_for__", 0x1f04);

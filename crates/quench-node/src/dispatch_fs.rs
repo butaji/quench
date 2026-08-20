@@ -85,6 +85,8 @@ const CAP_FSP_FILEHANDLE_READ: u16 = 0x1177;
 const CAP_FSP_FILEHANDLE_CHMOD: u16 = 0x1178;
 const CAP_FSP_FILEHANDLE_CHOWN: u16 = 0x1179;
 const CAP_FSP_FILEHANDLE_UTIMES: u16 = 0x117A;
+const CAP_FSP_CHOWN: u16 = 0x117B;
+const CAP_FSP_UTIMES: u16 = 0x117C;
 
 pub fn fs_dispatch(cap: u16) -> Option<CallHandler> {
     Some(match cap {
@@ -170,6 +172,8 @@ fn fs_dispatch_promises(cap: u16) -> Option<CallHandler> {
         CAP_FSP_CHMOD => fs_promises::chmod,
         CAP_FSP_TRUNCATE => fs_promises::truncate,
         CAP_FSP_REALPATH => fs_promises::realpath,
+        CAP_FSP_CHOWN => fs_promises::chown,
+        CAP_FSP_UTIMES => fs_promises::utimes,
         CAP_FSP_OPEN => fs_promises::open,
         CAP_FSP_FILEHANDLE_STAT => fs_promises::filehandle_stat,
         CAP_FSP_FILEHANDLE_CLOSE => fs_promises::filehandle_close,
