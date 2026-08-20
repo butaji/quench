@@ -127,6 +127,17 @@ fn is_intl_constructor(builtin: crate::ops::Builtin) -> bool {
 }
 
 fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmError> {
+    // RegExp(pattern) returns the pattern when it is RegExp-like and its
+    // constructor is this intrinsic, before attempting to read/compile flags.
+    if let Some(pattern) = arguments.first() {
+        let flags_omitted = arguments.get(1).is_none_or(|value| matches!(value, Value::Undefined));
+        if flags_omitted && is_regexp_pattern(pattern)? {
+            let constructor = crate::execute::get_property_result(pattern, "constructor")?;
+            if matches!(constructor, Value::Builtin(crate::ops::Builtin::RegExp)) {
+                return Ok(pattern.clone());
+            }
+        }
+    }
     let (source, observable_source, flags) = regexp_source_and_flags(arguments)?;
     let visible_flags = crate::regexp::canonical_flags(&flags);
     crate::regexp::compile(&source, &flags)
