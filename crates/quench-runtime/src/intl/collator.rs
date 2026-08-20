@@ -213,19 +213,30 @@ fn provider_has_collation(locale: &str, collation: &str) -> bool {
     let mut preferences = CollatorPreferences::default();
     preferences.locale_preferences = (&locale).into();
     preferences.collation_type = Some(collation_type);
-    let Ok(attributes) = DataMarkerAttributes::try_from_str(collation) else {
-        return false;
-    };
-    let data_locale = CollationTailoringV1::make_locale(preferences.locale_preferences);
-    let request = DataRequest {
-        id: DataIdentifierBorrowed::for_marker_attributes_and_locale(attributes, &data_locale),
-        metadata: Default::default(),
-    };
-    <icu_collator::provider::Baked as DataProvider<CollationTailoringV1>>::load(
-        &icu_collator::provider::Baked,
-        request,
-    )
-    .is_ok()
+    // Combine collation data
+    // (from locale_fallback Baked) so the fallbacker can resolve any locale.
+    // Fall back to standard collation if the requested attribute isn't in
+    // the baked data. This avoids "Missing data for identifier" errors for
+    // attributes like search/pinyin/phonebk/compat that aren't bundled.
+    for attr in [collation, "standard"] {
+        let Ok(attributes) = DataMarkerAttributes::try_from_str(attr) else {
+            continue;
+        };
+        let data_locale = CollationTailoringV1::make_locale(preferences.locale_preferences);
+        let request = DataRequest {
+            id: DataIdentifierBorrowed::for_marker_attributes_and_locale(attributes, &data_locale),
+            metadata: Default::default(),
+        };
+        if <icu_collator::provider::Baked as DataProvider<CollationTailoringV1>>::load(
+            &icu_collator::provider::Baked,
+            request,
+        )
+        .is_ok()
+        {
+            return true;
+        }
+    }
+    false
 }
 
 fn set_extension(locale: &str, key: &str, value: &str) -> String {
