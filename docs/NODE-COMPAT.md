@@ -19,34 +19,31 @@ Legend
 | buffer | 🟢 | real | upstream selects green |
 | console | 🟢 | real | upstream selects green |
 | dgram | 🟢 | stub | createSocket cap only; needs dgram socket impl |
-| dns | 🟢 | partial | lookup + resolve4 only |
+| punycode | 🟢 | real | RFC 3492 encode/decode/toASCII/toUnicode/ucs2; compat fixture green |
 | events | 🟢 | real | upstream selects green |
 | fs | 🟢 | real | upstream selects green; edge cases remain |
 | http | 🟢 | real | server/client/host; options semantics remain |
 | os | 🟢 | real | upstream selects green |
 | path | 🟢 | real | posix/win32/glob; upstream selects green |
-| punycode | 🟢 | missing | not resolvable |
-| querystring | 🟢 | real | upstream selects green |
-| readline | 🟢 | partial | createInterface only |
+| perf_hooks | 🟡 | partial | performance marks/measures/observer/timerify; focused fixture green |
+| readline | 🟢 | partial | createInterface/question/write/close; focused fixture green |
 | stream | 🟢 | partial | Readable/Writable/Duplex/Transform; web+pipeline partial |
 | string_decoder | 🟢 | real | upstream selects green |
 | timers | 🟢 | real | upstream selects green |
-| tty | 🟢 | real | isatty only |
+| tty | 🟢 | partial | isatty plus ReadStream/WriteStream shape |
 | url | 🟢 | real | upstream selects green |
 | zlib | 🟢 | real | sync flate2; async missing |
 | http2 | 🟢 | missing | not implemented |
 | sqlite | 🟢 | missing | not implemented |
-| trace_events | 🟢 | missing | empty namespace |
 | quic | 🟢 | missing | not implemented |
 | diagnostics_channel | 🟡 | missing | not resolvable |
-| https | 🟡 | partial | request/get caps only; matches Bun partial gaps |
+| trace_events | 🟢 | partial | category enable/disable/getEnabledCategories; focused fixture green |
 | async_hooks | 🟡 | stub | minimal JS factory |
 | child_process | 🟡 | partial | spawn/spawnSync/exec/execSync |
 | cluster | 🟡 | missing | empty namespace |
 | crypto | 🟡 | missing | not resolvable |
 | domain | 🟡 | missing | not resolvable |
 | module | 🟡 | partial | CJS require; ESM APIs missing |
-| perf_hooks | 🟡 | partial | performance cap only |
 | process | 🟡 | partial | properties + basic; signals/lifecycle gaps |
 | util | 🟡 | real | upstream selects green; missing diff, transferableAbort* |
 | tls | 🟡 | stub | empty namespace (Bun also partial) |
@@ -81,7 +78,7 @@ Legend
 
 ## Verification evidence
 
-- `cargo run -p quench-node-test --bin run-compat` — 40 passed, 0 failed.
+- `cargo run -p quench-node-test --bin run-compat` — 45 passed, 0 failed.
 - `cargo run -p quench-node-test --bin run-parallel` — 177 passed, 0 failed
   (manifest: `crates/quench-node-test/node-tests/parallel.txt`).
 - Express smoke app runs under `quench-node`: `curl` → `HTTP/1.1 200 OK`.
