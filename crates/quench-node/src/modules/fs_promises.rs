@@ -49,7 +49,30 @@ promise_op!(rmdir, "rmdir");
 promise_op!(rm, "rm");
 promise_op!(rename, "rename");
 promise_op!(copy_file, "copyFile");
-promise_op!(access, "access");
+
+/// Promise `access` validates mode instead of inheriting the callback
+/// API's permissive coercion. Invalid modes reject with Node-coded errors.
+pub fn access(
+    state: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    match args.get(1) {
+        Some(Value::Number(mode)) if mode.is_finite() && *mode >= 0.0 && *mode <= 7.0 => {}
+        Some(Value::Number(mode)) => {
+            return Ok(settle(Err(crate::modules::buffer_enc::out_of_range(
+                "mode", ">= 0 && <= 7", &mode.to_string(),
+            ))));
+        }
+        Some(_) => {
+            return Ok(settle(Err(crate::modules::buffer_enc::invalid_arg_type(
+                "The \"mode\" argument must be of type number.".to_string(),
+            ))));
+        }
+        None => {}
+    }
+    run(state, args, "access")
+}
 promise_op!(mkdtemp, "mkdtemp");
 promise_op!(readlink, "readlink");
 promise_op!(chmod, "chmod");
