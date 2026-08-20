@@ -7,7 +7,7 @@ use std::{
 
 use quench_test262::{
     discover_js_files, resolve_stages, HarnessCache, ResolvedStage, RuntimeHost, StageReport,
-    Test262Runner,
+    Test262Runner, TestOutcome,
 };
 
 #[derive(Debug)]
@@ -214,13 +214,11 @@ fn parse_cli_token(parser: &mut CliParser) -> Result<(), String> {
 }
 
 fn run_stages(root: &Path, stages: Vec<ResolvedStage>, args: &Args) -> ExitCode {
-    let mut runner = Test262Runner::new(RuntimeHost);
-    let mut harness = HarnessCache::new(root.join("harness"));
     let mut overall = StageReport::default();
     let mut has_failure = false;
     for stage in &stages {
         print_stage_start(stage);
-        let report = match run_single_stage(&mut runner, &mut harness, stage, args.max_failures) {
+        let report = match run_single_stage(root, stage, args.max_failures) {
             Ok(report) => report,
             Err(error) => return fail(error),
         };
@@ -285,9 +283,8 @@ fn list_stages(stages: &[ResolvedStage]) {
     }
 }
 
-fn run_single_stage<H: quench_test262::Test262Host>(
-    runner: &mut Test262Runner<H>,
-    harness: &mut HarnessCache,
+fn run_single_stage(
+    root: &Path,
     stage: &ResolvedStage,
     max_failures: usize,
 ) -> Result<StageReport, String> {
@@ -301,14 +298,28 @@ fn run_single_stage<H: quench_test262::Test262Host>(
         );
         return Ok(StageReport::default());
     }
-    let report = runner.run_files_with_cache_limited(files, harness, max_failures)?;
+    let mut report = StageReport::default();
+    for path in files {
+        report.total += 1;
+        let mut runner = Test262Runner::new(RuntimeHost);
+        let mut harness = HarnessCache::new(root.join("harness"));
+        let outcome = runner.run_file_with_cache(&path, &mut harness)?;
+        match outcome {
+            TestOutcome::Pass => report.passed += 1,
+            TestOutcome::Fail { reason } => {
+                report.failed += 1;
+                if report.failures.len() < max_failures {
+                    report.failures.push((path, reason));
+                }
+            }
+        }
+    }
     println!(
         "stage {:>3}: {} passed {}",
         stage.id, stage.path, report.passed
     );
     Ok(report)
 }
-
 fn parse_stage_index(value: &str) -> Result<u32, String> {
     value
         .parse::<u32>()
