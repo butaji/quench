@@ -72,47 +72,7 @@ fn execute_special_tail(
 }
 
 fn object_keys_dispatch(target: Option<&Value>) -> Result<Value, VmError> {
-    let target = target.ok_or_else(|| {
-        crate::value::error::throw_type_error("Object.keys requires an object")
-    })?;
-    if matches!(target, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(
-            "Cannot convert undefined or null to object",
-        ));
-    }
-    let keys = if matches!(target, Value::Object(_) | Value::Array(_) | Value::Function(_) | Value::BoundFunction(_)) {
-        if matches!(target, Value::Proxy(_)) {
-            crate::proxy::proxy_own_keys(target)?
-        } else {
-            crate::own_keys::all(target)?
-        }
-    } else {
-        // Primitives (Number, Boolean, String, Symbol) have no own enumerable keys.
-        return Ok(Value::Array(Rc::new(crate::value::ArrayData::new(Vec::new()))));
-    };
-    let Value::Array(keys) = keys else {
-        return Err(crate::vm::not_callable());
-    };
-    let mut result = Vec::new();
-    for key in keys.snapshot() {
-        let Value::String(key) = key else {
-            continue;
-        };
-        if key.contains('\0') {
-            continue;
-        }
-        let descriptor = if matches!(target, Value::Proxy(_)) {
-            crate::proxy::proxy_get_own_property_descriptor(target, &key)?
-        } else {
-            descriptor(Some(target), Some(&Value::String(key.clone())))?
-        };
-        if crate::execute::is_truthy(
-            &crate::execute::get_property_result(&descriptor, "enumerable")?,
-        ) {
-            result.push(Value::String(key));
-        }
-    }
-    Ok(Value::array(result))
+    object_keys(target)
 }
 
 fn get_own_property_descriptors(arguments: &[Value]) -> Result<Value, VmError> {
