@@ -367,6 +367,9 @@ pub fn tty_isatty(
 pub fn crypto_random_bytes(
     state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value],
 ) -> Result<Value, VmError> { crate::modules::crypto::random_bytes(state, args) }
+pub fn crypto_random_fill_sync(
+    state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value],
+) -> Result<Value, VmError> { crate::modules::crypto::random_fill_sync(state, args) }
 pub fn crypto_unsupported(
     state: &Rc<RefCell<HostState>>, _receiver: Option<&Value>, args: &[Value],
 ) -> Result<Value, VmError> { crate::modules::crypto::unsupported(state, args) }
@@ -419,6 +422,13 @@ pub fn process_getgid(
     args: &[Value],
 ) -> Result<Value, VmError> {
     crate::modules::process::getgid(state, args)
+}
+pub fn process_binding(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::binding(state, args)
 }
 
 // ---- os ----
