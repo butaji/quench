@@ -144,6 +144,7 @@ fn own_property_names_standard(builtin: Builtin) -> &'static [&'static str] {
         | Builtin::BigIntPrototype
         | Builtin::FunctionPrototype
         | Builtin::Error
+        | Builtin::Promise
         | Builtin::ThrowTypeError => own_property_names_standard_core(builtin),
         _ => own_property_names_standard_tail(builtin),
     }

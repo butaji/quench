@@ -280,7 +280,7 @@ fn function_source(
         (_, true) => "async function",
         (_, false) => "function",
     };
-    Ok(format!("{prefix} anonymous({parameters}\n) {{\n{body}\n}}"))
+    Ok(format!("{prefix} anonymous({parameters}) {{\n{body}\n}}"))
 }
 
 fn normalize_annex_b_comments(source: &str, allow_leading_close: bool) -> String {
