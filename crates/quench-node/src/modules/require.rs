@@ -68,6 +68,16 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .borrow_mut()
             .module_cache
             .insert("async_hooks".to_string(), value.clone());
+    }
+    if matches!(spec.as_str(), "http-errors" | "node:http-errors") {
+        if let Some(cached) = state.borrow().module_cache.get("http-errors") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::http_errors::build(state)?;
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("http-errors".to_string(), value.clone());
         return Ok(value);
     }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
