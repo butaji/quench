@@ -14,10 +14,7 @@ pub(crate) fn has_await_using(statements: &[Statement<'_>]) -> bool {
     statements.iter().any(statement_has_await_using)
 }
 
-pub(crate) fn reserve_slot(
-    locals: &mut HashMap<String, u16>,
-    next_slot: &mut u16,
-) -> u16 {
+pub(crate) fn reserve_slot(locals: &mut HashMap<String, u16>, next_slot: &mut u16) -> u16 {
     let slot = *next_slot;
     *next_slot = next_slot.saturating_add(1);
     locals.insert(CAPABILITY.to_string(), slot);
@@ -60,7 +57,12 @@ pub(crate) fn emit_tdz(
     }
 }
 
-pub(crate) fn emit_create(ops: &mut Vec<Op>, stack: u16, await_using: bool, next_register: &mut u16) {
+pub(crate) fn emit_create(
+    ops: &mut Vec<Op>,
+    stack: u16,
+    await_using: bool,
+    next_register: &mut u16,
+) {
     let ctor = take(next_register);
     let value = take(next_register);
     ops.push(Op::MakeBuiltin {

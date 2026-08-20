@@ -50,7 +50,7 @@ pub trait Test262Host: Send {
 }
 
 /// Runner metadata needed before dispatching one test.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TestMetadata {
     /// Whether the test must execute as an ES module.
     pub is_module: bool,
@@ -148,6 +148,32 @@ pub struct StageReport {
     pub passed: usize,
     pub failed: usize,
     pub failures: Vec<(std::path::PathBuf, String)>,
+}
+
+impl StageReport {
+    /// Build a per-path outcome map for a completed stage report. Paths that
+    /// are absent from the failure list are treated as passing; this matches
+    /// the runner's convention that only failed tests are recorded with a
+    /// reason. Used by determinism regression guards to compare batched
+    /// outcomes against individual runs.
+    pub fn outcomes(
+        report: &StageReport,
+        paths: &[std::path::PathBuf],
+    ) -> std::collections::HashMap<std::path::PathBuf, TestOutcome> {
+        let mut indexed = std::collections::HashMap::new();
+        for path in paths {
+            indexed.insert(path.clone(), TestOutcome::Pass);
+        }
+        for (path, _) in &report.failures {
+            indexed.insert(
+                path.clone(),
+                TestOutcome::Fail {
+                    reason: format!("reported failure for {}", path.display()),
+                },
+            );
+        }
+        indexed
+    }
 }
 
 /// Discover JavaScript test files recursively in deterministic path order.
