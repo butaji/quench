@@ -130,7 +130,9 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     // RegExp(pattern) returns the pattern when it is RegExp-like and its
     // constructor is this intrinsic, before attempting to read/compile flags.
     if let Some(pattern) = arguments.first() {
-        let flags_omitted = arguments.get(1).is_none_or(|value| matches!(value, Value::Undefined));
+        let flags_omitted = arguments
+            .get(1)
+            .map_or(true, |value| matches!(value, Value::Undefined));
         if flags_omitted && is_regexp_pattern(pattern)? {
             let constructor = crate::execute::get_property_result(pattern, "constructor")?;
             if matches!(constructor, Value::Builtin(crate::ops::Builtin::RegExp)) {
