@@ -488,11 +488,13 @@ pub fn reduce_unary(
         UnaryOperator::Typeof => crate::ops::UnaryOp::Typeof,
         _ => return None,
     };
-    let src = if operator == crate::ops::UnaryOp::Typeof
-        && crate::unary::is_unbound_identifier(&unary.argument, locals)
-    {
-        emit_optional_name_lookup(&unary.argument, ops, next_register)
-            .unwrap_or_else(|| crate::reduce_support::emit_undefined(ops, next_register))
+    let unresolved_typeof = operator == crate::ops::UnaryOp::Typeof
+        && crate::unary::is_unresolved_identifier(&unary.argument, locals);
+    // An unresolved identifier may still be bound by the host at runtime
+    // (installed globals, module environments), so `typeof x` must emit a
+    // real lookup; folding to `undefined` is only sound for known locals.
+    let src = if unresolved_typeof {
+        emit_optional_name_lookup(&unary.argument, ops, next_register)?
     } else {
         reduce_expression(&unary.argument, ops, facts, next_register, locals)?
     };

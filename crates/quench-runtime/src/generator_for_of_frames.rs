@@ -26,59 +26,44 @@ fn collect_loop_body_frames(
     frames: &mut Vec<crate::machine::Frame>,
 ) -> Result<bool, VmError> {
     for (index, op) in ops.iter().enumerate() {
-        if collect_loop_body_op(op, index, body, &iterator, slot, resume, registers, frames)? {
+        if let Op::Yield { src } = op {
+            frames.push(for_of_repeat_frame(
+                iterator.clone(),
+                body,
+                range_after_iterator_op(body, index),
+                resume,
+                *src,
+                slot,
+            ));
             return Ok(true);
         }
-    }
-    Ok(false)
-}
-
-fn collect_loop_body_op(
-    op: &Op,
-    index: usize,
-    body: crate::machine::CodeRange,
-    iterator: &Value,
-    slot: u16,
-    resume: crate::machine::CodeRange,
-    registers: &[Value],
-    frames: &mut Vec<crate::machine::Frame>,
-) -> Result<bool, VmError> {
-    if let Op::Yield { src } = op {
-        frames.push(for_of_repeat_frame(
-            iterator.clone(),
-            body,
-            range_after_iterator_op(body, index),
-            resume,
-            *src,
-            slot,
-        ));
-        return Ok(true);
-    }
-    if matches!(op, Op::IteratorBinding { .. }) {
-        frames.push(for_of_repeat_frame(
-            iterator.clone(),
-            body,
-            range_after_iterator_op(body, index),
-            resume,
-            0,
-            slot,
-        ));
-        if collect_iterator_frames(op, range_after_iterator_op(body, index), registers, frames)? {
+        if matches!(op, Op::IteratorBinding { .. }) {
+            frames.push(for_of_repeat_frame(
+                iterator.clone(),
+                body,
+                range_after_iterator_op(body, index),
+                resume,
+                0,
+                slot,
+            ));
+            if collect_iterator_frames(op, range_after_iterator_op(body, index), registers, frames)?
+            {
+                return Ok(true);
+            }
+            frames.pop();
+            return Ok(false);
+        }
+        if try_contains_yield(op) {
+            frames.push(for_of_repeat_frame(
+                iterator.clone(),
+                body,
+                range_after_iterator_op(body, index),
+                resume,
+                0,
+                slot,
+            ));
             return Ok(true);
         }
-        frames.pop();
-        return Ok(false);
-    }
-    if try_contains_yield(op) {
-        frames.push(for_of_repeat_frame(
-            iterator.clone(),
-            body,
-            range_after_iterator_op(body, index),
-            resume,
-            0,
-            slot,
-        ));
-        return Ok(true);
     }
     Ok(false)
 }
@@ -118,10 +103,7 @@ fn for_of_repeat_frame(
         body,
         body_resume,
         resume,
-        yield_dst,
-        true,
-        true,
-        slot,
+        (yield_dst, true, true, slot),
     )
 }
 
@@ -231,10 +213,7 @@ fn collect_nested_yield_frame(
         body,
         range_after_iterator_op(code.range, index),
         resume,
-        *src,
-        close_normal,
-        false,
-        0,
+        (*src, close_normal, false, 0),
     ));
     Ok(true)
 }
