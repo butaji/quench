@@ -185,8 +185,8 @@ fn execute_module(
     let wrapped = wrap_cjs(state, &filename, source);
     let module = state
         .borrow()
-        .pending_module
-        .as_ref()
+        .pending_modules
+        .last()
         .map(|pending| pending.module.clone());
     let program = quench_runtime::reduce::reduce_global_script_source(&wrapped)
         .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
@@ -210,7 +210,7 @@ pub fn wrap_cjs(state: &Rc<RefCell<HostState>>, filename: &str, source: &str) ->
         .parent()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| "/".to_string());
-    state.borrow_mut().pending_module = Some(crate::host::PendingModule {
+    state.borrow_mut().pending_modules.push(crate::host::PendingModule {
         module,
         filename: filename.to_string(),
         dirname,
@@ -223,7 +223,7 @@ pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
     let Some(function) = args.first() else {
         return Err(VmError::NotCallable);
     };
-    let Some(pending) = state.borrow_mut().pending_module.take() else {
+    let Some(pending) = state.borrow_mut().pending_modules.pop() else {
         return Err(VmError::EvalError("cjs wrap without pending module".into()));
     };
     let exports = quench_runtime::execute::get_property_result(&pending.module, "exports")?;
