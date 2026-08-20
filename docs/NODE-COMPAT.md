@@ -33,9 +33,9 @@ Legend
 | tty | 🟢 | partial | isatty plus ReadStream/WriteStream shape |
 | url | 🟢 | real | upstream selects green |
 | zlib | 🟢 | real | sync flate2; async missing |
-| http2 | 🟢 | missing | not implemented |
-| sqlite | 🟢 | missing | not implemented |
-| quic | 🟢 | missing | not implemented |
+| http2 | 🟡 | capability error | recognized; requires an HTTP/2 transport backend not present in current architecture |
+| sqlite | 🟡 | capability error | recognized; requires a SQLite library dependency and host bindings |
+| quic | 🟡 | capability error | recognized; requires a QUIC transport backend not present in current architecture |
 | diagnostics_channel | 🟡 | missing | not resolvable |
 | trace_events | 🟢 | partial | category enable/disable/getEnabledCategories; focused fixture green |
 | async_hooks | 🟡 | stub | minimal JS factory |
