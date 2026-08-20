@@ -170,7 +170,7 @@ fn replace_with_exec(
         // A hostile exec result may also report a position beyond the input;
         // clamp it before slicing and avoid a reversed byte range.
         let clamped_index = index.min(input.len());
-        if index >= next_source && next_source <= input.len() {
+        if clamped_index >= next_source && next_source <= input.len() {
             output.push_str(&input[next_source..clamped_index]);
             output.push_str(&expand_exec_template(
                 replacement,
