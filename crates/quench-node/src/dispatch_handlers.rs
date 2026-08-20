@@ -915,3 +915,8 @@ pub fn util_is_deep_strict_equal(
         skip_prototype,
     )?))
 }
+pub fn dgram_create(state:&Rc<RefCell<HostState>>,_:Option<&Value>,args:&[Value])->Result<Value,VmError>{crate::modules::dgram::create_socket(state,args)}
+pub fn dgram_bind(state:&Rc<RefCell<HostState>>,r:Option<&Value>,args:&[Value])->Result<Value,VmError>{crate::modules::dgram::bind(state,r,args)}
+pub fn dgram_send(state:&Rc<RefCell<HostState>>,r:Option<&Value>,args:&[Value])->Result<Value,VmError>{crate::modules::dgram::send(state,r,args)}
+pub fn dgram_close(state:&Rc<RefCell<HostState>>,r:Option<&Value>,args:&[Value])->Result<Value,VmError>{crate::modules::dgram::close(state,r,args)}
+pub fn dgram_address(state:&Rc<RefCell<HostState>>,r:Option<&Value>,args:&[Value])->Result<Value,VmError>{crate::modules::dgram::address(state,r,args)}

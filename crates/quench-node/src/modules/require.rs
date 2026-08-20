@@ -377,7 +377,7 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         "vm" => Some(crate::modules::vm::build()),
         "dgram" => Some(crate::host::namespace_object_from_pairs(vec![(
             "createSocket".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("dgram:createSocket", 0x1500)),
+            crate::host::capability(crate::registry::NodeSpec::new("dgram:createSocket", 0x2300)),
         )])),
         "https" => Some(crate::host::namespace_object_from_pairs(vec![
             (

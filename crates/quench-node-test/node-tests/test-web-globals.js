@@ -1,0 +1,18 @@
+const h = new Headers({ 'X-Test': 'a' });
+h.append('X-Test', 'b');
+if (h.get('x-test') !== 'a, b' || !h.has('X-TEST')) throw new Error('Headers');
+const f = new FormData(); f.append('a', '1'); f.append('a', '2');
+if (f.getAll('a').length !== 2 || f.get('a') !== '1') throw new Error('FormData');
+const b = new Blob(['hello'], { type: 'text/plain' });
+if (b.size !== 5 || b.type !== 'text/plain') throw new Error('Blob');
+const e = new CustomEvent('x', { detail: 3 });
+if (e.detail !== 3) throw new Error('CustomEvent');
+const ex = new DOMException('bad', 'AbortError');
+if (ex.name !== 'AbortError' || ex.message !== 'bad') throw new Error('DOMException');
+const c = new MessageChannel(); let got = 0; c.port2.onmessage = e => { got = e.data.x; }; c.port1.postMessage({ x: 7 });
+if (got !== 7) throw new Error('MessageChannel');
+const r = new Response('{"ok":true}', { status: 201, headers: { 'content-type': 'application/json' } });
+if (!r.ok || r.status !== 201) throw new Error('Response');
+r.json().then(v => { if (!v.ok) throw new Error('Response json'); });
+const q = new Request('https://example.test/a');
+if (q.url !== 'https://example.test/a' || q.method !== 'GET') throw new Error('Request');

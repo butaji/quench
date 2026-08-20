@@ -89,6 +89,7 @@ pub fn await_promise(state: &Rc<RefCell<HostState>>, promise: &Value) -> Result<
         }
         crate::modules::process::deliver_pending_warnings(state)?;
         crate::modules::net::poll(state)?;
+        crate::modules::dgram::poll(state)?;
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         fire_due_timers(state)?;
@@ -134,6 +135,7 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     loop {
         crate::modules::process::deliver_pending_warnings(state)?;
         crate::modules::net::poll(state)?;
+        crate::modules::dgram::poll(state)?;
         drain_ticks(state)?;
         quench_runtime::drain_promise_jobs();
         fire_due_timers(state)?;
