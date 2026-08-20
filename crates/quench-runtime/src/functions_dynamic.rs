@@ -293,13 +293,15 @@ fn dynamic_value(
         },
     );
     if let Value::Function(function) = &value {
-        if let Some(token) = crate::vm::realm_token(crate::vm::current_context_or_default().realm())
-        {
-            function
-                .properties
-                .borrow_mut()
-                .push(("\0realm".to_string(), token));
+        let realm = crate::vm::current_context_or_default().realm();
+        let mut properties = function.properties.borrow_mut();
+        if let Some(token) = crate::vm::realm_token(realm) {
+            properties.push(("\0realm".to_string(), token));
         }
+        properties.push((
+            "\0function_prototype".to_string(),
+            crate::vm::realm_intrinsic(crate::ops::Builtin::FunctionPrototype),
+        ));
     }
     value
 }
