@@ -2,6 +2,7 @@
 //! objects installed via the runtime's host contract. There is no
 //! self-hosted JavaScript builtin layer.
 pub mod express;
+pub mod express_request;
 
 pub mod http_errors;
 pub mod statuses;
