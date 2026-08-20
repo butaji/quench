@@ -48,6 +48,7 @@ pub mod path_win32_extra;
 pub mod path_win32_normalize;
 pub mod process;
 pub mod pump;
+pub mod punycode;
 pub mod querystring;
 pub mod querystring_parse;
 pub mod querystring_stringify;
