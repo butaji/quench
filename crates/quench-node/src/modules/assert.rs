@@ -11,8 +11,7 @@ use std::rc::Rc;
 
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
-use quench_runtime::value::Value;
-
+use quench_runtime::value::{PromiseData, PromiseState, Value};
 use crate::host::HostState;
 use crate::registry::*;
 
@@ -36,7 +35,7 @@ pub fn build() -> Vec<(String, Value)> {
         pair("ifError", SPEC_ASSERT_IF_ERROR),
         pair("match", SPEC_ASSERT_MATCH),
         pair("doesNotMatch", SPEC_ASSERT_DOES_NOT_MATCH),
-        ("AssertionError".to_string(), assertion_error_type()),
+        pair("rejects", SPEC_ASSERT_REJECTS),
     ]
 }
 
@@ -62,8 +61,16 @@ fn assertion_error_type() -> Value {
     )])
 }
 
-/// AssertionError-shaped thrown value, catchable from JavaScript.
-/// `generated` mirrors Node's `generatedMessage`: true when the
+/// Build a settled promise (fulfilled with `value`, rejected with
+/// `error`) for assert.rejects returns.
+fn settle(result: Result<Value, VmError>) -> Value {
+    let state = match result {
+        Ok(value) => PromiseState::Fulfilled(value),
+        Err(VmError::Thrown(value)) => PromiseState::Rejected(value),
+        Err(_) => PromiseState::Rejected(Value::String("I/O error".to_string())),
+    };
+    Value::Promise(Rc::new(PromiseData::new(state)))
+}
 /// message was produced by assert itself, false when user-supplied.
 pub fn assertion_error(
     message: String,
@@ -288,4 +295,74 @@ pub fn not_deep_strict_equal(
     binary_assert(args, "notDeepStrictEqual", false, |a, b| {
         crate::modules::deep_equal::deep_equal(a, b, true)
     })
+}
+
+/// `assert.rejects(asyncFn|promise, [error[, message]])` — returns a
+/// promise that resolves when the input rejects (matching the optional
+/// validator) and rejects with an AssertionError otherwise.
+pub fn rejects(
+    _s: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let first = arg(args, 0);
+    let validator = arg(args, 1);
+    let promise = match first {
+        Value::Promise(p) => p.clone(),
+        Value::Function(_) | Value::BoundFunction(_) => {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("message".into(), Value::String("assert.rejects requires a Promise".into())),
+            ])));
+        }
+        _ => {
+            return Err(VmError::Thrown(host_api::object(vec![
+                ("name".into(), Value::String("TypeError".into())),
+                ("message".into(), Value::String("The \"asyncFn\" argument must be of type Function or Promise".into())),
+            ])));
+        }
+    };
+    let state = promise.state.borrow().clone();
+    match state {
+        PromiseState::Fulfilled(_) => Ok(assertion_rejected("The function did not reject")),
+        PromiseState::Pending => Ok(assertion_rejected("The input promise is still pending")),
+        PromiseState::Rejected(reason) => {
+            if !matches!(validator, Value::Undefined) && !matches_validator(&validator, &reason) {
+                Ok(assertion_rejected("The rejection did not match the expected validator"))
+            } else {
+                Ok(settle(Ok(Value::Undefined)))
+            }
+        }
+    }
+}
+
+fn assertion_rejected(msg: &str) -> Value {
+    use quench_runtime::execute::VmError;
+    settle(Err(VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("AssertionError".into())),
+        ("message".into(), Value::String(msg.into())),
+        ("operator".into(), Value::String("rejects".into())),
+        ("code".into(), Value::String("ERR_ASSERTION".into())),
+    ]))))
+}
+
+/// Match a Node `assert.rejects`/`assert.throws` validator against an
+/// error value. Object validators: string fields use strict equality;
+/// other types (RegExp, function, class) are best-effort.
+fn matches_validator(validator: &Value, error: &Value) -> bool {
+    if let Value::Object(o) = validator {
+        for (k, v) in o.iter() {
+            let actual = execute::get_property(error, k);
+            let ok = match v {
+                Value::String(s) => matches!(actual, Value::String(a) if a == *s),
+                _ => true,
+            };
+            if !ok {
+                return false;
+            }
+        }
+        true
+    } else {
+        true
+    }
 }

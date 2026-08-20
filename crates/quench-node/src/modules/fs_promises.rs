@@ -149,9 +149,8 @@ pub fn filehandle_chown(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Val
     Ok(settle(fd(r).and_then(|x| super::fs::fd_chown(x, uid, gid))))
 }
 pub fn filehandle_utimes(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> {
-    let parse = |v: Option<&Value>| match v { Some(Value::Number(n)) if n.is_finite() => Ok(*n), _ => Err(crate::modules::buffer_enc::invalid_arg_type("atime and mtime must be numbers".into())) };
-    let atime = match parse(a.first()) { Ok(v) => v, Err(e) => return Ok(settle(Err(e))) };
-    let mtime = match parse(a.get(1)) { Ok(v) => v, Err(e) => return Ok(settle(Err(e))) };
+    let atime = match super::fs_sync::utimes_time(a.first(), "atime") { Ok(v) => v, Err(e) => return Ok(settle(Err(e))) };
+    let mtime = match super::fs_sync::utimes_time(a.get(1), "mtime") { Ok(v) => v, Err(e) => return Ok(settle(Err(e))) };
     Ok(settle(fd(r).and_then(|x| super::fs::fd_utimes(x, atime, mtime))))
 }
 pub fn filehandle_datasync(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, _a: &[Value]) -> Result<Value, VmError> { Ok(settle(fd(r).map(|_| Value::Undefined))) }
