@@ -169,10 +169,8 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
 }
 
 fn set_object_prototype(data: &Rc<crate::value::ObjectData>, prototype: Value) -> Value {
-    if let Some((_, Value::BindingCell(cell))) = data
-        .iter()
-        .rev()
-        .find(|(key, _)| key == "\0prototype")
+    if let Some((_, Value::BindingCell(cell))) =
+        data.iter().rev().find(|(key, _)| key == "\0prototype")
     {
         *cell.borrow_mut() = prototype;
         return Value::Object(Rc::clone(data));

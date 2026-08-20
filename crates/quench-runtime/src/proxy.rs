@@ -80,8 +80,8 @@ fn check_revoked(proxy: &ProxyValue) -> Result<(), VmError> {
 }
 
 pub(crate) fn get_handler_trap(proxy: &ProxyValue, trap: &str) -> Option<Value> {
-    let value = crate::execute::get_property_result(&proxy.handler, trap)
-        .unwrap_or(Value::Undefined);
+    let value =
+        crate::execute::get_property_result(&proxy.handler, trap).unwrap_or(Value::Undefined);
     if matches!(value, Value::Undefined | Value::Null) {
         None
     } else {
