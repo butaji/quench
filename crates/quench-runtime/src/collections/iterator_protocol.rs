@@ -28,7 +28,10 @@ pub(super) fn call_next(
     next: &Value,
     iterator: &Value,
 ) -> Result<Value, crate::execute::VmError> {
-    if !super::should_update_protocol_receiver() {
+    // Generator  resumes the existing generator through the ordinary
+    // builtin path. The receiver-update path re-enters the function frame and
+    // can recursively create protocol iterators during Array.from.
+    if !super::should_update_protocol_receiver() || matches!(iterator, Value::Generator(_)) {
         return super::call(next, iterator);
     }
     let (result, updated) = crate::functions::execute_target_with_receiver(next, iterator, &[])?;
