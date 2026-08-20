@@ -94,13 +94,9 @@ pub fn execute_in_place_context(
     registers: &mut Vec<Value>,
     context: &VmContext,
 ) -> Result<Value, VmError> {
-    if crate::locals::is_installed() {
-        return run_ops(ops, registers, context);
-    }
-    let environment = crate::environment::Environment::child(
-        &crate::environment::Environment::new(),
-        registers.clone(),
-    );
+    let parent = crate::locals::current();
+    let environment =
+        crate::environment::Environment::in_place_child(&parent, registers.clone());
     execute_in_environment(ops, registers, context, environment)
 }
 
