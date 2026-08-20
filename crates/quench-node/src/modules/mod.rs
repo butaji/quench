@@ -71,5 +71,7 @@ pub mod util;
 pub mod util_inherits;
 pub mod util_strip;
 pub mod util_style_text;
+pub mod crypto;
 pub mod vm;
+pub mod compat_extra;
 pub mod zlib;
