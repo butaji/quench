@@ -80,6 +80,16 @@ fn reduce_block_statements(
         }
         let barrier = facts.eval_var_barrier.len();
         facts.eval_var_barrier.extend(own_functions.iter().cloned());
+        // Track whether the upcoming statement may need to inherit the
+        // previous V (used to carry the value through a `break` so that
+        // the labelled statement spec can return it as the abrupt
+        // completion's [[Value]]).
+        let pending_abrupt = matches!(
+            statement,
+            oxc::ast::ast::Statement::BreakStatement(_)
+                | oxc::ast::ast::Statement::ContinueStatement(_)
+        );
+        let start_ops = ops.len();
         let value = reduce_statement(
             statement,
             ops,
@@ -89,11 +99,27 @@ fn reduce_block_statements(
             block_locals,
         )?;
         facts.eval_var_barrier.truncate(barrier);
+        if pending_abrupt {
+            // Patch the just-emitted break/continue to carry `last`
+            // as its V so the enclosing loop/label can surface it.
+            patch_abrupt_value(ops, start_ops, last);
+        }
         if let Some(value) = value {
             last = Some(value);
         }
     }
     Ok(last)
+}
+
+pub(crate) fn patch_abrupt_value(ops: &mut [Op], start: usize, value: Option<u16>) {
+    for op in ops.iter_mut().skip(start) {
+        match op {
+            Op::Break { value: slot, .. } | Op::Continue { value: slot, .. } => {
+                *slot = value;
+            }
+            _ => {}
+        }
+    }
 }
 
 fn block_function_names(statements: &[oxc::ast::ast::Statement<'_>]) -> Vec<String> {
@@ -123,10 +149,7 @@ pub(crate) fn prepare_block_functions(
         *next_slot = next_slot.saturating_add(1);
         locals.insert(name.clone(), slot);
         locals.insert(format!("\0annex-b-lexical:{name}"), slot);
-        ops.push(Op::MarkUninitialized {
-            slot,
-            shared: true,
-        });
+        ops.push(Op::MarkUninitialized { slot, shared: true });
     }
 }
 

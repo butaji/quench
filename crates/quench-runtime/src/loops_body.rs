@@ -45,6 +45,12 @@ fn reduce_loop_body_list(
 ) -> Result<Option<u16>, Vec<String>> {
     let mut last = None;
     for statement in statements {
+        let pending_abrupt = matches!(
+            statement,
+            oxc::ast::ast::Statement::BreakStatement(_)
+                | oxc::ast::ast::Statement::ContinueStatement(_)
+        );
+        let start_ops = ops.len();
         if let Some(value) = crate::reduce::reduce_statement(
             statement,
             ops,
@@ -55,6 +61,9 @@ fn reduce_loop_body_list(
         )? {
             crate::reduce_support::emit_move(ops, completion, value);
             last = Some(value);
+        }
+        if pending_abrupt {
+            crate::blocks::patch_abrupt_value(ops, start_ops, last);
         }
     }
     Ok(last)

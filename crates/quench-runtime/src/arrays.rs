@@ -306,11 +306,21 @@ pub(crate) fn array_index(key: &str) -> Option<u32> {
 }
 
 fn direct_property(values: &crate::value::ArrayData, key: &str) -> Option<Value> {
+    // arguments.length may carry a plain value override stored on the
+    // live argument data; consult it before falling back to the
+    // ordinary own-property / array-length paths.
+    if values.is_arguments() && key == "length" {
+        if let Some(live) = values.argument_live_view() {
+            if live.length_override.is_some() {
+                return Some(values.arguments_length_value());
+            }
+        }
+    }
     if let Some(value) = values.property(key) {
         return Some(value);
     }
     if values.is_arguments() && key == "length" {
-        return Some(Value::Undefined);
+        return Some(values.arguments_length_value());
     }
     if values.is_arguments() && key == "constructor" {
         return Some(Value::Builtin(crate::ops::Builtin::Object));

@@ -63,7 +63,11 @@ pub(crate) fn accessor(value: &Value, key: &str, field: &str) -> Option<Value> {
 fn has_own_key(value: &Value, key: &str) -> bool {
     match value {
         Value::Object(properties) => properties.iter().any(|(name, _)| name == key),
-        Value::Function(function) => function.properties.borrow().iter().any(|(name, _)| name == key),
+        Value::Function(function) => function
+            .properties
+            .borrow()
+            .iter()
+            .any(|(name, _)| name == key),
         _ => false,
     }
 }

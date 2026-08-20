@@ -442,4 +442,5 @@ fn run_module_source(source: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     include!("runtime_host_tests.rs");
+    include!("runtime_host_determinism_tests.rs");
 }

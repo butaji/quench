@@ -209,12 +209,12 @@ fn loop_result(result: Result<Option<u16>, Vec<String>>) -> ReduceResult {
 
 fn reduce_break(statement: &BreakStatement<'_>, ops: &mut Vec<Op>) -> ReduceResult {
     let label = statement.label.as_ref().map(|label| label.name.to_string());
-    ops.push(Op::Break { label });
+    ops.push(Op::Break { label, value: None });
     Ok(None)
 }
 
 fn reduce_continue(statement: &ContinueStatement<'_>, ops: &mut Vec<Op>) -> ReduceResult {
     let label = statement.label.as_ref().map(|label| label.name.to_string());
-    ops.push(Op::Continue { label });
+    ops.push(Op::Continue { label, value: None });
     Ok(None)
 }

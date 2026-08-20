@@ -90,9 +90,17 @@ pub(crate) fn execute_label(
         return Err(crate::execute::VmError::MissingReturn);
     };
     let completion = crate::execute::execute_completion_in_place(body, registers)?;
-    if matches!(&completion, crate::completion::Completion::Break { label: Some(label), .. } if label == name) {
-        Ok(crate::completion::Completion::Normal)
-    } else {
-        Ok(completion)
+    // Per spec 13.13.14 step 4: a matching break becomes
+    // NormalCompletion(stmtResult.[[Value]]), not an empty normal
+    // completion. Preserve the break's carried value.
+    match &completion {
+        crate::completion::Completion::Break {
+            label: Some(label),
+            value,
+        } if label == name => {
+            let carried = value.clone().unwrap_or(crate::value::Value::Undefined);
+            Ok(crate::completion::Completion::Return(carried))
+        }
+        _ => Ok(completion),
     }
 }
