@@ -166,9 +166,24 @@ fn prototype_tag_tail(receiver: Option<&Value>) -> &'static str {
 }
 
 fn string_tag(value: &Value) -> Option<String> {
-    match crate::execute::get_property(value, "Symbol.toStringTag") {
+    // Use the own property only. Per spec, Object.prototype.toString inspects
+    // the receiver's own `Symbol.toStringTag`, not the prototype chain.
+    match own_to_string_tag(value) {
         Value::String(tag) if !crate::conversion::is_symbol_string(&tag) => Some(tag),
         _ => None,
+    }
+}
+
+fn own_to_string_tag(value: &Value) -> Value {
+    use Value::*;
+    match value {
+        Builtin(builtin) => crate::builtins::special_property(*builtin, "Symbol.toStringTag")
+            .unwrap_or(Value::Undefined),
+        Object(properties) => properties
+            .iter()
+            .find(|(key, _)| key == "Symbol.toStringTag")
+            .map_or(Value::Undefined, |(_, value)| value.clone()),
+        _ => Value::Undefined,
     }
 }
 
