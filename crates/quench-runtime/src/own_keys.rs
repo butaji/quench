@@ -293,7 +293,12 @@ fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
             .collect();
     };
     if crate::conversion::is_symbol_string(value) {
-        return ordered(properties, symbols);
+        // Boxed Symbol: enumerable indices are not meaningful. Only the
+        // own data properties (other than `_value`) are visible.
+        return ordered(properties, symbols)
+            .into_iter()
+            .filter(|key| key != "_value")
+            .collect();
     }
     boxed_string_keys(properties, value, symbols)
 }
