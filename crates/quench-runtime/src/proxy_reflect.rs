@@ -184,8 +184,21 @@ fn validate_own_keys_invariants(target: &Value, result: &Value) -> Result<(), Vm
     Ok(())
 }
 fn own_keys_array_like(value: &Value) -> Result<Value, VmError> {
-    if matches!(value, Value::Array(_)) {
-        return Ok(value.clone());
+    // Normalize arrays returned by traps as well: trap-created arrays may have
+    // indexed properties but a stale logical length after copy-on-write.
+    if let Value::Array(array) = value {
+        let property_len = array
+            .property_keys()
+            .into_iter()
+            .chain(array.descriptor_keys())
+            .filter_map(|key| key.parse::<usize>().ok().map(|index| index + 1))
+            .max()
+            .unwrap_or(0);
+        let length = array.physical_len().max(property_len);
+        let values = (0..length)
+            .map(|index| array.get_index(index).unwrap_or(Value::Undefined))
+            .collect();
+        return Ok(Value::array(values));
     }
     let length = crate::conversion::to_number(
         &crate::execute::get_property_result(value, "length")?,
