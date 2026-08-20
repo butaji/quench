@@ -54,9 +54,21 @@ fn atty_stderr() -> bool {
 }
 
 pub fn build() -> Value {
-    crate::host::namespace_object(vec![(
-        "isatty",
-        crate::host::capability(crate::registry::SPEC_TTY_ISATTY),
-    )])
-    .unwrap_or_else(|_| Value::Undefined)
+    crate::host::namespace_object(vec![
+        ("isatty", crate::host::capability(crate::registry::SPEC_TTY_ISATTY)),
+        ("ReadStream", crate::host::capability(crate::registry::NodeSpec::new("tty:ReadStream", 0x1401))),
+        ("WriteStream", crate::host::capability(crate::registry::NodeSpec::new("tty:WriteStream", 0x1402))),
+        ("Socket", crate::host::capability(crate::registry::NodeSpec::new("tty:WriteStream", 0x1402))),
+    ]).unwrap_or_else(|_| Value::Undefined)
+}
+
+pub fn read_stream(_state: &Rc<RefCell<crate::host::HostState>>, _receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    let fd = args.first().map(value_to_i32).unwrap_or(0);
+    Ok(crate::host::namespace_object_from_pairs(vec![
+        ("fd".into(), Value::Number(fd as f64)), ("isTTY".into(), Value::Boolean(false)),
+    ]))
+}
+
+pub fn write_stream(state: &Rc<RefCell<crate::host::HostState>>, receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    read_stream(state, receiver, args)
 }

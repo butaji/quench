@@ -344,6 +344,11 @@ pub const SPEC_FSP_UTIMES: NodeSpec = NodeSpec::new("fs:promises:utimes", 0x117C
 pub const SPEC_REQUIRE: NodeSpec = NodeSpec::new("require", 0x1200);
 pub const SPEC_REQUIRE_FOR: NodeSpec = NodeSpec::new("__quench_require_for__", 0x1f04);
 pub const SPEC_READLINE: NodeSpec = NodeSpec::new("readline:createInterface", 0x1300);
+pub const SPEC_READLINE_QUESTION: NodeSpec = NodeSpec::new("readline:question", 0x1303);
+pub const SPEC_READLINE_WRITE: NodeSpec = NodeSpec::new("readline:write", 0x1304);
+pub const SPEC_READLINE_CLOSE: NodeSpec = NodeSpec::new("readline:close", 0x1305);
+pub const SPEC_TTY_READSTREAM: NodeSpec = NodeSpec::new("tty:ReadStream", 0x2001);
+pub const SPEC_TTY_WRITESTREAM: NodeSpec = NodeSpec::new("tty:WriteStream", 0x2002);
 
 pub const SPEC_FS_OPEN: NodeSpec = NodeSpec::new("fs:open", 0x1160);
 pub const SPEC_FS_FSTAT: NodeSpec = NodeSpec::new("fs:fstat", 0x1161);
