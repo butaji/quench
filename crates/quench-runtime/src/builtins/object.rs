@@ -148,19 +148,47 @@ pub(crate) fn set_prototype_of(arguments: &[Value]) -> Result<Value, VmError> {
             "Cannot set the prototype of a non-extensible object",
         ));
     }
-    let internal_key = if matches!(target, Value::Function(_) | Value::BoundFunction(_)) {
-        "\0function_prototype"
-    } else {
-        "\0prototype"
+    let result = match target {
+        Value::Function(_) | Value::BoundFunction(_) => set_function_prototype(target, prototype),
+        Value::Object(data) => set_object_prototype(data, prototype),
+        _ => crate::builtins::set_property(target.clone(), "\0prototype", prototype),
     };
-    let result = crate::builtins::set_property(target.clone(), internal_key, prototype);
-    if let Value::Object(data) = &result {
-        if data.original_prototype().is_none() {
-            data.set_original_prototype(current.clone());
-        }
-    }
     crate::super_scope::attach_home_objects(&result);
     Ok(result)
+}
+
+fn set_object_prototype(data: &Rc<crate::value::ObjectData>, prototype: Value) -> Value {
+    if let Some((_, Value::BindingCell(cell))) = data
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "\0prototype")
+    {
+        *cell.borrow_mut() = prototype;
+        return Value::Object(Rc::clone(data));
+    }
+    crate::builtins::set_property(Value::Object(Rc::clone(data)), "\0prototype", prototype)
+}
+
+fn set_function_prototype(target: &Value, prototype: Value) -> Value {
+    let properties = match target {
+        Value::Function(function) => &function.properties,
+        Value::BoundFunction(function) => &function.properties,
+        _ => return target.clone(),
+    };
+    let mut properties = properties.borrow_mut();
+    if let Some((_, value)) = properties
+        .iter_mut()
+        .find(|(key, _)| key == "\0function_prototype")
+    {
+        if let Value::BindingCell(cell) = value {
+            *cell.borrow_mut() = prototype;
+        } else {
+            *value = prototype;
+        }
+    } else {
+        properties.push(("\0function_prototype".to_string(), prototype));
+    }
+    target.clone()
 }
 
 pub fn original_prototype(value: &Value) -> Option<Value> {
