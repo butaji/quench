@@ -275,7 +275,10 @@ fn is_constructible(value: &Value) -> bool {
             !function.is_async && matches!(function.kind, FunctionKind::Ordinary)
         }
         Value::BoundFunction(bound) => is_constructible(&bound.target),
-        Value::Proxy(_) => true,
+        // A proxy is constructible exactly when its target is constructible.
+        // The proxy itself does not acquire a [[Construct]] slot merely by
+        // being a proxy.
+        Value::Proxy(proxy) => is_constructible(&proxy.target),
         Value::Builtin(builtin) => crate::builtin_meta::constructor_name(*builtin).is_some(),
         _ => false,
     }
