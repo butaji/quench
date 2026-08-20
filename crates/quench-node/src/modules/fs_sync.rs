@@ -524,3 +524,31 @@ pub fn truncate_sync(
         .map_err(|e| super::fs_error::fs_error("truncate", Some(&path), &e))?;
     Ok(Value::Undefined)
 }
+ 
+pub fn chown_sync(_s: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(args.first())?;
+    let uid = match args.get(1) { Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => *n as u32, _ => return Err(crate::modules::buffer_enc::invalid_arg_type("The \"uid\" argument must be of type number.".into())) };
+    let gid = match args.get(2) { Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => *n as u32, _ => return Err(crate::modules::buffer_enc::invalid_arg_type("The \"gid\" argument must be of type number.".into())) };
+    #[cfg(unix)] {
+        use std::ffi::CString;
+        let cpath = CString::new(path.as_bytes()).map_err(|_| crate::modules::buffer_enc::invalid_arg_type("path must not contain null bytes".into()))?;
+        if unsafe { libc::chown(cpath.as_ptr(), uid as libc::uid_t, gid as libc::gid_t) } == -1 { return Err(super::fs_error::fs_error("chown", Some(&path), &std::io::Error::last_os_error())); }
+        Ok(Value::Undefined)
+    }
+    #[cfg(not(unix))] { let _ = (uid, gid); Err(super::fs_error::fs_error("chown", Some(&path), &std::io::Error::from_raw_os_error(78))) }
+}
+
+pub fn utimes_sync(_s: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+    let path = path_arg(args.first())?;
+    let atime = match args.get(1) { Some(Value::Number(n)) if n.is_finite() => *n, _ => return Err(crate::modules::buffer_enc::invalid_arg_type("The \"atime\" argument must be a number.".into())) };
+    let mtime = match args.get(2) { Some(Value::Number(n)) if n.is_finite() => *n, _ => return Err(crate::modules::buffer_enc::invalid_arg_type("The \"mtime\" argument must be a number.".into())) };
+    #[cfg(unix)] {
+        use std::ffi::CString;
+        let cpath = CString::new(path.as_bytes()).map_err(|_| crate::modules::buffer_enc::invalid_arg_type("path must not contain null bytes".into()))?;
+        let ts = |t: f64| { let sec = (t / 1000.0).floor() as libc::time_t; let nsec = ((t - sec as f64 * 1000.0) * 1_000_000.0) as libc::c_long; libc::timespec { tv_sec: sec, tv_nsec: nsec } };
+        let times = [ts(atime), ts(mtime)];
+        if unsafe { libc::utimensat(libc::AT_FDCWD, cpath.as_ptr(), times.as_ptr(), 0) } == -1 { return Err(super::fs_error::fs_error("utimes", Some(&path), &std::io::Error::last_os_error())); }
+        Ok(Value::Undefined)
+    }
+    #[cfg(not(unix))] { let _ = (atime, mtime); Err(super::fs_error::fs_error("utimes", Some(&path), &std::io::Error::from_raw_os_error(78))) }
+}
