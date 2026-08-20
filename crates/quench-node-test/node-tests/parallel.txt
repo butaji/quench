@@ -78,6 +78,7 @@ test-fs-unlink-type-check.js
 test-fs-watch-recursive-validate.js
 test-fs-write-file-buffer.js
 test-net-autoselectfamily-ipv4first.js
+test-crypto.js
 test-net-connect-after-destroy.js
 test-net-connect-immediate-destroy.js
 test-net-dns-lookup-skip.js

@@ -41,7 +41,7 @@ Legend
 | async_hooks | 🟡 | stub | minimal JS factory |
 | child_process | 🟡 | partial | spawn/spawnSync/exec/execSync |
 | cluster | 🟡 | missing | empty namespace |
-| crypto | 🟡 | partial | `randomBytes`/`randomFillSync` use OS randomness; hash/cipher/key APIs explicitly unsupported |
+| crypto | 🟡 | partial | `randomBytes` and in-place `randomFillSync` use OS randomness; constants are exposed; hash/cipher/key APIs explicitly unsupported |
 | domain | 🟡 | missing | not resolvable |
 | module | 🟡 | partial | CJS require; ESM APIs missing |
 | process | 🟡 | partial | properties + basic; signals/lifecycle gaps |
