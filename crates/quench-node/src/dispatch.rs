@@ -23,6 +23,7 @@ const CAP_EVENTS_LISTENER_COUNT: u16 = 0x010A;
 const CAP_EVENTS_PREPEND: u16 = 0x010B;
 const CAP_CRYPTO_RANDOM_BYTES: u16 = 0x2100;
 const CAP_CRYPTO_UNSUPPORTED: u16 = 0x2101;
+const CAP_CRYPTO_RANDOM_FILL_SYNC: u16 = 0x2102;
 const CAP_EVENTS_PREPEND_ONCE: u16 = 0x010C;
 const CAP_EVENTS_SET_MAX: u16 = 0x010D;
 const CAP_EVENTS_GET_MAX: u16 = 0x010E;
@@ -213,6 +214,7 @@ const CAP_PROCESS_ON: u16 = 0x0A07;
 const CAP_PROCESS_ONCE: u16 = 0x0A08;
 const CAP_PROCESS_GETUID: u16 = 0x0A0B;
 const CAP_PROCESS_GETGID: u16 = 0x0A0C;
+const CAP_PROCESS_BINDING: u16 = 0x0A0D;
 const CAP_STDOUT_WRITE: u16 = 0x0A09;
 const CAP_STDERR_WRITE: u16 = 0x0A0A;
 const CAP_NET_GET_ASF_TIMEOUT: u16 = 0x1005;
@@ -404,7 +406,9 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_ONCE => process_once,
         CAP_PROCESS_GETUID => process_getuid,
         CAP_PROCESS_GETGID => process_getgid,
+        CAP_PROCESS_BINDING => process_binding,
         CAP_CRYPTO_RANDOM_BYTES => crypto_random_bytes,
+        CAP_CRYPTO_RANDOM_FILL_SYNC => crypto_random_fill_sync,
         CAP_CRYPTO_UNSUPPORTED => crypto_unsupported,
         CAP_STDOUT_WRITE | CAP_STDERR_WRITE => {
             |state, _receiver, args| crate::modules::process::stream_write(state, args)
