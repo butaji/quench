@@ -124,7 +124,13 @@ impl ModuleGraph {
     {
         for specifier in specifiers {
             let Some(target) = self.resolve(from, specifier) else {
-                continue;
+                let from_path = self
+                    .unit(from)
+                    .map(|unit| unit.path.display().to_string())
+                    .unwrap_or_else(|| format!("<unknown:{:?}>", from));
+                return Err(format!(
+                    "unresolved static module specifier `{specifier}` from `{from_path}`"
+                ));
             };
             self.link(from, target)?;
         }
@@ -284,10 +290,25 @@ mod tests {
         assert_eq!(graph.entry_unit().map(|unit| unit.id), Some(entry));
         assert_eq!(graph.unit(dependency).map(|unit| unit.id), Some(dependency));
         assert_eq!(graph.units().len(), 2);
+
         graph.link_all_units().expect("known edge");
         assert_eq!(
             graph.dependency_order(entry).unwrap(),
             vec![dependency, entry]
+        );
+    }
+
+    #[test]
+    fn graph_rejects_unresolved_static_imports() {
+        let mut graph = ModuleGraph::new();
+        let entry = graph.add_entry(
+            PathBuf::from("test/entry.js"),
+            "import './missing.js';".to_string(),
+        );
+        let error = graph.link_unit_imports(entry).expect_err("missing import");
+        assert_eq!(
+            error,
+            "unresolved static module specifier `./missing.js` from `test/entry.js`"
         );
     }
 
