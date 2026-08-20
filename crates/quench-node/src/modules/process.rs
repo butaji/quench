@@ -98,12 +98,25 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
         ),
         ("arch", Value::String(current_arch().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
+        // Bun documents source-map support as unavailable in its Node
+        // compatibility layer. Expose the documented false value rather than
+        // claiming that stack traces are being rewritten.
+        ("sourceMapsEnabled", Value::Boolean(false)),
         ("execArgv", host_api::array(vec![])),
         ("features", host_api::object(vec![])),
         ("stdout", std_stream(false)),
         ("stderr", std_stream(true)),
     ]
 }
+
+/// `process.binding()` is an internal Node escape hatch. Quench has no
+/// internal-binding ABI; keep the callable surface and fail explicitly,
+/// rather than returning a fake namespace that later crashes mysteriously.
+pub fn binding(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let name = args.first().map(value_to_string).unwrap_or_default();
+    Err(VmError::EvalError(format!("process.binding('{name}') is not supported")))
+}
+
 
 /// `process.stdout` / `process.stderr` — non-TTY write streams.
 fn std_stream(is_error: bool) -> Value {
@@ -165,6 +178,10 @@ fn method_props() -> Vec<(&'static str, Value)> {
         (
             "getgid",
             crate::host::capability(crate::registry::SPEC_PROCESS_GETGID),
+        ),
+        (
+            "binding",
+            crate::host::capability(crate::registry::SPEC_PROCESS_BINDING),
         ),
     ]
 }
