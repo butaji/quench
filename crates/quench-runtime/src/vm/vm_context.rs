@@ -52,7 +52,8 @@ pub(crate) fn is_legacy_global(_key: &str) -> bool {
 }
 
 pub(crate) fn global_builtin_value(key: &str) -> Option<Value> {
-    crate::globals::builtin(key).map(Value::Builtin)
+    crate::globals::builtin(key)
+        .map(|builtin| realm_intrinsic_for(current_context_or_default().realm(), builtin))
 }
 
 pub(crate) fn realm_token(realm: RealmId) -> Option<Value> {
@@ -78,26 +79,27 @@ pub(crate) fn is_intrinsic_bound(bound: &crate::value::BoundFunctionValue) -> bo
     realm::is_intrinsic(bound)
 }
 
-pub(crate) fn intrinsic_realm(value: &Value, builtin: Builtin) -> Option<RealmId> {
+pub(crate) fn value_realm(value: &Value, builtin: Builtin) -> Option<RealmId> {
     if matches!(value, Value::Builtin(candidate) if *candidate == builtin) {
         return Some(RealmId::ROOT);
     }
     let Value::BoundFunction(bound) = value else {
         return None;
     };
-    if bound.target != Value::Builtin(builtin) {
-        return None;
-    }
     let Value::HostCapability(token) = &bound.receiver else {
         return None;
     };
     if token.realm() != bound.realm {
         return None;
     }
-    if token.realm() == RealmId::ROOT {
+    Some(bound.realm)
+}
+
+pub(crate) fn intrinsic_realm(value: &Value, builtin: Builtin) -> Option<RealmId> {
+    if matches!(value, Value::Builtin(candidate) if *candidate == builtin) {
         return Some(RealmId::ROOT);
     }
-    Some(bound.realm)
+    value_realm(value, builtin)
 }
 
 pub(crate) fn intl_fallback_symbol(realm: RealmId) -> Option<Value> {
@@ -174,9 +176,9 @@ impl VmContext {
         arguments: &[Value],
         new_target: &Value,
     ) -> Option<Result<Value, VmError>> {
-        self.host.as_ref().map(|host| {
-            host.construct_with_new_target(capability, arguments, new_target)
-        })
+        self.host
+            .as_ref()
+            .map(|host| host.construct_with_new_target(capability, arguments, new_target))
     }
 
     pub fn with_host_capability(

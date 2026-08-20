@@ -192,6 +192,9 @@ fn slot_prototype(value: &Value) -> Option<Value> {
         } else {
             Builtin::SetPrototype
         })),
+        Value::Promise(data) => data
+            .prototype()
+            .unwrap_or_else(|| crate::vm::realm_intrinsic(Builtin::PromisePrototype)),
         _ => return typed_array_slot_prototype(value),
     })
 }
