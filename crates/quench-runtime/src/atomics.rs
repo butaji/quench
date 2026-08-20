@@ -209,6 +209,17 @@ fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
     let index = atomic_index(args.get(1))?;
     let old = bigint_old(view, index)?;
     let replacement = bigint_result(builtin, args, &old)?;
+    let replacement = match view {
+        Value::BigInt64Array(_) => replacement
+            .parse::<i128>()
+            .map(|value| (value as i64).to_string())
+            .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt"))?,
+        Value::BigUint64Array(_) => replacement
+            .parse::<i128>()
+            .map(|value| (value as u64).to_string())
+            .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt"))?,
+        _ => replacement,
+    };
     bigint_write(
         view,
         index,
