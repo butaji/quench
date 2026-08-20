@@ -75,6 +75,49 @@ pub(crate) fn fd_read(fd: i32, out: &mut [u8], offset: usize, length: usize, pos
             .map_err(|e| crate::modules::fs_error::fs_error("read", None, &e))
     })
 }
+#[cfg(unix)]
+fn with_raw_fd<T>(fd: i32, f: impl FnOnce(std::os::unix::io::RawFd) -> Result<T, VmError>) -> Result<T, VmError> {
+    use std::os::unix::io::AsRawFd;
+    FDS.with(|t| t.borrow().get(&fd).map(|file| f(file.as_raw_fd())).unwrap_or_else(|| Err(crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into()))))
+}
+
+#[cfg(unix)]
+pub(crate) fn fd_chmod(fd: i32, mode: u32) -> Result<Value, VmError> {
+    with_raw_fd(fd, |raw| {
+        let rc = unsafe { libc::fchmod(raw, mode as libc::mode_t) };
+        if rc == -1 { return Err(crate::modules::fs_error::fs_error("fchmod", None, &std::io::Error::last_os_error())); }
+        Ok(Value::Undefined)
+    })
+}
+
+#[cfg(unix)]
+pub(crate) fn fd_chown(fd: i32, uid: u32, gid: u32) -> Result<Value, VmError> {
+    with_raw_fd(fd, |raw| {
+        let rc = unsafe { libc::fchown(raw, uid as libc::uid_t, gid as libc::gid_t) };
+        if rc == -1 { return Err(crate::modules::fs_error::fs_error("fchown", None, &std::io::Error::last_os_error())); }
+        Ok(Value::Undefined)
+    })
+}
+
+#[cfg(unix)]
+pub(crate) fn fd_utimes(fd: i32, atime: f64, mtime: f64) -> Result<Value, VmError> {
+    with_raw_fd(fd, |raw| {
+        let times = [
+            libc::timeval { tv_sec: atime.trunc() as libc::time_t, tv_usec: (atime.fract() * 1_000_000.0) as libc::suseconds_t },
+            libc::timeval { tv_sec: mtime.trunc() as libc::time_t, tv_usec: (mtime.fract() * 1_000_000.0) as libc::suseconds_t },
+        ];
+        let rc = unsafe { libc::futimes(raw, times.as_ptr()) };
+        if rc == -1 { return Err(crate::modules::fs_error::fs_error("futimes", None, &std::io::Error::last_os_error())); }
+        Ok(Value::Undefined)
+    })
+}
+
+#[cfg(not(unix))]
+pub(crate) fn fd_chmod(_: i32, _: u32) -> Result<Value, VmError> { Err(VmError::NotCallable) }
+#[cfg(not(unix))]
+pub(crate) fn fd_chown(_: i32, _: u32, _: u32) -> Result<Value, VmError> { Err(VmError::NotCallable) }
+#[cfg(not(unix))]
+pub(crate) fn fd_utimes(_: i32, _: f64, _: f64) -> Result<Value, VmError> { Err(VmError::NotCallable) }
 
 /// The `/dev/fd/N` path for standard stream descriptors 0/1/2, which are
 /// always-open real fds in Node (stdin/stdout/stderr).
