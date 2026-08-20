@@ -460,6 +460,7 @@ impl<H: Test262Host> Test262Runner<H> {
         metadata: &TestMetadata,
         path: Option<&Path>,
     ) -> TestOutcome {
+        // AGENTS.md: harness fidelity is absolute; dispatch the composed sources unchanged.
         if metadata.is_module {
             if let Some(path) = path {
                 return runner_support::outcome(
