@@ -311,18 +311,27 @@ fn object_keys(properties: &[(String, Value)], symbols: bool) -> Vec<String> {
 fn filter_namespace_symbol_name(
     properties: &[(String, Value)],
     symbols: bool,
-    keys: Vec<String>,
+    mut keys: Vec<String>,
 ) -> Vec<String> {
     let namespace = properties.iter().any(|(key, value)| {
         key == "\0quench:module_namespace" && matches!(value, Value::Boolean(true))
     });
-    if namespace && !symbols {
-        keys.into_iter()
-            .filter(|key| key != "Symbol.toStringTag")
-            .collect()
-    } else {
-        keys
+    if !namespace {
+        return keys;
     }
+    if symbols {
+        if properties
+            .iter()
+            .any(|(key, _)| key == "Symbol.toStringTag")
+            && !keys.iter().any(|key| key == "Symbol.toStringTag")
+        {
+            keys.push("Symbol.toStringTag".to_string());
+        }
+        return keys;
+    }
+    keys.into_iter()
+        .filter(|key| key != "Symbol.toStringTag")
+        .collect()
 }
 
 fn boxed_string_keys(properties: &[(String, Value)], value: &str, symbols: bool) -> Vec<String> {
