@@ -317,6 +317,12 @@ pub const SPEC_FSP_READLINK: NodeSpec = NodeSpec::new("fs:promises:readlink", 0x
 pub const SPEC_FSP_CHMOD: NodeSpec = NodeSpec::new("fs:promises:chmod", 0x114F);
 pub const SPEC_FSP_TRUNCATE: NodeSpec = NodeSpec::new("fs:promises:truncate", 0x1150);
 pub const SPEC_FSP_REALPATH: NodeSpec = NodeSpec::new("fs:promises:realpath", 0x1151);
+pub const SPEC_FSP_OPEN: NodeSpec = NodeSpec::new("fs:promises:open", 0x1170);
+pub const SPEC_FSP_FILEHANDLE_STAT: NodeSpec = NodeSpec::new("fs:promises:FileHandle:stat", 0x1171);
+pub const SPEC_FSP_FILEHANDLE_CLOSE: NodeSpec = NodeSpec::new("fs:promises:FileHandle:close", 0x1172);
+pub const SPEC_FSP_FILEHANDLE_TRUNCATE: NodeSpec = NodeSpec::new("fs:promises:FileHandle:truncate", 0x1173);
+pub const SPEC_FSP_FILEHANDLE_DATASYNC: NodeSpec = NodeSpec::new("fs:promises:FileHandle:datasync", 0x1174);
+pub const SPEC_FSP_FILEHANDLE_SYNC: NodeSpec = NodeSpec::new("fs:promises:FileHandle:sync", 0x1175);
 
 pub const SPEC_REQUIRE: NodeSpec = NodeSpec::new("require", 0x1200);
 pub const SPEC_REQUIRE_FOR: NodeSpec = NodeSpec::new("__quench_require_for__", 0x1f04);

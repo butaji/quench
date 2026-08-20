@@ -49,6 +49,10 @@ pub(crate) fn fd_close(fd: i32) -> Result<Value, VmError> {
     FDS.with(|t| if t.borrow_mut().remove(&fd).is_some() { Ok(Value::Undefined) } else { Err(crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())) })
 }
 
+pub(crate) fn fd_truncate(fd: i32, len: u64) -> Result<Value, VmError> {
+    FDS.with(|t| t.borrow().get(&fd).ok_or_else(|| crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())).and_then(|f| f.set_len(len).map(|_| Value::Undefined).map_err(|e| crate::modules::fs_error::fs_error("ftruncate", None, &e))))
+}
+
 /// The `/dev/fd/N` path for standard stream descriptors 0/1/2, which are
 /// always-open real fds in Node (stdin/stdout/stderr).
 fn std_stream_fd(fd: i32) -> Option<&'static str> {
@@ -290,6 +294,7 @@ fn promises() -> Value {
         ("chmod", crate::host::capability(SPEC_FSP_CHMOD)),
         ("truncate", crate::host::capability(SPEC_FSP_TRUNCATE)),
         ("realpath", crate::host::capability(SPEC_FSP_REALPATH)),
+        ("open", crate::host::capability(SPEC_FSP_OPEN)),
     ];
     crate::host::namespace_object(props).unwrap_or_else(|_| Value::Undefined)
 }
