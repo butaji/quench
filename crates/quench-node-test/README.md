@@ -76,6 +76,8 @@ Current coverage (28 scripts):
   local server, echoing the parsed path
 - `test-readline.js` — readline.createInterface emits 'line' per input
   line then 'close'
+- `test-zlib-sync.js` — zlib gzip/gunzip, deflateRaw/inflateRaw, and
+  deflate/inflate round-trips (flate2-backed, matching Node)
 - `test-http-post.js` — the server streams a Content-Length request body
   to req 'data'/'end' and echoes it back to an http.request POST
 - `test-http-keepalive.js` — two requests served over one connection,

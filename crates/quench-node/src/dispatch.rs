@@ -168,6 +168,12 @@ const CAP_REQUIRE: u16 = 0x1200;
 const CAP_READLINE: u16 = 0x1300;
 const CAP_READLINE_DRIVER: u16 = 0x1301;
 const CAP_READLINE_DONE: u16 = 0x1302;
+const CAP_ZLIB_GZIP: u16 = 0x1700;
+const CAP_ZLIB_GUNZIP: u16 = 0x1701;
+const CAP_ZLIB_DEFLATE_RAW: u16 = 0x1702;
+const CAP_ZLIB_INFLATE_RAW: u16 = 0x1703;
+const CAP_ZLIB_DEFLATE: u16 = 0x1704;
+const CAP_ZLIB_INFLATE: u16 = 0x1705;
 const CAP_ASSERT_OK: u16 = 0x1400;
 const CAP_ASSERT_STRICT_EQUAL: u16 = 0x1401;
 const CAP_ASSERT_NOT_STRICT_EQUAL: u16 = 0x1402;
@@ -461,6 +467,12 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_READLINE => crate::modules::readline::create_interface,
         CAP_READLINE_DRIVER => crate::modules::readline::driver_handler,
         CAP_READLINE_DONE => crate::modules::readline::done_handler,
+        CAP_ZLIB_GZIP => crate::modules::zlib::gzip,
+        CAP_ZLIB_GUNZIP => crate::modules::zlib::gunzip,
+        CAP_ZLIB_DEFLATE_RAW => crate::modules::zlib::deflate_raw,
+        CAP_ZLIB_INFLATE_RAW => crate::modules::zlib::inflate_raw,
+        CAP_ZLIB_DEFLATE => crate::modules::zlib::deflate,
+        CAP_ZLIB_INFLATE => crate::modules::zlib::inflate,
         _ => return fs_dispatch(cap),
     })
 }
