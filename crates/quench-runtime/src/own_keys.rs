@@ -312,12 +312,23 @@ fn boxed_string_keys(properties: &[(String, Value)], value: &str, symbols: bool)
         .enumerate()
         .map(|(index, _)| index.to_string())
         .collect::<Vec<_>>();
-    keys.push("length".to_string());
-    keys.extend(
-        ordered(properties, false)
-            .into_iter()
-            .filter(|key| !matches!(key.as_str(), "_value" | "constructor")),
-    );
+    let mut string_keys: Vec<String> = ordered(properties, false)
+        .into_iter()
+        .filter(|key| !matches!(key.as_str(), "_value" | "constructor"))
+        .collect();
+    // Ensure "length" is present and appears first among the non-index
+    // string keys, in creation order. `Object.defineProperty` may have
+    // re-defined or removed the own `length` slot; if it is missing,
+    // prepend it so the resulting enumeration matches the spec.
+    if let Some(position) = string_keys.iter().position(|key| key == "length") {
+        if position != 0 {
+            string_keys.remove(position);
+            string_keys.insert(0, "length".to_string());
+        }
+    } else {
+        string_keys.insert(0, "length".to_string());
+    }
+    keys.extend(string_keys);
     keys
 }
 
