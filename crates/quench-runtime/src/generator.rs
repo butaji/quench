@@ -274,13 +274,13 @@ pub(crate) fn async_dispose(receiver: Option<&Value>) -> Result<Value, VmError> 
         )],
     )
 }
-enum Resume {
+pub(crate) enum Resume {
     Next(Value),
     Return(Value),
     Throw(Value),
 }
 
-fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
+pub(crate) fn resume(generator: &GeneratorData, resume: Resume) -> Result<Value, VmError> {
     if *generator.running.borrow() {
         return Err(crate::value::error::throw_type_error(
             "Generator is already executing",
