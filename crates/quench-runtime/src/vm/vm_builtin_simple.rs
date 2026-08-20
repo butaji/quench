@@ -93,6 +93,12 @@ fn is_simple_errors(builtin: Builtin) -> bool {
             | Builtin::SuppressedError
             | Builtin::ErrorIsError
             | Builtin::ErrorCaptureStackTrace
+            | Builtin::CallSiteGetFileName
+            | Builtin::CallSiteGetLineNumber
+            | Builtin::CallSiteGetColumnNumber
+            | Builtin::CallSiteGetFunctionName
+            | Builtin::CallSiteIsEval
+            | Builtin::CallSiteGetEvalOrigin
             | Builtin::ErrorPrototypeToString
             | Builtin::ErrorPrototypeNameGetter
             | Builtin::ErrorPrototypeMessageGetter

@@ -59,6 +59,17 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .insert("stream".to_string(), value.clone());
         return Ok(value);
     }
+    if matches!(spec.as_str(), "async_hooks" | "node:async_hooks") {
+        if let Some(cached) = state.borrow().module_cache.get("async_hooks") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::async_hooks::build(state)?;
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("async_hooks".to_string(), value.clone());
+        return Ok(value);
+    }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
         return Ok(cached.clone());
     }
@@ -120,6 +131,7 @@ fn execute_module(
     source: &str,
 ) -> Result<Value, VmError> {
     let filename = path.to_string_lossy().into_owned();
+    quench_runtime::frame_stack::set_current_file(filename.clone());
     let wrapped = wrap_cjs(state, &filename, source);
     let module = state
         .borrow()
