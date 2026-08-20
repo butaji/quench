@@ -210,14 +210,14 @@ fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
     let old = bigint_old(view, index)?;
     let replacement = bigint_result(builtin, args, &old)?;
     let replacement = match view {
-        Value::BigInt64Array(_) => replacement
-            .parse::<i128>()
-            .map(|value| (value as i64).to_string())
-            .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt"))?,
-        Value::BigUint64Array(_) => replacement
-            .parse::<i128>()
-            .map(|value| (value as u64).to_string())
-            .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt"))?,
+        Value::BigInt64Array(_) => {
+            let bits = crate::construct::bigint_bits(&Value::BigInt(replacement))?;
+            (bits as i64).to_string()
+        }
+        Value::BigUint64Array(_) => {
+            let bits = crate::construct::bigint_bits(&Value::BigInt(replacement))?;
+            bits.to_string()
+        }
         _ => replacement,
     };
     bigint_write(
@@ -260,7 +260,7 @@ fn bigint_old(view: &Value, index: usize) -> Result<String, VmError> {
 
 fn bigint_result(builtin: Builtin, args: &[Value], old: &str) -> Result<String, VmError> {
     let old = old
-        .parse::<i128>()
+        .parse::<num_bigint::BigInt>()
         .map_err(|_| crate::value::error::throw_type_error("Invalid BigInt"))?;
     let value = bigint_argument(args.get(2))?;
     let result = if builtin == Builtin::AtomicsCompareExchange {
@@ -271,10 +271,10 @@ fn bigint_result(builtin: Builtin, args: &[Value], old: &str) -> Result<String, 
         }
     } else {
         match builtin {
-            Builtin::AtomicsAdd => old.wrapping_add(value),
+            Builtin::AtomicsAdd => old + value,
             Builtin::AtomicsAnd => old & value,
             Builtin::AtomicsOr => old | value,
-            Builtin::AtomicsSub => old.wrapping_sub(value),
+            Builtin::AtomicsSub => old - value,
             Builtin::AtomicsXor => old ^ value,
             _ => return Err(crate::vm::not_callable()),
         }
@@ -304,7 +304,7 @@ fn bigint_write(view: &Value, index: usize, value: &str, unchanged: bool) -> Res
     Ok(())
 }
 
-fn bigint_argument(value: Option<&Value>) -> Result<i128, VmError> {
+fn bigint_argument(value: Option<&Value>) -> Result<num_bigint::BigInt, VmError> {
     let Some(Value::BigInt(value)) = value else {
         return Err(crate::value::error::throw_type_error(
             "Atomics requires BigInt values",
