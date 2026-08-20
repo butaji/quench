@@ -394,10 +394,9 @@ pub(crate) fn special_property(builtin: Builtin, key: &str) -> Option<Value> {
     special(builtin, key)
 }
 pub(crate) fn callable(builtin: Builtin, key: &str) -> Option<Value> {
-    if matches!(
-        builtin,
-        Builtin::GeneratorFunctionPrototype | Builtin::AsyncGeneratorFunctionPrototype
-    ) && matches!(key, "length" | "name")
+    if crate::builtin_meta::is_prototype(builtin)
+        && builtin != Builtin::FunctionPrototype
+        && matches!(key, "length" | "name")
     {
         return None;
     }
