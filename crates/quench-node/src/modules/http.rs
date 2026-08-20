@@ -19,8 +19,12 @@ const RES_ID_PROP: &str = "\0quench:http:res:id";
 
 pub struct HttpState {
     next_res: u64,
+    pub next_client: u64,
     pub conns: HashMap<u64, Conn>,
     pub res: HashMap<u64, Res>,
+    pub clientreqs: HashMap<u64, crate::modules::http_client::ClientReq>,
+    /// socket net id -> ClientRequest id.
+    pub clients: HashMap<u64, u64>,
 }
 
 /// Inbound connection parse state, keyed by socket net id.
@@ -49,8 +53,11 @@ impl HttpState {
     pub fn new() -> Self {
         Self {
             next_res: 1,
+            next_client: 1,
             conns: HashMap::new(),
             res: HashMap::new(),
+            clientreqs: HashMap::new(),
+            clients: HashMap::new(),
         }
     }
 }
@@ -456,23 +463,14 @@ fn number(value: &Value) -> Option<u16> {
     }
 }
 
-/// `http.request` / `http.get` — not yet implemented; return an object
-/// exposing the `on` shape so module consumers fail gracefully.
+/// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let _ = (state, args);
-    Ok(http_outgoing())
+    crate::modules::http_client::request(state, args)
 }
 
+/// `http.get(options[, cb])` — `request` with method GET, auto-ended.
 pub fn get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    request(state, args)
-}
-
-fn http_outgoing() -> Value {
-    host_api::object(vec![
-        ("on".to_string(), Value::Undefined),
-        ("write".to_string(), Value::Undefined),
-        ("end".to_string(), Value::Undefined),
-    ])
+    crate::modules::http_client::get(state, args)
 }
 
 /// The `http` module namespace.
