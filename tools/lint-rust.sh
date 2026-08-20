@@ -25,7 +25,7 @@ while IFS= read -r file; do
         printf '%s: %d lines (maximum 500)\n' "$file" "$lines" >&2
         fail=1
     fi
-done < <("$rg_bin" --files -g '*.rs' -g '!target/**' | sort)
+done < <("$rg_bin" --files -g '*.rs' -g '!target/**' -g '!tests/node/deps/**' | sort)
 
 while IFS= read -r file; do
     awk '
@@ -51,7 +51,7 @@ while IFS= read -r file; do
         }
         END { exit fail }
     ' "$file" || fail=1
-done < <("$rg_bin" --files -g '*.rs' -g '!target/**' | sort)
+done < <("$rg_bin" --files -g '*.rs' -g '!target/**' -g '!tests/node/deps/**' | sort)
 
 if (( fail != 0 )); then
     exit 1
