@@ -21,6 +21,8 @@ const CAP_EVENTS_LISTENERS: u16 = 0x0108;
 const CAP_EVENTS_EVENT_NAMES: u16 = 0x0109;
 const CAP_EVENTS_LISTENER_COUNT: u16 = 0x010A;
 const CAP_EVENTS_PREPEND: u16 = 0x010B;
+const CAP_CRYPTO_RANDOM_BYTES: u16 = 0x2100;
+const CAP_CRYPTO_UNSUPPORTED: u16 = 0x2101;
 const CAP_EVENTS_PREPEND_ONCE: u16 = 0x010C;
 const CAP_EVENTS_SET_MAX: u16 = 0x010D;
 const CAP_EVENTS_GET_MAX: u16 = 0x010E;
@@ -402,6 +404,8 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_ONCE => process_once,
         CAP_PROCESS_GETUID => process_getuid,
         CAP_PROCESS_GETGID => process_getgid,
+        CAP_CRYPTO_RANDOM_BYTES => crypto_random_bytes,
+        CAP_CRYPTO_UNSUPPORTED => crypto_unsupported,
         CAP_STDOUT_WRITE | CAP_STDERR_WRITE => {
             |state, _receiver, args| crate::modules::process::stream_write(state, args)
         }
