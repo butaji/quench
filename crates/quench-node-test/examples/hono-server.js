@@ -39,7 +39,7 @@ server.listen(0, () => {
   const port = server.address().port;
 
   const client = net.connect(port, '127.0.0.1', () => {
-    client.write('GET /json HTTP/1.1\r\nHost: localhost\r\n\r\n');
+    client.write('GET /json HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n');
   });
   let received = '';
   client.setEncoding('utf8');

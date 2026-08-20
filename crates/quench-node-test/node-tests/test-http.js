@@ -21,6 +21,7 @@ server.listen(0, '127.0.0.1', () => {
     client.write(
       'GET /path?q=1 HTTP/1.1\r\n' +
       'Host: localhost\r\n' +
+      'Connection: close\r\n' +
       'X-Custom: yes\r\n' +
       '\r\n'
     );
