@@ -505,19 +505,5 @@ pub(crate) fn for_each(
     }
 }
 
-fn consume_count(iterator: &Value, mut limit: usize) -> Result<usize, crate::execute::VmError> {
-    let mut consumed = 0;
-    while limit > 0 {
-        match step_value(iterator) {
-            Ok(Some(_)) => {
-                consumed += 1;
-                limit -= 1;
-            }
-            Ok(None) => return Ok(consumed),
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(consumed)
-}
 
 
