@@ -166,6 +166,8 @@ const CAP_NET_ISIPV4: u16 = 0x1003;
 const CAP_NET_ISIPV6: u16 = 0x1004;
 const CAP_REQUIRE: u16 = 0x1200;
 const CAP_READLINE: u16 = 0x1300;
+const CAP_READLINE_DRIVER: u16 = 0x1301;
+const CAP_READLINE_DONE: u16 = 0x1302;
 const CAP_ASSERT_OK: u16 = 0x1400;
 const CAP_ASSERT_STRICT_EQUAL: u16 = 0x1401;
 const CAP_ASSERT_NOT_STRICT_EQUAL: u16 = 0x1402;
@@ -456,6 +458,9 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STRUCTURED_CLONE => structured_clone,
         CAP_FETCH => fetch,
         CAP_VM_RUN_IN_NEW_CONTEXT => crate::modules::vm::run_in_new_context,
+        CAP_READLINE => crate::modules::readline::create_interface,
+        CAP_READLINE_DRIVER => crate::modules::readline::driver_handler,
+        CAP_READLINE_DONE => crate::modules::readline::done_handler,
         _ => return fs_dispatch(cap),
     })
 }
