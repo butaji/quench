@@ -268,6 +268,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_UTIL_INSPECT => util_inspect,
         CAP_STRING_DECODER => string_decoder_call,
         CAP_STRING_DECODER_WRITE => string_decoder_write,
+        CAP_STRING_DECODER_END => string_decoder_end,
         _ => return events_dispatch(cap),
     };
     Some(h)
@@ -412,6 +413,11 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_EXIT => process_exit,
         CAP_PROCESS_CWD => process_cwd,
         CAP_PROCESS_CHDIR => process_chdir,
+        CAP_PROCESS_NEXT_TICK => process_next_tick,
+        CAP_PROCESS_HRTIME => process_hrtime,
+        CAP_PROCESS_UMASK => process_umask,
+        CAP_PROCESS_ON => process_on,
+        CAP_PROCESS_ONCE => process_once,
         CAP_PROCESS_GETUID => process_getuid,
         CAP_PROCESS_GETGID => process_getgid,
         CAP_PROCESS_BINDING => process_binding,
@@ -569,7 +575,8 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_TEXT_ENCODER_NEW => crate::modules::text_encoder::new_text_encoder,
         CAP_URL_SEARCH => url_search_params,
         CAP_READLINE => readline_create_interface,
-        CAP_ABORT_CONTROLLER => abort_controller_new,
+        CAP_NET_SERVER => net_create_server,
+        CAP_BUFFER_NEW => buffer_new_construct,
         CAP_ABORT_SIGNAL => abort_signal_new,
         _ => return None,
     })
