@@ -83,6 +83,14 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
     if key == "Symbol.iterator" {
         return Some(crate::ops::Builtin::StringIterator);
     }
+    property_method_name(key)
+}
+
+fn property_method_name(key: &str) -> Option<crate::ops::Builtin> {
+    property_method_name_primary(key).or_else(|| property_method_name_secondary(key))
+}
+
+fn property_method_name_primary(key: &str) -> Option<crate::ops::Builtin> {
     match key {
         "anchor" => Some(crate::ops::Builtin::StringAnchor),
         "big" => Some(crate::ops::Builtin::StringBig),
@@ -110,6 +118,12 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "charCodeAt" => Some(crate::ops::Builtin::StringCharCodeAt),
         "indexOf" => Some(crate::ops::Builtin::StringIndexOf),
         "lastIndexOf" => Some(crate::ops::Builtin::StringLastIndexOf),
+        _ => None,
+    }
+}
+
+fn property_method_name_secondary(key: &str) -> Option<crate::ops::Builtin> {
+    match key {
         "slice" => Some(crate::ops::Builtin::StringSlice),
         "substring" => Some(crate::ops::Builtin::StringSubstring),
         "substr" => Some(crate::ops::Builtin::StringSubstr),
@@ -119,10 +133,8 @@ pub(crate) fn property_method(key: &str) -> Option<crate::ops::Builtin> {
         "split" => Some(crate::ops::Builtin::StringSplit),
         "padStart" => Some(crate::ops::Builtin::StringPadStart),
         "padEnd" => Some(crate::ops::Builtin::StringPadEnd),
-        "trimStart" => Some(crate::ops::Builtin::StringTrimStart),
-        "trimLeft" => Some(crate::ops::Builtin::StringTrimStart),
-        "trimEnd" => Some(crate::ops::Builtin::StringTrimEnd),
-        "trimRight" => Some(crate::ops::Builtin::StringTrimEnd),
+        "trimStart" | "trimLeft" => Some(crate::ops::Builtin::StringTrimStart),
+        "trimEnd" | "trimRight" => Some(crate::ops::Builtin::StringTrimEnd),
         "codePointAt" => Some(crate::ops::Builtin::StringCodePointAt),
         "toString" => Some(crate::ops::Builtin::StringToString),
         "valueOf" => Some(crate::ops::Builtin::StringValueOf),

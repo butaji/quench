@@ -220,6 +220,14 @@ fn transfer(
             "transfer requires an ArrayBuffer",
         ));
     };
+    transfer_buffer(buffer, arguments, preserve_resizability)
+}
+
+fn transfer_buffer(
+    buffer: &crate::value::ArrayBufferData,
+    arguments: &[Value],
+    preserve_resizability: bool,
+) -> Result<Value, VmError> {
     let new_length = match arguments.first() {
         None | Some(Value::Undefined) => buffer.byte_length(),
         Some(value) => crate::construct::to_index(crate::intl::tolocale::value::to_number_result(

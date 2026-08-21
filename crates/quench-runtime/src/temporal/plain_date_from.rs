@@ -5,6 +5,10 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
     let Some(Value::String(text)) = value else {
         return Err(crate::value::error::throw_type_error("Invalid PlainDate"));
     };
+    parse_date_string(text)
+}
+
+fn parse_date_string(text: &str) -> Result<Value, VmError> {
     if has_utc_designator(text) {
         return Err(crate::value::error::throw_range_error("Invalid ISO date"));
     }
@@ -51,11 +55,7 @@ fn from(value: Option<&Value>) -> Result<Value, VmError> {
         let year = date[1..7]
             .parse::<i32>()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;
-        let year = if date.as_bytes()[0] == b'-' {
-            -year
-        } else {
-            year
-        };
+        let year = if date.as_bytes()[0] == b'-' { -year } else { year };
         let month = date[7..9]
             .parse()
             .map_err(|_| crate::value::error::throw_range_error("Invalid ISO date"))?;

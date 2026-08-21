@@ -14,18 +14,7 @@ pub(crate) fn construct(arguments: &[Value]) -> Result<Value, VmError> {
     if !matches!(plural_type.as_str(), "cardinal" | "ordinal") {
         return Err(runtime_error("RangeError: invalid type"));
     }
-    let mut slots = vec![
-        ("locale".to_string(), Value::String(locale)),
-        ("type".to_string(), Value::String(plural_type)),
-        ("notation".to_string(), Value::String(notation)),
-        (
-            "compactDisplay".to_string(),
-            Value::String(compact_display.unwrap_or_else(|| "short".to_string())),
-        ),
-        ("minimumIntegerDigits".to_string(), Value::Number(1.0)),
-        ("minimumFractionDigits".to_string(), Value::Number(0.0)),
-        ("maximumFractionDigits".to_string(), Value::Number(3.0)),
-    ];
+    let mut slots = plural_slots(&locale, &plural_type, &notation, compact_display.as_deref());
     if let Some((minimum, maximum)) = significant {
         slots.push((
             "minimumSignificantDigits".to_string(),
@@ -60,25 +49,8 @@ fn plural_options(option: Option<&Value>) -> Result<PluralOptions, VmError> {
     else {
         return Ok(("standard".to_string(), None, "cardinal".to_string(), None));
     };
-    let keys = [
-        "localeMatcher",
-        "type",
-        "notation",
-        "compactDisplay",
-        "minimumIntegerDigits",
-        "minimumFractionDigits",
-        "maximumFractionDigits",
-        "minimumSignificantDigits",
-        "maximumSignificantDigits",
-        "roundingIncrement",
-        "roundingMode",
-        "roundingPriority",
-        "trailingZeroDisplay",
-    ];
-    let values = keys
-        .iter()
-        .map(|key| read_option(option, key))
-        .collect::<Result<Vec<_>, _>>()?;
+    let values = read_plural_values(option)?;
+
     let notation = match &values[2] {
         Value::Undefined => "standard".to_string(),
         value => option_text(value)?,
@@ -100,6 +72,46 @@ fn plural_options(option: Option<&Value>) -> Result<PluralOptions, VmError> {
         _ => None,
     };
     Ok((notation, compact_display, plural_type, significant))
+}
+
+fn plural_slots(
+    locale: &str,
+    plural_type: &str,
+    notation: &str,
+    compact_display: Option<&str>,
+) -> Vec<(String, Value)> {
+    vec![
+        ("locale".to_string(), Value::String(locale.to_string())),
+        ("type".to_string(), Value::String(plural_type.to_string())),
+        ("notation".to_string(), Value::String(notation.to_string())),
+        (
+            "compactDisplay".to_string(),
+            Value::String(compact_display.unwrap_or("short").to_string()),
+        ),
+        ("minimumIntegerDigits".to_string(), Value::Number(1.0)),
+        ("minimumFractionDigits".to_string(), Value::Number(0.0)),
+        ("maximumFractionDigits".to_string(), Value::Number(3.0)),
+    ]
+}
+fn read_plural_values(option: &Value) -> Result<Vec<Value>, VmError> {
+    let keys = [
+        "localeMatcher",
+        "type",
+        "notation",
+        "compactDisplay",
+        "minimumIntegerDigits",
+        "minimumFractionDigits",
+        "maximumFractionDigits",
+        "minimumSignificantDigits",
+        "maximumSignificantDigits",
+        "roundingIncrement",
+        "roundingMode",
+        "roundingPriority",
+        "trailingZeroDisplay",
+    ];
+    keys.iter()
+        .map(|key| read_option(option, key))
+        .collect::<Result<Vec<_>, _>>()
 }
 
 fn read_option(option: &Value, key: &str) -> Result<Value, VmError> {

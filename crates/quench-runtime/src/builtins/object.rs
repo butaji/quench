@@ -292,33 +292,7 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
         return descriptor_for_value(&cell.borrow(), key);
     }
     let descriptor = match value {
-        Value::Object(properties) => {
-            let global = Value::Object(properties.clone());
-            let deleted = properties
-                .iter()
-                .any(|(name, _)| name.as_str() == crate::builtins::deleted_key(key).as_str());
-            if !deleted
-                && crate::vm::is_global_object(&global)
-                && crate::vm::global_builtin_exists(key)
-            {
-                let immutable = crate::globals::immutable_value(key);
-                let value = immutable
-                    .clone()
-                    .unwrap_or_else(|| crate::execute::get_property(&global, key));
-                Some(descriptor_object_with_flags(
-                    value,
-                    immutable.is_none(),
-                    false,
-                    immutable.is_none(),
-                ))
-            } else if is_child_realm_global(&global)
-                && !matches!(key, "undefined" | "Infinity" | "NaN")
-            {
-                configurable_global_descriptor(&global, key)
-            } else {
-                object_descriptor(properties, key)
-            }
-        }
+        Value::Object(properties) => descriptor_for_object(properties, key),
         Value::ObjectAlias(alias) => alias
             .0
             .borrow()
@@ -334,6 +308,29 @@ fn descriptor_for_value(value: &Value, key: &str) -> Option<Value> {
         _ => None,
     };
     descriptor
+}
+
+fn descriptor_for_object(properties: &Rc<crate::value::ObjectData>, key: &str) -> Option<Value> {
+    let global = Value::Object(properties.clone());
+    let deleted = properties
+        .iter()
+        .any(|(name, _)| name.as_str() == crate::builtins::deleted_key(key).as_str());
+    if !deleted && crate::vm::is_global_object(&global) && crate::vm::global_builtin_exists(key) {
+        let immutable = crate::globals::immutable_value(key);
+        let value = immutable
+            .clone()
+            .unwrap_or_else(|| crate::execute::get_property(&global, key));
+        return Some(descriptor_object_with_flags(
+            value,
+            immutable.is_none(),
+            false,
+            immutable.is_none(),
+        ));
+    }
+    if is_child_realm_global(&global) && !matches!(key, "undefined" | "Infinity" | "NaN") {
+        return configurable_global_descriptor(&global, key);
+    }
+    object_descriptor(properties, key)
 }
 
 fn is_child_realm_global(value: &Value) -> bool {

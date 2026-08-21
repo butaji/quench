@@ -71,10 +71,7 @@ pub(crate) fn build_registers(
         mark_arguments_immutable(function, &environment, arguments_slot);
     }
     let register_count = function.ops().len().max(32);
-    (
-        vec![crate::value::Value::Undefined; register_count],
-        environment,
-    )
+    (vec![crate::value::Value::Undefined; register_count], environment)
 }
 
 fn mark_arguments_immutable(

@@ -263,10 +263,6 @@ fn prepare_array_length_definition(
     let Some(Value::Number(new_length)) = array_descriptor_value(descriptor, "value") else {
         return Ok(None);
     };
-    // The "length" of an Array object can be set to a number that exceeds
-    // the number of actually-stored elements. In that case there is
-    // nothing to delete below the physical length, so the iteration must
-    // be bounded by the physical length, not the logical one.
     let old_length = values.physical_len();
     let new_length = new_length as usize;
     if new_length >= old_length {
@@ -285,6 +281,17 @@ fn prepare_array_length_definition(
             "Cannot assign to read only array length",
         ));
     }
+    prepare_array_length_shrink(target, values, key, descriptor, old_length, new_length)
+}
+
+fn prepare_array_length_shrink(
+    target: &Value,
+    values: &Rc<crate::value::ArrayData>,
+    key: &str,
+    descriptor: &[(String, Value)],
+    old_length: usize,
+    new_length: usize,
+) -> Result<Option<Value>, crate::execute::VmError> {
     let mut values = Rc::clone(values);
     let data = Rc::make_mut(&mut values);
     for index in (new_length..old_length).rev() {
@@ -295,10 +302,7 @@ fn prepare_array_length_definition(
         if array_descriptor_flag(data, &index_key, "configurable") == Some(false) {
             data.set_length(index + 1);
             return Err(commit_failed_array_length(
-                target,
-                values,
-                descriptor,
-                index + 1,
+                target, values, descriptor, index + 1,
             ));
         }
         data.delete_property(&index_key);

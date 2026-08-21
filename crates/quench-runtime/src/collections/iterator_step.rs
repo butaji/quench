@@ -145,8 +145,11 @@ enum Snapshot {
 }
 
 fn snapshot_reentry(data: &IteratorData) -> Option<Snapshot> {
-    let state = data.state.borrow();
-    Some(match &*state {
+    snapshot_state(&data.state.borrow())
+}
+
+fn snapshot_state(state: &IteratorState) -> Option<Snapshot> {
+    Some(match state {
         IteratorState::Mapped {
             iterator,
             mapper,
@@ -169,42 +172,18 @@ fn snapshot_reentry(data: &IteratorData) -> Option<Snapshot> {
             index: *index,
             done: *done,
         },
-        IteratorState::FlatMapped {
-            inner,
-            mapper,
-            index,
-            current,
-            done,
-        } => Snapshot::FlatMapped {
-            inner: inner.clone(),
-            mapper: mapper.clone(),
-            index: *index,
-            current: current.clone(),
-            done: *done,
+        IteratorState::FlatMapped { inner, mapper, index, current, done } => Snapshot::FlatMapped {
+            inner: inner.clone(), mapper: mapper.clone(), index: *index,
+            current: current.clone(), done: *done,
         },
-        IteratorState::Dropped {
-            inner,
-            skipped,
-            limit,
-            done,
-        } => Snapshot::Dropped {
-            inner: inner.clone(),
-            skipped: *skipped,
-            limit: *limit,
-            done: *done,
+        IteratorState::Dropped { inner, skipped, limit, done } => Snapshot::Dropped {
+            inner: inner.clone(), skipped: *skipped, limit: *limit, done: *done,
         },
         IteratorState::Take { inner, remaining } => Snapshot::Take {
-            inner: inner.clone(),
-            remaining: *remaining,
+            inner: inner.clone(), remaining: *remaining,
         },
-        IteratorState::Zip {
-            iterators,
-            mode,
-            done,
-        } => Snapshot::Zip {
-            iterators: iterators.clone(),
-            mode: *mode,
-            done: *done,
+        IteratorState::Zip { iterators, mode, done } => Snapshot::Zip {
+            iterators: iterators.clone(), mode: *mode, done: *done,
         },
         _ => return None,
     })
