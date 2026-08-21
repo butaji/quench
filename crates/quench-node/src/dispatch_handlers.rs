@@ -381,13 +381,13 @@ pub fn crypto_create_hmac(
 ) -> Result<Value, VmError> { crate::modules::crypto::create_hmac(s, a) }
 pub fn crypto_timing_safe_equal(
     s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
-) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
+) -> Result<Value, VmError> { crate::modules::crypto::timing_safe_equal(s, a) }
 pub fn crypto_random_uuid(
     s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
-) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
+) -> Result<Value, VmError> { crate::modules::crypto::random_uuid(s, a) }
 pub fn crypto_random_int(
     s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
-) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
+) -> Result<Value, VmError> { crate::modules::crypto::random_int(s, a) }
 pub fn crypto_get_hashes(
     s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
 ) -> Result<Value, VmError> { crate::modules::crypto::get_hashes(s, a) }
