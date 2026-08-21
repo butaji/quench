@@ -57,30 +57,16 @@ fn number_options(
     minimum_fraction_digits: f64,
     maximum_fraction_digits: f64,
 ) -> NumberOptions {
-    let locale_numbering = super::numbering_system(&locale);
-    let numbering_system = raw
-        .numbering_system
-        .as_deref()
-        .or(locale_numbering)
-        .unwrap_or("latn")
-        .to_string();
-    let locale = match raw.numbering_system.as_deref() {
-        Some(option) if locale_numbering != Some(option) => locale
-            .split_once("-u-")
-            .map_or(locale.clone(), |(base, _)| base.to_string()),
-        _ => super::number_locale(&locale),
-    };
+    let locale_numbering = super::numbering_system(&locale).map(str::to_owned);
+    let locale = selected_locale(locale, &raw, locale_numbering.as_deref());
+    let numbering_system = selected_numbering_system(&raw, locale_numbering.as_deref());
     let currency = raw
         .currency
         .as_ref()
         .filter(|_| raw.style == "currency")
         .cloned();
     let compact_grouping_default = raw.notation == "compact" && !raw.grouping_explicit;
-    let grouping = if compact_grouping_default {
-        "min2".to_string()
-    } else {
-        raw.grouping.clone()
-    };
+    let grouping = selected_grouping(&raw, compact_grouping_default);
     NumberOptions {
         locale,
         numbering_system,
@@ -107,5 +93,30 @@ fn number_options(
             .or_else(|| significant_digits(raw.minimum_significant_digits).map(|_| 21)),
         rounding_priority: raw.rounding_priority,
         trailing_zero_display: raw.trailing_zero_display,
+    }
+}
+
+fn selected_numbering_system(raw: &RawOptions, locale_numbering: Option<&str>) -> String {
+    raw.numbering_system
+        .as_deref()
+        .or(locale_numbering)
+        .unwrap_or("latn")
+        .to_string()
+}
+
+fn selected_locale(locale: String, raw: &RawOptions, locale_numbering: Option<&str>) -> String {
+    match raw.numbering_system.as_deref() {
+        Some(option) if locale_numbering != Some(option) => locale
+            .split_once("-u-")
+            .map_or(locale.clone(), |(base, _)| base.to_string()),
+        _ => super::number_locale(&locale),
+    }
+}
+
+fn selected_grouping(raw: &RawOptions, compact_grouping_default: bool) -> String {
+    if compact_grouping_default {
+        "min2".to_string()
+    } else {
+        raw.grouping.clone()
     }
 }

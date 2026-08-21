@@ -103,22 +103,7 @@ fn locale_tag(value: &Value) -> Result<String, VmError> {
 
 fn parse_canonical(tag: &str) -> Locale {
     let parts: Vec<&str> = tag.split('-').collect();
-    let mut locale = Locale {
-        language: parts.first().map(|p| p.to_string()).unwrap_or_default(),
-        script: None,
-        region: None,
-        variants: Vec::new(),
-        calendar: None,
-        collation: None,
-        case_first: None,
-        hour_cycle: None,
-        first_day_of_week: None,
-        numbering_system: None,
-        numeric: false,
-        numeric_explicit: false,
-        unicode_extensions: Vec::new(),
-        other_extensions: Vec::new(),
-    };
+    let mut locale = empty_locale(parts.first().copied().unwrap_or_default());
     let mut index = 1;
     if parts
         .get(index)
@@ -154,6 +139,25 @@ fn parse_canonical(tag: &str) -> Locale {
     locale
 }
 
+fn empty_locale(language: &str) -> Locale {
+    Locale {
+        language: language.to_string(),
+        script: None,
+        region: None,
+        variants: Vec::new(),
+        calendar: None,
+        collation: None,
+        case_first: None,
+        hour_cycle: None,
+        first_day_of_week: None,
+        numbering_system: None,
+        numeric: false,
+        numeric_explicit: false,
+        unicode_extensions: Vec::new(),
+        other_extensions: Vec::new(),
+    }
+}
+
 pub(crate) fn calendar_from_tag(tag: &str) -> Option<String> {
     parse_canonical(tag).calendar
 }
@@ -185,10 +189,7 @@ fn parse_other_extensions(parts: &[&str]) -> Vec<OtherExtension> {
     let mut index = 0;
     while index < parts.len() {
         if parts[index] == "u" {
-            index += 1;
-            while index < parts.len() && parts[index].len() != 1 {
-                index += 1;
-            }
+            index = next_extension(parts, index + 1);
             continue;
         }
         if parts[index].len() != 1 {
@@ -198,19 +199,7 @@ fn parse_other_extensions(parts: &[&str]) -> Vec<OtherExtension> {
         let singleton = parts[index].to_string();
         index += 1;
         let start = index;
-        if singleton == "x" {
-            extensions.push(OtherExtension {
-                singleton,
-                subtags: parts[start..]
-                    .iter()
-                    .map(|part| (*part).to_string())
-                    .collect(),
-            });
-            break;
-        }
-        while index < parts.len() && parts[index].len() != 1 {
-            index += 1;
-        }
+        index = next_extension(parts, index);
         extensions.push(OtherExtension {
             singleton,
             subtags: parts[start..index]
@@ -218,8 +207,18 @@ fn parse_other_extensions(parts: &[&str]) -> Vec<OtherExtension> {
                 .map(|part| (*part).to_string())
                 .collect(),
         });
+        if parts[start.saturating_sub(1)] == "x" {
+            break;
+        }
     }
     extensions
+}
+
+fn next_extension(parts: &[&str], mut index: usize) -> usize {
+    while index < parts.len() && parts[index].len() != 1 {
+        index += 1;
+    }
+    index
 }
 
 fn parse_unicode_extensions(parts: &[&str]) -> Vec<UnicodeExtension> {
@@ -232,12 +231,7 @@ fn parse_unicode_extensions(parts: &[&str]) -> Vec<UnicodeExtension> {
     };
     let mut extensions = Vec::new();
     let mut index = start + 1;
-    let mut attributes = Vec::new();
-    while index < parts.len() && parts[index].len() != 2 && parts[index].len() != 1 {
-        attributes.push(parts[index].to_string());
-        index += 1;
-    }
-    attributes.sort();
+    let mut attributes = unicode_attributes(parts, &mut index);
     if !attributes.is_empty() {
         extensions.push(UnicodeExtension {
             attributes: attributes.clone(),
@@ -274,6 +268,19 @@ fn parse_unicode_extensions(parts: &[&str]) -> Vec<UnicodeExtension> {
     }
     extensions.sort_by(|left, right| left.key.cmp(&right.key));
     extensions
+}
+
+fn unicode_attributes(parts: &[&str], index: &mut usize) -> Vec<String> {
+    let start = *index;
+    while *index < parts.len() && parts[*index].len() != 2 && parts[*index].len() != 1 {
+        *index += 1;
+    }
+    let mut attributes = parts[start..*index]
+        .iter()
+        .map(|part| (*part).to_string())
+        .collect::<Vec<_>>();
+    attributes.sort();
+    attributes
 }
 
 pub(crate) fn case_first_extension(tag: &str) -> Option<String> {
