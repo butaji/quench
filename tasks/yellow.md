@@ -46,6 +46,13 @@ error codes. Focused evidence is `test-process-kill.js`; the applicable
 upstream `test-process-kill-pid.js` and the Node CLI validation oracle pass.
 “Implemented” means surface code exists; it MUST NOT be reported as verified
 without executable test evidence.
+Measured addition (2026-08-21): active-dispatch `process.exitCode` is now a
+host-backed non-configurable accessor. Numeric integer codes, numeric strings,
+`null`, and `undefined` follow Node's setter behavior; invalid values report
+Node-style type/range errors. Focused evidence is
+`test-process-exitcode.js`; a direct `quench-node-cli` smoke exits with code 7.
+The applicable `test-process-exit-code-validation.js` still has an unrelated
+child-process/exit-handler callback gap and is not claimed fully green.
 
 Measured additions (2026-08-21): `diagnostics_channel` now provides
 `channel()`/`subscribe`/`unsubscribe`/`channelNames`, `tracingChannel` with a

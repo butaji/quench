@@ -183,6 +183,21 @@ pub fn process_kill(
 ) -> Result<Value, VmError> {
     crate::modules::process::kill(state, receiver, args)
 }
+pub fn process_exit_code_get(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::exit_code_get(state, args)
+}
+
+pub fn process_exit_code_set(
+    state: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::exit_code_set(state, args)
+}
 pub fn process_getgid(
     state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
