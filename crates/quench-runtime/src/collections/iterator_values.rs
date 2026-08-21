@@ -188,22 +188,26 @@ pub(crate) fn property_for(value: &Value, key: &str) -> Value {
     let Value::Iterator(data) = value else {
         return Value::Undefined;
     };
-    let tag = match &*data.state.borrow() {
+    let tag = iterator_tag(&data.state.borrow());
+    Value::String(tag.to_string())
+}
+
+fn iterator_tag(state: &crate::value::IteratorState) -> &'static str {
+    match state {
         IteratorState::Native { .. } => "Array Iterator",
         IteratorState::RegExpString { .. } => "RegExp String Iterator",
         IteratorState::String { .. } => "String Iterator",
         IteratorState::Set { .. } => "Set Iterator",
         IteratorState::Map { .. } => "Map Iterator",
-        IteratorState::Protocol { .. } => "Iterator",
-        IteratorState::Mapped { .. } => "Iterator",
-        IteratorState::Filtered { .. } => "Iterator",
-        IteratorState::FlatMapped { .. } => "Iterator",
-        IteratorState::Dropped { .. } => "Iterator",
-        IteratorState::Take { .. } => "Iterator",
-        IteratorState::Concat { .. } => "Iterator",
-        IteratorState::Zip { .. } => "Iterator",
-    };
-    Value::String(tag.to_string())
+        IteratorState::Protocol { .. }
+        | IteratorState::Mapped { .. }
+        | IteratorState::Filtered { .. }
+        | IteratorState::FlatMapped { .. }
+        | IteratorState::Dropped { .. }
+        | IteratorState::Take { .. }
+        | IteratorState::Concat { .. }
+        | IteratorState::Zip { .. } => "Iterator",
+    }
 }
 
 fn next_for(value: &Value) -> Value {

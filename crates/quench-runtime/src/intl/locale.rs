@@ -181,8 +181,7 @@ pub(crate) fn remove_unicode_extension(tag: &str, key: &str) -> String {
 }
 
 fn parse_other_extensions(parts: &[&str]) -> Vec<OtherExtension> {
-    let mut extensions = Vec::new();
-    let mut index = 0;
+    let mut extensions = Vec::new(); let mut index = 0;
     while index < parts.len() {
         if parts[index] == "u" {
             index += 1;

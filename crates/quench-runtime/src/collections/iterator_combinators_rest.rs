@@ -52,7 +52,7 @@ pub(crate) fn reduce(
         return Err(crate::vm::not_callable());
     }
     let iterator = receiver_iterator(receiver)?;
-    let mut accumulator = match arguments.get(1) {
+    let accumulator = match arguments.get(1) {
         Some(value) => value.clone(),
         None => match step_value(&iterator)? {
             Some(value) => value,
@@ -63,6 +63,14 @@ pub(crate) fn reduce(
             }
         },
     };
+    reduce_loop(callback, iterator, accumulator)
+}
+
+fn reduce_loop(
+    callback: Value,
+    iterator: Value,
+    mut accumulator: Value,
+) -> Result<Value, crate::execute::VmError> {
     let mut index = 0;
     loop {
         let value = match step_value(&iterator) {
@@ -105,6 +113,13 @@ pub(crate) fn find(
             "Iterator.prototype.find predicate is not callable",
         ));
     }
+    find_in_iterator(receiver, &callback)
+}
+
+fn find_in_iterator(
+    receiver: &Value,
+    callback: &Value,
+) -> Result<Value, crate::execute::VmError> {
     let iterator = receiver_iterator(receiver)?;
     let mut index = 0;
     loop {
@@ -117,7 +132,7 @@ pub(crate) fn find(
             }
         };
         let result = crate::functions::execute_target(
-            &callback,
+            callback,
             &Value::Undefined,
             &[value.clone(), Value::Number(index as f64), iterator.clone()],
         );

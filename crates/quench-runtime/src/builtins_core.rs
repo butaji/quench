@@ -30,41 +30,46 @@ pub(crate) fn array_map(
     };
     let length = map_length(receiver)?;
     if length > u32::MAX as usize {
-        return Err(crate::value::error::throw_range_error(
-            "Invalid array length",
-        ));
+        return Err(crate::value::error::throw_range_error("Invalid array length"));
     }
     let mut mapped = Value::array(Vec::new());
     if let Value::Array(values) = &mut mapped {
         Rc::make_mut(values).set_length(length);
     }
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
+    map_array_values(receiver, callback, this_arg, length, &mut mapped)?;
+    Ok(mapped)
+}
+
+fn map_array_values(
+    receiver: &Value,
+    callback: &Value,
+    this_arg: &Value,
+    length: usize,
+    mapped: &mut Value,
+) -> Result<(), crate::execute::VmError> {
     if let Value::Array(source) = receiver {
         let mut index = 0;
         while let Some(current) = source.next_index(index, length) {
             index = current.saturating_add(1);
-            let Some(value) = map_value(receiver, current)? else {
-                continue;
-            };
+            let Some(value) = map_value(receiver, current)? else { continue };
             let args = [value, Value::Number(current as f64), receiver.clone()];
             let result = crate::functions::execute_target(callback, this_arg, &args)?;
-            if let Value::Array(values) = &mut mapped {
+            if let Value::Array(values) = mapped {
                 Rc::make_mut(values).set_index(current, result);
             }
         }
     } else {
         for index in 0..length {
-            let Some(value) = map_value(receiver, index)? else {
-                continue;
-            };
+            let Some(value) = map_value(receiver, index)? else { continue };
             let args = [value, Value::Number(index as f64), receiver.clone()];
             let result = crate::functions::execute_target(callback, this_arg, &args)?;
-            if let Value::Array(values) = &mut mapped {
+            if let Value::Array(values) = mapped {
                 Rc::make_mut(values).set_index(index, result);
             }
         }
     }
-    Ok(mapped)
+    Ok(())
 }
 fn map_length(receiver: &Value) -> Result<usize, crate::execute::VmError> {
     if let Value::Array(values) = receiver {
@@ -107,6 +112,16 @@ pub(crate) fn array_for_each(
     }
     let length = map_length(receiver)?;
     let this_arg = arguments.get(1).map_or(&Value::Undefined, |value| value);
+    array_for_each_values(receiver, callback, this_arg, length)?;
+    Ok(Value::Undefined)
+}
+
+fn array_for_each_values(
+    receiver: &Value,
+    callback: &Value,
+    this_arg: &Value,
+    length: usize,
+) -> Result<(), crate::execute::VmError> {
     if let Value::Array(values) = receiver {
         let mut index = 0;
         while let Some(current) = values.next_index(index, length) {
@@ -132,7 +147,7 @@ pub(crate) fn array_for_each(
             )?;
         }
     }
-    Ok(Value::Undefined)
+    Ok(())
 }
 pub(crate) fn array_filter(
     receiver: Option<&Value>,
