@@ -243,31 +243,7 @@ pub fn install_with_argv(
     context = context.with_host_value("URL".to_string(), url_class);
     let url_search_params = crate::host::capability(crate::registry::SPEC_URL_SEARCHPARAMS_NEW);
     context = context.with_host_value("URLSearchParams".to_string(), url_search_params);
-    if let Ok(web) = crate::modules::web_globals::build() {
-        for name in [
-            "Headers",
-            "FormData",
-            "Blob",
-            "CustomEvent",
-            "DOMException",
-            "MessageChannel",
-            "MessagePort",
-            "Request",
-            "Response",
-            "ReadableStream",
-            "WritableStream",
-            "TransformStream",
-            "ByteLengthQueuingStrategy",
-            "CountQueuingStrategy",
-            "TextDecoderStream",
-            "TextEncoderStream",
-            "CompressionStream",
-            "DecompressionStream",
-        ] {
-            let value = quench_runtime::execute::get_property(&web, name);
-            context = context.with_host_value(name.to_string(), value);
-        }
-    }
+    let mut context = install_web_globals(context);
     let text_decoder = crate::host::capability(crate::registry::SPEC_TEXT_DECODER_NEW);
     context = context.with_host_value("TextDecoder".to_string(), text_decoder);
     let text_encoder = crate::host::capability(crate::registry::SPEC_TEXT_ENCODER_NEW);
@@ -275,10 +251,39 @@ pub fn install_with_argv(
     (host, context)
 }
 
-/// Build a capability call descriptor for the host.
-pub fn capability(spec: NodeSpec) -> Value {
-    host_api::custom_function(RealmId::ROOT, spec.cap)
+fn install_web_globals(mut context: VmContext) -> VmContext {
+    let Ok(web) = crate::modules::web_globals::build() else {
+        return context;
+    };
+    for name in [
+        "Headers",
+        "FormData",
+        "Blob",
+        "CustomEvent",
+        "DOMException",
+        "MessageChannel",
+        "MessagePort",
+        "Request",
+        "Response",
+        "ReadableStream",
+        "WritableStream",
+        "TransformStream",
+        "ByteLengthQueuingStrategy",
+        "CountQueuingStrategy",
+        "TextDecoderStream",
+        "TextEncoderStream",
+        "CompressionStream",
+        "DecompressionStream",
+    ] {
+        let value = quench_runtime::execute::get_property(&web, name);
+        context = context.with_host_value(name.to_string(), value);
+    }
+    context
 }
+
+pub fn capability(spec: NodeSpec) -> Value {
+     host_api::custom_function(RealmId::ROOT, spec.cap)
+ }
 
 /// Build a properly-described namespace object. Each named
 /// property is stored as the actual value at `key`, and a
