@@ -409,6 +409,7 @@ fn reduce_import_expression(
         key: "resolve".to_string(),
         callee: None,
         args: vec![namespace],
+        spreads: vec![false],
     });
     Some(dst)
 }

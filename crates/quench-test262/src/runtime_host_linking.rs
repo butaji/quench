@@ -11,9 +11,12 @@ fn bind_imports(
             .iter()
             .filter(|binding| binding.is_binding() && accept(binding))
         {
-            let target = graph
-                .resolve(*id, &binding.source)
-                .ok_or_else(|| format!("unresolved module {}", binding.source))?;
+            let Some(target) = graph.resolve(*id, &binding.source) else {
+                if binding.deferred {
+                    continue;
+                }
+                return Err(format!("unresolved module {}", binding.source));
+            };
             let cell = import_cell(graph, units, target, &binding.imported, binding.deferred)?;
             units
                 .get(id)

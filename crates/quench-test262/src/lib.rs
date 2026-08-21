@@ -101,14 +101,14 @@ impl TestMetadata {
 }
 
 fn extract_frontmatter(source: &str) -> Result<&str, String> {
-    let Some(start) = source.find("/*---") else {
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
+    let Some(body) = source.strip_prefix("/*---") else {
         return Ok("");
     };
-    let body_start = start + "/*---".len();
-    let Some(end_offset) = source[body_start..].find("---*/") else {
+    let Some(end_offset) = body.find("---*/") else {
         return Err("unterminated test262 frontmatter".into());
     };
-    Ok(&source[body_start..body_start + end_offset])
+    Ok(&body[..end_offset])
 }
 
 fn value_after_colon(line: &str) -> Option<String> {
@@ -305,14 +305,25 @@ impl<H: Test262Host> Test262Runner<H> {
     }
 
     /// Read one test262 file and compose its requested harness files.
-    pub fn run_file_with_harness<P, F>(&mut self, path: P, load: F) -> Result<TestOutcome, String>
+    pub fn run_file_with_harness<P, F>(
+        &mut self,
+        path: P,
+        mut load: F,
+    ) -> Result<TestOutcome, String>
     where
         P: AsRef<Path>,
         F: FnMut(&str) -> Result<String, String>,
     {
-        let source = std::fs::read_to_string(path.as_ref())
+        let path = path.as_ref();
+        let source = std::fs::read_to_string(path)
             .map_err(|error| format!("test262 read failed: {error}"))?;
-        self.run_test_with_harness(&source, load)
+        let metadata = TestMetadata::parse(&source)?;
+        let harness = runner_support::harness(&metadata, &mut load)?;
+        let harness = harness.iter().map(String::as_str).collect::<Vec<_>>();
+        Ok(runner_support::negative(
+            self.dispatch_test_at(&harness, &source, &metadata, Some(path)),
+            &metadata,
+        ))
     }
 
     /// Read one test262 file and compose it with cached harness sources.

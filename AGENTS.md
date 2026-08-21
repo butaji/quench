@@ -1,22 +1,11 @@
 # AGENTS.md
 
-1. **Goal**: build the frozen OXC-facts residual-VM architecture from scratch with minimum handwritten LOC.
-2. **Architecture (only plan)**: OXC owns AST, scopes, and symbols; Quench queries that data plus unified `ProgramDb` facts (`Proven`, `Guarded`, `Unknown`) and reduces programs directly to flat residual ops. Do not build a second AST, HIR/MIR ladder, TypeGraph, self-hosted-JS builtin layer, or alternate semantic pipeline. Implement canonical completion-aware semantics before specialization. Use the five reducer contexts (`value`, `place`, `effect`, `control`, `define`). Keep compact `HeapRef(u32)` references, shapes/slots, and stack frames as runtime foundations; materialize continuations only for genuine suspension.
-3. **Test runner ownership**: `crates/quench-test262` owns test262 metadata, harness composition, and runner contracts. Never put test262 runner code in `crates/quench-runtime`; never modify `tests/test262/`.
-4. **Harness fidelity is absolute**: `quench-test262` must not override, rewrite, shim, short-circuit, or replace any behavior of the test262 harness. It may only load the exact declared harness sources, compose them as specified by test262, execute them through the host contract, and classify the resulting completion.
-5. **Runtime isolation is absolute**: `quench-runtime` is a pure JavaScript runtime and must know nothing about test262, its harness, metadata, fixtures, staging, or conformance policy. All such concerns belong exclusively to `quench-test262`.
-6. **No TDD — tests are regression guards only**: never write a failing `#[test]` before implementing new behavior. Write a Rust unit test only for a bug reproducer, a core invariant the runner cannot observe, or a refactor pin. No debugging, no `println!`, no guessing, no speculative edits.
-7. **Unit tests live only in the Rust core** — regression guards for complicated issues (bug reproducers, core invariants test262 cannot observe, refactor pins); never replicate a test262 assertion as a unit test.
-8. **Fix workflow**: fix families of related failures, not single cases; reproduce → minimal fix → re-run relevant tests → leave the regression guard in.
-9. **Linter is law**: every `*.rs` file in this repo must have zero warnings, no file longer than 500 lines, no function longer than 40 lines, and cognitive complexity ≤ 10. Run `tools/lint-rust.sh`; it enforces `cargo fmt --check`, workspace clippy with `-D warnings` and `-D clippy::cognitive_complexity`, the file limit, and the function limit. No `#[allow]` exceptions.
-10. **One canonical semantic path**: `ToPrimitive`, `IsCallable`, `SameValueZero`, etc. have one semantic owner; residual ops and specializations delegate to it. Grep before writing any helper. Never optimize through proxies, accessors, coercion, `Symbol.toPrimitive`, dynamic prototype mutation, direct `eval`, realms, or completion ordering.
-11. **Prefer crates over hand-rolling** (`regress`, `chrono`, `num-bigint`, `serde_json`, `urlencoding`, `oxc`).
-12. **Zero duplication, zero dead code, no speculative generality**: hoist repeated logic to `value/` or `eval/ops.rs`; delete unused symbols, fields, and variants in the same PR.
-13. **Builtins throw, never panic**: use `value::error::throw_type_error(msg)`; `panic!`/`unwrap()`/`expect()` are forbidden in `builtins/` and `eval/`.
-14. **Verify before done**: relevant unit tests green, `cargo fmt`, and `cargo clippy --workspace --all-targets -- -D warnings` clean.
-15. **Conventions**: symbol payloads are raw `desc\0id` strings used directly as property keys; boxed primitives live in a `_value` property; strictness is captured at definition site; accessors via `Object::define_accessor`; `CURRENT_CONTEXT` is a thread-local raw pointer during eval.
-16. **No stale progress tracking**: do not add stage ledgers, pass-rate reports, or task status files. Test runs are ephemeral verification output.
-17. **Commit and push as you progress** (`GOAL.md`): small commits as work lands; never leave a finished, verified step uncommitted.
+This repository implements Node-compatible APIs on rquickjs. Treat API shape,
+validation, errors, calling conventions, exports, and evidence as data. Generate
+repetitive Rust registration and JavaScript wrappers from that data; keep only
+irreducible behavior handwritten. Optimize for the minimum maintainable LOC.
+Keep the Rust host minimal and do not add or restore a separate runtime crate.
+The architecture is defined in `docs/data-first-minimal-runtime.md`.
 
 ## Frozen doctrine
 
@@ -43,10 +32,33 @@
 18. Generated LOC, binary text, static data, caches, and native code all count
     toward the memory and complexity budget.
 
-## Commands
+1. Select the next upstream Node fixture or API cluster.
+2. Model the reusable API facts in the shared declaration/IR layer first.
+3. Generate registration, wrappers, and ordinary tests; hand-write only
+   irreducible compatibility behavior.
+4. Add a focused stage under `tests/node-compat/stage-N/`, run it, format with
+   Prettier, and run `git diff --check`.
+5. Commit and push each verified stage before starting the next one.
 
 ```bash
 cargo build -p quench-runtime
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
+
+Run an upstream fixture with:
+
+```sh
+tools/run-node-tests.sh tests/node/test/parallel/test-name.js
+```
+
+Do not minify or obscure declarations or exceptional polyfills. Generated
+mechanical wrappers may replace duplicated source. Leave `tests/node` as the
+Node.js submodule and do not modify unrelated external projects.
+
+Do not add or restore GitHub Actions or other GitHub CI configuration. Keep
+verification local through the repository tooling.
+
+When behavior is uncertain, first check the actual local Node.js CLI behavior;
+then consult the corresponding Node.js source code on GitHub before choosing an
+implementation or documenting a compatibility difference.

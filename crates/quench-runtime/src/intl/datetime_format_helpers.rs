@@ -1,5 +1,15 @@
 fn format_result(arguments: &[Value], slots: &[(String, Value)]) -> Result<Value, VmError> {
     let number = range_number(arguments.first().unwrap_or(&Value::Undefined))?;
+    let has_era = slot_string(slots, "era").is_some();
+    let has_date = slot_string(slots, "year").is_some()
+        || slot_string(slots, "month").is_some()
+        || slot_string(slots, "day").is_some()
+        || slot_string(slots, "weekday").is_some();
+    if has_date && !has_era {
+        if let Some(value) = date_format_result(slots, number) {
+            return Ok(Value::String(value));
+        }
+    }
     if let Some(value) = hour_day_period_format(slots, number) {
         return Ok(Value::String(value));
     }
@@ -63,7 +73,15 @@ fn range_parts(start: &str, end: &str) -> Vec<Value> {
     if start == end {
         return vec![literal_part(start)];
     }
-    vec![literal_part(start), literal_part(" – "), literal_part(end)]
+    vec![
+        literal_part(start),
+        make_object(vec![
+            ("type".to_string(), Value::String("literal".to_string())),
+            ("value".to_string(), Value::String(" – ".to_string())),
+            ("source".to_string(), Value::String("shared".to_string())),
+        ]),
+        literal_part(end),
+    ]
 }
 
 fn day_period_format(slots: &[(String, Value)], number: f64) -> Option<String> {
@@ -118,7 +136,10 @@ fn day_period_name(hour: u32) -> String {
     name.to_string()
 }
 
-fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
+fn range_values(
+    arguments: &[Value],
+    slots: &[(String, Value)],
+) -> Result<(String, String), VmError> {
     let Some(start_value) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
             "date value is undefined",
@@ -136,7 +157,33 @@ fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
     }
     let start = range_number(start_value)?;
     let end = range_number(end_value)?;
-    Ok((range_text(start), range_text(end)))
+    let start_str = if let Some(v) = date_format_result(slots, start) {
+        v
+    } else if let Some(v) = hour_day_period_format(slots, start) {
+        v
+    } else if let Some(v) = day_period_format(slots, start) {
+        v
+    } else if let Some(v) = proleptic_year_format(slots, start) {
+        v
+    } else if let Some(v) = fractional_format(slots, start) {
+        v
+    } else {
+        range_text(start)
+    };
+    let end_str = if let Some(v) = date_format_result(slots, end) {
+        v
+    } else if let Some(v) = hour_day_period_format(slots, end) {
+        v
+    } else if let Some(v) = day_period_format(slots, end) {
+        v
+    } else if let Some(v) = proleptic_year_format(slots, end) {
+        v
+    } else if let Some(v) = fractional_format(slots, end) {
+        v
+    } else {
+        range_text(end)
+    };
+    Ok((start_str, end_str))
 }
 
 fn fractional_format(slots: &[(String, Value)], number: f64) -> Option<String> {
@@ -200,6 +247,12 @@ fn grouped_year(year: i64) -> String {
 }
 
 fn range_number(value: &Value) -> Result<f64, VmError> {
+    if matches!(value, Value::Undefined) {
+        // ECMA-402 12.1.3: format() with no argument formats the current
+        // instant; ToNumber(undefined) would yield NaN and incorrectly
+        // throw "date value is not finite".
+        return Ok(crate::date::chrono_utils::current_time_ms());
+    }
     let number = conversion::to_number(value)?;
     if !number.is_finite() || number.abs() > 8_640_000_000_000_000.0 {
         return Err(runtime_error("RangeError: date value is not finite"));
@@ -210,3 +263,4 @@ fn range_number(value: &Value) -> Result<f64, VmError> {
 fn range_text(number: f64) -> String {
     conversion::number_to_string(number)
 }
+include!("datetime_format_date.rs");
