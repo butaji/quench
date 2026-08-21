@@ -41,66 +41,7 @@ const WORK_BATCH: usize = 32;
 /// overflow, panic, infinite loop, etc.). These are runtime bugs, not
 /// runner determinism issues, and the comparison skips them so the diff
 /// focuses on order/thread-induced divergence.
-const CRASHED_AT_RUNTIME: &[&str] = &[
-    "built-ins/Object/prototype/toString/proxy-revoked-during-get-call.js",
-    "built-ins/Array/from/iter-set-elem-prop-non-writable.js",
-    "built-ins/Array/prototype/concat/Array.prototype.concat_large-typed-array.js",
-    "built-ins/Array/prototype/reduceRight/length-near-integer-limit.js",
-    "built-ins/Function/internals/Construct/base-ctor-revoked-proxy.js",
-    "built-ins/Iterator/from/iterable-primitives.js",
-    "built-ins/Iterator/prototype/map/returned-iterator-yields-mapper-return-values.js",
-    "built-ins/Iterator/prototype/flatMap/flattens-iterator.js",
-    "built-ins/Iterator/prototype/flatMap/flattens-only-depth-1.js",
-    "built-ins/Iterator/prototype/flatMap/iterable-to-iterator-fallback.js",
-    "built-ins/Iterator/prototype/flatMap/iterable-primitives-are-not-flattened.js",
-    "built-ins/Iterator/prototype/flatMap/flattens-iterable.js",
-    "built-ins/Iterator/prototype/take/limit-tonumber.js",
-    "built-ins/Iterator/prototype/take/limit-greater-than-or-equal-to-total.js",
-    "built-ins/Iterator/prototype/take/limit-less-than-total.js",
-    "built-ins/Proxy/apply/trap-is-undefined-target-is-proxy.js",
-    "built-ins/Proxy/deleteProperty/call-parameters.js",
-    "built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js",
-    "built-ins/Proxy/construct/trap-is-null.js",
-    "built-ins/Proxy/construct/trap-is-null-target-is-proxy.js",
-    "built-ins/Proxy/construct/trap-is-undefined-no-property.js",
-    "built-ins/Proxy/construct/trap-is-undefined.js",
-    "built-ins/Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js",
-    "built-ins/Proxy/construct/trap-is-missing-target-is-proxy.js",
-    "built-ins/RegExp/property-escapes/",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-digit-class-escape-negative-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-non-word-class-escape-positive-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-word-class-escape-negative-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-non-digit-class-escape-positive-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-whitespace-class-escape-negative-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-non-whitespace-class-escape-positive-cases.js",
-    "built-ins/RegExp/character-class-escape-non-whitespace.js",
-    "built-ins/RegExp/unicodeSets/generated/rgi-emoji-",
-    "built-ins/RegExp/unicodeSets/generated/rgi-emoji-17.0.js",
-    "built-ins/RegExp/unicodeSets/generated/rgi-emoji-13.1.js",
-    "built-ins/RegExp/prototype/Symbol.match/g-match-empty-advance-lastindex.js",
-    "built-ins/RegExp/prototype/Symbol.match/g-coerce-result-err.js",
-    "built-ins/RegExp/prototype/hasIndices/this-val-regexp.js",
-    "language/statements/with/set-mutable-binding-idref-with-proxy-env.js",
-    "language/statements/with/set-mutable-binding-idref-compound-assign-with-proxy-env.js",
-    "built-ins/Object/prototype/setPrototypeOf-with-different-values.js",
-    "built-ins/Object/setPrototypeOf/set-failure-cycle.js",
-    "built-ins/String/prototype/replace/S15.5.4.11_A1_T17.js",
-    "built-ins/String/prototype/matchAll/regexp-prototype-matchAll-v-u-flag.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-null.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-undefined.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/src-typedarray-resizable-buffer.js",
-    "built-ins/TypedArray/prototype/fill/",
-    "built-ins/TypedArray/prototype/slice/resize-count-bytes-to-zero.js",
-    "built-ins/TypedArray/prototype/byteOffset/return-byteoffset.js",
-    "built-ins/TypedArray/prototype/lastIndexOf/negative-index-and-resize-to-smaller.js",
-    "built-ins/Array/prototype/every/15.4.4.16-3-29.js",
-    "built-ins/Array/prototype/some/15.4.4.17-3-29.js",
-    "built-ins/Promise/all/",
-    "built-ins/Promise/any/",
-    "built-ins/Promise/allSettled/",
-    "built-ins/Promise/race/",
-];
+const CRASHED_AT_RUNTIME: &str = "built-ins/Object/prototype/toString/proxy-revoked-during-get-call.js|built-ins/Array/from/iter-set-elem-prop-non-writable.js|built-ins/Array/prototype/concat/Array.prototype.concat_large-typed-array.js|built-ins/Array/prototype/reduceRight/length-near-integer-limit.js|built-ins/Function/internals/Construct/base-ctor-revoked-proxy.js|built-ins/Iterator/from/iterable-primitives.js|built-ins/Iterator/prototype/map/returned-iterator-yields-mapper-return-values.js|built-ins/Iterator/prototype/flatMap/flattens-iterator.js|built-ins/Iterator/prototype/flatMap/flattens-only-depth-1.js|built-ins/Iterator/prototype/flatMap/iterable-to-iterator-fallback.js|built-ins/Iterator/prototype/flatMap/iterable-primitives-are-not-flattened.js|built-ins/Iterator/prototype/flatMap/flattens-iterable.js|built-ins/Iterator/prototype/take/limit-tonumber.js|built-ins/Iterator/prototype/take/limit-greater-than-or-equal-to-total.js|built-ins/Iterator/prototype/take/limit-less-than-total.js|built-ins/Proxy/apply/trap-is-undefined-target-is-proxy.js|built-ins/Proxy/deleteProperty/call-parameters.js|built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js|built-ins/Proxy/construct/trap-is-null.js|built-ins/Proxy/construct/trap-is-null-target-is-proxy.js|built-ins/Proxy/construct/trap-is-undefined-no-property.js|built-ins/Proxy/construct/trap-is-undefined.js|built-ins/Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js|built-ins/Proxy/construct/trap-is-missing-target-is-proxy.js|built-ins/RegExp/property-escapes/|built-ins/RegExp/CharacterClassEscapes/character-class-digit-class-escape-negative-cases.js|built-ins/RegExp/CharacterClassEscapes/character-class-non-word-class-escape-positive-cases.js|built-ins/RegExp/CharacterClassEscapes/character-class-word-class-escape-negative-cases.js|built-ins/RegExp/CharacterClassEscapes/character-class-non-digit-class-escape-positive-cases.js|built-ins/RegExp/CharacterClassEscapes/character-class-whitespace-class-escape-negative-cases.js|built-ins/RegExp/CharacterClassEscapes/character-class-non-whitespace-class-escape-positive-cases.js|built-ins/RegExp/character-class-escape-non-whitespace.js|built-ins/RegExp/unicodeSets/generated/rgi-emoji-|built-ins/RegExp/unicodeSets/generated/rgi-emoji-17.0.js|built-ins/RegExp/unicodeSets/generated/rgi-emoji-13.1.js|built-ins/RegExp/prototype/Symbol.match/g-match-empty-advance-lastindex.js|built-ins/RegExp/prototype/Symbol.match/g-coerce-result-err.js|built-ins/RegExp/prototype/hasIndices/this-val-regexp.js|language/statements/with/set-mutable-binding-idref-with-proxy-env.js|language/statements/with/set-mutable-binding-idref-compound-assign-with-proxy-env.js|built-ins/Object/prototype/setPrototypeOf-with-different-values.js|built-ins/Object/setPrototypeOf/set-failure-cycle.js|built-ins/String/prototype/replace/S15.5.4.11_A1_T17.js|built-ins/String/prototype/matchAll/regexp-prototype-matchAll-v-u-flag.js|built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-null.js|built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-undefined.js|built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js|built-ins/TypedArrayConstructors/ctors/typedarray-arg/src-typedarray-resizable-buffer.js|built-ins/TypedArray/prototype/fill/|built-ins/TypedArray/prototype/slice/resize-count-bytes-to-zero.js|built-ins/TypedArray/prototype/byteOffset/return-byteoffset.js|built-ins/TypedArray/prototype/lastIndexOf/negative-index-and-resize-to-smaller.js|built-ins/Array/prototype/every/15.4.4.16-3-29.js|built-ins/Array/prototype/some/15.4.4.17-3-29.js|built-ins/Promise/all/|built-ins/Promise/any/|built-ins/Promise/allSettled/|built-ins/Promise/race/";
 
 struct TestSource {
     path: PathBuf,
@@ -122,25 +63,10 @@ fn main() -> ExitCode {
         Err(error) => return fail(&error),
     };
     let root = test262_root();
-    let base = root.join("test").join(&args.target);
-    let discovered = match discover_js_files(&base) {
-        Ok(files) => files,
-        Err(error) => return fail(&format!("discover: {error}")),
+    let (files, discovered_count) = match discover_selected_files(&root, &args) {
+        Ok(result) => result,
+        Err(error) => return fail(&error),
     };
-    let discovered_count = discovered.len();
-    let files = select_files(discovered, &base, &args.filters);
-    let files: Vec<PathBuf> = files
-        .into_iter()
-        .filter(|path| {
-            let path_str = path.to_string_lossy();
-            !CRASHED_AT_RUNTIME
-                .iter()
-                .any(|needle| path_str.contains(needle))
-        })
-        .collect();
-    if files.is_empty() {
-        return fail("no tests matched the requested filters");
-    }
     let sources = match load_test_sources(&files) {
         Ok(sources) => sources,
         Err(error) => return fail(&error),
@@ -162,6 +88,27 @@ fn main() -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+fn discover_selected_files(root: &Path, args: &Args) -> Result<(Vec<PathBuf>, usize), String> {
+    let base = root.join("test").join(&args.target);
+    let discovered = discover_js_files(&base).map_err(|error| format!("discover: {error}"))?;
+    let discovered_count = discovered.len();
+    let files = select_files(discovered, &base, &args.filters)
+        .into_iter()
+        .filter(|path| !is_crashed_runtime(path))
+        .collect();
+    if files.is_empty() {
+        return Err("no tests matched the requested filters".to_string());
+    }
+    Ok((files, discovered_count))
+}
+
+fn is_crashed_runtime(path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+    CRASHED_AT_RUNTIME
+        .split('|')
+        .any(|needle| path_str.contains(needle))
 }
 
 /// Emit a machine-readable JSON report consumable by
@@ -192,10 +139,6 @@ fn write_json_report(
     });
     std::fs::write(path, serde_json::to_string_pretty(&report).unwrap())
         .map_err(|error| format!("write {}: {error}", path.display()))
-}
-
-fn fingerprints(root: &Path, target: &Path) -> serde_json::Value {
-    json!({ "test262_tree": test262_tree_commit(root), "target": target.display().to_string() })
 }
 
 fn test262_tree_commit(root: &Path) -> String {
@@ -414,37 +357,57 @@ fn run_fixture_batch(
         if counter.load(Ordering::Relaxed) >= limit {
             break;
         }
-        let outcome = if fixture.metadata.is_module {
-            runner.run_test_with_cache_metadata_and_path(
-                &fixture.source,
-                &fixture.metadata,
-                &fixture.path,
-                harness,
-            )
-        } else {
-            runner.run_test_with_cache_and_metadata(&fixture.source, &fixture.metadata, harness)
-        };
-        let (category, reason) = match outcome {
-            Ok(TestOutcome::Pass) => (String::from("pass"), None),
-            Ok(TestOutcome::Fail { reason }) | Err(reason) => {
-                (normalize_reason(reason.trim()), Some(reason))
-            }
-        };
-        if emit_outcomes {
-            report.outcomes.push(JsonOutcome {
-                path: fixture.path.clone(),
-                category,
-            });
+        run_fixture(runner, harness, fixture, counter, emit_outcomes, report);
+    }
+}
+
+fn run_fixture(
+    runner: &mut Test262Runner<RuntimeHost>,
+    harness: &mut HarnessCache,
+    fixture: &TestSource,
+    counter: &Arc<AtomicUsize>,
+    emit_outcomes: bool,
+    report: &mut RunReport,
+) {
+    let outcome = if fixture.metadata.is_module {
+        runner.run_test_with_cache_metadata_and_path(
+            &fixture.source,
+            &fixture.metadata,
+            &fixture.path,
+            harness,
+        )
+    } else {
+        runner.run_test_with_cache_and_metadata(&fixture.source, &fixture.metadata, harness)
+    };
+    let (category, reason) = match outcome {
+        Ok(TestOutcome::Pass) => (String::from("pass"), None),
+        Ok(TestOutcome::Fail { reason }) | Err(reason) => {
+            (normalize_reason(reason.trim()), Some(reason))
         }
-        match reason {
-            None => report.passed += 1,
-            Some(reason) => {
-                counter.fetch_add(1, Ordering::Relaxed);
-                report.failed += 1;
-                report
-                    .failures
-                    .push((fixture.path.clone(), reason.trim().to_string()));
-            }
+    };
+    if emit_outcomes {
+        report.outcomes.push(JsonOutcome {
+            path: fixture.path.clone(),
+            category,
+        });
+    }
+    record_outcome(fixture, reason, counter, report);
+}
+
+fn record_outcome(
+    fixture: &TestSource,
+    reason: Option<String>,
+    counter: &Arc<AtomicUsize>,
+    report: &mut RunReport,
+) {
+    match reason {
+        None => report.passed += 1,
+        Some(reason) => {
+            counter.fetch_add(1, Ordering::Relaxed);
+            report.failed += 1;
+            report
+                .failures
+                .push((fixture.path.clone(), reason.trim().to_string()));
         }
     }
 }
@@ -530,9 +493,8 @@ fn fail(message: &str) -> ExitCode {
     eprintln!("FAIL: {message}");
     ExitCode::from(1)
 }
-
 fn test262_root() -> PathBuf {
     env::var_os("TEST262_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("tests/test262"))
+        .unwrap_or_else(|| "tests/test262".into())
 }
