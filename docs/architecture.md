@@ -295,6 +295,17 @@ fit; mark performance-sensitive choices **needs benchmark** rather than
 guessing. This audit may recommend reuse, rejection, or benchmarking, but it
 does not authorize changes to the frozen OXC-facts residual-VM architecture.
 
+Follow-up decisions from the bounded audit:
+
+- **Path traversal crates — reject.** Do not replace the resolver with a crate
+  when lexical normalization or error semantics change; preserve the current
+  Test262 resolver contract.
+- **`clap` migration — reject unless exact CLI compatibility is proven.** Help,
+  error, exit, unknown-option, missing-value, and zero-thread behavior require
+  compatibility evidence before adoption.
+- **Intl `formatToParts` adapter — needs benchmark.** Measure binary/RSS cost,
+  throughput, and focused `intl402` outcomes before adopting a formatting kernel.
+
 After implementation-order steps 1–5 establish the complete generic runtime,
 domain breadth proceeds through language primitives, ordinary builtins, RegExp
 and numeric kernels, Date, URI/JSON, then selected ECMA-402 components. Steps
