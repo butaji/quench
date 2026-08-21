@@ -1,6 +1,5 @@
 // Date component formatting for `Intl.DateTimeFormat.prototype.format`.
-// Implements en-US patterns for the most common option combinations used
-// in test262:
+// Implements en-US patterns for the most common option combinations:
 // - year/month/day (numeric/2-digit): `M/d/y`
 // - year/month (short/long) + day: `MMM d, y` / `MMMM d, y`
 // - weekday + date components: `WD, M/d/y` style
