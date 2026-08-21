@@ -124,7 +124,6 @@ fn weak_set_property(key: &str) -> Option<Value> {
 }
 
 pub const fn fn_name(b: Builtin) -> Option<&'static str> {
-    if let Some(v) = set_fn_name(b) { return Some(v); }
     if let Some(name) = set_fn_name(b) {
         return Some(name);
     }
@@ -250,8 +249,6 @@ pub const fn fn_len(b: Builtin) -> Option<f64> {
 }
 
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
-    if let Some(v) = size_getter_name(b) { return Some(v); }
-    if let Some(v) = weak_short_name(b) { return Some(v); }
     if let Some(name) = size_getter_name(b) {
         return Some(name);
     }

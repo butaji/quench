@@ -15,12 +15,6 @@ pub const fn short_name(b: Builtin) -> Option<&'static str> {
 }
 
 const fn intl_name_group_a(b: Builtin) -> Option<&'static str> {
-    if let Some(v) = intl_name_group_a_part_0(b) { return Some(v); }
-    if let Some(v) = intl_name_group_a_part_1(b) { return Some(v); }
-    None
-}
-
-const fn intl_name_group_a_part_0(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IntlGetCanonicalLocales => Some("Intl.getCanonicalLocales"),
         Builtin::IntlSupportedValuesOf => Some("Intl.supportedValuesOf"),
@@ -44,11 +38,6 @@ const fn intl_name_group_a_part_0(b: Builtin) -> Option<&'static str> {
         Builtin::IntlRelativeTimeFormatSupportedLocalesOf => {
             Some("Intl.RelativeTimeFormat.supportedLocalesOf")
         }
-    }
-}
-
-const fn intl_name_group_a_part_1(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlDurationFormatSupportedLocalesOf => {
             Some("Intl.DurationFormat.supportedLocalesOf")
         }
@@ -111,14 +100,7 @@ const fn intl_name_group_a_tail(b: Builtin) -> Option<&'static str> {
     }
 }
 
-const fn intl_fn_len(b: Builtin) {
-    if let Some(v) = intl_fn_len_part_0(b) { return Some(v); }
-    if let Some(v) = intl_fn_len_part_1(b) { return Some(v); }
-    if let Some(v) = intl_fn_len_part_2(b) { return Some(v); }
-    None
-}
-
-const fn intl_fn_len_part_0(b: Builtin) -> Option<f64> {
+const fn intl_fn_len(b: Builtin) -> Option<f64> {
     match b {
         Builtin::IntlGetCanonicalLocales => Some(1.0),
         Builtin::IntlSupportedValuesOf => Some(1.0),
@@ -132,11 +114,6 @@ const fn intl_fn_len_part_0(b: Builtin) -> Option<f64> {
         | Builtin::IntlLocaleGetTimeZones
         | Builtin::IntlLocaleGetTextInfo
         | Builtin::IntlLocaleGetWeekInfo => Some(0.0),
-    }
-}
-
-const fn intl_fn_len_part_1(b: Builtin) -> Option<f64> {
-    match b {
         Builtin::IntlLocaleBaseNameGetter
         | Builtin::IntlLocaleCalendarGetter
         | Builtin::IntlLocaleCaseFirstGetter
@@ -159,11 +136,6 @@ const fn intl_fn_len_part_1(b: Builtin) -> Option<f64> {
         Builtin::IntlRelativeTimeFormatSupportedLocalesOf
         | Builtin::IntlDurationFormatSupportedLocalesOf => Some(1.0),
         Builtin::IntlNumberFormatFormat => Some(0.0),
-    }
-}
-
-const fn intl_fn_len_part_2(b: Builtin) -> Option<f64> {
-    match b {
         Builtin::IntlDurationFormatFormat | Builtin::IntlDurationFormatFormatToParts => Some(1.0),
         _ => intl_fn_len_tail(b),
     }
@@ -201,13 +173,7 @@ const fn intl_fn_len_tail(b: Builtin) -> Option<f64> {
     }
 }
 
-const fn intl_short_name(b: Builtin) {
-    if let Some(v) = intl_short_name_part_0(b) { return Some(v); }
-    if let Some(v) = intl_short_name_part_1(b) { return Some(v); }
-    None
-}
-
-const fn intl_short_name_part_0(b: Builtin) -> Option<&'static str> {
+const fn intl_short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IntlCollator => Some("Collator"),
         Builtin::IntlPluralRules => Some("PluralRules"),
@@ -231,11 +197,6 @@ const fn intl_short_name_part_0(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleCaseFirstGetter => Some("get caseFirst"),
         Builtin::IntlLocaleCollationGetter => Some("get collation"),
         Builtin::IntlLocaleFirstDayOfWeekGetter => Some("get firstDayOfWeek"),
-    }
-}
-
-const fn intl_short_name_part_1(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::IntlLocaleHourCycleGetter => Some("get hourCycle"),
         Builtin::IntlLocaleLanguageGetter => Some("get language"),
         Builtin::IntlLocaleNumberingSystemGetter => Some("get numberingSystem"),
