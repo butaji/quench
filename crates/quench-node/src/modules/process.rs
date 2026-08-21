@@ -92,6 +92,8 @@ fn info_props_static(exec_path: &str) -> Vec<(&'static str, Value)> {
         ("platform", Value::String(std_env("QUENCH_PLATFORM", current_platform()))),
         ("arch", Value::String(current_arch().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
+        ("ppid", Value::Number(parent_pid() as f64)),
+        ("title", Value::String("quench".into())),
         ("sourceMapsEnabled", Value::Boolean(false)),
         ("report", crate::host::namespace_object_from_pairs(vec![(
             "getReport".to_string(),
@@ -103,6 +105,11 @@ fn info_props_static(exec_path: &str) -> Vec<(&'static str, Value)> {
         ("stdout", std_stream(false)),
         ("stderr", std_stream(true)),
     ]
+}
+
+fn parent_pid() -> u32 {
+    #[cfg(unix)] { unsafe { libc::getppid() as u32 } }
+    #[cfg(not(unix))] { 0 }
 }
 
 /// `process.binding()` is an internal Node escape hatch. Quench has no

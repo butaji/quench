@@ -50,6 +50,7 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         "repl" => crate::modules::compat_extra::repl(state).ok(),
         "wasi" => crate::modules::compat_extra::wasi(state).ok(),
         "cluster" => crate::modules::compat_extra::cluster(state).ok(),
+        "diagnostics_channel" => crate::modules::compat_extra::diagnostics_channel(state).ok(),
         "domain" => crate::modules::compat_extra::domain(state).ok(),
         "v8" => crate::modules::compat_extra::v8(state).ok(),
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),

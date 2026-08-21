@@ -32,9 +32,20 @@ pub fn run_in_new_context(
 
 pub fn build() -> Value {
     let run = crate::host::capability(crate::registry::SPEC_VM_RUN_IN_NEW_CONTEXT);
-    crate::host::namespace_object(vec![
-        ("runInNewContext", run.clone()),
-        ("runInContext", run),
-    ])
-    .unwrap_or_else(|_| Value::Undefined)
+    let source = r#"(function(run){
+      function runThis(code){return run(code);}
+      function createContext(o){o=o||{};o.__vm_context__=true;return o}
+      function isContext(o){return !!(o&&o.__vm_context__===true)}
+      function Script(code){this.code=String(code)}
+      Script.prototype.runInNewContext=function(s){return run(this.code,s)};
+      Script.prototype.runInContext=function(s){return run(this.code,s)};
+      Script.prototype.runInThisContext=function(){return run(this.code)};
+      function compileFunction(code,params){params=params||[];return eval('(function('+params.join(',')+'){'+code+'})')}
+      return {runInNewContext:run,runInContext:run,runInThisContext:runThis,Script:Script,createContext:createContext,isContext:isContext,compileFunction:compileFunction};
+    })"#;
+    let Ok(program) = quench_runtime::reduce::reduce_global_script_source(source) else { return Value::Undefined };
+    let context = quench_runtime::vm::current_context();
+    let mut regs = Vec::new();
+    let factory = quench_runtime::vm::with_current_context(&context, || quench_runtime::vm::execute_in_place_context(program.ops(), &mut regs, &context)).unwrap_or(Value::Undefined);
+    quench_runtime::vm::call_value(&factory, &Value::Undefined, &[run]).unwrap_or(Value::Undefined)
 }

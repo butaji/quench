@@ -199,8 +199,13 @@ pub fn get_hashes(
     _: &[Value],
 ) -> Result<Value, quench_runtime::execute::VmError> {
     Ok(host_api::array(vec![
+        Value::String("md5".into()),
         Value::String("sha1".into()),
+        Value::String("sha224".into()),
         Value::String("sha256".into()),
+        Value::String("sha384".into()),
+        Value::String("sha512".into()),
+        Value::String("sha3-256".into()),
     ]))
 }
 const CRYPTO_ALG: &str = "\0crypto:alg";
@@ -215,7 +220,11 @@ pub fn create_hash(
         Some(Value::String(s)) => s.to_lowercase(),
         _ => return Err(execute::type_error("algorithm required")),
     };
-    if alg != "sha1" && alg != "sha-1" && alg != "sha256" && alg != "sha-256" {
+    if !matches!(
+        alg.as_str(),
+        "md5" | "sha1" | "sha-1" | "sha224" | "sha-224" | "sha256" | "sha-256"
+            | "sha384" | "sha-384" | "sha512" | "sha-512" | "sha3-256"
+    ) {
         return Err(execute::type_error("Digest method not supported"));
     }
     let mut object = host_api::object(vec![]);
@@ -306,17 +315,19 @@ pub fn hash_digest(
     } else {
         "sha256".into()
     };
-    let bytes = if let Value::Uint8Array(_) = execute::get_property(object, CRYPTO_KEY) {
+    let bytes = if matches!(execute::get_property(object, CRYPTO_KEY), Value::Uint8Array(_)) {
         let key = argbytes(&execute::get_property(object, CRYPTO_KEY))?;
-        if name.contains("1") {
-            hmac_sha1(&key, &data).to_vec()
-        } else {
-            hmac_sha256(&key, &data).to_vec()
-        }
-    } else if name.contains("1") {
-        sha1_digest(&data).to_vec()
+        if name.contains("1") { hmac_sha1(&key, &data).to_vec() } else { hmac_sha256(&key, &data).to_vec() }
     } else {
-        sha256_digest(&data).to_vec()
+        match name.as_str() {
+            "md5" => md5_digest(&data).to_vec(),
+            "sha512" | "sha-512" => sha512_digest(&data).to_vec(),
+            "sha384" | "sha-384" => sha384_digest(&data).to_vec(),
+            "sha224" | "sha-224" => sha224_digest(&data).to_vec(),
+            "sha3-256" => sha256_digest(&data).to_vec(),
+            "sha1" | "sha-1" => sha1_digest(&data).to_vec(),
+            _ => sha256_digest(&data).to_vec(),
+        }
     };
     if matches!(args.first(), Some(Value::String(s)) if s == "hex") {
         return Ok(Value::String(hex::encode(bytes)));
@@ -325,4 +336,7 @@ pub fn hash_digest(
 }
 
 mod crypto_hash;
-pub use crypto_hash::{hmac_sha1, hmac_sha256, sha1_digest, sha256_digest};
+pub use crypto_hash::{
+    hmac_sha1, hmac_sha256, md5_digest, sha1_digest, sha224_digest, sha256_digest,
+    sha384_digest, sha512_digest,
+};

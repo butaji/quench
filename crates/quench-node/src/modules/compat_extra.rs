@@ -28,6 +28,9 @@ pub fn cluster(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
 pub fn domain(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("domain.js"))
 }
+pub fn diagnostics_channel(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("diagnostics_channel.js"))
+}
 pub fn v8(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("v8.js")).or_else(|_| Ok(crate::host::namespace_object_from_pairs(vec![])))
 }
