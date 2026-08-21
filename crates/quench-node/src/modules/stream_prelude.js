@@ -212,6 +212,18 @@
   }
   mixEmitter(Readable.prototype);
 
+  Readable.prototype.destroy = function (error) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    this.readable = false;
+    if (error) {
+      this.readableErrored = error;
+      this._emitter.emit("error", error);
+    }
+    this._emitter.emit("close");
+    return this;
+  };
+
   // ---- Writable ----
 
   function initWritable(stream, options) {
@@ -317,6 +329,18 @@
   }
   mixEmitter(Writable.prototype);
 
+  Writable.prototype.destroy = function (error) {
+    if (this.destroyed) return this;
+    this.destroyed = true;
+    this.writable = false;
+    if (error) {
+      this.writableErrored = error;
+      this._emitter.emit("error", error);
+    }
+    this._emitter.emit("close");
+    return this;
+  };
+
   // ---- Duplex / Transform ----
 
   function mixWritable(proto) {
@@ -402,6 +426,61 @@
     return last;
   }
 
+  function isReadableNodeStream(o) {
+    return !!(
+      o &&
+      typeof o.pipe === "function" &&
+      typeof o.on === "function" &&
+      (!o._writableState || o._readableState?.readable !== false) &&
+      (!o._writableState || o._readableState)
+    );
+  }
+  function isWritableNodeStream(o) {
+    return !!(
+      o &&
+      typeof o.write === "function" &&
+      typeof o.on === "function" &&
+      (!o._readableState || o._writableState?.writable !== false)
+    );
+  }
+  function isReadable(stream) {
+    if (stream && typeof stream.readable !== "boolean") return null;
+    if (!stream || stream.destroyed) return false;
+    return (
+      isReadableNodeStream(stream) &&
+      stream.readable &&
+      !stream._readableState?.endEmitted
+    );
+  }
+  function isWritable(stream) {
+    if (stream && typeof stream.writable !== "boolean") return null;
+    if (!stream || stream.destroyed) return false;
+    return (
+      isWritableNodeStream(stream) &&
+      stream.writable &&
+      !stream._writableState?.ended
+    );
+  }
+  function isErrored(stream) {
+    return !!(
+      stream &&
+      (stream.readableErrored ??
+        stream.writableErrored ??
+        stream._readableState?.errored ??
+        stream._writableState?.errored ??
+        stream._readableState?.errorEmitted ??
+        stream._writableState?.errorEmitted)
+    );
+  }
+  function isDisturbed(stream) {
+    return !!(
+      stream &&
+      (stream._readableState?.dataEmitted ?? stream.readableDidRead ?? stream.readableAborted)
+    );
+  }
+  Readable.isDisturbed = isDisturbed;
+  Writable.destroy = function (stream, error) { return stream.destroy(error); };
+
   return {
     Readable,
     Writable,
@@ -409,6 +488,10 @@
     Transform,
     Stream: Readable,
     finished,
-    pipeline
+    pipeline,
+    isReadable,
+    isWritable,
+    isErrored,
+    isDisturbed
   };
 });

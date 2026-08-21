@@ -33,8 +33,8 @@ Measured after the latest compatibility fixes:
 
 - `cargo check -p quench-node`: passes, with one existing unused-variable
   warning.
-- `cargo run -p quench-node-test --bin run-compat -- --quiet`: **58 passed,
-  0 failed, 58 total**.
+- `cargo run -p quench-node-test --bin run-compat -- --quiet`: **59 passed,
+  0 failed, 59 total**.
 - `cargo run -p quench-node-test --bin run-parallel`: **178 passed, 0 failed,
   178 total**.
 - Focused diagnostics_channel, inspector, repl/wasi, DNS, path, events,
