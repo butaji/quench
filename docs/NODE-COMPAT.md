@@ -81,7 +81,7 @@ Legend
 Measured after the latest compatibility fixes:
 
 - `cargo run -p quench-node-test --bin run-compat -- --quiet` —
-  **66 passed, 0 failed, 66 total**.
+  **67 passed, 0 failed, 67 total**.
 - `cargo run -p quench-node-test --bin run-parallel` —
   **178 passed, 0 failed, 178 total**.
 - Focused diagnostics_channel, inspector, repl/wasi, DNS, path, events,

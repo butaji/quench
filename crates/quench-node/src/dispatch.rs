@@ -318,6 +318,7 @@ fn network_dispatch_host(cap: u16) -> Option<CallHandler> {
         | CAP_CRYPTO_SUBTLE_EXPORT_KEY => crypto_subtle_export_key,
         | CAP_CRYPTO_SUBTLE_ENCRYPT => crypto_subtle_encrypt,
         | CAP_CRYPTO_SUBTLE_DECRYPT => crypto_subtle_decrypt,
+        | CAP_CRYPTO_SUBTLE_GENERATE_KEY => crypto_subtle_generate_key,
         CAP_CRYPTO_SUBTLE_DERIVE_BITS => crypto_subtle_derive_bits,
         CAP_CRYPTO_SUBTLE_DERIVE_KEY => crypto_subtle_derive_key,
         CAP_REQUIRE => node_require,
