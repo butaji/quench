@@ -119,11 +119,11 @@ fn is_coercible_primitive(value: &Value) -> bool {
 fn is_equality_object(value: &Value) -> bool {
     crate::value::is_object(value) && !crate::conversion::is_symbol(value)
 }
-fn strict_equal_object_refs(left: &Value, right: &Value) -> Option<bool> {
-    Some(match (left, right) {
-        (Value::Array(left), Value::Array(right)) | (Value::Object(left), Value::Object(right)) => {
-            Rc::ptr_eq(left, right)
-        }
+
+pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
+        (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
         (Value::ObjectAlias(left), Value::Object(right))
         | (Value::Object(right), Value::ObjectAlias(left)) => left
             .0
@@ -136,15 +136,7 @@ fn strict_equal_object_refs(left: &Value, right: &Value) -> Option<bool> {
                 _ => false,
             }
         }
-        _ => return None,
-    })
-}
-
-pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
-    if let Some(result) = strict_equal_object_refs(left, right) {
-        return result;
-    }
-    match (left, right) {
+        (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => Rc::ptr_eq(left, right),
         (Value::DataView(left), Value::DataView(right)) => Rc::ptr_eq(left, right),
         (Value::Float32Array(left), Value::Float32Array(right)) => Rc::ptr_eq(left, right),
         (Value::Float64Array(left), Value::Float64Array(right)) => Rc::ptr_eq(left, right),
