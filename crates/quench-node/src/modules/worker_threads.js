@@ -2,8 +2,14 @@
 // The synchronous launch is intentional: it gives the small embedding a real
 // isolated VM while preserving deterministic event delivery to the parent.
 var proc = process;
+var workerArgs = proc.argv || [];
 var workerEnv = proc.env && proc.env.QUENCH_WORKER;
-var workerData = workerEnv ? JSON.parse(proc.env.QUENCH_WORKER_DATA || 'null') : null;
+var workerArgData = null;
+for (var wa = 0; wa < workerArgs.length; wa++) {
+  if (workerArgs[wa] === '--quench-worker') workerEnv = '1';
+  if (String(workerArgs[wa]).indexOf('--quench-worker-data=') === 0) workerArgData = String(workerArgs[wa]).slice(21);
+}
+var workerData = workerEnv ? JSON.parse(workerArgData || (proc.env && proc.env.QUENCH_WORKER_DATA) || 'null') : null;
 function emitter(target) {
   var listeners = {};
   var pending = target._queueEvents ? [] : null;
@@ -51,8 +57,9 @@ var api = {
     for (var i = 0; i < keys.length; i++) env[keys[i]] = proc.env[keys[i]];
     env.QUENCH_WORKER = '1';
     env.QUENCH_WORKER_DATA = JSON.stringify(options.workerData === undefined ? null : options.workerData);
-    var result = cp.spawnSync(proc.execPath, [filename], { env: env, cwd: options.cwd });
-    var lines = String(result.stdout || '').split('\n');
+    var result = cp.spawnSync(proc.execPath, [filename, '--quench-worker', '--quench-worker-data=' + JSON.stringify(options.workerData === undefined ? null : options.workerData)], { env: env, cwd: options.cwd });
+    var output = result.stdout && typeof result.stdout.toString === 'function' ? result.stdout.toString() : String(result.stdout || '');
+    var lines = output.split('\n');
     for (var j = 0; j < lines.length; j++) {
       var marker = '__QUENCH_WORKER_MESSAGE__';
         try { self.emit('message', JSON.parse(lines[j].slice(marker.length))); } catch (_) {}
