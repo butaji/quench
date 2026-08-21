@@ -78,16 +78,15 @@ Legend
 
 ## Verification evidence
 
-Measured after the latest implementation and merge:
+Measured after the latest compatibility fixes:
 
-- `cargo run -p quench-node-test --bin run-compat -- --quiet` — **49 passed,
-  8 failed, 57 total**.
-- `cargo run -p quench-node-test --bin run-parallel` — **blocked** by an
-  uncaught panic in `crates/quench-runtime/src/intl/datetime_format_date.rs:90`;
-  no upstream pass rate is claimable.
-- Focused diagnostics_channel, inspector, repl/wasi, DNS, and path fixtures
-  pass individually.
+- `cargo run -p quench-node-test --bin run-compat -- --quiet` —
+  **57 passed, 0 failed, 57 total**.
+- `cargo run -p quench-node-test --bin run-parallel` —
+  **178 passed, 0 failed, 178 total**.
+- Focused diagnostics_channel, inspector, repl/wasi, DNS, path, events,
+  HTTP, net, and readline fixtures pass individually.
 
-These results are evidence for the current repository only. Bun's green/yellow
-labels are reference classifications from the current Bun Node v26 page, not
-Node API test results for Quench.
+These results cover the current repository manifests. Bun's green/yellow
+labels remain reference classifications from the current Bun Node v26 page,
+not proof that every Bun-documented API is implemented by Quench.
