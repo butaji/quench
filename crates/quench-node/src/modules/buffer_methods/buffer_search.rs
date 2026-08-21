@@ -1,8 +1,8 @@
 use quench_runtime::execute::VmError;
 use quench_runtime::value::{Uint8ArrayData, Value};
 
-use super::buffer_enc as enc;
-use super::buffer_methods::{encoding_arg, this_view, to_offset};
+use crate::modules::buffer_enc as enc;
+use super::{encoding_arg, this_view, to_offset};
 
 type HandlerResult = Result<Value, VmError>;
 
