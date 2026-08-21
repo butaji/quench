@@ -350,6 +350,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_STREAM_READABLE => stream_readable,
         CAP_STREAM_WRITABLE => stream_writable,
         CAP_STREAM_DUPLEX => stream_duplex,
+        CAP_STREAM_TRANSFORM => stream_transform,
         CAP_URL_NEW => url_new,
         CAP_TEXT_DECODER_NEW => crate::modules::text_decoder::new_text_decoder,
         CAP_TEXT_ENCODER_NEW => crate::modules::text_encoder::new_text_encoder,
