@@ -49,6 +49,11 @@ is a passing focused runner, a passing Node CLI oracle, and clean
 `run-compat`/`run-parallel` results. The legacy `url.parse` path remains
 separate and is not claimed as equivalent to the WHATWG static parser.
 `url.fileURLToPath` and `url.pathToFileURL` are present.
+Measured improvement (2026-08-21): legacy `url.parse()` now separates the
+scheme, authority, pathname, query, and combined `path` for ordinary HTTP(S)
+URLs. Focused `test-url.js` asserts those Node fields; the Node CLI oracle and
+the full focused/upstream gates pass. Complex legacy parser edge cases remain
+outside this slice.
 The separate default `quench-node` runtime remains an explicit gap: its
 host-value URL constructor does not yet preserve the same static properties
 through the VM host-value boundary, so its direct CLI smoke must not be counted
