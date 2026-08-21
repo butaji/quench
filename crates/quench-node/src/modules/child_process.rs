@@ -190,3 +190,83 @@ fn opt_env(value: &Value) -> Option<std::collections::HashMap<String, String>> {
     }
     Some(env)
 }
+/// Execute a shell command and return Node's synchronous stdout contract.
+pub fn exec_sync(
+    _state: &std::rc::Rc<std::cell::RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let command = args.first().map(value_to_string).unwrap_or_default();
+    if command.is_empty() {
+        return Ok(Value::String(String::new()));
+    }
+    let mut cmd = std::process::Command::new("sh");
+    cmd.args(["-c", &command]);
+    let input = apply_options(&mut cmd, args.get(1));
+    let mut child = cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::piped())
+        .spawn().map_err(|_| execute::type_error("failed to spawn command"))?;
+    pipe_input(&mut child, input.as_deref());
+    let output = child.wait_with_output().map_err(|_| execute::type_error("failed waiting for command"))?;
+    if !output.status.success() {
+        return Err(execute::type_error("command failed"));
+    }
+    Ok(Value::String(String::from_utf8_lossy(&output.stdout).into_owned()))
+}
+
+/// Execute a command asynchronously, invoking the supplied callback eagerly.
+pub fn exec(
+    _state: &std::rc::Rc<std::cell::RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let command = args.first().map(value_to_string).unwrap_or_default();
+    let callback = args.iter().rev().find(|v| quench_runtime::is_callable(v)).cloned();
+    let mut cmd = std::process::Command::new("sh");
+    cmd.args(["-c", &command]).stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let result = match cmd.output() {
+        Ok(output) => {
+            let out = String::from_utf8_lossy(&output.stdout).into_owned();
+            let err = String::from_utf8_lossy(&output.stderr).into_owned();
+            (if output.status.success() { Value::Null } else { coded_error("1", "command failed") }, out, err)
+        }
+        Err(error) => (coded_error(raw_code(&error), &error.to_string()), String::new(), String::new()),
+    };
+    if let Some(cb) = callback {
+        execute::call(&cb, &Value::Undefined, &[result.0, Value::String(result.1), Value::String(result.2)])?;
+    }
+    Ok(Value::Undefined)
+}
+
+/// Execute a file directly (without a shell), with optional callback.
+pub fn exec_file(
+    _state: &std::rc::Rc<std::cell::RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let file = args.first().map(value_to_string).unwrap_or_default();
+    let file_args = args.get(1).and_then(string_args).unwrap_or_default();
+    let callback = args.iter().rev().find(|v| quench_runtime::is_callable(v)).cloned();
+    let result = match std::process::Command::new(&file).args(file_args).output() {
+        Ok(output) => (if output.status.success() { Value::Null } else { coded_error("1", "command failed") },
+            String::from_utf8_lossy(&output.stdout).into_owned(), String::from_utf8_lossy(&output.stderr).into_owned()),
+        Err(error) => (coded_error(raw_code(&error), &error.to_string()), String::new(), String::new()),
+    };
+    if let Some(cb) = callback {
+        execute::call(&cb, &Value::Undefined, &[result.0, Value::String(result.1), Value::String(result.2)])?;
+    }
+    Ok(Value::Undefined)
+}
+/// Synchronous direct-file variant.
+pub fn exec_file_sync(
+    _state: &std::rc::Rc<std::cell::RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let file = args.first().map(value_to_string).unwrap_or_default();
+    let file_args = args.get(1).and_then(string_args).unwrap_or_default();
+    let output = std::process::Command::new(file).args(file_args).output()
+        .map_err(|_| execute::type_error("failed to execute file"))?;
+    if !output.status.success() {
+        return Err(execute::type_error("file command failed"));
+    }
+    Ok(Value::String(String::from_utf8_lossy(&output.stdout).into_owned()))
+}
