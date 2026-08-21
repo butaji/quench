@@ -1,12 +1,26 @@
 (function(deps){'use strict';
-  var assert = deps.assert, suites = [], current = null, failures = 0, count = 0;
-  function log(s){ if (typeof console !== 'undefined' && console.log) console.log(s); }
-  function invoke(fn,t){ if(typeof fn==='function') return fn(t); }
-  function hooks(){ var o={beforeEach:[],afterEach:[],before:[],after:[]}; for(var i=0;i<suites.length;i++) for(var k in o) for(var j=0;j<suites[i][k].length;j++) o[k].push(suites[i][k][j]); return o; }
-  function run(name, opts, fn){ if(typeof opts==='function'){fn=opts;opts={};} opts=opts||{}; count++; if(opts.skip){log('ok '+count+' - '+name+' # SKIP');return;} var h=hooks(),t={assert:assert}; t.test=test; try{for(var i=0;i<h.beforeEach.length;i++)invoke(h.beforeEach[i],t);for(var i=0;i<h.before.length;i++)invoke(h.before[i],t);invoke(fn,t);for(var i=h.afterEach.length-1;i>=0;i--)invoke(h.afterEach[i],t);for(var i=h.after.length-1;i>=0;i--)invoke(h.after[i],t);log('ok '+count+' - '+name);}catch(e){failures++;log('not ok '+count+' - '+name);}}
-  function test(name,opts,fn){run(String(name),opts,fn);} test.skip=function(name,fn){run(String(name),{skip:true},fn);};
-  function describe(name,fn){var s={beforeEach:[],afterEach:[],before:[],after:[]},old=current;suites.push(s);current=s;try{invoke(fn,{test:test,assert:assert});}catch(e){failures++;log('not ok - '+name);}suites.pop();current=old;}
+  var assert=deps.assert, suites=[], current=null, count=0, passed=0, failures=0, skipped=0, onlyTests=[], running=false;
+  function log(s){if(typeof console!=='undefined'&&console.log)console.log(s);}
+  function promise(v){return v&&typeof v.then==='function'?v:Promise.resolve(v);}
+  function invoke(fn,t){return typeof fn==='function'?fn(t):undefined;}
+  function hooks(){var o={beforeEach:[],afterEach:[],before:[],after:[]},i,k,j;for(i=0;i<suites.length;i++)for(k in o)for(j=0;j<suites[i][k].length;j++)o[k].push(suites[i][k][j]);return o;}
+  function run(name,opts,fn,parent){if(typeof opts==='function'){parent=fn;fn=opts;opts={};}opts=opts||{};var rec={name:String(name),opts:opts,fn:fn,parent:parent,children:[]};if(parent)parent.children.push(rec);else test._records.push(rec);return rec;}
+  function execute(rec){var h=hooks(),ctx={assert:assert,name:rec.name,signal:{aborted:false,addEventListener:function(){}}}, children=rec.children, i, result;
+    ctx.test=function(n,o,f){return run(n,o,f,rec);};
+    if(rec.opts.skip||rec.opts.todo){skipped++;log('ok '+(++count)+' - '+rec.name+' # SKIP');return Promise.resolve();}
+    if(test._hasOnly&&!rec.opts.only&&!rec.parent)return Promise.resolve();
+    return promise().then(function(){for(i=0;i<h.before.length;i++)return promise(invoke(h.before[i],ctx)).then(function(){return executeBefore(h.before.slice(1),ctx);});}).then(function(){return executeBefore(h.beforeEach,ctx);}).then(function(){return invoke(rec.fn,ctx);}).then(function(v){result=v;return promise(result);}).then(function(){return runChildren(children);}).then(function(){return executeAfter(h.afterEach.slice().reverse(),ctx);}).then(function(){return executeAfter(h.after.slice().reverse(),ctx);}).then(function(){passed++;log('ok '+(++count)+' - '+rec.name);},function(e){failures++;log('not ok '+(++count)+' - '+rec.name+' '+(e&&e.message||e));});
+  }
+  function executeBefore(a,t){var i=0;function n(){return i<a.length?promise(invoke(a[i++],t)).then(n):Promise.resolve();}return n();}
+  function executeAfter(a,t){var i=0;function n(){return i<a.length?promise(invoke(a[i++],t)).then(n):Promise.resolve();}return n();}
+  function runChildren(a){var i=0;function n(){return i<a.length?execute(a[i++]).then(n):Promise.resolve();}return n();}
+  function test(name,opts,fn){return run(name,opts,fn,null);} test._records=[]; test._hasOnly=false;
+  test.skip=function(n,o,f){return test(n,typeof o==='function'?{skip:true}:Object.assign({},o,{skip:true}),typeof o==='function'?o:f);};
+  test.todo=function(n,o,f){return test(n,typeof o==='function'?{todo:true}:Object.assign({},o,{todo:true}),typeof o==='function'?o:f);};
+  test.only=function(n,o,f){test._hasOnly=true;return test(n,typeof o==='function'?{only:true}:Object.assign({},o,{only:true}),typeof o==='function'?o:f);};
+  test.run=function(){running=true;var a=test._records.slice();return Promise.all(a.map(execute)).then(function(){running=false;return test.summary();});};
+  function describe(name,fn){var s={beforeEach:[],afterEach:[],before:[],after:[]},old=current;suites.push(s);current=s;try{invoke(fn,{test:test,assert:assert});}catch(e){failures++;}suites.pop();current=old;}
   function hook(k,fn){if(current&&typeof fn==='function')current[k].push(fn);} describe.beforeEach=function(f){hook('beforeEach',f);};describe.afterEach=function(f){hook('afterEach',f);};describe.before=function(f){hook('before',f);};describe.after=function(f){hook('after',f);};
-  test.test=test;test.describe=describe;test.it=test;test.beforeEach=describe.beforeEach;test.afterEach=describe.afterEach;test.before=describe.before;test.after=describe.after;test.summary=function(){log('tests '+count+', failures '+failures);};test.assert=assert;
+  test.test=test;test.describe=describe;test.it=test;test.beforeEach=describe.beforeEach;test.afterEach=describe.afterEach;test.before=describe.before;test.after=describe.after;test.summary=function(){return {tests:count,pass:passed,fail:failures,skip:skipped,passed:passed,failed:failures,skipped:skipped};};test.assert=assert;
   return test;
 })

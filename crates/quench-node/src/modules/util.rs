@@ -6,8 +6,8 @@
 
 use std::cell::RefCell;
 
+use quench_runtime::execute;
 use quench_runtime::value::Value;
-
 thread_local! {
     /// The live `util.inspect.defaultOptions` object; formatters read
     /// through it so JavaScript-side mutation is observed.
@@ -27,37 +27,40 @@ pub fn format_with_options(args: &[Value], numeric_separator: bool) -> String {
 /// Module wiring: returns the `(name, value)` pairs the host
 /// installs into the `util` namespace.
 pub fn build() -> Vec<(String, Value)> {
-    vec![
-        (
-            "format".to_string(),
-            crate::host::capability(crate::registry::SPEC_UTIL_FORMAT),
-        ),
-        ("inspect".to_string(), inspect_capability()),
-        (
-            "isDeepStrictEqual".to_string(),
-            crate::host::capability(crate::registry::SPEC_UTIL_IS_DEEP_STRICT_EQUAL),
-        ),
-        (
-            "styleText".to_string(),
-            crate::host::capability(crate::registry::SPEC_UTIL_STYLE_TEXT),
-        ),
-        (
-            "formatWithOptions".to_string(),
-            crate::host::capability(crate::registry::SPEC_UTIL_FORMAT_WITH_OPTIONS),
-        ),
-        (
-            "stripVTControlCharacters".to_string(),
-            crate::host::capability(crate::registry::SPEC_UTIL_STRIP_VT),
-        ),
-        (
-            "inherits".to_string(),
-            crate::host::capability(crate::registry::SPEC_UTIL_INHERITS),
-        ),
-        (
-            "getCallSites".to_string(),
-            crate::host::capability(crate::registry::SPEC_UTIL_GETCALLSITES),
-        ),
-    ]
+    let inspect = inspect_capability();
+    let format = crate::host::capability(crate::registry::SPEC_UTIL_FORMAT);
+    let deep_equal = crate::host::capability(crate::registry::SPEC_UTIL_IS_DEEP_STRICT_EQUAL);
+    let style_text = crate::host::capability(crate::registry::SPEC_UTIL_STYLE_TEXT);
+    let format_with_options = crate::host::capability(crate::registry::SPEC_UTIL_FORMAT_WITH_OPTIONS);
+    let strip_vt = crate::host::capability(crate::registry::SPEC_UTIL_STRIP_VT);
+    let inherits = crate::host::capability(crate::registry::SPEC_UTIL_INHERITS);
+    let get_call_sites = crate::host::capability(crate::registry::SPEC_UTIL_GETCALLSITES);
+    let source = r#"(function(format,inspect,deepEqual,styleText,formatWithOptions,stripVT,inherits,getCallSites){
+      function promisify(fn){ var p=function(){var a=[].slice.call(arguments), self=this;
+        return new Promise(function(resolve,reject){a.push(function(e,v){if(e)reject(e);else resolve(v)});fn.apply(self,a);});};
+        if (fn && fn[promisify.custom]) return fn[promisify.custom]; return p; }
+      promisify.custom=Symbol('custom'); promisify[Symbol.for('nodejs.util.promisify.custom')]=promisify.custom;
+      function callbackify(fn){return function(){var a=[].slice.call(arguments), cb=a.pop(), self=this;
+        Promise.resolve(fn.apply(self,a)).then(function(v){cb(null,v)},function(e){cb(e);});};}
+      var types={isArrayBuffer:function(v){return v instanceof ArrayBuffer},isTypedArray:function(v){return typeof ArrayBuffer!=='undefined'&&ArrayBuffer.isView(v)&&!(v instanceof DataView)},
+        isUint8Array:function(v){return v instanceof Uint8Array},isDate:function(v){return v instanceof Date},isRegExp:function(v){return v instanceof RegExp},
+        isMap:function(v){return v instanceof Map},isSet:function(v){return v instanceof Set},isString:function(v){return typeof v==='string'||v instanceof String},
+        isNumber:function(v){return typeof v==='number'||v instanceof Number},isBoolean:function(v){return typeof v==='boolean'||v instanceof Boolean},
+        isBuffer:function(v){return typeof Buffer!=='undefined'&&Buffer.isBuffer(v)},isPromise:function(v){return v instanceof Promise},
+        isSymbol:function(v){return typeof v==='symbol'}};
+      function deprecate(fn){return function(){return fn.apply(this,arguments)}} function debuglog(){return function(){}}
+      return {format:format,inspect:inspect,isDeepStrictEqual:deepEqual,styleText:styleText,formatWithOptions:formatWithOptions,stripVTControlCharacters:stripVT,inherits:inherits,getCallSites:getCallSites,promisify:promisify,callbackify:callbackify,types:types,deprecate:deprecate,debuglog:debuglog};
+    })"#;
+    let Ok(program) = quench_runtime::reduce::reduce_global_script_source(source) else { return Vec::new() };
+    let context = quench_runtime::vm::current_context();
+    let mut regs = Vec::new();
+    let factory = quench_runtime::vm::with_current_context(&context, || quench_runtime::vm::execute_in_place_context(program.ops(), &mut regs, &context)).unwrap_or(Value::Undefined);
+    let module = quench_runtime::vm::call_value(&factory, &Value::Undefined, &[format, inspect, deep_equal, style_text, format_with_options, strip_vt, inherits, get_call_sites]).unwrap_or(Value::Undefined);
+    execute_pairs(module)
+}
+
+fn execute_pairs(module: Value) -> Vec<(String, Value)> {
+    execute::own_enumerable_keys(&module).into_iter().filter_map(|k| execute::get_property_result(&module, &k).ok().map(|v| (k,v))).collect()
 }
 
 fn inspect_capability() -> Value {
