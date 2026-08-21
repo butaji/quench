@@ -66,7 +66,8 @@ inputs via visited-pair tracking. All covered by `test-assert.js`.
 Measured gap (2026-08-21): `events` still lacks the Bun-green namespace
 exports `once`, `getEventListeners`, `addAbortListener`, `usingAsyncResource`,
 and the `errorMonitor`/`captureRejectionSymbol` Symbol constants (plus
-`EventEmitter.captureRejections` semantics). True `Symbol` values and a
-stateful listener registry are required; the harness rejects `\0`-string
-symbol stand-ins, so this needs host Symbol support and is tracked here rather
-than claimed complete.
+`EventEmitter.captureRejections` semantics). The built-in module export object
+is non-extensible, so JS static additions do not stick (`events.once` becomes
+non-callable) and true `Symbol` values are not constructible; these need host
+export-table extensions and host Symbol/listener-registry support, tracked here
+rather than claimed complete.
