@@ -449,74 +449,6 @@ pub(crate) fn to_reversed(receiver: Option<&Value>) -> Result<Value, crate::exec
     }
     Ok(Value::array(values))
 }
-pub(crate) fn reduce_values(
-    receiver: Option<&Value>,
-    arguments: &[Value],
-    reverse: bool,
-) -> Result<Value, crate::execute::VmError> {
-    let Some(receiver) = receiver else {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.reduce called on null or undefined",
-        ));
-    };
-    if matches!(receiver, Value::Null | Value::Undefined) {
-        return Err(crate::value::error::throw_type_error(
-            "Array.prototype.reduce called on null or undefined",
-        ));
-    }
-    let values: Vec<Value> = if let Value::Array(values) = receiver {
-        values.iter().cloned().collect()
-    } else {
-        let length = crate::execute::get_property_result(receiver, "length")
-            .ok()
-            .and_then(|v| {
-                if let Value::Number(n) = v {
-                    let clamped = if n.is_nan() || n < 0.0 {
-                        0.0
-                    } else if n > 1_048_576.0 {
-                        1_048_576.0
-                    } else {
-                        n
-                    };
-                    Some(clamped.trunc() as usize)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0);
-        (0..length)
-            .map(|i| {
-                crate::execute::get_property_result(receiver, &i.to_string())
-                    .unwrap_or(Value::Undefined)
-            })
-            .collect()
-    };
-    let Some(callback) = arguments.first() else {
-        return Ok(Value::Undefined);
-    };
-    let indices: Vec<usize> = if reverse {
-        (0..values.len()).rev().collect()
-    } else {
-        (0..values.len()).collect()
-    };
-    if indices.is_empty() && arguments.get(1).is_none() {
-        return Ok(Value::Undefined);
-    }
-    let (mut accumulator, start) = match arguments.get(1) {
-        Some(value) => (value.clone(), 0),
-        None => (values[indices.first().copied().unwrap_or(0)].clone(), 1),
-    };
-    for index in indices.into_iter().skip(start) {
-        let args = [
-            accumulator,
-            values[index].clone(),
-            Value::Number(index as f64),
-            receiver.clone(),
-        ];
-        accumulator = crate::functions::execute_target(callback, receiver, &args)?;
-    }
-    Ok(accumulator)
-}
 fn relative_index(value: Option<&Value>, length: isize) -> isize {
     let number = match value {
         None | Some(Value::Undefined) => 0.0,
@@ -533,6 +465,7 @@ fn relative_index(value: Option<&Value>, length: isize) -> isize {
         integer.min(length)
     }
 }
+include!("arrays_reduce.rs");
 include!("arrays_concat.rs");
 include!("arrays_slice.rs");
 include!("arrays_index_of.rs");
