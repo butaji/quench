@@ -399,8 +399,8 @@ fn match_indices(text: &str, m: &regress::Match, offset: usize) -> Value {
         Value::Number(crate::strings::byte_to_utf16(text, offset + m.start()) as f64),
         Value::Number(crate::strings::byte_to_utf16(text, offset + m.end()) as f64),
     ])];
-    indices.extend(m.groups().map(|group| {
-        group.map_or(Value::Undefined, |range| {
+    indices.extend(m.captures.iter().map(|group| {
+        group.as_ref().map_or(Value::Undefined, |range| {
             Value::array(vec![
                 Value::Number(crate::strings::byte_to_utf16(text, offset + range.start) as f64),
                 Value::Number(crate::strings::byte_to_utf16(text, offset + range.end) as f64),
