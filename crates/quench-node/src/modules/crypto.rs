@@ -78,3 +78,13 @@ pub fn random_fill_sync(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Resu
 pub fn unsupported(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, quench_runtime::execute::VmError> {
     Err(quench_runtime::execute::VmError::EvalError("node:crypto operation is not supported by quench".into()))
 }
+fn argbytes(v:&Value)->Result<Vec<u8>,quench_runtime::execute::VmError>{match v{Value::Uint8Array(x)=>Ok(x.buffer.bytes.borrow()[x.byte_offset..x.byte_offset+x.length].to_vec()),Value::String(s)=>Ok(s.as_bytes().to_vec()),_=>
+Err(execute::type_error("argument must be a Buffer or string"))}}
+pub fn timing_safe_equal(_: &Rc<RefCell<HostState>>,a:&[Value])->Result<Value,quench_runtime::execute::VmError>{let x=argbytes(a.first().ok_or_else(||execute::type_error("missing argument"))?)?;let y=argbytes(a.get(1).ok_or_else(||execute::type_error("missing argument"))?)?;if x.len()!=y.len(){return Err(execute::type_error("Input buffers must have the same byte length"))}let mut d=0;for(i,j)in x.iter().zip(y.iter()){d|=i^j}Ok(Value::Boolean(d==0))}
+pub fn random_uuid(_: &Rc<RefCell<HostState>>,_:&[Value])->Result<Value,quench_runtime::execute::VmError>{let mut b=[0u8;16];random_into(&mut b)?;b[6]=(b[6]&15)|64;b[8]=(b[8]&63)|128;Ok(Value::String(format!("{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7],b[8],b[9],b[10],b[11],b[12],b[13],b[14],b[15])))}
+pub fn random_int(_: &Rc<RefCell<HostState>>,a:&[Value])->Result<Value,quench_runtime::execute::VmError>{let min=match a.first(){Some(Value::Number(n))=>*n as i64,_=>0};let max=match a.last(){Some(Value::Number(n))=>*n as i64,_=>return Err(execute::type_error("max must be a number"))};if max<=min{return Err(execute::VmError::EvalError("max must be greater than min".into()))}let mut b=[0;8];random_into(&mut b)?;Ok(Value::Number((min+(u64::from_ne_bytes(b)%(max-min)as u64) as i64)as f64))}
+pub fn get_hashes(_: &Rc<RefCell<HostState>>,_:&[Value])->Result<Value,quench_runtime::execute::VmError>{Ok(host_api::array(vec![Value::String("sha1".into()),Value::String("sha256".into())]))}
+pub fn create_hash(_: &Rc<RefCell<HostState>>,_:&[Value])->Result<Value,quench_runtime::execute::VmError>{Ok(host_api::object(vec![]))}
+pub fn create_hmac(_: &Rc<RefCell<HostState>>,_:&[Value])->Result<Value,quench_runtime::execute::VmError>{Ok(host_api::object(vec![]))}
+pub fn hash_update(_: &Rc<RefCell<HostState>>,_:Option<&Value>,_:&[Value])->Result<Value,quench_runtime::execute::VmError>{Ok(Value::Undefined)}
+pub fn hash_digest(_: &Rc<RefCell<HostState>>,_:Option<&Value>,_:&[Value])->Result<Value,quench_runtime::execute::VmError>{Ok(crate::modules::buffer_proto::make_buffer(&[]))}
