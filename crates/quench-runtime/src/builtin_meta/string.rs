@@ -68,12 +68,6 @@ const fn fn_name_tail(builtin: Builtin) -> Option<&'static str> {
 }
 
 pub const fn fn_len(b: Builtin) -> Option<f64> {
-    if let Some(v) = string_fn_len_0(b) { return Some(v); }
-    if let Some(v) = string_fn_len_1(b) { return Some(v); }
-    None
-}
-
-const fn string_fn_len_0(b: Builtin) -> Option<f64> {
     match b {
         Builtin::StringAnchor => Some(1.0),
         Builtin::StringBig => Some(0.0),
@@ -94,11 +88,6 @@ const fn string_fn_len_0(b: Builtin) -> Option<f64> {
         Builtin::StringFromCodePoint => Some(1.0),
         Builtin::StringRaw => Some(1.0),
         Builtin::StringValueOf => Some(0.0),
-    }
-}
-
-const fn string_fn_len_1(b: Builtin) -> Option<f64> {
-    match b {
         Builtin::StringRepeat
         | Builtin::StringTrim
         | Builtin::StringToLowerCase
@@ -139,13 +128,6 @@ const fn fn_len_tail(builtin: Builtin) -> Option<f64> {
 }
 
 pub const fn short_name(b: Builtin) -> Option<&'static str> {
-    if let Some(v) = string_short_name_0(b) { return Some(v); }
-    if let Some(v) = string_short_name_1(b) { return Some(v); }
-    if let Some(v) = string_short_name_2(b) { return Some(v); }
-    None
-}
-
-const fn string_short_name_0(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::StringAnchor => Some("anchor"),
         Builtin::StringBig => Some("big"),
@@ -169,11 +151,6 @@ const fn string_short_name_0(b: Builtin) -> Option<&'static str> {
         Builtin::StringIsWellFormed => Some("isWellFormed"),
         Builtin::StringToWellFormed => Some("toWellFormed"),
         Builtin::StringStartsWith => Some("startsWith"),
-    }
-}
-
-const fn string_short_name_1(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::StringEndsWith => Some("endsWith"),
         Builtin::StringAt => Some("at"),
         Builtin::StringRepeat => Some("repeat"),
@@ -196,11 +173,6 @@ const fn string_short_name_1(b: Builtin) -> Option<&'static str> {
         Builtin::StringCodePointAt => Some("codePointAt"),
         Builtin::StringToString => Some("toString"),
         Builtin::StringReplace => Some("replace"),
-    }
-}
-
-const fn string_short_name_2(b: Builtin) -> Option<&'static str> {
-    match b {
         Builtin::StringReplaceAll => Some("replaceAll"),
         Builtin::StringSearch => Some("search"),
         Builtin::StringLocaleCompare => Some("localeCompare"),
