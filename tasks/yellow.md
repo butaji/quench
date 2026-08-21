@@ -6,7 +6,7 @@ Document every supported API and every intentional Bun-matching gap. Implement r
 ## Status (2026-08-21; measured after latest merge)
 
 The listed yellow modules have partial implementations and focused fixtures.
-The current focused suite passes 59/59 and the upstream parallel manifest
+The current focused suite passes 62/62 and the upstream parallel manifest
 passes 178/178. This verifies only the repository's current Node API manifests;
 it does not erase Bun-documented partial behavior or prove full Node v26
 compatibility. Each module MUST record supported APIs, intentional gaps,
@@ -25,7 +25,7 @@ Measured additions (2026-08-21): `diagnostics_channel` now provides
 real `traceSync`/`tracePromise` lifecycle (start/end/asyncStart/asyncEnd/error
 dispatch and error propagation), and `boundedChannel`. Verified by
 `crates/quench-node-test/node-tests/test-diagnostics-channel.js`; focused suite
-59/59, upstream parallel 178/178. Built-in diagnostics channels
+62/62, upstream parallel 178/178. Built-in diagnostics channels
 (`http.client.*`, `http2`, `dgram`, `http.server.*`, `net`, `module`,
 `console`, `child_process`, `worker_threads`) and Node's channel store semantics
 remain an explicit gap, not a compatibility claim.
