@@ -15,7 +15,7 @@ FormData, MessagePort, streams, URL, fetch, crypto, and event globals require
 the same executable evidence as module APIs; installation alone is not
 verification.
 
-Current repository evidence: `run-compat --quiet` passes 66/66 and
+Current repository evidence: `run-compat --quiet` passes 67/67 and
 `run-parallel` passes 178/178. This verifies the current manifests, not every
 Bun-documented Node v26 global. Remaining global caveats and module-specific
 gaps require related Node API fixtures before being marked green.
