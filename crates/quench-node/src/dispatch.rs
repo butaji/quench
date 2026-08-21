@@ -236,6 +236,8 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_STREAM_PIPELINE => stream_pipeline,
         CAP_DNS_LOOKUP => dns_lookup,
         CAP_DNS_RESOLVE4 => dns_resolve4,
+        CAP_DNS_PROMISE_LOOKUP => dns_promise_lookup,
+        CAP_DNS_PROMISE_RESOLVE4 => dns_promise_resolve4,
         CAP_HTTP_REQUEST => http_request,
         CAP_HTTP_GET => http_get,
         CAP_HTTP_SERVER => http_create_server,
