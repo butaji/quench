@@ -210,58 +210,34 @@ fn os_static_props(out: &mut Vec<(String, Value)>) {
 }
 
 fn os_capability_props(out: &mut Vec<(String, Value)>) {
-    out.push((
-        "platform".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_PLATFORM),
-    ));
-    out.push((
-        "arch".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_ARCH),
-    ));
-    out.push((
-        "hostname".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_HOSTNAME),
-    ));
-    out.push((
-        "type".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_TYPE),
-    ));
-    out.push((
-        "release".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_RELEASE),
-    ));
-    out.push((
-        "uptime".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_UPTIME),
-    ));
-    out.push((
-        "homedir".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_HOMEDIR),
-    ));
-    out.push((
-        "tmpdir".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_TMPDIR),
-    ));
-    out.push((
-        "totalmem".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_TOTALMEM),
-    ));
-    out.push((
-        "freemem".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_FREEMEM),
-    ));
-    out.push((
-        "cpus".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_CPUS),
-    ));
-    out.push((
-        "loadavg".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_LOADAVG),
-    ));
-    out.push((
-        "networkInterfaces".to_string(),
-        crate::host::capability(crate::registry::SPEC_OS_NETWORKINTERFACES),
-    ));
+    os_identity_caps(out);
+    os_path_caps(out);
+    os_resource_caps(out);
+}
+
+fn os_identity_caps(out: &mut Vec<(String, Value)>) {
+    use crate::registry::*;
+    out.push(("platform".into(), crate::host::capability(SPEC_OS_PLATFORM)));
+    out.push(("arch".into(), crate::host::capability(SPEC_OS_ARCH)));
+    out.push(("hostname".into(), crate::host::capability(SPEC_OS_HOSTNAME)));
+    out.push(("type".into(), crate::host::capability(SPEC_OS_TYPE)));
+    out.push(("release".into(), crate::host::capability(SPEC_OS_RELEASE)));
+}
+
+fn os_path_caps(out: &mut Vec<(String, Value)>) {
+    use crate::registry::*;
+    out.push(("homedir".into(), crate::host::capability(SPEC_OS_HOMEDIR)));
+    out.push(("tmpdir".into(), crate::host::capability(SPEC_OS_TMPDIR)));
+}
+
+fn os_resource_caps(out: &mut Vec<(String, Value)>) {
+    use crate::registry::*;
+    out.push(("uptime".into(), crate::host::capability(SPEC_OS_UPTIME)));
+    out.push(("totalmem".into(), crate::host::capability(SPEC_OS_TOTALMEM)));
+    out.push(("freemem".into(), crate::host::capability(SPEC_OS_FREEMEM)));
+    out.push(("cpus".into(), crate::host::capability(SPEC_OS_CPUS)));
+    out.push(("loadavg".into(), crate::host::capability(SPEC_OS_LOADAVG)));
+    out.push(("networkInterfaces".into(), crate::host::capability(SPEC_OS_NETWORKINTERFACES)));
 }
 
 // ---- sysinfo-backed helpers ----
