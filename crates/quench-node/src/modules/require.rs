@@ -53,92 +53,69 @@ fn capability_value(spec: crate::registry::NodeSpec) -> Value {
     crate::host::capability(spec)
 }
 
-pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
-    let spec = args.first().map(value_to_string).unwrap_or_default();
-    // `node:assert` exports a callable value whose identity is stable
-    // across requires (assert.strict === assert); cache it like a CJS module.
-    if matches!(
-        spec.as_str(),
-        "assert" | "node:assert" | "assert/strict" | "node:assert/strict"
-    ) {
-        return cached_module(state, "node:assert", || {
-            Ok(crate::modules::assert::build_value())
-        });
+fn require_assert(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
+    matches!(spec, "assert" | "node:assert" | "assert/strict" | "node:assert/strict")
+        .then(|| cached_module(state, "node:assert", || Ok(crate::modules::assert::build_value())))
+}
+
+fn require_path_variant(
+    state: &Rc<RefCell<HostState>>,
+    spec: &str,
+) -> Option<Result<Value, VmError>> {
+    if !matches!(spec, "path/posix" | "path/win32" | "node:path/posix" | "node:path/win32") {
+        return None;
     }
-    if matches!(
-        spec.as_str(),
-        "path/posix" | "path/win32" | "node:path/posix" | "node:path/win32"
-    ) {
-        if let Some(cached) = state.borrow().module_cache.get(&spec) {
+    Some((|| {
+        if let Some(cached) = state.borrow().module_cache.get(spec) {
             return Ok(cached.clone());
         }
         let path_mod = require(state, &[Value::String("path".into())])?;
         let key = spec.rsplit('/').next().unwrap_or("posix");
         let ns = quench_runtime::execute::get_property(&path_mod, key);
-        state.borrow_mut().module_cache.insert(spec, ns.clone());
-        return Ok(ns);
+        state.borrow_mut().module_cache.insert(spec.to_string(), ns.clone());
+        Ok(ns)
+    })())
+}
+
+fn require_cached(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
+    let (key, build): (&str, Box<dyn FnOnce() -> Result<Value, VmError> + '_>) = match spec {
+        "stream" | "node:stream" => ("stream", Box::new(|| crate::modules::stream::build(state))),
+        "async_hooks" | "node:async_hooks" => ("async_hooks", Box::new(|| crate::modules::async_hooks::build(state))),
+        "test" | "node:test" => ("test", Box::new(|| crate::modules::node_test::build(state))),
+        "punycode" | "node:punycode" => ("punycode", Box::new(|| crate::modules::punycode::build(state))),
+        "perf_hooks" | "node:perf_hooks" => ("perf_hooks", Box::new(|| crate::modules::perf_hooks::build(state))),
+        "trace_events" | "node:trace_events" => ("trace_events", Box::new(|| crate::modules::trace_events::build(state))),
+        "http-errors" | "node:http-errors" => ("http-errors", Box::new(|| crate::modules::http_errors::build(state))),
+        "http2" | "node:http2" => ("node:http2", Box::new(|| Ok(crate::modules::http2::build()))),
+        "quic" | "node:quic" => ("node:quic", Box::new(|| Ok(crate::modules::quic::build()))),
+        "statuses" => ("statuses", Box::new(|| crate::modules::statuses::build(state))),
+        "mime-db" => ("mime-db", Box::new(|| crate::modules::mime_db::build(state))),
+        "express" | "node:express" => ("express", Box::new(|| crate::modules::express::build(state))),
+        "express/lib/request" | "node:express/request" => ("express_request", Box::new(|| crate::modules::express_request::build(state))),
+        "koa" | "node:koa" => ("koa", Box::new(|| crate::modules::koa::build(state))),
+        "fastify" | "node:fastify" => ("fastify", Box::new(|| crate::modules::fastify::build(state))),
+        _ => return None,
+    };
+    Some(cached_module(state, key, build))
+}
+
+fn require_special(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
+    match spec {
+        "readline/promises" | "node:readline/promises" => Some(Ok(namespace_of(vec![(
+            "createInterface", capability_value(crate::registry::SPEC_READLINE),
+        )]))),
+        "sqlite" | "node:sqlite" => Some(cached_module(state, "node:sqlite", || Ok(namespace_of_owned(vec![(
+            "DatabaseSync".to_string(), capability_value(crate::registry::SPEC_SQLITE_DATABASE_SYNC),
+        )])))),
+        _ => None,
     }
-    if matches!(spec.as_str(), "stream" | "node:stream") {
-        return cached_module(state, "stream", || crate::modules::stream::build(state));
-    }
-    if matches!(spec.as_str(), "async_hooks" | "node:async_hooks") {
-        return cached_module(state, "async_hooks", || crate::modules::async_hooks::build(state));
-    }
-    if matches!(spec.as_str(), "test" | "node:test") {
-        return cached_module(state, "test", || crate::modules::node_test::build(state));
-    }
-    if matches!(spec.as_str(), "readline/promises" | "node:readline/promises") {
-        let value = namespace_of(vec![(
-            "createInterface",
-            capability_value(crate::registry::SPEC_READLINE),
-        )]);
-        return Ok(value);
-    }
-    if matches!(spec.as_str(), "punycode" | "node:punycode") {
-        return cached_module(state, "punycode", || crate::modules::punycode::build(state));
-    }
-    if matches!(spec.as_str(), "perf_hooks" | "node:perf_hooks") {
-        return cached_module(state, "perf_hooks", || crate::modules::perf_hooks::build(state));
-    }
-    if matches!(spec.as_str(), "trace_events" | "node:trace_events") {
-        return cached_module(state, "trace_events", || crate::modules::trace_events::build(state));
-    }
-    if matches!(spec.as_str(), "http-errors" | "node:http-errors") {
-        return cached_module(state, "http-errors", || crate::modules::http_errors::build(state));
-    }
-    if matches!(spec.as_str(), "sqlite" | "node:sqlite") {
-        return cached_module(state, "node:sqlite", || {
-            Ok(namespace_of_owned(vec![(
-                "DatabaseSync".to_string(),
-                capability_value(crate::registry::SPEC_SQLITE_DATABASE_SYNC),
-            )]))
-        });
-    }
-    if matches!(spec.as_str(), "http2" | "node:http2") {
-        return cached_module(state, "node:http2", || Ok(crate::modules::http2::build()));
-    }
-    if matches!(spec.as_str(), "quic" | "node:quic") {
-        return cached_module(state, "node:quic", || Ok(crate::modules::quic::build()));
-    }
-    if matches!(spec.as_str(), "statuses") {
-        return cached_module(state, "statuses", || crate::modules::statuses::build(state));
-    }
-    if matches!(spec.as_str(), "mime-db") {
-        return cached_module(state, "mime-db", || crate::modules::mime_db::build(state));
-    }
-    if matches!(spec.as_str(), "express" | "node:express") {
-        return cached_module(state, "express", || crate::modules::express::build(state));
-    }
-    if matches!(spec.as_str(), "express/lib/request") || spec == "node:express/request" {
-        return cached_module(state, "express_request", || {
-            crate::modules::express_request::build(state)
-        });
-    }
-    if matches!(spec.as_str(), "koa" | "node:koa") {
-        return cached_module(state, "koa", || crate::modules::koa::build(state));
-    }
-    if matches!(spec.as_str(), "fastify" | "node:fastify") {
-        return cached_module(state, "fastify", || crate::modules::fastify::build(state));
+}
+
+pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let spec = args.first().map(value_to_string).unwrap_or_default();
+    if let Some(result) = require_assert(state, &spec).or_else(|| require_path_variant(state, &spec))
+        .or_else(|| require_cached(state, &spec)).or_else(|| require_special(state, &spec)) {
+        return result;
     }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
         return Ok(cached.clone());
@@ -300,6 +277,10 @@ fn capability_namespace_static(
 }
 
 pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
+    resolve_dispatch(state, spec)
+}
+
+fn resolve_dispatch(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
     let name = spec.strip_prefix("node:").unwrap_or(spec);
     match name {
         "console" => Some(crate::modules::console::build_value()),
