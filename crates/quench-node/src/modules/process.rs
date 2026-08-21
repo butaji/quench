@@ -74,7 +74,17 @@ pub fn build(argv: &[String], exec_path: &str) -> Value {
     props.push(("resourceUsage", crate::host::capability(crate::registry::SPEC_PROCESS_RESOURCE_USAGE)));
     props.push(("cpuUsage", crate::host::capability(crate::registry::SPEC_PROCESS_CPU_USAGE)));
     let obj = crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()));
-    obj
+    execute::define_property(
+        obj,
+        "exitCode",
+        host_api::object(vec![
+            ("get".into(), crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_GET)),
+            ("set".into(), crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_SET)),
+            ("enumerable".into(), Value::Boolean(true)),
+            ("configurable".into(), Value::Boolean(false)),
+        ]),
+    )
+    .unwrap_or_else(|_| host_api::object(Vec::new()))
 }
 
 fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
@@ -417,6 +427,57 @@ fn cpu_value_error(field: &str, value: f64) -> VmError {
         ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
         ("message".into(), Value::String(format!(
             "The property 'prevValue.{field}' is invalid. Received {rendered}"
+        ))),
+    ]))
+}
+
+pub fn exit_code_get(
+    state: &Rc<RefCell<HostState>>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(state
+        .borrow()
+        .process
+        .exit_code
+        .map_or(Value::Undefined, |code| Value::Number(code as f64)))
+}
+
+pub fn exit_code_set(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let value = args.first().cloned().unwrap_or(Value::Undefined);
+    let code = match value {
+        Value::Undefined | Value::Null => None,
+        Value::Number(code) if code.is_finite() && code.fract() == 0.0 => Some(code as i32),
+        Value::Number(code) => return Err(exit_code_range_error(code)),
+        Value::String(code) => match code.parse::<i32>() {
+            Ok(code) => Some(code),
+            Err(_) => return Err(exit_code_type_error(&Value::String(code))),
+        },
+        other => return Err(exit_code_type_error(&other)),
+    };
+    state.borrow_mut().process.exit_code = code;
+    Ok(Value::Undefined)
+}
+
+fn exit_code_type_error(value: &Value) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ("message".into(), Value::String(format!(
+            "The \"code\" argument must be a number.{}",
+            crate::modules::util::invalid_arg_received(value)
+        ))),
+    ]))
+}
+
+fn exit_code_range_error(value: f64) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("RangeError".into())),
+        ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
+        ("message".into(), Value::String(format!(
+            "The value of \"code\" is out of range. It must be an integer. Received {value}"
         ))),
     ]))
 }
