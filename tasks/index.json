@@ -13,6 +13,17 @@
     "application_gate_classes": ["web-server", "cli", "package-loader", "streams", "crypto", "database-sdk"],
     "clean_runs_required": 2
   },
+  "compatibility_reference": {
+    "url": "https://bun.com/docs/runtime/nodejs-compat",
+    "bun_version_scope": "current Bun page; currently describes Node v26",
+    "project_node_scope": "Node 24",
+    "classification": "Bun green/yellow/red is reference metadata, not Quench verification"
+  },
+  "validation": {
+    "focused": "cargo run -p quench-node-test --bin run-compat -- --quiet",
+    "upstream": "cargo run -p quench-node-test --bin run-parallel",
+    "requirement": "Do not mark a green/yellow module verified without applicable upstream Node API test evidence; record panics and failures explicitly."
+  },
   "tasks": [
     {
       "id": "000",

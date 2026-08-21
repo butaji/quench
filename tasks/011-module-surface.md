@@ -5,12 +5,24 @@
 > excluded. Use the statuses and release gates in
 > [compatibility-contract.md](../docs/compatibility-contract.md).
 
-## Contract alignment
+## Bun matrix and verification policy
 
-This task supports the Node 24 application-runtime contract on Linux x86_64;
-observable Node behavior remains the compatibility target. See
-`docs/authoritative-test-sources.md` for the Node, LLRT, Deno, WPT, and Test262
-reference roles.
+The Bun reference matrix is at
+`https://bun.com/docs/runtime/nodejs-compat` (currently describing Node 26);
+this project targets Node 24. Bun green/yellow/red labels classify the
+reference runtime and do not prove Quench behavior. A module is green only
+after focused and applicable upstream Node API tests pass; partial or
+platform-limited behavior is yellow; unsupported behavior is red. Surface
+registration alone is not completion evidence. Record exact commands,
+fixtures, failures, and panics.
+
+## Contract alignment
+Every name in `require('module').builtinModules` MUST have an explicit
+classification: green (implemented and applicable Node API tests pass), yellow
+(partial/platform-limited or focused-only evidence), or red (unsupported with
+Node-compatible error). A registered namespace or shape-only polyfill is not
+green evidence. Unsupported names must return the Node-correct
+`ERR_UNKNOWN_BUILTIN_MODULE` error rather than `undefined` or a generic error.
 
 ## Goal
 
