@@ -65,7 +65,7 @@ impl ProcessState {
 
 pub fn build(argv: &[String], exec_path: &str) -> Value {
     let mut props = info_props(argv, exec_path);
-    props.extend(method_props());
+    props.extend(method_props_helper::method_props());
     crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()))
 }
 
@@ -144,55 +144,57 @@ fn std_stream(is_error: bool) -> Value {
         ),
     ])
 }
+#[path = "process_method_props.rs"]
+mod method_props_helper;
 
-fn method_props() -> Vec<(&'static str, Value)> {
-    vec![
-        (
-            "cwd",
-            crate::host::capability(crate::registry::SPEC_PROCESS_CWD),
-        ),
-        (
-            "chdir",
-            crate::host::capability(crate::registry::SPEC_PROCESS_CHDIR),
-        ),
-        (
-            "exit",
-            crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
-        ),
-        (
-            "nextTick",
-            crate::host::capability(crate::registry::SPEC_PROCESS_NEXT_TICK),
-        ),
-        (
-            "hrtime",
-            crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME),
-        ),
-        (
-            "umask",
-            crate::host::capability(crate::registry::SPEC_PROCESS_UMASK),
-        ),
-        (
-            "on",
-            crate::host::capability(crate::registry::SPEC_PROCESS_ON),
-        ),
-        (
-            "once",
-            crate::host::capability(crate::registry::SPEC_PROCESS_ONCE),
-        ),
-        (
-            "getuid",
-            crate::host::capability(crate::registry::SPEC_PROCESS_GETUID),
-        ),
-        (
-            "getgid",
-            crate::host::capability(crate::registry::SPEC_PROCESS_GETGID),
-        ),
-        (
-            "binding",
-            crate::host::capability(crate::registry::SPEC_PROCESS_BINDING),
-        ),
-    ]
-}
+ fn method_props() -> Vec<(&'static str, Value)> {
+     vec![
+         (
+             "cwd",
+             crate::host::capability(crate::registry::SPEC_PROCESS_CWD),
+         ),
+         (
+             "chdir",
+             crate::host::capability(crate::registry::SPEC_PROCESS_CHDIR),
+         ),
+         (
+             "exit",
+             crate::host::capability(crate::registry::SPEC_PROCESS_EXIT),
+         ),
+         (
+             "nextTick",
+             crate::host::capability(crate::registry::SPEC_PROCESS_NEXT_TICK),
+         ),
+         (
+             "hrtime",
+             crate::host::capability(crate::registry::SPEC_PROCESS_HRTIME),
+         ),
+         (
+             "umask",
+             crate::host::capability(crate::registry::SPEC_PROCESS_UMASK),
+         ),
+         (
+             "on",
+             crate::host::capability(crate::registry::SPEC_PROCESS_ON),
+         ),
+         (
+             "once",
+             crate::host::capability(crate::registry::SPEC_PROCESS_ONCE),
+         ),
+         (
+             "getuid",
+             crate::host::capability(crate::registry::SPEC_PROCESS_GETUID),
+         ),
+         (
+             "getgid",
+             crate::host::capability(crate::registry::SPEC_PROCESS_GETGID),
+         ),
+         (
+             "binding",
+             crate::host::capability(crate::registry::SPEC_PROCESS_BINDING),
+         ),
+     ]
+ }
 
 /// `process.getuid()` — return the effective Unix user ID, or zero on non-Unix.
 pub fn getuid(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
