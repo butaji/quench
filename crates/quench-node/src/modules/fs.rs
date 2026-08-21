@@ -35,21 +35,33 @@ pub(crate) fn fd_open(path: &str, flag: Option<&str>) -> Result<i32, VmError> {
         "r" => o.read(true).open(path),
         "r+" => o.read(true).write(true).open(path),
         "w" => o.write(true).create(true).truncate(true).open(path),
-        "w+" => o.read(true).write(true).create(true).truncate(true).open(path),
-        "a" => o.write(true).create(true).append(true).open(path),
-        "a+" => o.read(true).write(true).create(true).append(true).open(path),
+        "w+" => o
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path),
+        "a" => o.create(true).append(true).open(path),
+        "a+" => o.read(true).create(true).append(true).open(path),
         // Exclusive-create variants (Node's `wx`/`wx+`/`ax`/`ax+`).
         "wx" | "xw" => o.write(true).create_new(true).open(path),
         "wx+" | "xw+" => o.read(true).write(true).create_new(true).open(path),
-        "ax" | "xa" => o.write(true).create_new(true).append(true).open(path),
-        "ax+" | "xa+" => o.read(true).write(true).create_new(true).append(true).open(path),
+        "ax" | "xa" => o.create_new(true).append(true).open(path),
+        "ax+" | "xa+" => o.read(true).create_new(true).append(true).open(path),
         _ => {
-            return Err(crate::modules::fs_error::fs_error("open", Some(path), &std::io::Error::from(std::io::ErrorKind::InvalidInput)));
+            return Err(crate::modules::fs_error::fs_error(
+                "open",
+                Some(path),
+                &std::io::Error::from(std::io::ErrorKind::InvalidInput),
+            ));
         }
     }
     .map_err(|e| crate::modules::fs_error::fs_error("open", Some(path), &e))?;
     let fd = NEXT_FD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    FDS.with(|t| { t.borrow_mut().insert(fd, f); }); Ok(fd)
+    FDS.with(|t| {
+        t.borrow_mut().insert(fd, f);
+    });
+    Ok(fd)
 }
 pub(crate) fn fd_stat(fd: i32) -> Result<Value, VmError> {
     if let Some(stream) = std_stream_fd(fd) {
@@ -57,35 +69,87 @@ pub(crate) fn fd_stat(fd: i32) -> Result<Value, VmError> {
             .map(|m| super::fs_stats::stats(&m))
             .map_err(|e| crate::modules::fs_error::fs_error("fstat", None, &e));
     }
-    FDS.with(|t| t.borrow().get(&fd).ok_or_else(|| crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())).and_then(|f| f.metadata().map(|m| super::fs_stats::stats(&m)).map_err(|e| crate::modules::fs_error::fs_error("fstat", None, &e))))
+    FDS.with(|t| {
+        t.borrow()
+            .get(&fd)
+            .ok_or_else(|| {
+                crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
+            })
+            .and_then(|f| {
+                f.metadata()
+                    .map(|m| super::fs_stats::stats(&m))
+                    .map_err(|e| crate::modules::fs_error::fs_error("fstat", None, &e))
+            })
+    })
 }
 pub(crate) fn fd_close(fd: i32) -> Result<Value, VmError> {
     if std_stream_fd(fd).is_some() {
         return Ok(Value::Undefined);
     }
-    FDS.with(|t| if t.borrow_mut().remove(&fd).is_some() { Ok(Value::Undefined) } else { Err(crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())) })
+    FDS.with(|t| {
+        if t.borrow_mut().remove(&fd).is_some() {
+            Ok(Value::Undefined)
+        } else {
+            Err(crate::modules::buffer_enc::invalid_arg_value(
+                "Invalid file descriptor".into(),
+            ))
+        }
+    })
 }
 
 pub(crate) fn fd_truncate(fd: i32, len: u64) -> Result<Value, VmError> {
-    FDS.with(|t| t.borrow().get(&fd).ok_or_else(|| crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())).and_then(|f| f.set_len(len).map(|_| Value::Undefined).map_err(|e| crate::modules::fs_error::fs_error("ftruncate", None, &e))))
+    FDS.with(|t| {
+        t.borrow()
+            .get(&fd)
+            .ok_or_else(|| {
+                crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
+            })
+            .and_then(|f| {
+                f.set_len(len)
+                    .map(|_| Value::Undefined)
+                    .map_err(|e| crate::modules::fs_error::fs_error("ftruncate", None, &e))
+            })
+    })
 }
-pub(crate) fn fd_write(fd: i32, data: &[u8], offset: usize, length: usize, position: Option<u64>) -> Result<usize, VmError> {
+pub(crate) fn fd_write(
+    fd: i32,
+    data: &[u8],
+    offset: usize,
+    length: usize,
+    position: Option<u64>,
+) -> Result<usize, VmError> {
     use std::io::{Seek, SeekFrom, Write};
     FDS.with(|t| {
         let mut table = t.borrow_mut();
-        let file = table.get_mut(&fd).ok_or_else(|| crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into()))?;
-        if let Some(pos) = position { file.seek(SeekFrom::Start(pos)).map_err(|e| crate::modules::fs_error::fs_error("write", None, &e))?; }
+        let file = table.get_mut(&fd).ok_or_else(|| {
+            crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
+        })?;
+        if let Some(pos) = position {
+            file.seek(SeekFrom::Start(pos))
+                .map_err(|e| crate::modules::fs_error::fs_error("write", None, &e))?;
+        }
         file.write(&data[offset..offset.saturating_add(length).min(data.len())])
             .map_err(|e| crate::modules::fs_error::fs_error("write", None, &e))
     })
 }
 
-pub(crate) fn fd_read(fd: i32, out: &mut [u8], offset: usize, length: usize, position: Option<u64>) -> Result<usize, VmError> {
+pub(crate) fn fd_read(
+    fd: i32,
+    out: &mut [u8],
+    offset: usize,
+    length: usize,
+    position: Option<u64>,
+) -> Result<usize, VmError> {
     use std::io::{Read, Seek, SeekFrom};
     FDS.with(|t| {
         let mut table = t.borrow_mut();
-        let file = table.get_mut(&fd).ok_or_else(|| crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into()))?;
-        if let Some(pos) = position { file.seek(SeekFrom::Start(pos)).map_err(|e| crate::modules::fs_error::fs_error("read", None, &e))?; }
+        let file = table.get_mut(&fd).ok_or_else(|| {
+            crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
+        })?;
+        if let Some(pos) = position {
+            file.seek(SeekFrom::Start(pos))
+                .map_err(|e| crate::modules::fs_error::fs_error("read", None, &e))?;
+        }
         let end = offset.saturating_add(length).min(out.len());
         let start = offset.min(out.len());
         file.read(&mut out[start..end])
@@ -93,16 +157,34 @@ pub(crate) fn fd_read(fd: i32, out: &mut [u8], offset: usize, length: usize, pos
     })
 }
 #[cfg(unix)]
-fn with_raw_fd<T>(fd: i32, f: impl FnOnce(std::os::unix::io::RawFd) -> Result<T, VmError>) -> Result<T, VmError> {
+fn with_raw_fd<T>(
+    fd: i32,
+    f: impl FnOnce(std::os::unix::io::RawFd) -> Result<T, VmError>,
+) -> Result<T, VmError> {
     use std::os::unix::io::AsRawFd;
-    FDS.with(|t| t.borrow().get(&fd).map(|file| f(file.as_raw_fd())).unwrap_or_else(|| Err(crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into()))))
+    FDS.with(|t| {
+        t.borrow()
+            .get(&fd)
+            .map(|file| f(file.as_raw_fd()))
+            .unwrap_or_else(|| {
+                Err(crate::modules::buffer_enc::invalid_arg_value(
+                    "Invalid file descriptor".into(),
+                ))
+            })
+    })
 }
 
 #[cfg(unix)]
 pub(crate) fn fd_chmod(fd: i32, mode: u32) -> Result<Value, VmError> {
     with_raw_fd(fd, |raw| {
         let rc = unsafe { libc::fchmod(raw, mode as libc::mode_t) };
-        if rc == -1 { return Err(crate::modules::fs_error::fs_error("fchmod", None, &std::io::Error::last_os_error())); }
+        if rc == -1 {
+            return Err(crate::modules::fs_error::fs_error(
+                "fchmod",
+                None,
+                &std::io::Error::last_os_error(),
+            ));
+        }
         Ok(Value::Undefined)
     })
 }
@@ -111,7 +193,13 @@ pub(crate) fn fd_chmod(fd: i32, mode: u32) -> Result<Value, VmError> {
 pub(crate) fn fd_chown(fd: i32, uid: u32, gid: u32) -> Result<Value, VmError> {
     with_raw_fd(fd, |raw| {
         let rc = unsafe { libc::fchown(raw, uid as libc::uid_t, gid as libc::gid_t) };
-        if rc == -1 { return Err(crate::modules::fs_error::fs_error("fchown", None, &std::io::Error::last_os_error())); }
+        if rc == -1 {
+            return Err(crate::modules::fs_error::fs_error(
+                "fchown",
+                None,
+                &std::io::Error::last_os_error(),
+            ));
+        }
         Ok(Value::Undefined)
     })
 }
@@ -120,21 +208,39 @@ pub(crate) fn fd_chown(fd: i32, uid: u32, gid: u32) -> Result<Value, VmError> {
 pub(crate) fn fd_utimes(fd: i32, atime: f64, mtime: f64) -> Result<Value, VmError> {
     with_raw_fd(fd, |raw| {
         let times = [
-            libc::timeval { tv_sec: atime.trunc() as libc::time_t, tv_usec: (atime.fract() * 1_000_000.0) as libc::suseconds_t },
-            libc::timeval { tv_sec: mtime.trunc() as libc::time_t, tv_usec: (mtime.fract() * 1_000_000.0) as libc::suseconds_t },
+            libc::timeval {
+                tv_sec: atime.trunc() as libc::time_t,
+                tv_usec: (atime.fract() * 1_000_000.0) as libc::suseconds_t,
+            },
+            libc::timeval {
+                tv_sec: mtime.trunc() as libc::time_t,
+                tv_usec: (mtime.fract() * 1_000_000.0) as libc::suseconds_t,
+            },
         ];
         let rc = unsafe { libc::futimes(raw, times.as_ptr()) };
-        if rc == -1 { return Err(crate::modules::fs_error::fs_error("futimes", None, &std::io::Error::last_os_error())); }
+        if rc == -1 {
+            return Err(crate::modules::fs_error::fs_error(
+                "futimes",
+                None,
+                &std::io::Error::last_os_error(),
+            ));
+        }
         Ok(Value::Undefined)
     })
 }
 
 #[cfg(not(unix))]
-pub(crate) fn fd_chmod(_: i32, _: u32) -> Result<Value, VmError> { Err(VmError::NotCallable) }
+pub(crate) fn fd_chmod(_: i32, _: u32) -> Result<Value, VmError> {
+    Err(VmError::NotCallable)
+}
 #[cfg(not(unix))]
-pub(crate) fn fd_chown(_: i32, _: u32, _: u32) -> Result<Value, VmError> { Err(VmError::NotCallable) }
+pub(crate) fn fd_chown(_: i32, _: u32, _: u32) -> Result<Value, VmError> {
+    Err(VmError::NotCallable)
+}
 #[cfg(not(unix))]
-pub(crate) fn fd_utimes(_: i32, _: f64, _: f64) -> Result<Value, VmError> { Err(VmError::NotCallable) }
+pub(crate) fn fd_utimes(_: i32, _: f64, _: f64) -> Result<Value, VmError> {
+    Err(VmError::NotCallable)
+}
 
 /// The `/dev/fd/N` path for standard stream descriptors 0/1/2, which are
 /// always-open real fds in Node (stdin/stdout/stderr).
