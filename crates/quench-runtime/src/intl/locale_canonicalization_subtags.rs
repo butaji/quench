@@ -61,8 +61,7 @@ fn canonicalize_subtags(
 
 /// IANA Language Subtag Registry: deprecated primary language subtags
 /// (Type: language, Subtag: deprecated) replaced with the preferred form
-/// during `CanonicalizeLanguageTag`. Only a minimal subset is handled
-/// here for the cases the test262 harness exercises.
+/// here for the currently supported language cases.
 fn deprecated_to_preferred(mut parts: Vec<String>) -> Vec<String> {
     let preferred = match parts.first().map(String::as_str) {
         Some("cmn") => Some("zh"),
