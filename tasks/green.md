@@ -17,7 +17,7 @@ streams; string_decoder rejects end(string) and subclassing; tty permits
 non-TTY construction; zlib/http2/quic have documented upstream failure or
 experimental-surface caveats.
 
-Current measured evidence: the focused suite passes 59/59 and the upstream
+Current measured evidence: the focused suite passes 62/62 and the upstream
 parallel manifest passes 178/178. These results cover the repository's current
 fixtures, not every Bun-documented Node v26 API. New or expanded green claims
 still require related Node API tests and recorded results.
@@ -27,4 +27,15 @@ Measured additions (2026-08-21): `stream` now exports the Node predicate family
 `Writable` destroy/errored tracking so the predicates behave correctly against
 real streams. Verified by
 `crates/quench-node-test/node-tests/test-stream-predicates.js` (focused suite
-59/59, upstream parallel 178/178).
+62/62, upstream parallel 178/178).
+
+Measured additions (2026-08-21): `stream.Readable.from` now converts
+sync/async iterables and pull-style sources with `read()`, propagating
+iteration errors and honoring object-mode defaults
+(`test-stream-from.js`). `node:timers/promises` gained Node-compatible
+options/ref/signal validation and AbortSignal abort reason semantics for
+setTimeout, setImmediate, and setInterval, plus `ref:false` unref behavior
+(`test-timers-promises.js`). `node:perf_hooks` gained real `createHistogram`
+(stats/percentile/delta), `monitorEventLoopDelay` (unref'd timer-tick
+enable/disable/start/stop/reset metrics), and error-aware `timerify`
+(`test-perf-hooks2.js`).
