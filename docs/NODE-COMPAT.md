@@ -33,9 +33,9 @@ Legend
 | tty | 🟢 | partial | isatty plus ReadStream/WriteStream shape |
 | url | 🟢 | real | upstream selects green |
 | zlib | 🟢 | real | sync flate2; async missing |
-| http2 | 🟡 | capability error | recognized; requires an HTTP/2 transport backend not present in current architecture |
-| sqlite | 🟢 | real partial | bundled rusqlite DatabaseSync memory/open/exec/prepare/run/all/close; focused fixture green |
-| quic | 🟡 | capability error | recognized; requires a QUIC transport backend not present in current architecture |
+| http2 | 🟢 partial | loopback HTTP adapter over existing HTTP host; protocol-specific gaps remain |
+| sqlite | 🟢 real partial | bundled rusqlite DatabaseSync memory/open/exec/prepare/run/all/close; focused fixture green |
+| quic | 🟢 partial | loopback UDP adapter; QUIC TLS/streams/congestion gaps remain |
 | diagnostics_channel | 🟡 | missing | not resolvable |
 | trace_events | 🟢 | partial | category enable/disable/getEnabledCategories; focused fixture green |
 | async_hooks | 🟡 | stub | minimal JS factory |
@@ -78,7 +78,7 @@ Legend
 
 ## Verification evidence
 
-- `cargo run -p quench-node-test --bin run-compat` — 50 passed, 0 failed.
+- `cargo run -p quench-node-test --bin run-compat` — 51 passed, 0 failed.
 - `cargo run -p quench-node-test --bin run-parallel` — 178 passed, 0 failed
   (manifest: `crates/quench-node-test/node-tests/parallel.txt`).
 - Express smoke app runs under `quench-node`: `curl` → `HTTP/1.1 200 OK`.
