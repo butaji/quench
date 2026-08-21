@@ -530,6 +530,74 @@ pub fn subtle_verify(
     Ok(fulfilled(Value::Boolean(ok)))
 }
 
+use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce};
+
+fn aes_gcm_nonce(iv_v: &Value) -> Result<[u8; 12], quench_runtime::execute::VmError> {
+    let iv = argbytes(iv_v)?;
+    if iv.len() != 12 { return Err(execute::type_error("AES-GCM: iv must be 12 bytes")); }
+    let mut n = [0u8; 12];
+    n.copy_from_slice(&iv);
+    Ok(n)
+}
+
+pub fn subtle_encrypt(
+    _: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let algorithm = args.first().cloned().unwrap_or(Value::Undefined);
+    let alg_name = match execute::get_property(&algorithm, "name") {
+        Value::String(s) => s.to_string(),
+        _ => return Err(execute::type_error("encrypt: algorithm.name required")),
+    };
+    if alg_name != "AES-GCM" { return Err(execute::type_error(format!("encrypt: unsupported algorithm {alg_name}").as_str())); }
+    let iv = aes_gcm_nonce(&execute::get_property(&algorithm, "iv"))?;
+    let key = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let secret = crypto_key_bytes(&key)?;
+    if secret.len() != 32 { return Err(execute::type_error("AES-GCM: key must be 32 bytes")); }
+    let data_v = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let plaintext = argbytes(&data_v)?;
+    let cipher = Aes256Gcm::new_from_slice(&secret).map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?;
+    let ciphertext = cipher.encrypt(Nonce::from_slice(&iv), plaintext.as_ref())
+        .map_err(|e| execute::type_error(format!("AES-GCM encrypt: {e}").as_str()))?;
+    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&ciphertext)))
+}
+
+pub fn subtle_decrypt(
+    _: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let algorithm = args.first().cloned().unwrap_or(Value::Undefined);
+    let alg_name = match execute::get_property(&algorithm, "name") {
+        Value::String(s) => s.to_string(),
+        _ => return Err(execute::type_error("decrypt: algorithm.name required")),
+    };
+    if alg_name != "AES-GCM" { return Err(execute::type_error(format!("decrypt: unsupported algorithm {alg_name}").as_str())); }
+    let iv = aes_gcm_nonce(&execute::get_property(&algorithm, "iv"))?;
+    let key = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let secret = crypto_key_bytes(&key)?;
+    if secret.len() != 32 { return Err(execute::type_error("AES-GCM: key must be 32 bytes")); }
+    let data_v = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let ciphertext = argbytes(&data_v)?;
+    let cipher = Aes256Gcm::new_from_slice(&secret).map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?;
+    let plaintext = cipher.decrypt(Nonce::from_slice(&iv), ciphertext.as_ref())
+        .map_err(|e| execute::type_error(format!("AES-GCM decrypt: {e}").as_str()))?;
+    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&plaintext)))
+}
+
+pub fn subtle_export_key(
+    _: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let format = match args.first().cloned().unwrap_or(Value::Undefined) {
+        Value::String(s) => s.to_string(),
+        _ => return Err(execute::type_error("exportKey: format required")),
+    };
+    if format != "raw" && format != "raw-secret" { return Err(execute::type_error(format!("exportKey: unsupported format {format}").as_str())); }
+    let key = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let secret = crypto_key_bytes(&key)?;
+    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&secret)))
+}
+
 pub fn subtle_unsupported(
     _: &Rc<RefCell<HostState>>,
     _: &[Value],

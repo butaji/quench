@@ -113,6 +113,9 @@ pub fn crypto_subtle_derive_bits(s: &Rc<RefCell<HostState>>, _: Option<&Value>, 
 pub fn crypto_subtle_derive_key(s: &Rc<RefCell<HostState>>, _: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::subtle_derive_key(s, a) }
 pub fn crypto_subtle_sign(s: &Rc<RefCell<HostState>>, _: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::subtle_sign(s, a) }
 pub fn crypto_subtle_verify(s: &Rc<RefCell<HostState>>, _: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::subtle_verify(s, a) }
+pub fn crypto_subtle_encrypt(s: &Rc<RefCell<HostState>>, _: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::subtle_encrypt(s, a) }
+pub fn crypto_subtle_decrypt(s: &Rc<RefCell<HostState>>, _: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::subtle_decrypt(s, a) }
+pub fn crypto_subtle_export_key(s: &Rc<RefCell<HostState>>, _: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::subtle_export_key(s, a) }
 
 pub fn process_exit(
     state: &Rc<RefCell<HostState>>,
