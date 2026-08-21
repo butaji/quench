@@ -131,9 +131,7 @@ fn prototype_for_value_tail(value: &Value) -> Value {
             intrinsic_bound_prototype(bound)
         }
         Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
-        Value::Builtin(builtin)
-            if !crate::builtin_meta::constructor_name(*builtin).is_some() =>
-        {
+        Value::Builtin(Builtin::Intl | Builtin::Math | Builtin::Reflect | Builtin::Json) => {
             Value::Builtin(Builtin::ObjectPrototype)
         }
         Value::Builtin(_) => Value::Builtin(Builtin::FunctionPrototype),
