@@ -1,0 +1,3 @@
+# Verification and delivery
+
+Every API task must leave current evidence: focused fixture, applicable upstream fixture result, cargo test/build result, and lint result for touched files. Full gates: cargo test --workspace, run-compat, run-parallel, tools/lint-rust.sh, and Express/Koa/Fastify smoke applications. Submodules remain byte-for-byte unchanged. Commit and push each verified increment; never call the objective complete while any gate is red.
