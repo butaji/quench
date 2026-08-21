@@ -5,64 +5,34 @@ use quench_runtime::{execute, host_api};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+fn capability_props() -> Vec<(String, Value)> {
+    use crate::registry::*;
+    vec![
+        ("randomBytes".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_BYTES)),
+        ("randomFillSync".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC)),
+        ("createHash".to_string(), crate::host::capability(SPEC_CRYPTO_CREATE_HASH)),
+        ("createHmac".to_string(), crate::host::capability(SPEC_CRYPTO_CREATE_HMAC)),
+        ("timingSafeEqual".to_string(), crate::host::capability(SPEC_CRYPTO_TIMING_SAFE_EQUAL)),
+        ("randomUUID".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_UUID)),
+        ("randomInt".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_INT)),
+        ("getHashes".to_string(), crate::host::capability(SPEC_CRYPTO_GET_HASHES)),
+        ("getCiphers".to_string(), crate::host::capability(SPEC_CRYPTO_GET_CIPHERS)),
+        ("createCipheriv".to_string(), crate::host::capability(SPEC_CRYPTO_UNSUPPORTED)),
+        ("createDecipheriv".to_string(), crate::host::capability(SPEC_CRYPTO_UNSUPPORTED)),
+        ("generateKeyPairSync".to_string(), crate::host::capability(SPEC_CRYPTO_UNSUPPORTED)),
+    ]
+}
+
 pub fn build() -> Value {
-    host_api::object(vec![
-        (
-            "randomBytes".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_RANDOM_BYTES),
-        ),
-        (
-            "randomFillSync".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_RANDOM_FILL_SYNC),
-        ),
-        (
-            "createHash".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_CREATE_HASH),
-        ),
-        (
-            "createHmac".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_CREATE_HMAC),
-        ),
-        (
-            "timingSafeEqual".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_TIMING_SAFE_EQUAL),
-        ),
-        (
-            "randomUUID".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_RANDOM_UUID),
-        ),
-        (
-            "randomInt".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_RANDOM_INT),
-        ),
-        (
-            "getHashes".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_GET_HASHES),
-        ),
-        (
-            "getCiphers".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_GET_CIPHERS),
-        ),
-        (
-            "constants".into(),
-            host_api::object(vec![
-                ("OPENSSL_VERSION_NUMBER".into(), Value::Number(0.0)),
-                ("defaultCoreCipherList".into(), Value::String("".into())),
-            ]),
-        ),
-        (
-            "createCipheriv".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_UNSUPPORTED),
-        ),
-        (
-            "createDecipheriv".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_UNSUPPORTED),
-        ),
-        (
-            "generateKeyPairSync".into(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_UNSUPPORTED),
-        ),
-    ])
+    let mut props = capability_props();
+    props.push((
+        "constants".to_string(),
+        host_api::object(vec![
+            ("OPENSSL_VERSION_NUMBER".into(), Value::Number(0.0)),
+            ("defaultCoreCipherList".into(), Value::String("".into())),
+        ]),
+    ));
+    host_api::object(props)
 }
 
 fn random_into(bytes: &mut [u8]) -> Result<(), quench_runtime::execute::VmError> {
