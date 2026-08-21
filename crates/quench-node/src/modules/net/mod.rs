@@ -25,9 +25,10 @@ mod methods;
 mod pump;
 
 pub use methods::{
-    connect, create_server, server_address, server_close, server_listen, socket_address,
-    socket_destroy, socket_end, socket_pause, socket_resume, socket_set_encoding,
-    socket_set_keep_alive, socket_set_no_delay, socket_set_timeout, socket_write,
+    connect, create_server, server_address, server_close, server_get_connections,
+    server_listen, server_ref, server_set_max_connections, server_unref, socket_address,
+    socket_destroy, socket_end, socket_pause, socket_ref, socket_resume, socket_set_encoding,
+    socket_set_keep_alive, socket_set_no_delay, socket_set_timeout, socket_unref, socket_write,
 };
 pub use pump::{finalize, poll};
 
@@ -52,6 +53,7 @@ pub struct NetServer {
     pub announced: bool,
     pub closed: bool,
     pub close_emitted: bool,
+    pub max_connections: u64,
 }
 
 pub struct NetSocket {
@@ -65,6 +67,8 @@ pub struct NetSocket {
     pub close_emitted: bool,
     pub connect_announced: bool,
     pub encoding: Option<String>,
+    pub bytes_read: u64,
+    pub bytes_written: u64,
 }
 
 pub struct NetState {
@@ -146,28 +150,25 @@ fn allocate_id(state: &Rc<RefCell<HostState>>) -> u64 {
 /// Socket address info stamped on a socket object.
 fn net_info_props(peer: SocketAddr, local: Option<SocketAddr>) -> Vec<(String, Value)> {
     let mut props = vec![
-        (
-            "remoteAddress".to_string(),
-            Value::String(peer.ip().to_string()),
-        ),
+        ("remoteAddress".to_string(), Value::String(peer.ip().to_string())),
         ("remotePort".to_string(), Value::Number(peer.port() as f64)),
         ("remoteFamily".to_string(), Value::String(family(peer))),
     ];
     if let Some(local) = local {
-        props.push((
-            "localAddress".to_string(),
-            Value::String(local.ip().to_string()),
-        ));
+        props.push(("localAddress".to_string(), Value::String(local.ip().to_string())));
         props.push(("localPort".to_string(), Value::Number(local.port() as f64)));
     }
     props
 }
-
 fn server_props() -> Vec<(&'static str, Value)> {
     vec![
         ("listen", cap(crate::registry::SPEC_NET_SERVER_LISTEN)),
         ("close", cap(crate::registry::SPEC_NET_SERVER_CLOSE)),
         ("address", cap(crate::registry::SPEC_NET_SERVER_ADDRESS)),
+        ("getConnections", cap(crate::registry::NodeSpec::new("net:server:getConnections", 0x1019))),
+        ("ref", cap(crate::registry::NodeSpec::new("net:server:ref", 0x101A))),
+        ("unref", cap(crate::registry::NodeSpec::new("net:server:unref", 0x101B))),
+        ("maxConnections", Value::Number(0.0)),
         ("timeout", Value::Number(0.0)),
         ("keepAliveTimeout", Value::Number(5000.0)),
         ("headersTimeout", Value::Number(60000.0)),
@@ -175,29 +176,25 @@ fn server_props() -> Vec<(&'static str, Value)> {
         ("connectionsCheckingInterval", Value::Number(30000.0)),
     ]
 }
-
 fn socket_props() -> Vec<(&'static str, Value)> {
     vec![
         ("write", cap(crate::registry::SPEC_NET_SOCKET_WRITE)),
         ("end", cap(crate::registry::SPEC_NET_SOCKET_END)),
         ("destroy", cap(crate::registry::SPEC_NET_SOCKET_DESTROY)),
         ("address", cap(crate::registry::SPEC_NET_SOCKET_ADDRESS)),
-        (
-            "setNoDelay",
-            cap(crate::registry::SPEC_NET_SOCKET_SET_NO_DELAY),
-        ),
-        (
-            "setKeepAlive",
-            cap(crate::registry::SPEC_NET_SOCKET_SET_KEEP_ALIVE),
-        ),
-        (
-            "setEncoding",
-            cap(crate::registry::SPEC_NET_SOCKET_SET_ENCODING),
-        ),
+        ("ref", cap(crate::registry::NodeSpec::new("net:socket:ref", 0x101C))),
+        ("unref", cap(crate::registry::NodeSpec::new("net:socket:unref", 0x101D))),
+        ("setNoDelay", cap(crate::registry::SPEC_NET_SOCKET_SET_NO_DELAY)),
+        ("setKeepAlive", cap(crate::registry::SPEC_NET_SOCKET_SET_KEEP_ALIVE)),
+        ("setEncoding", cap(crate::registry::SPEC_NET_SOCKET_SET_ENCODING)),
         ("setTimeout", cap(crate::registry::SPEC_NET_SOCKET_SET_TIMEOUT)),
         ("timeout", Value::Number(0.0)),
         ("pause", cap(crate::registry::SPEC_NET_SOCKET_PAUSE)),
         ("resume", cap(crate::registry::SPEC_NET_SOCKET_RESUME)),
+        ("bytesRead", Value::Number(0.0)),
+        ("bytesWritten", Value::Number(0.0)),
+        ("connecting", Value::Boolean(false)),
+        ("readyState", Value::String("open".into())),
     ]
 }
 
@@ -227,6 +224,7 @@ fn register_server(
             announced: false,
             closed: false,
             close_emitted: false,
+            max_connections: 0,
         })),
     );
     Ok(id)

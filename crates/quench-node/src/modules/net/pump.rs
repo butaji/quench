@@ -83,6 +83,8 @@ fn accept_one(
         close_emitted: false,
         connect_announced: true,
         encoding: None,
+        bytes_read: 0,
+        bytes_written: 0,
     }));
     state.borrow_mut().net.sockets.insert(id, socket);
     let server_js = state

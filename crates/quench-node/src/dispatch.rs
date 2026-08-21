@@ -256,6 +256,16 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_DGRAM_SEND => dgram_send,
         CAP_DGRAM_CLOSE => dgram_close,
         CAP_DGRAM_ADDRESS => dgram_address,
+        CAP_DGRAM_SET_TTL => crate::modules::dgram::set_ttl,
+        CAP_DGRAM_SET_BROADCAST => crate::modules::dgram::set_broadcast,
+        CAP_DGRAM_SET_MULTICAST_TTL => crate::modules::dgram::set_multicast_ttl,
+        CAP_DGRAM_SET_MULTICAST_LOOPBACK => crate::modules::dgram::set_multicast_loopback,
+        CAP_DGRAM_ADD_MEMBERSHIP => crate::modules::dgram::add_membership,
+        CAP_DGRAM_DROP_MEMBERSHIP => crate::modules::dgram::drop_membership,
+        CAP_DGRAM_GET_SEND_QUEUE_SIZE => crate::modules::dgram::get_send_queue_size,
+        CAP_DGRAM_GET_SEND_QUEUE_COUNT => crate::modules::dgram::get_send_queue_count,
+        CAP_DGRAM_REF => crate::modules::dgram::ref_socket,
+        CAP_DGRAM_UNREF => crate::modules::dgram::unref_socket,
         _ => return network_dispatch_secondary(cap),
     })
 }
@@ -273,6 +283,9 @@ fn network_dispatch_secondary(cap: u16) -> Option<CallHandler> {
         CAP_NET_SERVER_LISTEN => crate::modules::net::server_listen,
         CAP_NET_SERVER_CLOSE => crate::modules::net::server_close,
         CAP_NET_SERVER_ADDRESS => crate::modules::net::server_address,
+        CAP_NET_SERVER_GET_CONNECTIONS => crate::modules::net::server_get_connections,
+        CAP_NET_SERVER_REF => crate::modules::net::server_ref,
+        CAP_NET_SERVER_UNREF => crate::modules::net::server_unref,
         CAP_NET_SOCKET_WRITE => crate::modules::net::socket_write,
         CAP_NET_SOCKET_END => crate::modules::net::socket_end,
         CAP_NET_SOCKET_DESTROY => crate::modules::net::socket_destroy,
@@ -283,6 +296,8 @@ fn network_dispatch_secondary(cap: u16) -> Option<CallHandler> {
         CAP_NET_SOCKET_PAUSE => crate::modules::net::socket_pause,
         CAP_NET_SOCKET_SET_TIMEOUT => crate::modules::net::socket_set_timeout,
         CAP_NET_SOCKET_RESUME => crate::modules::net::socket_resume,
+        CAP_NET_SOCKET_REF => crate::modules::net::socket_ref,
+        CAP_NET_SOCKET_UNREF => crate::modules::net::socket_unref,
         _ => return network_dispatch_host(cap),
     })
 }
@@ -290,6 +305,10 @@ fn network_dispatch_secondary(cap: u16) -> Option<CallHandler> {
 fn network_dispatch_host(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     Some(match cap {
+        CAP_CRYPTO_SUBTLE_DIGEST => crypto_subtle_digest,
+        CAP_CRYPTO_SUBTLE_IMPORT_KEY => crypto_subtle_import_key,
+        CAP_CRYPTO_SUBTLE_ENCRYPT | CAP_CRYPTO_SUBTLE_DECRYPT | CAP_CRYPTO_SUBTLE_SIGN |
+        CAP_CRYPTO_SUBTLE_VERIFY | CAP_CRYPTO_SUBTLE_GENERATE_KEY | CAP_CRYPTO_SUBTLE_EXPORT_KEY => crypto_subtle_unsupported,
         CAP_REQUIRE => node_require,
         CAP_REQUIRE_FOR => node_require_for,
         CAP_CJS_WRAP => cjs_wrap,
@@ -300,6 +319,8 @@ fn network_dispatch_host(cap: u16) -> Option<CallHandler> {
         CAP_CP_SPAWNSYNC => cp_spawn_sync,
         CAP_CP_EXECSYNC => cp_exec_sync,
         CAP_CP_EXEC | CAP_CP_SPAWN => cp_async,
+        CAP_CP_EXECFILE => cp_exec_file,
+        CAP_CP_EXECFILESYNC => cp_exec_file_sync,
         CAP_TEST_RUN => test_run,
         CAP_TEST_SKIP => test_skip,
         CAP_STRUCTURED_CLONE => structured_clone,

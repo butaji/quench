@@ -196,17 +196,33 @@ pub fn cp_spawn_sync(
 pub fn cp_exec_sync(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::String(String::new()))
+    crate::modules::child_process::exec_sync(_state, args)
 }
 
 pub fn cp_async(
     _state: &Rc<RefCell<HostState>>,
     _receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::Undefined)
+    crate::modules::child_process::exec(_state, args)
+}
+
+pub fn cp_exec_file(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::child_process::exec_file(state, args)
+}
+
+pub fn cp_exec_file_sync(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::child_process::exec_file_sync(state, args)
 }
 
 pub fn url_path_to_file_url(

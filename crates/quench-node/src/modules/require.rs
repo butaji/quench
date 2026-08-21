@@ -392,6 +392,8 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
             ("execSync", crate::registry::SPEC_CP_EXECSYNC),
             ("exec", crate::registry::SPEC_CP_EXEC),
             ("spawn", crate::registry::SPEC_CP_SPAWN),
+            ("execFile", crate::registry::SPEC_CP_EXECFILE),
+            ("execFileSync", crate::registry::SPEC_CP_EXECFILESYNC),
         ]),
         _ => None,
     }

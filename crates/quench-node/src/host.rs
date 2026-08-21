@@ -239,6 +239,7 @@ pub fn install_with_argv(
     for (name, value) in bindings {
         context = context.with_host_value(name, value);
     }
+    context = context.with_host_value("crypto".to_string(), crate::modules::crypto::build());
     let (url_class, _) = crate::modules::url_whatwg::url_class(&host.state);
     context = context.with_host_value("URL".to_string(), url_class);
     let url_search_params = crate::host::capability(crate::registry::SPEC_URL_SEARCHPARAMS_NEW);
