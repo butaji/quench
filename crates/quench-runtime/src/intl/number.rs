@@ -262,6 +262,7 @@ impl NumberOptions {
         let raw = RawOptions::from_value(options)?;
         validate_unit_display(&raw.unit_display)?;
         validate_significant_digits(&raw)?;
+        validate_currency_display(&raw.currency_display)?;
         validate_rounding_mode(&raw.rounding_mode)?;
         validate_rounding_increment(&raw)?;
         validate_trailing_zero_display(&raw.trailing_zero_display)?;
