@@ -195,7 +195,44 @@ pub fn copy(
             crate::modules::util::invalid_arg_received(args.first().unwrap_or(&Value::Undefined))
         )));
     };
+    let count = match copy_count(&view, &target, args)? {
+        Some(n) => n,
+        None => return Ok(Value::Number(0.0)),
+    };
     let target_start = to_offset(args.get(1)).max(0.0) as usize;
+    copy_transfer(&view, &target, target_start, count)
+}
+
+fn copy_transfer(
+    view: &Uint8ArrayData,
+    target: &Uint8ArrayData,
+    target_start: usize,
+    count: usize,
+) -> Result<Value, VmError> {
+    let mut source_bytes = view.buffer.bytes.borrow_mut();
+    let same = Rc::ptr_eq(&view.buffer, &target.buffer);
+    if same {
+        source_bytes.copy_within(
+            view.byte_offset + target_start..view.byte_offset + target_start + count,
+            target.byte_offset + target_start,
+        );
+    } else {
+        let chunk: Vec<u8> = source_bytes
+            [view.byte_offset + target_start..view.byte_offset + target_start + count]
+            .to_vec();
+        drop(source_bytes);
+        target.buffer.bytes.borrow_mut()
+            [target.byte_offset + target_start..target.byte_offset + target_start + count]
+            .copy_from_slice(&chunk);
+    }
+    Ok(Value::Number(count as f64))
+}
+
+fn copy_count(
+    view: &Uint8ArrayData,
+    target: &Uint8ArrayData,
+    args: &[Value],
+) -> Result<Option<usize>, VmError> {
     // Node rejects indexes that do not fit in a 32-bit size_t.
     for (at, name) in [(2, "sourceStart"), (3, "sourceEnd")] {
         let raw = to_offset(args.get(at));
@@ -209,27 +246,11 @@ pub fn copy(
     }
     let source_start = clamp_bounds(args, 2, view.length, 0.0);
     let source_end = clamp_bounds(args, 3, view.length, view.length as f64);
+    let target_start = to_offset(args.get(1)).max(0.0) as usize;
     if target_start >= target.length || source_start >= source_end {
-        return Ok(Value::Number(0.0));
+        return Ok(None);
     }
-    let count = (source_end - source_start).min(target.length - target_start);
-    let mut source_bytes = view.buffer.bytes.borrow_mut();
-    let same = Rc::ptr_eq(&view.buffer, &target.buffer);
-    if same {
-        source_bytes.copy_within(
-            view.byte_offset + source_start..view.byte_offset + source_start + count,
-            target.byte_offset + target_start,
-        );
-    } else {
-        let chunk: Vec<u8> = source_bytes
-            [view.byte_offset + source_start..view.byte_offset + source_start + count]
-            .to_vec();
-        drop(source_bytes);
-        target.buffer.bytes.borrow_mut()
-            [target.byte_offset + target_start..target.byte_offset + target_start + count]
-            .copy_from_slice(&chunk);
-    }
-    Ok(Value::Number(count as f64))
+    Ok(Some((source_end - source_start).min(target.length - target_start)))
 }
 
 /// `buf.fill(value[, offset[, end]][, encoding])`.
