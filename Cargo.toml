@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/quench-js-check", "crates/quench-node"]
+members = [
+    "crates/quench-js-check",
+    "crates/quench-node",
+    "crates/quench-node-test",
+    "crates/quench-runtime",
+    "crates/quench-test262",
+]
 
 [profile.dev]
 opt-level = 3
