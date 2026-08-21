@@ -183,22 +183,8 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         (StringIteratorPrototype, "Symbol.toStringTag") => {
             Some(Value::String("String Iterator".into()))
         }
-        (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Atomics, "Symbol.toStringTag") => Some(Value::String("Atomics".into())),
-        (Atomics, "add") => Some(Value::Builtin(AtomicsAdd)),
-        (Atomics, "and") => Some(Value::Builtin(AtomicsAnd)),
-        (Atomics, "or") => Some(Value::Builtin(AtomicsOr)),
-        (Atomics, "sub") => Some(Value::Builtin(AtomicsSub)),
-        (Atomics, "xor") => Some(Value::Builtin(AtomicsXor)),
-        (Atomics, "compareExchange") => Some(Value::Builtin(AtomicsCompareExchange)),
-        (Atomics, "isLockFree") => Some(Value::Builtin(AtomicsIsLockFree)),
-        (Atomics, "notify") => Some(Value::Builtin(AtomicsNotify)),
-        (Atomics, "wait") => Some(Value::Builtin(AtomicsWait)),
-        (Atomics, "load") => Some(Value::Builtin(AtomicsLoad)),
-        (Atomics, "store") => Some(Value::Builtin(AtomicsStore)),
-        (Atomics, "exchange") => Some(Value::Builtin(AtomicsExchange)),
-        (Atomics, "waitAsync") => Some(Value::Builtin(AtomicsWaitAsync)),
-        (Atomics, "pause") => Some(Value::Builtin(AtomicsPause)),
+        (Math, "Symbol.toStringTag") => Some(Value::String("Math".into())),
         (Reflect, "Symbol.toStringTag") => Some(Value::String("Reflect".into())),
         (SymbolPrototype, "Symbol.toStringTag") => Some(Value::String("Symbol".into())),
         (Symbol, "prototype") => Some(Value::Builtin(SymbolPrototype)),
@@ -217,22 +203,30 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
 fn special_match_middle_tail(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
     match (builtin, key) {
-        (Atomics, "add") => Some(Value::Builtin(AtomicsAdd)),
-        (Atomics, "and") => Some(Value::Builtin(AtomicsAnd)),
-        (Atomics, "or") => Some(Value::Builtin(AtomicsOr)),
-        (Atomics, "sub") => Some(Value::Builtin(AtomicsSub)),
-        (Atomics, "xor") => Some(Value::Builtin(AtomicsXor)),
-        (Atomics, "compareExchange") => Some(Value::Builtin(AtomicsCompareExchange)),
-        (Atomics, "isLockFree") => Some(Value::Builtin(AtomicsIsLockFree)),
-        (Atomics, "notify") => Some(Value::Builtin(AtomicsNotify)),
-        (Atomics, "wait") => Some(Value::Builtin(AtomicsWait)),
-        (Atomics, "load") => Some(Value::Builtin(AtomicsLoad)),
-        (Atomics, "store") => Some(Value::Builtin(AtomicsStore)),
-        (Atomics, "exchange") => Some(Value::Builtin(AtomicsExchange)),
-        (Atomics, "waitAsync") => Some(Value::Builtin(AtomicsWaitAsync)),
-        (Atomics, "pause") => Some(Value::Builtin(AtomicsPause)),
+        (Atomics, k) => atomics_property(k),
         _ => special_match_middle_tail_end(builtin, key),
     }
+}
+
+fn atomics_property(key: &str) -> Option<Value> {
+    use Builtin::*;
+    Some(match key {
+        "add" => Value::Builtin(AtomicsAdd),
+        "and" => Value::Builtin(AtomicsAnd),
+        "or" => Value::Builtin(AtomicsOr),
+        "sub" => Value::Builtin(AtomicsSub),
+        "xor" => Value::Builtin(AtomicsXor),
+        "compareExchange" => Value::Builtin(AtomicsCompareExchange),
+        "isLockFree" => Value::Builtin(AtomicsIsLockFree),
+        "notify" => Value::Builtin(AtomicsNotify),
+        "wait" => Value::Builtin(AtomicsWait),
+        "load" => Value::Builtin(AtomicsLoad),
+        "store" => Value::Builtin(AtomicsStore),
+        "exchange" => Value::Builtin(AtomicsExchange),
+        "waitAsync" => Value::Builtin(AtomicsWaitAsync),
+        "pause" => Value::Builtin(AtomicsPause),
+        _ => return None,
+    })
 }
 
 fn special_match_middle_tail_end(builtin: Builtin, key: &str) -> Option<Value> {
@@ -256,7 +250,6 @@ fn special_match_middle_tail_end(builtin: Builtin, key: &str) -> Option<Value> {
         _ => special_match_tail(builtin, key),
     }
 }
-
 
 fn special_match_tail(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
