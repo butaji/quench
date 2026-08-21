@@ -3,6 +3,10 @@ use crate::{intl::make_object, value::Value};
 pub(crate) fn format_unit(text: &str, unit: Option<&str>, display: &str) -> String {
     let suffix = match (unit, display) {
         (Some("percent"), _) => "%",
+        (Some("celsius"), "long") => "degrees Celsius",
+        (Some("celsius"), _) => "°C",
+        (Some("fahrenheit"), "long") => "degrees Fahrenheit",
+        (Some("fahrenheit"), _) => "°F",
         (Some("meter"), "long") => "meters",
         (Some("meter"), _) => "m",
         (Some("kilometer"), "long") => "kilometers",
@@ -19,6 +23,18 @@ pub(crate) fn format_unit(text: &str, unit: Option<&str>, display: &str) -> Stri
         (Some("microsecond"), _) => "μs",
         (Some("nanosecond"), "long") => "nanoseconds",
         (Some("nanosecond"), _) => "ns",
+        (Some("year"), "long") => "years",
+        (Some("year"), _) => "yr",
+        (Some("month"), "long") => "months",
+        (Some("month"), _) => "mo",
+        (Some("week"), "long") => "weeks",
+        (Some("week"), _) => "wk",
+        (Some("day"), "long") => "days",
+        (Some("day"), _) => "day",
+        (Some("hour"), "long") => "hours",
+        (Some("hour"), _) => "hr",
+        (Some("minute"), "long") => "minutes",
+        (Some("minute"), _) => "min",
         _ => "",
     };
     if suffix.is_empty() {
