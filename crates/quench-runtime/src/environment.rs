@@ -177,13 +177,9 @@ impl Environment {
             .replace(captures.immutable_slots.borrow().clone());
         environment
     }
-    /// Create an execution child whose own bindings do not inherit the
-    /// caller's declaration metadata, while retaining lexical lookup.
+    /// Create an execution child while retaining captured binding metadata.
     pub(crate) fn in_place_child(captures: &Rc<Self>, values: Vec<Value>) -> Rc<Self> {
-        let environment = Self::child(captures, values);
-        environment.immutable_slots.replace(None);
-        environment.uninitialized.replace(None);
-        environment
+        Self::child(captures, values)
     }
 
     pub(crate) fn len(&self) -> usize {
