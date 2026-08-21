@@ -27,16 +27,7 @@ pub fn spawn_sync(
     let mut cmd = std::process::Command::new(&command);
     cmd.args(&child_args);
 
-    let mut input: Option<String> = None;
-    if let Some(options) = args.get(2) {
-        if let Some(cwd) = opt_str(options, "cwd") {
-            cmd.current_dir(cwd);
-        }
-        if let Some(env) = opt_env(options) {
-            cmd.env_clear().envs(env);
-        }
-        input = opt_str(options, "input");
-    }
+    let input = apply_options(&mut cmd, args.get(2));
 
     let mut child = match cmd
         .stdin(std::process::Stdio::piped())
@@ -48,26 +39,49 @@ pub fn spawn_sync(
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
     let pid = child.id();
-    if let Some(data) = input {
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(data.as_bytes());
-        }
-    }
+    pipe_input(&mut child, input.as_deref());
     let output = match child.wait_with_output() {
         Ok(output) => output,
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    Ok(host_api::object(vec![
+    Ok(spawn_result_object(pid, output.status.code(), stdout, stderr))
+}
+
+fn apply_options(cmd: &mut std::process::Command, options: Option<&Value>) -> Option<String> {
+    let Some(options) = options else {
+        return None;
+    };
+    if let Some(cwd) = opt_str(options, "cwd") {
+        cmd.current_dir(cwd);
+    }
+    if let Some(env) = opt_env(options) {
+        cmd.env_clear().envs(env);
+    }
+    opt_str(options, "input")
+}
+
+fn pipe_input(
+    child: &mut std::process::Child,
+    data: Option<&str>,
+) {
+    let Some(data) = data else { return };
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(data.as_bytes());
+    }
+}
+
+fn spawn_result_object(
+    pid: u32,
+    status: Option<i32>,
+    stdout: String,
+    stderr: String,
+) -> Value {
+    let status_value = status.map_or(Value::Null, |c| Value::Number(c as f64));
+    host_api::object(vec![
         ("pid".to_string(), Value::Number(pid as f64)),
-        (
-            "status".to_string(),
-            output
-                .status
-                .code()
-                .map_or(Value::Null, |c| Value::Number(c as f64)),
-        ),
+        ("status".to_string(), status_value),
         ("signal".to_string(), Value::Null),
         ("stdout".to_string(), Value::String(stdout.clone())),
         ("stderr".to_string(), Value::String(stderr.clone())),
@@ -75,7 +89,7 @@ pub fn spawn_sync(
             "output".to_string(),
             host_api::array(vec![Value::String(stdout), Value::String(stderr)]),
         ),
-    ]))
+    ])
 }
 
 fn spawn_error_result(code: &str, message: &str) -> Value {
