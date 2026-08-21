@@ -122,7 +122,11 @@ pub fn hash_digest(_: &Rc<RefCell<HostState>>, receiver: Option<&Value>, args: &
     let object = receiver.ok_or_else(|| execute::type_error("receiver"))?;
     let data = argbytes(&execute::get_property(object, CRYPTO_DATA))?;
     let alg = execute::get_property(object, CRYPTO_ALG);
-    let bytes = if let Value::String(name) = alg { if name.contains("1") { sha1_digest(&data).to_vec() } else { sha256_digest(&data).to_vec() } } else { sha256_digest(&data).to_vec() };
+    let name = if let Value::String(value) = alg { value } else { "sha256".into() };
+    let bytes = if let Value::Uint8Array(_) = execute::get_property(object, CRYPTO_KEY) {
+        let key = argbytes(&execute::get_property(object, CRYPTO_KEY))?;
+        if name.contains("1") { hmac_sha1(&key, &data).to_vec() } else { hmac_sha256(&key, &data).to_vec() }
+    } else if name.contains("1") { sha1_digest(&data).to_vec() } else { sha256_digest(&data).to_vec() };
     if matches!(args.first(), Some(Value::String(s)) if s == "hex") { return Ok(Value::String(hex::encode(bytes))); }
     Ok(crate::modules::buffer_proto::make_buffer(&bytes))
 }
