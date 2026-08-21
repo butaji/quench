@@ -295,31 +295,34 @@ pub(crate) fn execute_target(
                 arguments,
             )
         }
-        crate::value::Value::BoundFunction(bound)
-            if crate::vm::is_intrinsic_bound(bound)
-                && matches!(bound.target, crate::value::Value::Builtin(_)) =>
+        crate::value::Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound)
+            && matches!(bound.target, crate::value::Value::Builtin(_)) =>
         {
-            let crate::value::Value::Builtin(builtin) = bound.target else {
-                unreachable!()
-            };
-            // Host capabilities (BoundFunction wrapping Builtin::HostCapability)
-            // must receive the bound capability token as `receiver` so
-            // `execute_host_capability` finds it. Other builtins keep the
-            // JS call's `this`.
-            let cap_receiver = if matches!(builtin, crate::ops::Builtin::HostCapability(_)) {
-                bound.receiver.clone()
-            } else {
-                receiver.clone()
-            };
-            crate::vm::with_realm(bound.realm, || {
-                execute_builtin_target(builtin, Some(&cap_receiver), arguments)
-            })
-            .unwrap_or_else(|| execute_builtin_target(builtin, Some(&cap_receiver), arguments))
+            execute_intrinsic_bound(bound, receiver, arguments)
         }
         crate::value::Value::BoundFunction(bound) => execute_bound(bound, arguments),
         crate::value::Value::Proxy(_) => crate::proxy::proxy_apply(target, receiver, arguments),
         _ => Err(crate::execute::VmError::NotCallable),
     }
+}
+
+fn execute_intrinsic_bound(
+    bound: &crate::value::BoundFunctionValue,
+    receiver: &crate::value::Value,
+    arguments: &[crate::value::Value],
+) -> Result<crate::value::Value, crate::execute::VmError> {
+    let crate::value::Value::Builtin(builtin) = bound.target else {
+        unreachable!()
+    };
+    let cap_receiver = if matches!(builtin, crate::ops::Builtin::HostCapability(_)) {
+        bound.receiver.clone()
+    } else {
+        receiver.clone()
+    };
+    crate::vm::with_realm(bound.realm, || {
+        execute_builtin_target(builtin, Some(&cap_receiver), arguments)
+    })
+    .unwrap_or_else(|| execute_builtin_target(builtin, Some(&cap_receiver), arguments))
 }
 
 fn execute_in_function_realm(
