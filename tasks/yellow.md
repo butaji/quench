@@ -14,9 +14,18 @@ focused results, and applicable upstream Node API results.
 
 Known intentional or measured partial surfaces include `tls`, `https`,
 `async_hooks`, `child_process`, `cluster`, `crypto`, `domain`, `module`,
-`perf_hooks`, `process`, `util`, `v8`, `vm`, `wasi`, `worker_threads`,
+`perf_hooks`, `util`, `v8`, `vm`, `wasi`, `worker_threads`,
 `inspector`, `repl`, and `node:test`. Each module MUST record supported APIs,
 intentional gaps, focused results, and applicable upstream Node API results.
+
+Measured (2026-08-21): `node:process` now provides `process.uptime()` (seconds
+since host start via `std::time::Instant::now()`) and `process.memoryUsage()`
+returning a sysinfo-backed RSS estimate with `rss`/`heapTotal`/`heapUsed`/
+`external`/`arrayBuffers` keys. Verified by
+`crates/quench-node-test/node-tests/test-process-uptime-memusage.js`; focused
+suite 70/70, upstream parallel 178/178. Remaining `process` gaps include
+`fork` (IPC), `exec`/`execFile` async child handles beyond the synchronous
+forms, and `process.resourceUsage()` exact POSIX values.
 “Implemented” means surface code exists; it MUST NOT be reported as verified
 without executable test evidence.
 
