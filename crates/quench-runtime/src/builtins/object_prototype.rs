@@ -5,7 +5,6 @@ pub(crate) fn get_prototype_of(value: Option<&Value>) -> Result<Value, crate::ex
     }
     Ok(prototype_for_value(value))
 }
-
 fn prototype_for_value(value: &Value) -> Value {
     if let Value::Function(function) = value {
         if let Some((_, prototype)) = function
@@ -78,7 +77,6 @@ fn prototype_for_value(value: &Value) -> Value {
         _ => prototype_for_value_tail(value),
     }
 }
-
 fn function_prototype(function: &crate::value::FunctionValue) -> Value {
     if function.is_async {
         if let Some((_, prototype)) = function

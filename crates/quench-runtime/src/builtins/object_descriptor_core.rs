@@ -495,8 +495,4 @@ include!("object_accessor_descriptor.rs");
 include!("object_property_flags.rs");
 include!("object_array_descriptor.rs");
 include!("object_descriptor_values.rs");
-#[cfg(test)]
-mod tests {
-    include!("object_descriptor_tests.rs");
-    include!("object_tests.rs");
-}
+include!("object_descriptor_tests_mod.rs");
