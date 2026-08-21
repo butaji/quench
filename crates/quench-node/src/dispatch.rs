@@ -314,6 +314,8 @@ fn network_dispatch_host(cap: u16) -> Option<CallHandler> {
         | CAP_CRYPTO_SUBTLE_VERIFY
         | CAP_CRYPTO_SUBTLE_GENERATE_KEY
         | CAP_CRYPTO_SUBTLE_EXPORT_KEY => crypto_subtle_unsupported,
+        CAP_CRYPTO_SUBTLE_DERIVE_BITS => crypto_subtle_derive_bits,
+        CAP_CRYPTO_SUBTLE_DERIVE_KEY => crypto_subtle_derive_key,
         CAP_REQUIRE => node_require,
         CAP_REQUIRE_FOR => node_require_for,
         CAP_CJS_WRAP => cjs_wrap,

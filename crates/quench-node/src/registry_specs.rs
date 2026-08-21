@@ -194,6 +194,10 @@ pub const SPEC_CRYPTO_SUBTLE_IMPORT_KEY: NodeSpec =
     NodeSpec::new("crypto.subtle.importKey", 0x2116);
 pub const SPEC_CRYPTO_SUBTLE_EXPORT_KEY: NodeSpec =
     NodeSpec::new("crypto.subtle.exportKey", 0x2117);
+pub const SPEC_CRYPTO_SUBTLE_DERIVE_BITS: NodeSpec =
+    NodeSpec::new("crypto.subtle.deriveBits", 0x2118);
+pub const SPEC_CRYPTO_SUBTLE_DERIVE_KEY: NodeSpec =
+    NodeSpec::new("crypto.subtle.deriveKey", 0x2119);
 // Reserved node:sqlite capability range. The synchronous backend is exposed
 // directly by modules::sqlite until VM object dispatch is installed.
 pub const SPEC_SQLITE_DATABASE_SYNC: NodeSpec = NodeSpec::new("sqlite:DatabaseSync", 0x2400);

@@ -109,6 +109,8 @@ pub fn crypto_hmac_digest(
 pub fn crypto_subtle_digest(s: &Rc<RefCell<HostState>>, _: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::subtle_digest(s, a) }
 pub fn crypto_subtle_import_key(s: &Rc<RefCell<HostState>>, _: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::subtle_import_key(s, a) }
 pub fn crypto_subtle_unsupported(s: &Rc<RefCell<HostState>>, _: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::subtle_unsupported(s, a) }
+pub fn crypto_subtle_derive_bits(s: &Rc<RefCell<HostState>>, _: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::subtle_derive_bits(s, a) }
+pub fn crypto_subtle_derive_key(s: &Rc<RefCell<HostState>>, _: Option<&Value>, a: &[Value]) -> Result<Value, VmError> { crate::modules::crypto::subtle_derive_key(s, a) }
 
 pub fn process_exit(
     state: &Rc<RefCell<HostState>>,
