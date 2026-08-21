@@ -31,7 +31,7 @@ pub fn domain(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
 pub fn v8(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("v8.js"))
 }
-pub fn worker_threads(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+pub fn worker_threads(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("worker_threads.js")).or_else(|_| {
         Ok(crate::host::namespace_object_from_pairs(vec![
             ("isMainThread".to_string(), Value::Boolean(true)),
