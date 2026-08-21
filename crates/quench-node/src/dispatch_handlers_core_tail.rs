@@ -160,6 +160,14 @@ pub fn process_getuid(
 ) -> Result<Value, VmError> {
     crate::modules::process::getuid(state, args)
 }
+pub fn process_uptime(state: &Rc<RefCell<HostState>>, _: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+    crate::modules::process::uptime(state, _args)
+}
+
+pub fn process_memory_usage(state: &Rc<RefCell<HostState>>, _: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+    crate::modules::process::memory_usage(state, _args)
+}
+
 pub fn process_getgid(
     state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
