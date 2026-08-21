@@ -16,6 +16,7 @@
     open: function () { var session = new Session(); session.connect(); return session; },
     close: function () {},
     url: function () { return undefined; },
-    waitForDebugger: function () {}
+    waitForDebugger: function () {},
+    console: {}
   };
 }());
