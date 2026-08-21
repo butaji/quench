@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "source": "https://bun.com/docs/runtime/nodejs-compat",
+  "lint": {"file_max_lines": 500, "function_max_lines": 40, "complexity_max": 10},
+  "plans": {
+    "green": "green.md",
+    "advanced_green": "advanced.md",
+    "yellow": "yellow.md",
+    "globals": "globals.md",
+    "red_sea": "sea.md",
+    "verification": "verification.md"
+  },
+  "required_green_modules": ["assert","buffer","console","dgram","dns","events","fs","http","os","path","punycode","querystring","readline","stream","string_decoder","timers","tty","url","zlib","http2","sqlite","trace_events","quic"],
+  "required_yellow_modules": ["diagnostics_channel","https","async_hooks","child_process","cluster","crypto","domain","module","perf_hooks","process","util","tls","v8","vm","wasi","worker_threads","inspector","repl","node:test"],
+  "required_globals": ["AbortController","AbortSignal","Blob","fetch","FormData","Headers","MessageChannel","MessagePort","CompressionStream","DecompressionStream","ReadableStream","WritableStream","TransformStream","TextDecoder","TextEncoder","TextDecoderStream","TextEncoderStream","URL","URLSearchParams","structuredClone","SubtleCrypto","Crypto","CryptoKey","WebAssembly","DOMException","Event","EventTarget","CustomEvent","BroadcastChannel","performance","PerformanceObserver","PerformanceResourceTiming","Request","Response"],
+  "verification_commands": ["cargo test --workspace","cargo run -p quench-node-test --bin run-compat -- --quiet","cargo run -p quench-node-test --bin run-parallel","tools/lint-rust.sh"],
+  "boundaries": ["Never modify tests/node", "Never modify tests/test262", "Never modify tests/typescript", "No harness behavior rewriting", "No runtime test policy in quench-runtime"]
+}
