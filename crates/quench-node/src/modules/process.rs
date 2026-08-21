@@ -421,6 +421,71 @@ fn cpu_value_error(field: &str, value: f64) -> VmError {
     ]))
 }
 
+pub fn kill(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let pid = match args.first() {
+        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0 => *value as i32,
+        Some(Value::String(value)) => value.parse().map_err(|_| kill_pid_error(args.first()))?,
+        Some(value) => return Err(kill_pid_error(Some(value))),
+        None => return Err(kill_pid_error(None)),
+    };
+    let signal = match args.get(1) {
+        None | Some(Value::Undefined) => 15,
+        Some(Value::Number(value)) if value.is_finite() && value.fract() == 0.0 => {
+            let signal = *value as i32;
+            if [0, 1, 2, 9, 15].contains(&signal) {
+                signal
+            } else {
+                return Err(kill_invalid_signal_error());
+            }
+        }
+        Some(Value::String(value)) => match value.as_str() {
+            "SIGHUP" => 1,
+            "SIGINT" => 2,
+            "SIGKILL" => 9,
+            "SIGTERM" => 15,
+            _ => return Err(kill_signal_error(value)),
+        },
+        Some(_) => return Err(kill_signal_error("unknown")),
+    };
+    if let Some(receiver) = receiver {
+        if let Ok(callback) = execute::get_property_result(receiver, "_kill") {
+            if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) {
+                execute::call(&callback, receiver, &[Value::Number(pid as f64), Value::Number(signal as f64)])?;
+            }
+        }
+    }
+    Ok(Value::Boolean(true))
+}
+
+fn kill_pid_error(value: Option<&Value>) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ("message".into(), Value::String(format!(
+            "The \"pid\" argument must be of type number.{}",
+            crate::modules::util::invalid_arg_received(value.unwrap_or(&Value::Undefined))
+        ))),
+    ]))
+}
+
+fn kill_signal_error(signal: &str) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_UNKNOWN_SIGNAL".into())),
+        ("message".into(), Value::String(format!("Unknown signal: {signal}"))),
+    ]))
+}
+fn kill_invalid_signal_error() -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("Error".into())),
+        ("code".into(), Value::String("EINVAL".into())),
+        ("message".into(), Value::String("kill EINVAL".into())),
+    ]))
+}
 fn push_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, once: bool) {
     let mut guard = state.borrow_mut();
     let process = &mut guard.process;
