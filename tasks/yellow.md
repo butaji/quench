@@ -18,6 +18,13 @@ Known intentional or measured partial surfaces include `tls`, `https`,
 `inspector`, `repl`, and `node:test`. Each module MUST record supported APIs,
 intentional gaps, focused results, and applicable upstream Node API results.
 
+Measured addition (2026-08-21): active-dispatch `util.parseArgs` now supports
+boolean and string options, long `--name=value` and `--name value` forms,
+short options, `--no-` boolean negation, repeated values, and positionals.
+Focused evidence is `test-util-parseargs.js` and its Node CLI oracle. The
+applicable upstream `test-parse-args.mjs` command remains blocked by the
+runner's existing ESM `import` reduction failure; this is recorded as an
+explicit verification gap rather than a green claim.
 Measured (2026-08-21): `node:process` now provides `process.uptime()` (seconds
 since host start via `std::time::Instant::now()`) and `process.memoryUsage()`
 returning a sysinfo-backed RSS estimate with `rss`/`heapTotal`/`heapUsed`/
