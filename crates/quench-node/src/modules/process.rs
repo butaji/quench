@@ -70,46 +70,34 @@ pub fn build(argv: &[String], exec_path: &str) -> Value {
 }
 
 fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
+    let mut props = info_props_argv(argv);
+    props.extend(info_props_static(exec_path));
+    props
+}
+
+fn info_props_argv(argv: &[String]) -> Vec<(&'static str, Value)> {
+    vec![(
+        "argv",
+        host_api::array(argv.iter().cloned().map(Value::String).collect()),
+    )]
+}
+
+fn info_props_static(exec_path: &str) -> Vec<(&'static str, Value)> {
     vec![
-        (
-            "argv",
-            host_api::array(argv.iter().cloned().map(Value::String).collect()),
-        ),
         ("env", env_object()),
-        (
-            "config",
-            host_api::object(vec![(
-                "variables".to_string(),
-                host_api::object(vec![(
-                    "v8_enable_i18n_support".to_string(),
-                    Value::Number(1.0),
-                )]),
-            )]),
-        ),
+        ("config", host_api::object(vec![("variables".to_string(), host_api::object(vec![("v8_enable_i18n_support".to_string(), Value::Number(1.0))]))])),
         ("execPath", Value::String(exec_path.to_string())),
         ("version", Value::String("v22.0.0".into())),
-        (
-            "versions",
-            crate::host::namespace_object_from_pairs(versions_props()),
-        ),
-        (
-            "platform",
-            Value::String(std_env("QUENCH_PLATFORM", current_platform())),
-        ),
+        ("versions", crate::host::namespace_object_from_pairs(versions_props())),
+        ("platform", Value::String(std_env("QUENCH_PLATFORM", current_platform()))),
         ("arch", Value::String(current_arch().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
         ("sourceMapsEnabled", Value::Boolean(false)),
-        (
-            "report",
-            crate::host::namespace_object_from_pairs(vec![(
-                "getReport".to_string(),
-                crate::host::capability(crate::registry::SPEC_PROCESS_REPORT),
-            )]),
-        ),
-        (
-            "activeResourcesInfo",
-            crate::host::capability(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES),
-        ),
+        ("report", crate::host::namespace_object_from_pairs(vec![(
+            "getReport".to_string(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_REPORT),
+        )])),
+        ("activeResourcesInfo", crate::host::capability(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES)),
         ("execArgv", host_api::array(vec![])),
         ("features", host_api::object(vec![])),
         ("stdout", std_stream(false)),
