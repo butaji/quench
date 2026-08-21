@@ -84,51 +84,56 @@ pub fn truncate_sync(
     Ok(Value::Undefined)
 }
 
+/// `chown(path, uid, gid)` — change ownership.
 pub fn chown_sync(
     _s: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
-    let uid = match args.get(1) {
-        Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => *n as u32,
-        _ => {
-            return Err(crate::modules::buffer_enc::invalid_arg_type(
-                "The \"uid\" argument must be of type number.".into(),
-            ))
-        }
-    };
-    let gid = match args.get(2) {
-        Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => *n as u32,
-        _ => {
-            return Err(crate::modules::buffer_enc::invalid_arg_type(
-                "The \"gid\" argument must be of type number.".into(),
-            ))
-        }
-    };
+    let uid = nonneg_u32(args, 1, "uid")?;
+    let gid = nonneg_u32(args, 2, "gid")?;
+    chown_apply(&path, uid, gid, false, "chown")
+}
+
+fn nonneg_u32(args: &[Value], at: usize, name: &str) -> Result<u32, VmError> {
+    match args.get(at) {
+        Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => Ok(*n as u32),
+        _ => Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+            "The \"{name}\" argument must be of type number."
+        ))),
+    }
+}
+
+fn chown_apply(
+    path: &str,
+    uid: u32,
+    gid: u32,
+    follow_symlinks: bool,
+    op: &str,
+) -> Result<Value, VmError> {
     #[cfg(unix)]
     {
         use std::ffi::CString;
         let cpath = CString::new(path.as_bytes()).map_err(|_| {
             crate::modules::buffer_enc::invalid_arg_type("path must not contain null bytes".into())
         })?;
-        if unsafe { libc::chown(cpath.as_ptr(), uid as libc::uid_t, gid as libc::gid_t) } == -1 {
-            return Err(fs_error::fs_error(
-                "chown",
-                Some(&path),
-                &std::io::Error::last_os_error(),
-            ));
+        let raw = unsafe {
+            if follow_symlinks {
+                libc::lchown(cpath.as_ptr(), uid as libc::uid_t, gid as libc::gid_t)
+            } else {
+                libc::chown(cpath.as_ptr(), uid as libc::uid_t, gid as libc::gid_t)
+            }
+        };
+        if raw == -1 {
+            return Err(fs_error::fs_error(op, Some(path), &std::io::Error::last_os_error()));
         }
         Ok(Value::Undefined)
     }
     #[cfg(not(unix))]
     {
-        let _ = (uid, gid);
-        Err(fs_error::fs_error(
-            "chown",
-            Some(&path),
-            &std::io::Error::from_raw_os_error(78),
-        ))
+        let _ = (uid, gid, follow_symlinks);
+        Err(fs_error::fs_error(op, Some(path), &std::io::Error::from_raw_os_error(78)))
     }
 }
 
@@ -140,39 +145,7 @@ pub fn utimes_sync(
     let path = path_arg(args.first())?;
     let atime = utimes_time(args.get(1), "atime")?;
     let mtime = utimes_time(args.get(2), "mtime")?;
-    #[cfg(unix)]
-    {
-        use std::ffi::CString;
-        let cpath = CString::new(path.as_bytes()).map_err(|_| {
-            crate::modules::buffer_enc::invalid_arg_type("path must not contain null bytes".into())
-        })?;
-        let ts = |t: f64| {
-            let sec = t.floor() as libc::time_t;
-            let nsec = ((t - sec as f64) * 1_000_000_000.0) as libc::c_long;
-            libc::timespec {
-                tv_sec: sec,
-                tv_nsec: nsec,
-            }
-        };
-        let times = [ts(atime), ts(mtime)];
-        if unsafe { libc::utimensat(libc::AT_FDCWD, cpath.as_ptr(), times.as_ptr(), 0) } == -1 {
-            return Err(fs_error::fs_error(
-                "utimes",
-                Some(&path),
-                &std::io::Error::last_os_error(),
-            ));
-        }
-        Ok(Value::Undefined)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (atime, mtime);
-        Err(fs_error::fs_error(
-            "utimes",
-            Some(&path),
-            &std::io::Error::from_raw_os_error(78),
-        ))
-    }
+    utimensat_apply(&path, atime, mtime, 0, "utimes")
 }
 pub fn link_sync(
     _s: &Rc<RefCell<HostState>>,
@@ -240,9 +213,20 @@ pub fn lutimes_sync(
     let path = path_arg(args.first())?;
     let atime = utimes_time(args.get(1), "atime")?;
     let mtime = utimes_time(args.get(2), "mtime")?;
+    utimensat_apply(&path, atime, mtime, libc::AT_SYMLINK_NOFOLLOW, "lutimes")
+}
+
+fn utimensat_apply(
+    path: &str,
+    atime: f64,
+    mtime: f64,
+    flags: i32,
+    op: &str,
+) -> Result<Value, VmError> {
     #[cfg(unix)]
     {
-        let cpath = std::ffi::CString::new(path.as_bytes()).map_err(|_| {
+        use std::ffi::CString;
+        let cpath = CString::new(path.as_bytes()).map_err(|_| {
             crate::modules::buffer_enc::invalid_arg_type("path must not contain null bytes".into())
         })?;
         let ts = |t: f64| {
@@ -254,31 +238,15 @@ pub fn lutimes_sync(
             }
         };
         let times = [ts(atime), ts(mtime)];
-        if unsafe {
-            libc::utimensat(
-                libc::AT_FDCWD,
-                cpath.as_ptr(),
-                times.as_ptr(),
-                libc::AT_SYMLINK_NOFOLLOW,
-            )
-        } == -1
-        {
-            return Err(fs_error::fs_error(
-                "lutimes",
-                Some(&path),
-                &std::io::Error::last_os_error(),
-            ));
+        if unsafe { libc::utimensat(libc::AT_FDCWD, cpath.as_ptr(), times.as_ptr(), flags) } == -1 {
+            return Err(fs_error::fs_error(op, Some(path), &std::io::Error::last_os_error()));
         }
         Ok(Value::Undefined)
     }
     #[cfg(not(unix))]
     {
-        let _ = (atime, mtime);
-        Err(fs_error::fs_error(
-            "lutimes",
-            Some(&path),
-            &std::io::Error::from_raw_os_error(78),
-        ))
+        let _ = (atime, mtime, flags);
+        Err(fs_error::fs_error(op, Some(path), &std::io::Error::from_raw_os_error(78)))
     }
 }
 
@@ -288,45 +256,9 @@ pub fn lchown_sync(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
-    let uid = match args.get(1) {
-        Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => *n as u32,
-        _ => {
-            return Err(crate::modules::buffer_enc::invalid_arg_type(
-                "The \"uid\" argument must be of type number.".into(),
-            ))
-        }
-    };
-    let gid = match args.get(2) {
-        Some(Value::Number(n)) if n.is_finite() && *n >= 0.0 => *n as u32,
-        _ => {
-            return Err(crate::modules::buffer_enc::invalid_arg_type(
-                "The \"gid\" argument must be of type number.".into(),
-            ))
-        }
-    };
-    #[cfg(unix)]
-    {
-        let cpath = std::ffi::CString::new(path.as_bytes()).map_err(|_| {
-            crate::modules::buffer_enc::invalid_arg_type("path must not contain null bytes".into())
-        })?;
-        if unsafe { libc::lchown(cpath.as_ptr(), uid as libc::uid_t, gid as libc::gid_t) } == -1 {
-            return Err(fs_error::fs_error(
-                "lchown",
-                Some(&path),
-                &std::io::Error::last_os_error(),
-            ));
-        }
-        Ok(Value::Undefined)
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (uid, gid);
-        Err(fs_error::fs_error(
-            "lchown",
-            Some(&path),
-            &std::io::Error::from_raw_os_error(78),
-        ))
-    }
+    let uid = nonneg_u32(args, 1, "uid")?;
+    let gid = nonneg_u32(args, 2, "gid")?;
+    chown_apply(&path, uid, gid, true, "lchown")
 }
 pub fn lchmod_sync(
     _s: &Rc<RefCell<HostState>>,
