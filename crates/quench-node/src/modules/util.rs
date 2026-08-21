@@ -42,7 +42,27 @@ fn build_factory(args: &[Value]) -> Value {
         isBuffer:function(v){return typeof Buffer!=='undefined'&&Buffer.isBuffer(v)},isPromise:function(v){return v instanceof Promise},
         isSymbol:function(v){return typeof v==='symbol'}};
       function deprecate(fn){return function(){return fn.apply(this,arguments)}} function debuglog(){return function(){}}
-      return {format:format,inspect:inspect,isDeepStrictEqual:deepEqual,styleText:styleText,formatWithOptions:formatWithOptions,stripVTControlCharacters:stripVT,inherits:inherits,getCallSites:getCallSites,promisify:promisify,callbackify:callbackify,types:types,deprecate:deprecate,debuglog:debuglog};
+      function parseArgs(config){
+        config=config||{}; var input=config.args||((typeof process!=='undefined'&&process.argv)||[]).slice(2);
+        var specs=config.options||{}, values={}, positionals=[], tokens=[];
+        Object.keys(specs).forEach(function(k){var s=specs[k]||{}; if(s.default!==undefined) values[k]=s.default; else if(s.type==='boolean') values[k]=false;});
+        function set(k,v){var s=specs[k]||{}, value=s.multiple?(Array.isArray(values[k])?values[k]:[]).concat([v]):v; values[k]=value;}
+        for(var i=0;i<input.length;i++){var arg=String(input[i]), name, value;
+          if(arg==='--'){positionals=positionals.concat(input.slice(i+1)); break;}
+          if(arg.indexOf('--')===0){var raw=arg.slice(2), eq=raw.indexOf('='); value=eq<0?undefined:raw.slice(eq+1); name=eq<0?raw:raw.slice(0,eq);
+            if(name.indexOf('no-')===0 && specs[name.slice(3)]&&specs[name.slice(3)].type==='boolean'){set(name.slice(3),false); continue;}
+            if(!specs[name]){if(config.strict!==false) throw new TypeError('Unknown option: --'+name); positionals.push(arg); continue;}
+            if(specs[name].type==='boolean') set(name,value===undefined?true:value!=='false');
+            else {if(value===undefined) value=String(input[++i]); set(name,value);} continue;
+          }
+          if(arg.charAt(0)==='-'&&arg.length>1){name=arg.charAt(1); var key=Object.keys(specs).find(function(k){return specs[k].short===name;});
+            if(key){if(specs[key].type==='boolean') set(key,true); else set(key,String(input[++i])); continue;}
+          }
+          if(config.allowPositionals!==false) positionals.push(input[i]); else if(config.strict!==false) throw new TypeError('Unexpected argument: '+arg);
+        }
+        var result={values:values,positionals:positionals}; if(config.tokens) result.tokens=tokens; return result;
+      }
+      return {format:format,inspect:inspect,isDeepStrictEqual:deepEqual,styleText:styleText,formatWithOptions:formatWithOptions,stripVTControlCharacters:stripVT,inherits:inherits,getCallSites:getCallSites,promisify:promisify,callbackify:callbackify,parseArgs:parseArgs,types:types,deprecate:deprecate,debuglog:debuglog};
     })"#,
     ) else {
         return Value::Undefined;
