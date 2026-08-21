@@ -466,14 +466,14 @@ fn prototype_result(
         crate::ops::Builtin::IntlDateTimeFormatFormat => format_result(arguments, slots),
         crate::ops::Builtin::IntlDateTimeFormatFormatToParts => parts_result(arguments, slots),
         crate::ops::Builtin::IntlDateTimeFormatFormatRange => {
-            let (start, end) = range_values(arguments)?;
+            let (start, end) = range_values(arguments, slots)?;
             if start == end {
                 return Ok(Value::String(start));
             }
             Ok(Value::String(format!("{start} – {end}")))
         }
         crate::ops::Builtin::IntlDateTimeFormatFormatRangeToParts => {
-            let (start, end) = range_values(arguments)?;
+            let (start, end) = range_values(arguments, slots)?;
             Ok(make_array(range_parts(&start, &end)))
         }
         crate::ops::Builtin::IntlDateTimeFormatResolvedOptions => Ok(make_object(slots.to_vec())),
