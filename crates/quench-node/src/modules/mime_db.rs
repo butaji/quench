@@ -36,7 +36,14 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
 }
 
 fn build_entries() -> Value {
-    host_api::object(vec![
+    let mut entries = application_entries();
+    entries.extend(text_entries());
+    entries.extend(media_entries());
+    host_api::object(entries)
+}
+
+fn application_entries() -> Vec<(String, Value)> {
+    vec![
         (
             "application/json".into(),
             entry("iana", Some(true), &["json", "map"]),
@@ -51,6 +58,20 @@ fn build_entries() -> Value {
             entry("iana", Some(true), &["xml"]),
         ),
         (
+            "application/pdf".into(),
+            entry("iana", Some(false), &["pdf"]),
+        ),
+        (
+            "application/zip".into(),
+            entry("iana", Some(false), &["zip"]),
+        ),
+        ("multipart/form-data".into(), entry("iana", None, &[])),
+    ]
+}
+
+fn text_entries() -> Vec<(String, Value)> {
+    vec![
+        (
             "text/plain".into(),
             entry(
                 "iana",
@@ -64,6 +85,11 @@ fn build_entries() -> Value {
         ),
         ("text/css".into(), entry("iana", Some(true), &["css"])),
         ("text/javascript".into(), entry("iana", Some(true), &["js"])),
+    ]
+}
+
+fn media_entries() -> Vec<(String, Value)> {
+    vec![
         ("image/png".into(), entry("iana", Some(false), &["png"])),
         (
             "image/jpeg".into(),
@@ -78,14 +104,5 @@ fn build_entries() -> Value {
             "video/mp4".into(),
             entry("iana", Some(false), &["mp4", "mp4v", "mpg4"]),
         ),
-        (
-            "application/pdf".into(),
-            entry("iana", Some(false), &["pdf"]),
-        ),
-        (
-            "application/zip".into(),
-            entry("iana", Some(false), &["zip"]),
-        ),
-        ("multipart/form-data".into(), entry("iana", None, &[])),
-    ])
+    ]
 }

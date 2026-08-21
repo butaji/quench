@@ -217,6 +217,27 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
 fn special_match_middle_tail(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
     match (builtin, key) {
+        (Atomics, "add") => Some(Value::Builtin(AtomicsAdd)),
+        (Atomics, "and") => Some(Value::Builtin(AtomicsAnd)),
+        (Atomics, "or") => Some(Value::Builtin(AtomicsOr)),
+        (Atomics, "sub") => Some(Value::Builtin(AtomicsSub)),
+        (Atomics, "xor") => Some(Value::Builtin(AtomicsXor)),
+        (Atomics, "compareExchange") => Some(Value::Builtin(AtomicsCompareExchange)),
+        (Atomics, "isLockFree") => Some(Value::Builtin(AtomicsIsLockFree)),
+        (Atomics, "notify") => Some(Value::Builtin(AtomicsNotify)),
+        (Atomics, "wait") => Some(Value::Builtin(AtomicsWait)),
+        (Atomics, "load") => Some(Value::Builtin(AtomicsLoad)),
+        (Atomics, "store") => Some(Value::Builtin(AtomicsStore)),
+        (Atomics, "exchange") => Some(Value::Builtin(AtomicsExchange)),
+        (Atomics, "waitAsync") => Some(Value::Builtin(AtomicsWaitAsync)),
+        (Atomics, "pause") => Some(Value::Builtin(AtomicsPause)),
+        _ => special_match_middle_tail_end(builtin, key),
+    }
+}
+
+fn special_match_middle_tail_end(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
         (AsyncFunctionPrototype, "Symbol.toStringTag") => {
             Some(Value::String("AsyncFunction".to_string()))
@@ -227,7 +248,7 @@ fn special_match_middle_tail(builtin: Builtin, key: &str) -> Option<Value> {
         (GeneratorFunctionPrototype, "prototype") => Some(crate::builtins::generator_prototype()),
         (DataViewPrototype, "Symbol.toStringTag") => Some(Value::String("DataView".into())),
         (AsyncGeneratorFunctionPrototype, "Symbol.toStringTag") => {
-            Some(Value::String("AsyncGeneratorFunction".into()))
+            Some(Value::String("AsyncGeneratorFunction".to_string()))
         }
         (AsyncGeneratorFunctionPrototype, "prototype") => {
             Some(crate::builtins::async_generator_prototype())
@@ -235,6 +256,7 @@ fn special_match_middle_tail(builtin: Builtin, key: &str) -> Option<Value> {
         _ => special_match_tail(builtin, key),
     }
 }
+
 
 fn special_match_tail(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;

@@ -110,7 +110,7 @@ fn stats_entries(
     ctime_ms: f64,
     birthtime_ms: f64,
 ) -> Vec<(String, Value)> {
-    vec![
+    let mut entries = vec![
         ("dev".to_string(), Value::Number(dev)),
         ("mode".to_string(), Value::Number(mode)),
         ("nlink".to_string(), Value::Number(nlink)),
@@ -125,6 +125,8 @@ fn stats_entries(
         ("mtimeMs".to_string(), Value::Number(mtime_ms)),
         ("ctimeMs".to_string(), Value::Number(ctime_ms)),
         ("birthtimeMs".to_string(), Value::Number(birthtime_ms)),
+    ];
+    entries.extend([
         (
             "atime".to_string(),
             quench_runtime::date::instance(atime_ms),
@@ -141,7 +143,8 @@ fn stats_entries(
             "birthtime".to_string(),
             quench_runtime::date::instance(birthtime_ms),
         ),
-    ]
+    ]);
+    entries
 }
 
 /// A `Stats` built from real filesystem metadata.
@@ -174,7 +177,7 @@ fn stats_unix(meta: &std::fs::Metadata) -> Value {
 #[cfg(unix)]
 fn stats_unix_entries(meta: &std::fs::Metadata) -> Vec<(String, Value)> {
     use std::os::unix::fs::MetadataExt;
-    vec![
+    let mut entries = vec![
         ("dev".to_string(), Value::Number(meta.dev() as f64)),
         ("ino".to_string(), Value::Number(meta.ino() as f64)),
         ("mode".to_string(), Value::Number(meta.mode() as f64)),
@@ -198,6 +201,8 @@ fn stats_unix_entries(meta: &std::fs::Metadata) -> Vec<(String, Value)> {
             Value::Number(ms(meta.ctime(), meta.ctime_nsec())),
         ),
         ("birthtimeMs".to_string(), Value::Number(created_ms(meta))),
+    ];
+    entries.extend([
         (
             "atime".to_string(),
             quench_runtime::date::instance(ms(meta.atime(), meta.atime_nsec())),
@@ -214,7 +219,8 @@ fn stats_unix_entries(meta: &std::fs::Metadata) -> Vec<(String, Value)> {
             "birthtime".to_string(),
             quench_runtime::date::instance(created_ms(meta)),
         ),
-    ]
+    ]);
+    entries
 }
 
 #[cfg(unix)]
