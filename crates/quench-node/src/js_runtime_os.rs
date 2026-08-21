@@ -356,7 +356,7 @@ fn os_network_interfaces() -> Result<Value, VmError> {
     use std::ffi::CStr;
     let mut raw = std::ptr::null_mut();
     if unsafe { libc::getifaddrs(&mut raw) } != 0 { return Ok(quench_runtime::host_api::object(vec![])); }
-    let mut out: Vec<(String, Value)> = Vec::new();
+    let mut accum: Vec<(String, Vec<Value>)> = Vec::new();
     let mut p = raw;
     while !p.is_null() {
         unsafe {
@@ -371,13 +371,17 @@ fn os_network_interfaces() -> Result<Value, VmError> {
                     ("family".into(), Value::String("IPv4".into())), ("mac".into(), Value::String("".into())),
                     ("internal".into(), Value::Boolean(internal)), ("cidr".into(), Value::String(format!("{ip}/{}", if internal {8} else {0}).into())),
                 ]);
-                if let Some((_, Value::Array(items))) = out.iter_mut().find(|(n, _)| n == &name) { items.push(entry); }
-                else { out.push((name, quench_runtime::host_api::array(vec![entry]))); }
+                if let Some((_, entries)) = accum.iter_mut().find(|(n, _)| n == &name) {
+                    entries.push(entry);
+                } else {
+                    accum.push((name, vec![entry]));
+                }
             }
             p = ifa.ifa_next;
         }
     }
     unsafe { libc::freeifaddrs(raw); }
+    let out: Vec<(String, Value)> = accum.into_iter().map(|(name, entries)| (name, quench_runtime::host_api::array(entries))).collect();
     Ok(quench_runtime::host_api::object(out))
 }
 
