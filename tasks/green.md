@@ -17,7 +17,7 @@ streams; string_decoder rejects end(string) and subclassing; tty permits
 non-TTY construction; zlib/http2/quic have documented upstream failure or
 experimental-surface caveats.
 
-Current measured evidence: the focused suite passes 62/62 and the upstream
+Current measured evidence: the focused suite passes 63/63 and the upstream
 parallel manifest passes 178/178. These results cover the repository's current
 fixtures, not every Bun-documented Node v26 API. New or expanded green claims
 still require related Node API tests and recorded results.
@@ -27,7 +27,7 @@ Measured additions (2026-08-21): `stream` now exports the Node predicate family
 `Writable` destroy/errored tracking so the predicates behave correctly against
 real streams. Verified by
 `crates/quench-node-test/node-tests/test-stream-predicates.js` (focused suite
-62/62, upstream parallel 178/178).
+63/63, upstream parallel 178/178).
 
 Measured additions (2026-08-21): `stream.Readable.from` now converts
 sync/async iterables and pull-style sources with `read()`, propagating
@@ -39,3 +39,13 @@ setTimeout, setImmediate, and setInterval, plus `ref:false` unref behavior
 (stats/percentile/delta), `monitorEventLoopDelay` (unref'd timer-tick
 enable/disable/start/stop/reset metrics), and error-aware `timerify`
 (`test-perf-hooks2.js`).
+
+Measured gap (2026-08-21): `URL.canParse` and `URL.parse`/`url.parse` are not
+callable in the active dispatch path — `capability_function(Custom(UrlCanParse))`
+has no handler in `dispatch::url_dispatch`, so invoking it throws
+`value is not callable`. The legacy `js_runtime_dispatch_url` stub returns only
+`true` for `UrlCanParse` and does not implement non-throwing parse semantics.
+Closing this gap requires wiring a real non-throwing URL-parse handler into the
+active dispatch layer (additive capability mapping) plus a focused fixture; it
+is tracked here as an explicit green gap rather than claimed complete.
+`url.fileURLToPath` and `url.pathToFileURL` are present.
