@@ -354,18 +354,11 @@ fn install_req_props(mut object: Value, props: Vec<(String, Value)>) -> Result<V
     Ok(object)
 }
 
-/// Parse the request line and headers; return the declared Content-Length.
-fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Value)>, usize, bool) {
-    let head_str = String::from_utf8_lossy(head);
-    let parts: Vec<&str> = head_str.split("\r\n").collect();
-    let mut fields = parts[0].split_whitespace();
-    let method = fields.next().unwrap_or("").to_string();
-    let url = fields.next().unwrap_or("/").to_string();
-    let version = fields
-        .next()
-        .and_then(|v| v.strip_prefix("HTTP/"))
-        .unwrap_or("1.1");
-
+/// Split `\r\n` header fields into `(key, value)` pairs, tracking
+/// Content-Length and Connection from the trailing request head lines.
+fn parse_headers(
+    parts: &[&str],
+) -> (Vec<(String, Value)>, usize, String) {
     let mut headers: Vec<(String, Value)> = Vec::new();
     let mut content_length = 0usize;
     let mut connection = String::new();
@@ -385,6 +378,22 @@ fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Valu
             headers.push((key, Value::String(value.to_string())));
         }
     }
+    (headers, content_length, connection)
+}
+
+/// Parse the request line and headers; return the declared Content-Length.
+fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Value)>, usize, bool) {
+    let head_str = String::from_utf8_lossy(head);
+    let parts: Vec<&str> = head_str.split("\r\n").collect();
+    let mut fields = parts[0].split_whitespace();
+    let method = fields.next().unwrap_or("").to_string();
+    let url = fields.next().unwrap_or("/").to_string();
+    let version = fields
+        .next()
+        .and_then(|v| v.strip_prefix("HTTP/"))
+        .unwrap_or("1.1");
+
+    let (mut headers, mut content_length, mut connection) = parse_headers(&parts);
     // HTTP/1.1 defaults to keep-alive unless `Connection: close`; HTTP/1.0
     // defaults to close unless the client asks to keep the connection.
     let http10 = version == "1.0";
