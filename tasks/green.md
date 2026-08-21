@@ -49,6 +49,10 @@ is a passing focused runner, a passing Node CLI oracle, and clean
 `run-compat`/`run-parallel` results. The legacy `url.parse` path remains
 separate and is not claimed as equivalent to the WHATWG static parser.
 `url.fileURLToPath` and `url.pathToFileURL` are present.
+The separate default `quench-node` runtime remains an explicit gap: its
+host-value URL constructor does not yet preserve the same static properties
+through the VM host-value boundary, so its direct CLI smoke must not be counted
+as verified by this dispatch-path result.
 
 Measured improvements (2026-08-21): `os` now returns real host data backed by
 `sysinfo` and `getifaddrs` for `cpus` (model/speed/times), `totalmem`/`freemem`,
