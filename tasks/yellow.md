@@ -6,7 +6,7 @@ Document every supported API and every intentional Bun-matching gap. Implement r
 ## Status (2026-08-21; measured after latest merge)
 
 The listed yellow modules have partial implementations and focused fixtures.
-The current focused suite passes 66/66 and the upstream parallel manifest
+The current focused suite passes 67/67 and the upstream parallel manifest
 passes 178/178. This verifies only the repository's current Node API manifests;
 it does not erase Bun-documented partial behavior or prove full Node v26
 compatibility. Each module MUST record supported APIs, intentional gaps,
@@ -25,22 +25,23 @@ Measured additions (2026-08-21): `diagnostics_channel` now provides
 real `traceSync`/`tracePromise` lifecycle (start/end/asyncStart/asyncEnd/error
 dispatch and error propagation), and `boundedChannel`. Verified by
 `crates/quench-node-test/node-tests/test-diagnostics-channel.js`; focused suite
-66/66, upstream parallel 178/178. Built-in diagnostics channels
+67/67, upstream parallel 178/178. Built-in diagnostics channels
 (`http.client.*`, `http2`, `dgram`, `http.server.*`, `net`, `module`,
 `console`, `child_process`, `worker_threads`) and Node's channel store semantics
 remain an explicit gap, not a compatibility claim.
 
 Measured (2026-08-21): `node:crypto` provides pure-Rust digests, `getHashes`,
 `getRandomValues`, and `crypto.subtle` with working `digest` (SHA-1/256/384/512),
-`importKey`, `encrypt`/`decrypt` (AES-256-GCM via the `aes-gcm` crate,
-round-trip + wrong-IV failure verified), `exportKey` (raw format), `deriveBits`
+`importKey`, `generateKey` (AES-GCM 128/256 + HMAC SHA-256, CSPRNG-backed),
+`encrypt`/`decrypt` (AES-256-GCM via the `aes-gcm` crate, round-trip +
+wrong-IV failure verified), `exportKey` (raw format), `deriveBits`
 (PBKDF2-HMAC-SHA256 verified against RFC 6070 vector 5 byte-for-byte),
 `deriveKey` (wraps PBKDF2 output as an AES-GCM/HMAC secret CryptoKey), and
 `sign`/`verify` (HMAC-SHA-256 and HMAC-SHA-1, verified against RFC 4231 test
 case 1 byte-for-byte). Verified by `test-crypto-subtle-aes-gcm.js`,
-`test-crypto-subtle-pbkdf2.js`, and `test-crypto-subtle-hmac.js` (focused
-66/66, upstream parallel 178/178). Measured gap versus Bun: `subtle.generateKey`
-returns `undefined` (no symmetric/asymmetric key generation backend). Algorithm
-breadth (no `encapsulate`/`decapsulate`, `ed448`, `x448`, `rsa-pss`, `dsa`,
-`dh`, extra curves, or CCM/OCB/XTS/`chacha20-poly1305`) is similarly out of
-reach without further crypto backends. These are tracked here, not claimed.
+`test-crypto-subtle-generate-key.js`, `test-crypto-subtle-pbkdf2.js`, and
+`test-crypto-subtle-hmac.js` (focused 67/67, upstream parallel 178/178).
+Algorithm breadth (no `encapsulate`/`decapsulate`, `ed448`, `x448`, `rsa-pss`,
+`dsa`, `dh`, extra curves, or CCM/OCB/XTS/`chacha20-poly1305`) is similarly
+out of reach without further crypto backends. These are tracked here, not
+claimed.

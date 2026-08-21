@@ -598,6 +598,53 @@ pub fn subtle_export_key(
     Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&secret)))
 }
 
+pub fn subtle_generate_key(
+    _: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let algorithm = args.first().cloned().unwrap_or(Value::Undefined);
+    let alg_name = match execute::get_property(&algorithm, "name") {
+        Value::String(s) => s.to_string(),
+        _ => return Err(execute::type_error("generateKey: algorithm.name required")),
+    };
+    let length_bits = match execute::get_property(&algorithm, "length") {
+        Value::Number(n) if n.is_finite() && n > 0.0 && n.fract() == 0.0 && n <= 4096.0 => n as usize,
+        _ => return Err(execute::type_error("generateKey: algorithm.length required")),
+    };
+    if length_bits % 8 != 0 { return Err(execute::type_error("generateKey: algorithm.length must be a multiple of 8")); }
+    let byte_length = length_bits / 8;
+    let mut buf = vec![0u8; byte_length];
+    random_into(&mut buf).map_err(|_e: quench_runtime::execute::VmError| execute::type_error("generateKey: random failed"))?;
+    let extractable = args.get(1).cloned().unwrap_or(Value::Boolean(false));
+    let usages_v = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let usages = if let Value::Object(_) = usages_v {
+        // Best-effort: read each index's string value if present.
+        let mut arr: Vec<Value> = Vec::new();
+        let len_v = execute::get_property(&usages_v, "length");
+        if let Value::Number(n) = len_v { let n = n as usize; for i in 0..n { if let Ok(s) = execute::get_property_result(&usages_v, &i.to_string()) { if let Value::String(_) = s { arr.push(s); } } } }
+        arr
+    } else { Vec::new() };
+    Ok(fulfilled(host_api::object(vec![
+        ("type".to_string(), Value::String("secret".into())),
+        ("extractable".to_string(), extractable),
+        (
+            "algorithm".to_string(),
+            host_api::object(vec![
+                ("name".to_string(), Value::String(alg_name.into())),
+                ("length".to_string(), Value::Number(length_bits as f64)),
+            ]),
+        ),
+        (
+            "usages".to_string(),
+            host_api::array(usages.into_iter().map(|v| match v { Value::String(s) => Value::String(s), _ => Value::Undefined }).collect()),
+        ),
+        (
+            "\0crypto:keydata".to_string(),
+            crate::modules::buffer_proto::make_buffer(&buf),
+        ),
+    ])))
+}
+
 pub fn subtle_unsupported(
     _: &Rc<RefCell<HostState>>,
     _: &[Value],
