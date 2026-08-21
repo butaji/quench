@@ -102,7 +102,17 @@ impl TestMetadata {
 
 fn extract_frontmatter(source: &str) -> Result<&str, String> {
     let source = source.strip_prefix('\u{feff}').unwrap_or(source);
-    let Some(body) = source.strip_prefix("/*---") else {
+    // test262 fixtures may begin with generator copyright banners (`// …`)
+    // before the frontmatter marker. Accept only leading `//` comment lines
+    // ahead of `/*---` so a marker embedded after arbitrary code is rejected.
+    let mut body = source;
+    while let Some(rest) = body.strip_prefix("//") {
+        let Some(line_end) = rest.find('\n') else {
+            return Ok("");
+        };
+        body = &rest[line_end + 1..];
+    }
+    let Some(body) = body.strip_prefix("/*---") else {
         return Ok("");
     };
     let Some(end_offset) = body.find("---*/") else {
