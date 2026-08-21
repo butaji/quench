@@ -35,3 +35,17 @@ assert.strictEqual(
 assert.strictEqual(crypto.randomUUID().length, 36);
 const randomValue = crypto.randomInt(2, 5);
 assert.ok(randomValue >= 2 && randomValue < 5);
+// crypto global + crypto.subtle.digest (async).
+assert.strictEqual(typeof crypto.getRandomValues, 'function');
+assert.strictEqual(typeof crypto.subtle, 'object');
+assert.strictEqual(typeof crypto.subtle.digest, 'function');
+const rv = crypto.getRandomValues(new Uint8Array(8));
+assert.strictEqual(rv.length, 8);
+(async () => {
+  const buf = await crypto.subtle.digest('SHA-256', Uint8Array.from([97, 98, 99]));
+  const u = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  let hex = '';
+  for (let i = 0; i < u.length; i++) hex += u[i].toString(16).padStart(2, '0');
+  assert.strictEqual(hex, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  console.log('crypto.subtle: ok');
+})().catch(e => { throw e; });
