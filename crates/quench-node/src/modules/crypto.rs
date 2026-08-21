@@ -8,47 +8,109 @@ use std::rc::Rc;
 fn capability_props_core() -> Vec<(String, Value)> {
     use crate::registry::*;
     vec![
-        ("randomBytes".into(), crate::host::capability(SPEC_CRYPTO_RANDOM_BYTES)),
-        ("randomFillSync".into(), crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC)),
-        ("getRandomValues".into(), crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC)),
-        ("createHash".into(), crate::host::capability(SPEC_CRYPTO_CREATE_HASH)),
-        ("createHmac".into(), crate::host::capability(SPEC_CRYPTO_CREATE_HMAC)),
-        ("timingSafeEqual".into(), crate::host::capability(SPEC_CRYPTO_TIMING_SAFE_EQUAL)),
-        ("randomUUID".into(), crate::host::capability(SPEC_CRYPTO_RANDOM_UUID)),
-        ("randomInt".into(), crate::host::capability(SPEC_CRYPTO_RANDOM_INT)),
+        (
+            "randomBytes".into(),
+            crate::host::capability(SPEC_CRYPTO_RANDOM_BYTES),
+        ),
+        (
+            "randomFillSync".into(),
+            crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC),
+        ),
+        (
+            "getRandomValues".into(),
+            crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC),
+        ),
+        (
+            "createHash".into(),
+            crate::host::capability(SPEC_CRYPTO_CREATE_HASH),
+        ),
+        (
+            "createHmac".into(),
+            crate::host::capability(SPEC_CRYPTO_CREATE_HMAC),
+        ),
+        (
+            "timingSafeEqual".into(),
+            crate::host::capability(SPEC_CRYPTO_TIMING_SAFE_EQUAL),
+        ),
+        (
+            "randomUUID".into(),
+            crate::host::capability(SPEC_CRYPTO_RANDOM_UUID),
+        ),
+        (
+            "randomInt".into(),
+            crate::host::capability(SPEC_CRYPTO_RANDOM_INT),
+        ),
     ]
 }
 
 fn capability_props() -> Vec<(String, Value)> {
     use crate::registry::*;
     let mut props = capability_props_core();
-    props.extend([
-        ("getHashes", SPEC_CRYPTO_GET_HASHES), ("getCiphers", SPEC_CRYPTO_GET_CIPHERS),
-        ("createCipheriv", SPEC_CRYPTO_UNSUPPORTED), ("createDecipheriv", SPEC_CRYPTO_UNSUPPORTED),
-        ("generateKeyPairSync", SPEC_CRYPTO_UNSUPPORTED),
-    ].into_iter().map(|(name, spec)| (name.into(), crate::host::capability(spec))));
+    props.extend(
+        [
+            ("getHashes", SPEC_CRYPTO_GET_HASHES),
+            ("getCiphers", SPEC_CRYPTO_GET_CIPHERS),
+            ("createCipheriv", SPEC_CRYPTO_UNSUPPORTED),
+            ("createDecipheriv", SPEC_CRYPTO_UNSUPPORTED),
+            ("generateKeyPairSync", SPEC_CRYPTO_UNSUPPORTED),
+        ]
+        .into_iter()
+        .map(|(name, spec)| (name.into(), crate::host::capability(spec))),
+    );
     props
 }
 fn subtle_object() -> Value {
-    host_api::object([
-        ("digest", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DIGEST)),
-        ("encrypt", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_ENCRYPT)),
-        ("decrypt", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DECRYPT)),
-        ("sign", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_SIGN)),
-        ("verify", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_VERIFY)),
-        ("generateKey", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_GENERATE_KEY)),
-        ("importKey", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_IMPORT_KEY)),
-        ("exportKey", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_EXPORT_KEY)),
-    ].into_iter().map(|(name, value)| (name.to_string(), value)).collect())
+    host_api::object(
+        [
+            (
+                "digest",
+                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DIGEST),
+            ),
+            (
+                "encrypt",
+                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_ENCRYPT),
+            ),
+            (
+                "decrypt",
+                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DECRYPT),
+            ),
+            (
+                "sign",
+                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_SIGN),
+            ),
+            (
+                "verify",
+                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_VERIFY),
+            ),
+            (
+                "generateKey",
+                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_GENERATE_KEY),
+            ),
+            (
+                "importKey",
+                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_IMPORT_KEY),
+            ),
+            (
+                "exportKey",
+                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_EXPORT_KEY),
+            ),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), value))
+        .collect(),
+    )
 }
 
 pub fn build() -> Value {
     let mut props = capability_props();
     props.push(("subtle".to_string(), subtle_object()));
-    props.push(("constants".to_string(), host_api::object(vec![
-        ("OPENSSL_VERSION_NUMBER".into(), Value::Number(0.0)),
-        ("defaultCoreCipherList".into(), Value::String("".into())),
-    ])));
+    props.push((
+        "constants".to_string(),
+        host_api::object(vec![
+            ("OPENSSL_VERSION_NUMBER".into(), Value::Number(0.0)),
+            ("defaultCoreCipherList".into(), Value::String("".into())),
+        ]),
+    ));
     host_api::object(props)
 }
 
@@ -233,6 +295,28 @@ pub fn create_hash(
     _: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, quench_runtime::execute::VmError> {
+    let alg = parse_hash_algorithm(args)?;
+    let mut object = host_api::object(vec![]);
+    object = execute::set_property(object, CRYPTO_ALG, Value::String(alg));
+    object = execute::set_property(
+        object,
+        CRYPTO_DATA,
+        crate::modules::buffer_proto::make_buffer(&[]),
+    );
+    object = execute::set_property(
+        object,
+        "update",
+        crate::host::capability(crate::registry::NodeSpec::new("crypto:hashUpdate", 0x210A)),
+    );
+    object = execute::set_property(
+        object,
+        "digest",
+        crate::host::capability(crate::registry::NodeSpec::new("crypto:hashDigest", 0x210B)),
+    );
+    Ok(object)
+}
+
+fn parse_hash_algorithm(args: &[Value]) -> Result<String, quench_runtime::execute::VmError> {
     let alg = match args.first() {
         Some(Value::String(s)) => s.to_lowercase(),
         _ => return Err(execute::type_error("algorithm required")),
@@ -254,24 +338,7 @@ pub fn create_hash(
     ) {
         return Err(execute::type_error("Digest method not supported"));
     }
-    let mut object = host_api::object(vec![]);
-    object = execute::set_property(object, CRYPTO_ALG, Value::String(alg));
-    object = execute::set_property(
-        object,
-        CRYPTO_DATA,
-        crate::modules::buffer_proto::make_buffer(&[]),
-    );
-    object = execute::set_property(
-        object,
-        "update",
-        crate::host::capability(crate::registry::NodeSpec::new("crypto:hashUpdate", 0x210A)),
-    );
-    object = execute::set_property(
-        object,
-        "digest",
-        crate::host::capability(crate::registry::NodeSpec::new("crypto:hashDigest", 0x210B)),
-    );
-    Ok(object)
+    Ok(alg)
 }
 
 pub fn create_hmac(

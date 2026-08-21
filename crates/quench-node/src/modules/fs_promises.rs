@@ -135,7 +135,8 @@ fn file_handle_props() -> Vec<(&'static str, Value)> {
 
 fn file_handle(fd: i32) -> Result<Value, VmError> {
     let mut obj = crate::host::namespace_object_from_pairs(vec![(
-        FD_PROP.to_string(), Value::Number(fd as f64),
+        FD_PROP.to_string(),
+        Value::Number(fd as f64),
     )]);
     for (name, cap) in file_handle_props() {
         let desc = quench_runtime::host_api::object(vec![
