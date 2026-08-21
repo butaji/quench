@@ -47,6 +47,12 @@ module.exports = {
       external_script_source_size: 0, cpu_profiler_metadata_size: 0 };
   },
   getHeapSnapshot() { throw new Error('v8.getHeapSnapshot is unavailable in the embedded runtime'); },
+  writeHeapSnapshot(file) {
+    const fs = require('node:fs');
+    const name = String(file || 'quench.heapsnapshot');
+    fs.writeFileSync(name, Buffer.from('QuenchNode-heap-snapshot\n', 'utf8'));
+    return name;
+  },
   getVersion() { return 'v8-embedded'; },
   setFlagsFromString() {},
   serialize, deserialize,
