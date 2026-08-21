@@ -19,3 +19,13 @@ Known intentional or measured partial surfaces include `tls`, `https`,
 intentional gaps, focused results, and applicable upstream Node API results.
 “Implemented” means surface code exists; it MUST NOT be reported as verified
 without executable test evidence.
+
+Measured additions (2026-08-21): `diagnostics_channel` now provides
+`channel()`/`subscribe`/`unsubscribe`/`channelNames`, `tracingChannel` with a
+real `traceSync`/`tracePromise` lifecycle (start/end/asyncStart/asyncEnd/error
+dispatch and error propagation), and `boundedChannel`. Verified by
+`crates/quench-node-test/node-tests/test-diagnostics-channel.js`; focused suite
+58/58, upstream parallel 178/178. Built-in diagnostics channels
+(`http.client.*`, `http2`, `dgram`, `http.server.*`, `net`, `module`,
+`console`, `child_process`, `worker_threads`) and Node's channel store semantics
+remain an explicit gap, not a compatibility claim.
