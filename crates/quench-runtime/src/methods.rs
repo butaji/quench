@@ -63,34 +63,33 @@ fn execute_callee(
     args: &[u16],
     registers: &mut Vec<Value>,
 ) -> Result<Value, VmError> {
-    let value = match &callee {
+    match &callee {
         Value::Builtin(crate::ops::Builtin::String) => {
-            execute_builtin_with_receiver(crate::ops::Builtin::String, arguments, None)?
+            execute_builtin_with_receiver(crate::ops::Builtin::String, arguments, None)
         }
         Value::Builtin(
             builtin @ (crate::ops::Builtin::ObjectDefineProperty
             | crate::ops::Builtin::ObjectDefineProperties),
-        ) => define_object_properties(*builtin, arguments, args, registers)?,
+        ) => define_object_properties(*builtin, arguments, args, registers),
         Value::Builtin(crate::ops::Builtin::ObjectSetPrototypeOf) => {
-            execute_mutating_object_builtin(arguments, args, registers)?
+            execute_mutating_object_builtin(arguments, args, registers)
         }
         Value::Builtin(builtin) => {
-            execute_builtin_with_receiver(*builtin, arguments, Some(receiver))?
+            execute_builtin_with_receiver(*builtin, arguments, Some(receiver))
         }
-        Value::Function(_) => crate::functions::execute_target(&callee, receiver, arguments)?,
+        Value::Function(_) => crate::functions::execute_target(&callee, receiver, arguments),
         Value::BoundFunction(bound)
             if matches!(
                 bound.target,
                 Value::Builtin(crate::ops::Builtin::HostCapability(_))
             ) =>
         {
-            execute_bound_host_capability(bound, receiver, arguments)?
+            execute_bound_host_capability(bound, receiver, arguments)
         }
-        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments)?,
-        Value::Undefined => return Err(crate::vm::not_callable()),
-        _ => return Err(crate::vm::not_callable()),
-    };
-    Ok(value)
+        Value::BoundFunction(bound) => crate::functions::execute_bound(bound, arguments),
+        Value::Undefined => Err(crate::vm::not_callable()),
+        _ => Err(crate::vm::not_callable()),
+    }
 }
 
 fn execute_bound_host_capability(
@@ -101,12 +100,12 @@ fn execute_bound_host_capability(
     let Value::Builtin(crate::ops::Builtin::HostCapability(kind)) = bound.target else {
         unreachable!()
     };
-    Ok(crate::vm::execute_host_capability_with_receiver(
+    crate::vm::execute_host_capability_with_receiver(
         kind,
         Some(&bound.receiver),
         Some(receiver),
         arguments,
-    )?)
+    )
 }
 
 fn define_object_properties(

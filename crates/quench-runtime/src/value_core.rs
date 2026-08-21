@@ -82,6 +82,8 @@ impl TypedArrayMeta {
     }
 }
 
+type PromiseThenAction = (Option<Value>, Option<Value>, Rc<PromiseData>);
+
 /// Heap-allocated Promise data.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromiseData {
@@ -90,7 +92,7 @@ pub struct PromiseData {
     pub state: RefCell<PromiseState>,
     pub result: RefCell<Option<Value>>,
     pub(crate) already_resolved: Cell<bool>,
-    pub then_actions: RefCell<Vec<(Option<Value>, Option<Value>, Rc<PromiseData>)>>,
+    pub then_actions: RefCell<Vec<PromiseThenAction>>,
     pub(crate) continuations: RefCell<Vec<PromiseContinuation>>,
 }
 

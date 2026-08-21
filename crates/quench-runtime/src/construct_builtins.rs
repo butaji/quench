@@ -132,7 +132,7 @@ fn construct_regexp(arguments: &[Value]) -> Result<Value, crate::execute::VmErro
     if let Some(pattern) = arguments.first() {
         let flags_omitted = arguments
             .get(1)
-            .is_none_or(|value| matches!(value, Value::Undefined));
+            .map_or(true, |value| matches!(value, Value::Undefined));
         if flags_omitted && is_regexp_pattern(pattern)? {
             let constructor = crate::execute::get_property_result(pattern, "constructor")?;
             if matches!(constructor, Value::Builtin(crate::ops::Builtin::RegExp)) {
