@@ -171,6 +171,8 @@ pub const SPEC_PROCESS_MEMORYUSAGE: NodeSpec = NodeSpec::new("process:memoryUsag
 pub const SPEC_PROCESS_ACTIVE_RESOURCES: NodeSpec =
     NodeSpec::new("process:activeResourcesInfo", 0x0A0E);
 pub const SPEC_PROCESS_REPORT: NodeSpec = NodeSpec::new("process:report", 0x0A0F);
+pub const SPEC_PROCESS_RESOURCE_USAGE: NodeSpec = NodeSpec::new("process:resourceUsage", 0x0A10);
+pub const SPEC_PROCESS_CPU_USAGE: NodeSpec = NodeSpec::new("process:cpuUsage", 0x0A11);
 pub const SPEC_CRYPTO_RANDOM_BYTES: NodeSpec = NodeSpec::new("crypto:randomBytes", 0x2100);
 pub const SPEC_CRYPTO_RANDOM_FILL_SYNC: NodeSpec = NodeSpec::new("crypto:randomFillSync", 0x2102);
 pub const SPEC_CRYPTO_UNSUPPORTED: NodeSpec = NodeSpec::new("crypto:unsupported", 0x2101);
