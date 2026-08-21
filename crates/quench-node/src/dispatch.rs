@@ -108,6 +108,8 @@ fn url_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_URL_PARSE => url_parse,
         CAP_URL_FORMAT => url_format,
         CAP_URL_RESOLVE => url_resolve,
+        CAP_URL_CAN_PARSE => url_can_parse,
+        CAP_URL_PARSE_STATIC => url_parse_static,
         CAP_QS_PARSE => crate::modules::querystring_parse::parse,
         CAP_QS_STRINGIFY => crate::modules::querystring_stringify::stringify,
         CAP_QS_ESCAPE => crate::modules::querystring::escape,
