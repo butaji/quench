@@ -145,7 +145,7 @@ fn std_stream(is_error: bool) -> Value {
     ])
 }
 #[path = "process_method_props.rs"]
-
+mod method_props_helper;
 
 /// `process.getuid()` — return the effective Unix user ID, or zero on non-Unix.
 pub fn getuid(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
