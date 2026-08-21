@@ -97,8 +97,16 @@ fn compose_date_string(
             parts.push(y);
         }
     }
-    if parts.is_empty() {
-        return String::new();
+    if month_is_name {
+        let mut out = String::new();
+        out.push_str(parts[0].as_str());
+        out.push(' ');
+        out.push_str(parts[1].as_str());
+        if parts.len() >= 3 {
+            out.push_str(", ");
+            out.push_str(parts[2].as_str());
+        }
+        return out;
     }
     if !month_is_name
         && parts.len() >= 3
