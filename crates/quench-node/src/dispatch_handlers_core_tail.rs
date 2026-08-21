@@ -168,6 +168,14 @@ pub fn process_memory_usage(state: &Rc<RefCell<HostState>>, _: Option<&Value>, _
     crate::modules::process::memory_usage(state, _args)
 }
 
+pub fn process_resource_usage(state: &Rc<RefCell<HostState>>, _: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+    crate::modules::process::resource_usage(state, _args)
+}
+
+pub fn process_cpu_usage(state: &Rc<RefCell<HostState>>, _: Option<&Value>, _args: &[Value]) -> Result<Value, VmError> {
+    crate::modules::process::cpu_usage(state, _args)
+}
+
 pub fn process_getgid(
     state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
