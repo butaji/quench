@@ -69,7 +69,7 @@ Measured (2026-08-21): `events` exposes the Bun-green namespace exports
 counting, identity, and post-removal behavior). Measured gap: `events.once`,
 `events.addAbortListener`, `usingAsyncResource`, and the `errorMonitor`/
 `captureRejectionSymbol` Symbol constants (plus `EventEmitter.captureRejections`
-semantics). Two architectural blockers were confirmed during implementation
+semantics). Three architectural blockers were confirmed during implementation
 attempts: (1) `AbortController#abort()` itself throws `value is not callable`
 in the runtime (a broken stub in `js_runtime_adapters.rs:94` and an absent
 runtime registration in `host::install_with_argv`), so `events.addAbortListener`
@@ -78,7 +78,14 @@ is wired through the run harness; (2) `events.once` would need a per-call
 Rust closure that resolves a specific `PromiseData` on the next emit, but
 the host dispatch layer has no per-instance state for static capability
 functions (all `capability_function(Custom(name))` values share the same
-dispatch target). True `Symbol` values are also not constructible. Closing
-these gaps needs a Promise-capable host export, host Symbol support, and
-fixing the AbortController stub at the same time, and is multi-day work,
-tracked here rather than claimed complete.
+dispatch target); (3) JS-side polyfills via `quench_runtime::reduce::
+reduce_global_script_source` + `vm::call_value` cannot survive across the
+`host_value` boundary — the returned constructor becomes a native function
+(`function () { [native code] }`) that drops its captured closure state, so
+inline methods, prototype assignments, and IIFE-captured state are all
+lost when the host value is invoked from a user script. True `Symbol` values
+are also not constructible. Closing these gaps needs a Promise-capable
+host export with per-call state, a JS-callable host function API (so closures
+survive), host Symbol support, and fixing the AbortController stub at the
+same time; this is multi-day host-engine work, tracked here rather than
+claimed complete.
