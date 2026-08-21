@@ -5,12 +5,12 @@ Target Bun-documented partial behavior for diagnostics_channel, https, async_hoo
 Document every supported API and every intentional Bun-matching gap. Implement reachable behavior with real errors/backends; no shape-only claims. Enforce file <=500 lines, function <=40 lines, complexity <=10. Add focused fixtures and run applicable upstream tests.
 ## Status (2026-08-21; measured after latest merge)
 
-The listed yellow modules have partial implementations and focused fixtures,
-but they are not fully Node-compatible. `run-compat --quiet` currently passes
-49/57 fixtures overall and fails `events`, HTTP, `net`, and `readline` cases.
-`run-parallel` is currently blocked by an uncaught panic in
-`crates/quench-runtime/src/intl/datetime_format_date.rs:90`; no upstream
-green/yellow pass rate is claimable.
+The listed yellow modules have partial implementations and focused fixtures.
+The current focused suite passes 57/57 and the upstream parallel manifest
+passes 178/178. This verifies only the repository's current Node API manifests;
+it does not erase Bun-documented partial behavior or prove full Node v26
+compatibility. Each module MUST record supported APIs, intentional gaps,
+focused results, and applicable upstream Node API results.
 
 Known intentional or measured partial surfaces include `tls`, `https`,
 `async_hooks`, `child_process`, `cluster`, `crypto`, `domain`, `module`,

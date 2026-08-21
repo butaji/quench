@@ -22,7 +22,13 @@
   "validation": {
     "focused": "cargo run -p quench-node-test --bin run-compat -- --quiet",
     "upstream": "cargo run -p quench-node-test --bin run-parallel",
-    "requirement": "Do not mark a green/yellow module verified without applicable upstream Node API test evidence; record panics and failures explicitly."
+    "implementation_definition_of_done": [
+      "Implementation behavior is exercised by a related Node API fixture.",
+      "Applicable upstream Node API tests are executed and results recorded.",
+      "Failures, unsupported behavior, platform limits, and panics remain explicitly listed.",
+      "No green or yellow status is marked verified from registration or shape-only checks."
+    ],
+    "requirement": "Every task implementation must include its related Node API test command and measured result."
   },
   "tasks": [
     {

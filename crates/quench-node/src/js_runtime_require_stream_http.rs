@@ -121,36 +121,9 @@ fn require_stream_http_modules(name: &str) -> Option<Value> {
                 ),
             ]));
         }
-        if name == "node:http" || name == "http" {
-            let incoming = quench_runtime::execute::set_property(
-                capability_function(HostCapabilityKind::Custom(CapabilityName::HttpServer)),
-                "prototype",
-                quench_runtime::host_api::object(vec![
-                    (
-                        "once".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::HttpIncomingOnce,
-                        )),
-                    ),
-                    (
-                        "emit".into(),
-                        capability_function(HostCapabilityKind::Custom(
-                            CapabilityName::HttpIncomingEmit,
-                        )),
-                    ),
-                ]),
-            );
-            return Some(Value::object(vec![
-                (
-                    "createServer".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::HttpServer)),
-                ),
-                (
-                    "get".into(),
-                    capability_function(HostCapabilityKind::Custom(CapabilityName::HttpGet)),
-                ),
-                ("IncomingMessage".into(), incoming),
-            ]));
-        }
+        // HTTP is provided by the bootstrap polyfill (`__nodeHttp`).  Do not
+        // shadow it with the legacy capability-only stub: that stub returns a
+        // request placeholder from createServer, so server methods such as
+        // `.on` and `.listen` are not callable.
     None
 }

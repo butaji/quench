@@ -19,36 +19,40 @@ upstream Node parallel fixtures listed in
 verified until the relevant green/yellow fixtures pass and the upstream run
 completes without a panic or unclassified failure.
 
+## Per-implementation definition of done
+
+Every implementation task MUST name the related Node API fixture(s), the
+focused command used to execute them, and the applicable upstream Node test
+command. A task is not done when code compiles or a namespace exists. It is
+done only when behavior is exercised, results are recorded, and every
+remaining failure or unsupported/platform-limited case is listed as a gap.
+
 ## Current measured status
 
-Measured after the latest implementation and merge:
+Measured after the latest compatibility fixes:
 
-- `cargo check -p quench-node`: passes, with existing warnings.
-- `cargo run -p quench-node-test --bin run-compat -- --quiet`: **49 passed,
-  8 failed, 57 total**.
-- `cargo run -p quench-node-test --bin run-parallel`: **blocked** by a runtime
-  panic in `crates/quench-runtime/src/intl/datetime_format_date.rs:90`
-  (`index out of bounds`); no upstream pass rate is claimable.
-- Focused fixtures for diagnostics_channel, inspector, repl/wasi, dns, and
-  path pass individually.
+- `cargo check -p quench-node`: passes, with one existing unused-variable
+  warning.
+- `cargo run -p quench-node-test --bin run-compat -- --quiet`: **57 passed,
+  0 failed, 57 total**.
+- `cargo run -p quench-node-test --bin run-parallel`: **178 passed, 0 failed,
+  178 total**.
+- Focused diagnostics_channel, inspector, repl/wasi, DNS, path, events,
+  HTTP, net, and readline fixtures pass.
 
-Current focused failures:
+The previous datetime-format panic is fixed and covered by a regression unit
+test. The focused and upstream suites are green for their current manifests.
+This is evidence for the repository's tested Node API set; it is not a claim
+that every Bun-documented Node v26 API is implemented.
 
-```text
-events
-http-client
-http-keepalive
-http-post
-http-url
-http
-net
-readline
-```
+Residual gap policy:
 
-Therefore green and yellow are **implemented in part**, but neither category
-has full Node API verification. Existing task status text MUST NOT claim
-`57/57`, `178/178`, or complete green/yellow coverage until these results are
-reproduced successfully.
+- Bun yellow modules remain partial unless their documented gaps are either
+  implemented or explicitly recorded.
+- Bun green modules outside the current manifests still require applicable
+  upstream Node API fixtures.
+- Every new implementation MUST add or identify its related Node API test and
+  record the command/result before status changes to verified.
 
 ## Completion rule
 
