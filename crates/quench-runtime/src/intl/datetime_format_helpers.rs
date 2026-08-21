@@ -200,6 +200,12 @@ fn grouped_year(year: i64) -> String {
 }
 
 fn range_number(value: &Value) -> Result<f64, VmError> {
+    if matches!(value, Value::Undefined) {
+        // ECMA-402 12.1.3: format() with no argument formats the current
+        // instant; ToNumber(undefined) would yield NaN and incorrectly
+        // throw "date value is not finite".
+        return Ok(crate::date::chrono_utils::current_time_ms());
+    }
     let number = conversion::to_number(value)?;
     if !number.is_finite() || number.abs() > 8_640_000_000_000_000.0 {
         return Err(runtime_error("RangeError: date value is not finite"));
