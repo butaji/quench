@@ -432,13 +432,17 @@ pub fn subtle_import_key(
     )?;
     let algorithm = args.get(2).cloned().unwrap_or(Value::Undefined);
     let name = execute::get_property(&algorithm, "name");
+    // Preserve known sub-algorithm fields (e.g. `hash`) so downstream operations
+    // (sign/verify) can dispatch on them.
+    let hash_v = execute::get_property(&algorithm, "hash");
+    let length_v = execute::get_property(&algorithm, "length");
+    let mut alg_fields: Vec<(String, Value)> = vec![("name".to_string(), name)];
+    if !matches!(hash_v, Value::Undefined) { alg_fields.push(("hash".to_string(), hash_v)); }
+    if !matches!(length_v, Value::Undefined) { alg_fields.push(("length".to_string(), length_v)); }
     Ok(fulfilled(host_api::object(vec![
         ("type".to_string(), Value::String("secret".into())),
         ("extractable".to_string(), Value::Boolean(true)),
-        (
-            "algorithm".to_string(),
-            host_api::object(vec![("name".to_string(), name)]),
-        ),
+        ("algorithm".to_string(), host_api::object(alg_fields)),
         (
             "usages".to_string(),
             host_api::array(vec![Value::String("digest".into())]),
@@ -448,6 +452,82 @@ pub fn subtle_import_key(
             crate::modules::buffer_proto::make_buffer(&data),
         ),
     ])))
+}
+
+fn crypto_key_hash_name(key: &Value) -> String {
+    let algorithm = execute::get_property(key, "algorithm");
+    let name = execute::get_property(&algorithm, "name");
+    if let Value::String(s) = name { return s.to_string(); }
+    String::new()
+}
+
+pub fn subtle_sign(
+    _: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let algorithm = args.first().cloned().unwrap_or(Value::Undefined);
+    let alg_name = match execute::get_property(&algorithm, "name") {
+        Value::String(s) => s.to_string(),
+        _ => return Err(execute::type_error("sign: algorithm.name required")),
+    };
+    if alg_name != "HMAC" { return Err(execute::type_error(format!("sign: unsupported algorithm {alg_name}").as_str())); }
+    let hash_name = match execute::get_property(&algorithm, "hash") {
+        Value::String(s) => s.to_string(),
+        _ => "SHA-256".to_string(),
+    };
+    let key = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let key_hash = crypto_key_hash_name(&key);
+    if !key_hash.is_empty() && key_hash != "HMAC" {
+        return Err(execute::type_error("sign: key is not an HMAC key"));
+    }
+    let secret = crypto_key_bytes(&key)?;
+    let data_v = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let data = argbytes(&data_v)?;
+    let mac: Vec<u8> = match hash_name.as_str() {
+        "SHA-256" => hmac_sha256(&secret, &data).to_vec(),
+        "SHA-1" => hmac_sha1(&secret, &data).to_vec(),
+        "SHA-384" => {
+            return Err(execute::type_error("sign: SHA-384 not yet supported"))
+        }
+        "SHA-512" => {
+            return Err(execute::type_error("sign: SHA-512 not yet supported"))
+        }
+        _ => return Err(execute::type_error(format!("sign: unsupported hash {hash_name}").as_str())),
+    };
+    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&mac)))
+}
+
+pub fn subtle_verify(
+    _: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let algorithm = args.first().cloned().unwrap_or(Value::Undefined);
+    let alg_name = match execute::get_property(&algorithm, "name") {
+        Value::String(s) => s.to_string(),
+        _ => return Err(execute::type_error("verify: algorithm.name required")),
+    };
+    if alg_name != "HMAC" { return Err(execute::type_error(format!("verify: unsupported algorithm {alg_name}").as_str())); }
+    let hash_name = match execute::get_property(&algorithm, "hash") {
+        Value::String(s) => s.to_string(),
+        _ => "SHA-256".to_string(),
+    };
+    let key = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let key_hash = crypto_key_hash_name(&key);
+    if !key_hash.is_empty() && key_hash != "HMAC" {
+        return Err(execute::type_error("verify: key is not an HMAC key"));
+    }
+    let secret = crypto_key_bytes(&key)?;
+    let signature_v = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let signature = argbytes(&signature_v)?;
+    let data_v = args.get(3).cloned().unwrap_or(Value::Undefined);
+    let data = argbytes(&data_v)?;
+    let mac: Vec<u8> = match hash_name.as_str() {
+        "SHA-256" => hmac_sha256(&secret, &data).to_vec(),
+        "SHA-1" => hmac_sha1(&secret, &data).to_vec(),
+        _ => return Err(execute::type_error(format!("verify: unsupported hash {hash_name}").as_str())),
+    };
+    let ok = mac.len() == signature.len() && mac.iter().zip(signature.iter()).all(|(a, b)| a == b);
+    Ok(fulfilled(Value::Boolean(ok)))
 }
 
 pub fn subtle_unsupported(
