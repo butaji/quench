@@ -160,6 +160,12 @@ fn fs_dispatch_more(cap: u16) -> Option<CallHandler> {
 fn fs_dispatch_promises(cap: u16) -> Option<CallHandler> {
     Some(match cap {
         CAP_FS_REALPATH => fs_async::realpath,
+        _ => fs_dispatch_promises_core(cap)?,
+    })
+}
+
+fn fs_dispatch_promises_core(cap: u16) -> Option<CallHandler> {
+    Some(match cap {
         CAP_FSP_READFILE => fs_promises::read_file,
         CAP_FSP_WRITEFILE => fs_promises::write_file,
         CAP_FSP_APPENDFILE => fs_promises::append_file,
@@ -187,6 +193,12 @@ fn fs_dispatch_promises(cap: u16) -> Option<CallHandler> {
         CAP_FSP_LUTIMES => fs_promises::lutimes,
         CAP_FSP_LCHOWN => fs_promises::lchown,
         CAP_FSP_LCHMOD => fs_promises::lchmod,
+        _ => fs_dispatch_filehandle(cap)?,
+    })
+}
+
+fn fs_dispatch_filehandle(cap: u16) -> Option<CallHandler> {
+    Some(match cap {
         CAP_FSP_FILEHANDLE_STAT => fs_promises::filehandle_stat,
         CAP_FSP_FILEHANDLE_CLOSE => fs_promises::filehandle_close,
         CAP_FSP_FILEHANDLE_TRUNCATE => fs_promises::filehandle_truncate,
