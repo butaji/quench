@@ -45,9 +45,10 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         "timers" | "timers/promises" => Some(crate::host::namespace_object_from_pairs(
             crate::modules::timers::build(),
         )),
-        "tls" | "inspector" | "repl" | "wasi" => {
-            Some(crate::host::namespace_object_from_pairs(vec![]))
-        }
+        "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "inspector" => crate::modules::compat_extra::inspector(state).ok(),
+        "repl" => crate::modules::compat_extra::repl(state).ok(),
+        "wasi" => crate::modules::compat_extra::wasi(state).ok(),
         "cluster" => crate::modules::compat_extra::cluster(state).ok(),
         "domain" => crate::modules::compat_extra::domain(state).ok(),
         "v8" => crate::modules::compat_extra::v8(state).ok(),

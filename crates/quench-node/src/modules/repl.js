@@ -1,0 +1,1 @@
+(function(){function start(prompt,input,output){return {setPrompt:function(){},prompt:function(){},close:function(){if(output&&output.end)output.end();},context:{},on:function(){return this;}};}module.exports={start:start,REPLServer:function(){return start.apply(null,arguments);}};}());

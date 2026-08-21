@@ -357,10 +357,9 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         "tls" => Some(namespace_of_owned(vec![])),
         "cluster" => crate::modules::compat_extra::cluster(state).ok(),
         "domain" => crate::modules::compat_extra::domain(state).ok(),
-        "v8" => crate::modules::compat_extra::v8(state).ok(),
-        "inspector" => Some(namespace_of_owned(vec![])),
-        "repl" => Some(namespace_of_owned(vec![])),
-        "wasi" => Some(namespace_of_owned(vec![])),
+        "inspector" => crate::modules::compat_extra::inspector(state).ok(),
+        "repl" => crate::modules::compat_extra::repl(state).ok(),
+        "wasi" => crate::modules::compat_extra::wasi(state).ok(),
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
         "sea" => capability_namespace_static(vec![(
             "isSea",

@@ -256,24 +256,13 @@ fn install_web_globals(mut context: VmContext) -> VmContext {
         return context;
     };
     for name in [
-        "Headers",
-        "FormData",
-        "Blob",
-        "CustomEvent",
-        "DOMException",
-        "MessageChannel",
-        "MessagePort",
-        "Request",
-        "Response",
-        "ReadableStream",
-        "WritableStream",
-        "TransformStream",
-        "ByteLengthQueuingStrategy",
-        "CountQueuingStrategy",
-        "TextDecoderStream",
-        "TextEncoderStream",
-        "CompressionStream",
-        "DecompressionStream",
+        "Headers", "FormData", "Blob", "Event", "EventTarget", "CustomEvent",
+        "DOMException", "MessageChannel", "MessagePort", "BroadcastChannel",
+        "Request", "Response", "ReadableStream", "WritableStream",
+        "TransformStream", "ByteLengthQueuingStrategy", "CountQueuingStrategy",
+        "TextDecoderStream", "TextEncoderStream", "CompressionStream",
+        "DecompressionStream", "performance", "PerformanceObserver",
+        "PerformanceResourceTiming",
     ] {
         let value = quench_runtime::execute::get_property(&web, name);
         context = context.with_host_value(name.to_string(), value);
