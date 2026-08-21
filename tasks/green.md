@@ -17,7 +17,7 @@ streams; string_decoder rejects end(string) and subclassing; tty permits
 non-TTY construction; zlib/http2/quic have documented upstream failure or
 experimental-surface caveats.
 
-Current measured evidence: the focused suite passes 67/67 and the upstream
+Current measured evidence: the focused suite passes 68/68 and the upstream
 parallel manifest passes 178/178. These results cover the repository's current
 fixtures, not every Bun-documented Node v26 API. New or expanded green claims
 still require related Node API tests and recorded results.
@@ -27,7 +27,7 @@ Measured additions (2026-08-21): `stream` now exports the Node predicate family
 `Writable` destroy/errored tracking so the predicates behave correctly against
 real streams. Verified by
 `crates/quench-node-test/node-tests/test-stream-predicates.js` (focused suite
-67/67, upstream parallel 178/178).
+68/68, upstream parallel 178/178).
 
 Measured additions (2026-08-21): `stream.Readable.from` now converts
 sync/async iterables and pull-style sources with `read()`, propagating
@@ -54,7 +54,7 @@ Measured improvements (2026-08-21): `os` now returns real host data backed by
 `sysinfo` and `getifaddrs` for `cpus` (model/speed/times), `totalmem`/`freemem`,
 `release`/`type`, `loadavg`, `networkInterfaces` (real IPv4 NICs), `userInfo`
 (uid/gid/env), `uptime`, and `hostname`; errno constants are expanded. Verified
-by `test-os.js` (focused 67/67, upstream parallel 178/178). `homedir`/`tmpdir`
+by `test-os.js` (focused 68/68, upstream parallel 178/178). `homedir`/`tmpdir`
 remain environment-backed.
 
 Measured improvement (2026-08-21): `assert.match` now actually asserts (with
@@ -63,11 +63,13 @@ message; `assert.doesNotThrow` wraps a caught error as an AssertionError-style
 failure instead of rethrowing the raw error; deep-equality terminates on cyclic
 inputs via visited-pair tracking. All covered by `test-assert.js`.
 
-Measured gap (2026-08-21): `events` still lacks the Bun-green namespace
-exports `once`, `getEventListeners`, `addAbortListener`, `usingAsyncResource`,
-and the `errorMonitor`/`captureRejectionSymbol` Symbol constants (plus
-`EventEmitter.captureRejections` semantics). The built-in module export object
-is non-extensible, so JS static additions do not stick (`events.once` becomes
-non-callable) and true `Symbol` values are not constructible; these need host
-export-table extensions and host Symbol/listener-registry support, tracked here
+Measured (2026-08-21): `events` exposes the Bun-green namespace exports
+`EventEmitter`, `getMaxListeners`, `setMaxListeners`, `getEventListeners`,
+`listenerCount`, and `defaultMaxListeners` (verified for `getEventListeners`
+counting, identity, and post-removal behavior). Measured gap: `events.once`,
+`events.addAbortListener`, `usingAsyncResource`, and the `errorMonitor`/
+`captureRejectionSymbol` Symbol constants (plus `EventEmitter.captureRejections`
+semantics). True `Symbol` values are not constructible and the export object
+does not accept `once` via the same path that accepted `getEventListeners`;
+these need a Promise-capable host export and host Symbol support, tracked here
 rather than claimed complete.
