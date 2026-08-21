@@ -364,6 +364,7 @@ fn emitter_props() -> Vec<(&'static str, Value)> {
         ),
         ("setMaxListeners", cap("events:setMaxListeners", 0x010D)),
         ("getMaxListeners", cap("events:getMaxListeners", 0x010E)),
+        ("defaultMaxListeners", Value::Number(10.0)),
     ]
 }
 
