@@ -19,14 +19,16 @@ fn format_duration_values(
         .iter()
         .any(|value| *value < 0);
     let abs = DurationFields {
-        years: fields.years,
-        months: fields.months,
-        weeks: fields.weeks,
-        days: fields.days.abs(),
-        hours: fields.hours.abs(),
-        minutes: fields.minutes.abs(),
-        seconds: fields.seconds.abs(),
-        ..fields
+        years: fields.years.saturating_abs(),
+        months: fields.months.saturating_abs(),
+        weeks: fields.weeks.saturating_abs(),
+        days: fields.days.saturating_abs(),
+        hours: fields.hours.saturating_abs(),
+        minutes: fields.minutes.saturating_abs(),
+        seconds: fields.seconds.saturating_abs(),
+        milliseconds: fields.milliseconds.saturating_abs(),
+        microseconds: fields.microseconds.saturating_abs(),
+        nanoseconds: fields.nanoseconds.saturating_abs(),
     };
     let style = duration_style(slots);
     format_duration_shape(slots, style, negative, abs)
@@ -46,7 +48,7 @@ fn format_duration_shape(
     if style == "digital" {
         return Ok(format_digital_duration(slots, fields, negative));
     }
-    Ok(format_standard_duration(slots, fields))
+    Ok(format_standard_duration(slots, fields, negative))
 }
 
 fn duration_style(slots: &[(String, Value)]) -> &str {
@@ -133,16 +135,32 @@ fn format_digital_duration(
     }
 }
 
-fn format_standard_duration(slots: &[(String, Value)], fields: DurationFields) -> String {
+fn format_standard_duration(
+    slots: &[(String, Value)],
+    fields: DurationFields,
+    negative: bool,
+) -> String {
     let mut parts = Vec::new();
+    if fields.years != 0 {
+        parts.push(format!("{} yr", fields.years));
+    }
+    if fields.months != 0 {
+        parts.push(format!("{} mo", fields.months));
+    }
+    if fields.weeks != 0 {
+        parts.push(format!("{} wk", fields.weeks));
+    }
+    if fields.days != 0 {
+        parts.push(format!("{} day", fields.days));
+    }
     if fields.hours != 0 {
-        parts.push(format!("{hours} hr", hours = fields.hours));
+        parts.push(format!("{} hr", fields.hours));
     }
     if fields.minutes != 0 {
-        parts.push(format!("{minutes} min", minutes = fields.minutes));
+        parts.push(format!("{} min", fields.minutes));
     }
     if fields.seconds != 0 {
-        parts.push(format!("{seconds} sec", seconds = fields.seconds));
+        parts.push(format!("{} sec", fields.seconds));
     }
     append_subsecond_parts(
         &mut parts,
@@ -151,5 +169,10 @@ fn format_standard_duration(slots: &[(String, Value)], fields: DurationFields) -
         fields.microseconds,
         fields.nanoseconds,
     );
-    parts.join(", ")
+    let result = parts.join(", ");
+    if negative && !result.is_empty() {
+        format!("-{result}")
+    } else {
+        result
+    }
 }
