@@ -204,13 +204,19 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
         Builtin::IntlLocaleScriptGetter => Some("get script"),
         Builtin::IntlLocaleTextInfoGetter => Some("get textInfo"),
         Builtin::IntlLocaleVariantsGetter => Some("get variants"),
+        _ => intl_short_name_supported_locales(b),
+    }
+}
+
+const fn intl_short_name_supported_locales(b: Builtin) -> Option<&'static str> {
+    match b {
         Builtin::IntlNumberFormatSupportedLocalesOf
-        | Builtin::IntlDateTimeFormatSupportedLocalesOf => Some("supportedLocalesOf"),
-        Builtin::IntlCollatorSupportedLocalesOf => Some("supportedLocalesOf"),
-        Builtin::IntlPluralRulesSupportedLocalesOf => Some("supportedLocalesOf"),
-        Builtin::IntlSegmenterSupportedLocalesOf => Some("supportedLocalesOf"),
-        Builtin::IntlListFormatSupportedLocalesOf => Some("supportedLocalesOf"),
-        Builtin::IntlRelativeTimeFormatSupportedLocalesOf => Some("supportedLocalesOf"),
+        | Builtin::IntlDateTimeFormatSupportedLocalesOf
+        | Builtin::IntlCollatorSupportedLocalesOf
+        | Builtin::IntlPluralRulesSupportedLocalesOf
+        | Builtin::IntlSegmenterSupportedLocalesOf
+        | Builtin::IntlListFormatSupportedLocalesOf
+        | Builtin::IntlRelativeTimeFormatSupportedLocalesOf => Some("supportedLocalesOf"),
         _ => intl_short_name_formats(b),
     }
 }
