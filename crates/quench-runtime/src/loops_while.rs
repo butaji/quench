@@ -59,6 +59,16 @@ fn reduce_counted_loop(
         locals,
         dst,
     )?;
+    append_counted_loop(ops, test, body_ops, post_test, dst)
+}
+
+fn append_counted_loop(
+    ops: &mut Vec<Op>,
+    test: Vec<Op>,
+    body_ops: Vec<Op>,
+    post_test: bool,
+    dst: u16,
+) -> Result<Option<u16>, Vec<String>> {
     let [init, test, body, update] = crate::machine::FunctionCode::from_ops_many(vec![
         Vec::new(),
         test,

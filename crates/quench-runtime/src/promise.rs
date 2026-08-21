@@ -454,8 +454,18 @@ pub fn execute_builtin(
     receiver: Option<&Value>,
     arguments: &[Value],
 ) -> Option<Result<Value, VmError>> {
+    if matches!(builtin, Builtin::Promise) {
+        return Some(Err(VmError::NotCallable));
+    }
+    execute_builtin_inner(builtin, receiver, arguments)
+}
+
+fn execute_builtin_inner(
+    builtin: Builtin,
+    receiver: Option<&Value>,
+    arguments: &[Value],
+) -> Option<Result<Value, VmError>> {
     let result = match builtin {
-        Builtin::Promise => Err(VmError::NotCallable),
         Builtin::PromiseResolve => resolve_receiver(receiver, arguments),
         Builtin::PromiseReject => reject_receiver(receiver, arguments),
         Builtin::PromiseAll => promise_combinator(PromiseAggregateKind::All, receiver, arguments),
@@ -475,14 +485,10 @@ pub fn execute_builtin(
         Builtin::PromiseFinallyFulfilled => settle_finally_value(true, receiver),
         Builtin::PromiseFinallyRejected => settle_finally_value(false, receiver),
         Builtin::PromiseFinallyOnFulfilled => execute_finally_handler(
-            true,
-            receiver,
-            arguments.first().cloned().unwrap_or(Value::Undefined),
+            true, receiver, arguments.first().cloned().unwrap_or(Value::Undefined),
         ),
         Builtin::PromiseFinallyOnRejected => execute_finally_handler(
-            false,
-            receiver,
-            arguments.first().cloned().unwrap_or(Value::Undefined),
+            false, receiver, arguments.first().cloned().unwrap_or(Value::Undefined),
         ),
         Builtin::PromiseAdoptResolve => adopt_resolve(receiver, arguments),
         Builtin::PromiseAdoptReject => adopt_reject(receiver, arguments),

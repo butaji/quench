@@ -21,7 +21,11 @@ fn walk_statements(statements: &[Statement<'_>], errors: &mut Vec<String>) {
     }
 }
 
+
 fn walk_statement(statement: &Statement<'_>, errors: &mut Vec<String>) {
+    walk_statement_inner(statement, errors);
+}
+fn walk_statement_inner(statement: &Statement<'_>, errors: &mut Vec<String>) {
     match statement {
         Statement::BlockStatement(block) => walk_statements(&block.body, errors),
         Statement::SwitchStatement(statement) => {
