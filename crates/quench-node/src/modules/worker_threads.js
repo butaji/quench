@@ -1,8 +1,7 @@
 // Worker adapter: execute worker files in a separate quench-node process.
 // The synchronous launch is intentional: it gives the small embedding a real
 // isolated VM while preserving deterministic event delivery to the parent.
-var cp = require('child_process');
-var proc = require('process');
+var proc = process;
 var workerEnv = proc.env && proc.env.QUENCH_WORKER;
 var workerData = workerEnv ? JSON.parse(proc.env.QUENCH_WORKER_DATA || 'null') : null;
 function emitter(target) {
@@ -46,6 +45,7 @@ var api = {
   Worker: function Worker(filename, options) {
     var self = emitter({ threadId: 1, exited: false, _queueEvents: true });
     options = options || {};
+    var cp = require('child_process');
     var env = {};
     var keys = Object.keys(proc.env || {});
     for (var i = 0; i < keys.length; i++) env[keys[i]] = proc.env[keys[i]];
