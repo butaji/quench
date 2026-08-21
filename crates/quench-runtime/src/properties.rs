@@ -210,9 +210,7 @@ fn finish_set_property(
         }
         return Ok(());
     }
-    if inherited_write_blocked(target, key)
-        && !(matches!(target, crate::value::Value::Builtin(builtin) if key == "Symbol.toStringTag" && crate::builtins::special_property(*builtin, key).is_some()))
-    {
+    if inherited_write_blocked(target, key) {
         return write_failure(strict);
     }
     if matches!(

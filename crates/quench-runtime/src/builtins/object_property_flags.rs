@@ -11,13 +11,8 @@ pub(crate) fn builtin_property_writable(builtin: Builtin, key: &str) -> bool {
     if builtin == Builtin::SymbolPrototype && key == "Symbol.toPrimitive" {
         return false;
     }
-    if is_well_known_symbol_property(builtin, key) && key != "Symbol.toStringTag" {
+    if is_well_known_symbol_property(builtin, key) {
         return false;
-    }
-    if key == "Symbol.toStringTag"
-        && crate::builtins::special_property(builtin, key).is_some()
-    {
-        return true;
     }
     if builtin == Builtin::Math && crate::math::constant(key).is_some() {
         return false;
