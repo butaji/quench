@@ -357,6 +357,7 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         "tls" => Some(namespace_of_owned(vec![])),
         "cluster" => crate::modules::compat_extra::cluster(state).ok(),
         "domain" => crate::modules::compat_extra::domain(state).ok(),
+        "v8" => crate::modules::compat_extra::v8(state).ok(),
         "inspector" => crate::modules::compat_extra::inspector(state).ok(),
         "repl" => crate::modules::compat_extra::repl(state).ok(),
         "wasi" => crate::modules::compat_extra::wasi(state).ok(),
