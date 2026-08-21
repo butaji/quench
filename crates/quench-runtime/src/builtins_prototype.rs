@@ -184,13 +184,23 @@ fn own_or_inherited_to_string_tag(value: &Value) -> Option<String> {
     while let Some(value) = current {
         match &value {
             Builtin(builtin) => {
-                if let Some(Value::String(tag)) =
-                    crate::builtins::special_property(*builtin, "Symbol.toStringTag")
-                {
-                    if !crate::conversion::is_symbol_string(&tag) {
-                        return Some(tag);
+                if !crate::builtins::builtin_prototype_property_is_removed(*builtin, "Symbol.toStringTag") {
+                    if let Some(tag_value) = crate::builtins::read_descriptor_value(*builtin, "Symbol.toStringTag") {
+                        if let Value::String(tag) = tag_value {
+                            if !crate::conversion::is_symbol_string(&tag) {
+                                return Some(tag);
+                            }
+                        }
+                    }
+                    if let Some(Value::String(tag)) =
+                        crate::builtins::special_property(*builtin, "Symbol.toStringTag")
+                    {
+                        if !crate::conversion::is_symbol_string(&tag) {
+                            return Some(tag);
+                        }
                     }
                 }
+
                 // Walk to the prototype for builtins.
                 let proto = crate::builtin_meta::instance_prototype(*builtin)
                     .or_else(|| crate::builtin_meta::prototype(*builtin));

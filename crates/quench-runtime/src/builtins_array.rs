@@ -169,6 +169,10 @@ fn define_property_value(target: Value, key: &str, value: Value) -> Value {
             }
             Value::BoundFunction(bound)
         }
+        Value::Builtin(builtin) => {
+            crate::builtins::write_intrinsic_override(builtin, key, Value::Object(Rc::new(crate::value::ObjectData::new(vec![("value".to_string(), value)]))));
+            target
+        }
         target => set_property(target, key, value),
     }
 }
