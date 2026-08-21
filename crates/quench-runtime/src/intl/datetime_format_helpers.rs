@@ -128,7 +128,10 @@ fn day_period_name(hour: u32) -> String {
     name.to_string()
 }
 
-fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
+fn range_values(
+    arguments: &[Value],
+    slots: &[(String, Value)],
+) -> Result<(String, String), VmError> {
     let Some(start_value) = arguments.first() else {
         return Err(crate::value::error::throw_type_error(
             "date value is undefined",
@@ -146,7 +149,33 @@ fn range_values(arguments: &[Value]) -> Result<(String, String), VmError> {
     }
     let start = range_number(start_value)?;
     let end = range_number(end_value)?;
-    Ok((range_text(start), range_text(end)))
+    let start_str = if let Some(v) = date_format_result(slots, start) {
+        v
+    } else if let Some(v) = hour_day_period_format(slots, start) {
+        v
+    } else if let Some(v) = day_period_format(slots, start) {
+        v
+    } else if let Some(v) = proleptic_year_format(slots, start) {
+        v
+    } else if let Some(v) = fractional_format(slots, start) {
+        v
+    } else {
+        range_text(start)
+    };
+    let end_str = if let Some(v) = date_format_result(slots, end) {
+        v
+    } else if let Some(v) = hour_day_period_format(slots, end) {
+        v
+    } else if let Some(v) = day_period_format(slots, end) {
+        v
+    } else if let Some(v) = proleptic_year_format(slots, end) {
+        v
+    } else if let Some(v) = fractional_format(slots, end) {
+        v
+    } else {
+        range_text(end)
+    };
+    Ok((start_str, end_str))
 }
 
 fn fractional_format(slots: &[(String, Value)], number: f64) -> Option<String> {
