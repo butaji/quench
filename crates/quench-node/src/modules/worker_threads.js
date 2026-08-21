@@ -57,7 +57,6 @@ var api = {
       var marker = '__QUENCH_WORKER_MESSAGE__';
         try { self.emit('message', JSON.parse(lines[j].slice(marker.length))); } catch (_) {}
       }
-    }
     self.exited = true;
     self.emit('exit', result.status === null ? 1 : result.status);
     if (result.status !== 0 && result.stderr) self.emit('error', new Error(String(result.stderr)));
