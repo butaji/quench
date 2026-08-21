@@ -29,7 +29,9 @@ pub(crate) fn reduce(
     next_slot: &mut u16,
 ) -> Result<(Vec<Op>, Option<u16>), Vec<String>> {
     match statement {
-        oxc::ast::ast::Statement::BlockStatement(block) => reduce_block(block, facts, locals, next_slot),
+        oxc::ast::ast::Statement::BlockStatement(block) => {
+            reduce_block(block, facts, locals, next_slot)
+        }
         statement => reduce_statement(statement, facts, locals, next_slot),
     }
 }
@@ -45,7 +47,10 @@ fn reduce_block(
         *next_slot = base;
     }
     let (ops, last, final_slot) = crate::reduce::reduce_statements_no_tail_value(
-        &block.body, facts, locals.clone(), *next_slot,
+        &block.body,
+        facts,
+        locals.clone(),
+        *next_slot,
     )?;
     *next_slot = final_slot;
     Ok((ops, last))
@@ -62,7 +67,12 @@ fn reduce_statement(
     let mut body_slot = *next_slot;
     let mut locals = locals.clone();
     let last = crate::reduce::reduce_statement(
-        statement, &mut ops, facts, &mut next_register, &mut body_slot, &mut locals,
+        statement,
+        &mut ops,
+        facts,
+        &mut next_register,
+        &mut body_slot,
+        &mut locals,
     )?;
     *next_slot = body_slot;
     Ok((ops, last))

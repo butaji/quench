@@ -67,16 +67,28 @@ const fn intl_name_group_a_tail(b: Builtin) -> Option<&'static str> {
         Builtin::IntlNumberFormatFormat => Some("get format"),
         Builtin::IntlNumberFormatFormatToParts => Some("Intl.NumberFormat.prototype.formatToParts"),
         Builtin::IntlNumberFormatFormatRange => Some("Intl.NumberFormat.prototype.formatRange"),
-        Builtin::IntlNumberFormatFormatRangeToParts => Some("Intl.NumberFormat.prototype.formatRangeToParts"),
-        Builtin::IntlNumberFormatResolvedOptions => Some("Intl.NumberFormat.prototype.resolvedOptions"),
+        Builtin::IntlNumberFormatFormatRangeToParts => {
+            Some("Intl.NumberFormat.prototype.formatRangeToParts")
+        }
+        Builtin::IntlNumberFormatResolvedOptions => {
+            Some("Intl.NumberFormat.prototype.resolvedOptions")
+        }
         Builtin::IntlPluralRulesSelect => Some("Intl.PluralRules.prototype.select"),
         Builtin::IntlPluralRulesSelectRange => Some("Intl.PluralRules.prototype.selectRange"),
-        Builtin::IntlPluralRulesResolvedOptions => Some("Intl.PluralRules.prototype.resolvedOptions"),
+        Builtin::IntlPluralRulesResolvedOptions => {
+            Some("Intl.PluralRules.prototype.resolvedOptions")
+        }
         Builtin::IntlDateTimeFormatFormat => Some("Intl.DateTimeFormat.prototype.format"),
-        Builtin::IntlDateTimeFormatFormatToParts => Some("Intl.DateTimeFormat.prototype.formatToParts"),
+        Builtin::IntlDateTimeFormatFormatToParts => {
+            Some("Intl.DateTimeFormat.prototype.formatToParts")
+        }
         Builtin::IntlDateTimeFormatFormatRange => Some("Intl.DateTimeFormat.prototype.formatRange"),
-        Builtin::IntlDateTimeFormatFormatRangeToParts => Some("Intl.DateTimeFormat.prototype.formatRangeToParts"),
-        Builtin::IntlDateTimeFormatResolvedOptions => Some("Intl.DateTimeFormat.prototype.resolvedOptions"),
+        Builtin::IntlDateTimeFormatFormatRangeToParts => {
+            Some("Intl.DateTimeFormat.prototype.formatRangeToParts")
+        }
+        Builtin::IntlDateTimeFormatResolvedOptions => {
+            Some("Intl.DateTimeFormat.prototype.resolvedOptions")
+        }
         _ => intl_name_group_a_tail_rest(b),
     }
 }
@@ -85,8 +97,12 @@ const fn intl_name_group_a_tail_rest(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IntlDateTimeFormatFormatGetter => Some("get format"),
         Builtin::IntlDurationFormatFormat => Some("Intl.DurationFormat.prototype.format"),
-        Builtin::IntlDurationFormatFormatToParts => Some("Intl.DurationFormat.prototype.formatToParts"),
-        Builtin::IntlDurationFormatResolvedOptions => Some("Intl.DurationFormat.prototype.resolvedOptions"),
+        Builtin::IntlDurationFormatFormatToParts => {
+            Some("Intl.DurationFormat.prototype.formatToParts")
+        }
+        Builtin::IntlDurationFormatResolvedOptions => {
+            Some("Intl.DurationFormat.prototype.resolvedOptions")
+        }
         Builtin::IntlCollatorResolvedOptions => Some("Intl.Collator.prototype.resolvedOptions"),
         Builtin::IntlCollatorCompareGetter => Some("get compare"),
         _ => None,

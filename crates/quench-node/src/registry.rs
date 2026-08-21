@@ -134,7 +134,10 @@ fn push_runtime_tail(out: &mut Vec<(String, quench_runtime::value::Value)>) {
 fn push_internal_globals(out: &mut Vec<(String, quench_runtime::value::Value)>) {
     out.push((
         "__quench_uncaught__".to_string(),
-        crate::host::capability(crate::registry::NodeSpec::new("__quench_uncaught__", 0x0117)),
+        crate::host::capability(crate::registry::NodeSpec::new(
+            "__quench_uncaught__",
+            0x0117,
+        )),
     ));
     out.push((
         "structuredClone".to_string(),
@@ -143,16 +146,37 @@ fn push_internal_globals(out: &mut Vec<(String, quench_runtime::value::Value)>) 
 }
 
 fn push_web_globals(out: &mut Vec<(String, quench_runtime::value::Value)>) {
-    out.push(("fetch".to_string(), crate::host::capability(crate::registry::SPEC_FETCH)));
-    out.push(("AbortController".to_string(), crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER)));
-    out.push(("AbortSignal".to_string(), crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL)));
-    out.push(("EventTarget".to_string(), crate::host::capability(crate::registry::NodeSpec::new("events:EventTarget", 0x0116))));
+    out.push((
+        "fetch".to_string(),
+        crate::host::capability(crate::registry::SPEC_FETCH),
+    ));
+    out.push((
+        "AbortController".to_string(),
+        crate::host::capability(crate::registry::SPEC_ABORT_CONTROLLER),
+    ));
+    out.push((
+        "AbortSignal".to_string(),
+        crate::host::capability(crate::registry::SPEC_ABORT_SIGNAL),
+    ));
+    out.push((
+        "EventTarget".to_string(),
+        crate::host::capability(crate::registry::NodeSpec::new("events:EventTarget", 0x0116)),
+    ));
 }
 
 fn push_btoa_atob_global(out: &mut Vec<(String, quench_runtime::value::Value)>) {
-    out.push(("atob".to_string(), crate::host::capability(crate::registry::SPEC_BUFFER_ATOB)));
-    out.push(("btoa".to_string(), crate::host::capability(crate::registry::SPEC_BUFFER_BTOA)));
-    out.push(("global".to_string(), crate::host::namespace_object_from_pairs(vec![])));
+    out.push((
+        "atob".to_string(),
+        crate::host::capability(crate::registry::SPEC_BUFFER_ATOB),
+    ));
+    out.push((
+        "btoa".to_string(),
+        crate::host::capability(crate::registry::SPEC_BUFFER_BTOA),
+    ));
+    out.push((
+        "global".to_string(),
+        crate::host::namespace_object_from_pairs(vec![]),
+    ));
 }
 
 fn push_bindings(

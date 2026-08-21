@@ -1,9 +1,5 @@
 //! Promise implementation with microtask queue.
-use std::{
-    cell::RefCell,
-    collections::VecDeque,
-    rc::Rc,
-};
+use std::{cell::RefCell, collections::VecDeque, rc::Rc};
 
 use crate::{
     execute::VmError,
@@ -433,14 +429,11 @@ pub fn promise_then(receiver: Option<&Value>, arguments: &[Value]) -> Result<Val
         Value::Promise(promise) => Rc::clone(promise),
         _ => return Err(VmError::NotCallable),
     };
-    promise
-        .then_actions
-        .borrow_mut()
-        .push((
-            maybe_handler(arguments, 0),
-            maybe_handler(arguments, 1),
-            result_promise,
-        ));
+    promise.then_actions.borrow_mut().push((
+        maybe_handler(arguments, 0),
+        maybe_handler(arguments, 1),
+        result_promise,
+    ));
     if !matches!(*promise.state.borrow(), PromiseState::Pending) {
         queue_promise(promise);
     }
@@ -485,10 +478,14 @@ fn execute_builtin_inner(
         Builtin::PromiseFinallyFulfilled => settle_finally_value(true, receiver),
         Builtin::PromiseFinallyRejected => settle_finally_value(false, receiver),
         Builtin::PromiseFinallyOnFulfilled => execute_finally_handler(
-            true, receiver, arguments.first().cloned().unwrap_or(Value::Undefined),
+            true,
+            receiver,
+            arguments.first().cloned().unwrap_or(Value::Undefined),
         ),
         Builtin::PromiseFinallyOnRejected => execute_finally_handler(
-            false, receiver, arguments.first().cloned().unwrap_or(Value::Undefined),
+            false,
+            receiver,
+            arguments.first().cloned().unwrap_or(Value::Undefined),
         ),
         Builtin::PromiseAdoptResolve => adopt_resolve(receiver, arguments),
         Builtin::PromiseAdoptReject => adopt_reject(receiver, arguments),

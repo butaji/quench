@@ -3,8 +3,8 @@
 //! self-hosted JavaScript builtin layer.
 pub mod express;
 pub mod express_request;
-pub mod koa;
 pub mod fastify;
+pub mod koa;
 
 pub mod assert;
 pub mod async_hooks;

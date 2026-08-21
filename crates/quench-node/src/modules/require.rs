@@ -30,7 +30,10 @@ where
         return Ok(cached.clone());
     }
     let value = build()?;
-    state.borrow_mut().module_cache.insert(key.into(), value.clone());
+    state
+        .borrow_mut()
+        .module_cache
+        .insert(key.into(), value.clone());
     Ok(value)
 }
 
@@ -54,15 +57,25 @@ fn capability_value(spec: crate::registry::NodeSpec) -> Value {
 }
 
 fn require_assert(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
-    matches!(spec, "assert" | "node:assert" | "assert/strict" | "node:assert/strict")
-        .then(|| cached_module(state, "node:assert", || Ok(crate::modules::assert::build_value())))
+    matches!(
+        spec,
+        "assert" | "node:assert" | "assert/strict" | "node:assert/strict"
+    )
+    .then(|| {
+        cached_module(state, "node:assert", || {
+            Ok(crate::modules::assert::build_value())
+        })
+    })
 }
 
 fn require_path_variant(
     state: &Rc<RefCell<HostState>>,
     spec: &str,
 ) -> Option<Result<Value, VmError>> {
-    if !matches!(spec, "path/posix" | "path/win32" | "node:path/posix" | "node:path/win32") {
+    if !matches!(
+        spec,
+        "path/posix" | "path/win32" | "node:path/posix" | "node:path/win32"
+    ) {
         return None;
     }
     Some((|| {
@@ -72,7 +85,10 @@ fn require_path_variant(
         let path_mod = require(state, &[Value::String("path".into())])?;
         let key = spec.rsplit('/').next().unwrap_or("posix");
         let ns = quench_runtime::execute::get_property(&path_mod, key);
-        state.borrow_mut().module_cache.insert(spec.to_string(), ns.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert(spec.to_string(), ns.clone());
         Ok(ns)
     })())
 }
@@ -80,20 +96,53 @@ fn require_path_variant(
 fn require_cached(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
     let (key, build): (&str, Box<dyn FnOnce() -> Result<Value, VmError> + '_>) = match spec {
         "stream" | "node:stream" => ("stream", Box::new(|| crate::modules::stream::build(state))),
-        "async_hooks" | "node:async_hooks" => ("async_hooks", Box::new(|| crate::modules::async_hooks::build(state))),
+        "async_hooks" | "node:async_hooks" => (
+            "async_hooks",
+            Box::new(|| crate::modules::async_hooks::build(state)),
+        ),
         "test" | "node:test" => ("test", Box::new(|| crate::modules::node_test::build(state))),
-        "punycode" | "node:punycode" => ("punycode", Box::new(|| crate::modules::punycode::build(state))),
-        "perf_hooks" | "node:perf_hooks" => ("perf_hooks", Box::new(|| crate::modules::perf_hooks::build(state))),
-        "trace_events" | "node:trace_events" => ("trace_events", Box::new(|| crate::modules::trace_events::build(state))),
-        "http-errors" | "node:http-errors" => ("http-errors", Box::new(|| crate::modules::http_errors::build(state))),
-        "http2" | "node:http2" => ("node:http2", Box::new(|| Ok(crate::modules::http2::build()))),
+        "punycode" | "node:punycode" => (
+            "punycode",
+            Box::new(|| crate::modules::punycode::build(state)),
+        ),
+        "perf_hooks" | "node:perf_hooks" => (
+            "perf_hooks",
+            Box::new(|| crate::modules::perf_hooks::build(state)),
+        ),
+        "trace_events" | "node:trace_events" => (
+            "trace_events",
+            Box::new(|| crate::modules::trace_events::build(state)),
+        ),
+        "http-errors" | "node:http-errors" => (
+            "http-errors",
+            Box::new(|| crate::modules::http_errors::build(state)),
+        ),
+        "http2" | "node:http2" => (
+            "node:http2",
+            Box::new(|| Ok(crate::modules::http2::build())),
+        ),
         "quic" | "node:quic" => ("node:quic", Box::new(|| Ok(crate::modules::quic::build()))),
-        "statuses" => ("statuses", Box::new(|| crate::modules::statuses::build(state))),
-        "mime-db" => ("mime-db", Box::new(|| crate::modules::mime_db::build(state))),
-        "express" | "node:express" => ("express", Box::new(|| crate::modules::express::build(state))),
-        "express/lib/request" | "node:express/request" => ("express_request", Box::new(|| crate::modules::express_request::build(state))),
+        "statuses" => (
+            "statuses",
+            Box::new(|| crate::modules::statuses::build(state)),
+        ),
+        "mime-db" => (
+            "mime-db",
+            Box::new(|| crate::modules::mime_db::build(state)),
+        ),
+        "express" | "node:express" => (
+            "express",
+            Box::new(|| crate::modules::express::build(state)),
+        ),
+        "express/lib/request" | "node:express/request" => (
+            "express_request",
+            Box::new(|| crate::modules::express_request::build(state)),
+        ),
         "koa" | "node:koa" => ("koa", Box::new(|| crate::modules::koa::build(state))),
-        "fastify" | "node:fastify" => ("fastify", Box::new(|| crate::modules::fastify::build(state))),
+        "fastify" | "node:fastify" => (
+            "fastify",
+            Box::new(|| crate::modules::fastify::build(state)),
+        ),
         _ => return None,
     };
     Some(cached_module(state, key, build))
@@ -102,19 +151,26 @@ fn require_cached(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<V
 fn require_special(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
     match spec {
         "readline/promises" | "node:readline/promises" => Some(Ok(namespace_of(vec![(
-            "createInterface", capability_value(crate::registry::SPEC_READLINE),
+            "createInterface",
+            capability_value(crate::registry::SPEC_READLINE),
         )]))),
-        "sqlite" | "node:sqlite" => Some(cached_module(state, "node:sqlite", || Ok(namespace_of_owned(vec![(
-            "DatabaseSync".to_string(), capability_value(crate::registry::SPEC_SQLITE_DATABASE_SYNC),
-        )])))),
+        "sqlite" | "node:sqlite" => Some(cached_module(state, "node:sqlite", || {
+            Ok(namespace_of_owned(vec![(
+                "DatabaseSync".to_string(),
+                capability_value(crate::registry::SPEC_SQLITE_DATABASE_SYNC),
+            )]))
+        })),
         _ => None,
     }
 }
 
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
-    if let Some(result) = require_assert(state, &spec).or_else(|| require_path_variant(state, &spec))
-        .or_else(|| require_cached(state, &spec)).or_else(|| require_special(state, &spec)) {
+    if let Some(result) = require_assert(state, &spec)
+        .or_else(|| require_path_variant(state, &spec))
+        .or_else(|| require_cached(state, &spec))
+        .or_else(|| require_special(state, &spec))
+    {
         return result;
     }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
@@ -265,9 +321,7 @@ fn module_require(_state: &Rc<RefCell<HostState>>, dirname: &str) -> Result<Valu
 }
 
 /// Build a namespace object from a list of static capability specs.
-fn capability_namespace_static(
-    pairs: Vec<(&str, crate::registry::NodeSpec)>,
-) -> Option<Value> {
+fn capability_namespace_static(pairs: Vec<(&str, crate::registry::NodeSpec)>) -> Option<Value> {
     Some(crate::host::namespace_object_from_pairs(
         pairs
             .into_iter()
@@ -333,7 +387,10 @@ fn resolve_dispatch_network(state: &Rc<RefCell<HostState>>, name: &str) -> Optio
             crate::registry::NodeSpec::new("dgram:createSocket", 0x2300),
         )]),
         "https" => capability_namespace_static(vec![
-            ("request", crate::registry::NodeSpec::new("https:request", 0x1600)),
+            (
+                "request",
+                crate::registry::NodeSpec::new("https:request", 0x1600),
+            ),
             ("get", crate::registry::NodeSpec::new("https:get", 0x1601)),
         ]),
         "zlib" => Some(crate::modules::zlib::build()),
@@ -343,10 +400,7 @@ fn resolve_dispatch_network(state: &Rc<RefCell<HostState>>, name: &str) -> Optio
     }
 }
 
-fn resolve_dispatch_compat_modules(
-    state: &Rc<RefCell<HostState>>,
-    name: &str,
-) -> Option<Value> {
+fn resolve_dispatch_compat_modules(state: &Rc<RefCell<HostState>>, name: &str) -> Option<Value> {
     match name {
         "cluster" => crate::modules::compat_extra::cluster(state).ok(),
         "diagnostics_channel" => crate::modules::compat_extra::diagnostics_channel(state).ok(),

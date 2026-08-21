@@ -356,9 +356,7 @@ fn install_req_props(mut object: Value, props: Vec<(String, Value)>) -> Result<V
 
 /// Split `\r\n` header fields into `(key, value)` pairs, tracking
 /// Content-Length and Connection from the trailing request head lines.
-fn parse_headers(
-    parts: &[&str],
-) -> (Vec<(String, Value)>, usize, String) {
+fn parse_headers(parts: &[&str]) -> (Vec<(String, Value)>, usize, String) {
     let mut headers: Vec<(String, Value)> = Vec::new();
     let mut content_length = 0usize;
     let mut connection = String::new();
