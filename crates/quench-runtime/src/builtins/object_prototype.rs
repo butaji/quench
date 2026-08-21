@@ -43,8 +43,12 @@ fn prototype_for_value(value: &Value) -> Value {
             | Builtin::DisposableStackPrototype
             | Builtin::AsyncDisposableStackPrototype,
         ) => Value::Builtin(Builtin::ObjectPrototype),
-        Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => Value::Builtin(Builtin::TypedArray),
-        Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => Value::Builtin(Builtin::TypedArray),
+        Value::Builtin(builtin) if is_typed_array_constructor(*builtin) => {
+            Value::Builtin(Builtin::TypedArray)
+        }
+        Value::Builtin(builtin) if is_typed_array_prototype(*builtin) => {
+            Value::Builtin(Builtin::TypedArray)
+        }
         Value::Builtin(
             Builtin::RangeErrorPrototype
             | Builtin::TypeErrorPrototype
@@ -441,7 +445,13 @@ pub(crate) fn is_intrinsic_prototype(builtin: Builtin) -> bool {
             | Builtin::WeakMapPrototype
             | Builtin::WeakSetPrototype
             | Builtin::SharedArrayBufferPrototype
-            | Builtin::WeakRefPrototype
+    ) || is_intrinsic_prototype_tail(builtin)
+}
+
+fn is_intrinsic_prototype_tail(builtin: Builtin) -> bool {
+    matches!(
+        builtin,
+        Builtin::WeakRefPrototype
             | Builtin::FinalizationRegistryPrototype
             | Builtin::BigIntPrototype
             | Builtin::ErrorPrototype

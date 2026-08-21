@@ -46,7 +46,12 @@ pub fn spawn_sync(
     };
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    Ok(spawn_result_object(pid, output.status.code(), stdout, stderr))
+    Ok(spawn_result_object(
+        pid,
+        output.status.code(),
+        stdout,
+        stderr,
+    ))
 }
 
 fn apply_options(cmd: &mut std::process::Command, options: Option<&Value>) -> Option<String> {
@@ -62,22 +67,14 @@ fn apply_options(cmd: &mut std::process::Command, options: Option<&Value>) -> Op
     opt_str(options, "input")
 }
 
-fn pipe_input(
-    child: &mut std::process::Child,
-    data: Option<&str>,
-) {
+fn pipe_input(child: &mut std::process::Child, data: Option<&str>) {
     let Some(data) = data else { return };
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(data.as_bytes());
     }
 }
 
-fn spawn_result_object(
-    pid: u32,
-    status: Option<i32>,
-    stdout: String,
-    stderr: String,
-) -> Value {
+fn spawn_result_object(pid: u32, status: Option<i32>, stdout: String, stderr: String) -> Value {
     let status_value = status.map_or(Value::Null, |c| Value::Number(c as f64));
     host_api::object(vec![
         ("pid".to_string(), Value::Number(pid as f64)),
@@ -202,16 +199,22 @@ pub fn exec_sync(
     let mut cmd = std::process::Command::new("sh");
     cmd.args(["-c", &command]);
     let input = apply_options(&mut cmd, args.get(1));
-    let mut child = cmd.stdout(std::process::Stdio::piped())
+    let mut child = cmd
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .stdin(std::process::Stdio::piped())
-        .spawn().map_err(|_| execute::type_error("failed to spawn command"))?;
+        .spawn()
+        .map_err(|_| execute::type_error("failed to spawn command"))?;
     pipe_input(&mut child, input.as_deref());
-    let output = child.wait_with_output().map_err(|_| execute::type_error("failed waiting for command"))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|_| execute::type_error("failed waiting for command"))?;
     if !output.status.success() {
         return Err(execute::type_error("command failed"));
     }
-    Ok(Value::String(String::from_utf8_lossy(&output.stdout).into_owned()))
+    Ok(Value::String(
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+    ))
 }
 
 /// Execute a command asynchronously, invoking the supplied callback eagerly.
@@ -220,20 +223,41 @@ pub fn exec(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let command = args.first().map(value_to_string).unwrap_or_default();
-    let callback = args.iter().rev().find(|v| quench_runtime::is_callable(v)).cloned();
+    let callback = args
+        .iter()
+        .rev()
+        .find(|v| quench_runtime::is_callable(v))
+        .cloned();
     let mut cmd = std::process::Command::new("sh");
-    cmd.args(["-c", &command]).stdout(std::process::Stdio::piped())
+    cmd.args(["-c", &command])
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     let result = match cmd.output() {
         Ok(output) => {
             let out = String::from_utf8_lossy(&output.stdout).into_owned();
             let err = String::from_utf8_lossy(&output.stderr).into_owned();
-            (if output.status.success() { Value::Null } else { coded_error("1", "command failed") }, out, err)
+            (
+                if output.status.success() {
+                    Value::Null
+                } else {
+                    coded_error("1", "command failed")
+                },
+                out,
+                err,
+            )
         }
-        Err(error) => (coded_error(raw_code(&error), &error.to_string()), String::new(), String::new()),
+        Err(error) => (
+            coded_error(raw_code(&error), &error.to_string()),
+            String::new(),
+            String::new(),
+        ),
     };
     if let Some(cb) = callback {
-        execute::call(&cb, &Value::Undefined, &[result.0, Value::String(result.1), Value::String(result.2)])?;
+        execute::call(
+            &cb,
+            &Value::Undefined,
+            &[result.0, Value::String(result.1), Value::String(result.2)],
+        )?;
     }
     Ok(Value::Undefined)
 }
@@ -245,14 +269,33 @@ pub fn exec_file(
 ) -> Result<Value, VmError> {
     let file = args.first().map(value_to_string).unwrap_or_default();
     let file_args = args.get(1).and_then(string_args).unwrap_or_default();
-    let callback = args.iter().rev().find(|v| quench_runtime::is_callable(v)).cloned();
+    let callback = args
+        .iter()
+        .rev()
+        .find(|v| quench_runtime::is_callable(v))
+        .cloned();
     let result = match std::process::Command::new(&file).args(file_args).output() {
-        Ok(output) => (if output.status.success() { Value::Null } else { coded_error("1", "command failed") },
-            String::from_utf8_lossy(&output.stdout).into_owned(), String::from_utf8_lossy(&output.stderr).into_owned()),
-        Err(error) => (coded_error(raw_code(&error), &error.to_string()), String::new(), String::new()),
+        Ok(output) => (
+            if output.status.success() {
+                Value::Null
+            } else {
+                coded_error("1", "command failed")
+            },
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ),
+        Err(error) => (
+            coded_error(raw_code(&error), &error.to_string()),
+            String::new(),
+            String::new(),
+        ),
     };
     if let Some(cb) = callback {
-        execute::call(&cb, &Value::Undefined, &[result.0, Value::String(result.1), Value::String(result.2)])?;
+        execute::call(
+            &cb,
+            &Value::Undefined,
+            &[result.0, Value::String(result.1), Value::String(result.2)],
+        )?;
     }
     Ok(Value::Undefined)
 }
@@ -263,10 +306,14 @@ pub fn exec_file_sync(
 ) -> Result<Value, VmError> {
     let file = args.first().map(value_to_string).unwrap_or_default();
     let file_args = args.get(1).and_then(string_args).unwrap_or_default();
-    let output = std::process::Command::new(file).args(file_args).output()
+    let output = std::process::Command::new(file)
+        .args(file_args)
+        .output()
         .map_err(|_| execute::type_error("failed to execute file"))?;
     if !output.status.success() {
         return Err(execute::type_error("file command failed"));
     }
-    Ok(Value::String(String::from_utf8_lossy(&output.stdout).into_owned()))
+    Ok(Value::String(
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+    ))
 }

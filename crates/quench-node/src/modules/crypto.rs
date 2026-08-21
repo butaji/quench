@@ -8,38 +8,104 @@ use std::rc::Rc;
 fn capability_props() -> Vec<(String, Value)> {
     use crate::registry::*;
     vec![
-        ("randomBytes".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_BYTES)),
-        ("randomFillSync".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC)),
-        ("getRandomValues".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC)),
-        ("createHash".to_string(), crate::host::capability(SPEC_CRYPTO_CREATE_HASH)),
-        ("createHmac".to_string(), crate::host::capability(SPEC_CRYPTO_CREATE_HMAC)),
-        ("timingSafeEqual".to_string(), crate::host::capability(SPEC_CRYPTO_TIMING_SAFE_EQUAL)),
-        ("randomUUID".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_UUID)),
-        ("randomInt".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_INT)),
-        ("getHashes".to_string(), crate::host::capability(SPEC_CRYPTO_GET_HASHES)),
-        ("getCiphers".to_string(), crate::host::capability(SPEC_CRYPTO_GET_CIPHERS)),
-        ("createCipheriv".to_string(), crate::host::capability(SPEC_CRYPTO_UNSUPPORTED)),
-        ("createDecipheriv".to_string(), crate::host::capability(SPEC_CRYPTO_UNSUPPORTED)),
-        ("generateKeyPairSync".to_string(), crate::host::capability(SPEC_CRYPTO_UNSUPPORTED)),
+        (
+            "randomBytes".to_string(),
+            crate::host::capability(SPEC_CRYPTO_RANDOM_BYTES),
+        ),
+        (
+            "randomFillSync".to_string(),
+            crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC),
+        ),
+        (
+            "getRandomValues".to_string(),
+            crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC),
+        ),
+        (
+            "createHash".to_string(),
+            crate::host::capability(SPEC_CRYPTO_CREATE_HASH),
+        ),
+        (
+            "createHmac".to_string(),
+            crate::host::capability(SPEC_CRYPTO_CREATE_HMAC),
+        ),
+        (
+            "timingSafeEqual".to_string(),
+            crate::host::capability(SPEC_CRYPTO_TIMING_SAFE_EQUAL),
+        ),
+        (
+            "randomUUID".to_string(),
+            crate::host::capability(SPEC_CRYPTO_RANDOM_UUID),
+        ),
+        (
+            "randomInt".to_string(),
+            crate::host::capability(SPEC_CRYPTO_RANDOM_INT),
+        ),
+        (
+            "getHashes".to_string(),
+            crate::host::capability(SPEC_CRYPTO_GET_HASHES),
+        ),
+        (
+            "getCiphers".to_string(),
+            crate::host::capability(SPEC_CRYPTO_GET_CIPHERS),
+        ),
+        (
+            "createCipheriv".to_string(),
+            crate::host::capability(SPEC_CRYPTO_UNSUPPORTED),
+        ),
+        (
+            "createDecipheriv".to_string(),
+            crate::host::capability(SPEC_CRYPTO_UNSUPPORTED),
+        ),
+        (
+            "generateKeyPairSync".to_string(),
+            crate::host::capability(SPEC_CRYPTO_UNSUPPORTED),
+        ),
     ]
 }
 pub fn build() -> Value {
     let mut props = capability_props();
     let subtle = host_api::object(vec![
-        ("digest".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DIGEST)),
-        ("encrypt".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_ENCRYPT)),
-        ("decrypt".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DECRYPT)),
-        ("sign".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_SIGN)),
-        ("verify".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_VERIFY)),
-        ("generateKey".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_GENERATE_KEY)),
-        ("importKey".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_IMPORT_KEY)),
-        ("exportKey".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_EXPORT_KEY)),
+        (
+            "digest".to_string(),
+            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DIGEST),
+        ),
+        (
+            "encrypt".to_string(),
+            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_ENCRYPT),
+        ),
+        (
+            "decrypt".to_string(),
+            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DECRYPT),
+        ),
+        (
+            "sign".to_string(),
+            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_SIGN),
+        ),
+        (
+            "verify".to_string(),
+            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_VERIFY),
+        ),
+        (
+            "generateKey".to_string(),
+            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_GENERATE_KEY),
+        ),
+        (
+            "importKey".to_string(),
+            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_IMPORT_KEY),
+        ),
+        (
+            "exportKey".to_string(),
+            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_EXPORT_KEY),
+        ),
     ]);
     props.push(("subtle".to_string(), subtle));
-    props.push(("constants".to_string(), host_api::object(vec![
-        ("OPENSSL_VERSION_NUMBER".into(), Value::Number(0.0)),
-        ("defaultCoreCipherList".into(), Value::String("".into())),
-    ])));
+    props.push((
+        "constants".to_string(),
+        host_api::object(vec![
+            ("OPENSSL_VERSION_NUMBER".into(), Value::Number(0.0)),
+            ("defaultCoreCipherList".into(), Value::String("".into())),
+        ]),
+    ));
     host_api::object(props)
 }
 
@@ -230,8 +296,18 @@ pub fn create_hash(
     };
     if !matches!(
         alg.as_str(),
-        "md5" | "sha1" | "sha-1" | "sha224" | "sha-224" | "sha256" | "sha-256"
-            | "sha384" | "sha-384" | "sha512" | "sha-512" | "sha3-256"
+        "md5"
+            | "sha1"
+            | "sha-1"
+            | "sha224"
+            | "sha-224"
+            | "sha256"
+            | "sha-256"
+            | "sha384"
+            | "sha-384"
+            | "sha512"
+            | "sha-512"
+            | "sha3-256"
     ) {
         return Err(execute::type_error("Digest method not supported"));
     }
@@ -323,9 +399,16 @@ pub fn hash_digest(
     } else {
         "sha256".into()
     };
-    let bytes = if matches!(execute::get_property(object, CRYPTO_KEY), Value::Uint8Array(_)) {
+    let bytes = if matches!(
+        execute::get_property(object, CRYPTO_KEY),
+        Value::Uint8Array(_)
+    ) {
         let key = argbytes(&execute::get_property(object, CRYPTO_KEY))?;
-        if name.contains("1") { hmac_sha1(&key, &data).to_vec() } else { hmac_sha256(&key, &data).to_vec() }
+        if name.contains("1") {
+            hmac_sha1(&key, &data).to_vec()
+        } else {
+            hmac_sha256(&key, &data).to_vec()
+        }
     } else {
         match name.as_str() {
             "md5" => md5_digest(&data).to_vec(),
@@ -348,9 +431,18 @@ fn fulfilled(value: Value) -> Value {
     Value::Promise(Rc::new(PromiseData::new(PromiseState::Fulfilled(value))))
 }
 
-pub fn subtle_digest(_: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, quench_runtime::execute::VmError> {
-    let algorithm = match args.first() { Some(Value::String(s)) => s.to_ascii_lowercase(), _ => return Err(execute::type_error("algorithm required")) };
-    let data = argbytes(args.get(1).ok_or_else(|| execute::type_error("data required"))?)?;
+pub fn subtle_digest(
+    _: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let algorithm = match args.first() {
+        Some(Value::String(s)) => s.to_ascii_lowercase(),
+        _ => return Err(execute::type_error("algorithm required")),
+    };
+    let data = argbytes(
+        args.get(1)
+            .ok_or_else(|| execute::type_error("data required"))?,
+    )?;
     let out = match algorithm.as_str() {
         "sha-1" | "sha1" => sha1_digest(&data).to_vec(),
         "sha-256" | "sha256" => sha256_digest(&data).to_vec(),
@@ -361,25 +453,43 @@ pub fn subtle_digest(_: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value
     Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&out)))
 }
 
-pub fn subtle_import_key(_: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, quench_runtime::execute::VmError> {
-    let data = argbytes(args.get(1).ok_or_else(|| execute::type_error("key data required"))?)?;
+pub fn subtle_import_key(
+    _: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let data = argbytes(
+        args.get(1)
+            .ok_or_else(|| execute::type_error("key data required"))?,
+    )?;
     let algorithm = args.get(2).cloned().unwrap_or(Value::Undefined);
     let name = execute::get_property(&algorithm, "name");
     Ok(fulfilled(host_api::object(vec![
         ("type".to_string(), Value::String("secret".into())),
         ("extractable".to_string(), Value::Boolean(true)),
-        ("algorithm".to_string(), host_api::object(vec![("name".to_string(), name)])),
-        ("usages".to_string(), host_api::array(vec![Value::String("digest".into())])),
-        ("\0crypto:keydata".to_string(), crate::modules::buffer_proto::make_buffer(&data)),
+        (
+            "algorithm".to_string(),
+            host_api::object(vec![("name".to_string(), name)]),
+        ),
+        (
+            "usages".to_string(),
+            host_api::array(vec![Value::String("digest".into())]),
+        ),
+        (
+            "\0crypto:keydata".to_string(),
+            crate::modules::buffer_proto::make_buffer(&data),
+        ),
     ])))
 }
 
-pub fn subtle_unsupported(_: &Rc<RefCell<HostState>>, _: &[Value]) -> Result<Value, quench_runtime::execute::VmError> {
+pub fn subtle_unsupported(
+    _: &Rc<RefCell<HostState>>,
+    _: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
     Ok(fulfilled(Value::Undefined))
 }
 
 mod crypto_hash;
 pub use crypto_hash::{
-    hmac_sha1, hmac_sha256, md5_digest, sha1_digest, sha224_digest, sha256_digest,
-    sha384_digest, sha512_digest,
+    hmac_sha1, hmac_sha256, md5_digest, sha1_digest, sha224_digest, sha256_digest, sha384_digest,
+    sha512_digest,
 };

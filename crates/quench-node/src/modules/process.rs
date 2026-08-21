@@ -85,21 +85,42 @@ fn info_props_argv(argv: &[String]) -> Vec<(&'static str, Value)> {
 fn info_props_static(exec_path: &str) -> Vec<(&'static str, Value)> {
     vec![
         ("env", env_object()),
-        ("config", host_api::object(vec![("variables".to_string(), host_api::object(vec![("v8_enable_i18n_support".to_string(), Value::Number(1.0))]))])),
+        (
+            "config",
+            host_api::object(vec![(
+                "variables".to_string(),
+                host_api::object(vec![(
+                    "v8_enable_i18n_support".to_string(),
+                    Value::Number(1.0),
+                )]),
+            )]),
+        ),
         ("execPath", Value::String(exec_path.to_string())),
         ("version", Value::String("v22.0.0".into())),
-        ("versions", crate::host::namespace_object_from_pairs(versions_props())),
-        ("platform", Value::String(std_env("QUENCH_PLATFORM", current_platform()))),
+        (
+            "versions",
+            crate::host::namespace_object_from_pairs(versions_props()),
+        ),
+        (
+            "platform",
+            Value::String(std_env("QUENCH_PLATFORM", current_platform())),
+        ),
         ("arch", Value::String(current_arch().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
         ("ppid", Value::Number(parent_pid() as f64)),
         ("title", Value::String("quench".into())),
         ("sourceMapsEnabled", Value::Boolean(false)),
-        ("report", crate::host::namespace_object_from_pairs(vec![(
-            "getReport".to_string(),
-            crate::host::capability(crate::registry::SPEC_PROCESS_REPORT),
-        )])),
-        ("activeResourcesInfo", crate::host::capability(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES)),
+        (
+            "report",
+            crate::host::namespace_object_from_pairs(vec![(
+                "getReport".to_string(),
+                crate::host::capability(crate::registry::SPEC_PROCESS_REPORT),
+            )]),
+        ),
+        (
+            "activeResourcesInfo",
+            crate::host::capability(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES),
+        ),
         ("execArgv", host_api::array(vec![])),
         ("features", host_api::object(vec![])),
         ("stdout", std_stream(false)),
@@ -108,8 +129,14 @@ fn info_props_static(exec_path: &str) -> Vec<(&'static str, Value)> {
 }
 
 fn parent_pid() -> u32 {
-    #[cfg(unix)] { unsafe { libc::getppid() as u32 } }
-    #[cfg(not(unix))] { 0 }
+    #[cfg(unix)]
+    {
+        unsafe { libc::getppid() as u32 }
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
 }
 
 /// `process.binding()` is an internal Node escape hatch. Quench has no
@@ -117,9 +144,10 @@ fn parent_pid() -> u32 {
 /// rather than returning a fake namespace that later crashes mysteriously.
 pub fn binding(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let name = args.first().map(value_to_string).unwrap_or_default();
-    Err(VmError::EvalError(format!("process.binding('{name}') is not supported")))
+    Err(VmError::EvalError(format!(
+        "process.binding('{name}') is not supported"
+    )))
 }
-
 
 /// `process.stdout` / `process.stderr` — non-TTY write streams.
 fn std_stream(is_error: bool) -> Value {
@@ -307,7 +335,6 @@ pub fn stream_write(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Va
         sink(&chunk);
     }
     Ok(Value::Boolean(true))
-
 }
 pub fn active_resources_info(
     _state: &Rc<RefCell<HostState>>,
@@ -317,10 +344,7 @@ pub fn active_resources_info(
 }
 
 /// `process.report.getReport()` — return a stable, useful report shape.
-pub fn report(
-    _state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn report(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     Ok(host_api::object(vec![
         ("header".to_string(), host_api::object(vec![])),
         ("javascriptStack".to_string(), host_api::object(vec![])),
@@ -395,10 +419,13 @@ pub(crate) fn emit_warning(
 /// Deliver queued warnings to the currently-registered `warning`
 /// handlers. `once` handlers are dropped after a single delivery.
 /// Called by the pump before other work each iteration.
-pub(crate) fn deliver_pending_warnings(
-    state: &Rc<RefCell<HostState>>,
-) -> Result<(), VmError> {
-    let warnings: Vec<Value> = state.borrow_mut().process.pending_warnings.drain(..).collect();
+pub(crate) fn deliver_pending_warnings(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
+    let warnings: Vec<Value> = state
+        .borrow_mut()
+        .process
+        .pending_warnings
+        .drain(..)
+        .collect();
     for warning in warnings {
         for handler in crate::modules::timers::take_once_handlers(
             state,
