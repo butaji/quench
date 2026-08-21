@@ -9,10 +9,7 @@
 
 use crate::value::Value as RuntimeValue;
 
-pub(crate) fn date_format_result(
-    slots: &[(String, RuntimeValue)],
-    number: f64,
-) -> Option<String> {
+pub(crate) fn date_format_result(slots: &[(String, RuntimeValue)], number: f64) -> Option<String> {
     let has_year = lookup_slot_string(slots, "year").is_some();
     let has_month = lookup_slot_string(slots, "month").is_some();
     let has_day = lookup_slot_string(slots, "day").is_some();
@@ -68,7 +65,9 @@ fn compose_date_string(
     let month_str = month_style.as_deref().map(|s| format_month_value(s, month));
     let day_str = day_style.as_deref().map(|s| format_day_value(s, day));
     let year_str = year_style.as_deref().map(|s| format_year_value(s, year));
-    let weekday_str = weekday_style.as_deref().map(|s| format_weekday_value(s, ms, is_utc));
+    let weekday_str = weekday_style
+        .as_deref()
+        .map(|s| format_weekday_value(s, ms, is_utc));
     let month_is_name = month_str
         .as_deref()
         .is_some_and(|m| !m.chars().all(|c| c.is_ascii_digit()));
@@ -76,26 +75,14 @@ fn compose_date_string(
     if let Some(wd) = weekday_str {
         parts.push(wd);
     }
-    if month_is_name {
-        if let Some(m) = month_str {
-            parts.push(m);
-        }
-        if let Some(d) = day_str {
-            parts.push(d);
-        }
-        if let Some(y) = year_str {
-            parts.push(y);
-        }
-    } else {
-        if let Some(m) = month_str {
-            parts.push(m);
-        }
-        if let Some(d) = day_str {
-            parts.push(d);
-        }
-        if let Some(y) = year_str {
-            parts.push(y);
-        }
+    if let Some(m) = month_str {
+        parts.push(m);
+    }
+    if let Some(d) = day_str {
+        parts.push(d);
+    }
+    if let Some(y) = year_str {
+        parts.push(y);
     }
     if month_is_name {
         let mut out = String::new();
@@ -142,9 +129,26 @@ fn format_month_value(style: &str, month: u32) -> String {
     match style {
         "2-digit" => format!("{:02}", month),
         "numeric" => month.to_string(),
-        "short" => ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][idx].to_string(),
-        "long" => ["January","February","March","April","May","June","July","August","September","October","November","December"][idx].to_string(),
-        "narrow" => ["J","F","M","A","M","J","J","A","S","O","N","D"][idx].to_string(),
+        "short" => [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ][idx]
+            .to_string(),
+        "long" => [
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        ][idx]
+            .to_string(),
+        "narrow" => ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"][idx].to_string(),
         _ => month.to_string(),
     }
 }
@@ -160,9 +164,18 @@ fn format_day_value(style: &str, day: u32) -> String {
 fn format_weekday_value(style: &str, ms: f64, _is_utc: bool) -> String {
     let wd = crate::date::chrono_utils::weekday(ms).unwrap_or(0);
     match style {
-        "short" => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][wd].to_string(),
-        "long" => ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][wd].to_string(),
-        "narrow" => ["S","M","T","W","T","F","S"][wd].to_string(),
+        "short" => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][wd].to_string(),
+        "long" => [
+            "Sunday",
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+        ][wd]
+            .to_string(),
+        "narrow" => ["S", "M", "T", "W", "T", "F", "S"][wd].to_string(),
         _ => String::new(),
     }
 }
