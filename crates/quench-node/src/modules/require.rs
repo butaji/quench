@@ -214,6 +214,22 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             .insert("express_request".to_string(), value.clone());
         return Ok(value);
     }
+    if matches!(spec.as_str(), "koa" | "node:koa") {
+        if let Some(cached) = state.borrow().module_cache.get("koa") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::koa::build(state)?;
+        state.borrow_mut().module_cache.insert("koa".into(), value.clone());
+        return Ok(value);
+    }
+    if matches!(spec.as_str(), "fastify" | "node:fastify") {
+        if let Some(cached) = state.borrow().module_cache.get("fastify") {
+            return Ok(cached.clone());
+        }
+        let value = crate::modules::fastify::build(state)?;
+        state.borrow_mut().module_cache.insert("fastify".into(), value.clone());
+        return Ok(value);
+    }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
         return Ok(cached.clone());
     }
