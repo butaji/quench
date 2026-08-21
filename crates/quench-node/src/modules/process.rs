@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use quench_runtime::execute::VmError;
+use quench_runtime::execute;
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
@@ -70,6 +71,8 @@ pub fn build(argv: &[String], exec_path: &str) -> Value {
     props.extend(method_props_helper::method_props());
     props.push(("uptime", crate::host::capability(crate::registry::SPEC_PROCESS_UPTIME)));
     props.push(("memoryUsage", crate::host::capability(crate::registry::SPEC_PROCESS_MEMORYUSAGE)));
+    props.push(("resourceUsage", crate::host::capability(crate::registry::SPEC_PROCESS_RESOURCE_USAGE)));
+    props.push(("cpuUsage", crate::host::capability(crate::registry::SPEC_PROCESS_CPU_USAGE)));
     let obj = crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()));
     obj
 }
@@ -334,6 +337,87 @@ pub fn memory_usage(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<
         ("heapUsed".to_string(), Value::Number(0.0)),
         ("external".to_string(), Value::Number(0.0)),
         ("arrayBuffers".to_string(), Value::Number(0.0)),
+    ]))
+}
+
+/// `process.resourceUsage()` — stable POSIX-shaped counters for the host.
+pub fn resource_usage(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    Ok(host_api::object(vec![
+        ("userCPUTime".into(), Value::Number(0.0)),
+        ("systemCPUTime".into(), Value::Number(0.0)),
+        ("maxRSS".into(), Value::Number(0.0)),
+        ("sharedMemorySize".into(), Value::Number(0.0)),
+        ("unsharedDataSize".into(), Value::Number(0.0)),
+        ("unsharedStackSize".into(), Value::Number(0.0)),
+        ("minorPageFault".into(), Value::Number(0.0)),
+        ("majorPageFault".into(), Value::Number(0.0)),
+        ("swappedOut".into(), Value::Number(0.0)),
+        ("fsRead".into(), Value::Number(0.0)),
+        ("fsWrite".into(), Value::Number(0.0)),
+        ("ipcSent".into(), Value::Number(0.0)),
+        ("ipcReceived".into(), Value::Number(0.0)),
+        ("signalsCount".into(), Value::Number(0.0)),
+        ("voluntaryContextSwitches".into(), Value::Number(0.0)),
+        ("involuntaryContextSwitches".into(), Value::Number(0.0)),
+    ]))
+}
+
+/// `process.cpuUsage()` — returns the Node result shape in microseconds.
+pub fn cpu_usage(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let Some(previous) = args.first() {
+        if !matches!(previous, Value::Object(_)) {
+            return Err(cpu_type_error("prevValue", previous));
+        }
+        for field in ["user", "system"] {
+            let value = execute::get_property_result(previous, field).unwrap_or(Value::Undefined);
+            match value {
+                Value::Number(number) if number.is_finite() && number >= 0.0 => {}
+                Value::Number(number) if !number.is_finite() || number < 0.0 => {
+                    return Err(cpu_value_error(field, number));
+                }
+                _ => return Err(cpu_field_error(field, &value)),
+            }
+        }
+    }
+    Ok(host_api::object(vec![
+        ("user".into(), Value::Number(0.0)),
+        ("system".into(), Value::Number(0.0)),
+    ]))
+}
+
+fn cpu_type_error(name: &str, value: &Value) -> VmError {
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ("message".into(), Value::String(format!(
+            "The \"{name}\" argument must be of type object.{}",
+            crate::modules::util::invalid_arg_received(value)
+        ))),
+    ]))
+}
+
+fn cpu_field_error(field: &str, value: &Value) -> VmError {
+    let received = crate::modules::util::invalid_arg_received(value);
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+        ("message".into(), Value::String(format!(
+            "The \"prevValue.{field}\" property must be of type number.{received}"
+        ))),
+    ]))
+}
+fn cpu_value_error(field: &str, value: f64) -> VmError {
+    let rendered = if value.is_infinite() {
+        if value.is_sign_negative() { "-Infinity" } else { "Infinity" }.to_string()
+    } else {
+        value.to_string()
+    };
+    VmError::Thrown(host_api::object(vec![
+        ("name".into(), Value::String("RangeError".into())),
+        ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
+        ("message".into(), Value::String(format!(
+            "The property 'prevValue.{field}' is invalid. Received {rendered}"
+        ))),
     ]))
 }
 

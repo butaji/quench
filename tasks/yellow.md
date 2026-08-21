@@ -25,6 +25,12 @@ Focused evidence is `test-util-parseargs.js` and its Node CLI oracle. The
 applicable upstream `test-parse-args.mjs` command remains blocked by the
 runner's existing ESM `import` reduction failure; this is recorded as an
 explicit verification gap rather than a green claim.
+Measured addition (2026-08-21): active-dispatch `process.cpuUsage()` and
+`process.resourceUsage()` now expose Node-shaped numeric result objects.
+`cpuUsage` validates previous-value type, fields, and non-negative finite
+values with Node error codes. Focused evidence is
+`test-process-usage.js`; applicable upstream `test-process-cpuUsage.js` and
+`test-resource-usage.js` both pass.
 Measured (2026-08-21): `node:process` now provides `process.uptime()` (seconds
 since host start via `std::time::Instant::now()`) and `process.memoryUsage()`
 returning a sysinfo-backed RSS estimate with `rss`/`heapTotal`/`heapUsed`/
