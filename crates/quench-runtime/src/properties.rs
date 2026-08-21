@@ -348,7 +348,7 @@ fn set_primitive_prototype(
             crate::value::Value::Null => break,
             crate::value::Value::Proxy(_) => {
                 let trap_result =
-                    crate::proxy::proxy_set(&home_proto, key, &value, Some(&receiver))?;
+                    crate::proxy::proxy_set(&home_proto, key, &value, Some(receiver))?;
                 let succeeded = matches!(trap_result, crate::value::Value::Boolean(true));
                 if !succeeded && strict {
                     return Err(crate::value::error::throw_type_error(
@@ -372,7 +372,7 @@ fn set_primitive_prototype(
                 Ok(crate::value::Value::Undefined)
             );
             if has_setter {
-                let succeeded = crate::proxy::proxy_set(&home_proto, key, &value, Some(&receiver))?;
+                let succeeded = crate::proxy::proxy_set(&home_proto, key, &value, Some(receiver))?;
                 let ok = matches!(succeeded, crate::value::Value::Boolean(true));
                 if !ok && strict {
                     return Err(crate::value::error::throw_type_error(
@@ -402,7 +402,7 @@ fn set_primitive_prototype(
                     crate::value::Value::Boolean(true),
                 ),
             ];
-            let _ = crate::builtins::define_own_property(&receiver, key, &own)?;
+            let _ = crate::builtins::define_own_property(receiver, key, &own)?;
             return Ok(());
         }
         home_proto = crate::builtins::object::get_prototype_of(Some(&home_proto))?;
@@ -416,7 +416,7 @@ fn set_primitive_prototype(
             crate::value::Value::Boolean(true),
         ),
     ];
-    let _ = crate::builtins::define_own_property(&receiver, key, &own)?;
+    let _ = crate::builtins::define_own_property(receiver, key, &own)?;
     Ok(())
 }
 
