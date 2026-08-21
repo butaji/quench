@@ -94,6 +94,10 @@ fn constructor_name_tail(builtin: Builtin) -> Option<&'static str> {
 }
 
 fn intl_constructor_name(builtin: Builtin) -> Option<&'static str> {
+    // Intl itself is the namespace object, not a constructor.
+    if matches!(builtin, Builtin::Intl) {
+        return None;
+    }
     Some(match builtin {
         Builtin::Intl => "Intl",
         Builtin::IntlCollator => "Intl.Collator",
