@@ -177,6 +177,8 @@ const fn intl_short_name(b: Builtin) -> Option<&'static str> {
     match b {
         Builtin::IntlCollator => Some("Collator"),
         Builtin::IntlPluralRules => Some("PluralRules"),
+
+        Builtin::IntlGetCanonicalLocales => Some("getCanonicalLocales"),
         Builtin::IntlSupportedValuesOf => Some("supportedValuesOf"),
         Builtin::IntlDisplayNames => Some("DisplayNames"),
         Builtin::IntlLocale => Some("Locale"),
