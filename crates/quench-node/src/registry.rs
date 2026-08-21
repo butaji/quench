@@ -76,30 +76,28 @@ pub fn namespace_bindings(
 ) -> Vec<(String, quench_runtime::value::Value)> {
     let mut out = Vec::new();
     push_bindings(&mut out, argv, exec_path);
-    out.push(timers_binding(
-        "setTimeout",
-        crate::registry::SPEC_TIMERS_SETTIMEOUT,
-    ));
-    out.push(timers_binding(
-        "clearTimeout",
-        crate::registry::SPEC_TIMERS_CLEARTIMEOUT,
-    ));
-    out.push(timers_binding(
-        "setInterval",
-        crate::registry::SPEC_TIMERS_SETINTERVAL,
-    ));
-    out.push(timers_binding(
-        "clearInterval",
-        crate::registry::SPEC_TIMERS_CLEARINTERVAL,
-    ));
-    out.push(timers_binding(
-        "setImmediate",
-        crate::registry::SPEC_TIMERS_SETIMMEDIATE,
-    ));
-    out.push(timers_binding(
-        "clearImmediate",
-        crate::registry::SPEC_TIMERS_CLEARIMMEDIATE,
-    ));
+    push_timer_bindings(&mut out);
+    push_runtime_bindings(&mut out);
+    out
+}
+
+fn push_timer_bindings(out: &mut Vec<(String, quench_runtime::value::Value)>) {
+    for (name, spec) in [
+        ("setTimeout", crate::registry::SPEC_TIMERS_SETTIMEOUT),
+        ("clearTimeout", crate::registry::SPEC_TIMERS_CLEARTIMEOUT),
+        ("setInterval", crate::registry::SPEC_TIMERS_SETINTERVAL),
+        ("clearInterval", crate::registry::SPEC_TIMERS_CLEARINTERVAL),
+        ("setImmediate", crate::registry::SPEC_TIMERS_SETIMMEDIATE),
+        (
+            "clearImmediate",
+            crate::registry::SPEC_TIMERS_CLEARIMMEDIATE,
+        ),
+    ] {
+        out.push(timers_binding(name, spec));
+    }
+}
+
+fn push_runtime_bindings(out: &mut Vec<(String, quench_runtime::value::Value)>) {
     out.push((
         "queueMicrotask".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new("queueMicrotask", 0x0707)),
@@ -124,6 +122,10 @@ pub fn namespace_bindings(
         "__quench_run_exit__".to_string(),
         crate::host::capability(crate::registry::SPEC_RUN_EXIT),
     ));
+    push_runtime_tail(out);
+}
+
+fn push_runtime_tail(out: &mut Vec<(String, quench_runtime::value::Value)>) {
     out.push((
         "__quench_uncaught__".to_string(),
         crate::host::capability(crate::registry::NodeSpec::new(
@@ -163,7 +165,6 @@ pub fn namespace_bindings(
         "global".to_string(),
         crate::host::namespace_object_from_pairs(vec![]),
     ));
-    out
 }
 
 fn push_bindings(
