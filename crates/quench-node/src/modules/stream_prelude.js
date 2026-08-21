@@ -210,6 +210,55 @@
       return this;
     }
   }
+  Readable.from = function (source, options) {
+    options = options || {};
+    if (source == null) throw new TypeError("Readable.from requires a source");
+    const asyncIterator = source[Symbol.asyncIterator];
+    const iterator = asyncIterator ? asyncIterator.call(source) :
+      (source[Symbol.iterator] ? source[Symbol.iterator].call(source) : null);
+    const pull = iterator ? () => iterator.next() :
+      (typeof source.read === "function" ? () => source.read() : null);
+    if (!pull) throw new TypeError("source is not iterable or readable");
+
+    let pending = false;
+    let finished = false;
+    const readable = new Readable(Object.assign({}, options, {
+      objectMode: options.objectMode !== false,
+      read() {
+        if (pending || finished) return;
+        pending = true;
+        let result;
+        try {
+          result = pull();
+        } catch (error) {
+          pending = false;
+          finished = true;
+          readable._emitter.emit("error", error);
+          readable.push(null);
+          return;
+        }
+        Promise.resolve(result).then((step) => {
+          pending = false;
+          if (finished) return;
+          const iteratorResult = step && typeof step === "object" &&
+            ("done" in step || "value" in step);
+          if (step == null || (iteratorResult && step.done)) {
+            finished = true;
+            readable.push(null);
+          } else {
+            readable.push(iteratorResult ? step.value : step);
+          }
+        }, (error) => {
+          pending = false;
+          finished = true;
+          readable._emitter.emit("error", error);
+          readable.push(null);
+        });
+      }
+    }));
+    return readable;
+  };
+
   mixEmitter(Readable.prototype);
 
   Readable.prototype.destroy = function (error) {
