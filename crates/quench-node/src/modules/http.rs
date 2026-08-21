@@ -393,7 +393,7 @@ fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Valu
         .and_then(|v| v.strip_prefix("HTTP/"))
         .unwrap_or("1.1");
 
-    let (mut headers, mut content_length, mut connection) = parse_headers(&parts);
+    let (headers, content_length, connection) = parse_headers(&parts);
     // HTTP/1.1 defaults to keep-alive unless `Connection: close`; HTTP/1.0
     // defaults to close unless the client asks to keep the connection.
     let http10 = version == "1.0";

@@ -121,7 +121,6 @@ fn special_match_core_tail(builtin: Builtin, key: &str) -> Option<Value> {
 }
 
 fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
-    use Builtin::*;
     if let Some(value) = iterator_special(builtin, key) {
         return Some(value);
     }

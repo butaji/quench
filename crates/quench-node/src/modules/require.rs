@@ -53,16 +53,6 @@ fn capability_value(spec: crate::registry::NodeSpec) -> Value {
     crate::host::capability(spec)
 }
 
-/// Wrap a list of `(name, spec)` pairs as a namespace object whose
-/// values are capability descriptors.
-fn capability_namespace(pairs: Vec<(&str, crate::registry::NodeSpec)>) -> Value {
-    let owned = pairs
-        .into_iter()
-        .map(|(name, spec)| (name.to_string(), capability_value(spec)))
-        .collect();
-    namespace_of_owned(owned)
-}
-
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
     // `node:assert` exports a callable value whose identity is stable
