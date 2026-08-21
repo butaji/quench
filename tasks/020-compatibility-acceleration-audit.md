@@ -28,6 +28,20 @@ architecture remain runtime-owned. This is a decision task, not a progress
 report; do not treat a green focused result or a stale differential report as
 evidence that an audit is complete.
 
+### Follow-up decisions
+
+- **Path traversal crates — rejected:** reject any crate that changes lexical
+  normalization or resolver error semantics.
+- **`clap` migration — rejected unless exact CLI compatibility is proven:**
+  preserve help, error, exit, unknown-option, missing-value, and zero-thread
+  behavior until compatibility snapshots demonstrate equivalence.
+- **Intl `formatToParts` adapter — needs benchmark:** measure binary/RSS cost,
+  throughput, and focused `intl402` outcomes before adoption.
+
+These are audit decisions, not progress claims. Do not infer completion from
+green focused results or stale differential reports; refresh authoritative
+evidence before changing status.
+
 ## Ranked findings
 
 1. **Scope is not mechanically closed.** The task index has 19 records, but
