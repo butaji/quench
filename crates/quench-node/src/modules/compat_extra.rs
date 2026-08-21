@@ -58,3 +58,12 @@ pub fn worker_threads(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError>
         ]))
     })
 }
+/// SEA is intentionally unavailable outside a Bun/Node single executable.
+/// Keep the documented predicate callable while never claiming SEA support.
+pub fn sea_is_sea(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(false))
+}

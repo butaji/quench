@@ -18,4 +18,8 @@ dns.promises.lookup('localhost').then(r => {
   if (!Array.isArray(r) || r[1] !== 4) throw new Error('promise lookup');
   console.log('dns promises: ok');
 }).catch(e => { throw e; });
+if (typeof dns.promises.resolveTlsa !== 'undefined') {
+  throw new Error('resolveTlsa is not implemented in this compatibility target');
+}
+console.log('dns resolveTlsa: documented missing');
 setTimeout(() => {}, 50);

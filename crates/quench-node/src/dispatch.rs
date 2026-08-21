@@ -18,8 +18,8 @@ use dispatch_caps::*;
 pub fn lookup(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     let h = match cap {
+        0x1a00 => crate::modules::compat_extra::sea_is_sea,
         CAP_EVENTS_FROM => events_from,
-        CAP_EVENTS_ON => events_method_on,
         CAP_EVENTS_EMIT => events_method_emit,
         CAP_CONSOLE_LOG | CAP_CONSOLE_INFO | CAP_CONSOLE_DEBUG => console_log,
         CAP_CONSOLE_WARN | CAP_CONSOLE_ERROR => console_warn,

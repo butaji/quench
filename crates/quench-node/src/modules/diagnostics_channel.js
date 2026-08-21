@@ -1,11 +1,39 @@
 var channels = {};
-function channel(name) {
-  if (channels[name]) return channels[name];
-  var subs = [];
-  var c = { name:name, hasSubscribers:false,
-    subscribe:function(fn){ if(typeof fn==='function' && subs.indexOf(fn)<0) subs.push(fn); c.hasSubscribers=subs.length>0; return c; },
-    unsubscribe:function(fn){ var i=subs.indexOf(fn); if(i>=0)subs.splice(i,1); c.hasSubscribers=subs.length>0; return c; },
-    publish:function(msg){ var copy=subs.slice(); for(var i=0;i<copy.length;i++)copy[i](msg); }
-  }; channels[name]=c; return c;
+function Channel(name) {
+  this.name = String(name);
+  this._subscribers = [];
+  this._store = undefined;
 }
-module.exports={channel:channel, subscribe:function(n,f){return channel(n).subscribe(f);}, unsubscribe:function(n,f){return channel(n).unsubscribe(f);}, hasSubscribers:function(n){return channel(n).hasSubscribers;}, channelNames:function(){return Object.keys(channels);}};
+Channel.prototype.subscribe = function (fn) {
+  if (typeof fn !== 'function') throw new TypeError('subscriber must be a function');
+  if (this._subscribers.indexOf(fn) < 0) this._subscribers.push(fn);
+  return this;
+};
+Channel.prototype.unsubscribe = function (fn) {
+  var i = this._subscribers.indexOf(fn);
+  if (i >= 0) this._subscribers.splice(i, 1);
+  return this;
+};
+Channel.prototype.publish = function (message, context) {
+  var copy = this._subscribers.slice();
+  for (var i = 0; i < copy.length; i++) copy[i](message, context);
+};
+Channel.prototype.bindStore = function (store) {
+  this._store = store;
+  return this;
+};
+Object.defineProperty(Channel.prototype, 'hasSubscribers', { get: function () {
+  return this._subscribers.length > 0;
+}});
+function channel(name) {
+  var key = String(name);
+  if (!channels[key]) channels[key] = new Channel(key);
+  return channels[key];
+}
+module.exports = {
+  channel: channel,
+  subscribe: function (name, fn) { return channel(name).subscribe(fn); },
+  unsubscribe: function (name, fn) { return channel(name).unsubscribe(fn); },
+  hasSubscribers: function (name) { return channel(name).hasSubscribers; },
+  channelNames: function () { return Object.keys(channels); }
+};
