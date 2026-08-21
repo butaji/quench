@@ -28,7 +28,31 @@ const CALENDARS: &[&str] = &[
 ];
 
 pub(crate) fn supported_collations() -> Vec<Value> {
-    strings(&["default"])
+    // Common collations supported by ICU/CLDR. `default` is the locale's
+    // default; the rest are explicit collation types usable as
+    // `Intl.Collator` options.
+    strings(&[
+        "default",
+        "standard",
+        "search",
+        "big5han",
+        "compat",
+        "dict",
+        "direct",
+        "ducet",
+        "emoji",
+        "eor",
+        "gb2312",
+        "phonebk",
+        "phonetic",
+        "pinyin",
+        "reformed",
+        "searchjl",
+        "stroke",
+        "trad",
+        "unihan",
+        "zhuyin",
+    ])
 }
 
 const CURRENCIES: &[&str] = &[
