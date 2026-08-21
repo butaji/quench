@@ -3,14 +3,11 @@ use crate::{execute::VmError, ops::Builtin, value::Value};
 pub(crate) fn is_lock_free(arguments: &[Value]) -> Result<Value, VmError> {
     let value = arguments.first().unwrap_or(&Value::Undefined);
     let size = crate::conversion::to_number(value)?;
-    Ok(Value::Boolean(matches!(size, 1.0 | 2.0 | 4.0)))
+    Ok(Value::Boolean(matches!(size, 1.0 | 2.0 | 4.0 | 8.0)))
 }
 
 pub(crate) fn notify(arguments: &[Value]) -> Result<Value, VmError> {
-    if matches!(
-        arguments.first(),
-        Some(Value::BigInt64Array(_) | Value::BigUint64Array(_))
-    ) {
+    if matches!(arguments.first(), Some(Value::BigInt64Array(_))) {
         return notify_bigint(arguments);
     }
     let Some(Value::Int32Array(view)) = arguments.first() else {
@@ -199,12 +196,13 @@ pub(crate) fn execute(
     let old = view
         .get(index)
         .ok_or_else(|| crate::value::error::throw_range_error("Atomics index is out of range"))?;
+    let old_number = view.get_number(index).unwrap_or(old as f64);
     if builtin == Builtin::AtomicsCompareExchange {
         let expected = atomic_value(arguments.get(2))?;
         if old == expected {
             view.set(index, atomic_value(arguments.get(3))?);
         }
-        return Ok(Value::Number(old as f64));
+        return Ok(Value::Number(old_number));
     }
     let value = atomic_value(arguments.get(2))?;
     let updated = match builtin {
@@ -216,7 +214,7 @@ pub(crate) fn execute(
         _ => return Err(crate::vm::not_callable()),
     };
     view.set(index, updated);
-    Ok(Value::Number(old as f64))
+    Ok(Value::Number(old_number))
 }
 
 fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {
