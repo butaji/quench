@@ -115,53 +115,29 @@ fn fd(receiver: Option<&Value>) -> Result<i32, VmError> {
     }
 }
 
+fn file_handle_props() -> Vec<(&'static str, Value)> {
+    [
+        ("stat", crate::registry::SPEC_FSP_FILEHANDLE_STAT),
+        ("close", crate::registry::SPEC_FSP_FILEHANDLE_CLOSE),
+        ("truncate", crate::registry::SPEC_FSP_FILEHANDLE_TRUNCATE),
+        ("datasync", crate::registry::SPEC_FSP_FILEHANDLE_DATASYNC),
+        ("sync", crate::registry::SPEC_FSP_FILEHANDLE_SYNC),
+        ("write", crate::registry::SPEC_FSP_FILEHANDLE_WRITE),
+        ("read", crate::registry::SPEC_FSP_FILEHANDLE_READ),
+        ("chmod", crate::registry::SPEC_FSP_FILEHANDLE_CHMOD),
+        ("chown", crate::registry::SPEC_FSP_FILEHANDLE_CHOWN),
+        ("utimes", crate::registry::SPEC_FSP_FILEHANDLE_UTIMES),
+    ]
+    .into_iter()
+    .map(|(name, spec)| (name, crate::host::capability(spec)))
+    .collect()
+}
+
 fn file_handle(fd: i32) -> Result<Value, VmError> {
     let mut obj = crate::host::namespace_object_from_pairs(vec![(
-        FD_PROP.to_string(),
-        Value::Number(fd as f64),
+        FD_PROP.to_string(), Value::Number(fd as f64),
     )]);
-    for (name, cap) in [
-        (
-            "stat",
-            crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_STAT),
-        ),
-        (
-            "close",
-            crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_CLOSE),
-        ),
-        (
-            "truncate",
-            crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_TRUNCATE),
-        ),
-        (
-            "datasync",
-            crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_DATASYNC),
-        ),
-        (
-            "sync",
-            crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_SYNC),
-        ),
-        (
-            "write",
-            crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_WRITE),
-        ),
-        (
-            "read",
-            crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_READ),
-        ),
-        (
-            "chmod",
-            crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_CHMOD),
-        ),
-        (
-            "chown",
-            crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_CHOWN),
-        ),
-        (
-            "utimes",
-            crate::host::capability(crate::registry::SPEC_FSP_FILEHANDLE_UTIMES),
-        ),
-    ] {
+    for (name, cap) in file_handle_props() {
         let desc = quench_runtime::host_api::object(vec![
             ("value".to_string(), cap),
             ("writable".to_string(), Value::Boolean(true)),

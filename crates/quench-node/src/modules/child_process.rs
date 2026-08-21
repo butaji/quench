@@ -26,15 +26,8 @@ pub fn spawn_sync(
     let child_args = args.get(1).and_then(string_args).unwrap_or_default();
     let mut cmd = std::process::Command::new(&command);
     cmd.args(&child_args);
-
     let input = apply_options(&mut cmd, args.get(2));
-
-    let mut child = match cmd
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
+    let mut child = match spawn_piped(cmd) {
         Ok(child) => child,
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
@@ -44,14 +37,18 @@ pub fn spawn_sync(
         Ok(output) => output,
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     Ok(spawn_result_object(
-        pid,
-        output.status.code(),
-        stdout,
-        stderr,
+        pid, output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
     ))
+}
+
+fn spawn_piped(mut cmd: std::process::Command) -> std::io::Result<std::process::Child> {
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
 }
 
 fn apply_options(cmd: &mut std::process::Command, options: Option<&Value>) -> Option<String> {
