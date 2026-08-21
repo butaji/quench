@@ -149,8 +149,12 @@ cluster, and the next concrete slice.
 - `tty` — stage 521 registers `ReadStream`, `WriteStream`, `isatty`, color, and
   window-size APIs; non-TTY behavior is explicit until the termios host boundary
   is implemented.
-- `url` / `URL` / `URLSearchParams` — done. Need: `URL.canParse`, `URL.parse`,
-  `url.fileURLToPath` (real), `url.pathToFileURL` (real).
+- `url` / `URL` / `URLSearchParams` — active dispatch now verifies
+  `URL.canParse`, `URL.parse`, and ordinary legacy `url.parse` fields through
+  `test-url-static.js` and `test-url.js`; `url.fileURLToPath` and
+  `url.pathToFileURL` are present. The separate default `quench-node` runtime
+  still has an open host-value-boundary gap for the URL static methods and is
+  not counted as complete.
 - `util` — partial. Need: `util.promisify`, `util.types.*`, `util.styleText`,
   `util.parseArgs`, `util.transferableAbortSignal`. `styleText` now follows
   Node's `(format, text, options)` signature, validates styles, supports
