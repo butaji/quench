@@ -71,13 +71,16 @@ and the right call is Node semantics.
 
 ## Done when
 
-- `tools/check-focused-stages.sh` reports **506/506 pass** (the empty
-  `stage-507` directory has been removed).
+- The named focused stages report 506/506 pass.
 - `git diff --check` is clean.
 
 ## Status
 
-Done. 506/506 focused stages pass; `git diff --check` exits 0.
+The focused slice was historically recorded as 506/506, but that result is
+not evidence that the full green/yellow Node API matrix passes. Later upstream
+fixtures in this document remain unresolved; current status is
+**focused-slice complete, overall compatibility open**. Use the commands and
+results in `tasks/verification.md` for current evidence.
 
 Diffs applied:
 

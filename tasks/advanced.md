@@ -1,7 +1,16 @@
 # Advanced green Node API coverage
 
-Target: http2, sqlite, trace_events, quic. Require real observable loopback/backend behavior, not empty namespaces or silent fallbacks. For each module: upstream API inventory, focused fixture, resolver/dispatch wiring, lint-compliant Rust, run-compat and applicable tests/node evidence.
+Target: Bun green modules http2, sqlite, trace_events, and quic. Require real
+observable loopback/backend behavior, not empty namespaces or silent fallbacks.
+For each module: upstream API inventory, focused fixture, resolver/dispatch
+wiring, lint-compliant Rust, run-compat, and applicable Node API evidence.
 
-Evidence (2026-08-21): `test-http2.js`, `test-sqlite.js`, and `test-trace-events.js` each pass with `cargo run -p quench-node-test --bin run-compat -- --quiet --filter {http2,sqlite,trace-events}`. `test-quic.js` exercises real UDP bind/send/close through `node:quic` and passes with `--filter quic`. QUIC currently documents a UDP loopback subset rather than claiming TLS/streams/congestion-control parity.
+Bun caveats MUST be recorded: http2 has documented ignored options and a
+partial upstream suite; sqlite backup blocks and has platform/path caveats;
+trace categories are reduced; quic is experimental. Quench's current quic
+fixture demonstrates a UDP loopback subset only and MUST NOT be described as
+full QUIC/TLS/stream/congestion-control parity.
 
-Verification: cargo build/test, run-compat, run-parallel, tools/lint-rust.sh.
+Current evidence is incomplete: run-compat is 49/57 and run-parallel panics in
+datetime formatting. No advanced module is complete until relevant upstream
+tests finish without panic.

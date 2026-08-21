@@ -5,12 +5,23 @@
 > excluded. Use the statuses and release gates in
 > [compatibility-contract.md](../docs/compatibility-contract.md).
 
+## Bun matrix and verification policy
+
+The Bun reference matrix is at
+`https://bun.com/docs/runtime/nodejs-compat` (currently describing Node 26);
+this project targets Node 24. Bun green/yellow/red labels are reference
+classification, not Quench evidence. A global is green only after focused and
+applicable upstream Node API tests pass; partial or platform-limited behavior
+is yellow; unsupported behavior is red. Installation and shape checks alone do
+not complete this task. Record exact fixtures, commands, failures, and panics.
+
 ## Contract alignment
 
-This task supports the Node 24 application-runtime contract on Linux x86_64;
-observable Node behavior remains the compatibility target.
-See `docs/authoritative-test-sources.md` for the Node, LLRT, Deno, WPT, and
-Test262 reference roles.
+Every Node global MUST have an explicit green/yellow/red classification.
+Green requires applicable Node API tests to pass; yellow records partial or
+platform-limited behavior; red records unsupported behavior and the
+Node-compatible error or absence contract. Installation, constructor shape, or
+an unresolved "real or no-op" alternative is not green evidence.
 
 ## Goal
 
