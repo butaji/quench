@@ -108,8 +108,9 @@ fn os_module() -> Value {
                         ("EPIPE".into(), Value::Number(32.0)),
                         ("ERANGE".into(), Value::Number(34.0)),
                     ]),
-            ]),
-        ),
+                ),
+            ],
+        )),
     ]);
     let env = NODE_PROCESS_ENV
         .with(|current| current.borrow().clone())
