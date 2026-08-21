@@ -446,12 +446,7 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ModuleRequireCall) => require_module(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsPlatform) => os_platform(),
             HostCapabilityKind::Custom(CapabilityName::OsArch) => os_arch(),
-            HostCapabilityKind::Custom(CapabilityName::OsUptime) => Ok(Value::Number(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs_f64(),
-            )),
+            HostCapabilityKind::Custom(CapabilityName::OsUptime) => os_extra(capability.kind),
             HostCapabilityKind::Custom(CapabilityName::OsGetPriority) => os_get_priority(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsSetPriority) => os_set_priority(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsAvailableParallelism) => {
@@ -461,13 +456,13 @@ impl QuenchNodeHost {
                         .unwrap_or(1.0),
                 ))
             }
-            HostCapabilityKind::Custom(CapabilityName::OsHostname) => {
-                Ok(Value::String("localhost".into()))
-            }
+            HostCapabilityKind::Custom(CapabilityName::OsHostname) => Ok(Value::String(
+                sysinfo::System::host_name().unwrap_or_else(|| "unknown".into()).into(),
+            )),
             HostCapabilityKind::Custom(CapabilityName::OsVersion) => Ok(Value::String("".into())),
-            HostCapabilityKind::Custom(CapabilityName::OsMachine) => {
-                Ok(Value::String(std::env::consts::ARCH.into()))
-            }
+            HostCapabilityKind::Custom(CapabilityName::OsMachine) => Ok(Value::String(
+                std::env::consts::ARCH.into(),
+            )),
             HostCapabilityKind::Custom(CapabilityName::OsTmpdir) => os_tmpdir(receiver),
             HostCapabilityKind::Custom(CapabilityName::OsHomedir) => os_homedir(),
             HostCapabilityKind::Custom(CapabilityName::OsCpus..=CapabilityName::OsType)

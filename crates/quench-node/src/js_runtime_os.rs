@@ -94,8 +94,20 @@ fn os_module() -> Value {
                 ),
                 (
                     "errno".into(),
-                    quench_runtime::host_api::object(vec![("ENOENT".into(), Value::Number(2.0))]),
-                ),
+                    quench_runtime::host_api::object(vec![
+                        ("EPERM".into(), Value::Number(1.0)),
+                        ("ENOENT".into(), Value::Number(2.0)),
+                        ("EINTR".into(), Value::Number(4.0)),
+                        ("EIO".into(), Value::Number(5.0)),
+                        ("EACCES".into(), Value::Number(13.0)),
+                        ("EEXIST".into(), Value::Number(17.0)),
+                        ("ENOTDIR".into(), Value::Number(20.0)),
+                        ("EISDIR".into(), Value::Number(21.0)),
+                        ("EINVAL".into(), Value::Number(22.0)),
+                        ("ENOSPC".into(), Value::Number(28.0)),
+                        ("EPIPE".into(), Value::Number(32.0)),
+                        ("ERANGE".into(), Value::Number(34.0)),
+                    ]),
             ]),
         ),
     ]);
@@ -292,56 +304,80 @@ fn module_is_builtin(arguments: &[Value]) -> Result<Value, VmError> {
 fn os_extra(kind: HostCapabilityKind) -> Result<Value, VmError> {
     match kind {
         HostCapabilityKind::Custom(CapabilityName::OsCpus) => {
-            Ok(quench_runtime::host_api::array(vec![]))
+            let mut system = sysinfo::System::new();
+            system.refresh_cpu_all();
+            let cpus = system.cpus().iter().map(|cpu| {
+                quench_runtime::host_api::object(vec![
+                    ("model".into(), Value::String(cpu.brand().into())),
+                    ("speed".into(), Value::Number(cpu.frequency() as f64)),
+                    ("times".into(), quench_runtime::host_api::object(vec![
+                        ("user".into(), Value::Number(cpu.cpu_usage() as f64)),
+                        ("nice".into(), Value::Number(0.0)),
+                        ("sys".into(), Value::Number(0.0)),
+                        ("idle".into(), Value::Number(0.0)),
+                        ("irq".into(), Value::Number(0.0)),
+                    ])),
+                ])
+            }).collect();
+            Ok(quench_runtime::host_api::array(cpus))
         }
-        HostCapabilityKind::Custom(CapabilityName::OsFreemem)
-        | HostCapabilityKind::Custom(CapabilityName::OsTotalmem) => Ok(Value::Number(1.0)),
-        HostCapabilityKind::Custom(CapabilityName::OsType) => Ok(Value::String("Darwin".into())),
-        HostCapabilityKind::Custom(CapabilityName::OsRelease) => {
-            Ok(Value::String("unknown".into()))
-        }
+        HostCapabilityKind::Custom(CapabilityName::OsFreemem) =>
+            Ok(Value::Number(sysinfo::System::new_all().available_memory() as f64)),
+        HostCapabilityKind::Custom(CapabilityName::OsTotalmem) =>
+            Ok(Value::Number(sysinfo::System::new_all().total_memory() as f64)),
+        HostCapabilityKind::Custom(CapabilityName::OsType) => Ok(Value::String(
+            if cfg!(target_os = "macos") { "Darwin" } else if cfg!(target_os = "linux") { "Linux" } else { "Unknown" }.into())),
+        HostCapabilityKind::Custom(CapabilityName::OsRelease) =>
+            Ok(Value::String(sysinfo::System::kernel_version().unwrap_or_else(|| "unknown".into()).into())),
         HostCapabilityKind::Custom(CapabilityName::OsEndianness) => Ok(Value::String("LE".into())),
         HostCapabilityKind::Custom(CapabilityName::OsLoadavg) => {
-            Ok(quench_runtime::host_api::array(vec![
-                Value::Number(0.0),
-                Value::Number(0.0),
-                Value::Number(0.0),
-            ]))
+            let l = sysinfo::System::load_average();
+            Ok(quench_runtime::host_api::array(vec![Value::Number(l.one), Value::Number(l.five), Value::Number(l.fifteen)]))
         }
-        HostCapabilityKind::Custom(CapabilityName::OsNetworkInterfaces) => {
-            Ok(quench_runtime::host_api::object(vec![(
-                "lo".into(),
-                quench_runtime::host_api::array(vec![quench_runtime::host_api::object(vec![
-                    ("address".into(), Value::String("127.0.0.1".into())),
-                    ("netmask".into(), Value::String("255.0.0.0".into())),
-                    ("family".into(), Value::String("IPv4".into())),
-                    ("mac".into(), Value::String("00:00:00:00:00:00".into())),
-                    ("internal".into(), Value::Boolean(true)),
-                    ("cidr".into(), Value::String("127.0.0.1/8".into())),
-                ])]),
-            )]))
-        }
+        HostCapabilityKind::Custom(CapabilityName::OsUptime) =>
+            Ok(Value::Number(sysinfo::System::uptime() as f64)),
+        HostCapabilityKind::Custom(CapabilityName::OsNetworkInterfaces) => os_network_interfaces(),
         HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => {
+            let uid = unsafe { libc::getuid() };
+            let gid = unsafe { libc::getgid() };
             Ok(quench_runtime::host_api::object(vec![
-                (
-                    "username".into(),
-                    Value::String(
-                        std::env::var("USER")
-                            .unwrap_or_else(|_| "user".into())
-                            .into(),
-                    ),
-                ),
-                ("uid".into(), Value::Number(0.0)),
-                ("gid".into(), Value::Number(0.0)),
-                ("shell".into(), Value::String("/bin/sh".into())),
-                (
-                    "homedir".into(),
-                    Value::String(std::env::var("HOME").unwrap_or_else(|_| "/".into()).into()),
-                ),
+                ("username".into(), Value::String(std::env::var("USER").unwrap_or_else(|_| "unknown".into()).into())),
+                ("uid".into(), Value::Number(uid as f64)), ("gid".into(), Value::Number(gid as f64)),
+                ("shell".into(), Value::String(std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()).into())),
+                ("homedir".into(), Value::String(std::env::var("HOME").unwrap_or_else(|_| "/".into()).into())),
             ]))
         }
         _ => Err(VmError::NotCallable),
     }
+}
+
+fn os_network_interfaces() -> Result<Value, VmError> {
+    use std::ffi::CStr;
+    let mut raw = std::ptr::null_mut();
+    if unsafe { libc::getifaddrs(&mut raw) } != 0 { return Ok(quench_runtime::host_api::object(vec![])); }
+    let mut out: Vec<(String, Value)> = Vec::new();
+    let mut p = raw;
+    while !p.is_null() {
+        unsafe {
+            let ifa = &*p;
+            if !ifa.ifa_addr.is_null() && (*ifa.ifa_addr).sa_family as i32 == libc::AF_INET {
+                let name = CStr::from_ptr(ifa.ifa_name).to_string_lossy().into_owned();
+                let addr = &*(ifa.ifa_addr as *const libc::sockaddr_in);
+                let ip = std::net::Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr)).to_string();
+                let internal = ip == "127.0.0.1";
+                let entry = quench_runtime::host_api::object(vec![
+                    ("address".into(), Value::String(ip.clone().into())), ("netmask".into(), Value::String(if internal {"255.0.0.0"} else {"0.0.0.0"}.into())),
+                    ("family".into(), Value::String("IPv4".into())), ("mac".into(), Value::String("".into())),
+                    ("internal".into(), Value::Boolean(internal)), ("cidr".into(), Value::String(format!("{ip}/{}", if internal {8} else {0}).into())),
+                ]);
+                if let Some((_, Value::Array(items))) = out.iter_mut().find(|(n, _)| n == &name) { items.push(entry); }
+                else { out.push((name, quench_runtime::host_api::array(vec![entry]))); }
+            }
+            p = ifa.ifa_next;
+        }
+    }
+    unsafe { libc::freeifaddrs(raw); }
+    Ok(quench_runtime::host_api::object(out))
 }
 
 fn safe_value_string(value: &Value) -> String {
