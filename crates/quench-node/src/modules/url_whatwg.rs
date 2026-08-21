@@ -166,6 +166,16 @@ fn build_class() -> (Value, Value) {
         "revokeObjectURL",
         crate::host::capability(specs::SPEC_URL_REVOKE_OBJECT_URL),
     );
+    let _ = execute::set_callable_property(
+        &constructor,
+        "canParse",
+        crate::host::capability(specs::SPEC_URL_CAN_PARSE),
+    );
+    let _ = execute::set_callable_property(
+        &constructor,
+        "parse",
+        crate::host::capability(specs::SPEC_URL_PARSE_STATIC),
+    );
     (constructor, prototype)
 }
 
@@ -256,6 +266,49 @@ fn missing_args() -> VmError {
             Value::String("ERR_MISSING_ARGS".to_string()),
         ),
     ]))
+}
+
+/// `URL.canParse(input[, base])` returns false instead of throwing.
+pub fn can_parse(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> bool {
+    let Some(first) = args.first() else {
+        return false;
+    };
+    let Ok(input) = execute::to_js_string(first) else {
+        return false;
+    };
+    if input.starts_with(':') {
+        return false;
+    }
+    let base = match args.get(1) {
+        None | Some(Value::Undefined) => None,
+        Some(value) => execute::to_js_string(value).ok(),
+    };
+    Parsed::parse(&input, base.as_deref()).is_ok()
+}
+
+/// `URL.parse(input[, base])` returns a URL instance or null.
+pub fn parse_static(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let Some(first) = args.first() else {
+        return Ok(Value::Null);
+    };
+    let input = match execute::to_js_string(first) {
+        Ok(value) if !value.starts_with(':') => value,
+        _ => return Ok(Value::Null),
+    };
+    let base = match args.get(1) {
+        None | Some(Value::Undefined) => None,
+        Some(value) => match execute::to_js_string(value) {
+            Ok(value) => Some(value),
+            Err(_) => return Ok(Value::Null),
+        },
+    };
+    match Parsed::parse(&input, base.as_deref()) {
+        Ok(parsed) => Ok(make_instance(state, &parsed)),
+        Err(_) => Ok(Value::Null),
+    }
 }
 
 /// `URL.revokeObjectURL(url)` — object URLs are not supported; the argument

@@ -40,14 +40,14 @@ setTimeout, setImmediate, and setInterval, plus `ref:false` unref behavior
 enable/disable/start/stop/reset metrics), and error-aware `timerify`
 (`test-perf-hooks2.js`).
 
-Measured gap (2026-08-21): `URL.canParse` and `URL.parse`/`url.parse` are not
-callable in the active dispatch path — `capability_function(Custom(UrlCanParse))`
-has no handler in `dispatch::url_dispatch`, so invoking it throws
-`value is not callable`. The legacy `js_runtime_dispatch_url` stub returns only
-`true` for `UrlCanParse` and does not implement non-throwing parse semantics.
-Closing this gap requires wiring a real non-throwing URL-parse handler into the
-active dispatch layer (additive capability mapping) plus a focused fixture; it
-is tracked here as an explicit green gap rather than claimed complete.
+Measured improvement (2026-08-21): the active dispatch URL constructor now
+provides non-throwing `URL.canParse` and `URL.parse` statics. Valid relative
+URLs honor a base; invalid inputs return `false`/`null`, including malformed
+colon-prefixed input. The focused Node API fixture is
+`crates/quench-node-test/node-tests/test-url-static.js`; its definition of done
+is a passing focused runner, a passing Node CLI oracle, and clean
+`run-compat`/`run-parallel` results. The legacy `url.parse` path remains
+separate and is not claimed as equivalent to the WHATWG static parser.
 `url.fileURLToPath` and `url.pathToFileURL` are present.
 
 Measured improvements (2026-08-21): `os` now returns real host data backed by
