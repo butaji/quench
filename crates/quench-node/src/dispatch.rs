@@ -281,6 +281,13 @@ fn network_dispatch_secondary(cap: u16) -> Option<CallHandler> {
         CAP_NET_SOCKET_PAUSE => crate::modules::net::socket_pause,
         CAP_NET_SOCKET_SET_TIMEOUT => crate::modules::net::socket_set_timeout,
         CAP_NET_SOCKET_RESUME => crate::modules::net::socket_resume,
+        _ => return network_dispatch_host(cap),
+    })
+}
+
+fn network_dispatch_host(cap: u16) -> Option<CallHandler> {
+    use handlers::*;
+    Some(match cap {
         CAP_REQUIRE => node_require,
         CAP_REQUIRE_FOR => node_require_for,
         CAP_CJS_WRAP => cjs_wrap,
