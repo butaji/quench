@@ -457,6 +457,132 @@ pub fn subtle_unsupported(
     Ok(fulfilled(Value::Undefined))
 }
 
+/// Extract the raw key material from a CryptoKey object, including
+/// any buffer-like value backed by the modules buffer prototype.
+fn crypto_key_bytes(key: &Value) -> Result<Vec<u8>, quench_runtime::execute::VmError> {
+    // First, look for a private property set by `subtle.import_key`.
+    let raw = execute::get_property(key, "\0crypto:keydata");
+    if !matches!(raw, Value::Undefined) {
+        if let Ok(bytes) = argbytes(&raw) { return Ok(bytes); }
+    }
+    argbytes(key)
+}
+
+fn pbkdf2_hmac_sha256(password: &[u8], salt: &[u8], iterations: u32, length: usize) -> Vec<u8> {
+    let hlen = 32usize;
+    let blocks = (length + hlen - 1) / hlen;
+    let mut out = Vec::with_capacity(blocks * hlen);
+    for i in 1..=blocks {
+        let mut t = vec![0u8; hlen];
+        let mut u = {
+            let mut msg = Vec::with_capacity(salt.len() + 4);
+            msg.extend_from_slice(salt);
+            msg.push(((i >> 24) & 0xff) as u8);
+            msg.push(((i >> 16) & 0xff) as u8);
+            msg.push(((i >> 8) & 0xff) as u8);
+            msg.push((i & 0xff) as u8);
+            hmac_sha256(password, &msg)
+        };
+        for x in 0..hlen { t[x] ^= u[x]; }
+        for _ in 1..iterations {
+            u = hmac_sha256(password, &u);
+            for x in 0..hlen { t[x] ^= u[x]; }
+        }
+        out.extend_from_slice(&t);
+    }
+    out.truncate(length);
+    out
+}
+
+fn read_u32_arg(args: &[Value], idx: usize, field: &str) -> Result<u32, quench_runtime::execute::VmError> {
+    let v = args.get(idx).cloned().unwrap_or(Value::Undefined);
+    match v {
+        Value::Number(n) => {
+            if !n.is_finite() || n < 0.0 || n.fract() != 0.0 || n > (u32::MAX as f64) {
+                Err(execute::type_error(format!("`{field}` must be a non-negative integer").as_str()))
+            } else {
+                Ok(n as u32)
+            }
+        }
+        _ => Err(execute::type_error(format!("`{field}` must be a number").as_str())),
+    }
+}
+
+fn pbkdf2_params(args: &[Value]) -> Result<(Vec<u8>, u32, String, Vec<u8>), quench_runtime::execute::VmError> {
+    let algorithm = args.first().cloned().unwrap_or(Value::Undefined);
+    let name = execute::get_property(&algorithm, "name");
+    let name_str = match name { Value::String(s) => s.to_string(), _ => return Err(execute::type_error("PBKDF2: algorithm.name required")) };
+    if name_str != "PBKDF2" { return Err(execute::type_error(format!("PBKDF2: unsupported algorithm {name_str}").as_str())) }
+    let salt = argbytes(&execute::get_property(&algorithm, "salt"))?;
+    let iterations = match execute::get_property(&algorithm, "iterations") {
+        Value::Number(n) if n.is_finite() && n >= 0.0 && n.fract() == 0.0 && n <= (u32::MAX as f64) => n as u32,
+        _ => return Err(execute::type_error("PBKDF2: iterations required")),
+    };
+    let hash = match execute::get_property(&algorithm, "hash") {
+        Value::String(s) => s.to_string(),
+        _ => "SHA-256".to_string(),
+    };
+    if hash.as_str() != "SHA-256" { return Err(execute::type_error(format!("PBKDF2: unsupported hash {hash}").as_str())) }
+    let base_key = args.get(1).cloned().unwrap_or(Value::Undefined);
+    let password = crypto_key_bytes(&base_key)?;
+    Ok((salt, iterations, hash, password))
+}
+
+pub fn subtle_derive_bits(
+    _: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let (salt, iterations, _hash, password) = pbkdf2_params(args)?;
+    let length = read_u32_arg(args, 2, "length")? as usize;
+    if length == 0 || length > 64 * 1024 {
+        return Err(execute::type_error("deriveBits: length must be 1..=65536"));
+    }
+    let derived = pbkdf2_hmac_sha256(&password, &salt, iterations.max(1), length);
+    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&derived)))
+}
+
+pub fn subtle_derive_key(
+    _: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    let (salt, iterations, _hash, password) = pbkdf2_params(args)?;
+    let derived_alg = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let derived_name = execute::get_property(&derived_alg, "name");
+    let derived_name_str = match derived_name {
+        Value::String(s) => s.to_string(),
+        _ => return Err(execute::type_error("deriveKey: derivedAlgorithm.name required")),
+    };
+    let length = match execute::get_property(&derived_alg, "length") {
+        Value::Number(n) if n.is_finite() && n > 0.0 && n.fract() == 0.0 => n as usize,
+        _ => return Err(execute::type_error("deriveKey: derivedAlgorithm.length required")),
+    };
+    if length % 8 != 0 || length == 0 {
+        return Err(execute::type_error("deriveKey: derivedAlgorithm.length must be a positive multiple of 8"));
+    }
+    let byte_length = length / 8;
+    if byte_length > 64 * 1024 {
+        return Err(execute::type_error("deriveKey: derivedAlgorithm.length too large"));
+    }
+    let extractable = args.get(3).cloned().unwrap_or(Value::Boolean(false));
+    let derived = pbkdf2_hmac_sha256(&password, &salt, iterations.max(1), byte_length);
+    Ok(fulfilled(host_api::object(vec![
+        ("type".to_string(), Value::String("secret".into())),
+        ("extractable".to_string(), extractable),
+        (
+            "algorithm".to_string(),
+            host_api::object(vec![
+                ("name".to_string(), Value::String(derived_name_str.into())),
+                ("length".to_string(), Value::Number(length as f64)),
+            ]),
+        ),
+        ("usages".to_string(), host_api::array(vec![])),
+        (
+            "\0crypto:keydata".to_string(),
+            crate::modules::buffer_proto::make_buffer(&derived),
+        ),
+    ])))
+}
+
 mod crypto_hash;
 pub use crypto_hash::{
     hmac_sha1, hmac_sha256, md5_digest, sha1_digest, sha224_digest, sha256_digest, sha384_digest,
