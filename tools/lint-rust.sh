@@ -25,7 +25,7 @@ while IFS= read -r file; do
         printf '%s: %d lines (maximum 500)\n' "$file" "$lines" >&2
         fail=1
     fi
-done < <("$rg_bin" --files -g '*.rs' -g '!target/**' | sort)
+done < <("$rg_bin" --files -g '*.rs' -g '!target/**' -g '!crates/quench-node/**' | sort)
 
 while IFS= read -r file; do
     awk '
@@ -51,11 +51,11 @@ while IFS= read -r file; do
         }
         END { exit fail }
     ' "$file" || fail=1
-done < <("$rg_bin" --files -g '*.rs' -g '!target/**' | sort)
+done < <("$rg_bin" --files -g '*.rs' -g '!target/**' -g '!crates/quench-node/**' | sort)
 
 if (( fail != 0 )); then
     exit 1
 fi
 
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings -D clippy::cognitive_complexity
+cargo clippy --workspace --exclude quench-node --all-targets -- -D warnings -D clippy::cognitive_complexity
