@@ -9,11 +9,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::host::HostState;
+use crate::registry::*;
 use quench_runtime::execute::{self, VmError};
 use quench_runtime::host_api;
 use quench_runtime::value::{PromiseData, PromiseState, Value};
-use crate::host::HostState;
-use crate::registry::*;
 
 /// Namespace pairs following the module convention; `build_value`
 /// also attaches them to the callable `assert` capability value.
@@ -316,13 +316,21 @@ pub fn rejects(
         Value::Function(_) | Value::BoundFunction(_) => {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
-                ("message".into(), Value::String("assert.rejects requires a Promise".into())),
+                (
+                    "message".into(),
+                    Value::String("assert.rejects requires a Promise".into()),
+                ),
             ])));
         }
         _ => {
             return Err(VmError::Thrown(host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
-                ("message".into(), Value::String("The \"asyncFn\" argument must be of type Function or Promise".into())),
+                (
+                    "message".into(),
+                    Value::String(
+                        "The \"asyncFn\" argument must be of type Function or Promise".into(),
+                    ),
+                ),
             ])));
         }
     };
@@ -332,7 +340,9 @@ pub fn rejects(
         PromiseState::Pending => Ok(assertion_rejected("The input promise is still pending")),
         PromiseState::Rejected(reason) => {
             if !matches!(validator, Value::Undefined) && !matches_validator(&validator, &reason) {
-                Ok(assertion_rejected("The rejection did not match the expected validator"))
+                Ok(assertion_rejected(
+                    "The rejection did not match the expected validator",
+                ))
             } else {
                 Ok(settle(Ok(Value::Undefined)))
             }

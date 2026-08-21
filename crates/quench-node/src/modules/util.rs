@@ -31,7 +31,8 @@ pub fn build() -> Vec<(String, Value)> {
     let format = crate::host::capability(crate::registry::SPEC_UTIL_FORMAT);
     let deep_equal = crate::host::capability(crate::registry::SPEC_UTIL_IS_DEEP_STRICT_EQUAL);
     let style_text = crate::host::capability(crate::registry::SPEC_UTIL_STYLE_TEXT);
-    let format_with_options = crate::host::capability(crate::registry::SPEC_UTIL_FORMAT_WITH_OPTIONS);
+    let format_with_options =
+        crate::host::capability(crate::registry::SPEC_UTIL_FORMAT_WITH_OPTIONS);
     let strip_vt = crate::host::capability(crate::registry::SPEC_UTIL_STRIP_VT);
     let inherits = crate::host::capability(crate::registry::SPEC_UTIL_INHERITS);
     let get_call_sites = crate::host::capability(crate::registry::SPEC_UTIL_GETCALLSITES);
@@ -51,16 +52,42 @@ pub fn build() -> Vec<(String, Value)> {
       function deprecate(fn){return function(){return fn.apply(this,arguments)}} function debuglog(){return function(){}}
       return {format:format,inspect:inspect,isDeepStrictEqual:deepEqual,styleText:styleText,formatWithOptions:formatWithOptions,stripVTControlCharacters:stripVT,inherits:inherits,getCallSites:getCallSites,promisify:promisify,callbackify:callbackify,types:types,deprecate:deprecate,debuglog:debuglog};
     })"#;
-    let Ok(program) = quench_runtime::reduce::reduce_global_script_source(source) else { return Vec::new() };
+    let Ok(program) = quench_runtime::reduce::reduce_global_script_source(source) else {
+        return Vec::new();
+    };
     let context = quench_runtime::vm::current_context();
     let mut regs = Vec::new();
-    let factory = quench_runtime::vm::with_current_context(&context, || quench_runtime::vm::execute_in_place_context(program.ops(), &mut regs, &context)).unwrap_or(Value::Undefined);
-    let module = quench_runtime::vm::call_value(&factory, &Value::Undefined, &[format, inspect, deep_equal, style_text, format_with_options, strip_vt, inherits, get_call_sites]).unwrap_or(Value::Undefined);
+    let factory = quench_runtime::vm::with_current_context(&context, || {
+        quench_runtime::vm::execute_in_place_context(program.ops(), &mut regs, &context)
+    })
+    .unwrap_or(Value::Undefined);
+    let module = quench_runtime::vm::call_value(
+        &factory,
+        &Value::Undefined,
+        &[
+            format,
+            inspect,
+            deep_equal,
+            style_text,
+            format_with_options,
+            strip_vt,
+            inherits,
+            get_call_sites,
+        ],
+    )
+    .unwrap_or(Value::Undefined);
     execute_pairs(module)
 }
 
 fn execute_pairs(module: Value) -> Vec<(String, Value)> {
-    execute::own_enumerable_keys(&module).into_iter().filter_map(|k| execute::get_property_result(&module, &k).ok().map(|v| (k,v))).collect()
+    execute::own_enumerable_keys(&module)
+        .into_iter()
+        .filter_map(|k| {
+            execute::get_property_result(&module, &k)
+                .ok()
+                .map(|v| (k, v))
+        })
+        .collect()
 }
 
 fn inspect_capability() -> Value {

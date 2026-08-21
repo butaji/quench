@@ -262,28 +262,6 @@ fn special_match_tail(builtin: Builtin, key: &str) -> Option<Value> {
 fn special_match_error_tail(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
     match (builtin, key) {
-        (ErrorPrototype, "toString") => Some(Value::Builtin(ErrorPrototypeToString)),
-        (ErrorPrototype, "name") => Some(Value::String("Error".to_string())),
-        (ErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (ErrorPrototype, "constructor") => Some(Value::Builtin(Error)),
-        (RangeErrorPrototype, "name") => Some(Value::String("RangeError".to_string())),
-        (RangeErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (RangeErrorPrototype, "constructor") => Some(Value::Builtin(RangeError)),
-        (TypeErrorPrototype, "name") => Some(Value::String("TypeError".to_string())),
-        (TypeErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (TypeErrorPrototype, "constructor") => Some(Value::Builtin(TypeError)),
-        (ReferenceErrorPrototype, "name") => Some(Value::String("ReferenceError".to_string())),
-        (ReferenceErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (ReferenceErrorPrototype, "constructor") => Some(Value::Builtin(ReferenceError)),
-        (SyntaxErrorPrototype, "name") => Some(Value::String("SyntaxError".to_string())),
-        (SyntaxErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (SyntaxErrorPrototype, "constructor") => Some(Value::Builtin(SyntaxError)),
-        (EvalErrorPrototype, "name") => Some(Value::String("EvalError".to_string())),
-        (EvalErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (EvalErrorPrototype, "constructor") => Some(Value::Builtin(EvalError)),
-        (URIErrorPrototype, "name") => Some(Value::String("URIError".to_string())),
-        (URIErrorPrototype, "message") => Some(Value::String("".to_string())),
-        (URIErrorPrototype, "constructor") => Some(Value::Builtin(URIError)),
         (AggregateError, "prototype") => Some(Value::Builtin(AggregateErrorPrototype)),
         (AggregateErrorPrototype, "name") => Some(Value::String("AggregateError".to_string())),
         (AggregateErrorPrototype, "message") => Some(Value::String("".to_string())),
@@ -298,7 +276,28 @@ fn special_match_error_tail(builtin: Builtin, key: &str) -> Option<Value> {
         (DisposableStackPrototype, k) => {
             crate::builtin_meta::disposable::property(k).map(Value::Builtin)
         }
-        _ => builtin_method(builtin, key).map(Value::Builtin),
+        _ => standard_error_property(builtin, key).or_else(|| builtin_method(builtin, key).map(Value::Builtin)),
+    }
+}
+
+fn standard_error_property(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    let (name, constructor) = match builtin {
+        ErrorPrototype => ("Error", Error),
+        RangeErrorPrototype => ("RangeError", RangeError),
+        TypeErrorPrototype => ("TypeError", TypeError),
+        ReferenceErrorPrototype => ("ReferenceError", ReferenceError),
+        SyntaxErrorPrototype => ("SyntaxError", SyntaxError),
+        EvalErrorPrototype => ("EvalError", EvalError),
+        URIErrorPrototype => ("URIError", URIError),
+        _ => return None,
+    };
+    match key {
+        "toString" if builtin == ErrorPrototype => Some(Value::Builtin(ErrorPrototypeToString)),
+        "name" => Some(Value::String(name.to_string())),
+        "message" => Some(Value::String("".to_string())),
+        "constructor" => Some(Value::Builtin(constructor)),
+        _ => None,
     }
 }
 

@@ -118,7 +118,15 @@ fn relative_scan(from_orig: &str, to_orig: &str, from: &str, to: &str) -> String
     ) {
         return hit;
     }
-    build_relative(from_orig, to_orig, from_start, from_end, to_start, to_end, last_common_sep)
+    build_relative(
+        from_orig,
+        to_orig,
+        from_start,
+        from_end,
+        to_start,
+        to_end,
+        last_common_sep,
+    )
 }
 
 /// The `i === length` tail of win32 `relative`: exact-base early

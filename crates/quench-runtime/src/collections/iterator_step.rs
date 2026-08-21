@@ -172,18 +172,42 @@ fn snapshot_state(state: &IteratorState) -> Option<Snapshot> {
             index: *index,
             done: *done,
         },
-        IteratorState::FlatMapped { inner, mapper, index, current, done } => Snapshot::FlatMapped {
-            inner: inner.clone(), mapper: mapper.clone(), index: *index,
-            current: current.clone(), done: *done,
+        IteratorState::FlatMapped {
+            inner,
+            mapper,
+            index,
+            current,
+            done,
+        } => Snapshot::FlatMapped {
+            inner: inner.clone(),
+            mapper: mapper.clone(),
+            index: *index,
+            current: current.clone(),
+            done: *done,
         },
-        IteratorState::Dropped { inner, skipped, limit, done } => Snapshot::Dropped {
-            inner: inner.clone(), skipped: *skipped, limit: *limit, done: *done,
+        IteratorState::Dropped {
+            inner,
+            skipped,
+            limit,
+            done,
+        } => Snapshot::Dropped {
+            inner: inner.clone(),
+            skipped: *skipped,
+            limit: *limit,
+            done: *done,
         },
         IteratorState::Take { inner, remaining } => Snapshot::Take {
-            inner: inner.clone(), remaining: *remaining,
+            inner: inner.clone(),
+            remaining: *remaining,
         },
-        IteratorState::Zip { iterators, mode, done } => Snapshot::Zip {
-            iterators: iterators.clone(), mode: *mode, done: *done,
+        IteratorState::Zip {
+            iterators,
+            mode,
+            done,
+        } => Snapshot::Zip {
+            iterators: iterators.clone(),
+            mode: *mode,
+            done: *done,
         },
         _ => return None,
     })

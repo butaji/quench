@@ -237,7 +237,10 @@ fn os_resource_caps(out: &mut Vec<(String, Value)>) {
     out.push(("freemem".into(), crate::host::capability(SPEC_OS_FREEMEM)));
     out.push(("cpus".into(), crate::host::capability(SPEC_OS_CPUS)));
     out.push(("loadavg".into(), crate::host::capability(SPEC_OS_LOADAVG)));
-    out.push(("networkInterfaces".into(), crate::host::capability(SPEC_OS_NETWORKINTERFACES)));
+    out.push((
+        "networkInterfaces".into(),
+        crate::host::capability(SPEC_OS_NETWORKINTERFACES),
+    ));
 }
 
 // ---- sysinfo-backed helpers ----
