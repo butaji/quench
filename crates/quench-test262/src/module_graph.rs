@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
@@ -29,19 +29,44 @@ pub struct ModuleGraph {
     units: Vec<ModuleUnit>,
     paths: HashMap<PathBuf, ModuleId>,
     edges: HashMap<ModuleId, Vec<ModuleId>>,
+    deferred_modules: HashSet<ModuleId>,
+    resolution_errors: HashMap<ModuleId, String>,
 }
 
 impl ModuleGraph {
     pub fn new() -> Self {
         Self::default()
     }
-
     pub fn add_entry(&mut self, path: PathBuf, source: String) -> ModuleId {
         self.add_unit(path, source, ModuleKind::JavaScript, true)
     }
 
     pub fn add_dependency(&mut self, path: PathBuf, source: String) -> ModuleId {
         self.add_unit(path, source, ModuleKind::JavaScript, false)
+    }
+}
+
+impl ModuleGraph {
+    pub fn has_resolution_error(&self, id: ModuleId) -> bool {
+        self.resolution_errors.contains_key(&id)
+    }
+
+    pub fn mark_deferred_modules(&mut self) {
+        let ids = self.units.iter().map(|unit| unit.id).collect::<Vec<_>>();
+        for from in ids {
+            let Some(metadata) = self.unit(from).and_then(|unit| {
+                (unit.kind == ModuleKind::JavaScript)
+                    .then(|| quench_runtime::reduce::inspect_module_source(&unit.source).ok())
+                    .flatten()
+            }) else {
+                continue;
+            };
+            for request in metadata.requests.iter().filter(|request| request.deferred) {
+                if let Some(target) = self.resolve(from, &request.source) {
+                    self.deferred_modules.insert(target);
+                }
+            }
+        }
     }
 
     pub fn add_json_dependency(&mut self, path: PathBuf, source: String) -> ModuleId {
@@ -116,46 +141,83 @@ impl ModuleGraph {
         Ok(())
     }
 
-    /// Resolve and record all static imports discovered by the runtime's OXC
-    /// metadata pass. Resolution remains graph-owned; execution is separate.
     pub fn link_specifiers<'a, I>(&mut self, from: ModuleId, specifiers: I) -> Result<(), String>
     where
         I: IntoIterator<Item = &'a str>,
     {
         for specifier in specifiers {
             let Some(target) = self.resolve(from, specifier) else {
-                continue;
+                let from_path = self.unit(from).map_or_else(
+                    || format!("<unknown:{:?}>", from),
+                    |unit| unit.path.display().to_string(),
+                );
+                return Err(format!(
+                    "unresolved static module specifier `{specifier}` from `{from_path}`"
+                ));
             };
             self.link(from, target)?;
         }
         Ok(())
     }
 
-    /// Extract and link the unit's static imports through the runtime's OXC
-    /// metadata path. The graph owns resolution; the runtime owns syntax.
     pub fn link_unit_imports(&mut self, from: ModuleId) -> Result<(), String> {
-        let unit = self
-            .unit(from)
-            .ok_or_else(|| "module unit is unknown".to_string())?;
+        let (kind, source, path) = {
+            let unit = self
+                .unit(from)
+                .ok_or_else(|| "module unit is unknown".to_string())?;
+            (
+                unit.kind,
+                unit.source.clone(),
+                unit.path.display().to_string(),
+            )
+        };
         if matches!(
-            unit.kind,
+            kind,
             ModuleKind::Json | ModuleKind::Bytes | ModuleKind::Text
         ) {
             return Ok(());
         }
-        let source = unit.source.clone();
         let metadata = quench_runtime::reduce::inspect_module_source(&source)
             .map_err(|errors| errors.join("; "))?;
-        self.link_specifiers(from, metadata.import_specifiers.iter().map(String::as_str))
+        for request in &metadata.requests {
+            if let Some(target) = self.resolve(from, &request.source) {
+                self.link(from, target)?;
+            } else if self.deferred_modules.contains(&from) {
+                self.resolution_errors.insert(from, request.source.clone());
+            } else {
+                return Err(format!(
+                    "unresolved static module specifier `{}` from `{}`",
+                    request.source, path
+                ));
+            }
+        }
+        Ok(())
     }
 
-    /// Link every currently loaded unit from its canonical static metadata.
     pub fn link_all_units(&mut self) -> Result<(), String> {
+        self.mark_deferred_modules();
         let units = self.units.iter().map(|unit| unit.id).collect::<Vec<_>>();
         for unit in units {
             self.link_unit_imports(unit)?;
         }
         Ok(())
+    }
+    pub fn has_deferred_resolution_error(&self, id: ModuleId) -> bool {
+        let mut seen = HashSet::new();
+        self.has_deferred_resolution_error_inner(id, &mut seen)
+    }
+
+    fn has_deferred_resolution_error_inner(
+        &self,
+        id: ModuleId,
+        seen: &mut HashSet<ModuleId>,
+    ) -> bool {
+        seen.insert(id)
+            && (self.resolution_errors.contains_key(&id)
+                || self
+                    .dependencies(id)
+                    .iter()
+                    .any(|dep| self.has_deferred_resolution_error_inner(*dep, seen)))
     }
 
     /// Return deterministic post-order units for an entry, preserving edge
@@ -284,10 +346,25 @@ mod tests {
         assert_eq!(graph.entry_unit().map(|unit| unit.id), Some(entry));
         assert_eq!(graph.unit(dependency).map(|unit| unit.id), Some(dependency));
         assert_eq!(graph.units().len(), 2);
+
         graph.link_all_units().expect("known edge");
         assert_eq!(
             graph.dependency_order(entry).unwrap(),
             vec![dependency, entry]
+        );
+    }
+
+    #[test]
+    fn graph_rejects_unresolved_static_imports() {
+        let mut graph = ModuleGraph::new();
+        let entry = graph.add_entry(
+            PathBuf::from("test/entry.js"),
+            "import './missing.js';".to_string(),
+        );
+        let error = graph.link_unit_imports(entry).expect_err("missing import");
+        assert_eq!(
+            error,
+            "unresolved static module specifier `./missing.js` from `test/entry.js`"
         );
     }
 

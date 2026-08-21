@@ -183,11 +183,43 @@ fn own_or_inherited_to_string_tag(value: &Value) -> Option<String> {
     let mut current = Some(value.clone());
     while let Some(value) = current {
         match &value {
-            Builtin(builtin) => current = builtin_to_string_tag(*builtin),
-            Object(properties) => {
-                if let Some(tag) = object_to_string_tag(properties) {
-                    return Some(tag);
+            Builtin(builtin) => {
+                if !crate::builtins::builtin_prototype_property_is_removed(
+                    *builtin,
+                    "Symbol.toStringTag",
+                ) {
+                    if let Some(Value::String(tag)) =
+                        crate::builtins::read_descriptor_value(*builtin, "Symbol.toStringTag")
+                    {
+                        if !crate::conversion::is_symbol_string(&tag) {
+                            return Some(tag);
+                        }
+                    }
+                    if let Some(Value::String(tag)) =
+                        crate::builtins::special_property(*builtin, "Symbol.toStringTag")
+                    {
+                        if !crate::conversion::is_symbol_string(&tag) {
+                            return Some(tag);
+                        }
+                    }
                 }
+
+                // Walk to the prototype for builtins.
+                let proto = crate::builtin_meta::instance_prototype(*builtin)
+                    .or_else(|| crate::builtin_meta::prototype(*builtin));
+                current = proto.map(Value::Builtin);
+            }
+            Object(properties) => {
+                if let Some((_, Value::String(tag))) =
+                    properties.iter().rev().find(|(key, value)| {
+                        key == "Symbol.toStringTag" && matches!(value, Value::String(_))
+                    })
+                {
+                    if !crate::conversion::is_symbol_string(tag) {
+                        return Some(tag.clone());
+                    }
+                }
+                // Walk to the prototype.
                 current = properties
                     .iter()
                     .rev()
@@ -195,36 +227,14 @@ fn own_or_inherited_to_string_tag(value: &Value) -> Option<String> {
                     .cloned();
             }
             Iterator(data) => {
-                current = Some(Value::Builtin(crate::collections::iterator::builtin_for(data)));
+                current = Some(Value::Builtin(crate::collections::iterator::builtin_for(
+                    data,
+                )));
             }
             _ => return None,
         }
     }
     None
-}
-
-fn builtin_to_string_tag(builtin: crate::ops::Builtin) -> Option<Value> {
-    if let Some(Value::String(tag)) =
-        crate::builtins::special_property(builtin, "Symbol.toStringTag")
-    {
-        if !crate::conversion::is_symbol_string(&tag) {
-            return Some(Value::String(tag));
-        }
-    }
-    let proto = crate::builtin_meta::instance_prototype(builtin)
-        .or_else(|| crate::builtin_meta::prototype(builtin));
-    proto.map(Value::Builtin)
-}
-
-fn object_to_string_tag(properties: &crate::value::ObjectData) -> Option<String> {
-    properties
-        .iter()
-        .rev()
-        .find(|(key, value)| key == "Symbol.toStringTag" && matches!(value, Value::String(_)))
-        .and_then(|(_, value)| match value {
-            Value::String(tag) if !crate::conversion::is_symbol_string(tag) => Some(tag.clone()),
-            _ => None,
-        })
 }
 
 fn is_callable_builtin(value: &Value) -> bool {

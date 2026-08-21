@@ -1,0 +1,15 @@
+[package]
+name = "quench-js-check"
+version = "0.1.0"
+edition = "2021"
+description = "Compile-time syntax validation for embedded JavaScript strings"
+license = "MIT"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "2"
+oxc_allocator = "0.96"
+oxc_parser = "0.96"
+oxc_span = "0.96"
