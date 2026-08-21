@@ -3,7 +3,7 @@
 //! ECMAScript dates are represented as milliseconds since the Unix epoch,
 //! with special handling for NaN (invalid dates) and TimeClip limits.
 
-mod chrono_utils;
+pub(crate) mod chrono_utils;
 mod format;
 mod helpers;
 mod impl_;
