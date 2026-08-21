@@ -121,6 +121,10 @@ fn is_equality_object(value: &Value) -> bool {
 }
 
 pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
+    strict_equal_values(left, right)
+}
+
+fn strict_equal_values(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),

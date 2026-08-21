@@ -183,25 +183,8 @@ fn bound_function_fallback(
     if shadow_wrapper {
         return function_prototype_property_for_builtin(Builtin::FunctionPrototype, key);
     }
-    if let Value::Builtin(builtin) = bound.target {
-        if key == "prototype" {
-            if let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) {
-                return realm::intrinsic(bound.realm, prototype)
-                    .unwrap_or(Value::Builtin(prototype));
-            }
-        }
-        let intrinsic = match (builtin, key) {
-            (Builtin::GeneratorFunctionPrototype, "constructor") => {
-                Some(Builtin::GeneratorFunction)
-            }
-            (Builtin::AsyncGeneratorFunctionPrototype, "constructor") => {
-                Some(Builtin::AsyncGeneratorFunction)
-            }
-            _ => None,
-        };
-        if let Some(intrinsic) = intrinsic {
-            return realm::intrinsic(bound.realm, intrinsic).unwrap_or(Value::Builtin(intrinsic));
-        }
+    if let Some(value) = bound_builtin_property(bound, key) {
+        return value;
     }
     let result = get_property(&bound.target, key);
     if let Value::Builtin(constructor) = &result {
@@ -214,6 +197,27 @@ fn bound_function_fallback(
     } else {
         result
     }
+}
+
+fn bound_builtin_property(bound: &crate::value::BoundFunctionValue, key: &str) -> Option<Value> {
+    let Value::Builtin(builtin) = bound.target else {
+        return None;
+    };
+    if key == "prototype" {
+        if let Some(prototype) = crate::builtin_meta::instance_prototype(builtin) {
+            return Some(
+                realm::intrinsic(bound.realm, prototype).unwrap_or(Value::Builtin(prototype)),
+            );
+        }
+    }
+    let intrinsic = match (builtin, key) {
+        (Builtin::GeneratorFunctionPrototype, "constructor") => Some(Builtin::GeneratorFunction),
+        (Builtin::AsyncGeneratorFunctionPrototype, "constructor") => {
+            Some(Builtin::AsyncGeneratorFunction)
+        }
+        _ => None,
+    }?;
+    Some(realm::intrinsic(bound.realm, intrinsic).unwrap_or(Value::Builtin(intrinsic)))
 }
 fn bind_method(receiver: &Value, property: Value) -> Value {
     let Value::Builtin(builtin) = property else {

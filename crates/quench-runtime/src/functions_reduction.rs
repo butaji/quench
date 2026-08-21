@@ -121,7 +121,7 @@ fn reduce_function_body_inner(
     let (parameters, body_locals) = locals;
     let captures = layout.1;
     let ordered = ordered_function_declarations_first(statements);
-    let mut prefix = crate::function_parameters::prefix(
+    let prefix = crate::function_parameters::prefix(
         formal,
         facts,
         parameters,
@@ -131,10 +131,12 @@ fn reduce_function_body_inner(
     let local_count = function_local_count(&body_locals, layout, rest, arrow_expression.is_some());
     let inherited_barrier = facts.eval_var_barrier.clone();
     let inherited_formals = facts.eval_formals.clone();
-    facts.eval_formals.extend(crate::function_parameters::eval_var_barrier(
-        formal,
-        arrow_expression.is_none(),
-    ));
+    facts
+        .eval_formals
+        .extend(crate::function_parameters::eval_var_barrier(
+            formal,
+            arrow_expression.is_none(),
+        ));
     let body_ops = reduce_selected_body(
         statements,
         &ordered,
@@ -145,9 +147,13 @@ fn reduce_function_body_inner(
     );
     facts.eval_var_barrier = inherited_barrier;
     facts.eval_formals = inherited_formals;
+    Some(assemble_function_body(prefix, body_ops?))
+}
+
+fn assemble_function_body(mut prefix: Vec<Op>, body_ops: Vec<Op>) -> Vec<Op> {
     prefix.extend((!prefix.is_empty()).then_some(Op::ParameterEnd));
-    prefix.extend(body_ops?);
-    Some(prefix)
+    prefix.extend(body_ops);
+    prefix
 }
 
 fn prepare_function_scope(
@@ -226,7 +232,12 @@ pub(crate) fn reduce_selected_body(
     let mut last = None;
     let mut next_register = 0;
     let mut next_slot = local_count;
-    crate::reduce_support::predeclare_functions(statements, &mut locals, &mut next_slot, facts.strict);
+    crate::reduce_support::predeclare_functions(
+        statements,
+        &mut locals,
+        &mut next_slot,
+        facts.strict,
+    );
     crate::reduce_support::predeclare_lexicals(statements, &mut locals, &mut next_slot);
     let stack = crate::using_scope::reserve(statements, &mut locals, &mut next_slot);
     crate::using_scope::emit_tdz(statements, &mut ops, &locals);
@@ -256,7 +267,9 @@ pub(crate) fn reduce_selected_body(
     }
     facts.eval_var_barrier.truncate(barrier_len);
     let ops = match stack {
-        Some(stack) => crate::using_scope::wrap(ops, stack, await_using, &mut next_register).ok()?,
+        Some(stack) => {
+            crate::using_scope::wrap(ops, stack, await_using, &mut next_register).ok()?
+        }
         None => ops,
     };
     finalize_function_body(ops, last, expression_body)
