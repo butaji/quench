@@ -60,7 +60,9 @@ fn walk_statement_inner(statement: &Statement<'_>, errors: &mut Vec<String>) {
                 walk_expression(expression, errors);
             }
         }
-        Statement::VariableDeclaration(declaration) => walk_variable_declaration(declaration, errors),
+        Statement::VariableDeclaration(declaration) => {
+            walk_variable_declaration(declaration, errors)
+        }
         _ => {}
     }
 }

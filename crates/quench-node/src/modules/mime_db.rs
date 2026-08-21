@@ -37,21 +37,55 @@ pub fn build(state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
 
 fn build_entries() -> Value {
     host_api::object(vec![
-        ("application/json".into(), entry("iana", Some(true), &["json", "map"])),
-        ("application/javascript".into(), entry("apache", Some(true), &["js"])),
+        (
+            "application/json".into(),
+            entry("iana", Some(true), &["json", "map"]),
+        ),
+        (
+            "application/javascript".into(),
+            entry("apache", Some(true), &["js"]),
+        ),
         ("application/octet-stream".into(), entry("iana", None, &[])),
-        ("application/xml".into(), entry("iana", Some(true), &["xml"])),
-        ("text/plain".into(), entry("iana", Some(true), &["txt", "text", "conf", "def", "list", "log", "in", "ini"])),
-        ("text/html".into(), entry("iana", Some(true), &["html", "htm", "shtml"])),
+        (
+            "application/xml".into(),
+            entry("iana", Some(true), &["xml"]),
+        ),
+        (
+            "text/plain".into(),
+            entry(
+                "iana",
+                Some(true),
+                &["txt", "text", "conf", "def", "list", "log", "in", "ini"],
+            ),
+        ),
+        (
+            "text/html".into(),
+            entry("iana", Some(true), &["html", "htm", "shtml"]),
+        ),
         ("text/css".into(), entry("iana", Some(true), &["css"])),
         ("text/javascript".into(), entry("iana", Some(true), &["js"])),
         ("image/png".into(), entry("iana", Some(false), &["png"])),
-        ("image/jpeg".into(), entry("iana", Some(false), &["jpg", "jpeg", "jpe"])),
+        (
+            "image/jpeg".into(),
+            entry("iana", Some(false), &["jpg", "jpeg", "jpe"]),
+        ),
         ("image/gif".into(), entry("iana", Some(false), &["gif"])),
-        ("image/svg+xml".into(), entry("iana", Some(true), &["svg", "svgz"])),
-        ("video/mp4".into(), entry("iana", Some(false), &["mp4", "mp4v", "mpg4"])),
-        ("application/pdf".into(), entry("iana", Some(false), &["pdf"])),
-        ("application/zip".into(), entry("iana", Some(false), &["zip"])),
+        (
+            "image/svg+xml".into(),
+            entry("iana", Some(true), &["svg", "svgz"]),
+        ),
+        (
+            "video/mp4".into(),
+            entry("iana", Some(false), &["mp4", "mp4v", "mpg4"]),
+        ),
+        (
+            "application/pdf".into(),
+            entry("iana", Some(false), &["pdf"]),
+        ),
+        (
+            "application/zip".into(),
+            entry("iana", Some(false), &["zip"]),
+        ),
         ("multipart/form-data".into(), entry("iana", None, &[])),
     ])
 }

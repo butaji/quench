@@ -94,33 +94,68 @@ fn require_path_variant(
 }
 
 fn require_cached_group_a(
-    state: &Rc<RefCell<HostState>>, spec: &str,
+    state: &Rc<RefCell<HostState>>,
+    spec: &str,
 ) -> Option<Result<Value, VmError>> {
     let (key, build): (&str, Box<dyn FnOnce() -> Result<Value, VmError> + '_>) = match spec {
         "stream" | "node:stream" => ("stream", Box::new(|| crate::modules::stream::build(state))),
-        "async_hooks" | "node:async_hooks" => ("async_hooks", Box::new(|| crate::modules::async_hooks::build(state))),
+        "async_hooks" | "node:async_hooks" => (
+            "async_hooks",
+            Box::new(|| crate::modules::async_hooks::build(state)),
+        ),
         "test" | "node:test" => ("test", Box::new(|| crate::modules::node_test::build(state))),
-        "punycode" | "node:punycode" => ("punycode", Box::new(|| crate::modules::punycode::build(state))),
-        "perf_hooks" | "node:perf_hooks" => ("perf_hooks", Box::new(|| crate::modules::perf_hooks::build(state))),
-        "trace_events" | "node:trace_events" => ("trace_events", Box::new(|| crate::modules::trace_events::build(state))),
-        "http-errors" | "node:http-errors" => ("http-errors", Box::new(|| crate::modules::http_errors::build(state))),
+        "punycode" | "node:punycode" => (
+            "punycode",
+            Box::new(|| crate::modules::punycode::build(state)),
+        ),
+        "perf_hooks" | "node:perf_hooks" => (
+            "perf_hooks",
+            Box::new(|| crate::modules::perf_hooks::build(state)),
+        ),
+        "trace_events" | "node:trace_events" => (
+            "trace_events",
+            Box::new(|| crate::modules::trace_events::build(state)),
+        ),
+        "http-errors" | "node:http-errors" => (
+            "http-errors",
+            Box::new(|| crate::modules::http_errors::build(state)),
+        ),
         _ => return None,
     };
     Some(cached_module(state, key, build))
 }
 
 fn require_cached_group_b(
-    state: &Rc<RefCell<HostState>>, spec: &str,
+    state: &Rc<RefCell<HostState>>,
+    spec: &str,
 ) -> Option<Result<Value, VmError>> {
     let (key, build): (&str, Box<dyn FnOnce() -> Result<Value, VmError> + '_>) = match spec {
-        "http2" | "node:http2" => ("node:http2", Box::new(|| Ok(crate::modules::http2::build()))),
+        "http2" | "node:http2" => (
+            "node:http2",
+            Box::new(|| Ok(crate::modules::http2::build())),
+        ),
         "quic" | "node:quic" => ("node:quic", Box::new(|| Ok(crate::modules::quic::build()))),
-        "statuses" => ("statuses", Box::new(|| crate::modules::statuses::build(state))),
-        "mime-db" => ("mime-db", Box::new(|| crate::modules::mime_db::build(state))),
-        "express" | "node:express" => ("express", Box::new(|| crate::modules::express::build(state))),
-        "express/lib/request" | "node:express/request" => ("express_request", Box::new(|| crate::modules::express_request::build(state))),
+        "statuses" => (
+            "statuses",
+            Box::new(|| crate::modules::statuses::build(state)),
+        ),
+        "mime-db" => (
+            "mime-db",
+            Box::new(|| crate::modules::mime_db::build(state)),
+        ),
+        "express" | "node:express" => (
+            "express",
+            Box::new(|| crate::modules::express::build(state)),
+        ),
+        "express/lib/request" | "node:express/request" => (
+            "express_request",
+            Box::new(|| crate::modules::express_request::build(state)),
+        ),
         "koa" | "node:koa" => ("koa", Box::new(|| crate::modules::koa::build(state))),
-        "fastify" | "node:fastify" => ("fastify", Box::new(|| crate::modules::fastify::build(state))),
+        "fastify" | "node:fastify" => (
+            "fastify",
+            Box::new(|| crate::modules::fastify::build(state)),
+        ),
         _ => return None,
     };
     Some(cached_module(state, key, build))

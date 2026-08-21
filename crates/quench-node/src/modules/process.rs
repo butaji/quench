@@ -87,7 +87,10 @@ fn info_props_dynamic() -> Vec<(&'static str, Value)> {
         ("env", env_object()),
         ("execPath", Value::String(String::new())),
         ("version", Value::String("v22.0.0".into())),
-        ("platform", Value::String(std_env("QUENCH_PLATFORM", current_platform()))),
+        (
+            "platform",
+            Value::String(std_env("QUENCH_PLATFORM", current_platform())),
+        ),
         ("arch", Value::String(current_arch().to_string())),
         ("pid", Value::Number(std::process::id() as f64)),
         ("ppid", Value::Number(parent_pid() as f64)),
@@ -103,16 +106,31 @@ fn info_props_dynamic() -> Vec<(&'static str, Value)> {
 fn info_props_static(exec_path: &str) -> Vec<(&'static str, Value)> {
     let mut props = info_props_dynamic();
     props[1].1 = Value::String(exec_path.to_string());
-    props.push(("config", host_api::object(vec![(
-        "variables".to_string(),
-        host_api::object(vec![("v8_enable_i18n_support".to_string(), Value::Number(1.0))]),
-    )])));
-    props.push(("versions", crate::host::namespace_object_from_pairs(versions_props())));
-    props.push(("report", crate::host::namespace_object_from_pairs(vec![(
-        "getReport".to_string(),
-        crate::host::capability(crate::registry::SPEC_PROCESS_REPORT),
-    )])));
-    props.push(("activeResourcesInfo", crate::host::capability(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES)));
+    props.push((
+        "config",
+        host_api::object(vec![(
+            "variables".to_string(),
+            host_api::object(vec![(
+                "v8_enable_i18n_support".to_string(),
+                Value::Number(1.0),
+            )]),
+        )]),
+    ));
+    props.push((
+        "versions",
+        crate::host::namespace_object_from_pairs(versions_props()),
+    ));
+    props.push((
+        "report",
+        crate::host::namespace_object_from_pairs(vec![(
+            "getReport".to_string(),
+            crate::host::capability(crate::registry::SPEC_PROCESS_REPORT),
+        )]),
+    ));
+    props.push((
+        "activeResourcesInfo",
+        crate::host::capability(crate::registry::SPEC_PROCESS_ACTIVE_RESOURCES),
+    ));
     props
 }
 

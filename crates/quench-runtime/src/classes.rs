@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use oxc::ast::ast::{Class, ClassElement, MethodDefinition, MethodDefinitionKind, PropertyDefinition, PropertyKey};
+use oxc::ast::ast::{
+    Class, ClassElement, MethodDefinition, MethodDefinitionKind, PropertyDefinition, PropertyKey,
+};
 
 use crate::{
     facts::ProgramDb,

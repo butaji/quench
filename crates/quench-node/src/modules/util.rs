@@ -43,12 +43,16 @@ fn build_factory(args: &[Value]) -> Value {
         isSymbol:function(v){return typeof v==='symbol'}};
       function deprecate(fn){return function(){return fn.apply(this,arguments)}} function debuglog(){return function(){}}
       return {format:format,inspect:inspect,isDeepStrictEqual:deepEqual,styleText:styleText,formatWithOptions:formatWithOptions,stripVTControlCharacters:stripVT,inherits:inherits,getCallSites:getCallSites,promisify:promisify,callbackify:callbackify,types:types,deprecate:deprecate,debuglog:debuglog};
-    })"#) else { return Value::Undefined };
+    })"#,
+    ) else {
+        return Value::Undefined;
+    };
     let context = quench_runtime::vm::current_context();
     let mut regs = Vec::new();
     quench_runtime::vm::with_current_context(&context, || {
         quench_runtime::vm::execute_in_place_context(program.ops(), &mut regs, &context)
-    }).unwrap_or(Value::Undefined)
+    })
+    .unwrap_or(Value::Undefined)
 }
 
 pub fn build() -> Vec<(String, Value)> {
@@ -62,9 +66,9 @@ pub fn build() -> Vec<(String, Value)> {
         crate::host::capability(crate::registry::SPEC_UTIL_INHERITS),
         crate::host::capability(crate::registry::SPEC_UTIL_GETCALLSITES),
     ];
-    let module = quench_runtime::vm::call_value(
-        &build_factory(&values), &Value::Undefined, &values,
-    ).unwrap_or(Value::Undefined);
+    let module =
+        quench_runtime::vm::call_value(&build_factory(&values), &Value::Undefined, &values)
+            .unwrap_or(Value::Undefined);
     execute_pairs(module)
 }
 
