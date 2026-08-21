@@ -180,6 +180,8 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
     Some(match cap {
         CAP_PROCESS_EXIT => process_exit,
         CAP_PROCESS_KILL => process_kill,
+        CAP_PROCESS_EXIT_CODE_GET => process_exit_code_get,
+        CAP_PROCESS_EXIT_CODE_SET => process_exit_code_set,
         CAP_PROCESS_CWD => process_cwd,
         CAP_PROCESS_CHDIR => process_chdir,
         CAP_PROCESS_NEXT_TICK => process_next_tick,
