@@ -204,6 +204,10 @@ pub const SPEC_CRYPTO_RANDOM_UUID: NodeSpec = NodeSpec::new("crypto:randomUUID",
 pub const SPEC_CRYPTO_RANDOM_INT: NodeSpec = NodeSpec::new("crypto:randomInt", 0x2107);
 pub const SPEC_CRYPTO_GET_HASHES: NodeSpec = NodeSpec::new("crypto:getHashes", 0x2108);
 pub const SPEC_CRYPTO_GET_CIPHERS: NodeSpec = NodeSpec::new("crypto:getCiphers", 0x2109);
+pub const SPEC_CRYPTO_HASH_UPDATE: NodeSpec = NodeSpec::new("crypto:hashUpdate", 0x210A);
+pub const SPEC_CRYPTO_HASH_DIGEST: NodeSpec = NodeSpec::new("crypto:hashDigest", 0x210B);
+pub const SPEC_CRYPTO_HMAC_UPDATE: NodeSpec = NodeSpec::new("crypto:hmacUpdate", 0x210C);
+pub const SPEC_CRYPTO_HMAC_DIGEST: NodeSpec = NodeSpec::new("crypto:hmacDigest", 0x210D);
 
 // Reserved node:sqlite capability range. The synchronous backend is exposed
 // directly by modules::sqlite until VM object dispatch is installed.
