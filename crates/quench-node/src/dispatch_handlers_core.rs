@@ -89,6 +89,23 @@ pub fn url_resolve(
 pub fn url_new(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::url_whatwg::new_url(state, args)
 }
+pub fn url_can_parse(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Boolean(crate::modules::url_whatwg::can_parse(
+        state, args,
+    )))
+}
+
+pub fn url_parse_static(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::url_whatwg::parse_static(state, args)
+}
 pub fn url_search_params(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::url::new_search_params(state, args)
 }
