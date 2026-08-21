@@ -49,3 +49,17 @@ Closing this gap requires wiring a real non-throwing URL-parse handler into the
 active dispatch layer (additive capability mapping) plus a focused fixture; it
 is tracked here as an explicit green gap rather than claimed complete.
 `url.fileURLToPath` and `url.pathToFileURL` are present.
+
+Measured improvements (2026-08-21): `assert.match` now actually asserts (with
+string-pattern support) and throws on mismatch; `assert.fail` honors its
+message; `assert.doesNotThrow` wraps a caught error as an AssertionError-style
+failure instead of rethrowing the raw error; deep-equality terminates on cyclic
+inputs via visited-pair tracking. All covered by `test-assert.js`.
+
+Measured gap (2026-08-21): `events` still lacks the Bun-green namespace
+exports `once`, `getEventListeners`, `addAbortListener`, `usingAsyncResource`,
+and the `errorMonitor`/`captureRejectionSymbol` Symbol constants (plus
+`EventEmitter.captureRejections` semantics). True `Symbol` values and a
+stateful listener registry are required; the harness rejects `\0`-string
+symbol stand-ins, so this needs host Symbol support and is tracked here rather
+than claimed complete.
