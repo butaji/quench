@@ -124,18 +124,9 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Array(left), Value::Array(right)) => Rc::ptr_eq(left, right),
         (Value::Object(left), Value::Object(right)) => Rc::ptr_eq(left, right),
-        (Value::ObjectAlias(left), Value::Object(right))
-        | (Value::Object(right), Value::ObjectAlias(left)) => left
-            .0
-            .borrow()
-            .upgrade()
-            .is_some_and(|left| Rc::ptr_eq(&left, right)),
-        (Value::ObjectAlias(left), Value::ObjectAlias(right)) => {
-            match (left.0.borrow().upgrade(), right.0.borrow().upgrade()) {
-                (Some(left), Some(right)) => Rc::ptr_eq(&left, &right),
-                _ => false,
-            }
-        }
+        (Value::ObjectAlias(_), Value::Object(_))
+        | (Value::Object(_), Value::ObjectAlias(_))
+        | (Value::ObjectAlias(_), Value::ObjectAlias(_)) => strict_equal_aliases(left, right),
         (Value::ArrayBuffer(left), Value::ArrayBuffer(right)) => Rc::ptr_eq(left, right),
         (Value::DataView(left), Value::DataView(right)) => Rc::ptr_eq(left, right),
         (Value::Float32Array(left), Value::Float32Array(right)) => Rc::ptr_eq(left, right),
@@ -146,9 +137,7 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
         (Value::Uint16Array(left), Value::Uint16Array(right)) => Rc::ptr_eq(left, right),
         (Value::Uint32Array(left), Value::Uint32Array(right)) => Rc::ptr_eq(left, right),
         (Value::Uint8Array(left), Value::Uint8Array(right)) => Rc::ptr_eq(left, right),
-        (Value::Uint8ClampedArray(left), Value::Uint8ClampedArray(right)) => {
-            Rc::ptr_eq(left, right)
-        }
+        (Value::Uint8ClampedArray(left), Value::Uint8ClampedArray(right)) => Rc::ptr_eq(left, right),
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
         (Value::BoundFunction(left), Value::BoundFunction(right)) => Rc::ptr_eq(left, right),
         (Value::Generator(left), Value::Generator(right)) => Rc::ptr_eq(left, right),
@@ -162,12 +151,28 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
         (Value::String(left), Value::String(right)) => left == right,
         (Value::StringUnits(_), Value::String(_))
         | (Value::String(_), Value::StringUnits(_))
-        | (Value::StringUnits(_), Value::StringUnits(_)) => {
-            crate::strings::units_equal(left, right)
-        }
+        | (Value::StringUnits(_), Value::StringUnits(_)) => crate::strings::units_equal(left, right),
         (Value::BigInt(left), Value::BigInt(right)) => left == right,
         (Value::Builtin(left), Value::Builtin(right)) => left == right,
         (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => true,
+        _ => false,
+    }
+}
+
+fn strict_equal_aliases(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::ObjectAlias(left), Value::Object(right))
+        | (Value::Object(right), Value::ObjectAlias(left)) => left
+            .0
+            .borrow()
+            .upgrade()
+            .is_some_and(|left| Rc::ptr_eq(&left, right)),
+        (Value::ObjectAlias(left), Value::ObjectAlias(right)) => {
+            match (left.0.borrow().upgrade(), right.0.borrow().upgrade()) {
+                (Some(left), Some(right)) => Rc::ptr_eq(&left, &right),
+                _ => false,
+            }
+        }
         _ => false,
     }
 }

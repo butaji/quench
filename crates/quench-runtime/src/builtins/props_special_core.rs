@@ -14,10 +14,14 @@ fn special(builtin: Builtin, key: &str) -> Option<Value> {
     special_match(builtin, key)
 }
 fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
-    use Builtin::*;
     if let Some(value) = special_match_prefix(builtin, key) {
         return Some(value);
     }
+    special_match_core(builtin, key)
+}
+
+fn special_match_core(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
     match (builtin, key) {
         (Temporal, "Duration") => Some(Value::Builtin(TemporalDuration)),
         (IntlSegmenterPrototype, "Symbol.toStringTag") => {
@@ -51,6 +55,13 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (Temporal, "PlainDate") => Some(Value::Builtin(TemporalPlainDate)),
         (Temporal, "Symbol.toStringTag") => Some(Value::String("Temporal".into())),
+        _ => special_match_temporal_tail(builtin, key),
+    }
+}
+
+fn special_match_temporal_tail(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (TemporalDuration, "prototype") => Some(Value::Builtin(TemporalDurationPrototype)),
         (TemporalDuration, "from") => Some(Value::Builtin(TemporalDurationFrom)),
         (TemporalDuration, "compare") => Some(Value::Builtin(TemporalDurationCompare)),
@@ -71,6 +82,13 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
         }
         (TemporalDurationPrototype, "toString") => Some(Value::Builtin(TemporalDurationToString)),
         (TemporalDurationPrototype, "toJSON") => Some(Value::Builtin(TemporalDurationToJSON)),
+        _ => special_match_core_tail(builtin, key),
+    }
+}
+
+fn special_match_core_tail(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (TemporalPlainDate, "prototype") => Some(Value::Builtin(TemporalPlainDatePrototype)),
         (TemporalPlainDate, "from") => Some(Value::Builtin(TemporalPlainDateFrom)),
         (TemporalPlainDate, "compare") => Some(Value::Builtin(TemporalPlainDateCompare)),
@@ -104,50 +122,8 @@ fn special_match(builtin: Builtin, key: &str) -> Option<Value> {
 
 fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
     use Builtin::*;
-    if builtin == ArrayIteratorPrototype && key == "constructor" {
-        return Some(Value::Builtin(Array));
-    }
-    if builtin == ArrayIteratorPrototype && key == "next" {
-        return Some(Value::Builtin(IteratorNext));
-    }
-    if builtin == ArrayIteratorPrototype && key == "Symbol.toStringTag" {
-        return Some(Value::String("Array Iterator".into()));
-    }
-    if builtin == IteratorPrototype && key == "Symbol.iterator" {
-        return Some(Value::Builtin(IteratorSelf));
-    }
-    if builtin == IteratorPrototype && key == "toArray" {
-        return Some(Value::Builtin(IteratorToArray));
-    }
-    if builtin == IteratorPrototype && key == "map" {
-        return Some(Value::Builtin(IteratorMap));
-    }
-    if builtin == IteratorPrototype && key == "filter" {
-        return Some(Value::Builtin(IteratorFilter));
-    }
-    if builtin == IteratorPrototype && key == "flatMap" {
-        return Some(Value::Builtin(IteratorFlatMap));
-    }
-    if builtin == IteratorPrototype && key == "drop" {
-        return Some(Value::Builtin(IteratorDrop));
-    }
-    if builtin == IteratorPrototype && key == "take" {
-        return Some(Value::Builtin(IteratorTake));
-    }
-    if builtin == IteratorPrototype && key == "reduce" {
-        return Some(Value::Builtin(IteratorReduce));
-    }
-    if builtin == IteratorPrototype && key == "find" {
-        return Some(Value::Builtin(IteratorFind));
-    }
-    if builtin == IteratorPrototype && key == "forEach" {
-        return Some(Value::Builtin(IteratorForEach));
-    }
-    if builtin == IteratorPrototype && key == "some" {
-        return Some(Value::Builtin(IteratorSome));
-    }
-    if builtin == IteratorPrototype && key == "every" {
-        return Some(Value::Builtin(IteratorEvery));
+    if let Some(value) = iterator_special(builtin, key) {
+        return Some(value);
     }
     if let Some(value) = typed_array_static_property(builtin, key) {
         return Some(value);
@@ -162,6 +138,37 @@ fn special_match_prefix(builtin: Builtin, key: &str) -> Option<Value> {
         return Some(Value::Builtin(Builtin::ErrorCaptureStackTrace));
     }
     None
+}
+
+fn iterator_special(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    if builtin == ArrayIteratorPrototype && key == "constructor" {
+        return Some(Value::Builtin(Array));
+    }
+    if builtin == ArrayIteratorPrototype && key == "next" {
+        return Some(Value::Builtin(IteratorNext));
+    }
+    if builtin == ArrayIteratorPrototype && key == "Symbol.toStringTag" {
+        return Some(Value::String("Array Iterator".into()));
+    }
+    if builtin != IteratorPrototype {
+        return None;
+    }
+    Some(match key {
+        "Symbol.iterator" => Value::Builtin(IteratorSelf),
+        "toArray" => Value::Builtin(IteratorToArray),
+        "map" => Value::Builtin(IteratorMap),
+        "filter" => Value::Builtin(IteratorFilter),
+        "flatMap" => Value::Builtin(IteratorFlatMap),
+        "drop" => Value::Builtin(IteratorDrop),
+        "take" => Value::Builtin(IteratorTake),
+        "reduce" => Value::Builtin(IteratorReduce),
+        "find" => Value::Builtin(IteratorFind),
+        "forEach" => Value::Builtin(IteratorForEach),
+        "some" => Value::Builtin(IteratorSome),
+        "every" => Value::Builtin(IteratorEvery),
+        _ => return None,
+    })
 }
 
 fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {

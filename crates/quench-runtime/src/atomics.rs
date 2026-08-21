@@ -207,16 +207,20 @@ pub(crate) fn execute(
         return Ok(Value::Number(old as f64));
     }
     let value = atomic_value(arguments.get(2))?;
-    let updated = match builtin {
+    let updated = atomic_update_value(builtin, old, value)?;
+    view.set(index, updated);
+    Ok(Value::Number(old as f64))
+}
+
+fn atomic_update_value(builtin: Builtin, old: i32, value: i32) -> Result<i32, VmError> {
+    Ok(match builtin {
         Builtin::AtomicsAdd => old.wrapping_add(value),
         Builtin::AtomicsAnd => old & value,
         Builtin::AtomicsOr => old | value,
         Builtin::AtomicsSub => old.wrapping_sub(value),
         Builtin::AtomicsXor => old ^ value,
         _ => return Err(crate::vm::not_callable()),
-    };
-    view.set(index, updated);
-    Ok(Value::Number(old as f64))
+    })
 }
 
 fn execute_bigint(builtin: Builtin, args: &[Value]) -> Result<Value, VmError> {

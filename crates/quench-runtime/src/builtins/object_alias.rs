@@ -3,23 +3,8 @@ use std::{cell::RefCell, rc::Rc};
 use crate::value::{ObjectAliasValue, ObjectData, PrivateSlot, PrivateSlots, Value, WeakObject};
 
 pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value {
-    if value_targets(&value, &properties) {
-        let parent_alias = alias(&properties);
-        // The parent is intentionally updated even when aliased: this preserves
-        // JavaScript's self-reference identity across the persistent object model.
-        let parent = unsafe { &mut *(Rc::as_ptr(&properties) as *mut ObjectData) };
-        if let Some((_, current)) = parent
-            .properties
-            .iter_mut()
-            .rev()
-            .find(|(name, _)| name == key)
-        {
-            *current = parent_alias;
-        } else {
-            parent.properties.push((key.to_string(), parent_alias));
-        }
-        record_created(&mut parent.created, key);
-        return Value::Object(properties);
+    if let Some(result) = set_existing_alias(&properties, key, &value) {
+        return result;
     }
     let object = Rc::new_cyclic(|weak| {
         let mut values = properties.properties.clone();
@@ -43,6 +28,26 @@ pub(crate) fn set(properties: Rc<ObjectData>, key: &str, value: Value) -> Value 
         ObjectData::with_creation_order(values, Rc::clone(&properties.private_slots), created)
     });
     Value::Object(object)
+}
+
+fn set_existing_alias(properties: &Rc<ObjectData>, key: &str, value: &Value) -> Option<Value> {
+    if !value_targets(value, properties) {
+        return None;
+    }
+    let parent_alias = alias(properties);
+    let parent = unsafe { &mut *(Rc::as_ptr(properties) as *mut ObjectData) };
+    if let Some((_, current)) = parent
+        .properties
+        .iter_mut()
+        .rev()
+        .find(|(name, _)| name == key)
+    {
+        *current = parent_alias;
+    } else {
+        parent.properties.push((key.to_string(), parent_alias));
+    }
+    record_created(&mut parent.created, key);
+    Some(Value::Object(Rc::clone(properties)))
 }
 
 fn value_targets(value: &Value, parent: &Rc<ObjectData>) -> bool {
