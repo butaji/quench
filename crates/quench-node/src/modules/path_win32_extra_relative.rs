@@ -50,45 +50,58 @@ pub(super) fn relative_split(from_orig: &str, to_orig: &str) -> String {
     )
 }
 
-pub(super) fn relative_scan(from_orig: &str, to_orig: &str, from: &str, to: &str) -> String {
-    let f: Vec<char> = from.chars().collect();
-    let t: Vec<char> = to.chars().collect();
+fn char_offsets(s: &str, f: &[char], t: &[char]) -> (usize, usize, usize, usize, usize) {
     let from_start = f.iter().take_while(|&&c| c == '\\').count();
-    let from_end = trim_trailing(&f, from_start);
+    let from_end = trim_trailing(f, from_start);
     let to_start = t.iter().take_while(|&&c| c == '\\').count();
-    let to_end = trim_trailing(&t, to_start);
-    let from_len = from_end - from_start;
-    let to_len = to_end - to_start;
-    let length = from_len.min(to_len);
-    let mut last_common_sep: isize = -1;
+    let to_end = trim_trailing(t, to_start);
+    (from_start, from_end, to_start, to_end, from_end - from_start)
+}
+
+fn last_common_separator(f: &[char], t: &[char], from_start: usize, to_start: usize, length: usize) -> isize {
     let mut i = 0usize;
+    let mut last: isize = -1;
     while i < length {
         if f[from_start + i] != t[to_start + i] {
             break;
         }
         if f[from_start + i] == '\\' {
-            last_common_sep = i as isize;
+            last = i as isize;
         }
         i += 1;
     }
-    if i != length {
-        if last_common_sep == -1 {
-            return to_orig.to_string();
+    last
+}
+
+pub(super) fn relative_scan(from_orig: &str, to_orig: &str, from: &str, to: &str) -> String {
+    let f: Vec<char> = from.chars().collect();
+    let t: Vec<char> = to.chars().collect();
+    let (from_start, from_end, to_start, to_end, from_len) = char_offsets(from, &f, &t);
+    let to_len = to_end - to_start;
+    let length = from_len.min(to_len);
+    let mut last_common_sep = last_common_separator(&f, &t, from_start, to_start, length);
+    if last_common_sep == -1 && (from_len != length || to_len != length) {
+        return to_orig.to_string();
+    }
+    if (from_len != length || to_len != length) && last_common_sep == -1 {
+        return to_orig.to_string();
+    }
+    if from_len == length && to_len == length {
+        if let Some(hit) = common_prefix_hit(
+            to_orig,
+            &f,
+            &t,
+            from_start,
+            to_start,
+            length,
+            from_len,
+            to_len,
+            to_end,
+            length,
+            &mut last_common_sep,
+        ) {
+            return hit;
         }
-    } else if let Some(hit) = common_prefix_hit(
-        to_orig,
-        &f,
-        &t,
-        from_start,
-        to_start,
-        i,
-        from_len,
-        to_len,
-        to_end,
-        length,
-        &mut last_common_sep,
-    ) {
-        return hit;
     }
     build_relative(
         from_orig,
