@@ -9,16 +9,12 @@
 //!   `node:fs`, `node:timers`, `node:timers/promises`.
 //!
 //! Anything else throws `MODULE_NOT_FOUND`.
-
 use std::cell::RefCell;
 use std::rc::Rc;
-
 use quench_runtime::execute::VmError;
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
-
 use crate::host::HostState;
-
 /// Cache-or-build helper used by every per-module branch in `require`.
 /// Returns the cached module value if present, otherwise builds,
 /// inserts into `module_cache` under `key`, and returns it.
@@ -36,7 +32,6 @@ where
         .insert(key.into(), value.clone());
     Ok(value)
 }
-
 /// Build a namespace object from `(name, value)` pairs, returning
 /// `Value::Undefined` on failure. Avoids the deeply nested
 /// `Some(namespace_object(vec![...]))` paren-counting burden at the
@@ -44,18 +39,15 @@ where
 fn namespace_of(pairs: Vec<(&str, Value)>) -> Value {
     crate::host::namespace_object(pairs).unwrap_or(Value::Undefined)
 }
-
 /// Build a namespace object from owned `(String, Value)` pairs.
 fn namespace_of_owned(pairs: Vec<(String, Value)>) -> Value {
     crate::host::namespace_object_from_pairs(pairs)
 }
-
 /// A bare capability property descriptor used when wrapping a
 /// single-capability spec as a namespace object.
 fn capability_value(spec: crate::registry::NodeSpec) -> Value {
     crate::host::capability(spec)
 }
-
 fn require_assert(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
     matches!(
         spec,
@@ -67,7 +59,6 @@ fn require_assert(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<V
         })
     })
 }
-
 fn require_path_variant(
     state: &Rc<RefCell<HostState>>,
     spec: &str,
@@ -92,7 +83,6 @@ fn require_path_variant(
         Ok(ns)
     })())
 }
-
 fn require_cached_group_a(
     state: &Rc<RefCell<HostState>>,
     spec: &str,
@@ -124,7 +114,6 @@ fn require_cached_group_a(
     };
     Some(cached_module(state, key, build))
 }
-
 fn require_cached_group_b(
     state: &Rc<RefCell<HostState>>,
     spec: &str,
@@ -160,11 +149,9 @@ fn require_cached_group_b(
     };
     Some(cached_module(state, key, build))
 }
-
 fn require_cached(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
     require_cached_group_a(state, spec).or_else(|| require_cached_group_b(state, spec))
 }
-
 fn require_special(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
     match spec {
         "readline/promises" | "node:readline/promises" => Some(Ok(namespace_of(vec![(
@@ -180,7 +167,6 @@ fn require_special(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<
         _ => None,
     }
 }
-
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
     if let Some(result) = require_assert(state, &spec)
@@ -199,7 +185,6 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     }
     load_file_module(state, &spec)
 }
-
 /// CommonJS file loader: resolve, cache, wrap, execute, return exports.
 pub(crate) fn load_file_module(
     state: &Rc<RefCell<HostState>>,
@@ -216,7 +201,6 @@ pub(crate) fn load_file_module(
     state.borrow_mut().module_cache.insert(key, exports.clone());
     Ok(exports)
 }
-
 fn resolve_path(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<std::path::PathBuf, VmError> {
     let base = state
         .borrow()
@@ -240,11 +224,9 @@ fn resolve_path(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<std::path:
         .map(|resolution| resolution.into_path_buf())
         .map_err(|_| not_found(spec))
 }
-
 fn not_found(spec: &str) -> VmError {
     VmError::EvalError(format!("Cannot find module '{spec}'"))
 }
-
 /// Execute one CJS file inside the standard wrapper and return `module.exports`.
 /// The wrapper function is handed to the `__quench_cjs_wrap__` capability,
 /// which invokes it with the prepared module record (see `cjs_wrap`).
@@ -271,7 +253,6 @@ fn execute_module(
     let module = module.unwrap_or(Value::Undefined);
     quench_runtime::execute::get_property_result(&module, "exports")
 }
-
 /// Prepare `source` as a CJS module: records the pending module
 /// record and returns the wrapped source. The caller reduces and
 /// executes the result — in-place for nested `require`, in a fresh
@@ -293,7 +274,6 @@ pub fn wrap_cjs(state: &Rc<RefCell<HostState>>, filename: &str, source: &str) ->
         });
     format!("__quench_cjs_wrap__(function (exports, require, module, __filename, __dirname) {{\n{source}\n}})")
 }
-
 /// `__quench_cjs_wrap__(fn)` — invoke a CJS wrapper with the pending record.
 pub fn cjs_wrap(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let Some(function) = args.first() else {
