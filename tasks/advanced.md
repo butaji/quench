@@ -11,7 +11,7 @@ trace categories are reduced; quic is experimental. Quench's current quic
 fixture demonstrates a UDP loopback subset only and MUST NOT be described as
 full QUIC/TLS/stream/congestion-control parity.
 
-Current measured evidence: the focused suite passes 57/57 and the upstream
+Current measured evidence: the focused suite passes 58/58 and the upstream
 parallel manifest passes 178/178. QUIC remains a focused UDP loopback subset,
 not full Bun-level QUIC parity. Any broader advanced-module claim requires
 related Node API tests and recorded results.
