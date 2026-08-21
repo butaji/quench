@@ -184,12 +184,15 @@ fn own_or_inherited_to_string_tag(value: &Value) -> Option<String> {
     while let Some(value) = current {
         match &value {
             Builtin(builtin) => {
-                if !crate::builtins::builtin_prototype_property_is_removed(*builtin, "Symbol.toStringTag") {
-                    if let Some(tag_value) = crate::builtins::read_descriptor_value(*builtin, "Symbol.toStringTag") {
-                        if let Value::String(tag) = tag_value {
-                            if !crate::conversion::is_symbol_string(&tag) {
-                                return Some(tag);
-                            }
+                if !crate::builtins::builtin_prototype_property_is_removed(
+                    *builtin,
+                    "Symbol.toStringTag",
+                ) {
+                    if let Some(Value::String(tag)) =
+                        crate::builtins::read_descriptor_value(*builtin, "Symbol.toStringTag")
+                    {
+                        if !crate::conversion::is_symbol_string(&tag) {
+                            return Some(tag);
                         }
                     }
                     if let Some(Value::String(tag)) =
@@ -207,10 +210,10 @@ fn own_or_inherited_to_string_tag(value: &Value) -> Option<String> {
                 current = proto.map(Value::Builtin);
             }
             Object(properties) => {
-                if let Some((_, Value::String(tag))) = properties
-                    .iter()
-                    .rev()
-                    .find(|(key, value)| key == "Symbol.toStringTag" && matches!(value, Value::String(_)))
+                if let Some((_, Value::String(tag))) =
+                    properties.iter().rev().find(|(key, value)| {
+                        key == "Symbol.toStringTag" && matches!(value, Value::String(_))
+                    })
                 {
                     if !crate::conversion::is_symbol_string(tag) {
                         return Some(tag.clone());
@@ -224,7 +227,9 @@ fn own_or_inherited_to_string_tag(value: &Value) -> Option<String> {
                     .cloned();
             }
             Iterator(data) => {
-                current = Some(Value::Builtin(crate::collections::iterator::builtin_for(data)));
+                current = Some(Value::Builtin(crate::collections::iterator::builtin_for(
+                    data,
+                )));
             }
             _ => return None,
         }
