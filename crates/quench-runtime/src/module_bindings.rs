@@ -38,7 +38,7 @@ pub fn resolve_dynamic_import(specifier: &str, deferred: bool) -> Option<Value> 
 }
 
 /// GetModuleExportsList: evaluate a deferred namespace unless the key is
-/// symbol-like (`then` or a symbol) or a private/internal name.
+/// symbol-like (`then`, `Symbol.toStringTag`, or an encoded symbol) or private.
 pub fn exports(value: &Value, key: &str) -> Result<(), VmError> {
     if skips_deferred_evaluation(key) {
         return Ok(());
@@ -66,7 +66,10 @@ pub fn exports(value: &Value, key: &str) -> Result<(), VmError> {
 }
 
 fn skips_deferred_evaluation(key: &str) -> bool {
-    key == "then" || key.starts_with('#') || crate::conversion::is_symbol_string(key)
+    key == "then"
+        || key == "Symbol.toStringTag"
+        || key.starts_with('#')
+        || crate::conversion::is_symbol_string(key)
 }
 
 pub fn request_ensure_throw(value: Value) {

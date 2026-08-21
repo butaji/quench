@@ -145,6 +145,7 @@ pub(crate) fn register_resource(
         key: "use".to_string(),
         callee: None,
         args: vec![resource],
+        spreads: vec![false],
     });
 }
 

@@ -34,7 +34,7 @@ pub(crate) fn reduce_method_call(
             return reduce_dynamic_method_call(call, member, ops, facts, next_register, locals);
         }
     }
-    let (object, key) = match &call.callee {
+    let (object_expression, key) = match &call.callee {
         Expression::StaticMemberExpression(member) => {
             (&member.object, member.property.name.to_string())
         }
@@ -44,14 +44,33 @@ pub(crate) fn reduce_method_call(
         }
         _ => return None,
     };
-    let object = crate::reduce::reduce_expression(object, ops, facts, next_register, locals)?;
+    let object =
+        crate::reduce::reduce_expression(object_expression, ops, facts, next_register, locals)?;
     let callee = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::GetProperty { dst: callee, object, key: key.clone() });
-    let args = reduce_call_arguments(call, ops, facts, next_register, locals)?;
+    ops.push(Op::GetProperty {
+        dst: callee,
+        object,
+        key: key.clone(),
+    });
+    let (args, spreads) =
+        crate::reduce::reduce_expressions::calls_reduce::reduce_call_arguments(
+            call,
+            ops,
+            facts,
+            next_register,
+            locals,
+        )?;
     let dst = *next_register;
     *next_register = next_register.saturating_add(1);
-    ops.push(Op::CallMethod { dst, object, key, callee: Some(callee), args });
+    ops.push(Op::CallMethod {
+        dst,
+        object,
+        key,
+        callee: Some(callee),
+        args,
+        spreads,
+    });
     Some(dst)
 }
 

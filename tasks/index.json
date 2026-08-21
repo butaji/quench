@@ -1,18 +1,144 @@
 {
-  "schema_version": 1,
-  "source": "https://bun.com/docs/runtime/nodejs-compat",
-  "lint": {"file_max_lines": 500, "function_max_lines": 40, "complexity_max": 10},
-  "plans": {
-    "green": "green.md",
-    "advanced_green": "advanced.md",
-    "yellow": "yellow.md",
-    "globals": "globals.md",
-    "red_sea": "sea.md",
-    "verification": "verification.md"
+  "project": "quench-node",
+  "description": "Broad Node 24 compatibility across Linux x86_64, Linux ARM64, macOS, and Windows, measured by applicable upstream fixtures and six representative application gates. Native addons and Node-API are excluded.",
+  "contract": {
+    "document": "docs/compatibility-contract.md",
+    "architecture": "docs/data-first-minimal-runtime.md",
+    "architecture_task": "000-data-first-minimal-loc.md",
+    "loc_objective": "minimum-maintainable-loc",
+    "node": "24",
+    "platforms": ["linux-x86_64", "linux-arm64", "macos", "windows"],
+    "excluded": ["native-addons", "node-api", "typescript-execution", "package-installation"],
+    "statuses": ["pass", "fail", "unsupported", "platform-limited", "known-conflict", "not-tested"],
+    "application_gate_classes": ["web-server", "cli", "package-loader", "streams", "crypto", "database-sdk"],
+    "clean_runs_required": 2
   },
-  "required_green_modules": ["assert","buffer","console","dgram","dns","events","fs","http","os","path","punycode","querystring","readline","stream","string_decoder","timers","tty","url","zlib","http2","sqlite","trace_events","quic"],
-  "required_yellow_modules": ["diagnostics_channel","https","async_hooks","child_process","cluster","crypto","domain","module","perf_hooks","process","util","tls","v8","vm","wasi","worker_threads","inspector","repl","node:test"],
-  "required_globals": ["AbortController","AbortSignal","Blob","fetch","FormData","Headers","MessageChannel","MessagePort","CompressionStream","DecompressionStream","ReadableStream","WritableStream","TransformStream","TextDecoder","TextEncoder","TextDecoderStream","TextEncoderStream","URL","URLSearchParams","structuredClone","SubtleCrypto","Crypto","CryptoKey","WebAssembly","DOMException","Event","EventTarget","CustomEvent","BroadcastChannel","performance","PerformanceObserver","PerformanceResourceTiming","Request","Response"],
-  "verification_commands": ["cargo test --workspace","cargo run -p quench-node-test --bin run-compat -- --quiet","cargo run -p quench-node-test --bin run-parallel","tools/lint-rust.sh"],
-  "boundaries": ["Never modify tests/node", "Never modify tests/test262", "Never modify tests/typescript", "No harness behavior rewriting", "No runtime test policy in quench-runtime"]
+  "tasks": [
+    {
+      "id": "000",
+      "file": "000-data-first-minimal-loc.md",
+      "title": "Data-first minimal-LOC migration",
+      "status": "adopted"
+    },
+    {
+      "id": "001",
+      "file": "001-buffer-binary-paths.md",
+      "title": "Complete low-copy Buffer binary paths",
+      "status": "complete"
+    },
+    {
+      "id": "002",
+      "file": "002-fs-buffer-io.md",
+      "title": "Add Buffer-based fs read and write paths",
+      "status": "complete"
+    },
+    {
+      "id": "003",
+      "file": "003-native-timers.md",
+      "title": "Implement Node-compatible native timers",
+      "status": "in-progress"
+    },
+    {
+      "id": "004",
+      "file": "004-stream-backpressure.md",
+      "title": "Implement stream backpressure semantics",
+      "status": "in-progress"
+    },
+    {
+      "id": "005",
+      "file": "005-native-crypto-bytes.md",
+      "title": "Reduce crypto byte and string conversions",
+      "status": "in-progress"
+    },
+    {
+      "id": "006",
+      "file": "006-test-runtime-reuse.md",
+      "title": "Add an isolated and reusable test execution mode",
+      "status": "complete"
+    },
+    {
+      "id": "007",
+      "file": "007-bootstrap-laziness.md",
+      "title": "Make compatibility bootstrap initialization lazy",
+      "status": "in-progress"
+    },
+    {
+      "id": "008",
+      "file": "008-error-boundary.md",
+      "title": "Preserve Node error codes across the host boundary",
+      "status": "in-progress"
+    },
+    {
+      "id": "009",
+      "file": "009-focused-gate-regressions.md",
+      "title": "Fix focused stage gate regressions",
+      "status": "complete"
+    },
+    {
+      "id": "010",
+      "file": "010-node-api-surface-map.md",
+      "title": "Node API surface map and measurable Node 24 compatibility strategy",
+      "status": "in-progress"
+    },
+    {
+      "id": "011",
+      "file": "011-module-surface.md",
+      "title": "Module surface — register every builtinModules entry",
+      "status": "in-progress"
+    },
+    {
+      "id": "012",
+      "file": "012-global-surface.md",
+      "title": "Global surface — every Node globalThis name",
+      "status": "complete"
+    },
+    {
+      "id": "013",
+      "file": "013-upstream-fixtures.md",
+      "title": "Upstream fixtures — Node 24 application compatibility manifest",
+      "status": "in-progress"
+    },
+    {
+      "id": "014",
+      "file": "014-host-surface.md",
+      "title": "Host (Rust) surface — the unsafe / OS-bound primitives",
+      "status": "in-progress"
+    },
+    {
+      "id": "015",
+      "file": "015-tooling.md",
+      "title": "Tooling and harness improvements",
+      "status": "in-progress"
+    },
+    {
+      "id": "016",
+      "file": "016-compatibility-throughput.md",
+      "title": "Compatibility throughput and differential triage",
+      "status": "in-progress"
+    },
+    {
+      "id": "017",
+      "file": "017-current-compatibility-push.md",
+      "title": "Current compatibility push — stream/iter and auditable baselines",
+      "status": "in-progress"
+    },
+    {
+      "id": "018",
+      "file": "018-native-tcp-integration.md",
+      "title": "Native TCP integration",
+      "status": "in-progress"
+    },
+    {
+      "id": "019",
+      "file": "019-ten-compatibility-boundaries.md",
+      "title": "Ten remaining evidence boundaries",
+      "status": "in-progress"
+    },
+    {
+      "id": "020",
+      "file": "020-compatibility-acceleration-audit.md",
+      "title": "Compatibility acceleration audit and execution loop",
+      "status": "in-progress"
+    }
+  ]
 }

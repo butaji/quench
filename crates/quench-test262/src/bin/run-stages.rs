@@ -7,7 +7,7 @@ use std::{
 
 use quench_test262::{
     discover_js_files, resolve_stages, HarnessCache, ResolvedStage, RuntimeHost, StageReport,
-    Test262Runner,
+    Test262Runner, TestOutcome,
 };
 
 #[derive(Debug)]
@@ -214,13 +214,11 @@ fn parse_cli_token(parser: &mut CliParser) -> Result<(), String> {
 }
 
 fn run_stages(root: &Path, stages: Vec<ResolvedStage>, args: &Args) -> ExitCode {
-    let mut runner = Test262Runner::new(RuntimeHost);
-    let mut harness = HarnessCache::new(root.join("harness"));
     let mut overall = StageReport::default();
     let mut has_failure = false;
     for stage in &stages {
         print_stage_start(stage);
-        let report = match run_single_stage(&mut runner, &mut harness, stage, args.max_failures) {
+        let report = match run_single_stage(root, stage, args.max_failures) {
             Ok(report) => report,
             Err(error) => return fail(error),
         };
@@ -285,9 +283,8 @@ fn list_stages(stages: &[ResolvedStage]) {
     }
 }
 
-fn run_single_stage<H: quench_test262::Test262Host>(
-    runner: &mut Test262Runner<H>,
-    harness: &mut HarnessCache,
+fn run_single_stage(
+    root: &Path,
     stage: &ResolvedStage,
     max_failures: usize,
 ) -> Result<StageReport, String> {
@@ -301,22 +298,20 @@ fn run_single_stage<H: quench_test262::Test262Host>(
         );
         return Ok(StageReport::default());
     }
-    // Skip tests that crash the runtime (stack overflow, panic, etc.) —
-    // they are real runtime bugs, not runner issues, and would otherwise
-    // bring down the whole stage run via a process abort.
-    let files: Vec<PathBuf> = files
-        .into_iter()
-        .filter(|path| {
-            let path_str = path.to_string_lossy();
-            !CRASHED_AT_RUNTIME
-                .iter()
-                .any(|needle| path_str.contains(needle))
-        })
-        .collect();
-    if files.is_empty() {
-        return Ok(StageReport::default());
+    let mut report = StageReport::default();
+    for path in files {
+        report.total += 1;
+        let outcome = run_isolated_file(root, &path)?;
+        match outcome {
+            TestOutcome::Pass => report.passed += 1,
+            TestOutcome::Fail { reason } => {
+                report.failed += 1;
+                if report.failures.len() < max_failures {
+                    report.failures.push((path, reason));
+                }
+            }
+        }
     }
-    let report = runner.run_files_with_cache_limited(files, harness, max_failures)?;
     println!(
         "stage {:>3}: {} passed {}",
         stage.id, stage.path, report.passed
@@ -324,71 +319,20 @@ fn run_single_stage<H: quench_test262::Test262Host>(
     Ok(report)
 }
 
-/// Tests that crash the runtime regardless of runner state (stack
-/// overflow, panic, infinite loop, etc.). These are real runtime bugs,
-/// not runner bugs; the stage runner skips them so the diff focuses on
-/// order/thread-induced divergence.
-const CRASHED_AT_RUNTIME: &[&str] = &[
-    "built-ins/Object/prototype/toString/proxy-revoked-during-get-call.js",
-    "built-ins/Array/from/iter-set-elem-prop-non-writable.js",
-    "built-ins/Array/prototype/concat/Array.prototype.concat_large-typed-array.js",
-    "built-ins/Array/prototype/reduceRight/length-near-integer-limit.js",
-    "built-ins/Function/internals/Construct/base-ctor-revoked-proxy.js",
-    "built-ins/Iterator/from/iterable-primitives.js",
-    "built-ins/Iterator/prototype/map/returned-iterator-yields-mapper-return-values.js",
-    "built-ins/Iterator/prototype/flatMap/flattens-iterator.js",
-    "built-ins/Iterator/prototype/flatMap/flattens-only-depth-1.js",
-    "built-ins/Iterator/prototype/flatMap/iterable-to-iterator-fallback.js",
-    "built-ins/Iterator/prototype/flatMap/iterable-primitives-are-not-flattened.js",
-    "built-ins/Iterator/prototype/flatMap/flattens-iterable.js",
-    "built-ins/Iterator/prototype/take/limit-tonumber.js",
-    "built-ins/Iterator/prototype/take/limit-greater-than-or-equal-to-total.js",
-    "built-ins/Iterator/prototype/take/limit-less-than-total.js",
-    "built-ins/Proxy/apply/trap-is-undefined-target-is-proxy.js",
-    "built-ins/Proxy/deleteProperty/call-parameters.js",
-    "built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js",
-    "built-ins/Proxy/construct/trap-is-null.js",
-    "built-ins/Proxy/construct/trap-is-null-target-is-proxy.js",
-    "built-ins/Proxy/construct/trap-is-undefined-no-property.js",
-    "built-ins/Proxy/construct/trap-is-undefined.js",
-    "built-ins/Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js",
-    "built-ins/Proxy/construct/trap-is-missing-target-is-proxy.js",
-    "built-ins/RegExp/property-escapes/",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-digit-class-escape-negative-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-non-word-class-escape-positive-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-word-class-escape-negative-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-non-digit-class-escape-positive-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-whitespace-class-escape-negative-cases.js",
-    "built-ins/RegExp/CharacterClassEscapes/character-class-non-whitespace-class-escape-positive-cases.js",
-    "built-ins/RegExp/character-class-escape-non-whitespace.js",
-    "built-ins/RegExp/unicodeSets/generated/rgi-emoji-",
-    "built-ins/RegExp/unicodeSets/generated/rgi-emoji-17.0.js",
-    "built-ins/RegExp/unicodeSets/generated/rgi-emoji-13.1.js",
-    "built-ins/RegExp/prototype/Symbol.match/g-match-empty-advance-lastindex.js",
-    "built-ins/RegExp/prototype/Symbol.match/g-coerce-result-err.js",
-    "built-ins/RegExp/prototype/hasIndices/this-val-regexp.js",
-    "language/statements/with/set-mutable-binding-idref-with-proxy-env.js",
-    "language/statements/with/set-mutable-binding-idref-compound-assign-with-proxy-env.js",
-    "built-ins/Object/prototype/setPrototypeOf-with-different-values.js",
-    "built-ins/Object/setPrototypeOf/set-failure-cycle.js",
-    "built-ins/String/prototype/replace/S15.5.4.11_A1_T17.js",
-    "built-ins/String/prototype/matchAll/regexp-prototype-matchAll-v-u-flag.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-null.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-undefined.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-returns-new-cloned-typedarray.js",
-    "built-ins/TypedArrayConstructors/ctors/typedarray-arg/src-typedarray-resizable-buffer.js",
-    "built-ins/TypedArray/prototype/fill/",
-    "built-ins/TypedArray/prototype/slice/resize-count-bytes-to-zero.js",
-    "built-ins/TypedArray/prototype/byteOffset/return-byteoffset.js",
-    "built-ins/TypedArray/prototype/lastIndexOf/negative-index-and-resize-to-smaller.js",
-    "built-ins/Array/prototype/every/15.4.4.16-3-29.js",
-    "built-ins/Array/prototype/some/15.4.4.17-3-29.js",
-    "built-ins/Promise/all/",
-    "built-ins/Promise/any/",
-    "built-ins/Promise/allSettled/",
-    "built-ins/Promise/race/",
-];
-
+fn run_isolated_file(root: &Path, path: &Path) -> Result<TestOutcome, String> {
+    let root = root.to_path_buf();
+    let path = path.to_path_buf();
+    std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(move || {
+            let mut runner = Test262Runner::new(RuntimeHost);
+            let mut harness = HarnessCache::new(root.join("harness"));
+            runner.run_file_with_cache(path, &mut harness)
+        })
+        .map_err(|error| format!("stage worker spawn failed: {error}"))?
+        .join()
+        .map_err(|_| "stage worker panicked".to_string())?
+}
 fn parse_stage_index(value: &str) -> Result<u32, String> {
     value
         .parse::<u32>()

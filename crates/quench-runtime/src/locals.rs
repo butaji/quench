@@ -146,6 +146,11 @@ pub(crate) fn is_installed() -> bool {
 
 pub(crate) fn store(registers: &[Value], slot: u16, source: u16) -> Result<(), VmError> {
     let value = crate::execute::read_register(registers, source)?;
+    if current().is_deleted(&current().slot_cell(slot)) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access deleted binding '{slot}'"
+        )));
+    }
     if current().is_immutable_slot(slot) && !current().is_uninitialized(slot) {
         if ACTIVE_EVAL.with(|active| *active.borrow())
             && !STRICT_EVAL.with(|strict| *strict.borrow())
@@ -188,6 +193,11 @@ pub(crate) fn load_binding(
     if let Some(value) = crate::with_scope::resolve_binding(name)? {
         crate::execute::write_value(registers, dst, value);
         return Ok(());
+    }
+    if current().is_deleted(&current().slot_cell(slot)) {
+        return Err(crate::value::error::throw_reference_error(&format!(
+            "Cannot access deleted binding '{name}'"
+        )));
     }
     ensure_initialized(slot, name)?;
     if dynamic && current().eval_name_aliases_slot(name, slot) {
