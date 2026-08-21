@@ -69,7 +69,13 @@ Measured (2026-08-21): `events` exposes the Bun-green namespace exports
 counting, identity, and post-removal behavior). Measured gap: `events.once`,
 `events.addAbortListener`, `usingAsyncResource`, and the `errorMonitor`/
 `captureRejectionSymbol` Symbol constants (plus `EventEmitter.captureRejections`
-semantics). True `Symbol` values are not constructible and the export object
-does not accept `once` via the same path that accepted `getEventListeners`;
-these need a Promise-capable host export and host Symbol support, tracked here
-rather than claimed complete.
+semantics). Two architectural blockers were confirmed during implementation
+attempts: (1) `AbortController#abort()` itself throws `value is not callable`
+in the runtime, so `events.addAbortListener` cannot be verified end-to-end
+until that is fixed; (2) `events.once` would need a per-call Rust closure
+that resolves a specific `PromiseData` on the next emit, but the host
+dispatch layer has no per-instance state for static capability functions
+(all `capability_function(Custom(name))` values share the same dispatch
+target). True `Symbol` values are also not constructible. These need a
+Promise-capable host export and host Symbol support, tracked here rather
+than claimed complete.
