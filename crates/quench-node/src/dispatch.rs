@@ -190,6 +190,8 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_GETGID => process_getgid,
         CAP_PROCESS_UPTIME => process_uptime,
         CAP_PROCESS_MEMORYUSAGE => process_memory_usage,
+        CAP_PROCESS_RESOURCE_USAGE => process_resource_usage,
+        CAP_PROCESS_CPU_USAGE => process_cpu_usage,
         CAP_PROCESS_BINDING => process_binding,
         CAP_PROCESS_ACTIVE_RESOURCES => process_active_resources,
         CAP_PROCESS_REPORT => process_report,
