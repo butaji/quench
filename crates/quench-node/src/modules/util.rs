@@ -26,17 +26,9 @@ pub fn format_with_options(args: &[Value], numeric_separator: bool) -> String {
 
 /// Module wiring: returns the `(name, value)` pairs the host
 /// installs into the `util` namespace.
-pub fn build() -> Vec<(String, Value)> {
-    let inspect = inspect_capability();
-    let format = crate::host::capability(crate::registry::SPEC_UTIL_FORMAT);
-    let deep_equal = crate::host::capability(crate::registry::SPEC_UTIL_IS_DEEP_STRICT_EQUAL);
-    let style_text = crate::host::capability(crate::registry::SPEC_UTIL_STYLE_TEXT);
-    let format_with_options =
-        crate::host::capability(crate::registry::SPEC_UTIL_FORMAT_WITH_OPTIONS);
-    let strip_vt = crate::host::capability(crate::registry::SPEC_UTIL_STRIP_VT);
-    let inherits = crate::host::capability(crate::registry::SPEC_UTIL_INHERITS);
-    let get_call_sites = crate::host::capability(crate::registry::SPEC_UTIL_GETCALLSITES);
-    let source = r#"(function(format,inspect,deepEqual,styleText,formatWithOptions,stripVT,inherits,getCallSites){
+fn build_factory(args: &[Value]) -> Value {
+    let Ok(program) = quench_runtime::reduce::reduce_global_script_source(
+        r#"(function(format,inspect,deepEqual,styleText,formatWithOptions,stripVT,inherits,getCallSites){
       function promisify(fn){ var p=function(){var a=[].slice.call(arguments), self=this;
         return new Promise(function(resolve,reject){a.push(function(e,v){if(e)reject(e);else resolve(v)});fn.apply(self,a);});};
         if (fn && fn[promisify.custom]) return fn[promisify.custom]; return p; }
@@ -51,31 +43,28 @@ pub fn build() -> Vec<(String, Value)> {
         isSymbol:function(v){return typeof v==='symbol'}};
       function deprecate(fn){return function(){return fn.apply(this,arguments)}} function debuglog(){return function(){}}
       return {format:format,inspect:inspect,isDeepStrictEqual:deepEqual,styleText:styleText,formatWithOptions:formatWithOptions,stripVTControlCharacters:stripVT,inherits:inherits,getCallSites:getCallSites,promisify:promisify,callbackify:callbackify,types:types,deprecate:deprecate,debuglog:debuglog};
-    })"#;
-    let Ok(program) = quench_runtime::reduce::reduce_global_script_source(source) else {
-        return Vec::new();
-    };
+    })"#) else { return Value::Undefined };
     let context = quench_runtime::vm::current_context();
     let mut regs = Vec::new();
-    let factory = quench_runtime::vm::with_current_context(&context, || {
+    quench_runtime::vm::with_current_context(&context, || {
         quench_runtime::vm::execute_in_place_context(program.ops(), &mut regs, &context)
-    })
-    .unwrap_or(Value::Undefined);
+    }).unwrap_or(Value::Undefined)
+}
+
+pub fn build() -> Vec<(String, Value)> {
+    let values = [
+        crate::host::capability(crate::registry::SPEC_UTIL_FORMAT),
+        inspect_capability(),
+        crate::host::capability(crate::registry::SPEC_UTIL_IS_DEEP_STRICT_EQUAL),
+        crate::host::capability(crate::registry::SPEC_UTIL_STYLE_TEXT),
+        crate::host::capability(crate::registry::SPEC_UTIL_FORMAT_WITH_OPTIONS),
+        crate::host::capability(crate::registry::SPEC_UTIL_STRIP_VT),
+        crate::host::capability(crate::registry::SPEC_UTIL_INHERITS),
+        crate::host::capability(crate::registry::SPEC_UTIL_GETCALLSITES),
+    ];
     let module = quench_runtime::vm::call_value(
-        &factory,
-        &Value::Undefined,
-        &[
-            format,
-            inspect,
-            deep_equal,
-            style_text,
-            format_with_options,
-            strip_vt,
-            inherits,
-            get_call_sites,
-        ],
-    )
-    .unwrap_or(Value::Undefined);
+        &build_factory(&values), &Value::Undefined, &values,
+    ).unwrap_or(Value::Undefined);
     execute_pairs(module)
 }
 

@@ -5,107 +5,50 @@ use quench_runtime::{execute, host_api};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-fn capability_props() -> Vec<(String, Value)> {
+fn capability_props_core() -> Vec<(String, Value)> {
     use crate::registry::*;
     vec![
-        (
-            "randomBytes".to_string(),
-            crate::host::capability(SPEC_CRYPTO_RANDOM_BYTES),
-        ),
-        (
-            "randomFillSync".to_string(),
-            crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC),
-        ),
-        (
-            "getRandomValues".to_string(),
-            crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC),
-        ),
-        (
-            "createHash".to_string(),
-            crate::host::capability(SPEC_CRYPTO_CREATE_HASH),
-        ),
-        (
-            "createHmac".to_string(),
-            crate::host::capability(SPEC_CRYPTO_CREATE_HMAC),
-        ),
-        (
-            "timingSafeEqual".to_string(),
-            crate::host::capability(SPEC_CRYPTO_TIMING_SAFE_EQUAL),
-        ),
-        (
-            "randomUUID".to_string(),
-            crate::host::capability(SPEC_CRYPTO_RANDOM_UUID),
-        ),
-        (
-            "randomInt".to_string(),
-            crate::host::capability(SPEC_CRYPTO_RANDOM_INT),
-        ),
-        (
-            "getHashes".to_string(),
-            crate::host::capability(SPEC_CRYPTO_GET_HASHES),
-        ),
-        (
-            "getCiphers".to_string(),
-            crate::host::capability(SPEC_CRYPTO_GET_CIPHERS),
-        ),
-        (
-            "createCipheriv".to_string(),
-            crate::host::capability(SPEC_CRYPTO_UNSUPPORTED),
-        ),
-        (
-            "createDecipheriv".to_string(),
-            crate::host::capability(SPEC_CRYPTO_UNSUPPORTED),
-        ),
-        (
-            "generateKeyPairSync".to_string(),
-            crate::host::capability(SPEC_CRYPTO_UNSUPPORTED),
-        ),
+        ("randomBytes".into(), crate::host::capability(SPEC_CRYPTO_RANDOM_BYTES)),
+        ("randomFillSync".into(), crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC)),
+        ("getRandomValues".into(), crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC)),
+        ("createHash".into(), crate::host::capability(SPEC_CRYPTO_CREATE_HASH)),
+        ("createHmac".into(), crate::host::capability(SPEC_CRYPTO_CREATE_HMAC)),
+        ("timingSafeEqual".into(), crate::host::capability(SPEC_CRYPTO_TIMING_SAFE_EQUAL)),
+        ("randomUUID".into(), crate::host::capability(SPEC_CRYPTO_RANDOM_UUID)),
+        ("randomInt".into(), crate::host::capability(SPEC_CRYPTO_RANDOM_INT)),
     ]
 }
+
+fn capability_props() -> Vec<(String, Value)> {
+    use crate::registry::*;
+    let mut props = capability_props_core();
+    props.extend([
+        ("getHashes", SPEC_CRYPTO_GET_HASHES), ("getCiphers", SPEC_CRYPTO_GET_CIPHERS),
+        ("createCipheriv", SPEC_CRYPTO_UNSUPPORTED), ("createDecipheriv", SPEC_CRYPTO_UNSUPPORTED),
+        ("generateKeyPairSync", SPEC_CRYPTO_UNSUPPORTED),
+    ].into_iter().map(|(name, spec)| (name.into(), crate::host::capability(spec))));
+    props
+}
+fn subtle_object() -> Value {
+    host_api::object([
+        ("digest", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DIGEST)),
+        ("encrypt", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_ENCRYPT)),
+        ("decrypt", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DECRYPT)),
+        ("sign", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_SIGN)),
+        ("verify", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_VERIFY)),
+        ("generateKey", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_GENERATE_KEY)),
+        ("importKey", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_IMPORT_KEY)),
+        ("exportKey", crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_EXPORT_KEY)),
+    ].into_iter().map(|(name, value)| (name.to_string(), value)).collect())
+}
+
 pub fn build() -> Value {
     let mut props = capability_props();
-    let subtle = host_api::object(vec![
-        (
-            "digest".to_string(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DIGEST),
-        ),
-        (
-            "encrypt".to_string(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_ENCRYPT),
-        ),
-        (
-            "decrypt".to_string(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DECRYPT),
-        ),
-        (
-            "sign".to_string(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_SIGN),
-        ),
-        (
-            "verify".to_string(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_VERIFY),
-        ),
-        (
-            "generateKey".to_string(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_GENERATE_KEY),
-        ),
-        (
-            "importKey".to_string(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_IMPORT_KEY),
-        ),
-        (
-            "exportKey".to_string(),
-            crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_EXPORT_KEY),
-        ),
-    ]);
-    props.push(("subtle".to_string(), subtle));
-    props.push((
-        "constants".to_string(),
-        host_api::object(vec![
-            ("OPENSSL_VERSION_NUMBER".into(), Value::Number(0.0)),
-            ("defaultCoreCipherList".into(), Value::String("".into())),
-        ]),
-    ));
+    props.push(("subtle".to_string(), subtle_object()));
+    props.push(("constants".to_string(), host_api::object(vec![
+        ("OPENSSL_VERSION_NUMBER".into(), Value::Number(0.0)),
+        ("defaultCoreCipherList".into(), Value::String("".into())),
+    ])));
     host_api::object(props)
 }
 
