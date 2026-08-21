@@ -108,15 +108,15 @@ cluster, and the next concrete slice.
   `_cache`, and `_extensions`.
 - `net` — minimal. Need: real `net.createServer`/`net.connect` via host TCP;
   `net.Socket`, `net.BlockList`, `net.isIP`, `net.isIPv4`, `net.isIPv6`.
-- `os` — partial. Need: real `os.cpus`, `os.networkInterfaces`, `os.userInfo`,
-  `os.setPriority`, `os.getPriority`, `os.homedir`, `os.tmpdir`.
-- `path` / `path/posix` / `path/win32` — done (task 009).
-- `perf_hooks` — done (task 003 follow-up). Need: `PerformanceObserver` gc/stat
-  callback, `monitorEventLoopDelay`.
-- `process` — partial. Need: `process.report`, `process.dlopen`,
-  `process.setUncaughtExceptionCaptureCallback`, `process.chdir` (real via
-  host), `process.kill`, `process.exit` (real via host), real `process.uptime`,
-  real `process.memoryUsage`, real `process.cpuUsage`.
+- `os` — partial. `os.cpus`, `os.networkInterfaces`, `os.userInfo`,
+  `os.homedir`, and `os.tmpdir` have active-dispatch evidence; priority APIs
+  remain open because the authoritative permission/error matrix is not green.
+- `process` — partial. Active-dispatch fixtures now cover
+  `process.cpuUsage`, `process.resourceUsage`, `process.kill`, `process.exitCode`,
+  `process.report`, `process.uptime`, and `process.memoryUsage`. Remaining gaps
+  include `fork` IPC, asynchronous `exec`/`execFile`, `process.dlopen`,
+  `setUncaughtExceptionCaptureCallback`, and full exit-code child-process
+  lifecycle parity.
 - `punycode` — stage 528 complete: Unicode domain conversion and UCS-2 helpers
   use a compact JavaScript Bootstring implementation.
 - `querystring` — done.
