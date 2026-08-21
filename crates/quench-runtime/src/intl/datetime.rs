@@ -263,20 +263,10 @@ impl DateTimeOptions {
         if self.contains("dateStyle") || self.contains("timeStyle") {
             return;
         }
-        let explicit_date = ["year", "month", "day", "weekday", "era"]
-            .iter()
-            .any(|k| self.contains(k));
-        let explicit_time = ["hour", "minute", "second"]
-            .iter()
-            .any(|k| self.contains(k));
-
-        let keys: &[&str] = if let Some(d) = defaults {
-            d
-        } else if explicit_date {
-            &["year", "month", "day"]
-        } else {
+        let keys = defaults.unwrap_or(&["year", "month", "day"]);
+        if !self.components.is_empty() || keys.iter().any(|key| self.contains(key)) {
             return;
-        };
+        }
         for key in keys {
             self.set_component(key, "numeric".to_string());
         }
