@@ -64,6 +64,14 @@ fn validate_unit_display(value: &str) -> Result<(), VmError> {
         .ok_or_else(|| crate::value::error::throw_range_error("invalid unitDisplay"))
 }
 
+fn validate_currency_display(value: &str) -> Result<(), VmError> {
+    matches!(value, "code" | "symbol" | "narrowSymbol" | "name")
+        .then_some(())
+        .ok_or_else(|| crate::value::error::throw_range_error(
+            "invalid currencyDisplay",
+        ))
+}
+
 fn validate_significant_digits(raw: &RawOptions) -> Result<(), VmError> {
     for value in [
         raw.minimum_significant_digits,
