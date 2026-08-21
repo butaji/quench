@@ -106,7 +106,14 @@ fn extract_frontmatter(source: &str) -> Result<&str, String> {
     // before the frontmatter marker. Accept only leading `//` comment lines
     // ahead of `/*---` so a marker embedded after arbitrary code is rejected.
     let mut body = source;
-    while let Some(rest) = body.strip_prefix("//") {
+    loop {
+        if let Some(rest) = body.strip_prefix('\n') {
+            body = rest;
+            continue;
+        }
+        let Some(rest) = body.strip_prefix("//") else {
+            break;
+        };
         let Some(line_end) = rest.find('\n') else {
             return Ok("");
         };
