@@ -11,6 +11,7 @@ pub(super) fn method_props() -> Vec<(&'static str, Value)> {
         ("cwd", capability(SPEC_PROCESS_CWD)),
         ("chdir", capability(SPEC_PROCESS_CHDIR)),
         ("exit", capability(SPEC_PROCESS_EXIT)),
+        ("kill", capability(SPEC_PROCESS_KILL)),
         ("nextTick", capability(SPEC_PROCESS_NEXT_TICK)),
         ("hrtime", capability(SPEC_PROCESS_HRTIME)),
         ("umask", capability(SPEC_PROCESS_UMASK)),

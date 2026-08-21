@@ -176,6 +176,13 @@ pub fn process_cpu_usage(state: &Rc<RefCell<HostState>>, _: Option<&Value>, _arg
     crate::modules::process::cpu_usage(state, _args)
 }
 
+pub fn process_kill(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::kill(state, receiver, args)
+}
 pub fn process_getgid(
     state: &Rc<RefCell<HostState>>,
     _: Option<&Value>,
