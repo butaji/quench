@@ -144,27 +144,19 @@ pub fn res_end(
     };
     let status = status_code(receiver, status);
     let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive));
-    res_end_finish_connection(state, &socket, keep_alive)?;
-    Ok(receiver.cloned().unwrap_or(Value::Undefined))
-}
-
-fn res_end_finish_connection(
-    state: &Rc<RefCell<HostState>>,
-    socket: &Value,
-    keep_alive: bool,
-) -> Result<Value, VmError> {
+    crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
     if keep_alive {
         // Leave the socket open and let the connection parser reset for the
         // next request on the same connection.
-        if let Some(socket_id) = crate::modules::net::net_id(socket) {
+        if let Some(socket_id) = net::net_id(&socket) {
             if let Some(conn) = state.borrow_mut().http.conns.get_mut(&socket_id) {
                 conn.response_done = true;
             }
         }
     } else {
-        crate::modules::net::socket_end(state, Some(socket), &[])?;
+        crate::modules::net::socket_end(state, Some(&socket), &[])?;
     }
-    Ok(Value::Undefined)
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 /// The effective status code, honoring a `res.statusCode = n` write.

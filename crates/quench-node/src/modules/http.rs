@@ -365,22 +365,11 @@ fn parse_request_head(head: &[u8]) -> (String, String, String, Vec<(String, Valu
         .next()
         .and_then(|v| v.strip_prefix("HTTP/"))
         .unwrap_or("1.1");
-    let (mut headers, mut content_length, mut connection) = parse_request_headers(&parts[1..]);
-    // HTTP/1.1 defaults to keep-alive unless `Connection: close`; HTTP/1.0
-    // defaults to close unless the client asks to keep the connection.
-    let http10 = version == "1.0";
-    let keep_alive =
-        !connection.contains("close") && (!http10 || connection.contains("keep-alive"));
-    (method, url, version.to_string(), headers, content_length, keep_alive)
-}
 
-fn parse_request_headers(
-    lines: &[&str],
-) -> (Vec<(String, Value)>, usize, String) {
     let mut headers: Vec<(String, Value)> = Vec::new();
     let mut content_length = 0usize;
     let mut connection = String::new();
-    for line in lines.iter() {
+    for line in parts.iter().skip(1) {
         if line.is_empty() {
             break;
         }
@@ -396,7 +385,19 @@ fn parse_request_headers(
             headers.push((key, Value::String(value.to_string())));
         }
     }
-    (headers, content_length, connection)
+    // HTTP/1.1 defaults to keep-alive unless `Connection: close`; HTTP/1.0
+    // defaults to close unless the client asks to keep the connection.
+    let http10 = version == "1.0";
+    let keep_alive =
+        !connection.contains("close") && (!http10 || connection.contains("keep-alive"));
+    (
+        method,
+        url,
+        version.to_string(),
+        headers,
+        content_length,
+        keep_alive,
+    )
 }
 
 fn build_res_object(state: &Rc<RefCell<HostState>>) -> Result<(Value, u64), VmError> {
