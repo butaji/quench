@@ -375,10 +375,10 @@ pub fn crypto_unsupported(
 ) -> Result<Value, VmError> { crate::modules::crypto::unsupported(state, args) }
 pub fn crypto_create_hash(
     s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
-) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
+) -> Result<Value, VmError> { crate::modules::crypto::create_hash(s, a) }
 pub fn crypto_create_hmac(
     s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
-) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
+) -> Result<Value, VmError> { crate::modules::crypto::create_hmac(s, a) }
 pub fn crypto_timing_safe_equal(
     s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
 ) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
@@ -390,22 +390,22 @@ pub fn crypto_random_int(
 ) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
 pub fn crypto_get_hashes(
     s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
-) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
+) -> Result<Value, VmError> { crate::modules::crypto::get_hashes(s, a) }
 pub fn crypto_get_ciphers(
     s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
 ) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
 pub fn crypto_hash_update(
-    s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
-) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
+    s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value],
+) -> Result<Value, VmError> { crate::modules::crypto::hash_update(s, r, a) }
 pub fn crypto_hash_digest(
-    s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
-) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
+    s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value],
+) -> Result<Value, VmError> { crate::modules::crypto::hash_digest(s, r, a) }
 pub fn crypto_hmac_update(
-    s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
-) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
+    s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value],
+) -> Result<Value, VmError> { crate::modules::crypto::hash_update(s, r, a) }
 pub fn crypto_hmac_digest(
-    s: &Rc<RefCell<HostState>>, _r: Option<&Value>, a: &[Value],
-) -> Result<Value, VmError> { crate::modules::crypto::unsupported(s, a) }
+    s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value],
+) -> Result<Value, VmError> { crate::modules::crypto::hash_digest(s, r, a) }
 
 pub fn process_exit(
     state: &Rc<RefCell<HostState>>,
