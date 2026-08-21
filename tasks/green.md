@@ -50,7 +50,14 @@ active dispatch layer (additive capability mapping) plus a focused fixture; it
 is tracked here as an explicit green gap rather than claimed complete.
 `url.fileURLToPath` and `url.pathToFileURL` are present.
 
-Measured improvements (2026-08-21): `assert.match` now actually asserts (with
+Measured improvements (2026-08-21): `os` now returns real host data backed by
+`sysinfo` and `getifaddrs` for `cpus` (model/speed/times), `totalmem`/`freemem`,
+`release`/`type`, `loadavg`, `networkInterfaces` (real IPv4 NICs), `userInfo`
+(uid/gid/env), `uptime`, and `hostname`; errno constants are expanded. Verified
+by `test-os.js` (focused 63/63, upstream parallel 178/178). `homedir`/`tmpdir`
+remain environment-backed.
+
+Measured improvement (2026-08-21): `assert.match` now actually asserts (with
 string-pattern support) and throws on mismatch; `assert.fail` honors its
 message; `assert.doesNotThrow` wraps a caught error as an AssertionError-style
 failure instead of rethrowing the raw error; deep-equality terminates on cyclic
