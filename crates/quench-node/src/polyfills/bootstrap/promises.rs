@@ -1,5 +1,7 @@
 //! Polyfill: `promises`
 
+
+pub const JS: &str = quench_js_check::checked_js!(r##"
 const __nodeTimerPromiseSchedulerError = (code, message) => {
   const error = new TypeError(message);
   error.code = code;
@@ -117,4 +119,4 @@ globalThis.__nodeTimersPromises = {
 };
 process.stdout ||= { isTTY: false };
 process.stderr ||= { isTTY: false };
-"#);
+"##);
