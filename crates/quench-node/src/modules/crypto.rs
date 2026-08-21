@@ -10,6 +10,7 @@ fn capability_props() -> Vec<(String, Value)> {
     vec![
         ("randomBytes".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_BYTES)),
         ("randomFillSync".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC)),
+        ("getRandomValues".to_string(), crate::host::capability(SPEC_CRYPTO_RANDOM_FILL_SYNC)),
         ("createHash".to_string(), crate::host::capability(SPEC_CRYPTO_CREATE_HASH)),
         ("createHmac".to_string(), crate::host::capability(SPEC_CRYPTO_CREATE_HMAC)),
         ("timingSafeEqual".to_string(), crate::host::capability(SPEC_CRYPTO_TIMING_SAFE_EQUAL)),
@@ -22,16 +23,23 @@ fn capability_props() -> Vec<(String, Value)> {
         ("generateKeyPairSync".to_string(), crate::host::capability(SPEC_CRYPTO_UNSUPPORTED)),
     ]
 }
-
 pub fn build() -> Value {
     let mut props = capability_props();
-    props.push((
-        "constants".to_string(),
-        host_api::object(vec![
-            ("OPENSSL_VERSION_NUMBER".into(), Value::Number(0.0)),
-            ("defaultCoreCipherList".into(), Value::String("".into())),
-        ]),
-    ));
+    let subtle = host_api::object(vec![
+        ("digest".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DIGEST)),
+        ("encrypt".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_ENCRYPT)),
+        ("decrypt".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DECRYPT)),
+        ("sign".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_SIGN)),
+        ("verify".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_VERIFY)),
+        ("generateKey".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_GENERATE_KEY)),
+        ("importKey".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_IMPORT_KEY)),
+        ("exportKey".to_string(), crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_EXPORT_KEY)),
+    ]);
+    props.push(("subtle".to_string(), subtle));
+    props.push(("constants".to_string(), host_api::object(vec![
+        ("OPENSSL_VERSION_NUMBER".into(), Value::Number(0.0)),
+        ("defaultCoreCipherList".into(), Value::String("".into())),
+    ])));
     host_api::object(props)
 }
 
@@ -333,6 +341,41 @@ pub fn hash_digest(
         return Ok(Value::String(hex::encode(bytes)));
     }
     Ok(crate::modules::buffer_proto::make_buffer(&bytes))
+}
+
+fn fulfilled(value: Value) -> Value {
+    use quench_runtime::value::{PromiseData, PromiseState};
+    Value::Promise(Rc::new(PromiseData::new(PromiseState::Fulfilled(value))))
+}
+
+pub fn subtle_digest(_: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, quench_runtime::execute::VmError> {
+    let algorithm = match args.first() { Some(Value::String(s)) => s.to_ascii_lowercase(), _ => return Err(execute::type_error("algorithm required")) };
+    let data = argbytes(args.get(1).ok_or_else(|| execute::type_error("data required"))?)?;
+    let out = match algorithm.as_str() {
+        "sha-1" | "sha1" => sha1_digest(&data).to_vec(),
+        "sha-256" | "sha256" => sha256_digest(&data).to_vec(),
+        "sha-384" | "sha384" => sha384_digest(&data).to_vec(),
+        "sha-512" | "sha512" => sha512_digest(&data).to_vec(),
+        _ => return Err(execute::type_error("unsupported digest algorithm")),
+    };
+    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&out)))
+}
+
+pub fn subtle_import_key(_: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, quench_runtime::execute::VmError> {
+    let data = argbytes(args.get(1).ok_or_else(|| execute::type_error("key data required"))?)?;
+    let algorithm = args.get(2).cloned().unwrap_or(Value::Undefined);
+    let name = execute::get_property(&algorithm, "name");
+    Ok(fulfilled(host_api::object(vec![
+        ("type".to_string(), Value::String("secret".into())),
+        ("extractable".to_string(), Value::Boolean(true)),
+        ("algorithm".to_string(), host_api::object(vec![("name".to_string(), name)])),
+        ("usages".to_string(), host_api::array(vec![Value::String("digest".into())])),
+        ("\0crypto:keydata".to_string(), crate::modules::buffer_proto::make_buffer(&data)),
+    ])))
+}
+
+pub fn subtle_unsupported(_: &Rc<RefCell<HostState>>, _: &[Value]) -> Result<Value, quench_runtime::execute::VmError> {
+    Ok(fulfilled(Value::Undefined))
 }
 
 mod crypto_hash;
