@@ -78,10 +78,16 @@ Legend
 
 ## Verification evidence
 
-- `cargo run -p quench-node-test --bin run-compat` — 51 passed, 0 failed.
-- `cargo run -p quench-node-test --bin run-parallel` — 178 passed, 0 failed
-  (manifest: `crates/quench-node-test/node-tests/parallel.txt`).
-- Express smoke app runs under `quench-node`: `curl` → `HTTP/1.1 200 OK`.
-- Upstream submodules (`tests/node`, `tests/test262`, `tests/typescript`)
-  are byte-for-byte preserved; the harness never rewrites Node's `common`
-  helper or fixtures.
+Measured after the latest implementation and merge:
+
+- `cargo run -p quench-node-test --bin run-compat -- --quiet` — **49 passed,
+  8 failed, 57 total**.
+- `cargo run -p quench-node-test --bin run-parallel` — **blocked** by an
+  uncaught panic in `crates/quench-runtime/src/intl/datetime_format_date.rs:90`;
+  no upstream pass rate is claimable.
+- Focused diagnostics_channel, inspector, repl/wasi, DNS, and path fixtures
+  pass individually.
+
+These results are evidence for the current repository only. Bun's green/yellow
+labels are reference classifications from the current Bun Node v26 page, not
+Node API test results for Quench.
