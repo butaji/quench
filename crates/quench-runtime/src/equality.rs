@@ -152,6 +152,12 @@ fn strict_equal_values(left: &Value, right: &Value) -> bool {
         (Value::Set(left), Value::Set(right)) => Rc::ptr_eq(left, right),
         (Value::Iterator(left), Value::Iterator(right)) => Rc::ptr_eq(left, right),
         (Value::Proxy(left), Value::Proxy(right)) => Rc::ptr_eq(left, right),
+        _ => strict_equal_primitive_values(left, right),
+    }
+}
+
+fn strict_equal_primitive_values(left: &Value, right: &Value) -> bool {
+    match (left, right) {
         (Value::Number(left), Value::Number(right)) => left == right,
         (Value::Boolean(left), Value::Boolean(right)) => left == right,
         (Value::String(left), Value::String(right)) => left == right,

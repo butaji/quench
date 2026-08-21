@@ -374,21 +374,43 @@ pub(crate) fn reduce_expression_kind(
     );
     (facts.strict, facts.in_function, facts.tail_calls) = inherited;
     let (body_ops, captures) = reduced?;
-    Some(emit_function_expression(
+    Some(emit_reduced_function_expression(
+        ops,
+        next_register,
+        body_ops,
+        captures,
+        function,
+        parameter_count,
+        emitted_kind,
+        strictness,
+    ))
+}
+
+fn emit_reduced_function_expression(
+    ops: &mut Vec<Op>,
+    next_register: &mut u16,
+    body_ops: Vec<Op>,
+    captures: u16,
+    function: &oxc::ast::ast::Function<'_>,
+    parameter_count: u16,
+    kind: FunctionKind,
+    strictness: crate::ops::FunctionStrictness,
+) -> u16 {
+    emit_function_expression(
         ops,
         next_register,
         body_ops,
         parameter_count,
         captures,
         FunctionMetadata {
-            kind: emitted_kind,
+            kind,
             length: crate::function_parameters::expected_argument_count(&function.params),
             strictness,
             is_async: function.r#async,
             mapped_arguments: crate::function_parameters::is_simple(&function.params),
         },
         function.id.as_ref().map(|id| id.name.as_str()),
-    ))
+    )
 }
 
 pub(crate) fn function_kind(function: &oxc::ast::ast::Function<'_>) -> FunctionKind {
