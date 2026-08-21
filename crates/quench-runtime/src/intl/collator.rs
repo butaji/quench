@@ -200,9 +200,6 @@ fn resolve_collation(
 }
 
 fn provider_has_collation(locale: &str, collation: &str) -> bool {
-    if collation == "standard" {
-        return true;
-    }
      let locale = remove_unsupported_extension(locale, "co");
     let Ok(locale) = icu_locale_core::Locale::try_from_str(&locale) else {
         return false;
