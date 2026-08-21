@@ -403,7 +403,7 @@ fn resolve_dispatch_compat_modules(state: &Rc<RefCell<HostState>>, name: &str) -
         "diagnostics_channel" => crate::modules::compat_extra::diagnostics_channel(state).ok(),
         "domain" => crate::modules::compat_extra::domain(state).ok(),
         "v8" => crate::modules::compat_extra::v8(state).ok(),
-        "inspector" => crate::modules::compat_extra::inspector(state).ok(),
+        "inspector" | "inspector/promises" => crate::modules::compat_extra::inspector(state).ok(),
         "repl" => crate::modules::compat_extra::repl(state).ok(),
         "wasi" => crate::modules::compat_extra::wasi(state).ok(),
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),

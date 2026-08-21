@@ -5,6 +5,10 @@
     this.args = options.args || [];
     this.env = options.env || {};
     this.preopens = options.preopens || {};
+    // Bun accepts returnOnExit but does not provide a native WASI proc_exit
+    // implementation. Keep the documented default visible without pretending
+    // that unsupported syscalls are available.
+    this.returnOnExit = options.returnOnExit === undefined ? true : options.returnOnExit;
     this.wasiImport = {};
   }
   WASI.prototype.start = function (instance) {

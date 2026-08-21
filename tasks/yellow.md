@@ -6,7 +6,7 @@ Document every supported API and every intentional Bun-matching gap. Implement r
 ## Status (2026-08-21; measured after latest merge)
 
 The listed yellow modules have partial implementations and focused fixtures.
-The current focused suite passes 57/57 and the upstream parallel manifest
+The current focused suite passes 58/58 and the upstream parallel manifest
 passes 178/178. This verifies only the repository's current Node API manifests;
 it does not erase Bun-documented partial behavior or prove full Node v26
 compatibility. Each module MUST record supported APIs, intentional gaps,
