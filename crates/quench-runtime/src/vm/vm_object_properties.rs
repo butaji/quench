@@ -179,6 +179,28 @@ fn object_prototype(properties: &[(String, Value)]) -> Builtin {
     }
 }
 
+fn resolve_host_global(key: &str) -> Option<Value> {
+    if let Some(value) = crate::vm::current_context_or_default().host_value(key) {
+        return Some(value);
+    }
+    if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
+        let token = Value::HostCapability(Rc::new(
+            crate::value::HostCapabilityValue::new(binding),
+        ));
+        if matches!(binding.kind, crate::ops::HostCapabilityKind::Custom(1)) {
+            return Some(Value::BoundFunction(Rc::new(
+                crate::value::BoundFunctionValue::new(
+                    binding.realm,
+                    Value::Builtin(Builtin::HostCapability(binding.kind)),
+                    token,
+                ),
+            )));
+        }
+        return Some(token);
+    }
+    None
+}
+
 fn global_property(
     properties: &Rc<crate::value::ObjectData>,
     key: &str,
@@ -194,21 +216,8 @@ fn global_property(
             })
             .unwrap_or_else(|| crate::builtins::property(Builtin::ObjectPrototype, key));
     }
-    if let Some(value) = crate::vm::current_context_or_default().host_value(key) {
+    if let Some(value) = resolve_host_global(key) {
         return value;
-    }
-    if let Some(binding) = crate::vm::current_context_or_default().host_binding(key) {
-        let token = Value::HostCapability(Rc::new(
-            crate::value::HostCapabilityValue::new(binding),
-        ));
-        if matches!(binding.kind, crate::ops::HostCapabilityKind::Custom(1)) {
-            return Value::BoundFunction(Rc::new(crate::value::BoundFunctionValue::new(
-                binding.realm,
-                Value::Builtin(Builtin::HostCapability(binding.kind)),
-                token,
-            )));
-        }
-        return token;
     }
     realm::global_builtin(key).map_or_else(
         || crate::builtins::property(Builtin::ObjectPrototype, key),
