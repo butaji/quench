@@ -282,6 +282,13 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
 
 fn resolve_dispatch(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
     let name = spec.strip_prefix("node:").unwrap_or(spec);
+    resolve_dispatch_core(state, name)
+        .or_else(|| resolve_dispatch_network(state, name))
+        .or_else(|| resolve_dispatch_compat_modules(state, name))
+        .or_else(|| resolve_dispatch_compat_namespaces(name))
+}
+
+fn resolve_dispatch_core(state: &Rc<RefCell<HostState>>, name: &str) -> Option<Value> {
     match name {
         "console" => Some(crate::modules::console::build_value()),
         "process" => Some(crate::modules::process::build(
@@ -308,6 +315,12 @@ fn resolve_dispatch(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value>
         "os" => Some(namespace_of_owned(crate::modules::os::build())),
         "events" => Some(crate::modules::events::build()),
         "string_decoder" => Some(namespace_of_owned(crate::modules::string_decoder::build())),
+        _ => None,
+    }
+}
+
+fn resolve_dispatch_network(state: &Rc<RefCell<HostState>>, name: &str) -> Option<Value> {
+    match name {
         "dns" => Some(crate::modules::dns::build()),
         "net" => Some(crate::modules::net::build()),
         "tty" => Some(crate::modules::tty::build()),
@@ -326,6 +339,15 @@ fn resolve_dispatch(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value>
         "zlib" => Some(crate::modules::zlib::build()),
         "perf_hooks" => resolve_perf_hooks(state),
         "tls" => Some(namespace_of_owned(vec![])),
+        _ => None,
+    }
+}
+
+fn resolve_dispatch_compat_modules(
+    state: &Rc<RefCell<HostState>>,
+    name: &str,
+) -> Option<Value> {
+    match name {
         "cluster" => crate::modules::compat_extra::cluster(state).ok(),
         "diagnostics_channel" => crate::modules::compat_extra::diagnostics_channel(state).ok(),
         "domain" => crate::modules::compat_extra::domain(state).ok(),
@@ -334,6 +356,12 @@ fn resolve_dispatch(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value>
         "repl" => crate::modules::compat_extra::repl(state).ok(),
         "wasi" => crate::modules::compat_extra::wasi(state).ok(),
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
+        _ => None,
+    }
+}
+
+fn resolve_dispatch_compat_namespaces(name: &str) -> Option<Value> {
+    match name {
         "sea" => capability_namespace_static(vec![(
             "isSea",
             crate::registry::NodeSpec::new("sea:isSea", 0x1a00),
