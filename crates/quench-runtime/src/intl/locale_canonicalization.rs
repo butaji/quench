@@ -33,6 +33,18 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     let language = parts.next().ok_or_else(|| runtime_error("RangeError: invalid language tag"))?;
     validate_language(language)?;
     let parts: Vec<&str> = parts.collect();
+    let (out, script_done) = canonicalize_language_alias(language, &parts);
+    let (parts, replacement) = apply_armenian_variant_alias(&out, &parts);
+    let mut out = out;
+    if let Some(value) = replacement {
+        out[0] = value;
+    }
+    let parts = parts.to_vec();
+    validate_transformed_extensions(&parts)?;
+    Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
+}
+
+fn canonicalize_language_alias(language: &str, parts: &[&str]) -> (Vec<String>, bool) {
     let mut out = Vec::new();
     let mut script_done = false;
     if language.eq_ignore_ascii_case("sh") {
@@ -57,13 +69,7 @@ pub(crate) fn canonicalize(tag: &str) -> Result<String, VmError> {
     } else {
         out.push(language_alias(language.to_ascii_lowercase()));
     }
-    let (parts, replacement) = apply_armenian_variant_alias(&out, &parts);
-    if let Some(value) = replacement {
-        out[0] = value;
-    }
-    let parts = parts.to_vec();
-    validate_transformed_extensions(&parts)?;
-    Ok(canonicalize_subtags(parts, out, script_done)?.join("-"))
+    (out, script_done)
 }
 fn validate_tag_syntax(tag: &str) -> Result<(), VmError> {
     if tag.is_empty()
