@@ -130,7 +130,13 @@ fn prototype_for_value_tail(value: &Value) -> Value {
         Value::BoundFunction(bound) if crate::vm::is_intrinsic_bound(bound) => {
             intrinsic_bound_prototype(bound)
         }
-        Value::Builtin(_) | Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
+        Value::BoundFunction(_) => Value::Builtin(Builtin::FunctionPrototype),
+        Value::Builtin(builtin)
+            if !crate::builtin_meta::constructor_name(*builtin).is_some() =>
+        {
+            Value::Builtin(Builtin::ObjectPrototype)
+        }
+        Value::Builtin(_) => Value::Builtin(Builtin::FunctionPrototype),
         Value::Promise(_) => Value::Builtin(Builtin::PromisePrototype),
         Value::Generator(generator) => generator_prototype(generator),
         Value::Iterator(_) => crate::collections::iterator::prototype_of(value),
