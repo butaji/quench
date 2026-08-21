@@ -27,6 +27,7 @@ pub struct ProcessState {
     pub versions: Vec<(String, String)>,
     pub exit_code: Option<i32>,
     pub cwd: std::path::PathBuf,
+    pub start_time: std::time::Instant,
 }
 
 impl Default for ProcessState {
@@ -59,6 +60,7 @@ impl ProcessState {
             versions,
             exit_code: None,
             cwd,
+            start_time: std::time::Instant::now(),
         }
     }
 }
@@ -66,7 +68,10 @@ impl ProcessState {
 pub fn build(argv: &[String], exec_path: &str) -> Value {
     let mut props = info_props(argv, exec_path);
     props.extend(method_props_helper::method_props());
-    crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()))
+    props.push(("uptime", crate::host::capability(crate::registry::SPEC_PROCESS_UPTIME)));
+    props.push(("memoryUsage", crate::host::capability(crate::registry::SPEC_PROCESS_MEMORYUSAGE)));
+    let obj = crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()));
+    obj
 }
 
 fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
@@ -298,6 +303,30 @@ pub fn once(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmE
         }
     }
     Ok(Value::Undefined)
+}
+
+/// `process.uptime()` — seconds since the host process started.
+pub fn uptime(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    let start = state.borrow().process.start_time;
+    let elapsed = start.elapsed();
+    Ok(Value::Number(elapsed.as_secs_f64()))
+}
+
+/// `process.memoryUsage()` — sysinfo returns total/free in bytes; report
+/// `rss` as a defensible estimate of used system memory.
+pub fn memory_usage(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let total = sys.total_memory() as f64;
+    let free = sys.free_memory() as f64;
+    let used = (total - free).max(0.0);
+    Ok(host_api::object(vec![
+        ("rss".to_string(), Value::Number(used)),
+        ("heapTotal".to_string(), Value::Number(0.0)),
+        ("heapUsed".to_string(), Value::Number(0.0)),
+        ("external".to_string(), Value::Number(0.0)),
+        ("arrayBuffers".to_string(), Value::Number(0.0)),
+    ]))
 }
 
 fn push_handler(state: &Rc<RefCell<HostState>>, handler: &Value, event: &str, once: bool) {
