@@ -1,4 +1,5 @@
 //! Partial `node:crypto` surface.
+mod crypto_subtle;
 use crate::host::HostState;
 use quench_runtime::value::Value;
 use quench_runtime::{execute, host_api};
@@ -59,51 +60,9 @@ fn capability_props() -> Vec<(String, Value)> {
     );
     props
 }
-fn subtle_object() -> Value {
-    host_api::object(
-        [
-            (
-                "digest",
-                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DIGEST),
-            ),
-            (
-                "encrypt",
-                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_ENCRYPT),
-            ),
-            (
-                "decrypt",
-                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_DECRYPT),
-            ),
-            (
-                "sign",
-                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_SIGN),
-            ),
-            (
-                "verify",
-                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_VERIFY),
-            ),
-            (
-                "generateKey",
-                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_GENERATE_KEY),
-            ),
-            (
-                "importKey",
-                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_IMPORT_KEY),
-            ),
-            (
-                "exportKey",
-                crate::host::capability(crate::registry::SPEC_CRYPTO_SUBTLE_EXPORT_KEY),
-            ),
-        ]
-        .into_iter()
-        .map(|(name, value)| (name.to_string(), value))
-        .collect(),
-    )
-}
-
 pub fn build() -> Value {
     let mut props = capability_props();
-    props.push(("subtle".to_string(), subtle_object()));
+    props.push(("subtle".to_string(), crypto_subtle::subtle_object()));
     props.push((
         "constants".to_string(),
         host_api::object(vec![
