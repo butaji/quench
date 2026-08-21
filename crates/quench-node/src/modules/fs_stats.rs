@@ -88,10 +88,22 @@ pub fn stats_from_values(
         ("mtimeMs".to_string(), Value::Number(mtime_ms)),
         ("ctimeMs".to_string(), Value::Number(ctime_ms)),
         ("birthtimeMs".to_string(), Value::Number(birthtime_ms)),
-        ("atime".to_string(), quench_runtime::date::instance(atime_ms)),
-        ("mtime".to_string(), quench_runtime::date::instance(mtime_ms)),
-        ("ctime".to_string(), quench_runtime::date::instance(ctime_ms)),
-        ("birthtime".to_string(), quench_runtime::date::instance(birthtime_ms)),
+        (
+            "atime".to_string(),
+            quench_runtime::date::instance(atime_ms),
+        ),
+        (
+            "mtime".to_string(),
+            quench_runtime::date::instance(mtime_ms),
+        ),
+        (
+            "ctime".to_string(),
+            quench_runtime::date::instance(ctime_ms),
+        ),
+        (
+            "birthtime".to_string(),
+            quench_runtime::date::instance(birthtime_ms),
+        ),
     ];
     with_predicates(mode as u32, entries)
 }
@@ -144,10 +156,22 @@ fn stats_unix(meta: &std::fs::Metadata) -> Value {
             Value::Number(ms(meta.ctime(), meta.ctime_nsec())),
         ),
         ("birthtimeMs".to_string(), Value::Number(created_ms(meta))),
-        ("atime".to_string(), quench_runtime::date::instance(ms(meta.atime(), meta.atime_nsec()))),
-        ("mtime".to_string(), quench_runtime::date::instance(ms(meta.mtime(), meta.mtime_nsec()))),
-        ("ctime".to_string(), quench_runtime::date::instance(ms(meta.ctime(), meta.ctime_nsec()))),
-        ("birthtime".to_string(), quench_runtime::date::instance(created_ms(meta))),
+        (
+            "atime".to_string(),
+            quench_runtime::date::instance(ms(meta.atime(), meta.atime_nsec())),
+        ),
+        (
+            "mtime".to_string(),
+            quench_runtime::date::instance(ms(meta.mtime(), meta.mtime_nsec())),
+        ),
+        (
+            "ctime".to_string(),
+            quench_runtime::date::instance(ms(meta.ctime(), meta.ctime_nsec())),
+        ),
+        (
+            "birthtime".to_string(),
+            quench_runtime::date::instance(created_ms(meta)),
+        ),
     ];
     with_predicates(meta.mode(), entries)
 }

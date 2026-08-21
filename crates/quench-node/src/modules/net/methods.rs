@@ -230,22 +230,71 @@ pub fn server_address(
     Ok(bind_addr.map_or(Value::Null, address_value))
 }
 
-pub fn server_get_connections(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
-    let count = receiver.and_then(net_id).map(|id| state.borrow().net.sockets.values().filter(|s| s.borrow().server_id == Some(id)).count()).unwrap_or(0);
+pub fn server_get_connections(
+    state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    let count = receiver
+        .and_then(net_id)
+        .map(|id| {
+            state
+                .borrow()
+                .net
+                .sockets
+                .values()
+                .filter(|s| s.borrow().server_id == Some(id))
+                .count()
+        })
+        .unwrap_or(0);
     if let Some(cb) = args.first().filter(|v| quench_runtime::is_callable(v)) {
-        execute::call(cb, &Value::Undefined, &[Value::Null, Value::Number(count as f64)])?;
+        execute::call(
+            cb,
+            &Value::Undefined,
+            &[Value::Null, Value::Number(count as f64)],
+        )?;
     }
     Ok(Value::Undefined)
 }
-pub fn server_ref(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
-pub fn server_unref(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
-pub fn server_set_max_connections(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, a: &[Value]) -> Result<Value, VmError> {
+pub fn server_ref(
+    _s: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn server_unref(
+    _s: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn server_set_max_connections(
+    _s: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    a: &[Value],
+) -> Result<Value, VmError> {
     let r = r.cloned().unwrap_or(Value::Undefined);
-    if let Some(v) = a.first() { execute::set_property(r.clone(), "maxConnections", v.clone()); }
+    if let Some(v) = a.first() {
+        execute::set_property(r.clone(), "maxConnections", v.clone());
+    }
     Ok(r)
 }
-pub fn socket_ref(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
-pub fn socket_unref(_s: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
+pub fn socket_ref(
+    _s: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn socket_unref(
+    _s: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
 
 /// `socket.write(data[, encoding][, cb])` — buffers bytes and flushes
 /// what the socket will take; returns whether everything flushed.
@@ -273,7 +322,11 @@ pub fn socket_write(
     }
     guard.write_buf.extend_from_slice(&bytes);
     guard.bytes_written += bytes.len() as u64;
-    let _ = execute::set_property(guard.js.clone(), "bytesWritten", Value::Number(guard.bytes_written as f64));
+    let _ = execute::set_property(
+        guard.js.clone(),
+        "bytesWritten",
+        Value::Number(guard.bytes_written as f64),
+    );
     let flushed = try_flush(&mut guard);
     Ok(Value::Boolean(flushed))
 }

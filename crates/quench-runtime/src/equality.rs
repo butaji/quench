@@ -137,7 +137,9 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
         (Value::Uint16Array(left), Value::Uint16Array(right)) => Rc::ptr_eq(left, right),
         (Value::Uint32Array(left), Value::Uint32Array(right)) => Rc::ptr_eq(left, right),
         (Value::Uint8Array(left), Value::Uint8Array(right)) => Rc::ptr_eq(left, right),
-        (Value::Uint8ClampedArray(left), Value::Uint8ClampedArray(right)) => Rc::ptr_eq(left, right),
+        (Value::Uint8ClampedArray(left), Value::Uint8ClampedArray(right)) => {
+            Rc::ptr_eq(left, right)
+        }
         (Value::Function(left), Value::Function(right)) => Rc::ptr_eq(left, right),
         (Value::BoundFunction(left), Value::BoundFunction(right)) => Rc::ptr_eq(left, right),
         (Value::Generator(left), Value::Generator(right)) => Rc::ptr_eq(left, right),
@@ -151,7 +153,9 @@ pub(crate) fn strict_equal(left: &Value, right: &Value) -> bool {
         (Value::String(left), Value::String(right)) => left == right,
         (Value::StringUnits(_), Value::String(_))
         | (Value::String(_), Value::StringUnits(_))
-        | (Value::StringUnits(_), Value::StringUnits(_)) => crate::strings::units_equal(left, right),
+        | (Value::StringUnits(_), Value::StringUnits(_)) => {
+            crate::strings::units_equal(left, right)
+        }
         (Value::BigInt(left), Value::BigInt(right)) => left == right,
         (Value::Builtin(left), Value::Builtin(right)) => left == right,
         (Value::Null, Value::Null) | (Value::Undefined, Value::Undefined) => true,

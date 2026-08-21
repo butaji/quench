@@ -32,9 +32,13 @@ fn install(mut object: Value, name: &str, value: Value) -> Result<Value, VmError
 }
 
 fn sock_id(value: &Value) -> Option<u64> {
-    execute::get_property_result(value, ID)
-        .ok()
-        .and_then(|v| if let Value::Number(n) = v { Some(n as u64) } else { None })
+    execute::get_property_result(value, ID).ok().and_then(|v| {
+        if let Value::Number(n) = v {
+            Some(n as u64)
+        } else {
+            None
+        }
+    })
 }
 
 fn addr_object(addr: SocketAddr) -> Value {
@@ -56,21 +60,29 @@ fn rinfo_object(addr: SocketAddr, size: usize) -> Value {
 
 /// `dgram.createSocket(type)` — build a socket object. `type` is accepted but
 /// only IPv4-ish loopback behaviour is meaningful today.
-pub fn create_socket(
-    state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn create_socket(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     let mut object = crate::modules::events::new_emitter_object(state)?;
     for (name, cap_id) in [
-        ("bind", 0x2301), ("send", 0x2302), ("close", 0x2303), ("address", 0x2304),
-        ("setTTL", 0x2305), ("setBroadcast", 0x2306), ("setMulticastTTL", 0x2307),
-        ("setMulticastLoopback", 0x2308), ("addMembership", 0x2309),
-        ("dropMembership", 0x230A), ("getSendQueueSize", 0x230B),
-        ("getSendQueueCount", 0x230C), ("ref", 0x230D), ("unref", 0x230E),
+        ("bind", 0x2301),
+        ("send", 0x2302),
+        ("close", 0x2303),
+        ("address", 0x2304),
+        ("setTTL", 0x2305),
+        ("setBroadcast", 0x2306),
+        ("setMulticastTTL", 0x2307),
+        ("setMulticastLoopback", 0x2308),
+        ("addMembership", 0x2309),
+        ("dropMembership", 0x230A),
+        ("getSendQueueSize", 0x230B),
+        ("getSendQueueCount", 0x230C),
+        ("ref", 0x230D),
+        ("unref", 0x230E),
     ] {
-        object = install(object, name, crate::host::capability(crate::registry::NodeSpec::new(
-            "dgram:method", cap_id,
-        )))?;
+        object = install(
+            object,
+            name,
+            crate::host::capability(crate::registry::NodeSpec::new("dgram:method", cap_id)),
+        )?;
     }
     let id = NEXT.with(|next| {
         let value = *next.borrow();
@@ -96,14 +108,18 @@ pub fn bind(
         .get(1)
         .and_then(|v| execute::to_js_string(v).ok())
         .unwrap_or_else(|| "127.0.0.1".to_string());
-    let socket = UdpSocket::bind((host.as_str(), port))
-        .map_err(|e| execute::type_error(&e.to_string()))?;
+    let socket =
+        UdpSocket::bind((host.as_str(), port)).map_err(|e| execute::type_error(&e.to_string()))?;
     socket.set_nonblocking(true).ok();
     if let Some(id) = sock_id(&receiver) {
         SOCKS.with(|registry| {
-            registry
-                .borrow_mut()
-                .insert(id, Sock { socket, js: receiver.clone() });
+            registry.borrow_mut().insert(
+                id,
+                Sock {
+                    socket,
+                    js: receiver.clone(),
+                },
+            );
         });
         crate::modules::net::emit(state, &receiver, "listening", Vec::new())?;
     }
@@ -145,7 +161,12 @@ pub fn send(
     });
     if let Some(callback) = args.last() {
         if quench_runtime::is_callable(callback) {
-            execute::call(callback, &Value::Undefined, &[Value::Number(data.len() as f64)]).ok();
+            execute::call(
+                callback,
+                &Value::Undefined,
+                &[Value::Number(data.len() as f64)],
+            )
+            .ok();
         }
     }
     Ok(receiver)
@@ -190,16 +211,76 @@ pub fn address(
     Ok(value)
 }
 
-pub fn set_ttl(_: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
-pub fn set_broadcast(_: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
-pub fn set_multicast_ttl(_: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
-pub fn set_multicast_loopback(_: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
-pub fn add_membership(_: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
-pub fn drop_membership(_: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
-pub fn get_send_queue_size(_: &Rc<RefCell<HostState>>, _: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(Value::Number(0.0)) }
-pub fn get_send_queue_count(_: &Rc<RefCell<HostState>>, _: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(Value::Number(0.0)) }
-pub fn ref_socket(_: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
-pub fn unref_socket(_: &Rc<RefCell<HostState>>, r: Option<&Value>, _: &[Value]) -> Result<Value, VmError> { Ok(r.cloned().unwrap_or(Value::Undefined)) }
+pub fn set_ttl(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn set_broadcast(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn set_multicast_ttl(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn set_multicast_loopback(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn add_membership(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn drop_membership(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn get_send_queue_size(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(0.0))
+}
+pub fn get_send_queue_count(
+    _: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(Value::Number(0.0))
+}
+pub fn ref_socket(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
+pub fn unref_socket(
+    _: &Rc<RefCell<HostState>>,
+    r: Option<&Value>,
+    _: &[Value],
+) -> Result<Value, VmError> {
+    Ok(r.cloned().unwrap_or(Value::Undefined))
+}
 
 /// Event-loop pump: deliver any pending datagrams to `'message'` listeners.
 pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
@@ -229,4 +310,3 @@ pub fn poll(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
     }
     Ok(())
 }
-

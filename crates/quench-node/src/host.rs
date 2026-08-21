@@ -245,7 +245,26 @@ pub fn install_with_argv(
     let url_search_params = crate::host::capability(crate::registry::SPEC_URL_SEARCHPARAMS_NEW);
     context = context.with_host_value("URLSearchParams".to_string(), url_search_params);
     if let Ok(web) = crate::modules::web_globals::build() {
-        for name in ["Headers","FormData","Blob","Event","CustomEvent","DOMException","MessageChannel","MessagePort","BroadcastChannel","ReadableStream","WritableStream","TransformStream","TextDecoderStream","TextEncoderStream","CompressionStream","DecompressionStream","Request","Response"] {
+        for name in [
+            "Headers",
+            "FormData",
+            "Blob",
+            "Event",
+            "CustomEvent",
+            "DOMException",
+            "MessageChannel",
+            "MessagePort",
+            "BroadcastChannel",
+            "ReadableStream",
+            "WritableStream",
+            "TransformStream",
+            "TextDecoderStream",
+            "TextEncoderStream",
+            "CompressionStream",
+            "DecompressionStream",
+            "Request",
+            "Response",
+        ] {
             let value = quench_runtime::execute::get_property(&web, name);
             context = context.with_host_value(name.to_string(), value);
         }

@@ -307,8 +307,12 @@ fn network_dispatch_host(cap: u16) -> Option<CallHandler> {
     Some(match cap {
         CAP_CRYPTO_SUBTLE_DIGEST => crypto_subtle_digest,
         CAP_CRYPTO_SUBTLE_IMPORT_KEY => crypto_subtle_import_key,
-        CAP_CRYPTO_SUBTLE_ENCRYPT | CAP_CRYPTO_SUBTLE_DECRYPT | CAP_CRYPTO_SUBTLE_SIGN |
-        CAP_CRYPTO_SUBTLE_VERIFY | CAP_CRYPTO_SUBTLE_GENERATE_KEY | CAP_CRYPTO_SUBTLE_EXPORT_KEY => crypto_subtle_unsupported,
+        CAP_CRYPTO_SUBTLE_ENCRYPT
+        | CAP_CRYPTO_SUBTLE_DECRYPT
+        | CAP_CRYPTO_SUBTLE_SIGN
+        | CAP_CRYPTO_SUBTLE_VERIFY
+        | CAP_CRYPTO_SUBTLE_GENERATE_KEY
+        | CAP_CRYPTO_SUBTLE_EXPORT_KEY => crypto_subtle_unsupported,
         CAP_REQUIRE => node_require,
         CAP_REQUIRE_FOR => node_require_for,
         CAP_CJS_WRAP => cjs_wrap,

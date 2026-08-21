@@ -404,4 +404,3 @@ pub fn mkdir_sync(
     apply_mode(&path, options.mode);
     Ok(Value::Undefined)
 }
-

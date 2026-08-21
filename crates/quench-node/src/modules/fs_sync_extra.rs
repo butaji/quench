@@ -5,9 +5,9 @@ use std::rc::Rc;
 use quench_runtime::execute::VmError;
 use quench_runtime::value::Value;
 
+use crate::host::HostState;
 use crate::modules::fs::{parse_options, path_arg, FsOptions};
 use crate::modules::fs_error;
-use crate::host::HostState;
 
 fn split(args: &[Value]) -> Result<(String, FsOptions), VmError> {
     let path = path_arg(args.first())?;
@@ -126,14 +126,22 @@ fn chown_apply(
             }
         };
         if raw == -1 {
-            return Err(fs_error::fs_error(op, Some(path), &std::io::Error::last_os_error()));
+            return Err(fs_error::fs_error(
+                op,
+                Some(path),
+                &std::io::Error::last_os_error(),
+            ));
         }
         Ok(Value::Undefined)
     }
     #[cfg(not(unix))]
     {
         let _ = (uid, gid, follow_symlinks);
-        Err(fs_error::fs_error(op, Some(path), &std::io::Error::from_raw_os_error(78)))
+        Err(fs_error::fs_error(
+            op,
+            Some(path),
+            &std::io::Error::from_raw_os_error(78),
+        ))
     }
 }
 
@@ -239,14 +247,22 @@ fn utimensat_apply(
         };
         let times = [ts(atime), ts(mtime)];
         if unsafe { libc::utimensat(libc::AT_FDCWD, cpath.as_ptr(), times.as_ptr(), flags) } == -1 {
-            return Err(fs_error::fs_error(op, Some(path), &std::io::Error::last_os_error()));
+            return Err(fs_error::fs_error(
+                op,
+                Some(path),
+                &std::io::Error::last_os_error(),
+            ));
         }
         Ok(Value::Undefined)
     }
     #[cfg(not(unix))]
     {
         let _ = (atime, mtime, flags);
-        Err(fs_error::fs_error(op, Some(path), &std::io::Error::from_raw_os_error(78)))
+        Err(fs_error::fs_error(
+            op,
+            Some(path),
+            &std::io::Error::from_raw_os_error(78),
+        ))
     }
 }
 

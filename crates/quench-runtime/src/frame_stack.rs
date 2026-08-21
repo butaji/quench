@@ -66,7 +66,9 @@ pub struct FrameGuard {
 
 impl FrameGuard {
     pub fn enter(function: &Rc<FunctionValue>) -> Self {
-        let filename = CURRENT_FILE.with(|cell| cell.borrow().clone()).unwrap_or_default();
+        let filename = CURRENT_FILE
+            .with(|cell| cell.borrow().clone())
+            .unwrap_or_default();
         let frame = FrameInfo {
             function: inferred_name(function),
             filename,

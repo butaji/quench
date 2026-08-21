@@ -139,15 +139,27 @@ fn is_validation_error(err: &VmError) -> bool {
     }
 }
 
-pub fn open(state: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+pub fn open(
+    state: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
     let (a, cb) = super::fs::async_args(args)?;
     run_fd_op(state, &cb, super::fs_sync::open_sync, a)
 }
-pub fn fstat(state: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+pub fn fstat(
+    state: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
     let (a, cb) = super::fs::async_args(args)?;
     run_fd_op(state, &cb, super::fs_sync::fstat_sync, a)
 }
-pub fn close(state: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value]) -> Result<Value, VmError> {
+pub fn close(
+    state: &Rc<RefCell<HostState>>,
+    _r: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
     let (a, cb) = super::fs::async_args(args)?;
     let result = super::fs_sync::close_sync(state, None, a);
     if let Err(err) = &result {
@@ -155,10 +167,6 @@ pub fn close(state: &Rc<RefCell<HostState>>, _r: Option<&Value>, args: &[Value])
             return Err(err.clone());
         }
     }
-    super::fs::defer(
-        state,
-        &cb,
-        vec![super::fs::err_value(&result)],
-    );
+    super::fs::defer(state, &cb, vec![super::fs::err_value(&result)]);
     Ok(Value::Undefined)
 }

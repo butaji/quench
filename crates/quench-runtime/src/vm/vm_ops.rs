@@ -111,7 +111,9 @@ pub fn execute_await(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
                     Ok(())
                 }
                 crate::value::PromiseState::Rejected(reason) => Err(VmError::Thrown(reason)),
-                crate::value::PromiseState::Pending => execute_pending_await(registers, dst, promise),
+                crate::value::PromiseState::Pending => {
+                    execute_pending_await(registers, dst, promise)
+                }
             }
         }
         value => {

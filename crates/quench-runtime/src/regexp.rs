@@ -36,13 +36,14 @@ fn validate_literal_ranges(pattern: &str) -> Result<(), String> {
             index += 1;
         }
         while index < bytes.len() && bytes[index] != b']' {
-
             let (left_value, next) = class_atom(bytes, index);
             index = next;
             let Some(left_value) = left_value else {
                 continue;
             };
-            if index < bytes.len() && bytes[index] == b'-' && index + 1 < bytes.len()
+            if index < bytes.len()
+                && bytes[index] == b'-'
+                && index + 1 < bytes.len()
                 && bytes[index + 1] != b']'
             {
                 index += 1;

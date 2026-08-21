@@ -76,7 +76,14 @@ fn reduce_block_statements(
     let mut last = None;
     for statement in &block.body {
         if let Some(value) = reduce_block_statement(
-            statement, &own_functions, ops, facts, next_register, next_slot, block_locals, last,
+            statement,
+            &own_functions,
+            ops,
+            facts,
+            next_register,
+            next_slot,
+            block_locals,
+            last,
         )? {
             last = Some(value);
         }
@@ -107,7 +114,12 @@ fn reduce_block_statement(
     );
     let start_ops = ops.len();
     let value = reduce_statement(
-        statement, ops, facts, next_register, next_slot, block_locals,
+        statement,
+        ops,
+        facts,
+        next_register,
+        next_slot,
+        block_locals,
     )?;
     facts.eval_var_barrier.truncate(barrier);
     if pending_abrupt {
