@@ -15,6 +15,19 @@ Reduce the time from an observed Node mismatch to a verified general fix by
 2–5x, while preserving the full compatibility objective, readable polyfills,
 local-only verification, and authoritative evidence.
 
+## Crate replacement audit task
+
+For each high-volume failure cluster, first inventory handwritten algorithms
+and compare mature crates already compatible with the workspace's supported
+platforms and feature/binary/RSS budgets. Record one of **adopted**,
+**rejected**, or **needs benchmark**, with the candidate version/features,
+semantic mismatches, and a focused fixture or benchmark as evidence. Adoption
+must stay behind a Quench semantic adapter: JS-visible coercion, identity,
+ordering, errors, resource ownership, and the frozen OXC-facts residual-VM
+architecture remain runtime-owned. This is a decision task, not a progress
+report; do not treat a green focused result or a stale differential report as
+evidence that an audit is complete.
+
 ## Ranked findings
 
 1. **Scope is not mechanically closed.** The task index has 19 records, but

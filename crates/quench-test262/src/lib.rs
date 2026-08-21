@@ -101,14 +101,14 @@ impl TestMetadata {
 }
 
 fn extract_frontmatter(source: &str) -> Result<&str, String> {
-    let Some(start) = source.find("/*---") else {
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
+    let Some(body) = source.strip_prefix("/*---") else {
         return Ok("");
     };
-    let body_start = start + "/*---".len();
-    let Some(end_offset) = source[body_start..].find("---*/") else {
+    let Some(end_offset) = body.find("---*/") else {
         return Err("unterminated test262 frontmatter".into());
     };
-    Ok(&source[body_start..body_start + end_offset])
+    Ok(&body[..end_offset])
 }
 
 fn value_after_colon(line: &str) -> Option<String> {

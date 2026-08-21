@@ -282,6 +282,19 @@ omits JavaScript features such as backreferences and lookaround. Likewise,
 must be selected behind semantic adapters, with feature flags and generated
 data chosen for RSS and binary-size goals.
 
+### Crate replacement audit
+
+Before adding or expanding handwritten code, record a bounded audit in the
+owning task: identify the operation, compare candidate crates against the
+observable specification and current dependency/features, and cite a focused
+fixture or benchmark as evidence. Adopt a crate only behind a semantic adapter
+when it reduces maintained code without moving JS-visible coercion, identity,
+ordering, errors, or resource ownership out of Quench. Reject candidates whose
+semantics, portability, licensing, feature cost, or binary/RSS budget do not
+fit; mark performance-sensitive choices **needs benchmark** rather than
+guessing. This audit may recommend reuse, rejection, or benchmarking, but it
+does not authorize changes to the frozen OXC-facts residual-VM architecture.
+
 After implementation-order steps 1–5 establish the complete generic runtime,
 domain breadth proceeds through language primitives, ordinary builtins, RegExp
 and numeric kernels, Date, URI/JSON, then selected ECMA-402 components. Steps
