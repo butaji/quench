@@ -29,3 +29,13 @@ dispatch and error propagation), and `boundedChannel`. Verified by
 (`http.client.*`, `http2`, `dgram`, `http.server.*`, `net`, `module`,
 `console`, `child_process`, `worker_threads`) and Node's channel store semantics
 remain an explicit gap, not a compatibility claim.
+
+Measured (2026-08-21): `node:crypto` provides pure-Rust digests, `getHashes`,
+`getRandomValues`, and `crypto.subtle` with working `digest`, `importKey`,
+`encrypt`/`decrypt` (AES-GCM round-trip verified), `sign`/`verify`, and
+`generateKey`. Measured gap versus Bun: `subtle.deriveBits` and
+`subtle.deriveKey` are undefined, and algorithm/key-type coverage is narrower
+than Bun's BoringSSL-backed surface (no `encapsulate`/`decapsulate`, `ed448`,
+`x448`, `rsa-pss`, `dsa`, `dh`, extra curves, or the CCM/OCB/XTS/`chacha20-
+poly1305` ciphers). These require a broader crypto backend and are tracked here,
+not claimed.
