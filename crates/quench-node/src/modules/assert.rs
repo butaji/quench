@@ -335,6 +335,10 @@ pub fn rejects(
         }
     };
     let state = promise.state.borrow().clone();
+    settle_rejects(state, validator)
+}
+
+fn settle_rejects(state: PromiseState, validator: Value) -> Result<Value, VmError> {
     match state {
         PromiseState::Fulfilled(_) => Ok(assertion_rejected("The function did not reject")),
         PromiseState::Pending => Ok(assertion_rejected("The input promise is still pending")),

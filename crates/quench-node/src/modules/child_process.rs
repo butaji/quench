@@ -38,7 +38,8 @@ pub fn spawn_sync(
         Err(error) => return Ok(spawn_error_result(raw_code(&error), &error.to_string())),
     };
     Ok(spawn_result_object(
-        pid, output.status.code(),
+        pid,
+        output.status.code(),
         String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
     ))
@@ -229,7 +230,19 @@ pub fn exec(
     cmd.args(["-c", &command])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let result = match cmd.output() {
+    let result = exec_output(&mut cmd);
+    if let Some(cb) = callback {
+        execute::call(
+            &cb,
+            &Value::Undefined,
+            &[result.0, Value::String(result.1), Value::String(result.2)],
+        )?;
+    }
+    Ok(Value::Undefined)
+}
+
+fn exec_output(cmd: &mut std::process::Command) -> (Value, String, String) {
+    match cmd.output() {
         Ok(output) => {
             let out = String::from_utf8_lossy(&output.stdout).into_owned();
             let err = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -248,15 +261,7 @@ pub fn exec(
             String::new(),
             String::new(),
         ),
-    };
-    if let Some(cb) = callback {
-        execute::call(
-            &cb,
-            &Value::Undefined,
-            &[result.0, Value::String(result.1), Value::String(result.2)],
-        )?;
     }
-    Ok(Value::Undefined)
 }
 
 /// Execute a file directly (without a shell), with optional callback.

@@ -248,16 +248,33 @@ pub fn install_with_argv(
     let text_decoder = crate::host::capability(crate::registry::SPEC_TEXT_DECODER_NEW);
     let context = context.with_host_value("TextDecoder".to_string(), text_decoder);
     let text_encoder = crate::host::capability(crate::registry::SPEC_TEXT_ENCODER_NEW);
-    (host, context.with_host_value("TextEncoder".to_string(), text_encoder))
+    (
+        host,
+        context.with_host_value("TextEncoder".to_string(), text_encoder),
+    )
 }
 
 fn install_web_globals(mut context: VmContext) -> VmContext {
     if let Ok(web) = crate::modules::web_globals::build() {
         for name in [
-            "Headers", "FormData", "Blob", "Event", "CustomEvent", "DOMException",
-            "MessageChannel", "MessagePort", "BroadcastChannel", "ReadableStream",
-            "WritableStream", "TransformStream", "TextDecoderStream", "TextEncoderStream",
-            "CompressionStream", "DecompressionStream", "Request", "Response",
+            "Headers",
+            "FormData",
+            "Blob",
+            "Event",
+            "CustomEvent",
+            "DOMException",
+            "MessageChannel",
+            "MessagePort",
+            "BroadcastChannel",
+            "ReadableStream",
+            "WritableStream",
+            "TransformStream",
+            "TextDecoderStream",
+            "TextEncoderStream",
+            "CompressionStream",
+            "DecompressionStream",
+            "Request",
+            "Response",
         ] {
             let value = quench_runtime::execute::get_property(&web, name);
             context = context.with_host_value(name.to_string(), value);

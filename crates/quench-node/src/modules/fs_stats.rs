@@ -73,29 +73,74 @@ pub fn stats_from_values(
     ctime_ms: f64,
     birthtime_ms: f64,
 ) -> Value {
-    with_predicates(mode as u32, stats_entries(
-        dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks,
-        atime_ms, mtime_ms, ctime_ms, birthtime_ms,
-    ))
+    with_predicates(
+        mode as u32,
+        stats_entries(
+            dev,
+            mode,
+            nlink,
+            uid,
+            gid,
+            rdev,
+            blksize,
+            ino,
+            size,
+            blocks,
+            atime_ms,
+            mtime_ms,
+            ctime_ms,
+            birthtime_ms,
+        ),
+    )
 }
 
 fn stats_entries(
-    dev: f64, mode: f64, nlink: f64, uid: f64, gid: f64, rdev: f64,
-    blksize: f64, ino: f64, size: f64, blocks: f64, atime_ms: f64,
-    mtime_ms: f64, ctime_ms: f64, birthtime_ms: f64,
+    dev: f64,
+    mode: f64,
+    nlink: f64,
+    uid: f64,
+    gid: f64,
+    rdev: f64,
+    blksize: f64,
+    ino: f64,
+    size: f64,
+    blocks: f64,
+    atime_ms: f64,
+    mtime_ms: f64,
+    ctime_ms: f64,
+    birthtime_ms: f64,
 ) -> Vec<(String, Value)> {
     vec![
-        ("dev".to_string(), Value::Number(dev)), ("mode".to_string(), Value::Number(mode)),
-        ("nlink".to_string(), Value::Number(nlink)), ("uid".to_string(), Value::Number(uid)),
-        ("gid".to_string(), Value::Number(gid)), ("rdev".to_string(), Value::Number(rdev)),
-        ("blksize".to_string(), Value::Number(blksize)), ("ino".to_string(), Value::Number(ino)),
-        ("size".to_string(), Value::Number(size)), ("blocks".to_string(), Value::Number(blocks)),
-        ("atimeMs".to_string(), Value::Number(atime_ms)), ("mtimeMs".to_string(), Value::Number(mtime_ms)),
-        ("ctimeMs".to_string(), Value::Number(ctime_ms)), ("birthtimeMs".to_string(), Value::Number(birthtime_ms)),
-        ("atime".to_string(), quench_runtime::date::instance(atime_ms)),
-        ("mtime".to_string(), quench_runtime::date::instance(mtime_ms)),
-        ("ctime".to_string(), quench_runtime::date::instance(ctime_ms)),
-        ("birthtime".to_string(), quench_runtime::date::instance(birthtime_ms)),
+        ("dev".to_string(), Value::Number(dev)),
+        ("mode".to_string(), Value::Number(mode)),
+        ("nlink".to_string(), Value::Number(nlink)),
+        ("uid".to_string(), Value::Number(uid)),
+        ("gid".to_string(), Value::Number(gid)),
+        ("rdev".to_string(), Value::Number(rdev)),
+        ("blksize".to_string(), Value::Number(blksize)),
+        ("ino".to_string(), Value::Number(ino)),
+        ("size".to_string(), Value::Number(size)),
+        ("blocks".to_string(), Value::Number(blocks)),
+        ("atimeMs".to_string(), Value::Number(atime_ms)),
+        ("mtimeMs".to_string(), Value::Number(mtime_ms)),
+        ("ctimeMs".to_string(), Value::Number(ctime_ms)),
+        ("birthtimeMs".to_string(), Value::Number(birthtime_ms)),
+        (
+            "atime".to_string(),
+            quench_runtime::date::instance(atime_ms),
+        ),
+        (
+            "mtime".to_string(),
+            quench_runtime::date::instance(mtime_ms),
+        ),
+        (
+            "ctime".to_string(),
+            quench_runtime::date::instance(ctime_ms),
+        ),
+        (
+            "birthtime".to_string(),
+            quench_runtime::date::instance(birthtime_ms),
+        ),
     ]
 }
 
@@ -123,7 +168,13 @@ pub fn stats(meta: &std::fs::Metadata) -> Value {
 #[cfg(unix)]
 fn stats_unix(meta: &std::fs::Metadata) -> Value {
     use std::os::unix::fs::MetadataExt;
-    let entries: Vec<(String, Value)> = vec![
+    with_predicates(meta.mode(), stats_unix_entries(meta))
+}
+
+#[cfg(unix)]
+fn stats_unix_entries(meta: &std::fs::Metadata) -> Vec<(String, Value)> {
+    use std::os::unix::fs::MetadataExt;
+    vec![
         ("dev".to_string(), Value::Number(meta.dev() as f64)),
         ("ino".to_string(), Value::Number(meta.ino() as f64)),
         ("mode".to_string(), Value::Number(meta.mode() as f64)),
@@ -163,8 +214,7 @@ fn stats_unix(meta: &std::fs::Metadata) -> Value {
             "birthtime".to_string(),
             quench_runtime::date::instance(created_ms(meta)),
         ),
-    ];
-    with_predicates(meta.mode(), entries)
+    ]
 }
 
 #[cfg(unix)]

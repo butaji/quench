@@ -136,9 +136,14 @@ fn send_data(args: &[Value]) -> (Vec<u8>, u16, String) {
         }
         _ => Vec::new(),
     };
-    let port = args.get(1).and_then(|v| execute::to_js_string(v).ok())
-        .and_then(|s| s.parse::<u16>().ok()).unwrap_or(0);
-    let host = args.get(2).and_then(|v| execute::to_js_string(v).ok())
+    let port = args
+        .get(1)
+        .and_then(|v| execute::to_js_string(v).ok())
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    let host = args
+        .get(2)
+        .and_then(|v| execute::to_js_string(v).ok())
         .unwrap_or_else(|| "127.0.0.1".to_string());
     (data, port, host)
 }
@@ -150,7 +155,9 @@ pub fn send(
 ) -> Result<Value, VmError> {
     let _ = state;
     let receiver = receiver.cloned().unwrap_or(Value::Undefined);
-    let Some(id) = sock_id(&receiver) else { return Ok(receiver) };
+    let Some(id) = sock_id(&receiver) else {
+        return Ok(receiver);
+    };
     let (data, port, host) = send_data(args);
     SOCKS.with(|registry| {
         if let Some(sock) = registry.borrow().get(&id) {
@@ -159,7 +166,12 @@ pub fn send(
     });
     if let Some(callback) = args.last() {
         if quench_runtime::is_callable(callback) {
-            execute::call(callback, &Value::Undefined, &[Value::Number(data.len() as f64)]).ok();
+            execute::call(
+                callback,
+                &Value::Undefined,
+                &[Value::Number(data.len() as f64)],
+            )
+            .ok();
         }
     }
     Ok(receiver)

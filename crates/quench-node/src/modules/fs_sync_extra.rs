@@ -233,27 +233,7 @@ fn utimensat_apply(
 ) -> Result<Value, VmError> {
     #[cfg(unix)]
     {
-        use std::ffi::CString;
-        let cpath = CString::new(path.as_bytes()).map_err(|_| {
-            crate::modules::buffer_enc::invalid_arg_type("path must not contain null bytes".into())
-        })?;
-        let ts = |t: f64| {
-            let sec = t.floor() as libc::time_t;
-            let nsec = ((t - sec as f64) * 1_000_000_000.0) as libc::c_long;
-            libc::timespec {
-                tv_sec: sec,
-                tv_nsec: nsec,
-            }
-        };
-        let times = [ts(atime), ts(mtime)];
-        if unsafe { libc::utimensat(libc::AT_FDCWD, cpath.as_ptr(), times.as_ptr(), flags) } == -1 {
-            return Err(fs_error::fs_error(
-                op,
-                Some(path),
-                &std::io::Error::last_os_error(),
-            ));
-        }
-        Ok(Value::Undefined)
+        return utimensat_unix(path, atime, mtime, flags, op);
     }
     #[cfg(not(unix))]
     {
@@ -264,6 +244,37 @@ fn utimensat_apply(
             &std::io::Error::from_raw_os_error(78),
         ))
     }
+}
+
+#[cfg(unix)]
+fn utimensat_unix(
+    path: &str,
+    atime: f64,
+    mtime: f64,
+    flags: i32,
+    op: &str,
+) -> Result<Value, VmError> {
+    use std::ffi::CString;
+    let cpath = CString::new(path.as_bytes()).map_err(|_| {
+        crate::modules::buffer_enc::invalid_arg_type("path must not contain null bytes".into())
+    })?;
+    let ts = |t: f64| {
+        let sec = t.floor() as libc::time_t;
+        let nsec = ((t - sec as f64) * 1_000_000_000.0) as libc::c_long;
+        libc::timespec {
+            tv_sec: sec,
+            tv_nsec: nsec,
+        }
+    };
+    let times = [ts(atime), ts(mtime)];
+    if unsafe { libc::utimensat(libc::AT_FDCWD, cpath.as_ptr(), times.as_ptr(), flags) } == -1 {
+        return Err(fs_error::fs_error(
+            op,
+            Some(path),
+            &std::io::Error::last_os_error(),
+        ));
+    }
+    Ok(Value::Undefined)
 }
 
 pub fn lchown_sync(
