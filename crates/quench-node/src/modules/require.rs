@@ -19,6 +19,50 @@ use quench_runtime::value::Value;
 
 use crate::host::HostState;
 
+/// Cache-or-build helper used by every per-module branch in `require`.
+/// Returns the cached module value if present, otherwise builds,
+/// inserts into `module_cache` under `key`, and returns it.
+fn cached_module<F>(state: &Rc<RefCell<HostState>>, key: &str, build: F) -> Result<Value, VmError>
+where
+    F: FnOnce() -> Result<Value, VmError>,
+{
+    if let Some(cached) = state.borrow().module_cache.get(key) {
+        return Ok(cached.clone());
+    }
+    let value = build()?;
+    state.borrow_mut().module_cache.insert(key.into(), value.clone());
+    Ok(value)
+}
+
+/// Build a namespace object from `(name, value)` pairs, returning
+/// `Value::Undefined` on failure. Avoids the deeply nested
+/// `Some(namespace_object(vec![...]))` paren-counting burden at the
+/// require call sites.
+fn namespace_of(pairs: Vec<(&str, Value)>) -> Value {
+    crate::host::namespace_object(pairs).unwrap_or(Value::Undefined)
+}
+
+/// Build a namespace object from owned `(String, Value)` pairs.
+fn namespace_of_owned(pairs: Vec<(String, Value)>) -> Value {
+    crate::host::namespace_object_from_pairs(pairs)
+}
+
+/// A bare capability property descriptor used when wrapping a
+/// single-capability spec as a namespace object.
+fn capability_value(spec: crate::registry::NodeSpec) -> Value {
+    crate::host::capability(spec)
+}
+
+/// Wrap a list of `(name, spec)` pairs as a namespace object whose
+/// values are capability descriptors.
+fn capability_namespace(pairs: Vec<(&str, crate::registry::NodeSpec)>) -> Value {
+    let owned = pairs
+        .into_iter()
+        .map(|(name, spec)| (name.to_string(), capability_value(spec)))
+        .collect();
+    namespace_of_owned(owned)
+}
+
 pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let spec = args.first().map(value_to_string).unwrap_or_default();
     // `node:assert` exports a callable value whose identity is stable
@@ -27,13 +71,9 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         spec.as_str(),
         "assert" | "node:assert" | "assert/strict" | "node:assert/strict"
     ) {
-        let key = "node:assert".to_string();
-        if let Some(cached) = state.borrow().module_cache.get(&key) {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::assert::build_value();
-        state.borrow_mut().module_cache.insert(key, value.clone());
-        return Ok(value);
+        return cached_module(state, "node:assert", || {
+            Ok(crate::modules::assert::build_value())
+        });
     }
     if matches!(
         spec.as_str(),
@@ -49,186 +89,66 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
         return Ok(ns);
     }
     if matches!(spec.as_str(), "stream" | "node:stream") {
-        if let Some(cached) = state.borrow().module_cache.get("stream") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::stream::build(state)?;
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("stream".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "stream", || crate::modules::stream::build(state));
     }
     if matches!(spec.as_str(), "async_hooks" | "node:async_hooks") {
-        if let Some(cached) = state.borrow().module_cache.get("async_hooks") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::async_hooks::build(state)?;
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("async_hooks".to_string(), value.clone());
+        return cached_module(state, "async_hooks", || crate::modules::async_hooks::build(state));
     }
     if matches!(spec.as_str(), "test" | "node:test") {
-        if let Some(cached) = state.borrow().module_cache.get("test") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::node_test::build(state)?;
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("test".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "test", || crate::modules::node_test::build(state));
     }
-    if matches!(
-        spec.as_str(),
-        "readline/promises" | "node:readline/promises"
-    ) {
-        let value = crate::host::namespace_object(vec![(
+    if matches!(spec.as_str(), "readline/promises" | "node:readline/promises") {
+        let value = namespace_of(vec![(
             "createInterface",
-            crate::host::capability(crate::registry::SPEC_READLINE),
-        )])
-        .unwrap_or(Value::Undefined);
+            capability_value(crate::registry::SPEC_READLINE),
+        )]);
         return Ok(value);
     }
     if matches!(spec.as_str(), "punycode" | "node:punycode") {
-        if let Some(cached) = state.borrow().module_cache.get("punycode") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::punycode::build(state)?;
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("punycode".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "punycode", || crate::modules::punycode::build(state));
     }
     if matches!(spec.as_str(), "perf_hooks" | "node:perf_hooks") {
-        if let Some(cached) = state.borrow().module_cache.get("perf_hooks") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::perf_hooks::build(state)?;
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("perf_hooks".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "perf_hooks", || crate::modules::perf_hooks::build(state));
     }
     if matches!(spec.as_str(), "trace_events" | "node:trace_events") {
-        if let Some(cached) = state.borrow().module_cache.get("trace_events") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::trace_events::build(state)?;
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("trace_events".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "trace_events", || crate::modules::trace_events::build(state));
     }
     if matches!(spec.as_str(), "http-errors" | "node:http-errors") {
-        if let Some(cached) = state.borrow().module_cache.get("http-errors") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::http_errors::build(state)?;
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("http-errors".to_string(), value.clone());
+        return cached_module(state, "http-errors", || crate::modules::http_errors::build(state));
     }
     if matches!(spec.as_str(), "sqlite" | "node:sqlite") {
-        if let Some(cached) = state.borrow().module_cache.get("node:sqlite") {
-            return Ok(cached.clone());
-        }
-        let value = host_api::object(vec![(
-            "DatabaseSync".to_string(),
-            crate::host::capability(crate::registry::SPEC_SQLITE_DATABASE_SYNC),
-        )]);
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("node:sqlite".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "node:sqlite", || {
+            Ok(namespace_of_owned(vec![(
+                "DatabaseSync".to_string(),
+                capability_value(crate::registry::SPEC_SQLITE_DATABASE_SYNC),
+            )]))
+        });
     }
     if matches!(spec.as_str(), "http2" | "node:http2") {
-        if let Some(cached) = state.borrow().module_cache.get("node:http2") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::http2::build();
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("node:http2".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "node:http2", || Ok(crate::modules::http2::build()));
     }
     if matches!(spec.as_str(), "quic" | "node:quic") {
-        if let Some(cached) = state.borrow().module_cache.get("node:quic") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::quic::build();
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("node:quic".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "node:quic", || Ok(crate::modules::quic::build()));
     }
     if matches!(spec.as_str(), "statuses") {
-        if let Some(cached) = state.borrow().module_cache.get("statuses") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::statuses::build(state)?;
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("statuses".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "statuses", || crate::modules::statuses::build(state));
     }
     if matches!(spec.as_str(), "mime-db") {
-        if let Some(cached) = state.borrow().module_cache.get("mime-db") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::mime_db::build(state)?;
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("mime-db".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "mime-db", || crate::modules::mime_db::build(state));
     }
     if matches!(spec.as_str(), "express" | "node:express") {
-        if let Some(cached) = state.borrow().module_cache.get("express") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::express::build(state)?;
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("express".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "express", || crate::modules::express::build(state));
     }
     if matches!(spec.as_str(), "express/lib/request") || spec == "node:express/request" {
-        if let Some(cached) = state.borrow().module_cache.get("express_request") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::express_request::build(state)?;
-        state
-            .borrow_mut()
-            .module_cache
-            .insert("express_request".to_string(), value.clone());
-        return Ok(value);
+        return cached_module(state, "express_request", || {
+            crate::modules::express_request::build(state)
+        });
     }
     if matches!(spec.as_str(), "koa" | "node:koa") {
-        if let Some(cached) = state.borrow().module_cache.get("koa") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::koa::build(state)?;
-        state.borrow_mut().module_cache.insert("koa".into(), value.clone());
-        return Ok(value);
+        return cached_module(state, "koa", || crate::modules::koa::build(state));
     }
     if matches!(spec.as_str(), "fastify" | "node:fastify") {
-        if let Some(cached) = state.borrow().module_cache.get("fastify") {
-            return Ok(cached.clone());
-        }
-        let value = crate::modules::fastify::build(state)?;
-        state.borrow_mut().module_cache.insert("fastify".into(), value.clone());
-        return Ok(value);
+        return cached_module(state, "fastify", || crate::modules::fastify::build(state));
     }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
         return Ok(cached.clone());
@@ -377,6 +297,18 @@ fn module_require(_state: &Rc<RefCell<HostState>>, dirname: &str) -> Result<Valu
     )
 }
 
+/// Build a namespace object from a list of static capability specs.
+fn capability_namespace_static(
+    pairs: Vec<(&str, crate::registry::NodeSpec)>,
+) -> Option<Value> {
+    Some(crate::host::namespace_object_from_pairs(
+        pairs
+            .into_iter()
+            .map(|(name, spec)| (name.to_string(), crate::host::capability(spec)))
+            .collect(),
+    ))
+}
+
 pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
     let name = spec.strip_prefix("node:").unwrap_or(spec);
     match name {
@@ -387,52 +319,24 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         )),
         "crypto" => Some(crate::modules::crypto::build()),
         "buffer" => Some(crate::modules::buffer::build_module()),
-        "util" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::util::build(),
-        )),
-        "internal/util" => Some(crate::host::namespace_object_from_pairs(vec![(
+        "util" => Some(namespace_of_owned(crate::modules::util::build())),
+        "internal/util" => Some(namespace_of_owned(vec![(
             "sleep".to_string(),
-            crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
+            capability_value(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
         )])),
-        "internal/event_target" => Some(crate::host::namespace_object_from_pairs(vec![(
+        "internal/event_target" => Some(namespace_of_owned(vec![(
             "kWeakHandler".to_string(),
             Value::String("kWeakHandler\0quench".to_string()),
         )])),
         "path" => Some(crate::modules::path::build()),
         "url" => Some(crate::modules::url::build_root(state)),
         "querystring" => Some(crate::modules::querystring::build()),
-        "test" => {
-            if let Some(cached) = state.borrow().node_test_module.clone() {
-                Some(cached)
-            } else {
-                let value = crate::modules::node_test::build(state).ok()?;
-                Some(value)
-            }
-        }
-        "punycode" => {
-            if let Some(cached) = state.borrow().punycode_module.clone() {
-                Some(cached)
-            } else {
-                let value = crate::modules::punycode::build(state).ok()?;
-                state.borrow_mut().punycode_module = Some(value.clone());
-                Some(value)
-            }
-        }
-        "trace_events" => {
-            if let Some(cached) = state.borrow().trace_events_module.clone() {
-                Some(cached)
-            } else {
-                let value = crate::modules::trace_events::build(state).ok()?;
-                Some(value)
-            }
-        }
-        "os" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::os::build(),
-        )),
+        "test" => resolve_test(state),
+        "punycode" => resolve_punycode(state),
+        "trace_events" => resolve_trace_events(state),
+        "os" => Some(namespace_of_owned(crate::modules::os::build())),
         "events" => Some(crate::modules::events::build()),
-        "string_decoder" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::string_decoder::build(),
-        )),
+        "string_decoder" => Some(namespace_of_owned(crate::modules::string_decoder::build())),
         "dns" => Some(crate::modules::dns::build()),
         "net" => Some(crate::modules::net::build()),
         "tty" => Some(crate::modules::tty::build()),
@@ -440,97 +344,93 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         "http" => Some(crate::modules::http::build()),
         "readline" => Some(crate::modules::readline::build()),
         "vm" => Some(crate::modules::vm::build()),
-        "dgram" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "createSocket".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("dgram:createSocket", 0x2300)),
-        )])),
-        "https" => Some(crate::host::namespace_object_from_pairs(vec![
-            (
-                "request".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new("https:request", 0x1600)),
-            ),
-            (
-                "get".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new("https:get", 0x1601)),
-            ),
-        ])),
+        "dgram" => capability_namespace_static(vec![(
+            "createSocket",
+            crate::registry::NodeSpec::new("dgram:createSocket", 0x2300),
+        )]),
+        "https" => capability_namespace_static(vec![
+            ("request", crate::registry::NodeSpec::new("https:request", 0x1600)),
+            ("get", crate::registry::NodeSpec::new("https:get", 0x1601)),
+        ]),
         "zlib" => Some(crate::modules::zlib::build()),
-        "perf_hooks" => {
-            if let Some(cached) = state.borrow().perf_hooks_module.clone() {
-                Some(cached)
-            } else {
-                let value = crate::modules::perf_hooks::build(state).ok()?;
-                state.borrow_mut().perf_hooks_module = Some(value.clone());
-                Some(value)
-            }
-        }
-        "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "perf_hooks" => resolve_perf_hooks(state),
+        "tls" => Some(namespace_of_owned(vec![])),
         "cluster" => crate::modules::compat_extra::cluster(state).ok(),
         "domain" => crate::modules::compat_extra::domain(state).ok(),
         "v8" => crate::modules::compat_extra::v8(state).ok(),
-        "inspector" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "repl" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "wasi" => Some(crate::host::namespace_object_from_pairs(vec![])),
+        "inspector" => Some(namespace_of_owned(vec![])),
+        "repl" => Some(namespace_of_owned(vec![])),
+        "wasi" => Some(namespace_of_owned(vec![])),
         "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
-        "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "isSea".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("sea:isSea", 0x1a00)),
-        )])),
-        "stream/web" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "ReadableStream".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "stream_web:ReadableStream",
-                0x1c00,
-            )),
-        )])),
-        "stream/consumers" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "text".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "stream_consumers:text",
-                0x1c01,
-            )),
-        )])),
-        "stream/promises" => Some(crate::host::namespace_object_from_pairs(vec![
+        "sea" => capability_namespace_static(vec![(
+            "isSea",
+            crate::registry::NodeSpec::new("sea:isSea", 0x1a00),
+        )]),
+        "stream/web" => capability_namespace_static(vec![(
+            "ReadableStream",
+            crate::registry::NodeSpec::new("stream_web:ReadableStream", 0x1c00),
+        )]),
+        "stream/consumers" => capability_namespace_static(vec![(
+            "text",
+            crate::registry::NodeSpec::new("stream_consumers:text", 0x1c01),
+        )]),
+        "stream/promises" => capability_namespace_static(vec![
             (
-                "finished".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "stream_promises:finished",
-                    0x1c02,
-                )),
+                "finished",
+                crate::registry::NodeSpec::new("stream_promises:finished", 0x1c02),
             ),
             (
-                "pipeline".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "stream_promises:pipeline",
-                    0x1c03,
-                )),
+                "pipeline",
+                crate::registry::NodeSpec::new("stream_promises:pipeline", 0x1c03),
             ),
-        ])),
-        "timers" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::timers::build(),
-        )),
-        "timers/promises" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::timers::build(),
-        )),
-        "child_process" => Some(crate::host::namespace_object_from_pairs(vec![
-            (
-                "spawnSync".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
-            ),
-            (
-                "execSync".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
-            ),
-            (
-                "exec".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXEC),
-            ),
-            (
-                "spawn".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_SPAWN),
-            ),
-        ])),
+        ]),
+        "timers" => Some(namespace_of_owned(crate::modules::timers::build())),
+        "timers/promises" => Some(namespace_of_owned(crate::modules::timers::build())),
+        "child_process" => capability_namespace_static(vec![
+            ("spawnSync", crate::registry::SPEC_CP_SPAWNSYNC),
+            ("execSync", crate::registry::SPEC_CP_EXECSYNC),
+            ("exec", crate::registry::SPEC_CP_EXEC),
+            ("spawn", crate::registry::SPEC_CP_SPAWN),
+        ]),
         _ => None,
+    }
+}
+
+fn resolve_test(state: &Rc<RefCell<HostState>>) -> Option<Value> {
+    if let Some(cached) = state.borrow().node_test_module.clone() {
+        Some(cached)
+    } else {
+        let value = crate::modules::node_test::build(state).ok()?;
+        Some(value)
+    }
+}
+
+fn resolve_punycode(state: &Rc<RefCell<HostState>>) -> Option<Value> {
+    if let Some(cached) = state.borrow().punycode_module.clone() {
+        Some(cached)
+    } else {
+        let value = crate::modules::punycode::build(state).ok()?;
+        state.borrow_mut().punycode_module = Some(value.clone());
+        Some(value)
+    }
+}
+
+fn resolve_trace_events(state: &Rc<RefCell<HostState>>) -> Option<Value> {
+    if let Some(cached) = state.borrow().trace_events_module.clone() {
+        Some(cached)
+    } else {
+        let value = crate::modules::trace_events::build(state).ok()?;
+        Some(value)
+    }
+}
+
+fn resolve_perf_hooks(state: &Rc<RefCell<HostState>>) -> Option<Value> {
+    if let Some(cached) = state.borrow().perf_hooks_module.clone() {
+        Some(cached)
+    } else {
+        let value = crate::modules::perf_hooks::build(state).ok()?;
+        state.borrow_mut().perf_hooks_module = Some(value.clone());
+        Some(value)
     }
 }
 
