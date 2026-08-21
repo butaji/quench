@@ -33,12 +33,14 @@ Measured after the latest compatibility fixes:
 
 - `cargo check -p quench-node`: passes, with one existing unused-variable
   warning.
-- `cargo run -p quench-node-test --bin run-compat -- --quiet`: **68 passed,
-  0 failed, 68 total**.
+- `cargo test --workspace`: passes (80 tests across 22 suites).
+- `cargo run -p quench-node-test --bin run-compat -- --quiet`: **75 passed,
+  0 failed, 75 total**.
 - `cargo run -p quench-node-test --bin run-parallel`: **178 passed, 0 failed,
   178 total**.
-- Focused diagnostics_channel, inspector, repl/wasi, DNS, path, events,
-  HTTP, net, readline, and WASI option fixtures pass individually.
+- Focused URL static/legacy fixtures, diagnostics_channel, inspector, repl/wasi,
+  DNS, path, events, HTTP, net, readline, and WASI option fixtures pass
+  individually.
 
 The previous datetime-format panic is fixed and covered by a regression unit
 test. The focused and upstream suites are green for their current manifests.
