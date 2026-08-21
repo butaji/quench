@@ -155,6 +155,7 @@ pub(super) const CAP_PROCESS_CWD: u16 = 0x0A02;
 pub(super) const CAP_PROCESS_CHDIR: u16 = 0x0A03;
 pub(super) const CAP_PROCESS_NEXT_TICK: u16 = 0x0A04;
 pub(super) const CAP_PROCESS_HRTIME: u16 = 0x0A05;
+pub(super) const CAP_PROCESS_KILL: u16 = 0x0A12;
 pub(super) const CAP_OS_PLATFORM: u16 = 0x0B00;
 pub(super) const CAP_OS_ARCH: u16 = 0x0B01;
 pub(super) const CAP_OS_HOSTNAME: u16 = 0x0B02;

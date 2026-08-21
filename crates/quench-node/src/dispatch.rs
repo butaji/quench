@@ -179,6 +179,7 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
     use handlers::*;
     Some(match cap {
         CAP_PROCESS_EXIT => process_exit,
+        CAP_PROCESS_KILL => process_kill,
         CAP_PROCESS_CWD => process_cwd,
         CAP_PROCESS_CHDIR => process_chdir,
         CAP_PROCESS_NEXT_TICK => process_next_tick,

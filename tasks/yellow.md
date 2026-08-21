@@ -38,7 +38,12 @@ returning a sysinfo-backed RSS estimate with `rss`/`heapTotal`/`heapUsed`/
 `crates/quench-node-test/node-tests/test-process-uptime-memusage.js`; focused
 suite 70/70, upstream parallel 178/178. Remaining `process` gaps include
 `fork` (IPC), `exec`/`execFile` async child handles beyond the synchronous
-forms, and `process.resourceUsage()` exact POSIX values.
+forms, and exact POSIX resource accounting.
+Measured addition (2026-08-21): active-dispatch `process.kill()` now validates
+numeric/string PIDs, normalizes common signal names, delegates to a
+monkey-patchable `_kill` hook, and reports unknown/invalid signals with Node
+error codes. Focused evidence is `test-process-kill.js`; the applicable
+upstream `test-process-kill-pid.js` and the Node CLI validation oracle pass.
 “Implemented” means surface code exists; it MUST NOT be reported as verified
 without executable test evidence.
 
