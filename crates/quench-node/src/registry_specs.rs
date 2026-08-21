@@ -166,6 +166,8 @@ pub const SPEC_PROCESS_ONCE: NodeSpec = NodeSpec::new("process:once", 0x0A08);
 pub const SPEC_PROCESS_BINDING: NodeSpec = NodeSpec::new("process:binding", 0x0A0D);
 pub const SPEC_PROCESS_GETUID: NodeSpec = NodeSpec::new("process:getuid", 0x0A0B);
 pub const SPEC_PROCESS_GETGID: NodeSpec = NodeSpec::new("process:getgid", 0x0A0C);
+pub const SPEC_PROCESS_UPTIME: NodeSpec = NodeSpec::new("process:uptime", 0x0A0D);
+pub const SPEC_PROCESS_MEMORYUSAGE: NodeSpec = NodeSpec::new("process:memoryUsage", 0x0A0E);
 pub const SPEC_PROCESS_ACTIVE_RESOURCES: NodeSpec =
     NodeSpec::new("process:activeResourcesInfo", 0x0A0E);
 pub const SPEC_PROCESS_REPORT: NodeSpec = NodeSpec::new("process:report", 0x0A0F);
