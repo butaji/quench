@@ -71,11 +71,14 @@ counting, identity, and post-removal behavior). Measured gap: `events.once`,
 `captureRejectionSymbol` Symbol constants (plus `EventEmitter.captureRejections`
 semantics). Two architectural blockers were confirmed during implementation
 attempts: (1) `AbortController#abort()` itself throws `value is not callable`
-in the runtime, so `events.addAbortListener` cannot be verified end-to-end
-until that is fixed; (2) `events.once` would need a per-call Rust closure
-that resolves a specific `PromiseData` on the next emit, but the host
-dispatch layer has no per-instance state for static capability functions
-(all `capability_function(Custom(name))` values share the same dispatch
-target). True `Symbol` values are also not constructible. These need a
-Promise-capable host export and host Symbol support, tracked here rather
-than claimed complete.
+in the runtime (a broken stub in `js_runtime_adapters.rs:94` and an absent
+runtime registration in `host::install_with_argv`), so `events.addAbortListener`
+cannot be verified end-to-end until a real AbortController/AbortSignal pair
+is wired through the run harness; (2) `events.once` would need a per-call
+Rust closure that resolves a specific `PromiseData` on the next emit, but
+the host dispatch layer has no per-instance state for static capability
+functions (all `capability_function(Custom(name))` values share the same
+dispatch target). True `Symbol` values are also not constructible. Closing
+these gaps needs a Promise-capable host export, host Symbol support, and
+fixing the AbortController stub at the same time, and is multi-day work,
+tracked here rather than claimed complete.
