@@ -356,6 +356,7 @@ pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Valu
         "perf_hooks" => resolve_perf_hooks(state),
         "tls" => Some(namespace_of_owned(vec![])),
         "cluster" => crate::modules::compat_extra::cluster(state).ok(),
+        "diagnostics_channel" => crate::modules::compat_extra::diagnostics_channel(state).ok(),
         "domain" => crate::modules::compat_extra::domain(state).ok(),
         "v8" => crate::modules::compat_extra::v8(state).ok(),
         "inspector" => crate::modules::compat_extra::inspector(state).ok(),

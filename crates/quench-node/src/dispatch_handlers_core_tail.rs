@@ -293,3 +293,17 @@ pub fn dns_resolve4(
 ) -> Result<Value, VmError> {
     crate::modules::dns::resolve4(s, a)
 }
+pub fn dns_promise_lookup(
+    s: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    a: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::dns::promise_lookup(s, a)
+}
+pub fn dns_promise_resolve4(
+    s: &Rc<RefCell<HostState>>,
+    _: Option<&Value>,
+    a: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::dns::promise_resolve4(s, a)
+}
