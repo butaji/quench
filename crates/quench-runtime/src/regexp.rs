@@ -427,6 +427,16 @@ fn named_index_groups(text: &str, m: &regress::Match, offset: usize) -> Value {
     if properties.is_empty() {
         Value::Undefined
     } else {
+        let mut properties = vec![("\0prototype".to_string(), Value::Null)];
+        properties.extend(m.named_groups().map(|(name, range)| {
+            let value = range.map_or(Value::Undefined, |range| {
+                Value::array(vec![
+                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.start) as f64),
+                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.end) as f64),
+                ])
+            });
+            (name.to_string(), value)
+        }));
         Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
     }
 }
