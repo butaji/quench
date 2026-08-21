@@ -96,7 +96,7 @@ fn resolve_compat_modules(
     name: &str,
 ) -> Option<Value> {
     match name {
-        "inspector" => crate::modules::compat_extra::inspector(state).ok(),
+        "inspector" | "inspector/promises" => crate::modules::compat_extra::inspector(state).ok(),
         "repl" => crate::modules::compat_extra::repl(state).ok(),
         "wasi" => crate::modules::compat_extra::wasi(state).ok(),
         "cluster" => crate::modules::compat_extra::cluster(state).ok(),
