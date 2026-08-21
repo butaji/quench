@@ -25,3 +25,6 @@ assert.strictEqual(
 let mac = crypto.createHmac('sha256', 'key');
 mac = mac.update('The quick brown fox jumps over the lazy dog');
 assert.strictEqual(mac.digest('hex'), 'f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8');
+assert.strictEqual(crypto.randomUUID().length, 36);
+const randomValue = crypto.randomInt(2, 5);
+assert.ok(randomValue >= 2 && randomValue < 5);
