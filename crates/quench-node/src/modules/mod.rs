@@ -51,6 +51,7 @@ pub mod path_parts;
 pub mod path_posix;
 pub mod path_win32;
 pub mod path_win32_extra;
+pub mod path_win32_extra_util;
 pub mod path_win32_normalize;
 pub mod perf_hooks;
 pub mod process;
