@@ -31,6 +31,15 @@ pub fn domain(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
 pub fn v8(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("v8.js"))
 }
+pub fn inspector(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("inspector.js"))
+}
+pub fn repl(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("repl.js"))
+}
+pub fn wasi(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
+    load(include_str!("wasi.js"))
+}
 pub fn worker_threads(_state: &Rc<RefCell<HostState>>) -> Result<Value, VmError> {
     load(include_str!("worker_threads.js")).or_else(|_| {
         Ok(crate::host::namespace_object_from_pairs(vec![

@@ -1,0 +1,1 @@
+(function(){function WASI(options){this.options=options||{};this wasiImport={};}WASI.prototype.start=function(instance){return instance&&instance.exports&&instance.exports._start?instance.exports._start():0;};WASI.prototype.initialize=function(){return 0;};WASI.prototype.getImportObject=function(){return {wasi_snapshot_preview1:this.wasiImport};};module.exports={WASI:WASI};}());
