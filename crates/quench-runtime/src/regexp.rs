@@ -386,7 +386,49 @@ fn build_match_result(
     let values = match_values(s, &m, search_start);
     let index = Value::Number(crate::strings::byte_to_utf16(s, m.start() + search_start) as f64);
     let groups = named_groups(s, &m, search_start);
-    Ok(match_result(values, index, s, groups))
+    let mut result = match_result(values, index, s, groups);
+    if flags.contains('d') {
+        result =
+            crate::builtins::set_property(result, "indices", match_indices(s, &m, search_start));
+    }
+    Ok(result)
+}
+
+fn match_indices(text: &str, m: &regress::Match, offset: usize) -> Value {
+    let mut indices = vec![Value::array(vec![
+        Value::Number(crate::strings::byte_to_utf16(text, offset + m.start()) as f64),
+        Value::Number(crate::strings::byte_to_utf16(text, offset + m.end()) as f64),
+    ])];
+    indices.extend(m.groups().map(|group| {
+        group.map_or(Value::Undefined, |range| {
+            Value::array(vec![
+                Value::Number(crate::strings::byte_to_utf16(text, offset + range.start) as f64),
+                Value::Number(crate::strings::byte_to_utf16(text, offset + range.end) as f64),
+            ])
+        })
+    }));
+    let groups = named_index_groups(text, m, offset);
+    crate::builtins::set_property(Value::array(indices), "groups", groups)
+}
+
+fn named_index_groups(text: &str, m: &regress::Match, offset: usize) -> Value {
+    let properties: Vec<(String, Value)> = m
+        .named_groups()
+        .map(|(name, range)| {
+            let value = range.map_or(Value::Undefined, |range| {
+                Value::array(vec![
+                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.start) as f64),
+                    Value::Number(crate::strings::byte_to_utf16(text, offset + range.end) as f64),
+                ])
+            });
+            (name.to_string(), value)
+        })
+        .collect();
+    if properties.is_empty() {
+        Value::Undefined
+    } else {
+        Value::Object(std::rc::Rc::new(crate::value::ObjectData::new(properties)))
+    }
 }
 
 fn named_groups(text: &str, m: &regress::Match, offset: usize) -> Option<Value> {
