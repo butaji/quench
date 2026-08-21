@@ -208,6 +208,41 @@ const MD5_S: [u32; 64] = [
     14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15,
     21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
 ];
+fn md5_block(h: &mut [u32; 4], c: &[u8]) {
+    let mut a = h[0];
+    let mut b = h[1];
+    let mut cc = h[2];
+    let mut d = h[3];
+    let mut m = [0u32; 16];
+    for i in 0..16 {
+        m[i] = u32::from_le_bytes(c[i * 4..i * 4 + 4].try_into().unwrap());
+    }
+    for i in 0..64 {
+        let (f, g) = if i < 16 {
+            ((b & cc) | (!b & d), i)
+        } else if i < 32 {
+            ((d & b) | (!d & cc), (5 * i + 1) % 16)
+        } else if i < 48 {
+            (b ^ cc ^ d, (3 * i + 5) % 16)
+        } else {
+            (cc ^ (b | !d), (7 * i) % 16)
+        };
+        let t = a
+            .wrapping_add(f)
+            .wrapping_add(MD5_K[i])
+            .wrapping_add(m[g])
+            .rotate_left(MD5_S[i]);
+        a = d;
+        d = cc;
+        cc = b;
+        b = b.wrapping_add(t);
+    }
+    h[0] = h[0].wrapping_add(a);
+    h[1] = h[1].wrapping_add(b);
+    h[2] = h[2].wrapping_add(cc);
+    h[3] = h[3].wrapping_add(d);
+}
+
 pub fn md5_digest(data: &[u8]) -> [u8; 16] {
     let mut x = data.to_vec();
     x.push(0x80);
@@ -217,38 +252,7 @@ pub fn md5_digest(data: &[u8]) -> [u8; 16] {
     x.extend_from_slice(&((data.len() as u64) * 8).to_le_bytes());
     let mut h = [0x67452301u32, 0xefcdab89, 0x98badcfe, 0x10325476];
     for c in x.chunks_exact(64) {
-        let mut a = h[0];
-        let mut b = h[1];
-        let mut cc = h[2];
-        let mut d = h[3];
-        let mut m = [0u32; 16];
-        for i in 0..16 {
-            m[i] = u32::from_le_bytes(c[i * 4..i * 4 + 4].try_into().unwrap());
-        }
-        for i in 0..64 {
-            let (f, g) = if i < 16 {
-                ((b & cc) | (!b & d), i)
-            } else if i < 32 {
-                ((d & b) | (!d & cc), (5 * i + 1) % 16)
-            } else if i < 48 {
-                (b ^ cc ^ d, (3 * i + 5) % 16)
-            } else {
-                (cc ^ (b | !d), (7 * i) % 16)
-            };
-            let t = a
-                .wrapping_add(f)
-                .wrapping_add(MD5_K[i])
-                .wrapping_add(m[g])
-                .rotate_left(MD5_S[i]);
-            a = d;
-            d = cc;
-            cc = b;
-            b = b.wrapping_add(t);
-        }
-        h[0] = h[0].wrapping_add(a);
-        h[1] = h[1].wrapping_add(b);
-        h[2] = h[2].wrapping_add(cc);
-        h[3] = h[3].wrapping_add(d);
+        md5_block(&mut h, c);
     }
     let mut out = [0u8; 16];
     for i in 0..4 {

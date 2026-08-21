@@ -158,20 +158,8 @@ pub(crate) fn replace(
     all: bool,
 ) -> Result<Value, crate::execute::VmError> {
     let value = string_receiver(receiver)?;
-    if let Some(pattern) = arguments
-        .first()
-        .filter(|value| crate::value::is_object(value))
-    {
-        let matcher = crate::execute::get_property_result(pattern, "Symbol.replace")?;
-        if crate::conversion::is_callable(&matcher) {
-            let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-            return crate::functions::execute_target_with_receiver(
-                &matcher,
-                pattern,
-                &[Value::String(value.clone()), replacement],
-            )
-            .map(|(result, _)| result);
-        }
+    if let Some(result) = try_symbol_replace(&value, arguments)? {
+        return Ok(result);
     }
     let pattern = arguments.first().map_or_else(String::new, to_string);
     let Some(replacement) = arguments.get(1) else {
@@ -193,6 +181,29 @@ pub(crate) fn replace(
         }
     };
     Ok(Value::String(result))
+}
+
+fn try_symbol_replace(
+    value: &str,
+    arguments: &[Value],
+) -> Result<Option<Value>, crate::execute::VmError> {
+    let Some(pattern) = arguments
+        .first()
+        .filter(|value| crate::value::is_object(value))
+    else {
+        return Ok(None);
+    };
+    let matcher = crate::execute::get_property_result(pattern, "Symbol.replace")?;
+    if !crate::conversion::is_callable(&matcher) {
+        return Ok(None);
+    }
+    let replacement = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+    crate::functions::execute_target_with_receiver(
+        &matcher,
+        pattern,
+        &[Value::String(value.to_owned()), replacement],
+    )
+    .map(|(result, _)| Some(result))
 }
 
 fn apply_callable_replacement(
