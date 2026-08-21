@@ -28,7 +28,7 @@ pub(crate) fn execute_delete_property(
     if matches!(target, crate::value::Value::Proxy(_)) {
         return delete_proxy_property(registers, *dst, &target, &key, *strict);
     }
-    return delete_regular_property(registers, *object, *dst, &target, &key, *strict);
+    delete_regular_property(registers, *object, *dst, &target, &key, *strict)
 }
 
 fn delete_regular_property(

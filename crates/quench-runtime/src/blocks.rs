@@ -84,6 +84,7 @@ fn reduce_block_statements(
     Ok(last)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reduce_block_statement(
     statement: &oxc::ast::ast::Statement<'_>,
     own_functions: &[String],

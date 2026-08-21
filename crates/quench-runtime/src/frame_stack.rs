@@ -40,6 +40,7 @@ pub fn reset() {
     CURRENT_FILE.with(|cell| *cell.borrow_mut() = None);
 }
 
+#[allow(clippy::collapsible_if, clippy::collapsible_match)]
 fn inferred_name(function: &Rc<FunctionValue>) -> String {
     if let Some((_, value)) = function
         .properties
