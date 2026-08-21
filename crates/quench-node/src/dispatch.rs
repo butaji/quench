@@ -42,6 +42,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
 fn events_dispatch(cap: u16) -> Option<CallHandler> {
     use crate::modules::{event_target, events};
     Some(match cap {
+        CAP_EVENTS_ON => events::method_on,
         CAP_EVENTS_ONCE => events::method_once,
         CAP_EVENTS_REMOVE_LISTENER => events::method_remove_listener,
         CAP_EVENTS_REMOVE_ALL => events::method_remove_all_listeners,
