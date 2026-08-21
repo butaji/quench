@@ -81,10 +81,18 @@ fn info_props(argv: &[String], exec_path: &str) -> Vec<(&'static str, Value)> {
 }
 
 fn info_props_argv(argv: &[String]) -> Vec<(&'static str, Value)> {
-    vec![(
-        "argv",
-        host_api::array(argv.iter().cloned().map(Value::String).collect()),
-    )]
+    vec![
+        (
+            "argv",
+            host_api::array(argv.iter().cloned().map(Value::String).collect()),
+        ),
+        (
+            "argv0",
+            Value::String(
+                argv.first().cloned().unwrap_or_else(|| "quench".to_string()),
+            ),
+        ),
+    ]
 }
 
 fn info_props_dynamic() -> Vec<(&'static str, Value)> {
