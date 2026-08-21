@@ -324,12 +324,30 @@ fn reduce_statements_opt(
         &mut locals,
         (eval_behavior, initial_value),
     )?;
+    let ops = finish_statement_ops(
+        ops,
+        last_value,
+        stack,
+        await_using,
+        &mut next_register,
+        tail,
+    )?;
+    Ok((ops, last_value, next_slot))
+}
+
+fn finish_statement_ops(
+    ops: Vec<Op>,
+    last_value: Option<u16>,
+    stack: Option<u16>,
+    await_using: bool,
+    next_register: &mut u16,
+    tail: bool,
+) -> Result<Vec<Op>, Vec<String>> {
     let ops = match stack {
-        Some(stack) => crate::using_scope::wrap(ops, stack, await_using, &mut next_register)?,
+        Some(stack) => crate::using_scope::wrap(ops, stack, await_using, next_register)?,
         None => ops,
     };
-    let ops = finish_statements_opt(ops, last_value, tail)?;
-    Ok((ops, last_value, next_slot))
+    finish_statements_opt(ops, last_value, tail)
 }
 
 fn initialize_statement_reduction(
