@@ -210,6 +210,13 @@ fn special_match_middle(builtin: Builtin, key: &str) -> Option<Value> {
         (MapPrototype | SetPrototype | SetIteratorPrototype | MapIteratorPrototype, k) => {
             collections_prop(builtin, k)
         }
+        _ => special_match_middle_tail(builtin, key),
+    }
+}
+
+fn special_match_middle_tail(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (BigIntPrototype, "Symbol.toStringTag") => Some(Value::String("BigInt".to_string())),
         (AsyncFunctionPrototype, "Symbol.toStringTag") => {
             Some(Value::String("AsyncFunction".to_string()))
@@ -270,13 +277,21 @@ fn special_match_error_tail(builtin: Builtin, key: &str) -> Option<Value> {
         (SuppressedErrorPrototype, "name") => Some(Value::String("SuppressedError".to_string())),
         (SuppressedErrorPrototype, "message") => Some(Value::String("".to_string())),
         (SuppressedErrorPrototype, "constructor") => Some(Value::Builtin(SuppressedError)),
+        _ => special_match_error_tail_end(builtin, key),
+    }
+}
+
+fn special_match_error_tail_end(builtin: Builtin, key: &str) -> Option<Value> {
+    use Builtin::*;
+    match (builtin, key) {
         (DisposableStackPrototype, "Symbol.toStringTag") => {
             Some(Value::String("DisposableStack".into()))
         }
         (DisposableStackPrototype, k) => {
             crate::builtin_meta::disposable::property(k).map(Value::Builtin)
         }
-        _ => standard_error_property(builtin, key).or_else(|| builtin_method(builtin, key).map(Value::Builtin)),
+        _ => standard_error_property(builtin, key)
+            .or_else(|| builtin_method(builtin, key).map(Value::Builtin)),
     }
 }
 
