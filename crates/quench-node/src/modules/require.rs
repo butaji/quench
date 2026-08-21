@@ -10,6 +10,11 @@
 //!
 //! Anything else throws `MODULE_NOT_FOUND`.
 
+#[path = "require_resolve.rs"]
+mod require_resolve;
+
+use require_resolve::resolve;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -219,7 +224,10 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             return Ok(cached.clone());
         }
         let value = crate::modules::koa::build(state)?;
-        state.borrow_mut().module_cache.insert("koa".into(), value.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("koa".into(), value.clone());
         return Ok(value);
     }
     if matches!(spec.as_str(), "fastify" | "node:fastify") {
@@ -227,7 +235,10 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
             return Ok(cached.clone());
         }
         let value = crate::modules::fastify::build(state)?;
-        state.borrow_mut().module_cache.insert("fastify".into(), value.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert("fastify".into(), value.clone());
         return Ok(value);
     }
     if let Some(cached) = state.borrow().module_cache.get(&spec) {
@@ -375,163 +386,6 @@ fn module_require(_state: &Rc<RefCell<HostState>>, dirname: &str) -> Result<Valu
         &Value::Undefined,
         &[require_for, Value::String(dirname.to_string())],
     )
-}
-
-pub(crate) fn resolve(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Value> {
-    let name = spec.strip_prefix("node:").unwrap_or(spec);
-    match name {
-        "console" => Some(crate::modules::console::build_value()),
-        "process" => Some(crate::modules::process::build(
-            &state.borrow().process.argv,
-            &state.borrow().process.exec_path,
-        )),
-        "crypto" => Some(crate::modules::crypto::build()),
-        "buffer" => Some(crate::modules::buffer::build_module()),
-        "util" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::util::build(),
-        )),
-        "internal/util" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "sleep".to_string(),
-            crate::host::capability(crate::registry::SPEC_INTERNAL_UTIL_SLEEP),
-        )])),
-        "internal/event_target" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "kWeakHandler".to_string(),
-            Value::String("kWeakHandler\0quench".to_string()),
-        )])),
-        "path" => Some(crate::modules::path::build()),
-        "url" => Some(crate::modules::url::build_root(state)),
-        "querystring" => Some(crate::modules::querystring::build()),
-        "test" => {
-            if let Some(cached) = state.borrow().node_test_module.clone() {
-                Some(cached)
-            } else {
-                let value = crate::modules::node_test::build(state).ok()?;
-                Some(value)
-            }
-        }
-        "punycode" => {
-            if let Some(cached) = state.borrow().punycode_module.clone() {
-                Some(cached)
-            } else {
-                let value = crate::modules::punycode::build(state).ok()?;
-                state.borrow_mut().punycode_module = Some(value.clone());
-                Some(value)
-            }
-        }
-        "trace_events" => {
-            if let Some(cached) = state.borrow().trace_events_module.clone() {
-                Some(cached)
-            } else {
-                let value = crate::modules::trace_events::build(state).ok()?;
-                Some(value)
-            }
-        }
-        "os" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::os::build(),
-        )),
-        "events" => Some(crate::modules::events::build()),
-        "string_decoder" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::string_decoder::build(),
-        )),
-        "dns" => Some(crate::modules::dns::build()),
-        "net" => Some(crate::modules::net::build()),
-        "tty" => Some(crate::modules::tty::build()),
-        "fs" => Some(crate::modules::fs::build()),
-        "http" => Some(crate::modules::http::build()),
-        "readline" => Some(crate::modules::readline::build()),
-        "vm" => Some(crate::modules::vm::build()),
-        "dgram" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "createSocket".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("dgram:createSocket", 0x2300)),
-        )])),
-        "https" => Some(crate::host::namespace_object_from_pairs(vec![
-            (
-                "request".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new("https:request", 0x1600)),
-            ),
-            (
-                "get".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new("https:get", 0x1601)),
-            ),
-        ])),
-        "zlib" => Some(crate::modules::zlib::build()),
-        "perf_hooks" => {
-            if let Some(cached) = state.borrow().perf_hooks_module.clone() {
-                Some(cached)
-            } else {
-                let value = crate::modules::perf_hooks::build(state).ok()?;
-                state.borrow_mut().perf_hooks_module = Some(value.clone());
-                Some(value)
-            }
-        }
-        "tls" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "cluster" => crate::modules::compat_extra::cluster(state).ok(),
-        "domain" => crate::modules::compat_extra::domain(state).ok(),
-        "v8" => crate::modules::compat_extra::v8(state).ok(),
-        "inspector" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "repl" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "wasi" => Some(crate::host::namespace_object_from_pairs(vec![])),
-        "worker_threads" => crate::modules::compat_extra::worker_threads(state).ok(),
-        "sea" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "isSea".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new("sea:isSea", 0x1a00)),
-        )])),
-        "stream/web" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "ReadableStream".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "stream_web:ReadableStream",
-                0x1c00,
-            )),
-        )])),
-        "stream/consumers" => Some(crate::host::namespace_object_from_pairs(vec![(
-            "text".to_string(),
-            crate::host::capability(crate::registry::NodeSpec::new(
-                "stream_consumers:text",
-                0x1c01,
-            )),
-        )])),
-        "stream/promises" => Some(crate::host::namespace_object_from_pairs(vec![
-            (
-                "finished".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "stream_promises:finished",
-                    0x1c02,
-                )),
-            ),
-            (
-                "pipeline".to_string(),
-                crate::host::capability(crate::registry::NodeSpec::new(
-                    "stream_promises:pipeline",
-                    0x1c03,
-                )),
-            ),
-        ])),
-        "timers" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::timers::build(),
-        )),
-        "timers/promises" => Some(crate::host::namespace_object_from_pairs(
-            crate::modules::timers::build(),
-        )),
-        "child_process" => Some(crate::host::namespace_object_from_pairs(vec![
-            (
-                "spawnSync".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_SPAWNSYNC),
-            ),
-            (
-                "execSync".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXECSYNC),
-            ),
-            (
-                "exec".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_EXEC),
-            ),
-            (
-                "spawn".to_string(),
-                crate::host::capability(crate::registry::SPEC_CP_SPAWN),
-            ),
-        ])),
-        _ => None,
-    }
 }
 
 fn value_to_string(value: &Value) -> String {
