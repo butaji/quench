@@ -16,3 +16,9 @@ for (const name of ['createHash', 'createCipheriv', 'createDecipheriv', 'generat
   assert.strictEqual(typeof crypto[name], 'function');
 }
 console.log('crypto fixtures ok');
+let hash = crypto.createHash('sha256');
+hash = hash.update('abc');
+assert.strictEqual(
+  hash.digest('hex'),
+  'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+);
