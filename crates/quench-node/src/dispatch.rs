@@ -36,6 +36,10 @@ const CAP_CRYPTO_RANDOM_UUID: u16 = 0x2106;
 const CAP_CRYPTO_RANDOM_INT: u16 = 0x2107;
 const CAP_CRYPTO_GET_HASHES: u16 = 0x2108;
 const CAP_CRYPTO_GET_CIPHERS: u16 = 0x2109;
+const CAP_CRYPTO_HASH_UPDATE: u16 = 0x210A;
+const CAP_CRYPTO_HASH_DIGEST: u16 = 0x210B;
+const CAP_CRYPTO_HMAC_UPDATE: u16 = 0x210C;
+const CAP_CRYPTO_HMAC_DIGEST: u16 = 0x210D;
 const CAP_EVENTS_PREPEND_ONCE: u16 = 0x010C;
 const CAP_EVENTS_SET_MAX: u16 = 0x010D;
 const CAP_EVENTS_GET_MAX: u16 = 0x010E;
@@ -438,6 +442,10 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_CRYPTO_RANDOM_INT => crypto_random_int,
         CAP_CRYPTO_GET_HASHES => crypto_get_hashes,
         CAP_CRYPTO_GET_CIPHERS => crypto_get_ciphers,
+        CAP_CRYPTO_HASH_UPDATE => crypto_hash_update,
+        CAP_CRYPTO_HASH_DIGEST => crypto_hash_digest,
+        CAP_CRYPTO_HMAC_UPDATE => crypto_hmac_update,
+        CAP_CRYPTO_HMAC_DIGEST => crypto_hmac_digest,
         CAP_STDOUT_WRITE | CAP_STDERR_WRITE => {
             |state, _receiver, args| crate::modules::process::stream_write(state, args)
         }
