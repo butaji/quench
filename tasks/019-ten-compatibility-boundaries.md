@@ -1561,17 +1561,16 @@ without relying on `instanceof String`. The focused cross-realm stage passes;
 the upstream Buffer fixture advances past that case but still has a separate
 invalid-input assertion mismatch.
 Stage 2542 aligns invalid-argument diagnostics for null-prototype objects
-with the Node test helper. The Buffer fixture now advances beyond its initial
-error matrix; a later typed-array layout limitation remains open.
-Post-2542 verification: `cargo test -p quench-node` passes 2/2, and example
-application stages 2047, 2069, 2080, 2081, 2104, and 2251 all pass. These
-checks do not close the remaining upstream Buffer typed-array layout or
-network/HTTP lifecycle gaps.
-Fresh authoritative rerun confirms the remaining gaps: `test-buffer-from.js`
-fails on Float64Array reinterpretation (`RangeError: invalid offset`),
-`test-stream-destroy.js` misses callback 15, and `test-stream-pipeline.js`
-still fails its broader validation/lifecycle matrix. No completion claim is
-made from the focused gate alone.
+with the Node test helper. The formerly listed Buffer typed-array layout
+failure is no longer reproducible: the current authoritative
+`test-buffer-from.js` passes. Remaining failures in this boundary are the
+stream destroy/pipeline event and lifecycle paths; application stages remain
+separate evidence.
+Fresh rerun of the previously listed fixtures now passes
+`test-buffer-from.js`; the former Float64Array reinterpretation failure is no
+longer reproducible. `test-stream-destroy.js` and `test-stream-pipeline.js`
+still fail in separate event/lifecycle paths, so those remain explicit
+release gaps rather than being inferred from focused-stage results.
 Documentation audit: reviewed `AGENTS.md`, `README.md`, the authoritative test
 source map, glossary, and ADR 0001. The stated release contract is Node 24 on
 Linux x86_64 with zero curated application-gate failures and no manifest
