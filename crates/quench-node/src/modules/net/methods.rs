@@ -434,15 +434,24 @@ pub fn socket_set_keep_alive(
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
-/// `socket.setTimeout(milliseconds[, callback])` stores the configured timeout.
+/// `socket.setTimeout(milliseconds[, callback])` validates and stores the configured timeout.
 pub fn socket_set_timeout(
     state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    let timeout = args.first().cloned().unwrap_or(Value::Number(0.0));
+    let timeout = match args.first() {
+        Some(Value::Number(value)) if value.is_finite() => Value::Number(*value),
+        Some(value) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"milliseconds\" argument must be of type number.{}",
+                crate::modules::util::invalid_arg_received(value),
+            )));
+        }
+        None => Value::Number(0.0),
+    };
     if let Some(socket) = receiver {
-        let _ = execute::set_property(socket.clone(), "timeout", timeout.clone());
+        let _ = execute::set_property(socket.clone(), "timeout", timeout);
         if let Some(callback) = args.get(1) {
             if quench_runtime::is_callable(callback) {
                 crate::modules::events::method_on(
@@ -450,6 +459,11 @@ pub fn socket_set_timeout(
                     Some(socket),
                     &[Value::String("timeout".to_string()), callback.clone()],
                 )?;
+            } else {
+                return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                    "The \"callback\" argument must be of type function.{}",
+                    crate::modules::util::invalid_arg_received(callback),
+                )));
             }
         }
     }

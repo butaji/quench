@@ -26,6 +26,8 @@ pub struct ProcessState {
     pub exec_path: String,
     pub version: String,
     pub versions: Vec<(String, String)>,
+    /// Process file-creation mask, shared by `umask()` getter/setter calls.
+    pub umask: u32,
     pub exit_code: Option<i32>,
     pub cwd: std::path::PathBuf,
     pub start_time: std::time::Instant,
@@ -59,6 +61,7 @@ impl ProcessState {
             exec_path,
             version: "v22.0.0".into(),
             versions,
+            umask: 0o022,
             exit_code: None,
             cwd,
             start_time: std::time::Instant::now(),
@@ -682,11 +685,16 @@ pub fn report(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value,
         ("nativeStack".to_string(), host_api::array(Vec::new())),
     ]))
 }
-
-/// `process.umask([mask])` — accepts an optional new mask, returns the
-/// previous one. The host keeps a single shared mask (0o022 default).
-pub fn umask(_state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
-    Ok(Value::Number(0o022 as f64))
+/// `process.umask([mask])` — returns the prior mask and, when supplied,
+/// updates the shared process mask. Only the low nine permission bits
+/// are meaningful, matching Node's POSIX behavior.
+pub fn umask(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let mut process = state.borrow_mut();
+    let previous = process.process.umask;
+    if let Some(value) = args.first() {
+        process.process.umask = (value_to_i32(value).max(0) as u32) & 0o777;
+    }
+    Ok(Value::Number(previous as f64))
 }
 
 /// `process.on(event, handler)` — registers lifecycle handlers.
