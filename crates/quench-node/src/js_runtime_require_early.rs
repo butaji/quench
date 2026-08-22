@@ -1,5 +1,25 @@
 fn require_early_module(name: &str) -> Result<Option<Value>, VmError> {
     let value = match name {
+        "module" | "node:module" => quench_runtime::host_api::object(vec![
+            (
+                "builtinModules".into(),
+                quench_runtime::host_api::array(
+                    [
+                        "assert", "buffer", "crypto", "events", "fs", "http", "https",
+                        "module", "net", "os", "path", "perf_hooks", "process",
+                        "querystring", "stream", "timers", "tls", "url", "util",
+                        "vm", "worker_threads", "zlib",
+                    ]
+                    .into_iter()
+                    .map(|name| Value::String(name.into()))
+                    .collect(),
+                ),
+            ),
+            (
+                "isBuiltin".into(),
+                capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin)),
+            ),
+        ]),
         "console" | "node:console" => Value::object(vec![
             ("log".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ConsoleLog))),
             ("info".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ConsoleLog))),

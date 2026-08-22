@@ -152,13 +152,26 @@ fn require_cached_group_b(
 fn require_cached(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
     require_cached_group_a(state, spec).or_else(|| require_cached_group_b(state, spec))
 }
-fn require_special(state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
+fn require_special(_state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result<Value, VmError>> {
     match spec {
+        "module" | "node:module" => {
+            let names = [
+                "assert", "buffer", "crypto", "events", "fs", "http", "https", "module",
+                "net", "os", "path", "perf_hooks", "process", "querystring", "stream",
+                "timers", "tls", "url", "util", "vm", "worker_threads", "zlib",
+            ];
+            Some(Ok(namespace_of_owned(vec![(
+                "builtinModules".to_string(),
+                quench_runtime::host_api::array(
+                    names.into_iter().map(|name| Value::String(name.into())).collect(),
+                ),
+            )])))
+        }
         "readline/promises" | "node:readline/promises" => Some(Ok(namespace_of(vec![(
             "createInterface",
             capability_value(crate::registry::SPEC_READLINE),
         )]))),
-        "sqlite" | "node:sqlite" => Some(cached_module(state, "node:sqlite", || {
+        "sqlite" | "node:sqlite" => Some(cached_module(_state, "node:sqlite", || {
             Ok(namespace_of_owned(vec![(
                 "DatabaseSync".to_string(),
                 capability_value(crate::registry::SPEC_SQLITE_DATABASE_SYNC),

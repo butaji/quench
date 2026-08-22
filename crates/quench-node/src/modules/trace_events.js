@@ -1,21 +1,18 @@
 (function (deps) {
   'use strict';
 
-  var active = [];
+  var active = Object.create(null);
 
   function add(category) {
-    if (active.indexOf(category) < 0) active.push(category);
+    active[category] = (active[category] || 0) + 1;
   }
   function remove(category) {
-    var i = active.indexOf(category);
-    if (i >= 0) active.splice(i, 1);
+    if (!active[category]) return;
+    if (--active[category] === 0) delete active[category];
   }
   function categoriesString() {
     var out = [];
-    for (var i = 0; i < active.length; i++) {
-      if (active[i] === '*') continue;
-      out.push(active[i]);
-    }
+    for (var category in active) out.push(category);
     return out.join(',');
   }
   function createTracing(options) {
