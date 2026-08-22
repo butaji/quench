@@ -62,10 +62,15 @@ pub fn promise_lookup(
     args: &[Value],
 ) -> Result<Value, quench_runtime::execute::VmError> {
     let ip = address(&host(args)).unwrap_or_else(|| "127.0.0.1".into());
+    let family = if ip.parse::<std::net::Ipv6Addr>().is_ok() {
+        6.0
+    } else {
+        4.0
+    };
     let _ = state;
-    Ok(fulfilled(host_api::array(vec![
-        Value::String(ip),
-        Value::Number(4.0),
+    Ok(fulfilled(host_api::object(vec![
+        ("address".into(), Value::String(ip)),
+        ("family".into(), Value::Number(family)),
     ])))
 }
 pub fn promise_resolve4(
