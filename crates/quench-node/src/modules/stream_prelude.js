@@ -515,18 +515,36 @@
     const callback =
       typeof args[args.length - 1] === "function" ? args.pop() : null;
     const streams = args;
+    if (streams.length < 2) {
+      throw new TypeError("The streams argument must be an array or at least two streams");
+    }
+    if (!streams[0] || typeof streams[0].pipe !== "function" ||
+        typeof streams[0].on !== "function") {
+      throw new TypeError("The \"streams\" argument must contain stream instances");
+    }
+    for (const stream of streams.slice(1)) {
+      if (!stream || typeof stream.on !== "function" ||
+          typeof stream.write !== "function" || typeof stream.end !== "function") {
+        throw new TypeError("The \"streams\" argument must contain stream instances");
+      }
+    }
+    let callbackCalled = false;
+    const done = (error) => {
+      if (callback && !callbackCalled) {
+        callbackCalled = true;
+        callback(error);
+      }
+    };
     for (let i = 0; i + 1 < streams.length; i += 1) {
       streams[i].pipe(streams[i + 1]);
     }
     for (const stream of streams) {
-      stream.once("error", (error) => {
-        if (callback) callback(error);
-      });
+      stream.once("error", done);
     }
     const last = streams[streams.length - 1];
-    if (last && callback) {
-      last.once("finish", () => callback());
-      last.once("end", () => callback());
+    if (callback) {
+      last.once("finish", () => done());
+      last.once("end", () => done());
     }
     return last;
   }
