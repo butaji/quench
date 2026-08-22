@@ -330,6 +330,36 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
     ]))
 }
 
+fn legacy_query_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                output.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let high = (bytes[index + 1] as char).to_digit(16);
+                let low = (bytes[index + 2] as char).to_digit(16);
+                if let (Some(high), Some(low)) = (high, low) {
+                    output.push((high * 16 + low) as u8);
+                    index += 3;
+                } else {
+                    output.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                output.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&output).into_owned()
+}
+
 fn legacy_query_parse(value: &str) -> Result<Value, VmError> {
     let query = value
         .split_once('?')
@@ -338,10 +368,12 @@ fn legacy_query_parse(value: &str) -> Result<Value, VmError> {
     let mut entries: Vec<(String, Vec<String>)> = Vec::new();
     for pair in query.split('&').filter(|pair| !pair.is_empty()) {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        if let Some((_, values)) = entries.iter_mut().find(|(entry, _)| entry == key) {
-            values.push(value.to_owned());
+        let key = legacy_query_decode(key);
+        let value = legacy_query_decode(value);
+        if let Some((_, values)) = entries.iter_mut().find(|(entry, _)| entry == &key) {
+            values.push(value);
         } else {
-            entries.push((key.to_owned(), vec![value.to_owned()]));
+            entries.push((key, vec![value]));
         }
     }
     let query = entries
