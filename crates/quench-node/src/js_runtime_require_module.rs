@@ -28,6 +28,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
         )]));
     }
+    if name == "tty" || name == "node:tty" {
+        return Ok(Value::object(vec![
+            ("isatty".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyIsatty))),
+            ("ReadStream".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyReadStream))),
+            ("WriteStream".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyWriteStream))),
+            ("Socket".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyWriteStream))),
+        ]));
+    }
     if name == "dns" || name == "node:dns" {
         let promises = quench_runtime::host_api::object(vec![(
             "lookupService".into(),
