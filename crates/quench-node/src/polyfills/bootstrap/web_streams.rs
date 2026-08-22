@@ -128,6 +128,13 @@ class __quenchReadableStream {
     this[__quenchWebStreamsState].controller = controller;
     this._controller = controller;
   }
+  getReader() {
+    if (this.locked) {
+      throw Object.assign(new TypeError("Invalid state: stream is locked"), { code: "ERR_INVALID_STATE" });
+    }
+    this.locked = true;
+    return __quenchReadableReader(this);
+  }
   cancel(reason) {
     if (this.locked) {
       const error = new TypeError("Invalid state: stream is locked");
