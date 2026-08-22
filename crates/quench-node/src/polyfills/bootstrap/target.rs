@@ -41,6 +41,42 @@ pub const JS: &str = quench_js_check::checked_js!(r#"globalThis.EventTarget ||= 
     return true;
   }
 };
+const __quenchNativeEventTarget = globalThis.EventTarget;
+if (__quenchNativeEventTarget) {
+  const __quenchNativeAdd = EventTarget.prototype.addEventListener;
+  const __quenchNativeRemove = EventTarget.prototype.removeEventListener;
+  const __quenchSignalRecords = new WeakMap();
+  EventTarget.prototype.addEventListener = function (name, listener, options) {
+    if (typeof listener !== "function") return undefined;
+    const signal = options && options.signal;
+    if (signal !== undefined) {
+      if (!(signal instanceof AbortSignal)) throw new TypeError("signal must be an AbortSignal");
+      if (signal.aborted) return undefined;
+    }
+    __quenchNativeAdd.call(this, name, listener, options);
+    if (signal) {
+      const abort = () => __quenchNativeRemove.call(this, name, listener);
+      let records = __quenchSignalRecords.get(this);
+      if (!records) {
+        records = [];
+        __quenchSignalRecords.set(this, records);
+      }
+      records.push({ name, listener, signal, abort });
+      signal.addEventListener("abort", abort, { once: true });
+    }
+    return undefined;
+  };
+  EventTarget.prototype.removeEventListener = function (name, listener, options) {
+    const records = __quenchSignalRecords.get(this) || [];
+    for (const record of records) {
+      if (record.name === name && record.listener === listener) {
+        record.signal.removeEventListener("abort", record.abort);
+      }
+    }
+    __quenchNativeRemove.call(this, name, listener, options);
+  };
+}
+
 globalThis.Event ||= class Event {
   constructor(type, options = {}) {
     if (type === undefined) throw new TypeError("Event type is required");
