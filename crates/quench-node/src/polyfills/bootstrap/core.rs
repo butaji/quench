@@ -57,6 +57,31 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCoreStaticMod
     }
   ],
   ["assert", () => globalThis.__nodeAssert],
+  ["internal/assert/myers_diff", () => ({
+    myersDiff(a, b) {
+      const size = a.length + b.length;
+      if (size >= 2 ** 31) {
+        const error = new RangeError(
+          `The value of "myersDiff input size" is out of range. It must be < 2^31. Received ${size}`
+        );
+        error.code = "ERR_OUT_OF_RANGE";
+        throw error;
+      }
+      const result = [];
+      let i = 0, j = 0;
+      while (i < a.length && j < b.length) {
+        if (a[i] === b[j]) {
+          result.push({ type: "equal", value: a[i++] });
+          j++;
+        } else result.push({ type: "delete", value: a[i++] });
+      }
+      while (i < a.length) result.push({ type: "delete", value: a[i++] });
+      while (j < b.length) result.push({ type: "insert", value: b[j++] });
+      return result;
+    },
+    printMyersDiff() {},
+    printSimpleMyersDiff() {}
+  })],
   ["path", () => globalThis.__nodePath],
   ["path/posix", () => globalThis.__nodePath],
   ["path/win32", () => globalThis.__nodePath.win32],
