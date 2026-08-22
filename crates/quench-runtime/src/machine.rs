@@ -1,6 +1,69 @@
+//! Stackless execution state.
+//!
+//! `Machine::frames` is the sole owner of JavaScript call continuations.
+//! A frame owns its return metadata and register-window bounds; frames are
+//! pushed and popped only at VM transition boundaries. An empty stack is the
+//! only completed state. `FrameStack::limit` is a hard bound: failed pushes
+//! leave the stack unchanged and report the rejected frame to the caller.
+//! Host callbacks may re-enter the VM, but must do so through a new machine
+//! transition rather than Rust recursion.
+
 pub use crate::identity::{CodeId, CodeRange, EnvironmentRef, FrameId, PackedCompletion};
-use crate::{completion::Completion, ops::Op, value::Value};
+use crate::{
+    completion::Completion,
+    ops::{Constant, Op},
+    value::Value,
+};
 use std::{rc::Rc, sync::OnceLock};
+
+/// Immutable metadata kept beside executable instructions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstructionMeta {
+    pub source: Option<u32>,
+    pub name: Option<Rc<str>>,
+    pub flags: u16,
+}
+
+impl InstructionMeta {
+    pub const fn empty() -> Self {
+        Self {
+            source: None,
+            name: None,
+            flags: 0,
+        }
+    }
+}
+
+/// Per-code constant table. Instructions can use stable integer IDs when a
+/// lowering pass chooses pooled constants, while the legacy `Op::Const` form
+/// remains valid for generic paths.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstantPool {
+    values: Rc<[Constant]>,
+}
+
+impl ConstantPool {
+    pub fn new(values: Vec<Constant>) -> Self {
+        Self {
+            values: values.into(),
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self::new(Vec::new())
+    }
+
+    pub fn get(&self, id: u16) -> Option<&Constant> {
+        self.values.get(usize::from(id))
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct CodeArena {
@@ -39,28 +102,73 @@ impl Default for RegisterWindow {
     }
 }
 
+/// Explicit VM frame storage.
+///
+/// `frames` is the canonical contiguous allocation. `base` identifies the
+/// owning VM stack segment; frame offsets are valid only while the referenced
+/// frame remains in this stack and are invalid after a pop or stack reset.
+/// Push may relocate the allocation, so callers retain offsets, not references,
+/// across transitions. The hard limit bounds depth and allocation growth.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrameStack {
     pub base: u32,
-    pub count: u16,
     pub frames: Vec<Frame>,
-    limit: Option<u16>,
+    limit: u16,
 }
 
 impl FrameStack {
-    const DEFAULT_CAPACITY: u16 = 64;
+    const DEFAULT_CAPACITY: usize = 64;
+    pub const DEFAULT_LIMIT: u16 = u16::MAX;
 
     pub fn new() -> Self {
-        Self::with_capacity(Self::DEFAULT_CAPACITY)
+        Self::with_capacity(Self::DEFAULT_CAPACITY as u16)
     }
 
+    /// Creates a stack with an initial allocation and an explicit hard limit.
+    /// Growth is geometric and happens before pushing, so execution never
+    /// allocates beyond the configured limit.
     pub fn with_capacity(capacity: u16) -> Self {
+        Self::with_capacity_and_limit(capacity, Self::DEFAULT_LIMIT)
+    }
+
+    pub fn with_capacity_and_limit(capacity: u16, limit: u16) -> Self {
+        let capacity = usize::from(capacity.min(limit));
         Self {
             base: 0,
-            count: 0,
-            frames: Vec::with_capacity(usize::from(capacity)),
-            limit: Some(capacity),
+            frames: Vec::with_capacity(capacity),
+            limit,
         }
+    }
+
+    pub fn capacity(&self) -> u16 {
+        self.frames.capacity().min(usize::from(u16::MAX)) as u16
+    }
+
+    /// Preallocate room for `additional` frames without exceeding the limit.
+    pub fn try_reserve_for(&mut self, additional: u16) -> bool {
+        let target = self
+            .frames
+            .len()
+            .checked_add(usize::from(additional))
+            .filter(|target| *target <= usize::from(self.limit));
+        let Some(target) = target else {
+            return false;
+        };
+        if target > self.frames.capacity() {
+            self.frames.reserve(target - self.frames.len());
+        }
+        true
+    }
+
+    /// Preallocate room, ignoring requests that exceed the hard limit.
+    pub fn reserve_for(&mut self, additional: u16) {
+        let _ = self.try_reserve_for(additional);
+    }
+
+    /// Returns the number of additional frames accepted before the hard limit.
+    pub fn remaining(&self) -> u16 {
+        self.limit
+            .saturating_sub(self.frames.len().min(usize::from(u16::MAX)) as u16)
     }
 }
 
@@ -72,22 +180,47 @@ impl Default for FrameStack {
 
 impl FrameStack {
     pub fn try_push(&mut self, frame: Frame) -> Result<(), Frame> {
-        if self.limit.is_some_and(|limit| self.count >= limit) {
+        if self.frames.len() >= usize::from(self.limit) {
             return Err(frame);
         }
-        self.push(frame);
+        if self.frames.len() == self.frames.capacity() {
+            let next = self
+                .frames
+                .capacity()
+                .max(1)
+                .saturating_mul(2)
+                .min(usize::from(self.limit));
+            self.frames.reserve(next.saturating_sub(self.frames.len()));
+        }
+        self.frames.push(frame);
         Ok(())
     }
 
-    fn push(&mut self, frame: Frame) {
-        self.frames.push(frame);
-        self.count = u16::try_from(self.frames.len()).unwrap_or(u16::MAX);
+    pub fn pop(&mut self) -> Option<Frame> {
+        self.frames.pop()
     }
 
-    pub fn pop(&mut self) -> Option<Frame> {
-        let frame = self.frames.pop();
-        self.count = u16::try_from(self.frames.len()).unwrap_or(u16::MAX);
-        frame
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    pub fn depth(&self) -> u16 {
+        self.frames.len() as u16
+    }
+
+    pub fn as_slice(&self) -> &[Frame] {
+        &self.frames
+    }
+    /// Return the offset of the top frame in the contiguous frame storage.
+    #[inline]
+    pub fn top_offset(&self) -> Option<u16> {
+        self.frames.len().checked_sub(1).map(|index| index as u16)
+    }
+
+    /// Read a frame by its stable stack offset.
+    #[inline]
+    pub fn frame_at(&self, offset: u16) -> Option<&Frame> {
+        self.frames.get(usize::from(offset))
     }
 }
 
@@ -128,6 +261,21 @@ impl CodeArena {
         (range.start >= start && range.end <= end)
             .then(|| &self.ops[range.start as usize..range.end as usize])
     }
+    /// Build the compact pool used by lowering and diagnostics.
+    pub fn constant_pool(&self, range: CodeRange) -> ConstantPool {
+        let mut values = Vec::new();
+        if let Some(ops) = self.get(range) {
+            for op in ops {
+                let Op::Const { value, .. } = op else {
+                    continue;
+                };
+                if !values.iter().any(|item| item == value) {
+                    values.push(value.clone());
+                }
+            }
+        }
+        ConstantPool::new(values)
+    }
 
     pub fn len(&self) -> usize {
         self.ranges.len()
@@ -156,6 +304,21 @@ impl CodeStore {
         let (start, end) = self.ranges.get(range.code.0 as usize).copied()?;
         (range.start >= start && range.end <= end)
             .then(|| &self.ops[range.start as usize..range.end as usize])
+    }
+    /// Build the compact pool used by lowering and diagnostics.
+    pub fn constant_pool(&self, range: CodeRange) -> ConstantPool {
+        let mut values = Vec::new();
+        if let Some(ops) = self.get(range) {
+            for op in ops {
+                let Op::Const { value, .. } = op else {
+                    continue;
+                };
+                if !values.iter().any(|item| item == value) {
+                    values.push(value.clone());
+                }
+            }
+        }
+        ConstantPool::new(values)
     }
 
     pub fn range_len(&self, code: CodeId) -> Option<u32> {
@@ -400,6 +563,29 @@ impl Machine {
         self.completion = completion.clone();
         Ok(completion)
     }
+    /// Drive dispatch transitions without growing the Rust call stack.
+    ///
+    /// The callback performs one resumable VM slice and returns the next
+    /// completion.  Normal completion terminates; tail calls are fed back
+    /// into the same machine so callers do not recursively re-enter Rust.
+    pub fn run_until_complete<F, E>(
+        &mut self,
+        mut input: Completion,
+        mut execute: F,
+    ) -> Result<Completion, E>
+    where
+        F: FnMut(&mut Vec<Value>, Completion) -> Result<Completion, E>,
+    {
+        loop {
+            self.completion = input.clone();
+            let completion = execute(&mut self.registers.values, input)?;
+            self.completion = completion.clone();
+            if !matches!(completion, Completion::TailCall(_)) {
+                return Ok(completion);
+            }
+            input = completion;
+        }
+    }
 
     pub fn record_completion(&mut self, completion: Completion) {
         self.completion = completion;
@@ -422,7 +608,19 @@ impl Machine {
     }
 
     pub fn frame_count(&self) -> u16 {
-        self.frames.count
+        self.frames.depth()
+    }
+
+    pub fn code_id(&self) -> CodeId {
+        self.code
+    }
+
+    pub fn program_counter(&self) -> u32 {
+        self.pc
+    }
+
+    pub fn register_count(&self) -> u16 {
+        self.registers.count
     }
 
     pub(crate) fn install_environment(&mut self, environment: Rc<crate::environment::Environment>) {
@@ -446,6 +644,17 @@ impl Machine {
             return None;
         };
         Some(phase)
+    }
+    /// Borrow the contiguous register storage used by the active frame.
+    #[inline]
+    pub fn registers_mut(&mut self) -> &mut Vec<Value> {
+        &mut self.registers.values
+    }
+
+    /// Update the direct program-counter field after a resumable slice.
+    #[inline]
+    pub fn set_program_counter(&mut self, pc: u32) {
+        self.pc = pc;
     }
 
     pub(crate) fn set_iterator_phase(&mut self, next: IteratorPhase) -> bool {
@@ -473,7 +682,8 @@ impl Machine {
 
 #[cfg(test)]
 mod tests {
-    use super::{EnvironmentRef, Machine, RegisterWindow};
+    use super::{EnvironmentRef, FrameStack, Machine, RegisterWindow};
+    use crate::completion::{Completion, TailCallRequest};
     use crate::value::Value;
 
     #[test]
@@ -495,6 +705,61 @@ mod tests {
         assert_eq!(store.get(range).map(<[_]>::len), Some(1));
         let invalid = super::CodeRange::new(range.code, 0, 2).unwrap();
         assert!(store.get(invalid).is_none());
+    }
+
+    #[test]
+    fn machine_exposes_flat_execution_state() {
+        let machine = Machine::with_register_count(super::CodeId(7), EnvironmentRef(3), 5);
+        assert_eq!(machine.code_id(), super::CodeId(7));
+        assert_eq!(machine.program_counter(), 0);
+        assert_eq!(machine.register_count(), 5);
+        assert_eq!(machine.frame_count(), 0);
+    }
+    #[test]
+    fn tail_calls_reuse_one_machine_dispatch_loop() {
+        let mut machine = Machine::new(super::CodeId(0), EnvironmentRef(0));
+        let mut remaining = 128;
+        let completion = machine
+            .run_until_complete(Completion::Normal, |_, _| -> Result<Completion, ()> {
+                if remaining == 0 {
+                    return Ok(Completion::Return(Value::Undefined));
+                }
+                remaining -= 1;
+                Ok(Completion::TailCall(TailCallRequest {
+                    callee: Value::Undefined,
+                    receiver: Value::Undefined,
+                    arguments: Vec::new(),
+                }))
+            })
+            .unwrap();
+        assert_eq!(completion, Completion::Return(Value::Undefined));
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn machine_exposes_direct_pc_and_register_storage() {
+        let mut machine = Machine::with_register_count(super::CodeId(1), EnvironmentRef(0), 2);
+        machine.set_program_counter(9);
+        machine.registers_mut()[0] = Value::Number(3.0);
+        assert_eq!(machine.program_counter(), 9);
+        assert_eq!(machine.register_count(), 2);
+        assert_eq!(machine.take_registers()[0], Value::Number(3.0));
+    }
+
+    #[test]
+    fn frame_offsets_track_contiguous_storage() {
+        let mut stack = FrameStack::with_capacity(2);
+        let range = super::CodeRange::new(super::CodeId(0), 0, 1).unwrap();
+        assert_eq!(stack.top_offset(), None);
+        assert_eq!(stack.frame_at(0), None);
+        stack
+            .try_push(super::Frame::Await {
+                phase: 0,
+                resume: range,
+            })
+            .unwrap();
+        assert_eq!(stack.top_offset(), Some(0));
+        assert!(stack.frame_at(0).is_some());
     }
 
     include!("machine_tests.rs");

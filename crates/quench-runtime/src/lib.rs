@@ -57,6 +57,7 @@ pub mod identity;
 mod intl;
 mod json;
 pub use json::parse as parse_json;
+pub mod ir;
 mod literal;
 mod locals;
 mod logical;

@@ -226,7 +226,7 @@ fn current_host_capability(kind: HostCapabilityKind) -> Value {
         context
             .borrow()
             .as_ref()
-            .map_or(RealmId::ROOT, VmContext::realm)
+            .map_or(RealmId::ROOT, |rc| rc.realm())
     });
     Value::HostCapability(Rc::new(crate::value::HostCapabilityValue::new(
         HostCapabilityRef { realm, kind },

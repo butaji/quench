@@ -52,9 +52,14 @@ pub(crate) fn begin_global_declaration_batch() {
     ));
     GLOBAL_DECLARATION_BASE.with(|base| base.replace(Some(current)));
     GLOBAL_DECLARATION_BATCH.with(|batch| batch.replace(Some(staged)));
+    GLOBAL_DECLARATION_ACTIVE.with(|active| active.set(true));
 }
 
 pub(crate) fn flush_global_declaration_batch(registers: &mut Vec<Value>) {
+    if !GLOBAL_DECLARATION_ACTIVE.with(|active| active.get()) {
+        return;
+    }
+    GLOBAL_DECLARATION_ACTIVE.with(|active| active.set(false));
     let Some(previous) = GLOBAL_DECLARATION_BASE.with(|batch| batch.borrow_mut().take()) else {
         return;
     };
@@ -65,7 +70,7 @@ pub(crate) fn flush_global_declaration_batch(registers: &mut Vec<Value>) {
 }
 
 pub(crate) fn is_global_declaration_batch_active() -> bool {
-    GLOBAL_DECLARATION_BATCH.with(|batch| batch.borrow().is_some())
+    GLOBAL_DECLARATION_ACTIVE.with(|active| active.get())
 }
 
 pub(crate) fn update_global_declaration_batch(updated: &Value) {
@@ -139,7 +144,7 @@ fn current_realm() -> RealmId {
         context
             .borrow()
             .as_ref()
-            .map_or(RealmId::ROOT, VmContext::realm)
+            .map_or(RealmId::ROOT, |rc| rc.realm())
     })
 }
 
@@ -182,6 +187,7 @@ thread_local! {
     static GLOBAL_DECLARATION_BASE: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
     static GLOBAL_DECLARATION_BATCH: RefCell<Option<ObjectProperties>> =
         const { RefCell::new(None) };
+    static GLOBAL_DECLARATION_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static SHARED_GLOBAL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
