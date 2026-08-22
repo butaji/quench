@@ -259,10 +259,24 @@ fn params_id_from_receiver(receiver: Option<&Value>) -> Option<u16> {
     }
 }
 
+fn query_encode(input: &str) -> String {
+    let mut output = String::new();
+    for byte in input.as_bytes() {
+        if matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'*') {
+            output.push(*byte as char);
+        } else if *byte == b' ' {
+            output.push('+');
+        } else {
+            output.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    output
+}
+
 fn format_pairs(pairs: &[(String, String)]) -> String {
     pairs
         .iter()
-        .map(|(name, value)| format!("{name}={value}"))
+        .map(|(name, value)| format!("{}={}", query_encode(name), query_encode(value)))
         .collect::<Vec<_>>()
         .join("&")
 }

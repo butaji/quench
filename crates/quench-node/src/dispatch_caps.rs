@@ -69,6 +69,7 @@ pub(super) const CAP_CONSOLE_ERROR: u16 = 0x0203;
 pub(super) const CAP_CONSOLE_DEBUG: u16 = 0x0204;
 pub(super) const CAP_CONSOLE_TRACE: u16 = 0x0205;
 pub(super) const CAP_CONSOLE_ASSERT: u16 = 0x0206;
+pub(super) const CAP_CONSOLE_COUNT: u16 = 0x0207;
 pub(super) const CAP_UTIL_FORMAT: u16 = 0x0300;
 pub(super) const CAP_UTIL_INSPECT: u16 = 0x0301;
 pub(super) const CAP_PATH_JOIN: u16 = 0x0400;

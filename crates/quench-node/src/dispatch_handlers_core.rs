@@ -54,6 +54,13 @@ pub fn console_assert(
 ) -> Result<Value, VmError> {
     crate::modules::console::assert_(state, args)
 }
+pub fn console_count(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::console::count(state, args)
+}
 // ---- util ----
 pub fn util_format(
     _state: &Rc<RefCell<HostState>>,
