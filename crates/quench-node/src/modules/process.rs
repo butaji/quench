@@ -202,10 +202,17 @@ pub fn binding(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value,
 }
 
 /// `process.stdout` / `process.stderr` — non-TTY write streams.
+///
+/// Keep standard writable-state flags on the namespace object. Node consumers
+/// inspect these before routing output; exposing only `write()` makes those
+/// reads observe `undefined` and can fail after an asynchronous callback.
 fn std_stream(is_error: bool) -> Value {
     crate::host::namespace_object_from_pairs(vec![
         ("isTTY".to_string(), Value::Boolean(false)),
         ("isRawTTY".to_string(), Value::Boolean(false)),
+        ("writable".to_string(), Value::Boolean(true)),
+        ("writableEnded".to_string(), Value::Boolean(false)),
+        ("writableFinished".to_string(), Value::Boolean(false)),
         (
             "write".to_string(),
             crate::host::capability(crate::registry::NodeSpec::new(
