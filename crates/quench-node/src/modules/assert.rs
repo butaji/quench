@@ -314,24 +314,34 @@ pub fn rejects(
     let promise = match first {
         Value::Promise(p) => p.clone(),
         Value::Function(_) | Value::BoundFunction(_) => {
-            return Err(VmError::Thrown(host_api::object(vec![
-                ("name".into(), Value::String("TypeError".into())),
-                (
-                    "message".into(),
-                    Value::String("assert.rejects requires a Promise".into()),
-                ),
-            ])));
+            let result = execute::call(&first, &Value::Undefined, &[]);
+            let value = match result {
+                Ok(value) => value,
+                Err(error) => return Ok(settle(Err(error))),
+            };
+            match value {
+                Value::Promise(p) => p,
+                _ => {
+                    let error = host_api::object(vec![
+                        ("name".into(), Value::String("TypeError".into())),
+                        ("code".into(), Value::String("ERR_INVALID_RETURN_VALUE".into())),
+                        ("message".into(), Value::String(
+                            "Expected instance of Promise to be returned from the \"promiseFn\" function".into(),
+                        )),
+                    ]);
+                    return Ok(settle(Err(VmError::Thrown(error))));
+                }
+            }
         }
         _ => {
-            return Err(VmError::Thrown(host_api::object(vec![
+            let error = host_api::object(vec![
                 ("name".into(), Value::String("TypeError".into())),
-                (
-                    "message".into(),
-                    Value::String(
-                        "The \"asyncFn\" argument must be of type Function or Promise".into(),
-                    ),
-                ),
-            ])));
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                ("message".into(), Value::String(
+                    "The \"promiseFn\" argument must be of type function or an instance of Promise".into(),
+                )),
+            ]);
+            return Ok(settle(Err(VmError::Thrown(error))));
         }
     };
     let state = promise.state.borrow().clone();
