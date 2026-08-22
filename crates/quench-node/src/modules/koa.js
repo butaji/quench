@@ -25,9 +25,12 @@
               } else { res.end(); }
               return Promise.resolve();
             }
-            return Promise.resolve(fn(ctx, function () { return run(i + 1); }));
+            var result = fn(ctx, function () { return run(i + 1); });
+            return result && typeof result.then === 'function'
+              ? result.then(function () { return run(i + 1); })
+              : run(i + 1);
           }
-          run(0).catch(function (err) { res.statusCode = 500; res.end(String(err)); });
+          return run(0).catch(function (err) { res.statusCode = 500; res.end(String(err)); });
         };
       },
       listen: function (port, cb) {
