@@ -65,14 +65,13 @@ fn vm_create_context(arguments: &[Value]) -> Result<Value, VmError> {
                 "options must be an object",
             )));
         }
-        if matches!(
-            quench_runtime::execute::get_property_result(options, "name"),
-            Ok(Value::Null)
-        ) {
-            return Err(VmError::Thrown(fs_error(
-                "ERR_INVALID_ARG_TYPE",
-                "name must be a string",
-            )));
+        if let Ok(name) = quench_runtime::execute::get_property_result(options, "name") {
+            if !matches!(name, Value::Undefined | Value::String(_)) {
+                return Err(VmError::Thrown(fs_error(
+                    "ERR_INVALID_ARG_TYPE",
+                    "name must be a string",
+                )));
+            }
         }
     }
     match arguments.first() {

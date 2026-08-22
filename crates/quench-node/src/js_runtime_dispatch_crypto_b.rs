@@ -10,8 +10,16 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::CryptoCreateHmac) => {
                 let algorithm = match arguments.first() {
                     Some(Value::String(value)) => value.to_ascii_lowercase(),
-                    _ => "sha256".into(),
+                    _ => {
+                        return Err(VmError::Thrown(fs_error(
+                            "ERR_INVALID_ARG_TYPE",
+                            "The \"algorithm\" argument must be of type string",
+                        )))
+                    }
                 };
+                if !matches!(algorithm.as_str(), "sha1" | "sha256") {
+                    return Err(VmError::EvalError("unsupported HMAC algorithm".into()));
+                }
                 let key = match arguments.get(1) {
                     Some(Value::String(value)) => value.clone(),
                     _ => String::new(),
