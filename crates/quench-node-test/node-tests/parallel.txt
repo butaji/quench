@@ -59,6 +59,7 @@ test-dgram-msgsize.js
 test-dgram-reuseport.js
 test-dgram-send-empty-array.js
 test-dgram-unref-in-cluster.js
+test-diagnostics-channel-bounded-channel.js
 test-diagnostics-channel-has-subscribers.js
 test-diagnostics-channel-object-channel-pub-sub.js
 test-diagnostics-channel-pub-sub.js
