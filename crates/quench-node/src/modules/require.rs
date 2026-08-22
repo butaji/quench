@@ -221,7 +221,11 @@ fn resolve_path(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<std::path:
     resolver
         .resolve(std::path::Path::new(&base), spec)
         .map(|resolution| resolution.into_path_buf())
-        .map_err(|_| not_found(spec))
+        .map_err(|_| {
+            not_found(&format!(
+                "{spec} (base={base})"
+            ))
+        })
 }
 fn not_found(spec: &str) -> VmError {
     VmError::EvalError(format!("Cannot find module '{spec}'"))
