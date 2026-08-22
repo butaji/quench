@@ -7,8 +7,24 @@ function REPLServer(input, output, options) {
   this.historySize = this.options.historySize === undefined ? 30 : Number(this.options.historySize);
   this.history = [];
   this._commands = Object.create(null);
+  this.commands = this._commands;
   this._eval = typeof this.options.eval === 'function' ? this.options.eval : null;
+  this.closed = false;
 }
+REPLServer.prototype.addHistory = function (line) {
+  if (this.historySize <= 0) return this;
+  line = String(line);
+  if (!line) return this;
+  if (this.history.length && this.history[0] === line) return this;
+  this.history.unshift(line);
+  if (this.history.length > this.historySize) this.history.length = this.historySize;
+  return this;
+};
+REPLServer.prototype.removeHistory = function (index) {
+  index = Number(index);
+  if (index >= 0 && index < this.history.length) this.history.splice(index, 1);
+  return this;
+};
 REPLServer.prototype.setPrompt = function (prompt) { this._prompt = String(prompt); };
 REPLServer.prototype.getPrompt = function () { return this._prompt; };
 REPLServer.prototype.eval = function (cmd, context, filename, callback) {
@@ -23,7 +39,14 @@ REPLServer.prototype.eval = function (cmd, context, filename, callback) {
 };
 REPLServer.prototype.clearBufferedCommand = function () { return this; };
 REPLServer.prototype.defineCommand = function (command, callback) {
-  this._commands[String(command)] = callback;
+  command = String(command);
+  if (typeof callback === 'function') {
+    this._commands[command] = { action: callback };
+  } else if (callback && typeof callback.action === 'function') {
+    this._commands[command] = callback;
+  } else {
+    throw new TypeError('command callback must be a function');
+  }
   return this;
 };
 REPLServer.prototype.setupHistory = function (file, callback) {
