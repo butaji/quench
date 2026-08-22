@@ -41,6 +41,7 @@ impl CapabilityName {
     const ProcessEmit: u16 = 2091;
     const ProcessCpuUsage: u16 = 2110;
     const ProcessHrtime: u16 = 2111;
+    const ProcessHrtimeBigint: u16 = 2125;
     const ProcessActiveResourcesInfo: u16 = 2112;
     const ProcessPermissionHas: u16 = 2114;
     const UtilIsDate: u16 = 2130;

@@ -129,15 +129,17 @@ impl Default for VmContext {
     }
 }
 thread_local! {
-    static CURRENT_CONTEXT: RefCell<Option<VmContext>> = const { RefCell::new(None) };
+    static CURRENT_CONTEXT: RefCell<Option<Rc<VmContext>>> = const { RefCell::new(None) };
     static GLOBAL_OBJECT: RefCell<Option<ObjectProperties>> = const { RefCell::new(None) };
 }
 struct ContextGuard {
-    previous: Option<VmContext>,
+    previous: Option<Rc<VmContext>>,
 }
 impl ContextGuard {
     fn install(context: &VmContext) -> Self {
-        let previous = CURRENT_CONTEXT.with(|current| current.replace(Some(context.clone())));
+        let previous = CURRENT_CONTEXT.with(|current| {
+            current.replace(Some(Rc::new(context.clone())))
+        });
         Self { previous }
     }
 }

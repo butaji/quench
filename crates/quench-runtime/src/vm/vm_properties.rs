@@ -3,6 +3,7 @@ pub fn copy_register(registers: &mut Vec<Value>, dst: u16, src: u16) -> Result<(
     write_value(registers, dst, value);
     Ok(())
 }
+#[inline]
 pub fn write_value(registers: &mut Vec<Value>, index: u16, value: Value) {
     let index = usize::from(index);
     if registers.len() <= index {
@@ -10,12 +11,31 @@ pub fn write_value(registers: &mut Vec<Value>, index: u16, value: Value) {
     }
     registers[index] = value;
 }
+/// Unchecked variant for hot arithmetic paths where the compiler already
+/// guarantees the register index is in bounds.
+#[inline]
+pub(crate) fn write_value_unchecked(registers: &mut [Value], index: u16, value: Value) {
+    registers[usize::from(index)] = value;
+}
+
+#[inline]
 pub fn read_register(registers: &[Value], index: u16) -> Result<Value, VmError> {
     registers
         .get(usize::from(index))
         .cloned()
         .map(crate::locals::resolved_replacement)
         .ok_or(VmError::RegisterOutOfBounds(index))
+}
+
+/// Unchecked variant for hot arithmetic paths where the compiler already
+/// guarantees the register index is in bounds.
+#[inline]
+pub(crate) fn read_register_unchecked(registers: &[Value], index: u16) -> Value {
+    let value = registers
+        .get(usize::from(index))
+        .expect("register index out of bounds")
+        .clone();
+    crate::locals::resolved_replacement(value)
 }
 pub fn get_property(value: &Value, key: &str) -> Value {
     crate::module_bindings::exports(value, key).ok();

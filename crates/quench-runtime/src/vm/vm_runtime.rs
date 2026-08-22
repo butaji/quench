@@ -35,6 +35,7 @@ fn run_ops_completion_step(
     run_ops_completion_step_from(ops, 0, registers, context)
 }
 
+#[inline]
 fn run_ops_completion_step_from(
     ops: &[Op],
     start: usize,
@@ -44,34 +45,44 @@ fn run_ops_completion_step_from(
     for (index, op) in ops.iter().enumerate().skip(start) {
         let result = match run_op(registers, op, context) {
             Ok(result) => result,
-            Err(error) => {
-                crate::vm::flush_global_declaration_batch(registers);
-                return error_completion(error).map(|completion| CompletionStep {
-                    completion,
-                    next: index + 1,
-                });
-            }
+            Err(error) => return completion_step_after_error(registers, error, index + 1),
         };
         match result {
             None | Some(crate::completion::Completion::Normal) => {}
             Some(completion) => {
-                crate::vm::flush_global_declaration_batch(registers);
-                return Ok(CompletionStep {
-                    completion,
-                    next: index + 1,
-                });
+                return completion_step_after_transition(registers, completion, index + 1);
             }
         }
     }
-    crate::vm::flush_global_declaration_batch(registers);
-    Ok(CompletionStep {
-        completion: crate::completion::Completion::Normal,
-        next: ops.len(),
-    })
+    completion_step_after_transition(
+        registers,
+        crate::completion::Completion::Normal,
+        ops.len(),
+    )
 }
 
 fn error_completion(error: VmError) -> Result<crate::completion::Completion, VmError> {
     crate::completion::Completion::from_vm_error(error)
+}
+
+#[cold]
+fn completion_step_after_error(
+    registers: &mut Vec<Value>,
+    error: VmError,
+    next: usize,
+) -> Result<CompletionStep, VmError> {
+    crate::vm::flush_global_declaration_batch(registers);
+    error_completion(error).map(|completion| CompletionStep { completion, next })
+}
+
+#[cold]
+fn completion_step_after_transition(
+    registers: &mut Vec<Value>,
+    completion: crate::completion::Completion,
+    next: usize,
+) -> Result<CompletionStep, VmError> {
+    crate::vm::flush_global_declaration_batch(registers);
+    Ok(CompletionStep { completion, next })
 }
 
 pub(crate) fn completion_result(

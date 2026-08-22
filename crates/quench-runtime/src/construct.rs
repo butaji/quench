@@ -42,7 +42,14 @@ pub(crate) fn execute(registers: &mut Vec<Value>, op: &Op) -> Result<(), crate::
     };
     let arguments = collect_construct_arguments(registers, args, spreads)?;
     let target = crate::execute::read_register(registers, *callee)?;
-    let value = construct_value(&target, &arguments)?;
+    let value = match &target {
+        // Intrinsic builtins are implemented directly; do not enter the VM
+        // environment trampoline used by user-defined Function constructors.
+        Value::Builtin(builtin) => {
+            construct_builtin_target(*builtin, &target, &target, &arguments)?
+        }
+        _ => construct_value(&target, &arguments)?,
+    };
     crate::execute::write_value(registers, *dst, value);
     Ok(())
 }
