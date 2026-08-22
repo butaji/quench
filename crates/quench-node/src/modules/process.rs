@@ -210,6 +210,7 @@ fn std_stream(is_error: bool) -> Value {
     crate::host::namespace_object_from_pairs(vec![
         ("isTTY".to_string(), Value::Boolean(false)),
         ("isRawTTY".to_string(), Value::Boolean(false)),
+        ("fd".to_string(), Value::Number(if is_error { 2.0 } else { 1.0 })),
         ("writable".to_string(), Value::Boolean(true)),
         ("writableEnded".to_string(), Value::Boolean(false)),
         ("writableFinished".to_string(), Value::Boolean(false)),
