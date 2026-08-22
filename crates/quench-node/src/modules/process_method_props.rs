@@ -25,6 +25,7 @@ fn event_props() -> Vec<(&'static str, Value)> {
     vec![
         ("on", capability(SPEC_PROCESS_ON)),
         ("once", capability(SPEC_PROCESS_ONCE)),
+        ("emit", capability(SPEC_PROCESS_EMIT)),
     ]
 }
 

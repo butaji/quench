@@ -58,6 +58,13 @@ pub fn process_once(
 ) -> Result<Value, VmError> {
     crate::modules::process::once(state, args)
 }
+pub fn process_emit(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::process::emit(state, args)
+}
 
 pub fn test_run(
     state: &Rc<RefCell<HostState>>,
