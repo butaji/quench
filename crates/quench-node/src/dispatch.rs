@@ -25,6 +25,7 @@ pub fn lookup(cap: u16) -> Option<CallHandler> {
         CAP_CONSOLE_WARN | CAP_CONSOLE_ERROR => console_warn,
         CAP_CONSOLE_TRACE => console_trace,
         CAP_CONSOLE_ASSERT => console_assert,
+        CAP_CONSOLE_COUNT => console_count,
         CAP_UTIL_FORMAT => util_format,
         CAP_UTIL_INSPECT => util_inspect,
         CAP_STRING_DECODER => string_decoder_call,
