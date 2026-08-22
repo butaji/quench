@@ -88,8 +88,7 @@ fn require_cached_group_a(
     spec: &str,
 ) -> Option<Result<Value, VmError>> {
     let (key, build): (&str, Box<dyn FnOnce() -> Result<Value, VmError> + '_>) = match spec {
-        "stream" | "node:stream" => ("stream", Box::new(|| crate::modules::stream::build(state))),
-        "async_hooks" | "node:async_hooks" => (
+        "async_hooks" | "node:async_hooks" | "internal/async_hooks" => (
             "async_hooks",
             Box::new(|| crate::modules::async_hooks::build(state)),
         ),

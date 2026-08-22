@@ -201,6 +201,23 @@ fn dispatch(
         )));
     }
     match cap {
+        2351 => Ok(quench_runtime::host_api::object(vec![
+            (
+                "name".to_string(),
+                args.first().cloned().unwrap_or(Value::Undefined),
+            ),
+            (
+                "run".to_string(),
+                quench_runtime::host_api::capability_function(HostCapabilityRef {
+                    realm: RealmId::ROOT,
+                    kind: HostCapabilityKind::Custom(2352),
+                }),
+            ),
+        ])),
+        2352 => {
+            let callback = args.first().cloned().ok_or(VmError::NotCallable)?;
+            quench_runtime::execute::call(&callback, &Value::Undefined, &args[1..])
+        }
         2348 => dispatch(
             2346,
             state,

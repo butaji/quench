@@ -261,6 +261,7 @@ fn network_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_HTTP_REQ_END => crate::modules::http_client::req_end,
         CAP_HTTP_RESDATA => crate::modules::http_client::data_handler,
         CAP_HTTP_RESEND => crate::modules::http_client::res_end_handler,
+        CAP_HTTP_RESUME => crate::modules::http_client::res_resume,
         CAP_DGRAM_CREATE => dgram_create,
         CAP_DGRAM_BIND => dgram_bind,
         CAP_DGRAM_SEND => dgram_send,

@@ -411,8 +411,27 @@ fn build_incoming(state: &Rc<RefCell<HostState>>, head: &[u8]) -> Result<Value, 
         ("statusMessage".to_string(), Value::String(message)),
         ("httpVersion".to_string(), Value::String("1.1".to_string())),
         ("headers".to_string(), host_api::object(headers)),
+        // IncomingMessage.resume() switches a response into flowing mode. The
+        // client socket already drains data as it arrives; returning the
+        // response preserves the Node chainable-stream contract.
+        (
+            "resume".to_string(),
+            crate::host::capability(crate::registry::NodeSpec::new(
+                "http:response:resume",
+                0x0F0D,
+            )),
+        ),
     ];
     install_methods(res, props)
+}
+
+/// `IncomingMessage.resume()` — response data is already pumped by the host.
+pub fn res_resume(
+    _state: &Rc<RefCell<HostState>>,
+    receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
 fn request_options(value: Option<&Value>) -> Result<RequestOptions, VmError> {
