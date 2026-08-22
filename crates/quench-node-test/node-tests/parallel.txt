@@ -71,6 +71,10 @@ test-diagnostics-channel-tracing-channel-promise-early-exit.js
 test-diagnostics-channel-tracing-channel-sync-early-exit.js
 test-diagnostics-channel-tracing-channel-sync.js
 test-diagnostics-channel-web-locks.js
+test-domain-ee-error-listener.js
+test-domain-error-handler-throw-no-recursion.js
+test-domain-stack-empty-in-process-uncaughtexception.js
+test-domain-with-abort-on-uncaught-exception.js
 test-eval.js
 test-event-emitter-modify-in-emit.js
 test-event-emitter-num-args.js
