@@ -88,7 +88,8 @@
       flowScheduled: false,
       reading: false,
       ended: false,
-      endEmitted: false
+      endEmitted: false,
+      errored: null
     };
     stream.readable = true;
     stream.destroyed = false;
@@ -149,11 +150,19 @@
       return this._readableState.objectMode;
     }
 
+    get readableErrored() {
+      return this._readableState.errored || null;
+    }
+
+    get errored() {
+      return this._readableState.errored || null;
+    }
+
+
     isPaused() {
       // Node: a stream is "paused" only after an explicit pause().
       return this._readableState.paused === true;
     }
-
     pause() {
       this._readableState.paused = true;
       this._readableState.flowing = false;
@@ -170,6 +179,15 @@
     push(chunk) {
       const st = this._readableState;
       st.reading = false;
+      if (st.ended || st.errored) {
+        if (chunk !== null && !st.errored) {
+          const error = new Error("stream.push() after EOF");
+          error.code = "ERR_STREAM_PUSH_AFTER_EOF";
+          st.errored = error;
+          this.destroy(error);
+        }
+        return false;
+      }
       if (chunk === null) {
         st.ended = true;
       } else {
@@ -272,9 +290,21 @@
     this.readable = false;
     if (error) {
       this.readableErrored = error;
-      this._emitter.emit("error", error);
+      this._readableState.errored = error;
     }
-    this._emitter.emit("close");
+    const stream = this;
+    const destroy = this._destroy;
+    nextTick(() => {
+      const finish = () => {
+        if (error) stream._emitter.emit("error", error);
+        stream._emitter.emit("close");
+      };
+      if (destroy) {
+        destroy.call(stream, error, finish);
+      } else {
+        finish();
+      }
+    });
     return this;
   }
 
@@ -399,11 +429,20 @@
     if (this.destroyed) return this;
     this.destroyed = true;
     this.writable = false;
-    if (error) {
-      this.writableErrored = error;
-      this._emitter.emit("error", error);
-    }
-    this._emitter.emit("close");
+    if (error) this.writableErrored = error;
+    const stream = this;
+    const destroy = this._destroy;
+    nextTick(() => {
+      const finish = () => {
+        if (error) stream._emitter.emit("error", error);
+        stream._emitter.emit("close");
+      };
+      if (destroy) {
+        destroy.call(stream, error, finish);
+      } else {
+        finish();
+      }
+    });
     return this;
   };
 
