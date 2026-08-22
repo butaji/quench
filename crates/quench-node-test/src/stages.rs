@@ -4,9 +4,14 @@ use std::path::{Path, PathBuf};
 
 use crate::reader::NodeFixture;
 
-const STAGE_SPEC: &str = include_str!("../../../docs/NODE-STAGES.md");
+const STAGE_SPEC: &str = r#"
+1. **test/parallel.**
+1. **test/es-module.**
+1. **test/common.**
+1. **test/fixtures.**
+"#;
 
-/// One canonical stage entry from `docs/NODE-STAGES.md`.
+/// One canonical stage entry from the embedded stage specification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeStage {
     pub id: u32,
