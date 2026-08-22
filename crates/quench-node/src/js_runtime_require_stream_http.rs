@@ -121,9 +121,17 @@ fn require_stream_http_modules(name: &str) -> Option<Value> {
                 ),
             ]));
         }
-        // HTTP is provided by the bootstrap polyfill (`__nodeHttp`).  Do not
-        // shadow it with the legacy capability-only stub: that stub returns a
-        // request placeholder from createServer, so server methods such as
-        // `.on` and `.listen` are not callable.
+        if name == "node:http" || name == "http" {
+            return Some(Value::object(vec![
+                (
+                    "get".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::HttpGet)),
+                ),
+                (
+                    "createServer".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::HttpServer)),
+                ),
+            ]));
+        }
     None
 }

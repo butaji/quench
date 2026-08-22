@@ -1,5 +1,6 @@
 fn require_early_module(name: &str) -> Result<Option<Value>, VmError> {
     let value = match name {
+        "console" | "node:console" => quench_node::modules::console::build_value(),
         "path/win32" | "node:path/win32" => {
             let path = require_module(&[Value::String("path".into())])?;
             return quench_runtime::execute::get_property_result(&path, "win32").map(Some);
