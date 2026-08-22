@@ -98,12 +98,13 @@
 
   function flowReadable(stream) {
     const st = stream._readableState;
+    if (st.buffer.length > 0 && stream.listenerCount("readable") > 0) {
+      stream._emitter.emit("readable");
+    }
     if (st.flowing) {
       while (st.flowing && st.buffer.length > 0) {
         stream._emitter.emit("data", st.buffer.shift());
       }
-    } else if (st.buffer.length > 0 && stream.listenerCount("readable") > 0) {
-      stream._emitter.emit("readable");
     }
     if (st.flowing && st.buffer.length === 0 && !st.ended && !st.reading) {
       st.reading = true;

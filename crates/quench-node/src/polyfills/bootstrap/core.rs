@@ -476,16 +476,13 @@ const __quenchChildProcessModule = () => {
   globalThis.__nodeCompileCacheRuns ||= 0;
   const spawnSync = (command, args = [], options = {}) => {
     command = String(command || "");
-    const convertOutput = (value) =>
-      options.encoding === "buffer"
-        ? value
-        : options.encoding
-          ? value.toString(
-              options.encoding === true ? "utf8" : options.encoding
-            )
-          : value;
     const result = (stdout = "", stderr = "", status = 0) => {
-      const output = (value) => convertOutput(NodeBuffer.from(value));
+      const output = (value) =>
+        options.encoding === "buffer"
+          ? NodeBuffer.from(value)
+          : options.encoding
+            ? value
+            : NodeBuffer.from(value);
       return {
         pid: 0,
         status,
