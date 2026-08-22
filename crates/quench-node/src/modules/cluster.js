@@ -3,12 +3,14 @@ var workers = {};
 var nextId = 1;
 function workerHandle(id) {
   var listeners = {};
+  var connected = true;
+  var dead = false;
   var worker = {
     id: id,
     process: null,
     exitedAfterDisconnect: false,
-    isDead: function () { return false; },
-    isConnected: function () { return false; },
+    isDead: function () { return dead; },
+    isConnected: function () { return connected && !dead; },
     on: function (name, fn) {
       if (!listeners[name]) listeners[name] = [];
       listeners[name].push(fn);
@@ -21,14 +23,22 @@ function workerHandle(id) {
       return list.length > 0;
     },
     disconnect: function (cb) {
+      if (!connected && dead) {
+        if (cb) cb();
+        return worker;
+      }
       worker.exitedAfterDisconnect = true;
+      connected = false;
       worker.emit('disconnect');
       if (cb) cb();
       return worker;
     },
     kill: function (signal, cb) {
       if (typeof signal === 'function') { cb = signal; signal = undefined; }
+      connected = false;
+      dead = true;
       worker.emit('exit', 0, signal || 'SIGTERM');
+      delete workers[id];
       if (cb) cb();
       return worker;
     }
