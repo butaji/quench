@@ -13,7 +13,7 @@ let __quenchNetAutoSelectFamilyAttemptTimeout = __quenchNetFamilyTimeoutFlag
   )
   : 2500;
 const __quenchNetModule = {
-  _normalizeArgs(input) {
+  _normalizeArgs: function(input) {
     if (input?.[__quenchNetNormalizedArgsSymbol]) return input;
     const args = [input?.[0] || {}, input?.[1] ?? null];
     args[__quenchNetNormalizedArgsSymbol] = true;
@@ -86,6 +86,7 @@ const __quenchNetModule = {
               server.address().address === entry.address &&
               server.address().port === Number(options.port)
             ))
+            : addresses[0];
           if (!selected) {
             const noAddress = new AggregateError(
               addresses.map((entry) => {

@@ -22,24 +22,27 @@ fn bytes_of(value: &Value) -> Result<Vec<u8>, VmError> {
         }
         Value::DataView(view) => {
             if *view.buffer.detached.borrow() {
-                return Err(execute::type_error("zlib: input DataView buffer is detached"));
+                return Err(execute::type_error(
+                    "zlib: input DataView buffer is detached",
+                ));
             }
-            view.buffer.bytes.borrow()
-                [view.byte_offset..view.byte_offset + view.byte_length]
+            view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.byte_length]
                 .to_vec()
         }
         Value::Uint8Array(view) => {
             if *view.buffer.detached.borrow() {
-                return Err(execute::type_error("zlib: input Uint8Array buffer is detached"));
+                return Err(execute::type_error(
+                    "zlib: input Uint8Array buffer is detached",
+                ));
             }
-            view.buffer.bytes.borrow()
-                [view.byte_offset..view.byte_offset + view.length]
-                .to_vec()
+            view.buffer.bytes.borrow()[view.byte_offset..view.byte_offset + view.length].to_vec()
         }
-        other => return Err(execute::type_error(&format!(
-            "zlib: expected Buffer or string, got {}",
-            crate::modules::util::invalid_arg_received(other)
-        ))),
+        other => {
+            return Err(execute::type_error(&format!(
+                "zlib: expected Buffer or string, got {}",
+                crate::modules::util::invalid_arg_received(other)
+            )))
+        }
     };
     Ok(bytes)
 }
@@ -106,7 +109,6 @@ fn raw_inflate(data: &[u8], _: flate2::Compression) -> Result<Vec<u8>, std::io::
     Ok(out)
 }
 
-
 pub fn gzip(
     state: &Rc<RefCell<HostState>>,
     _r: Option<&Value>,
@@ -164,18 +166,54 @@ pub fn inflate(
 /// The `zlib` module namespace.
 pub fn build() -> Value {
     crate::host::namespace_object(vec![
-        ("gzipSync", crate::host::capability(crate::registry::SPEC_ZLIB_GZIP)),
-        ("gunzipSync", crate::host::capability(crate::registry::SPEC_ZLIB_GUNZIP)),
-        ("deflateRawSync", crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE_RAW)),
-        ("inflateRawSync", crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE_RAW)),
-        ("deflateSync", crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE)),
-        ("inflateSync", crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE)),
-        ("gzip", crate::host::capability(crate::registry::SPEC_ZLIB_GZIP)),
-        ("gunzip", crate::host::capability(crate::registry::SPEC_ZLIB_GUNZIP)),
-        ("deflateRaw", crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE_RAW)),
-        ("inflateRaw", crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE_RAW)),
-        ("deflate", crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE)),
-        ("inflate", crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE)),
+        (
+            "gzipSync",
+            crate::host::capability(crate::registry::SPEC_ZLIB_GZIP),
+        ),
+        (
+            "gunzipSync",
+            crate::host::capability(crate::registry::SPEC_ZLIB_GUNZIP),
+        ),
+        (
+            "deflateRawSync",
+            crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE_RAW),
+        ),
+        (
+            "inflateRawSync",
+            crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE_RAW),
+        ),
+        (
+            "deflateSync",
+            crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE),
+        ),
+        (
+            "inflateSync",
+            crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE),
+        ),
+        (
+            "gzip",
+            crate::host::capability(crate::registry::SPEC_ZLIB_GZIP),
+        ),
+        (
+            "gunzip",
+            crate::host::capability(crate::registry::SPEC_ZLIB_GUNZIP),
+        ),
+        (
+            "deflateRaw",
+            crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE_RAW),
+        ),
+        (
+            "inflateRaw",
+            crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE_RAW),
+        ),
+        (
+            "deflate",
+            crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE),
+        ),
+        (
+            "inflate",
+            crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE),
+        ),
     ])
     .unwrap_or_else(|_| Value::Undefined)
 }

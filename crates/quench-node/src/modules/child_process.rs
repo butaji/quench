@@ -270,7 +270,10 @@ fn exec_output(cmd: &mut std::process::Command) -> (Value, String, String) {
 fn exec_failed_error(code: i32) -> Value {
     host_api::object(vec![
         ("name".to_string(), Value::String("Error".to_string())),
-        ("message".to_string(), Value::String("command failed".to_string())),
+        (
+            "message".to_string(),
+            Value::String("command failed".to_string()),
+        ),
         ("code".to_string(), Value::Number(code as f64)),
         ("cmd".to_string(), Value::String("".to_string())),
     ])

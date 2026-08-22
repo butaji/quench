@@ -151,7 +151,11 @@ pub fn assert_(
     state: &Rc<RefCell<HostState>>,
     args: &[Value],
 ) -> Result<Value, quench_runtime::execute::VmError> {
-    if args.first().map(quench_runtime::execute::is_truthy).unwrap_or(false) {
+    if args
+        .first()
+        .map(quench_runtime::execute::is_truthy)
+        .unwrap_or(false)
+    {
         return Ok(Value::Undefined);
     }
     let mut rendered = "Assertion failed".to_string();

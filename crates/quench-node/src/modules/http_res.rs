@@ -64,11 +64,7 @@ pub fn res_write_head(
         }
         drop(guard);
         if let Some(response) = receiver {
-            let _ = execute::set_property(
-                response.clone(),
-                "headersSent",
-                Value::Boolean(true),
-            );
+            let _ = execute::set_property(response.clone(), "headersSent", Value::Boolean(true));
         }
         return Ok(Value::Undefined);
     }
@@ -85,11 +81,7 @@ pub fn res_write_head(
     }
     drop(guard);
     if let Some(response) = receiver {
-        let _ = execute::set_property(
-            response.clone(),
-            "headersSent",
-            Value::Boolean(true),
-        );
+        let _ = execute::set_property(response.clone(), "headersSent", Value::Boolean(true));
     }
     Ok(Value::Undefined)
 }
@@ -164,11 +156,7 @@ pub fn res_end(
     crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
     finish_response(state, &socket, keep_alive)?;
     if let Some(response) = receiver {
-        let _ = execute::set_property(
-            response.clone(),
-            "headersSent",
-            Value::Boolean(true),
-        );
+        let _ = execute::set_property(response.clone(), "headersSent", Value::Boolean(true));
         let _ = execute::set_property(response.clone(), "finished", Value::Boolean(true));
         let _ = execute::set_property(response.clone(), "writable", Value::Boolean(false));
     }

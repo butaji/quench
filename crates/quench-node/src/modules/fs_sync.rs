@@ -244,8 +244,7 @@ pub fn fstat_sync(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let bigint = args.get(1).is_some_and(|options| {
-        quench_runtime::execute::get_property_result(options, "bigint")
-            == Ok(Value::Boolean(true))
+        quench_runtime::execute::get_property_result(options, "bigint") == Ok(Value::Boolean(true))
     });
     match args.first() {
         Some(Value::Number(n)) => super::fs::fd_stat(*n as i32, bigint),

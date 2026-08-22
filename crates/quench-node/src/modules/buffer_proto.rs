@@ -102,7 +102,10 @@ const PROTOTYPE_METHODS: &[(&str, NodeSpec)] = &[
     ("writeIntBE", r::SPEC_BUF_WRITE_INT_BE),
 ];
 const ITERATOR_METHODS: &[(&str, quench_runtime::ops::Builtin)] = &[
-    ("Symbol.iterator", quench_runtime::ops::Builtin::ArrayIterator),
+    (
+        "Symbol.iterator",
+        quench_runtime::ops::Builtin::ArrayIterator,
+    ),
     ("values", quench_runtime::ops::Builtin::ArrayIterator),
     ("keys", quench_runtime::ops::Builtin::ArrayKeys),
     ("entries", quench_runtime::ops::Builtin::ArrayEntries),
@@ -132,11 +135,8 @@ pub fn buffer_prototype() -> Value {
         let mut prototype = crate::host::namespace_object(methods)
             .unwrap_or_else(|_| quench_runtime::host_api::object(Vec::new()));
         for (name, builtin) in ITERATOR_METHODS {
-            prototype = quench_runtime::execute::set_property(
-                prototype,
-                name,
-                Value::Builtin(*builtin),
-            );
+            prototype =
+                quench_runtime::execute::set_property(prototype, name, Value::Builtin(*builtin));
         }
         let _ = quench_runtime::execute::set_prototype_of(
             &prototype,

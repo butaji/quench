@@ -233,7 +233,6 @@ fn read_ifaddrs() -> Vec<(String, Vec<InterfaceAddress>)> {
     Vec::new()
 }
 
-
 pub fn build() -> Vec<(String, Value)> {
     let mut out = Vec::new();
     os_static_props(&mut out);
@@ -277,7 +276,6 @@ fn constants() -> Value {
         ),
     ])
 }
-
 
 fn os_capability_props(out: &mut Vec<(String, Value)>) {
     os_identity_caps(out);

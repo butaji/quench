@@ -318,9 +318,11 @@ pub(crate) fn path_arg(value: Option<&Value>) -> Result<String, VmError> {
         Value::Uint8Array(view) => {
             let bytes = view.buffer.bytes.borrow();
             String::from_utf8(bytes[view.byte_offset..view.byte_offset + view.length].to_vec())
-                .map_err(|_| crate::modules::buffer_enc::invalid_arg_type(
-                    "The \"path\" argument must be a string, Buffer, or URL".into(),
-                ))
+                .map_err(|_| {
+                    crate::modules::buffer_enc::invalid_arg_type(
+                        "The \"path\" argument must be a string, Buffer, or URL".into(),
+                    )
+                })
         }
         Value::Object(_) => {
             let href = quench_runtime::execute::get_property_result(value, "href")
@@ -329,9 +331,11 @@ pub(crate) fn path_arg(value: Option<&Value>) -> Result<String, VmError> {
                     Value::String(href) => Some(href),
                     _ => None,
                 })
-                .ok_or_else(|| crate::modules::buffer_enc::invalid_arg_type(
-                    "The \"path\" argument must be a string, Buffer, or URL".into(),
-                ))?;
+                .ok_or_else(|| {
+                    crate::modules::buffer_enc::invalid_arg_type(
+                        "The \"path\" argument must be a string, Buffer, or URL".into(),
+                    )
+                })?;
             if !href.starts_with("file://") {
                 return Err(crate::modules::buffer_enc::invalid_arg_value(
                     "The \"path\" argument must be a file URL".into(),

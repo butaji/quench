@@ -418,12 +418,7 @@ pub fn sha224_digest(data: &[u8]) -> [u8; 28] {
     out
 }
 
-fn hmac_with<F, const N: usize>(
-    key: &[u8],
-    data: &[u8],
-    digest: F,
-    block_size: usize,
-) -> [u8; N]
+fn hmac_with<F, const N: usize>(key: &[u8], data: &[u8], digest: F, block_size: usize) -> [u8; N]
 where
     F: Fn(&[u8]) -> [u8; N],
 {
