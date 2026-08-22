@@ -36,7 +36,9 @@ pub struct HostState {
     pub emitters: crate::modules::emitter::EmitterRegistry,
     pub targets: crate::modules::event_target::TargetRegistry,
     pub output: Option<OutputSink>,
+    pub console_counts: std::collections::HashMap<String, u64>,
     pub realm: RealmId,
+    /// Console counters keyed by label.
     /// Directory stack for the CJS loader: top is the requiring module's dir.
     pub dir_stack: Vec<String>,
     /// CJS module cache keyed by canonical file path.
@@ -99,6 +101,7 @@ impl NodeHost {
             emitters: crate::modules::emitter::EmitterRegistry::new(),
             targets: crate::modules::event_target::TargetRegistry::new(),
             output: None,
+            console_counts: std::collections::HashMap::new(),
             realm,
             dir_stack: Vec::new(),
             module_cache: std::collections::HashMap::new(),

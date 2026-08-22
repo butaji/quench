@@ -1,13 +1,43 @@
+fn query_decode(input: &str) -> String {
+    let mut bytes = Vec::with_capacity(input.len());
+    let raw = input.as_bytes();
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] == b'+' {
+            bytes.push(b' ');
+            index += 1;
+        } else if raw[index] == b'%' && index + 2 < raw.len() {
+            let hex = |byte: u8| match byte {
+                b'0'..=b'9' => Some(byte - b'0'),
+                b'a'..=b'f' => Some(byte - b'a' + 10),
+                b'A'..=b'F' => Some(byte - b'A' + 10),
+                _ => None,
+            };
+            if let (Some(high), Some(low)) = (hex(raw[index + 1]), hex(raw[index + 2])) {
+                bytes.push(high * 16 + low);
+                index += 3;
+            } else {
+                bytes.push(raw[index]);
+                index += 1;
+            }
+        } else {
+            bytes.push(raw[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 fn query_pairs(input: &str) -> Vec<(String, String)> {
     input
         .split('&')
         .filter(|pair| !pair.is_empty())
         .map(|pair| match pair.find('=') {
             Some(index) => (
-                pair[..index].to_string(),
-                pair[index + 1..].to_string(),
+                query_decode(&pair[..index]),
+                query_decode(&pair[index + 1..]),
             ),
-            None => (pair.to_string(), String::new()),
+            None => (query_decode(pair), String::new()),
         })
         .collect()
 }
