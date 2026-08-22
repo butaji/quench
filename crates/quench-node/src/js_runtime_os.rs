@@ -243,14 +243,16 @@ fn module_api() -> Value {
             "builtinModules".into(),
             quench_runtime::host_api::array(
                 [
-                    "assert", "assert/strict", "buffer", "child_process", "cluster", "console",
-                    "constants", "crypto", "dgram", "dns", "dns/promises", "domain", "events",
-                    "fs", "fs/promises", "http", "http2", "https", "module", "net", "os",
-                    "path", "path/posix", "path/win32", "perf_hooks", "process", "punycode",
-                    "querystring", "readline", "stream", "stream/consumers", "stream/promises",
-                    "stream/web", "string_decoder", "timers", "timers/promises", "tls",
-                    "trace_events", "tty", "url", "util", "util/types", "v8", "vm",
-                    "worker_threads", "zlib", "test",
+                    "assert", "assert/strict", "async_hooks", "buffer", "child_process", "cluster",
+                    "console", "constants", "crypto", "dgram", "diagnostics_channel", "dns",
+                    "dns/promises", "domain", "events", "fs", "fs/promises", "http", "http2",
+                    "https", "inspector", "inspector/promises", "module", "net", "os", "path",
+                    "path/posix", "path/win32", "perf_hooks", "process", "punycode", "querystring",
+                    "readline", "readline/promises", "repl", "sea", "sqlite", "stream",
+                    "stream/consumers", "stream/promises", "stream/web", "string_decoder", "sys",
+                    "test", "test/reporters", "timers", "timers/promises", "tls", "trace_events",
+                    "tty", "url", "util", "util/types", "v8", "vm", "wasi", "worker_threads",
+                    "zlib",
                 ]
                 .iter()
                 .map(|name| Value::String((*name).into()))
@@ -283,22 +285,27 @@ fn module_api() -> Value {
 }
 
 fn module_is_builtin(arguments: &[Value]) -> Result<Value, VmError> {
-    let Some(Value::String(name)) = arguments.first() else {
+    let Some(Value::String(raw_name)) = arguments.first() else {
         return Ok(Value::Boolean(false));
     };
-    let name = name.strip_prefix("node:").unwrap_or(name);
+    let is_node_prefixed = raw_name.starts_with("node:");
+    let name = raw_name.strip_prefix("node:").unwrap_or(raw_name);
+    if name == "test" && !is_node_prefixed {
+        return Ok(Value::Boolean(false));
+    }
     Ok(Value::Boolean(matches!(
         name,
         "assert" | "assert/strict" | "async_hooks" | "buffer" | "child_process"
             | "cluster" | "console" | "constants" | "crypto" | "dgram"
             | "diagnostics_channel" | "dns" | "dns/promises" | "domain" | "events"
-            | "fs" | "fs/promises" | "http" | "http2" | "https" | "module" | "net"
-            | "os" | "path" | "path/posix" | "path/win32" | "perf_hooks" | "process"
-            | "punycode" | "querystring" | "readline" | "repl" | "stream"
+            | "fs" | "fs/promises" | "http" | "http2" | "https" | "inspector"
+            | "inspector/promises" | "module" | "net" | "os" | "path" | "path/posix"
+            | "path/win32" | "perf_hooks" | "process" | "punycode" | "querystring"
+            | "readline" | "readline/promises" | "repl" | "sea" | "sqlite" | "stream"
             | "stream/consumers" | "stream/promises" | "stream/web" | "string_decoder"
-            | "sys" | "timers" | "timers/promises" | "tls" | "trace_events" | "tty"
-            | "url" | "util" | "util/types" | "v8" | "vm" | "wasi" | "worker_threads"
-            | "zlib"
+            | "sys" | "test" | "test/reporters" | "timers" | "timers/promises"
+            | "tls" | "trace_events" | "tty" | "url" | "util" | "util/types" | "v8"
+            | "vm" | "wasi" | "worker_threads" | "zlib"
     )))
 }
 
