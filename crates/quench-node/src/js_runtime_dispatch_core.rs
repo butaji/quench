@@ -176,6 +176,19 @@ impl QuenchNodeHost {
                 format!("{}\n", std::env::args().next().unwrap_or_default()).into(),
             )),
             HostCapabilityKind::Custom(CapabilityName::ChildFork) => child_fork(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ChildForkOnce) => {
+                let receiver = receiver.ok_or(VmError::NotCallable)?;
+                if matches!(arguments.first(), Some(Value::String(event)) if event == "exit") {
+                    if let Some(callback) = arguments.get(1) {
+                        quench_runtime::execute::call(
+                            callback,
+                            &Value::Undefined,
+                            &[Value::Number(0.0), Value::Undefined],
+                        )?;
+                    }
+                }
+                Ok(receiver.clone())
+            }
             HostCapabilityKind::Custom(CapabilityName::ChildEmit) => Ok(Value::Undefined),
             HostCapabilityKind::Custom(CapabilityName::ChildSend) => Err(VmError::EvalError(
                 "message argument must be specified".into(),

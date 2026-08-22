@@ -395,6 +395,7 @@ impl CapabilityName {
     const ChildStdoutToString: u16 = 2197;
     const ReplServer: u16 = 2202;
     const ChildFork: u16 = 1601;
+    const ChildForkOnce: u16 = 1604;
     const ChildEmit: u16 = 1602;
     const ChildSend: u16 = 1603;
     const CommonMustCall: u16 = 1700;
