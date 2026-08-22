@@ -141,6 +141,9 @@ globalThis.console.assert = (condition, ...args) => {
 };
 const consoleTimers = {};
 const consoleCounts = {};
+const __nodeConsoleWarning = (message) => {
+  globalThis.process?.emitWarning?.(message, { name: "Warning" });
+};
 globalThis.console.count = (label = "default") => {
   if (typeof label === "symbol") {
     const e = new TypeError("Count label must be a string");
@@ -151,14 +154,25 @@ globalThis.console.count = (label = "default") => {
   __nodeConsoleWrite(`${label}: ${consoleCounts[label]}`);
 };
 globalThis.console.countReset = (label = "default") => {
-  consoleCounts[label] = 0;
+  if (consoleCounts[label] === undefined) {
+    __nodeConsoleWarning(`Count for '${label}' does not exist`);
+    return;
+  }
+  delete consoleCounts[label];
 };
 globalThis.console.clear = () => undefined;
 globalThis.console.time = (label = "default") => {
+  if (consoleTimers[label] !== undefined) {
+    __nodeConsoleWarning(`Label '${label}' already exists for console.time()`);
+    return;
+  }
   consoleTimers[label] = BigInt(globalThis.__quench_now_ns());
 };
 globalThis.console.timeLog = (label = "default", ...args) => {
-  if (consoleTimers[label] === undefined) return;
+  if (consoleTimers[label] === undefined) {
+    __nodeConsoleWarning(`No such label '${label}' for console.timeLog()`);
+    return;
+  }
   __nodeConsoleWrite(
     `${label}: ${
       Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6
@@ -166,7 +180,10 @@ globalThis.console.timeLog = (label = "default", ...args) => {
   );
 };
 globalThis.console.timeEnd = (label = "default") => {
-  if (consoleTimers[label] === undefined) return;
+  if (consoleTimers[label] === undefined) {
+    __nodeConsoleWarning(`No such label '${label}' for console.timeEnd()`);
+    return;
+  }
   __nodeConsoleWrite(
     `${label}: ${
       Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6
