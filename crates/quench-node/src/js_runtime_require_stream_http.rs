@@ -1,19 +1,47 @@
 fn require_stream_http_modules(name: &str) -> Option<Value> {
         if name == "readline/promises" || name == "node:readline/promises" {
             let source = r#"(function() {
+                function inputLines(input) {
+                    if (Array.isArray(input)) return input.map(String);
+                    if (typeof input === "string") return input.split("\n").map(function(line) {
+                        return line.endsWith("\r") ? line.slice(0, -1) : line;
+                    });
+                    return [];
+                }
                 function Interface(options) {
                     options = options || {};
                     this.input = options.input;
                     this.output = options.output;
                     this._closed = false;
+                    this._readlineLines = inputLines(this.input);
+                    this._readlineIndex = 0;
                 }
                 Interface.prototype.question = function(prompt) {
                     if (this._closed) return Promise.reject(new Error("Interface is closed"));
                     if (this.output && this.output.write) this.output.write(prompt);
+                    var self = this;
                     return new Promise(function(resolve) {
-                        if (this.input && this.input.once) this.input.once("line", resolve);
-                        else resolve("");
-                    }.bind(this));
+                        if (self.input && self.input.once) self.input.once("line", resolve);
+                        else resolve(self._readlineLines[self._readlineIndex++] || "");
+                    });
+                };
+                Interface.prototype[Symbol.asyncIterator] = function() {
+                    var self = this;
+                    return {
+                        next: function() {
+                            if (!self._closed && self._readlineIndex < self._readlineLines.length) {
+                                return Promise.resolve({
+                                    value: self._readlineLines[self._readlineIndex++],
+                                    done: false
+                                });
+                            }
+                            return Promise.resolve({ value: undefined, done: true });
+                        },
+                        return: function() {
+                            self.close();
+                            return Promise.resolve({ value: undefined, done: true });
+                        }
+                    };
                 };
                 Interface.prototype.close = function() {
                     this._closed = true;
