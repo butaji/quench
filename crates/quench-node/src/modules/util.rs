@@ -35,12 +35,15 @@ fn build_factory(args: &[Value]) -> Value {
       promisify.custom=Symbol('custom'); promisify[Symbol.for('nodejs.util.promisify.custom')]=promisify.custom;
       function callbackify(fn){return function(){var a=[].slice.call(arguments), cb=a.pop(), self=this;
         Promise.resolve(fn.apply(self,a)).then(function(v){cb(null,v)},function(e){cb(e);});};}
-      var types={isArrayBuffer:function(v){return v instanceof ArrayBuffer},isTypedArray:function(v){return typeof ArrayBuffer!=='undefined'&&ArrayBuffer.isView(v)&&!(v instanceof DataView)},
-        isUint8Array:function(v){return v instanceof Uint8Array},isDate:function(v){return v instanceof Date},isRegExp:function(v){return v instanceof RegExp},
+      var types={isArrayBuffer:function(v){return v instanceof ArrayBuffer},isAnyArrayBuffer:function(v){return v instanceof ArrayBuffer},isDataView:function(v){return typeof DataView!=='undefined'&&v instanceof DataView},isTypedArray:function(v){return typeof ArrayBuffer!=='undefined'&&ArrayBuffer.isView(v)&&!(v instanceof DataView)},
+        isUint8Array:function(v){return v instanceof Uint8Array},isUint8ClampedArray:function(v){return typeof Uint8ClampedArray!=='undefined'&&v instanceof Uint8ClampedArray},isUint16Array:function(v){return typeof Uint16Array!=='undefined'&&v instanceof Uint16Array},isUint32Array:function(v){return typeof Uint32Array!=='undefined'&&v instanceof Uint32Array},
+        isInt8Array:function(v){return typeof Int8Array!=='undefined'&&v instanceof Int8Array},isInt16Array:function(v){return typeof Int16Array!=='undefined'&&v instanceof Int16Array},isInt32Array:function(v){return typeof Int32Array!=='undefined'&&v instanceof Int32Array},isFloat32Array:function(v){return typeof Float32Array!=='undefined'&&v instanceof Float32Array},isFloat64Array:function(v){return typeof Float64Array!=='undefined'&&v instanceof Float64Array},isBigInt64Array:function(v){return typeof BigInt64Array!=='undefined'&&v instanceof BigInt64Array},isBigUint64Array:function(v){return typeof BigUint64Array!=='undefined'&&v instanceof BigUint64Array},
+        isDate:function(v){return v instanceof Date},isRegExp:function(v){return v instanceof RegExp},
         isMap:function(v){return v instanceof Map},isSet:function(v){return v instanceof Set},isString:function(v){return typeof v==='string'||v instanceof String},
         isNumber:function(v){return typeof v==='number'||v instanceof Number},isBoolean:function(v){return typeof v==='boolean'||v instanceof Boolean},
-        isBuffer:function(v){return typeof Buffer!=='undefined'&&Buffer.isBuffer(v)},isPromise:function(v){return v instanceof Promise},
-        isSymbol:function(v){return typeof v==='symbol'}};
+        isBigInt:function(v){return typeof v==='bigint'||v instanceof Object&&Object.prototype.toString.call(v)==='[object BigInt]'},isSymbol:function(v){return typeof v==='symbol'||v instanceof Symbol},isFunction:function(v){return typeof v==='function'},isError:function(v){return v instanceof Error},isArgumentsObject:function(v){return Object.prototype.toString.call(v)==='[object Arguments]'},isPrimitive:function(v){return v===null||(typeof v!=='object'&&typeof v!=='function')},
+        isNull:function(v){return v===null},isUndefined:function(v){return v===undefined},
+        isBuffer:function(v){return typeof Buffer!=='undefined'&&Buffer.isBuffer(v)},isPromise:function(v){return v instanceof Promise}};
       function deprecate(fn){return function(){return fn.apply(this,arguments)}} function debuglog(){return function(){}}
       function parseArgs(config){
         config=config||{}; var input=config.args||((typeof process!=='undefined'&&process.argv)||[]).slice(2);

@@ -13,6 +13,17 @@ var workerData = workerEnv ? JSON.parse(workerArgData || (proc.env && proc.env.Q
 function emitter(target) {
   var listeners = {};
   var pending = target._queueEvents ? [] : null;
+  target._takePending = function (name) {
+    if (!pending) return undefined;
+    for (var p = 0; p < pending.length; p++) {
+      if (pending[p][0] === name) {
+        var item = pending[p][1];
+        pending.splice(p, 1);
+        return item;
+      }
+    }
+    return undefined;
+  };
   target.on = function (name, fn) {
     (listeners[name] || (listeners[name] = [])).push(fn);
     if (pending) {
@@ -52,6 +63,7 @@ function messagePort() {
   port.start = function () { return this; };
   return port;
 }
+var environmentData = {};
 function MessageChannel() {
   this.port1 = messagePort();
   this.port2 = messagePort();
@@ -92,8 +104,15 @@ var api = {
       self.ref = self.unref = function () { return self; };
       return self;
     },
-  receiveMessageOnPort: function () { return undefined; },
+  receiveMessageOnPort: function (port) {
+    if (!port || typeof port._takePending !== 'function') return undefined;
+    var args = port._takePending('message');
+    return args ? { message: args[0] } : undefined;
+  },
   markAsUncloneable: function () {}, markAsUntransferable: function () {},
-  setEnvironmentData: function () {}, getEnvironmentData: function () { return undefined; }
+  setEnvironmentData: function (key, value) { environmentData[String(key)] = value; },
+  getEnvironmentData: function (key) {
+    return Object.prototype.hasOwnProperty.call(environmentData, String(key)) ? environmentData[String(key)] : undefined;
+  }
 };
 module.exports = api;
