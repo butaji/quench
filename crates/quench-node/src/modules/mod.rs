@@ -5,6 +5,7 @@ pub mod express;
 pub mod express_request;
 pub mod fastify;
 pub mod koa;
+pub mod hono;
 
 pub mod assert;
 pub mod async_hooks;
