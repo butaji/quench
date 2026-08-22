@@ -332,6 +332,8 @@ impl CapabilityName {
     const TtyReadStream: u16 = 0x2001;
     const TtyWriteStream: u16 = 0x2002;
     const HttpServer: u16 = 11;
+    const ConsoleCreateTask: u16 = 2351;
+    const ConsoleTaskRun: u16 = 2352;
     const HttpGet: u16 = 12;
     const HttpRequestOn: u16 = 401;
     const HttpRequestEnd: u16 = 402;

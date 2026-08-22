@@ -20,8 +20,27 @@ impl QuenchNodeHost {
                     require_module(arguments)
                 }
             }
-            HostCapabilityKind::Custom(CapabilityName::TtyIsatty) => {
-                Ok(Value::Boolean(false))
+            HostCapabilityKind::Custom(CapabilityName::ConsoleCreateTask) => {
+                Ok(Value::object(vec![
+                    (
+                        "name".into(),
+                        arguments.first().cloned().unwrap_or(Value::Undefined),
+                    ),
+                    (
+                        "run".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::ConsoleTaskRun,
+                        )),
+                    ),
+                ]))
+            }
+            HostCapabilityKind::Custom(CapabilityName::ConsoleTaskRun) => {
+                let callback = arguments.first().cloned().ok_or(VmError::NotCallable)?;
+                quench_runtime::execute::call(
+                    &callback,
+                    &Value::Undefined,
+                    &arguments[1..],
+                )
             }
             HostCapabilityKind::Custom(
                 CapabilityName::TtyReadStream | CapabilityName::TtyWriteStream,
