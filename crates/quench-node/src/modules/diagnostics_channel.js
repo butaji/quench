@@ -207,12 +207,43 @@ BoundedChannel.prototype.unsubscribe = function (handlers) {
   if (handlers && handlers.end && !this.end.unsubscribe(handlers.end)) ok = false;
   return ok;
 };
+// Run `fn(thisArg, ...args)` inside a start/end publish window. The
+// context object is published as the message on start and end; a
+// thrown error still publishes end before propagating. Store binding
+// via bindStore is not materialized (async_hooks AsyncLocalStorage is
+// a stub), so the no-subscriber fast path and window semantics hold
+// without store enrichment.
+BoundedChannel.prototype.run = function (context, fn, thisArg) {
+  var args = Array.prototype.slice.call(arguments, 3);
+  if (!this.hasSubscribers) return fn.apply(thisArg, args);
+  if (this.start) this.start.publish(context);
+  try {
+    var result = fn.apply(thisArg, args);
+    if (this.end) this.end.publish(context);
+    return result;
+  } catch (error) {
+    if (this.end) this.end.publish(context);
+    throw error;
+  }
+};
+BoundedChannel.prototype.withScope = function (context) {
+  var self = this;
+  return {
+    [Symbol.for('nodejs.dispose')]: function () {
+      if (self.end) self.end.publish(context);
+    },
+    enter: function () {
+      if (self.start) self.start.publish(context);
+    }
+  };
+};
 function boundedChannel(nameOrChannels) {
   return new BoundedChannel(nameOrChannels);
 }
 
 module.exports = {
   Channel: Channel,
+  BoundedChannel: BoundedChannel,
   channel: channel,
   subscribe: function (name, fn) { return channel(name).subscribe(fn); },
   unsubscribe: function (name, fn) { return channel(name).unsubscribe(fn); },
