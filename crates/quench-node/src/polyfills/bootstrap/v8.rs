@@ -14,6 +14,15 @@ const __quenchV8 = {
     peak_malloced_memory: 0,
     does_zap_garbage: 0,
   }),
+  getHeapSpaceStatistics: () => [
+    {
+      space_name: "read_only_space",
+      space_size: 0,
+      space_used_size: 0,
+      space_available_size: 0,
+      physical_space_size: 0,
+    },
+  ],
   getHeapCodeStatistics: () => ({
     code_and_metadata_size: 0,
     bytecode_and_metadata_size: 0,

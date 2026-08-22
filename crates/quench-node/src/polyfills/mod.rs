@@ -114,10 +114,14 @@ impl Registry {
     }
 
     /// Post-bootstrap abilities in eval order, as `(name, js)` pairs.
-    pub fn post_bootstrap_fragments(&self) -> Vec<(&'static str, &'static str)> {
+    ///
+    /// Keep this as an iterator so contexts that do not reach post-bootstrap
+    /// setup do not pay for a temporary vector allocation.
+    pub fn post_bootstrap_fragments(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
         self.phase(Phase::PostBootstrap)
             .map(|ability| (ability.name, ability.js))
-            .collect()
     }
 }
 
