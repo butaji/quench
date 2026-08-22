@@ -239,24 +239,49 @@ pub fn random_int(
     _: &Rc<RefCell<HostState>>,
     a: &[Value],
 ) -> Result<Value, quench_runtime::execute::VmError> {
-    let min = match a.first() {
-        Some(Value::Number(n)) => *n as i64,
-        _ => 0,
+    // Node accepts randomInt(max) and randomInt(min, max), with both bounds
+    // required to be safe integers and max exclusive.
+    let number = |value: &Value| match value {
+        Value::Number(n)
+            if n.is_finite()
+                && n.fract() == 0.0
+                && n.abs() <= 9_007_199_254_740_991.0 =>
+            Some(*n as i64),
+        _ => None,
     };
-    let max = match a.last() {
-        Some(Value::Number(n)) => *n as i64,
-        _ => return Err(execute::type_error("max must be a number")),
+    let (min, max) = match a {
+        [max] => (
+            0,
+            number(max).ok_or_else(|| execute::type_error("max must be a safe integer"))?,
+        ),
+        [min, max] => (
+            number(min).ok_or_else(|| execute::type_error("min must be a safe integer"))?,
+            number(max).ok_or_else(|| execute::type_error("max must be a safe integer"))?,
+        ),
+        _ => {
+            return Err(execute::type_error(
+                "randomInt requires one or two integer arguments",
+            ))
+        }
     };
     if max <= min {
-        return Err(execute::VmError::EvalError(
+        return Err(quench_runtime::execute::VmError::EvalError(
             "max must be greater than min".into(),
         ));
     }
-    let mut b = [0; 8];
-    random_into(&mut b)?;
-    Ok(Value::Number(
-        (min + (u64::from_ne_bytes(b) % (max - min) as u64) as i64) as f64,
-    ))
+    let range = (max - min) as u64;
+    // Rejection sampling avoids modulo bias for ranges that do not divide
+    // the 64-bit random space evenly.
+    let cutoff = u64::MAX - (u64::MAX % range);
+    let offset = loop {
+        let mut b = [0; 8];
+        random_into(&mut b)?;
+        let sample = u64::from_ne_bytes(b);
+        if sample < cutoff {
+            break sample % range;
+        }
+    };
+    Ok(Value::Number((min + offset as i64) as f64))
 }
 pub fn get_hashes(
     _: &Rc<RefCell<HostState>>,
