@@ -205,8 +205,12 @@ pub fn build() -> Vec<(String, Value)> {
 
 fn os_static_props(out: &mut Vec<(String, Value)>) {
     // Node exposes type/platform/arch/release/hostname as functions (see
-    // os_capability_props); only the constant `EOL` is a property.
+    // os_capability_props); constants are plain properties.
     out.push(("EOL".to_string(), Value::String(eol())));
+    out.push((
+        "devNull".to_string(),
+        Value::String(if cfg!(windows) { "NUL" } else { "/dev/null" }.into()),
+    ));
 }
 
 fn os_capability_props(out: &mut Vec<(String, Value)>) {

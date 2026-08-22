@@ -41,7 +41,15 @@ module.exports = {
       used_global_handles_size: 0
     };
   },
-  getHeapSpaceStatistics() { return []; },
+  getHeapSpaceStatistics() {
+    return [{
+      space_name: 'read_only_space',
+      space_size: 0,
+      space_used_size: 0,
+      space_available_size: 0,
+      physical_space_size: 0
+    }];
+  },
   getHeapCodeStatistics() {
     return { code_and_metadata_size: 0, bytecode_and_metadata_size: 0,
       external_script_source_size: 0, cpu_profiler_metadata_size: 0 };

@@ -113,6 +113,10 @@ test-fs-unlink-type-check.js
 test-fs-watch-recursive-validate.js
 test-fs-write-file-buffer.js
 test-http-header-obstext.js
+test-module-prototype-mutation.js
+test-module-readonly.js
+test-module-strip-types.js
+test-module-subpath-import-long-path.js
 test-net-autoselectfamily-ipv4first.js
 test-net-connect-after-destroy.js
 test-net-connect-immediate-destroy.js
