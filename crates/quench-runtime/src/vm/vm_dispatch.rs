@@ -5,7 +5,7 @@ fn run_op(
 ) -> Result<Option<crate::completion::Completion>, VmError> {
     if is_global_declaration_op(op) {
         crate::vm::begin_global_declaration_batch();
-    } else {
+    } else if crate::vm::is_global_declaration_batch_active() {
         crate::vm::flush_global_declaration_batch(registers);
     }
     if let Some(result) = run_simple_op(registers, op)? {

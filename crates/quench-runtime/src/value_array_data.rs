@@ -1,7 +1,28 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ArrayKind {
+    PackedInt,
+    PackedDouble,
+    PackedValue,
+    Holey,
+    Sparse,
+}
+impl ArrayKind {
+    #[inline]
+    pub fn is_packed(self) -> bool {
+        matches!(
+            self,
+            Self::PackedInt | Self::PackedDouble | Self::PackedValue
+        )
+    }
+}
+
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayData {
     values: Vec<Value>,
     length: usize,
+    kind: ArrayKind,
     properties: Vec<(String, Value)>,
     descriptors: Vec<(String, Value)>,
     arguments: bool,
@@ -28,8 +49,8 @@ pub struct ArgumentLive {
 impl ArrayData {
     pub fn new(values: Vec<Value>) -> Self {
         let length = values.len();
-        let live_values = values.clone();
         Self {
+            kind: classify_kind(&values),
             values,
             length,
             properties: Vec::new(),
@@ -39,13 +60,7 @@ impl ArrayData {
             mapped: Vec::new(),
             deleted: Vec::new(),
             prototype: std::cell::RefCell::new(None),
-            argument_live: Some(Rc::new(RefCell::new(ArgumentLive {
-                values: live_values,
-                length,
-                mapped: Vec::new(),
-                deleted: Vec::new(),
-                length_override: None,
-            }))),
+            argument_live: None,
         }
     }
 
@@ -62,6 +77,9 @@ impl ArrayData {
         })));
         data
     }
+    pub(crate) fn kind(&self) -> ArrayKind {
+        self.kind
+    }
 
     pub(crate) fn is_arguments(&self) -> bool {
         self.arguments
@@ -71,10 +89,25 @@ impl ArrayData {
         self.strict_arguments
     }
 
+    #[inline]
+    pub(crate) fn is_packed(&self) -> bool {
+        self.kind.is_packed()
+    }
+
     pub fn logical_len(&self) -> usize {
         self.argument_live
             .as_ref()
             .map_or(self.length, |live| live.borrow().length)
+    }
+
+    #[inline]
+    pub(crate) fn is_holey(&self) -> bool {
+        matches!(self.kind, ArrayKind::Holey)
+    }
+    /// Header-resident logical length; does not traverse element storage.
+    #[inline]
+    pub(crate) fn header_length(&self) -> usize {
+        self.logical_len()
     }
 
     /// Return the value of `arguments.length` if a plain-value override
@@ -105,8 +138,28 @@ impl ArrayData {
     pub(crate) fn physical_len(&self) -> usize {
         self.values.len()
     }
+    /// Capacity of the dense backing store, exposed for focused allocation
+    /// checks without exposing ownership of the storage itself.
+    #[cfg(test)]
+    pub(crate) fn storage_capacity(&self) -> usize {
+        self.values.capacity()
+    }
 
-    /// Borrow the live argument data without consuming `self`. The
+
+    #[inline]
+    pub(crate) fn is_sparse(&self) -> bool {
+        matches!(self.kind, ArrayKind::Sparse)
+    }
+    pub(crate) fn is_dense(&self) -> bool {
+        !matches!(self.kind, ArrayKind::Sparse)
+    }
+
+
+    #[inline]
+    pub(crate) fn is_numeric_packed(&self) -> bool {
+        matches!(self.kind, ArrayKind::PackedInt | ArrayKind::PackedDouble)
+    }
+    /// Borrow the live argument data without consuming `self`.
     /// `argument_live` field is shared between the original and any
     /// `Rc::make_mut` clones of this data, so overrides stored via
     /// `set_arguments_length_override` are visible to all references.
@@ -138,6 +191,7 @@ impl ArrayData {
             self.descriptors.retain(|(key, _)| keep_index(key, length));
         }
         self.length = length;
+        self.kind = classify_kind_with_holes(&self.values, &self.deleted, length);
     }
 
     pub fn set_index(&mut self, index: usize, value: Value) {
@@ -153,8 +207,7 @@ impl ArrayData {
             *binding.borrow_mut() = value.clone();
         }
         if self.values.len() <= index {
-            self.values
-                .resize(index.saturating_add(1), Value::Undefined);
+            self.grow_dense_storage(index.saturating_add(1));
         }
         self.values[index] = value;
         if self.deleted.len() <= index {
@@ -162,6 +215,20 @@ impl ArrayData {
         }
         self.deleted[index] = false;
         self.length = self.length.max(index.saturating_add(1));
+        self.kind = classify_kind_with_holes(&self.values, &self.deleted, self.length);
+    }
+
+    /// Grow dense storage geometrically so sequential appends do not
+    /// repeatedly reallocate, while preserving undefined holes.
+    fn grow_dense_storage(&mut self, required: usize) {
+        let current = self.values.len();
+        if required <= current {
+            return;
+        }
+        let doubled = current.saturating_mul(2).max(4);
+        let capacity = doubled.max(required);
+        self.values.reserve(capacity.saturating_sub(current));
+        self.values.resize(required, Value::Undefined);
     }
 
     fn set_sparse_index(&mut self, index: usize, value: Value) {
@@ -172,8 +239,8 @@ impl ArrayData {
             live.length = live.length.max(length);
         }
         self.length = self.length.max(length);
+        self.kind = ArrayKind::Sparse;
     }
-
     pub(crate) fn append_live(&self, values: &[Value]) {
         let Some(live) = &self.argument_live else {
             return;
@@ -201,10 +268,31 @@ impl ArrayData {
             .and_then(Option::as_ref)
             .map(|binding| binding.borrow().clone())
             .or_else(|| self.values.get(index).cloned())
+            .or_else(|| self.property(&index.to_string()))
+    }
+
+    #[inline]
+    pub(crate) fn dense_value_at(&self, index: usize) -> Option<&Value> {
+        (index < self.values.len() && self.deleted.get(index) != Some(&true))
+            .then(|| self.values.get(index))?
+    }
+
+
+    #[inline]
+    pub(crate) fn last_dense_value(&self) -> Option<&Value> {
+        self.values
+            .len()
+            .checked_sub(1)
+            .and_then(|index| self.dense_value_at(index))
+    }
+    pub(crate) fn dense_value_at_mut(&mut self, index: usize) -> Option<&mut Value> {
+        (index < self.values.len() && self.deleted.get(index) != Some(&true))
+            .then(|| self.values.get_mut(index))?
     }
 
     pub(crate) fn has_index(&self, index: usize) -> bool {
         if let Some(live) = &self.argument_live {
+
             let live = live.borrow();
             return (index < live.length
                 && live.deleted.get(index) != Some(&true)
@@ -216,6 +304,20 @@ impl ArrayData {
             && self.deleted.get(index) != Some(&true)
             && (index < self.values.len()
                 || self.mapped.get(index).and_then(Option::as_ref).is_some())
+    }
+    pub(crate) fn copy_dense_within(&mut self, src: usize, dst: usize, len: usize) -> bool {
+        let Some(src_end) = src.checked_add(len) else {
+            return false;
+        };
+        let Some(dst_end) = dst.checked_add(len) else {
+            return false;
+        };
+        if src_end > self.values.len() || dst_end > self.values.len() {
+            return false;
+        }
+        let moved = self.values[src..src_end].to_vec();
+        self.values[dst..dst_end].clone_from_slice(&moved);
+        true
     }
 
     pub(crate) fn next_index(&self, start: usize, length: usize) -> Option<usize> {
@@ -341,12 +443,35 @@ impl ArrayData {
             self.disconnect_index(index);
             self.deleted.resize(index.saturating_add(1), false);
             self.deleted[index] = true;
+            self.kind = ArrayKind::Holey;
             if let Some(live) = &self.argument_live {
                 let mut live = live.borrow_mut();
                 live.deleted.resize(index.saturating_add(1), false);
                 live.deleted[index] = true;
             }
         }
+    }
+}
+fn classify_kind(values: &[Value]) -> ArrayKind {
+    classify_kind_with_holes(values, &[], values.len())
+}
+
+fn classify_kind_with_holes(values: &[Value], deleted: &[bool], length: usize) -> ArrayKind {
+    if length > values.len().saturating_mul(2).max(32) {
+        return ArrayKind::Sparse;
+    }
+    if deleted.iter().any(|deleted| *deleted) || length > values.len() {
+        return ArrayKind::Holey;
+    }
+    if values
+        .iter()
+        .all(|value| matches!(value, Value::Number(number) if number.fract() == 0.0))
+    {
+        ArrayKind::PackedInt
+    } else if values.iter().all(|value| matches!(value, Value::Number(_))) {
+        ArrayKind::PackedDouble
+    } else {
+        ArrayKind::PackedValue
     }
 }
 
@@ -386,6 +511,54 @@ impl std::ops::Deref for ArrayData {
 
     fn deref(&self) -> &Self::Target {
         &self.values
+    }
+}
+
+#[cfg(test)]
+mod array_data_tests {
+    use super::{ArrayData, ArrayKind};
+    use crate::value::Value;
+
+    #[test]
+    fn classifies_numeric_and_holey_storage() {
+        let ints = ArrayData::new(vec![Value::Number(1.0), Value::Number(2.0)]);
+        assert_eq!(std::mem::size_of::<ArrayKind>(), 1);
+        assert_eq!(ints.kind(), ArrayKind::PackedInt);
+        assert!(ints.kind().is_packed());
+        let doubles = ArrayData::new(vec![Value::Number(1.5)]);
+        assert_eq!(doubles.kind(), ArrayKind::PackedDouble);
+        assert!(doubles.kind().is_packed());
+        let mut holey = ArrayData::new(vec![Value::Number(1.0), Value::Number(2.0)]);
+        holey.delete_property("0");
+        assert_eq!(holey.kind(), ArrayKind::Holey);
+        assert!(!holey.kind().is_packed());
+    }
+
+    #[test]
+    fn dense_growth_is_geometric_and_sparse_length_is_separate() {
+        let mut data = ArrayData::new(Vec::new());
+        let mut previous = data.storage_capacity();
+        for index in 0..64 {
+            data.set_index(index, Value::Number(index as f64));
+            let capacity = data.storage_capacity();
+            assert!(capacity >= data.physical_len());
+            if capacity != previous {
+                previous = capacity;
+            }
+        }
+        data.set_index(10_000, Value::Boolean(true));
+        assert!(data.is_sparse());
+        assert!(!data.is_dense());
+        assert_eq!(data.logical_len(), 10_001);
+        assert_eq!(data.get_index(10_000), Some(Value::Boolean(true)));
+    }
+
+    #[test]
+    fn ordinary_arrays_do_not_duplicate_argument_storage() {
+        let ordinary = ArrayData::new(vec![Value::Number(1.0)]);
+        assert!(ordinary.argument_live_view().is_none());
+        let arguments = ArrayData::new_arguments(vec![Value::Number(1.0)], false);
+        assert!(arguments.argument_live_view().is_some());
     }
 }
 

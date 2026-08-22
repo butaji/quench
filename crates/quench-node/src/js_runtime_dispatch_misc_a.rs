@@ -85,6 +85,13 @@ impl QuenchNodeHost {
                 process_cpu_usage(arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::ProcessHrtime) => process_hrtime(arguments),
+            HostCapabilityKind::Custom(CapabilityName::ProcessHrtimeBigint) => Ok(Value::BigInt(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+                    .to_string(),
+            )),
             HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo) => {
                 process_active_resources_info()
             }

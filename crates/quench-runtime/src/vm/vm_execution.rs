@@ -30,10 +30,10 @@ pub fn execute_in_place(ops: &[Op], registers: &mut Vec<Value>) -> Result<Value,
     execute_in_place_context(ops, registers, &context)
 }
 
-pub(crate) fn current_context_or_default() -> VmContext {
+pub(crate) fn current_context_or_default() -> Rc<VmContext> {
     CURRENT_CONTEXT
         .with(|current| current.borrow().clone())
-        .unwrap_or_default()
+        .unwrap_or_else(|| Rc::new(VmContext::default()))
 }
 
 pub(crate) fn execute_completion_in_place(
@@ -64,7 +64,7 @@ pub fn execute_with_context(ops: &[Op], context: &VmContext) -> Result<Value, Vm
 
 /// The context currently active on this thread, or a default one.
 /// Hosts use this to re-enter the VM from inside a capability call.
-pub fn current_context() -> VmContext {
+pub fn current_context() -> Rc<VmContext> {
     current_context_or_default()
 }
 
@@ -82,6 +82,7 @@ pub fn execute_with_registers_context(
     mut registers: Vec<Value>,
     context: &VmContext,
 ) -> Result<Value, VmError> {
+    prepare_register_stack(&mut registers);
     let environment = crate::environment::Environment::child(
         &crate::environment::Environment::new(),
         registers.clone(),
@@ -89,9 +90,20 @@ pub fn execute_with_registers_context(
     execute_in_environment(ops, &mut registers, context, environment)
 }
 
+/// Prepare the VM's contiguous register stack once at entry.
+///
+/// Register indices are u16, so the representable stack limit is fixed.  We
+/// reserve a small hot-path working set up front; subsequent writes use Vec's
+/// geometric growth without introducing a second frame representation.
+fn prepare_register_stack(registers: &mut Vec<Value>) {
+    const INITIAL_REGISTER_CAPACITY: usize = 32;
+    const MAX_REGISTER_COUNT: usize = u16::MAX as usize + 1;
+    debug_assert!(registers.len() <= MAX_REGISTER_COUNT);
+    if registers.capacity() < INITIAL_REGISTER_CAPACITY {
+        registers.reserve(INITIAL_REGISTER_CAPACITY - registers.capacity());
+    }
+}
 /// Execute a fragment inside the currently installed lexical environment.
-/// Loop tests and updates must mutate the surrounding loop bindings; creating
-/// a child environment would discard those writes when the fragment returns.
 pub fn execute_in_current_context(
     ops: &[Op],
     registers: &mut Vec<Value>,
@@ -108,6 +120,7 @@ pub fn execute_in_place_context(
     registers: &mut Vec<Value>,
     context: &VmContext,
 ) -> Result<Value, VmError> {
+    prepare_register_stack(registers);
     let parent = crate::locals::current();
     let environment =
         crate::environment::Environment::in_place_child(&parent, registers.clone());
@@ -122,6 +135,7 @@ fn execute_completion_in_place_context(
     if crate::locals::is_installed() {
         return run_ops_completion(ops, registers, context);
     }
+    prepare_register_stack(registers);
     let environment = crate::environment::Environment::child(
         &crate::environment::Environment::new(),
         registers.clone(),
@@ -154,14 +168,20 @@ pub(crate) fn execute_in_environment(
     context: &VmContext,
     environment: Rc<crate::environment::Environment>,
 ) -> Result<Value, VmError> {
-    completion_result(execute_frame_completion(
-        ops,
-        registers,
-        context,
-        environment,
-    )?)
+    let register_count = registers.len().min(usize::from(u16::MAX)) as u16;
+    let mut machine = crate::machine::Machine::with_register_count(
+        crate::machine::CodeId(0),
+        crate::machine::EnvironmentRef(0),
+        register_count,
+    );
+    machine.restore_registers(std::mem::take(registers));
+    let completion = machine.step(crate::completion::Completion::Normal, |values| {
+        let _ = values;
+        execute_frame_completion(ops, values, context, environment)
+    })?;
+    *registers = machine.take_registers();
+    completion_result(completion)
 }
-
 pub(crate) fn execute_frame_completion(
     ops: &[Op],
     registers: &mut Vec<Value>,
@@ -176,7 +196,7 @@ pub(crate) fn execute_frame_completion(
 pub(crate) fn execute_indirect_eval(ops: &[Op]) -> Result<Value, VmError> {
     let context = CURRENT_CONTEXT
         .with(|current| current.borrow().clone())
-        .unwrap_or_default();
+        .unwrap_or_else(|| Rc::new(VmContext::default()));
     if realm::context(context.realm()).is_some() {
         return execute_indirect_eval_in_realm(context.realm(), ops);
     }

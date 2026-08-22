@@ -124,6 +124,7 @@ const CAP_PROCESS_CWD: u16 = 0x0A02;
 const CAP_PROCESS_CHDIR: u16 = 0x0A03;
 const CAP_PROCESS_NEXT_TICK: u16 = 0x0A04;
 const CAP_PROCESS_HRTIME: u16 = 0x0A05;
+const CAP_PROCESS_HRTIME_BIGINT: u16 = 0x0A0B;
 const CAP_OS_PLATFORM: u16 = 0x0B00;
 const CAP_OS_ARCH: u16 = 0x0B01;
 const CAP_OS_HOSTNAME: u16 = 0x0B02;
@@ -379,8 +380,8 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_EXIT => process_exit,
         CAP_PROCESS_CWD => process_cwd,
         CAP_PROCESS_CHDIR => process_chdir,
-        CAP_PROCESS_NEXT_TICK => process_next_tick,
         CAP_PROCESS_HRTIME => process_hrtime,
+        CAP_PROCESS_HRTIME_BIGINT => process_hrtime_bigint,
         CAP_PROCESS_UMASK => process_umask,
         CAP_PROCESS_ON => process_on,
         CAP_PROCESS_ONCE => process_once,

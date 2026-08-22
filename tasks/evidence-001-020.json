@@ -1,0 +1,20 @@
+{
+  "scope": "001-020",
+  "status": "guarded",
+  "invariants": {
+    "stack_and_frames": "cargo test -p quench-runtime machine::tests (8 passed)",
+    "compact_ir_and_pools": "cargo test -p quench-runtime ir::tests (2 passed)"
+  },
+  "comparison": {
+    "status": "unavailable",
+    "reason": "No canonical fixture path or quench-node-test runner is declared in tasks/001-020; repository-level Node compatibility fixtures require host capabilities and are not deterministic in this audit environment.",
+    "required_command": "cargo run -p quench-node -- <fixture.js>",
+    "reference_command": "node <fixture.js>"
+  },
+  "efficiency": {
+    "status": "unavailable",
+    "reason": "No before-baseline measurement is retained for these tasks; recording a new absolute value would not satisfy before/after comparison.",
+    "schema": ["workload", "before_wall_ns", "after_wall_ns", "before_peak_rss_bytes", "after_peak_rss_bytes"]
+  },
+  "task_ids": ["001","002","003","004","005","006","007","008","009","010","011","012","013","014","015","016","017","018","019","020"]
+}

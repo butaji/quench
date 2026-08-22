@@ -399,6 +399,17 @@ pub fn process_hrtime(
 ) -> Result<Value, VmError> {
     crate::modules::process::hrtime(state, args)
 }
+pub fn process_hrtime_bigint(
+    _state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    _args: &[Value],
+) -> Result<Value, VmError> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    Ok(Value::BigInt(nanos.to_string()))
+}
 
 // ---- os ----
 pub fn os_platform(
