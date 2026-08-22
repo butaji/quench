@@ -206,6 +206,7 @@ fn require_crypto_module(name: &str) -> Option<Value> {
                         CapabilityName::CryptoTimingSafeEqual,
                     )),
                 ),
+                ("subtle".into(), Value::Undefined),
             ]));
     }
     None
