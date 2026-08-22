@@ -61,8 +61,13 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = require_early_module(name)? {
         return Ok(value);
     }
-    if name == "async_hooks" || name == "node:async_hooks" {
-        return async_hooks_module();
+    if name == "internal/async_hooks" || name == "node:internal/async_hooks" {
+        return Ok(Value::object(vec![(
+            "enabledHooksExist".into(),
+            capability_function(HostCapabilityKind::Custom(
+                CapabilityName::AsyncHooksEnabledHooksExist,
+            )),
+        )]));
     }
     if name == "dns/promises" || name == "node:dns/promises" {
         return Ok(dns_promises_module());

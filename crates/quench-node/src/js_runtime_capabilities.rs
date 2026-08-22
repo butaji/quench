@@ -60,6 +60,7 @@ impl CapabilityName {
     const DnsResolveMx: u16 = 2136;
     const DnsPromiseLookup: u16 = 2353;
     const DnsPromiseResolve4: u16 = 2354;
+    const AsyncHooksEnabledHooksExist: u16 = 2355;
     const DgramCreateSocket: u16 = 2137;
     const DgramBind: u16 = 2138;
     const DgramClose: u16 = 2139;
