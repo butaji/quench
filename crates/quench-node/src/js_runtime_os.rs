@@ -244,11 +244,13 @@ fn module_api() -> Value {
             quench_runtime::host_api::array(
                 [
                     "assert", "assert/strict", "buffer", "child_process", "cluster", "console",
-                    "constants", "crypto", "dgram", "dns", "domain", "events", "fs",
-                    "fs/promises", "http", "http2", "https", "module", "net", "os", "path",
-                    "perf_hooks", "process", "punycode", "querystring", "readline", "stream",
-                    "string_decoder", "timers", "timers/promises", "tls", "trace_events", "tty",
-                    "url", "util", "v8", "vm", "worker_threads", "zlib", "test",
+                    "constants", "crypto", "dgram", "dns", "dns/promises", "domain", "events",
+                    "fs", "fs/promises", "http", "http2", "https", "module", "net", "os",
+                    "path", "path/posix", "path/win32", "perf_hooks", "process", "punycode",
+                    "querystring", "readline", "stream", "stream/consumers", "stream/promises",
+                    "stream/web", "string_decoder", "timers", "timers/promises", "tls",
+                    "trace_events", "tty", "url", "util", "util/types", "v8", "vm",
+                    "worker_threads", "zlib", "test",
                 ]
                 .iter()
                 .map(|name| Value::String((*name).into()))
