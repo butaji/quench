@@ -94,6 +94,7 @@ fn is_constructor(value: &crate::value::Value) -> bool {
     match value {
         crate::value::Value::Function(function) => crate::functions::is_constructible(function),
         crate::value::Value::BoundFunction(bound) => is_constructor(&bound.target),
+        crate::value::Value::HostCapability(_) => true,
         crate::value::Value::Builtin(builtin) => {
             crate::builtin_meta::constructor_name(*builtin).is_some()
         }
