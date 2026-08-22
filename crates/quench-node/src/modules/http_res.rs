@@ -38,7 +38,8 @@ pub fn res_set_header(
     };
     let mut guard = state.borrow_mut();
     if let Some(res) = guard.http.res.get_mut(&id) {
-        res.headers.retain(|(key, _)| key != &name);
+        res.headers
+            .retain(|(key, _)| !key.eq_ignore_ascii_case(&name));
         res.headers.push((name, value));
     }
     Ok(Value::Undefined)

@@ -2,7 +2,7 @@
   var assert=deps.assert, suites=[], current=null, count=0, passed=0, failures=0, skipped=0, onlyTests=[], running=false;
   function log(s){if(typeof console!=='undefined'&&console.log)console.log(s);}
   function promise(v){return v&&typeof v.then==='function'?v:Promise.resolve(v);}
-  function invoke(fn,t){return typeof fn==='function'?fn(t):undefined;}
+  function invoke(fn,t){if(typeof fn!=='function')return undefined;if(fn.length<2)return fn(t);return new Promise(function(resolve,reject){var done=false;function finish(err){if(done)return;done=true;if(err)reject(err);else resolve();}try{fn(t,finish);}catch(e){finish(e);}});}
   function hooks(suite){var o={beforeEach:[],afterEach:[],before:[],after:[]},chain=[],i,k,j;for(;suite;suite=suite.parent)chain.unshift(suite);for(i=0;i<chain.length;i++)for(k in o)for(j=0;j<chain[i][k].length;j++)o[k].push(chain[i][k][j]);return o;}
   function run(name,opts,fn,parent){if(typeof opts==='function'){parent=fn;fn=opts;opts={};}opts=opts||{};var rec={name:String(name),opts:opts,fn:fn,parent:parent,suite:current,children:[]};if(parent)parent.children.push(rec);else test._records.push(rec);return rec;}
   function execute(rec){var h=hooks(rec.suite),ctx={assert:assert,name:rec.name,signal:{aborted:false,addEventListener:function(){}}}, children=rec.children, i, result;
