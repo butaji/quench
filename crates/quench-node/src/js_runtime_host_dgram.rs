@@ -153,6 +153,12 @@ impl QuenchNodeHost {
                 Ok(Value::Undefined)
             }
             CapabilityName::DgramClose => {
+                if !state.0 {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_SOCKET_DGRAM_NOT_RUNNING",
+                        "Not running",
+                    )));
+                }
                 state.0 = false;
                 state.1 = false;
                 Ok(Value::Undefined)
