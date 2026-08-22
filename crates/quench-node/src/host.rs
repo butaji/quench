@@ -204,7 +204,10 @@ fn dispatch(
         2351 => Ok(quench_runtime::host_api::object(vec![
             (
                 "name".to_string(),
-                args.first().cloned().unwrap_or(Value::Undefined),
+                match args.first().unwrap_or(&Value::Undefined) {
+                    Value::String(value) => Value::String(value.clone()),
+                    value => Value::String(format!("{value:?}")),
+                },
             ),
             (
                 "run".to_string(),
