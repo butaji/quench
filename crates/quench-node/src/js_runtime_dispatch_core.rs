@@ -10,16 +10,28 @@ impl QuenchNodeHost {
         let result = (|| -> Result<Value, VmError> {
             match capability.kind {
             HostCapabilityKind::Custom(CapabilityName::Require) => {
-                if matches!(arguments.first(), Some(Value::String(name)) if name.trim_start_matches("node:") == "string_decoder")
-                {
+                if matches!(
+                    arguments.first(),
+                    Some(Value::String(name))
+                        if name.trim_start_matches("node:") == "string_decoder"
+                ) {
                     Ok(string_decoder_module())
                 } else {
                     require_module(arguments)
                 }
             }
-            HostCapabilityKind::Custom(CapabilityName::EventEmitter) => {
-                self.construct(capability, arguments)
+            HostCapabilityKind::Custom(CapabilityName::TtyIsatty) => {
+                Ok(Value::Boolean(false))
             }
+            HostCapabilityKind::Custom(
+                CapabilityName::TtyReadStream | CapabilityName::TtyWriteStream,
+            ) => Ok(Value::object(vec![
+                (
+                    "fd".into(),
+                    arguments.first().cloned().unwrap_or(Value::Number(0.0)),
+                ),
+                ("isTTY".into(), Value::Boolean(false)),
+            ])),
             HostCapabilityKind::Custom(
                 CapabilityName::StreamReadable
                 | CapabilityName::StreamWritable
