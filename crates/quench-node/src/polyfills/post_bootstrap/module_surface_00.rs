@@ -4,7 +4,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
   if (globalThis.require) {
     const moduleApi = globalThis.require("module");
     const builtins = new Set(
-      "assert buffer child_process cluster console crypto dgram diagnostics_channel dns events fs http https module net os path perf_hooks process punycode querystring readline repl stream string_decoder sys timers tls trace_events tty url util v8 vm wasi worker_threads zlib".split(
+      "assert assert/strict async_hooks buffer child_process cluster console constants crypto dgram diagnostics_channel dns dns/promises domain events fs fs/promises http http2 https module net os path path/posix path/win32 perf_hooks process punycode querystring readline repl stream stream/consumers stream/promises stream/web string_decoder sys timers timers/promises tls trace_events tty url util util/types v8 vm wasi worker_threads zlib".split(
         " "
       )
     );
