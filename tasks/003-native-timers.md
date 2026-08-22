@@ -114,3 +114,10 @@ Stages 2227 and 2228 continue to pass. Attempts to move native pumping before
 exit and to separate native pumping from exit-handler dispatch did not change
 the authoritative failure, so no general fix is claimed.
 exit ordering before verification.
+The event-loop pump now drains nextTick and promise jobs after timer and
+immediate callbacks before quiescence detection. Focused evidence:
+`cargo run -p quench-node-test --bin run -- tests/node-compat/stage-2227/timers-promises-scheduler.js`
+passes after this change. The new regression fixture is
+`tests/node-compat/stage-2607/timers-promises-scheduler.js`; the legacy direct
+CLI cannot resolve `node:timers/promises`, so its harness integration remains
+open and the task stays in progress.

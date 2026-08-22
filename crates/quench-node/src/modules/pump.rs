@@ -140,6 +140,11 @@ pub fn run_event_loop(state: &Rc<RefCell<HostState>>) -> Result<(), VmError> {
         quench_runtime::drain_promise_jobs();
         fire_due_timers(state)?;
         drain_immediates(state)?;
+        // Timer/immediate callbacks may settle promises and queue their
+        // reactions (including common.mustCall wrappers). Drain those jobs
+        // before checking whether the loop is quiescent.
+        drain_ticks(state)?;
+        quench_runtime::drain_promise_jobs();
         if !has_pending(state) {
             let handlers = state.borrow().process.before_exit_handlers.clone();
             run_handlers(&handlers, 0)?;
