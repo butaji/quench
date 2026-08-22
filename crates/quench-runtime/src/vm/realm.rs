@@ -101,7 +101,7 @@ pub(super) fn initialize_current_global(global: ObjectProperties) {
         context
             .borrow()
             .as_ref()
-            .map_or(RealmId::ROOT, VmContext::realm)
+            .map_or(RealmId::ROOT, |rc| rc.realm())
     });
     if let Some(state) = state(realm) {
         state.global.replace(global);

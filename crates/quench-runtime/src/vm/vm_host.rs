@@ -71,7 +71,7 @@ fn host_custom_call(
         context
             .borrow()
             .as_ref()
-            .and_then(VmContext::host_handle)
+            .and_then(|rc| rc.host_handle())
     });
     host.map(|host| host.call(descriptor, receiver, arguments))
         .unwrap_or(Err(VmError::NotCallable))
@@ -85,7 +85,7 @@ fn run_eval_script(arguments: &[Value]) -> Result<Value, VmError> {
         return Err(type_error("evalScript expects a string argument"));
     };
     let realm = CURRENT_CONTEXT
-        .with(|context| context.borrow().as_ref().map(VmContext::realm))
+        .with(|context| context.borrow().as_ref().map(|rc| rc.realm()))
         .and_then(|id| realm::context(id).is_some().then_some(id));
     let program = match crate::reduce::reduce_statements::reduce_global_script_source(source) {
         Ok(program) => program,
@@ -138,7 +138,7 @@ fn realm_global_object(
 fn create_realm_value() -> Value {
     let parent = CURRENT_CONTEXT
         .with(|context| context.borrow().clone())
-        .unwrap_or_default();
+        .unwrap_or_else(|| Rc::new(VmContext::default()));
     let realm = realm::create(&parent);
     let Some(context) = realm::context(realm) else {
         return Value::Undefined;

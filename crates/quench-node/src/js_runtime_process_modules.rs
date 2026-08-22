@@ -122,7 +122,18 @@ fn process_module() -> Value {
         ),
         (
             "hrtime".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime)),
+            quench_runtime::host_api::object(vec![
+                (
+                    "hrtime".into(),
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::ProcessHrtime)),
+                ),
+                (
+                    "bigint".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::ProcessHrtimeBigint,
+                    )),
+                ),
+            ]),
         ),
         (
             "getActiveResourcesInfo".into(),
