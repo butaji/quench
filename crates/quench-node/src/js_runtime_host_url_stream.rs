@@ -247,6 +247,14 @@ impl QuenchNodeHost {
             }
             7 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
             9 => {
+                let already_destroyed = self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .is_some_and(|state| state.destroyed);
+                if already_destroyed {
+                    return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+                }
                 if let Some(state) = self.streams.borrow_mut().get_mut(&stream_id) {
                     state.destroyed = true;
                     state.errored = arguments.first().cloned();

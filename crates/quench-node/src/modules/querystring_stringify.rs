@@ -85,11 +85,12 @@ fn emit_field(
 ) -> Result<(), VmError> {
     let ks = encode_value(&Value::String(key.to_string()), encode)? + eq;
     if let Value::Array(_) = value {
-        for index in 0..u32::MAX {
+        let length = match execute::get_property(value, "length") {
+            Value::Number(n) if n.is_finite() && n > 0.0 => n as usize,
+            _ => 0,
+        };
+        for index in 0..length {
             let item = execute::get_property(value, &index.to_string());
-            if matches!(item, Value::Undefined) {
-                break;
-            }
             if !fields.is_empty() || index > 0 {
                 fields.push_str(sep);
             }
