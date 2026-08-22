@@ -858,7 +858,7 @@
           "req_per_sec": 594177
         }
       },
-      "note": "Re-baseline taken before any 2026-08-10 optimization changes. Route-load is already within ~5% of Node in the release profile; props-json and ssr-response remain dominated by QuickJS engine throughput (JSON.stringify and template-string evaluation, not host boundary crossings). LOC count includes every .rs and .js file under crates/quench-node/src and crates/quench-node/polyfills; 39181 here is the immediately-current tree and not the published 39399 (which counted only files then listed in the snapshot cause).",
+      "note": "Re-baseline taken before any 2026-08-10 optimization changes. Route-load is already within ~5% of Node in the release profile; props-json and ssr-response remain dominated by JavaScript engine throughput (JSON.stringify and template-string evaluation, not host boundary crossings). LOC count includes every .rs and .js file under crates/quench-node/src and crates/quench-node/polyfills; 39181 here is the immediately-current tree and not the published 39399 (which counted only files then listed in the snapshot cause).",
       "cause": "Independent re-baseline on the release profile before any new experiment; this is the published target line for subsequent candidate measurements."
     },
     {
@@ -1044,7 +1044,7 @@
           "req_per_sec": 587372
         }
       },
-      "note": "Baseline before the 2026-08-10 improvement cycle. Wall time is dominated by process startup; workload_ms is the in-process loop. Quench workload for route-load is already ~5% faster than Node; props-json and ssr-response are dominated by QuickJS engine throughput (14x and 6x slower respectively than V8). Startup gap is ~15-22ms across scenarios.",
+      "note": "Baseline before the 2026-08-10 improvement cycle. Wall time is dominated by process startup; workload_ms is the in-process loop. Quench workload for route-load is already ~5% faster than Node; props-json and ssr-response are dominated by JavaScript engine throughput (14x and 6x slower respectively than V8). Startup gap is ~15-22ms across scenarios.",
       "cause": "Baseline measurement for the improvement cycle."
     },
     {
@@ -1290,7 +1290,7 @@
     {
       "commit": null,
       "change": "Profiled 5,000,000 repeated route reads.",
-      "cause": "macOS sample attributed the long-running path primarily to the Rust fs callback, open/read syscalls, QuickJS callback conversion, and utf8_scan. A raw-byte host return with JS TextDecoder was tested and rejected because route workload rose from about 33 ms to 3,345 ms. A path cache was not attempted because it would change readFileSync freshness semantics."
+      "cause": "macOS sample attributed the long-running path primarily to the Rust fs callback, open/read syscalls, host callback conversion, and utf8_scan. A raw-byte host return with JS TextDecoder was tested and rejected because route workload rose from about 33 ms to 3,345 ms. A path cache was not attempted because it would change readFileSync freshness semantics."
     },
     {
       "commit": null,
@@ -1309,7 +1309,7 @@
     },
     {
       "commit": null,
-      "change": "Deferred rquickjs parallel-feature experiment.",
+      "change": "Deferred runtime parallel-feature experiment.",
       "cause": "A feature-disabled build passed examples, but the benchmark harness rejected two attempts because unrelated host load was 12.87 and 16.08 on 10 CPUs. The feature was restored and no performance claim was made."
     },
     {
