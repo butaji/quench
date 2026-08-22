@@ -60,7 +60,11 @@ test-dgram-reuseport.js
 test-dgram-send-empty-array.js
 test-dgram-unref-in-cluster.js
 test-diagnostics-channel-has-subscribers.js
+test-diagnostics-channel-object-channel-pub-sub.js
+test-diagnostics-channel-pub-sub.js
+test-diagnostics-channel-symbol-named.js
 test-diagnostics-channel-sync-unsubscribe.js
+test-diagnostics-channel-tracing-channel-args-types.js
 test-diagnostics-channel-tracing-channel-has-subscribers.js
 test-diagnostics-channel-tracing-channel-promise-early-exit.js
 test-diagnostics-channel-tracing-channel-sync-early-exit.js
