@@ -22,7 +22,7 @@ if (!dc.channelNames().some((n) => n === 'quench-fixture')) throw new Error('cha
 const trace = dc.tracingChannel('quench-trace');
 const events = [];
 trace.start.subscribe((c) => events.push('start:' + c.value));
-trace.end.subscribe((c) => events.push('end:' + c.result));
+trace.end.subscribe((c) => events.push(c.result === 5 ? 'end:5' : 'end'));
 trace.error.subscribe((c) => events.push('error:' + c.error.message));
 const syncResult = trace.traceSync((value) => value + 1, { value: 4 }, undefined, 4);
 if (syncResult !== 5) throw new Error('traceSync result=' + syncResult);
@@ -35,7 +35,7 @@ try {
   trace.traceSync(() => { throw new Error('boom'); }, { value: 1 }, undefined);
 } catch (e) { threw = e.message === 'boom'; }
 if (!threw) throw new Error('traceSync did not rethrow');
-if (events.join('|') !== 'start:1|error:boom') throw new Error('traceSync error events=' + events.join('|'));
+if (events.join('|') !== 'start:1|error:boom|end') throw new Error('traceSync error events=' + events.join('|'));
 
 // tracingChannel tracePromise async lifecycle.
 events.length = 0;
@@ -44,7 +44,7 @@ trace.asyncEnd.subscribe((c) => events.push('asyncEnd:' + c.result));
 Promise.resolve(trace.tracePromise(() => Promise.resolve(8), { value: 8 }, undefined))
   .then((value) => {
     if (value !== 8) throw new Error('tracePromise result=' + value);
-    if (events.join('|') !== 'start:8|asyncStart:8|asyncEnd:8') {
+    if (events.join('|') !== 'start:8|end|asyncStart:8|asyncEnd:8') {
       throw new Error('tracePromise events=' + events.join('|'));
     }
     // boundedChannel surface.
