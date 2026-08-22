@@ -283,7 +283,10 @@ fn legacy_parse_url(url: &str) -> BTreeMap<String, String> {
             let slash = suffix.find('/').map(|i| authority_start + i);
             let end = slash.unwrap_or(rest.len());
             out.insert("protocol".into(), rest[..protocol_end + 1].to_string());
-            (&rest[authority_start..end], slash.map_or_else(String::new, |i| rest[i..].to_string()))
+            (
+                &rest[authority_start..end],
+                slash.map_or_else(String::new, |i| rest[i..].to_string()),
+            )
         }
         None => match rest.find('/') {
             Some(i) => (&rest[..i], rest[i..].to_string()),

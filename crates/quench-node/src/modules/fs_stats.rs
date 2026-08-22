@@ -111,10 +111,27 @@ fn stats_entries(
     birthtime_ms: f64,
 ) -> Vec<(String, Value)> {
     let mut entries = stats_numeric_entries(
-        dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atime_ms, mtime_ms,
-        ctime_ms, birthtime_ms,
+        dev,
+        mode,
+        nlink,
+        uid,
+        gid,
+        rdev,
+        blksize,
+        ino,
+        size,
+        blocks,
+        atime_ms,
+        mtime_ms,
+        ctime_ms,
+        birthtime_ms,
     );
-    entries.extend(stats_date_entries(atime_ms, mtime_ms, ctime_ms, birthtime_ms));
+    entries.extend(stats_date_entries(
+        atime_ms,
+        mtime_ms,
+        ctime_ms,
+        birthtime_ms,
+    ));
     entries
 }
 
@@ -159,9 +176,18 @@ fn stats_date_entries(
     birthtime_ms: f64,
 ) -> [(String, Value); 4] {
     [
-        ("atime".to_string(), quench_runtime::date::instance(atime_ms)),
-        ("mtime".to_string(), quench_runtime::date::instance(mtime_ms)),
-        ("ctime".to_string(), quench_runtime::date::instance(ctime_ms)),
+        (
+            "atime".to_string(),
+            quench_runtime::date::instance(atime_ms),
+        ),
+        (
+            "mtime".to_string(),
+            quench_runtime::date::instance(mtime_ms),
+        ),
+        (
+            "ctime".to_string(),
+            quench_runtime::date::instance(ctime_ms),
+        ),
         (
             "birthtime".to_string(),
             quench_runtime::date::instance(birthtime_ms),
@@ -204,17 +230,46 @@ fn stats_unix_entries(meta: &std::fs::Metadata) -> Vec<(String, Value)> {
     let ctime_ms = ms(meta.ctime(), meta.ctime_nsec());
     let birthtime_ms = created_ms(meta);
     let mut entries = stats_unix_numeric_entries(
-        meta.dev(), meta.ino(), meta.mode(), meta.nlink(), meta.uid(), meta.gid(), meta.rdev(),
-        meta.size(), meta.blksize(), meta.blocks(), atime_ms, mtime_ms, ctime_ms, birthtime_ms,
+        meta.dev(),
+        meta.ino(),
+        meta.mode(),
+        meta.nlink(),
+        meta.uid(),
+        meta.gid(),
+        meta.rdev(),
+        meta.size(),
+        meta.blksize(),
+        meta.blocks(),
+        atime_ms,
+        mtime_ms,
+        ctime_ms,
+        birthtime_ms,
     );
-    entries.extend(stats_date_entries(atime_ms, mtime_ms, ctime_ms, birthtime_ms));
+    entries.extend(stats_date_entries(
+        atime_ms,
+        mtime_ms,
+        ctime_ms,
+        birthtime_ms,
+    ));
     entries
 }
 
 #[cfg(unix)]
 fn stats_unix_numeric_entries(
-    dev: u64, ino: u64, mode: u32, nlink: u64, uid: u32, gid: u32, rdev: u64, size: u64,
-    blksize: u64, blocks: u64, atime_ms: f64, mtime_ms: f64, ctime_ms: f64, birthtime_ms: f64,
+    dev: u64,
+    ino: u64,
+    mode: u32,
+    nlink: u64,
+    uid: u32,
+    gid: u32,
+    rdev: u64,
+    size: u64,
+    blksize: u64,
+    blocks: u64,
+    atime_ms: f64,
+    mtime_ms: f64,
+    ctime_ms: f64,
+    birthtime_ms: f64,
 ) -> Vec<(String, Value)> {
     vec![
         ("dev".to_string(), Value::Number(dev as f64)),

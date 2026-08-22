@@ -3,8 +3,8 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use quench_runtime::execute::VmError;
 use quench_runtime::execute;
+use quench_runtime::execute::VmError;
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
 
@@ -69,17 +69,35 @@ impl ProcessState {
 pub fn build(argv: &[String], exec_path: &str) -> Value {
     let mut props = info_props(argv, exec_path);
     props.extend(method_props_helper::method_props());
-    props.push(("uptime", crate::host::capability(crate::registry::SPEC_PROCESS_UPTIME)));
-    props.push(("memoryUsage", crate::host::capability(crate::registry::SPEC_PROCESS_MEMORYUSAGE)));
-    props.push(("resourceUsage", crate::host::capability(crate::registry::SPEC_PROCESS_RESOURCE_USAGE)));
-    props.push(("cpuUsage", crate::host::capability(crate::registry::SPEC_PROCESS_CPU_USAGE)));
+    props.push((
+        "uptime",
+        crate::host::capability(crate::registry::SPEC_PROCESS_UPTIME),
+    ));
+    props.push((
+        "memoryUsage",
+        crate::host::capability(crate::registry::SPEC_PROCESS_MEMORYUSAGE),
+    ));
+    props.push((
+        "resourceUsage",
+        crate::host::capability(crate::registry::SPEC_PROCESS_RESOURCE_USAGE),
+    ));
+    props.push((
+        "cpuUsage",
+        crate::host::capability(crate::registry::SPEC_PROCESS_CPU_USAGE),
+    ));
     let obj = crate::host::namespace_object(props).unwrap_or_else(|_| host_api::object(Vec::new()));
     execute::define_property(
         obj,
         "exitCode",
         host_api::object(vec![
-            ("get".into(), crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_GET)),
-            ("set".into(), crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_SET)),
+            (
+                "get".into(),
+                crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_GET),
+            ),
+            (
+                "set".into(),
+                crate::host::capability(crate::registry::SPEC_PROCESS_EXIT_CODE_SET),
+            ),
             ("enumerable".into(), Value::Boolean(true)),
             ("configurable".into(), Value::Boolean(false)),
         ]),
@@ -102,7 +120,9 @@ fn info_props_argv(argv: &[String]) -> Vec<(&'static str, Value)> {
         (
             "argv0",
             Value::String(
-                argv.first().cloned().unwrap_or_else(|| "quench".to_string()),
+                argv.first()
+                    .cloned()
+                    .unwrap_or_else(|| "quench".to_string()),
             ),
         ),
     ]
@@ -399,10 +419,13 @@ fn cpu_type_error(name: &str, value: &Value) -> VmError {
     VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("TypeError".into())),
         ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-        ("message".into(), Value::String(format!(
-            "The \"{name}\" argument must be of type object.{}",
-            crate::modules::util::invalid_arg_received(value)
-        ))),
+        (
+            "message".into(),
+            Value::String(format!(
+                "The \"{name}\" argument must be of type object.{}",
+                crate::modules::util::invalid_arg_received(value)
+            )),
+        ),
     ]))
 }
 
@@ -411,30 +434,38 @@ fn cpu_field_error(field: &str, value: &Value) -> VmError {
     VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("TypeError".into())),
         ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-        ("message".into(), Value::String(format!(
-            "The \"prevValue.{field}\" property must be of type number.{received}"
-        ))),
+        (
+            "message".into(),
+            Value::String(format!(
+                "The \"prevValue.{field}\" property must be of type number.{received}"
+            )),
+        ),
     ]))
 }
 fn cpu_value_error(field: &str, value: f64) -> VmError {
     let rendered = if value.is_infinite() {
-        if value.is_sign_negative() { "-Infinity" } else { "Infinity" }.to_string()
+        if value.is_sign_negative() {
+            "-Infinity"
+        } else {
+            "Infinity"
+        }
+        .to_string()
     } else {
         value.to_string()
     };
     VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("RangeError".into())),
         ("code".into(), Value::String("ERR_INVALID_ARG_VALUE".into())),
-        ("message".into(), Value::String(format!(
-            "The property 'prevValue.{field}' is invalid. Received {rendered}"
-        ))),
+        (
+            "message".into(),
+            Value::String(format!(
+                "The property 'prevValue.{field}' is invalid. Received {rendered}"
+            )),
+        ),
     ]))
 }
 
-pub fn exit_code_get(
-    state: &Rc<RefCell<HostState>>,
-    _args: &[Value],
-) -> Result<Value, VmError> {
+pub fn exit_code_get(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
     Ok(state
         .borrow()
         .process
@@ -442,10 +473,7 @@ pub fn exit_code_get(
         .map_or(Value::Undefined, |code| Value::Number(code as f64)))
 }
 
-pub fn exit_code_set(
-    state: &Rc<RefCell<HostState>>,
-    args: &[Value],
-) -> Result<Value, VmError> {
+pub fn exit_code_set(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let value = args.first().cloned().unwrap_or(Value::Undefined);
     let code = match value {
         Value::Undefined | Value::Null => None,
@@ -465,10 +493,13 @@ fn exit_code_type_error(value: &Value) -> VmError {
     VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("TypeError".into())),
         ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-        ("message".into(), Value::String(format!(
-            "The \"code\" argument must be a number.{}",
-            crate::modules::util::invalid_arg_received(value)
-        ))),
+        (
+            "message".into(),
+            Value::String(format!(
+                "The \"code\" argument must be a number.{}",
+                crate::modules::util::invalid_arg_received(value)
+            )),
+        ),
     ]))
 }
 
@@ -476,9 +507,12 @@ fn exit_code_range_error(value: f64) -> VmError {
     VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("RangeError".into())),
         ("code".into(), Value::String("ERR_OUT_OF_RANGE".into())),
-        ("message".into(), Value::String(format!(
-            "The value of \"code\" is out of range. It must be an integer. Received {value}"
-        ))),
+        (
+            "message".into(),
+            Value::String(format!(
+                "The value of \"code\" is out of range. It must be an integer. Received {value}"
+            )),
+        ),
     ]))
 }
 
@@ -515,7 +549,11 @@ pub fn kill(
     if let Some(receiver) = receiver {
         if let Ok(callback) = execute::get_property_result(receiver, "_kill") {
             if matches!(callback, Value::Function(_) | Value::BoundFunction(_)) {
-                execute::call(&callback, receiver, &[Value::Number(pid as f64), Value::Number(signal as f64)])?;
+                execute::call(
+                    &callback,
+                    receiver,
+                    &[Value::Number(pid as f64), Value::Number(signal as f64)],
+                )?;
             }
         }
     }
@@ -526,10 +564,13 @@ fn kill_pid_error(value: Option<&Value>) -> VmError {
     VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("TypeError".into())),
         ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
-        ("message".into(), Value::String(format!(
-            "The \"pid\" argument must be of type number.{}",
-            crate::modules::util::invalid_arg_received(value.unwrap_or(&Value::Undefined))
-        ))),
+        (
+            "message".into(),
+            Value::String(format!(
+                "The \"pid\" argument must be of type number.{}",
+                crate::modules::util::invalid_arg_received(value.unwrap_or(&Value::Undefined))
+            )),
+        ),
     ]))
 }
 
@@ -537,7 +578,10 @@ fn kill_signal_error(signal: &str) -> VmError {
     VmError::Thrown(host_api::object(vec![
         ("name".into(), Value::String("TypeError".into())),
         ("code".into(), Value::String("ERR_UNKNOWN_SIGNAL".into())),
-        ("message".into(), Value::String(format!("Unknown signal: {signal}"))),
+        (
+            "message".into(),
+            Value::String(format!("Unknown signal: {signal}")),
+        ),
     ]))
 }
 fn kill_invalid_signal_error() -> VmError {

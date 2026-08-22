@@ -26,6 +26,7 @@ thread_local! {
     static NODE_PROCESS_TITLE: RefCell<String> = RefCell::new("quench-node".into());
     static NODE_PATH_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_DNS_PROMISES_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
+    static NODE_ASYNC_HOOKS_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_UTIL_TYPES: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_PROCESS_MODULE: RefCell<Option<Value>> = const { RefCell::new(None) };
     static NODE_PROCESS_WARNING_LISTENERS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };

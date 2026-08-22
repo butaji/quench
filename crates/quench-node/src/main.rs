@@ -26,18 +26,13 @@ fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
             println!("quench-node [-e CODE|SCRIPT]");
             Ok(())
         }
-        Some("-e") | Some("--eval") => {
-            QuenchRuntime.execute(
-                args.get(mode_index + 1).map_or("", String::as_str),
-                None,
-                &host,
-            )
-        }
+        Some("-e") | Some("--eval") => QuenchRuntime.execute(
+            args.get(mode_index + 1).map_or("", String::as_str),
+            None,
+            &host,
+        ),
         Some("--stage") => {
-            let stage = args
-                .get(mode_index + 1)
-                .map(String::as_str)
-                .unwrap_or("0");
+            let stage = args.get(mode_index + 1).map(String::as_str).unwrap_or("0");
             run_quench_directory(&PathBuf::from(format!("tests/node-compat/stage-{stage}")))
         }
         Some("--test-dir") => {
@@ -145,7 +140,10 @@ fn run_directory_with_runtime(
     let mut total = 0;
     for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
         if entry.file_type().is_file()
-            && entry.path().extension().is_some_and(|e| e == "js" || e == "mjs")
+            && entry
+                .path()
+                .extension()
+                .is_some_and(|e| e == "js" || e == "mjs")
         {
             total += 1;
             let source = fs::read_to_string(entry.path())?;
@@ -170,17 +168,28 @@ fn run_directory_with_runtime(
 }
 #[cfg(test)]
 mod tests {
-    use super::{js_runtime::{FilesystemNodeHost, JsRuntime}, QuenchRuntime};
+    use super::{
+        js_runtime::{FilesystemNodeHost, JsRuntime},
+        QuenchRuntime,
+    };
     #[test]
     fn evaluates_javascript_source() {
         QuenchRuntime
-            .execute("if (1 + 1 !== 2) throw new Error('bad arithmetic');", None, &FilesystemNodeHost::default())
+            .execute(
+                "if (1 + 1 !== 2) throw new Error('bad arithmetic');",
+                None,
+                &FilesystemNodeHost::default(),
+            )
             .unwrap();
     }
     #[test]
     fn loads_node_compatibility_globals() {
         QuenchRuntime
-            .execute("if (typeof Buffer !== 'function') throw new Error('Buffer missing');", None, &FilesystemNodeHost::default())
+            .execute(
+                "if (typeof Buffer !== 'function') throw new Error('Buffer missing');",
+                None,
+                &FilesystemNodeHost::default(),
+            )
             .unwrap();
     }
 }

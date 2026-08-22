@@ -62,7 +62,13 @@ fn capability_props() -> Vec<(String, Value)> {
 }
 pub fn build() -> Value {
     let mut props = capability_props();
-    props.push(("subtle".to_string(), crypto_subtle::subtle_object()));
+    let subtle = crypto_subtle::subtle_object();
+    props.push(("subtle".to_string(), subtle.clone()));
+    // Node exposes the same WebCrypto namespace through `crypto.webcrypto`.
+    props.push((
+        "webcrypto".to_string(),
+        host_api::object(vec![("subtle".to_string(), subtle)]),
+    ));
     props.push((
         "constants".to_string(),
         host_api::object(vec![
@@ -186,16 +192,12 @@ fn argbytes(v: &Value) -> Result<Vec<u8>, quench_runtime::execute::VmError> {
             return Ok(buffer.bytes.borrow().clone());
         }
         Value::String(s) => return Ok(s.as_bytes().to_vec()),
-        _ => {
-            return Err(execute::type_error(
-                "argument must be a Buffer or string",
-            ))
-        }
+        _ => return Err(execute::type_error("argument must be a Buffer or string")),
     };
     let bytes = buffer.bytes.borrow();
-    let end = offset.checked_add(length).ok_or_else(|| {
-        execute::type_error("argument must be a Buffer or string")
-    })?;
+    let end = offset
+        .checked_add(length)
+        .ok_or_else(|| execute::type_error("argument must be a Buffer or string"))?;
     bytes
         .get(offset..end)
         .map(|slice| slice.to_vec())
@@ -462,8 +464,12 @@ pub fn subtle_import_key(
     let hash_v = execute::get_property(&algorithm, "hash");
     let length_v = execute::get_property(&algorithm, "length");
     let mut alg_fields: Vec<(String, Value)> = vec![("name".to_string(), name)];
-    if !matches!(hash_v, Value::Undefined) { alg_fields.push(("hash".to_string(), hash_v)); }
-    if !matches!(length_v, Value::Undefined) { alg_fields.push(("length".to_string(), length_v)); }
+    if !matches!(hash_v, Value::Undefined) {
+        alg_fields.push(("hash".to_string(), hash_v));
+    }
+    if !matches!(length_v, Value::Undefined) {
+        alg_fields.push(("length".to_string(), length_v));
+    }
     Ok(fulfilled(host_api::object(vec![
         ("type".to_string(), Value::String("secret".into())),
         ("extractable".to_string(), Value::Boolean(true)),
@@ -482,7 +488,9 @@ pub fn subtle_import_key(
 fn crypto_key_hash_name(key: &Value) -> String {
     let algorithm = execute::get_property(key, "algorithm");
     let name = execute::get_property(&algorithm, "name");
-    if let Value::String(s) = name { return s.to_string(); }
+    if let Value::String(s) = name {
+        return s.to_string();
+    }
     String::new()
 }
 
@@ -495,7 +503,11 @@ pub fn subtle_sign(
         Value::String(s) => s.to_string(),
         _ => return Err(execute::type_error("sign: algorithm.name required")),
     };
-    if alg_name != "HMAC" { return Err(execute::type_error(format!("sign: unsupported algorithm {alg_name}").as_str())); }
+    if alg_name != "HMAC" {
+        return Err(execute::type_error(
+            format!("sign: unsupported algorithm {alg_name}").as_str(),
+        ));
+    }
     let hash_name = match execute::get_property(&algorithm, "hash") {
         Value::String(s) => s.to_string(),
         _ => "SHA-256".to_string(),
@@ -511,13 +523,13 @@ pub fn subtle_sign(
     let mac: Vec<u8> = match hash_name.as_str() {
         "SHA-256" => hmac_sha256(&secret, &data).to_vec(),
         "SHA-1" => hmac_sha1(&secret, &data).to_vec(),
-        "SHA-384" => {
-            return Err(execute::type_error("sign: SHA-384 not yet supported"))
+        "SHA-384" => return Err(execute::type_error("sign: SHA-384 not yet supported")),
+        "SHA-512" => return Err(execute::type_error("sign: SHA-512 not yet supported")),
+        _ => {
+            return Err(execute::type_error(
+                format!("sign: unsupported hash {hash_name}").as_str(),
+            ))
         }
-        "SHA-512" => {
-            return Err(execute::type_error("sign: SHA-512 not yet supported"))
-        }
-        _ => return Err(execute::type_error(format!("sign: unsupported hash {hash_name}").as_str())),
     };
     Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&mac)))
 }
@@ -531,7 +543,11 @@ pub fn subtle_verify(
         Value::String(s) => s.to_string(),
         _ => return Err(execute::type_error("verify: algorithm.name required")),
     };
-    if alg_name != "HMAC" { return Err(execute::type_error(format!("verify: unsupported algorithm {alg_name}").as_str())); }
+    if alg_name != "HMAC" {
+        return Err(execute::type_error(
+            format!("verify: unsupported algorithm {alg_name}").as_str(),
+        ));
+    }
     let hash_name = match execute::get_property(&algorithm, "hash") {
         Value::String(s) => s.to_string(),
         _ => "SHA-256".to_string(),
@@ -549,17 +565,26 @@ pub fn subtle_verify(
     let mac: Vec<u8> = match hash_name.as_str() {
         "SHA-256" => hmac_sha256(&secret, &data).to_vec(),
         "SHA-1" => hmac_sha1(&secret, &data).to_vec(),
-        _ => return Err(execute::type_error(format!("verify: unsupported hash {hash_name}").as_str())),
+        _ => {
+            return Err(execute::type_error(
+                format!("verify: unsupported hash {hash_name}").as_str(),
+            ))
+        }
     };
     let ok = mac.len() == signature.len() && mac.iter().zip(signature.iter()).all(|(a, b)| a == b);
     Ok(fulfilled(Value::Boolean(ok)))
 }
 
-use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce};
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
+};
 
 fn aes_gcm_nonce(iv_v: &Value) -> Result<[u8; 12], quench_runtime::execute::VmError> {
     let iv = argbytes(iv_v)?;
-    if iv.len() != 12 { return Err(execute::type_error("AES-GCM: iv must be 12 bytes")); }
+    if iv.len() != 12 {
+        return Err(execute::type_error("AES-GCM: iv must be 12 bytes"));
+    }
     let mut n = [0u8; 12];
     n.copy_from_slice(&iv);
     Ok(n)
@@ -574,17 +599,27 @@ pub fn subtle_encrypt(
         Value::String(s) => s.to_string(),
         _ => return Err(execute::type_error("encrypt: algorithm.name required")),
     };
-    if alg_name != "AES-GCM" { return Err(execute::type_error(format!("encrypt: unsupported algorithm {alg_name}").as_str())); }
+    if alg_name != "AES-GCM" {
+        return Err(execute::type_error(
+            format!("encrypt: unsupported algorithm {alg_name}").as_str(),
+        ));
+    }
     let iv = aes_gcm_nonce(&execute::get_property(&algorithm, "iv"))?;
     let key = args.get(1).cloned().unwrap_or(Value::Undefined);
     let secret = crypto_key_bytes(&key)?;
-    if secret.len() != 32 { return Err(execute::type_error("AES-GCM: key must be 32 bytes")); }
+    if secret.len() != 32 {
+        return Err(execute::type_error("AES-GCM: key must be 32 bytes"));
+    }
     let data_v = args.get(2).cloned().unwrap_or(Value::Undefined);
     let plaintext = argbytes(&data_v)?;
-    let cipher = Aes256Gcm::new_from_slice(&secret).map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?;
-    let ciphertext = cipher.encrypt(Nonce::from_slice(&iv), plaintext.as_ref())
+    let cipher = Aes256Gcm::new_from_slice(&secret)
+        .map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?;
+    let ciphertext = cipher
+        .encrypt(Nonce::from_slice(&iv), plaintext.as_ref())
         .map_err(|e| execute::type_error(format!("AES-GCM encrypt: {e}").as_str()))?;
-    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&ciphertext)))
+    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(
+        &ciphertext,
+    )))
 }
 
 pub fn subtle_decrypt(
@@ -596,17 +631,27 @@ pub fn subtle_decrypt(
         Value::String(s) => s.to_string(),
         _ => return Err(execute::type_error("decrypt: algorithm.name required")),
     };
-    if alg_name != "AES-GCM" { return Err(execute::type_error(format!("decrypt: unsupported algorithm {alg_name}").as_str())); }
+    if alg_name != "AES-GCM" {
+        return Err(execute::type_error(
+            format!("decrypt: unsupported algorithm {alg_name}").as_str(),
+        ));
+    }
     let iv = aes_gcm_nonce(&execute::get_property(&algorithm, "iv"))?;
     let key = args.get(1).cloned().unwrap_or(Value::Undefined);
     let secret = crypto_key_bytes(&key)?;
-    if secret.len() != 32 { return Err(execute::type_error("AES-GCM: key must be 32 bytes")); }
+    if secret.len() != 32 {
+        return Err(execute::type_error("AES-GCM: key must be 32 bytes"));
+    }
     let data_v = args.get(2).cloned().unwrap_or(Value::Undefined);
     let ciphertext = argbytes(&data_v)?;
-    let cipher = Aes256Gcm::new_from_slice(&secret).map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?;
-    let plaintext = cipher.decrypt(Nonce::from_slice(&iv), ciphertext.as_ref())
+    let cipher = Aes256Gcm::new_from_slice(&secret)
+        .map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?;
+    let plaintext = cipher
+        .decrypt(Nonce::from_slice(&iv), ciphertext.as_ref())
         .map_err(|e| execute::type_error(format!("AES-GCM decrypt: {e}").as_str()))?;
-    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&plaintext)))
+    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(
+        &plaintext,
+    )))
 }
 
 pub fn subtle_export_key(
@@ -617,10 +662,16 @@ pub fn subtle_export_key(
         Value::String(s) => s.to_string(),
         _ => return Err(execute::type_error("exportKey: format required")),
     };
-    if format != "raw" && format != "raw-secret" { return Err(execute::type_error(format!("exportKey: unsupported format {format}").as_str())); }
+    if format != "raw" && format != "raw-secret" {
+        return Err(execute::type_error(
+            format!("exportKey: unsupported format {format}").as_str(),
+        ));
+    }
     let key = args.get(1).cloned().unwrap_or(Value::Undefined);
     let secret = crypto_key_bytes(&key)?;
-    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&secret)))
+    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(
+        &secret,
+    )))
 }
 
 pub fn subtle_generate_key(
@@ -633,22 +684,45 @@ pub fn subtle_generate_key(
         _ => return Err(execute::type_error("generateKey: algorithm.name required")),
     };
     let length_bits = match execute::get_property(&algorithm, "length") {
-        Value::Number(n) if n.is_finite() && n > 0.0 && n.fract() == 0.0 && n <= 4096.0 => n as usize,
-        _ => return Err(execute::type_error("generateKey: algorithm.length required")),
+        Value::Number(n) if n.is_finite() && n > 0.0 && n.fract() == 0.0 && n <= 4096.0 => {
+            n as usize
+        }
+        _ => {
+            return Err(execute::type_error(
+                "generateKey: algorithm.length required",
+            ))
+        }
     };
-    if length_bits % 8 != 0 { return Err(execute::type_error("generateKey: algorithm.length must be a multiple of 8")); }
+    if length_bits % 8 != 0 {
+        return Err(execute::type_error(
+            "generateKey: algorithm.length must be a multiple of 8",
+        ));
+    }
     let byte_length = length_bits / 8;
     let mut buf = vec![0u8; byte_length];
-    random_into(&mut buf).map_err(|_e: quench_runtime::execute::VmError| execute::type_error("generateKey: random failed"))?;
+    random_into(&mut buf).map_err(|_e: quench_runtime::execute::VmError| {
+        execute::type_error("generateKey: random failed")
+    })?;
     let extractable = args.get(1).cloned().unwrap_or(Value::Boolean(false));
     let usages_v = args.get(2).cloned().unwrap_or(Value::Undefined);
     let usages = if let Value::Object(_) = usages_v {
         // Best-effort: read each index's string value if present.
         let mut arr: Vec<Value> = Vec::new();
         let len_v = execute::get_property(&usages_v, "length");
-        if let Value::Number(n) = len_v { let n = n as usize; for i in 0..n { if let Ok(s) = execute::get_property_result(&usages_v, &i.to_string()) { if let Value::String(_) = s { arr.push(s); } } } }
+        if let Value::Number(n) = len_v {
+            let n = n as usize;
+            for i in 0..n {
+                if let Ok(s) = execute::get_property_result(&usages_v, &i.to_string()) {
+                    if let Value::String(_) = s {
+                        arr.push(s);
+                    }
+                }
+            }
+        }
         arr
-    } else { Vec::new() };
+    } else {
+        Vec::new()
+    };
     Ok(fulfilled(host_api::object(vec![
         ("type".to_string(), Value::String("secret".into())),
         ("extractable".to_string(), extractable),
@@ -661,7 +735,15 @@ pub fn subtle_generate_key(
         ),
         (
             "usages".to_string(),
-            host_api::array(usages.into_iter().map(|v| match v { Value::String(s) => Value::String(s), _ => Value::Undefined }).collect()),
+            host_api::array(
+                usages
+                    .into_iter()
+                    .map(|v| match v {
+                        Value::String(s) => Value::String(s),
+                        _ => Value::Undefined,
+                    })
+                    .collect(),
+            ),
         ),
         (
             "\0crypto:keydata".to_string(),
@@ -683,7 +765,9 @@ fn crypto_key_bytes(key: &Value) -> Result<Vec<u8>, quench_runtime::execute::VmE
     // First, look for a private property set by `subtle.import_key`.
     let raw = execute::get_property(key, "\0crypto:keydata");
     if !matches!(raw, Value::Undefined) {
-        if let Ok(bytes) = argbytes(&raw) { return Ok(bytes); }
+        if let Ok(bytes) = argbytes(&raw) {
+            return Ok(bytes);
+        }
     }
     argbytes(key)
 }
@@ -703,10 +787,14 @@ fn pbkdf2_hmac_sha256(password: &[u8], salt: &[u8], iterations: u32, length: usi
             msg.push((i & 0xff) as u8);
             hmac_sha256(password, &msg)
         };
-        for x in 0..hlen { t[x] ^= u[x]; }
+        for x in 0..hlen {
+            t[x] ^= u[x];
+        }
         for _ in 1..iterations {
             u = hmac_sha256(password, &u);
-            for x in 0..hlen { t[x] ^= u[x]; }
+            for x in 0..hlen {
+                t[x] ^= u[x];
+            }
         }
         out.extend_from_slice(&t);
     }
@@ -714,35 +802,60 @@ fn pbkdf2_hmac_sha256(password: &[u8], salt: &[u8], iterations: u32, length: usi
     out
 }
 
-fn read_u32_arg(args: &[Value], idx: usize, field: &str) -> Result<u32, quench_runtime::execute::VmError> {
+fn read_u32_arg(
+    args: &[Value],
+    idx: usize,
+    field: &str,
+) -> Result<u32, quench_runtime::execute::VmError> {
     let v = args.get(idx).cloned().unwrap_or(Value::Undefined);
     match v {
         Value::Number(n) => {
             if !n.is_finite() || n < 0.0 || n.fract() != 0.0 || n > (u32::MAX as f64) {
-                Err(execute::type_error(format!("`{field}` must be a non-negative integer").as_str()))
+                Err(execute::type_error(
+                    format!("`{field}` must be a non-negative integer").as_str(),
+                ))
             } else {
                 Ok(n as u32)
             }
         }
-        _ => Err(execute::type_error(format!("`{field}` must be a number").as_str())),
+        _ => Err(execute::type_error(
+            format!("`{field}` must be a number").as_str(),
+        )),
     }
 }
 
-fn pbkdf2_params(args: &[Value]) -> Result<(Vec<u8>, u32, String, Vec<u8>), quench_runtime::execute::VmError> {
+fn pbkdf2_params(
+    args: &[Value],
+) -> Result<(Vec<u8>, u32, String, Vec<u8>), quench_runtime::execute::VmError> {
     let algorithm = args.first().cloned().unwrap_or(Value::Undefined);
     let name = execute::get_property(&algorithm, "name");
-    let name_str = match name { Value::String(s) => s.to_string(), _ => return Err(execute::type_error("PBKDF2: algorithm.name required")) };
-    if name_str != "PBKDF2" { return Err(execute::type_error(format!("PBKDF2: unsupported algorithm {name_str}").as_str())) }
+    let name_str = match name {
+        Value::String(s) => s.to_string(),
+        _ => return Err(execute::type_error("PBKDF2: algorithm.name required")),
+    };
+    if name_str != "PBKDF2" {
+        return Err(execute::type_error(
+            format!("PBKDF2: unsupported algorithm {name_str}").as_str(),
+        ));
+    }
     let salt = argbytes(&execute::get_property(&algorithm, "salt"))?;
     let iterations = match execute::get_property(&algorithm, "iterations") {
-        Value::Number(n) if n.is_finite() && n >= 0.0 && n.fract() == 0.0 && n <= (u32::MAX as f64) => n as u32,
+        Value::Number(n)
+            if n.is_finite() && n >= 0.0 && n.fract() == 0.0 && n <= (u32::MAX as f64) =>
+        {
+            n as u32
+        }
         _ => return Err(execute::type_error("PBKDF2: iterations required")),
     };
     let hash = match execute::get_property(&algorithm, "hash") {
         Value::String(s) => s.to_string(),
         _ => "SHA-256".to_string(),
     };
-    if hash.as_str() != "SHA-256" { return Err(execute::type_error(format!("PBKDF2: unsupported hash {hash}").as_str())) }
+    if hash.as_str() != "SHA-256" {
+        return Err(execute::type_error(
+            format!("PBKDF2: unsupported hash {hash}").as_str(),
+        ));
+    }
     let base_key = args.get(1).cloned().unwrap_or(Value::Undefined);
     let password = crypto_key_bytes(&base_key)?;
     Ok((salt, iterations, hash, password))
@@ -758,7 +871,9 @@ pub fn subtle_derive_bits(
         return Err(execute::type_error("deriveBits: length must be 1..=65536"));
     }
     let derived = pbkdf2_hmac_sha256(&password, &salt, iterations.max(1), length);
-    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(&derived)))
+    Ok(fulfilled(crate::modules::buffer_proto::make_buffer(
+        &derived,
+    )))
 }
 
 pub fn subtle_derive_key(
@@ -770,18 +885,30 @@ pub fn subtle_derive_key(
     let derived_name = execute::get_property(&derived_alg, "name");
     let derived_name_str = match derived_name {
         Value::String(s) => s.to_string(),
-        _ => return Err(execute::type_error("deriveKey: derivedAlgorithm.name required")),
+        _ => {
+            return Err(execute::type_error(
+                "deriveKey: derivedAlgorithm.name required",
+            ))
+        }
     };
     let length = match execute::get_property(&derived_alg, "length") {
         Value::Number(n) if n.is_finite() && n > 0.0 && n.fract() == 0.0 => n as usize,
-        _ => return Err(execute::type_error("deriveKey: derivedAlgorithm.length required")),
+        _ => {
+            return Err(execute::type_error(
+                "deriveKey: derivedAlgorithm.length required",
+            ))
+        }
     };
     if length % 8 != 0 || length == 0 {
-        return Err(execute::type_error("deriveKey: derivedAlgorithm.length must be a positive multiple of 8"));
+        return Err(execute::type_error(
+            "deriveKey: derivedAlgorithm.length must be a positive multiple of 8",
+        ));
     }
     let byte_length = length / 8;
     if byte_length > 64 * 1024 {
-        return Err(execute::type_error("deriveKey: derivedAlgorithm.length too large"));
+        return Err(execute::type_error(
+            "deriveKey: derivedAlgorithm.length too large",
+        ));
     }
     let extractable = args.get(3).cloned().unwrap_or(Value::Boolean(false));
     let derived = pbkdf2_hmac_sha256(&password, &salt, iterations.max(1), byte_length);

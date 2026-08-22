@@ -2,6 +2,11 @@ const hooks = require('node:async_hooks');
 const bare = require('async_hooks');
 if (hooks !== bare) throw new Error('async_hooks aliases must share module');
 if (typeof hooks.createHook !== 'function') throw new Error('createHook export');
+const cached = require('node:async_hooks');
+if (cached !== hooks) throw new Error('async_hooks require cache');
+for (const name of ['AsyncResource', 'AsyncLocalStorage', 'createHook', 'executionAsyncId', 'triggerAsyncId']) {
+  if (!(name in hooks)) throw new Error(`missing async_hooks export: ${name}`);
+}
 const resource = new hooks.AsyncResource('fixture');
 if (typeof resource.asyncId !== 'function' || typeof resource.triggerAsyncId !== 'function') {
   throw new Error('AsyncResource id methods');
