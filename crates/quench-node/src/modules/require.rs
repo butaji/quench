@@ -356,6 +356,7 @@ fn resolve_dispatch_core(state: &Rc<RefCell<HostState>>, name: &str) -> Option<V
             "kWeakHandler".to_string(),
             Value::String("kWeakHandler\0quench".to_string()),
         )])),
+        "stream" => Some(crate::modules::stream::build(state).ok()?),
         "path" => Some(crate::modules::path::build()),
         "url" => Some(crate::modules::url::build_root(state)),
         "querystring" => Some(crate::modules::querystring::build()),
