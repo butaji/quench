@@ -42,6 +42,15 @@ impl QuenchNodeHost {
                     &arguments[1..],
                 )
             }
+            HostCapabilityKind::Custom(CapabilityName::DnsPromiseLookup) => Ok(fulfilled(
+                quench_runtime::host_api::array(vec![
+                    Value::String("127.0.0.1".into()),
+                    Value::Number(4.0),
+                ]),
+            )),
+            HostCapabilityKind::Custom(CapabilityName::DnsPromiseResolve4) => Ok(fulfilled(
+                quench_runtime::host_api::array(vec![Value::String("127.0.0.1".into())]),
+            )),
             HostCapabilityKind::Custom(
                 CapabilityName::TtyReadStream | CapabilityName::TtyWriteStream,
             ) => Ok(Value::object(vec![

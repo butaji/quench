@@ -15,4 +15,5 @@ function create() {
   };
   return d;
 }
-module.exports = { active: null, create };
+function Domain() { return create(); }
+module.exports = { active: null, Domain, create, createDomain: create };
