@@ -1680,3 +1680,15 @@ This directly improves item 7's multi-socket handle-identity evidence. It does
 not claim the unsupported cluster-worker fixture or IPv6 multicast coverage;
 those remain the precise open dgram boundaries. No broad task closure is
 claimed.
+## Boundary evidence — HTTP sequential response ordering (2026-08-21)
+
+The focused Node fixture `tests/node-compat/stage-2602/http-sequencing-boundary.js`
+performs two keep-alive HTTP requests sequentially, verifies each response body,
+and records request/end ordering for both responses. It passes with
+`cargo run -p quench-node-test --bin run-compat -- --quiet tests/node-compat/stage-2602`
+(`1 passed, 0 failed`).
+
+This directly improves item 6's response/close sequencing evidence for a
+single keep-alive client. It does not claim concurrent multi-request,
+connection-reuse, or full upstream HTTP fixture compatibility; those remain
+separate boundaries. No broad task closure is claimed.
