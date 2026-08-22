@@ -13,7 +13,7 @@
   function categoriesString() {
     var out = [];
     for (var category in active) out.push(category);
-    return out.join(',');
+    return out.length ? out.join(',') : undefined;
   }
   function Tracing(options) {
     if (!options || !Array.isArray(options.categories)) {
