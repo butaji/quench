@@ -24,7 +24,7 @@ Legend
 | events | 🟢 | real | upstream selects green |
 | fs | 🟢 | real | upstream selects green; edge cases remain |
 | http | 🟢 | real | server/client/host; options semantics remain |
-| https | 🟡 | stub | HTTPS-specific request/get/Agent/TLS integration remains |
+| https | 🟡 | partial | Plain-HTTP `request`/`get` delegate to the existing HTTP client; HTTPS/TLS transport, `Agent`, and TLS-backed servers remain |
 | os | 🟢 | real | upstream selects green |
 | net | 🟢 | partial | loopback sockets and server APIs covered; full option and fd semantics remain |
 | path | 🟢 | real | posix/win32/glob; upstream selects green |
