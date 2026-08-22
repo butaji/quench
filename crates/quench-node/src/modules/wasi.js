@@ -18,8 +18,10 @@
   };
   WASI.prototype.initialize = function (instance) {
     if (!instance || !instance.exports) throw new TypeError('instance must export _initialize');
-    if (typeof instance.exports._initialize === 'function') return instance.exports._initialize();
-    return 0;
+    if (typeof instance.exports._initialize !== 'function') {
+      throw new TypeError('instance must export _initialize');
+    }
+    return instance.exports._initialize();
   };
   WASI.prototype.getImportObject = function () {
     return { wasi_snapshot_preview1: this.wasiImport };
