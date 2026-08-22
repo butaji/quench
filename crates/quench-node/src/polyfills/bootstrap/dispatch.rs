@@ -18,6 +18,21 @@ globalThis.require = (specifier) => {
       { code: "ERR_UNKNOWN_BUILTIN_MODULE" }
     );
   }
+  if (name === "internal/assert/myers_diff") {
+    return {
+      myersDiff(a, b) {
+        const size = a.length + b.length;
+        if (size >= 2 ** 31) {
+          const error = new RangeError(
+            `The value of "myersDiff input size" is out of range. It must be < 2^31. Received ${size}`
+          );
+          error.code = "ERR_OUT_OF_RANGE";
+          throw error;
+        }
+        return [];
+      }
+    };
+  }
   if (name === "internal/vfs/stats" && globalThis.__quenchVfsStatsHelpers) {
     return globalThis.__quenchVfsStatsHelpers;
   }

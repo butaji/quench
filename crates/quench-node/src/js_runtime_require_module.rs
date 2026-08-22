@@ -53,11 +53,26 @@ fn async_hooks_module() -> Result<Value, VmError> {
     NODE_ASYNC_HOOKS_MODULE.with(|cached| *cached.borrow_mut() = Some(module.clone()));
     Ok(module)
 }
+fn myers_diff_module() -> Result<Value, VmError> {
+    let program = quench_runtime::reduce::reduce_global_script_source(
+        include_str!("modules/myers_diff.js"),
+    )
+    .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = Vec::new();
+    let factory = quench_runtime::vm::with_current_context(&context, || {
+        quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
+    })?;
+    quench_runtime::vm::call_value(&factory, &Value::Undefined, &[])
+}
 
 fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(name)) = arguments.first() else {
         return Err(VmError::EvalError("require expects a module name".into()));
     };
+    if name == "internal/assert/myers_diff" || name == "node:internal/assert/myers_diff" {
+        return myers_diff_module();
+    }
     if let Some(value) = require_early_module(name)? {
         return Ok(value);
     }
