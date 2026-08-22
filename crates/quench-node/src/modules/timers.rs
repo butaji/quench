@@ -339,7 +339,10 @@ pub fn build() -> Vec<(String, Value)> {
     let scheduler = crate::host::namespace_object_from_pairs(vec![
         ("wait".to_string(), crate::host::scheduler_capability(2348)),
         ("yield".to_string(), crate::host::scheduler_capability(2349)),
-        ("constructor".to_string(), crate::host::scheduler_capability(2350)),
+        (
+            "constructor".to_string(),
+            crate::host::scheduler_capability(2350),
+        ),
     ]);
     let marker = quench_runtime::host_api::object(vec![
         ("value".into(), Value::Boolean(true)),

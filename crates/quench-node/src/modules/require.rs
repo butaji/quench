@@ -9,12 +9,12 @@
 //!   `node:fs`, `node:timers`, `node:timers/promises`.
 //!
 //! Anything else throws `MODULE_NOT_FOUND`.
-use std::cell::RefCell;
-use std::rc::Rc;
+use crate::host::HostState;
 use quench_runtime::execute::VmError;
 use quench_runtime::host_api;
 use quench_runtime::value::Value;
-use crate::host::HostState;
+use std::cell::RefCell;
+use std::rc::Rc;
 /// Cache-or-build helper used by every per-module branch in `require`.
 /// Returns the cached module value if present, otherwise builds,
 /// inserts into `module_cache` under `key`, and returns it.
@@ -401,9 +401,12 @@ fn resolve_dispatch_compat_modules(state: &Rc<RefCell<HostState>>, name: &str) -
     match name {
         "cluster" => crate::modules::compat_extra::cluster(state).ok(),
         "diagnostics_channel" => crate::modules::compat_extra::diagnostics_channel(state).ok(),
-        "domain" => Some(cached_module(state, "domain", || {
-            crate::modules::compat_extra::domain(state)
-        }).ok()?),
+        "domain" => Some(
+            cached_module(state, "domain", || {
+                crate::modules::compat_extra::domain(state)
+            })
+            .ok()?,
+        ),
         "v8" => crate::modules::compat_extra::v8(state).ok(),
         "inspector" | "inspector/promises" => crate::modules::compat_extra::inspector(state).ok(),
         "repl" => crate::modules::compat_extra::repl(state).ok(),
