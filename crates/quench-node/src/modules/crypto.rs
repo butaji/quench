@@ -72,6 +72,9 @@ pub fn build() -> Value {
     ));
     host_api::object(props)
 }
+pub(crate) fn subtle() -> Value {
+    crypto_subtle::subtle_object()
+}
 
 fn random_into(bytes: &mut [u8]) -> Result<(), quench_runtime::execute::VmError> {
     #[cfg(unix)]
