@@ -40,6 +40,10 @@ pub fn build() -> Vec<(String, Value)> {
             crate::host::capability(crate::registry::SPEC_CONSOLE_LOG),
         ),
         (
+            "assert".to_string(),
+            crate::host::capability(crate::registry::SPEC_CONSOLE_ASSERT),
+        ),
+        (
             "createTask".to_string(),
             crate::host::scheduler_capability(2351),
         ),
@@ -119,4 +123,25 @@ fn format_args(args: &[Value]) -> String {
         }
         out
     }
+}
+pub fn assert_(
+    state: &Rc<RefCell<HostState>>,
+    args: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    if args.first().map(quench_runtime::execute::is_truthy).unwrap_or(false) {
+        return Ok(Value::Undefined);
+    }
+    let mut rendered = "Assertion failed".to_string();
+    if args.len() > 1 {
+        let message = format_args(&args[1..]);
+        if !message.is_empty() {
+            rendered.push_str(": ");
+            rendered.push_str(&message);
+        }
+    }
+    let state = state.borrow();
+    if let Some(sink) = &state.output {
+        sink(&rendered);
+    }
+    Ok(Value::Undefined)
 }
