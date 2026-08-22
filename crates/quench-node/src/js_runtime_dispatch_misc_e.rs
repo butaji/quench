@@ -461,7 +461,7 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::ModuleRequireCall) => require_module(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsPlatform) => os_platform(),
             HostCapabilityKind::Custom(CapabilityName::OsArch) => os_arch(),
-            HostCapabilityKind::Custom(CapabilityName::OsUptime) => os_extra(capability.kind),
+            HostCapabilityKind::Custom(CapabilityName::OsUptime) => os_extra(capability.kind, arguments),
             HostCapabilityKind::Custom(CapabilityName::OsGetPriority) => os_get_priority(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsSetPriority) => os_set_priority(arguments),
             HostCapabilityKind::Custom(CapabilityName::OsAvailableParallelism) => {
@@ -489,7 +489,7 @@ impl QuenchNodeHost {
             | HostCapabilityKind::Custom(
                 CapabilityName::OsRelease..=CapabilityName::OsNetworkInterfaces,
             )
-            | HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => os_extra(capability.kind),
+            | HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => os_extra(capability.kind, arguments),
             HostCapabilityKind::Custom(CapabilityName::EventsGetMax) => events_get_max(arguments),
             HostCapabilityKind::Custom(CapabilityName::EventsSetMax) => events_set_max(arguments),
             HostCapabilityKind::Custom(CapabilityName::UtilIsDate) => Ok(Value::Boolean(true)),
