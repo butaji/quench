@@ -371,7 +371,7 @@ fn module_is_builtin(arguments: &[Value]) -> Result<Value, VmError> {
     )))
 }
 
-fn os_extra(kind: HostCapabilityKind) -> Result<Value, VmError> {
+fn os_extra(kind: HostCapabilityKind, arguments: &[Value]) -> Result<Value, VmError> {
     match kind {
         HostCapabilityKind::Custom(CapabilityName::OsCpus) => {
             let mut system = sysinfo::System::new();
@@ -408,13 +408,37 @@ fn os_extra(kind: HostCapabilityKind) -> Result<Value, VmError> {
             Ok(Value::Number(sysinfo::System::uptime() as f64)),
         HostCapabilityKind::Custom(CapabilityName::OsNetworkInterfaces) => os_network_interfaces(),
         HostCapabilityKind::Custom(CapabilityName::OsUserInfo) => {
+            // Read this property even when its value is not used so JavaScript
+            // accessor errors have the same observable behavior as Node.
+            let encoding = arguments.first().map(|options| {
+                quench_runtime::execute::get_property_result(options, "encoding")
+            }).transpose()?;
+            let as_buffer = matches!(encoding, Some(Value::String(value)) if value.eq_ignore_ascii_case("buffer"));
             let uid = unsafe { libc::getuid() };
             let gid = unsafe { libc::getgid() };
+            let (username, homedir, shell) = unsafe {
+                let pw = libc::getpwuid(uid);
+                if pw.is_null() {
+                    ("unknown".to_owned(), std::env::var("HOME").unwrap_or_else(|_| "/".into()), std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()))
+                } else {
+                    let pw = &*pw;
+                    let text = |ptr: *const libc::c_char, fallback: &str| {
+                        if ptr.is_null() { fallback.to_owned() } else { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() }
+                    };
+                    (text(pw.pw_name, "unknown"), text(pw.pw_dir, "/"), text(pw.pw_shell, "/bin/sh"))
+                }
+            };
+            let text_value = |value: String| if as_buffer {
+                quench_runtime::host_api::bytes(value.as_bytes())
+            } else {
+                Value::String(value.into())
+            };
             Ok(quench_runtime::host_api::object(vec![
-                ("username".into(), Value::String(std::env::var("USER").unwrap_or_else(|_| "unknown".into()).into())),
-                ("uid".into(), Value::Number(uid as f64)), ("gid".into(), Value::Number(gid as f64)),
-                ("shell".into(), Value::String(std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()).into())),
-                ("homedir".into(), Value::String(std::env::var("HOME").unwrap_or_else(|_| "/".into()).into())),
+                ("username".into(), text_value(username)),
+                ("uid".into(), Value::Number(uid as f64)),
+                ("gid".into(), Value::Number(gid as f64)),
+                ("shell".into(), text_value(shell)),
+                ("homedir".into(), text_value(homedir)),
             ]))
         }
         _ => Err(VmError::NotCallable),

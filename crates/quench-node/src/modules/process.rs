@@ -152,6 +152,10 @@ fn info_props_static(exec_path: &str) -> Vec<(&'static str, Value)> {
     let mut props = info_props_dynamic();
     props[1].1 = Value::String(exec_path.to_string());
     props.push((
+        "release",
+        host_api::object(vec![("name".to_string(), Value::String("node".into()))]),
+    ));
+    props.push((
         "config",
         host_api::object(vec![(
             "variables".to_string(),
