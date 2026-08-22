@@ -1,6 +1,15 @@
 fn require_early_module(name: &str) -> Result<Option<Value>, VmError> {
     let value = match name {
-        "console" | "node:console" => quench_node::modules::console::build_value(),
+        "console" | "node:console" => Value::object(vec![
+            ("log".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ConsoleLog))),
+            ("info".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ConsoleLog))),
+            ("warn".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ConsoleLog))),
+            ("error".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ConsoleLog))),
+            ("debug".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ConsoleLog))),
+            ("trace".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ConsoleLog))),
+            ("dir".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ConsoleLog))),
+            ("createTask".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::ConsoleCreateTask))),
+        ]),
         "path/win32" | "node:path/win32" => {
             let path = require_module(&[Value::String("path".into())])?;
             return quench_runtime::execute::get_property_result(&path, "win32").map(Some);
