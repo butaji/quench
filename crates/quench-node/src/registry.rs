@@ -146,6 +146,17 @@ fn push_internal_globals(out: &mut Vec<(String, quench_runtime::value::Value)>) 
 }
 
 fn push_web_globals(out: &mut Vec<(String, quench_runtime::value::Value)>) {
+    // web_globals is reduced after host bindings are installed.  Seed the
+    // existing stream constructor so its Blob.stream implementation can
+    // resolve ReadableStream during that reduction; install_web_globals then
+    // replaces it with the complete constructor set.
+    out.push((
+        "ReadableStream".to_string(),
+        crate::host::capability(crate::registry::NodeSpec::new(
+            "stream_web:ReadableStream",
+            0x1c00,
+        )),
+    ));
     out.push((
         "fetch".to_string(),
         crate::host::capability(crate::registry::SPEC_FETCH),
