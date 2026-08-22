@@ -2,12 +2,21 @@
 (function (deps) {
   'use strict';
   var current = 0;
-  function AsyncResource(type) { this.type_ = type; this.id_ = ++current; }
+  function AsyncResource(type) { this.type_ = type; this.id_ = ++current; this.triggerId_ = current - 1; }
+  AsyncResource.prototype.asyncId = function () { return this.id_; };
+  AsyncResource.prototype.triggerAsyncId = function () { return this.triggerId_; };
+  AsyncResource.prototype.emitDestroy = function () { return this; };
   AsyncResource.prototype.runInAsyncScope = function (fn, thisArg) {
     var args = Array.prototype.slice.call(arguments, 2), prev = current;
     current = this.id_; try { return fn.apply(thisArg, args); } finally { current = prev; }
   };
-  AsyncResource.bind = function (fn, thisArg) { return function () { return fn.apply(thisArg, arguments); }; };
+  AsyncResource.bind = function (fn, thisArg) {
+    return function () { return fn.apply(thisArg, arguments); };
+  };
+  AsyncResource.prototype.bind = function (fn, thisArg) {
+    var resource = this;
+    return function () { return resource.runInAsyncScope(fn, thisArg || this, ...arguments); };
+  };
   function createHook(opts) {
     opts = opts || {}; var enabled = false;
     return { enable: function () { enabled = true; return this; }, disable: function () { enabled = false; return this; }, _enabled: function () { return enabled; } };
