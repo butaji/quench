@@ -143,6 +143,16 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     if name == "tls" || name == "node:tls" {
         return Ok(quench_runtime::host_api::object(vec![
             (
+                "DEFAULT_MIN_VERSION".into(),
+                Value::String("TLSv1.2".into()),
+            ),
+            (
+                "DEFAULT_MAX_VERSION".into(),
+                Value::String("TLSv1.3".into()),
+            ),
+            ("CLIENT_RENEG_LIMIT".into(), Value::Number(3.0)),
+            ("CLIENT_RENEG_WINDOW".into(), Value::Number(600.0)),
+            (
                 "getCiphers".into(),
                 capability_function(HostCapabilityKind::Custom(CapabilityName::TlsGetCiphers)),
             ),
