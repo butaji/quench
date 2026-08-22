@@ -183,3 +183,10 @@ also exposed; raw arrays are rejected by `Socket.connect()` while symbol-marked
 normalized arrays are accepted. `test-net-normalize-args.js` passes. Server
 `maxConnections` rejection is covered by `test-net-server-max-connections.js`;
 the longer close-and-reopen chain remains an unresolved ordering case.
+Native TCP sockets now apply `setNoDelay()` to the actual nonblocking
+`TcpStream` through a host binding, rather than the previous JavaScript-only
+state update. The native loopback regression calls `client.setNoDelay(true)`.
+The fixture reached its ping/pong assertions before this change and remains
+the authoritative focused target. A rerun in this shared worktree was blocked
+by an unrelated concurrent compile error in `modules/crypto.rs` (`E0282` at
+`buffer.bytes.borrow().as_ref().clone()`), not by the TCP fixture.

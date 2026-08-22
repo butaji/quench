@@ -52,9 +52,7 @@ impl QuenchNodeHost {
             }
             HostCapabilityKind::Custom(CapabilityName::FsUnlink) => fs_unlink_async(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsMkdtemp) => fs_mkdtemp(arguments),
-            HostCapabilityKind::Custom(CapabilityName::FsAccessSync) => {
-                fs_access_sync(arguments).map_err(invalid_path_error)
-            }
+            HostCapabilityKind::Custom(CapabilityName::FsAccessSync) => fs_access_sync(arguments),
             HostCapabilityKind::Custom(CapabilityName::FsWriteFileSync) => {
                 self.fs_write_file(arguments)
             }

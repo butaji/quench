@@ -108,6 +108,10 @@
     if (st.flowing && st.buffer.length === 0 && !st.ended && !st.reading) {
       st.reading = true;
       stream._read(st.highWaterMark);
+      // _read may synchronously refill the queue. Continue pulling in the
+      // same turn; flowScheduled is already set, so scheduling alone would
+      // otherwise strand the newly queued chunks until another event arrives.
+      if (st.buffer.length > 0 || st.ended) flowReadable(stream);
     }
     if (st.buffer.length === 0 && st.ended && !st.endEmitted) {
       st.endEmitted = true;
@@ -271,9 +275,15 @@
     }
     this._emitter.emit("close");
     return this;
-  };
+  }
 
-  // ---- Writable ----
+  function writableChunkLength(stream, chunk) {
+    if (stream._writableState.objectMode) return 1;
+    if (typeof chunk === "string") return chunk.length;
+    if (chunk && typeof chunk.byteLength === "number") return chunk.byteLength;
+    if (chunk && typeof chunk.length === "number") return chunk.length;
+    return 1;
+  }
 
   function initWritable(stream, options) {
     if (!stream._emitter) stream._emitter = new EventEmitter();
@@ -298,7 +308,7 @@
     stream._emitter.emit("finish");
   }
 
-  class Writable {
+  class WritableClass {
     constructor(options) {
       initWritable(this, options || {});
     }
@@ -335,13 +345,14 @@
         if (callback) nextTick(() => callback(error));
         return false;
       }
-      st.buffered += 1;
+      const chunkLength = writableChunkLength(this, chunk);
+      st.buffered += chunkLength;
       st.writing = true;
       let called = false;
       const done = (error) => {
         if (called) return;
         called = true;
-        st.buffered -= 1;
+        st.buffered -= chunkLength;
         st.writing = false;
         if (error) {
           if (callback) callback(error);
@@ -376,6 +387,11 @@
       return this;
     }
   }
+  // Node permits Writable(options) as a callable factory as well as new Writable(options).
+  function Writable(options) {
+    return new WritableClass(options);
+  }
+  Writable.prototype = WritableClass.prototype;
   mixEmitter(Writable.prototype);
 
   Writable.prototype.destroy = function (error) {

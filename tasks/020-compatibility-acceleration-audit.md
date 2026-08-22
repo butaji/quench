@@ -255,3 +255,30 @@ Stage 2584 adds a two-origin `maxTotalSockets` regression. Global agent
 admission now waits across origin pools when the total active socket cap is
 reached; the focused stage passes, while the upstream fixture retains its
 separate shutdown callback mismatch.
+
+## 2026-08-21 crate replacement decision: module resolver
+
+**Rejected — `oxc_resolver` 2.1.1 as a drop-in replacement for the
+Node-compatible module resolver.** The workspace currently enables the crate
+through `quench-node/Cargo.toml` with its default features (`cargo tree -p
+quench-node -e no-dev` reports `oxc_resolver v2.1.1`). The semantic adapter
+would still need to own Node's path identity, package lookup, and error
+behavior; therefore the crate cannot replace the existing resolver unless the
+authoritative focused contract passes.
+
+Deterministic evidence (macOS checkout, command run from repository root):
+
+```text
+$ cargo run -q -p quench-node --bin quench-node -- --stage 2117
+not ok tests/node-compat/stage-2117/module-resolve.js:
+  EvalError("Cannot find module '/tmp/quench-module-resolve/entry.js'")
+1 tests, 0 passed, 1 failed
+Error: "Quench harness failures"
+```
+
+Stage 2117 creates `/tmp/quench-module-resolve/entry.js` and asserts
+`require.resolve()` returns its real path, while also checking package lookup
+and builtin-module behavior. The candidate-backed path fails before those
+Node-visible identity/error contracts can be established, so adoption is
+rejected rather than inferred from dependency presence or unrelated green
+focused stages. No runtime change was made.

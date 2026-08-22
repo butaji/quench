@@ -202,13 +202,26 @@ pub fn server_close(
     let Some(id) = net_id(&receiver) else {
         return Ok(receiver);
     };
+    let has_open_sockets = state.borrow().net.sockets.values().any(|socket| {
+        let socket = socket.borrow();
+        socket.server_id == Some(id) && socket.state != SocketState::Closed
+    });
+    let mut emit_now = false;
     if let Some(server) = state.borrow().net.servers.get(&id).cloned() {
         let mut server = server.borrow_mut();
         server.listener.take();
         server.listening = false;
         server.closed = true;
+        if !has_open_sockets {
+            server.close_emitted = true;
+            emit_now = true;
+        }
     }
     add_listener_cb(state, &receiver, args.first(), "close")?;
+    if emit_now {
+        state.borrow_mut().net.servers.remove(&id);
+        emit(state, &receiver, "close", Vec::new())?;
+    }
     Ok(receiver)
 }
 

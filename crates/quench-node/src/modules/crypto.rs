@@ -168,13 +168,35 @@ pub fn unsupported(
     ))
 }
 fn argbytes(v: &Value) -> Result<Vec<u8>, quench_runtime::execute::VmError> {
-    match v {
-        Value::Uint8Array(x) => {
-            Ok(x.buffer.bytes.borrow()[x.byte_offset..x.byte_offset + x.length].to_vec())
+    let (buffer, offset, length) = match v {
+        Value::Uint8Array(view) => (&view.buffer, view.byte_offset, view.byte_length()),
+        Value::DataView(view) => {
+            if *view.buffer.detached.borrow() || view.is_out_of_bounds() {
+                return Err(execute::type_error("argument must be a Buffer or string"));
+            }
+            (&view.buffer, view.byte_offset, view.byte_length())
         }
-        Value::String(s) => Ok(s.as_bytes().to_vec()),
-        _ => Err(execute::type_error("argument must be a Buffer or string")),
-    }
+        Value::ArrayBuffer(buffer) => {
+            if *buffer.detached.borrow() {
+                return Err(execute::type_error("argument must be a Buffer or string"));
+            }
+            return Ok(buffer.bytes.borrow().clone());
+        }
+        Value::String(s) => return Ok(s.as_bytes().to_vec()),
+        _ => {
+            return Err(execute::type_error(
+                "argument must be a Buffer or string",
+            ))
+        }
+    };
+    let bytes = buffer.bytes.borrow();
+    let end = offset.checked_add(length).ok_or_else(|| {
+        execute::type_error("argument must be a Buffer or string")
+    })?;
+    bytes
+        .get(offset..end)
+        .map(|slice| slice.to_vec())
+        .ok_or_else(|| execute::type_error("argument must be a Buffer or string"))
 }
 pub fn timing_safe_equal(
     _: &Rc<RefCell<HostState>>,

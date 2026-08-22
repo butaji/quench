@@ -11,6 +11,7 @@ macro_rules! run_host_context {
         ctx.globals().set("__quench_tcp_read", Func::from($crate::host_context::quench_tcp_read))?;
         ctx.globals().set("__quench_tcp_readable", Func::from($crate::host_context::quench_tcp_readable))?;
         ctx.globals().set("__quench_tcp_write", Func::from($crate::host_context::quench_tcp_write))?;
+        ctx.globals().set("__quench_tcp_set_nodelay", Func::from($crate::host_context::quench_tcp_set_nodelay))?;
         ctx.globals().set("__quench_tcp_shutdown", Func::from($crate::host_context::quench_tcp_shutdown))?;
         ctx.globals().set("__quench_tcp_close", Func::from($crate::host_context::quench_tcp_close))?;
         ctx.globals().set("__quench_udp_socket", Func::from($crate::host_context::quench_udp_socket))?;
@@ -191,9 +192,12 @@ const __quenchEntryModule = globalThis.module;
                     ctx.eval::<(), _>(b"if (typeof globalThis.__quench_timer_poll === 'function') globalThis.__quench_timer_poll();")?;
                 }
                 if ran_job {
-                    let work_after = ctx.eval::<i64, _>(b"globalThis.__quench_work_generation || 0")?;
-                    if work_after > work_before { continue; }
-                    break;
+                    // Promise jobs can complete user-visible work without
+                    // touching the host work generation counter (for example
+                    // scheduler.yield().then(...)). Give the event loop
+                    // another turn so callbacks/listeners queued by those
+                    // jobs are observed before beforeExit.
+                    continue;
                 }
                 if !ran_job {
                     let wait_ms = ctx.eval::<i64, _>(b"typeof globalThis.__quench_timer_next_delay === 'function' ? globalThis.__quench_timer_next_delay() : -1")?;
@@ -206,16 +210,16 @@ const __quenchEntryModule = globalThis.module;
                 }
             }
         }
-        ctx.eval::<(), _>(b"try { Object.defineProperty(globalThis, '__quench_emitting_exit', { configurable: true, value: true }); if (typeof process?.emit === 'function') process.emit('exit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\\n${error.stack}` : String(error); throw error; }")
+        ctx.eval::<(), _>(b"try { Object.defineProperty(globalThis, '__quench_emitting_exit', { configurable: true, value: true }); if (typeof process?.emit === 'function') process.emit('exit', process.exitCode || 0); } catch (error) { globalThis.__quench_exit_error = error && error.stack ? `${error.name}: ${error.message}\n${error.stack}` : String(error); throw error; }")
             .map_err(|error| {
                 let detail = ctx.globals().get::<_, String>("__quench_exit_error").unwrap_or_else(|_| format!("{error:?}"));
                 eprintln!("Process exit handler failure: {detail}");
                 error
             })?;
-        ctx.eval::<(), _>(b"try { globalThis.__quench_verify_calls() } catch (error) { __quench_console_write(String(error)); throw error; }").map_err(|error| {
-            eprintln!("Node harness assertion failure: {error:?}");
-            error
-        })
+        ctx.eval::<(), _>(b"if (typeof globalThis.__quench_run_loop__ === 'function') globalThis.__quench_run_loop__();")?;
+        while ctx.execute_pending_job() {}
+        ctx.eval::<(), _>(b"try { globalThis.__quench_verify_calls() } catch (error) { __quench_console_write(String(error)); throw error; }")?;
+        Ok(())
     })
     };
 }

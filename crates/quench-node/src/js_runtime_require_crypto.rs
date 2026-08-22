@@ -200,6 +200,12 @@ fn require_crypto_module(name: &str) -> Option<Value> {
                     "pbkdf2".into(),
                     capability_function(HostCapabilityKind::Custom(CapabilityName::CryptoPbkdf2)),
                 ),
+                (
+                    "timingSafeEqual".into(),
+                    capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::CryptoTimingSafeEqual,
+                    )),
+                ),
             ]));
     }
     None

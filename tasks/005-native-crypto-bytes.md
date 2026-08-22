@@ -93,4 +93,17 @@ HKDF length validation now distinguishes `buffer.kMaxLength + 1` as
 `ERR_CRYPTO_INVALID_KEYLEN`. The fallback also normalizes typed arrays,
 ArrayBuffer, SharedArrayBuffer, and secret KeyObjects to byte inputs. The
 authoritative `test-crypto-hkdf.js` fixture now passes; WebCrypto HKDF remains
+
+`argbytes()` now accepts `ArrayBuffer` and `DataView` byte sources in addition
+to `Uint8Array` and strings. Focused validation command:
+`cargo run -p quench-node --bin quench-node -- tests/node-compat/stage-2590/crypto-timing-safe-equal-arraybuffer.js`.
+Measured result: **fails** before exercising the assertions with
+`TypeError: value is not callable` (exit 1). The corresponding authoritative
+Node fixture was not run because the focused host entry point is currently
+non-callable; this remains an explicit blocker for the slice.
+
+The timing-safe-equality byte extraction now uses each view's byte offset and
+byte length with checked bounds for Uint8Array and DataView values, while
+ArrayBuffer inputs retain their complete backing bytes. Offset DataView
+coverage is included in `tests/node-compat/stage-2590/crypto-timing-safe-equal-arraybuffer.js`.
 separate.

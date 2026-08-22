@@ -287,3 +287,17 @@ override ordering: OS helpers replaced existing environment-aware methods,
 `fs.constants` omitted access flags, and `sys` returned a fresh util clone. The
 follow-up preserves existing OS behavior, adds `F_OK`/access flags, and caches a
 shared util object; all six stages now pass before the next slice.
+Stage 559 adds `v8.getHeapSpaceStatistics` with a Node-shaped non-empty
+space-record array and zero-valued embedded-runtime metrics. Focused definition
+of done: `cargo run -p quench-node-test --bin run-compat -- --filter
+test-v8-heap-space` — `v8-heap-space-statistics: ok`; `compat: 1 passed, 0
+failed, 1 total`.
+
+## Upstream module evidence
+
+- 2026-08-21: `crates/quench-node-test/node-tests/parallel.txt` now includes:
+  `test-module-prototype-mutation.js`, `test-module-readonly.js`,
+  `test-module-strip-types.js`, and
+  `test-module-subpath-import-long-path.js`.
+  Ran `cargo run -p quench-node-test --bin run-parallel` and the suite reports
+  `parallel: 276 passed, 0 failed, 276 total` (from a previous 272 baseline).

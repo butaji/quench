@@ -64,6 +64,9 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchApplyFinalMod
     };
   }
   let result = originalRequire(name);
+  if (normalized === "timers/promises") {
+    result.scheduler = globalThis.__nodeTimersPromises?.scheduler || result.scheduler;
+  }
   if (normalized === "timers") {
     result.promises = originalRequire("timers/promises");
     const promisifyCustom = Symbol.for("nodejs.util.promisify.custom");

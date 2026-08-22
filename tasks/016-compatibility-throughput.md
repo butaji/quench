@@ -1990,3 +1990,13 @@ ikm/salt/info sources, output length, and invalid digests; the callback API
 now validates before scheduling completion, matching Node's synchronous throw
 behavior. Focused stages 901 and 905 pass. The upstream fixture advances to a
 later invalid-digest assertion mismatch, so this remains a partial cluster.
+2026-08-21: The triage execution loop now supports deterministic machine-readable
+queue persistence via `tools/compat-queue.cjs REPORT LIMIT [PREVIOUS_REPORT]
+[--json-out PATH]`. The persisted artifact contains the selected rank, stable
+signature ordering, counts, sorted categories, and up to three sorted
+representative fixtures, allowing a worker to claim the next bounded item
+without reparsing human output. Exact smoke evidence:
+`tmp=$(mktemp -d); printf '%s\n' '{"fixtures":[{"fixture":"test-b.js","signature":"ERR_B","status":"fail"},{"fixture":"test-a.js","signature":"ERR_A","status":"fail"},{"fixture":"test-c.js","signature":"ERR_A","status":"fail"}]}' > "$tmp/report.json"; node tools/compat-queue.cjs "$tmp/report.json" 2 --json-out "$tmp/q1.json" >/dev/null; node tools/compat-queue.cjs "$tmp/report.json" 2 --json-out "$tmp/q2.json" >/dev/null; cmp "$tmp/q1.json" "$tmp/q2.json"; node -e "const q=require('$tmp/q1.json'); if(q.queue[0].signature!=='ERR_A'||q.queue[0].count!==2)process.exit(1); console.log('deterministic queue: 2 signatures, top count=2')"`; result:
+`deterministic queue: 2 signatures, top count=2`. This improves triage
+execution throughput only; it does not change compatibility status or claim
+broad compatibility.

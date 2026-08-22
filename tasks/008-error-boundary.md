@@ -70,3 +70,10 @@ the corresponding upstream rmdir fixtures. BigInt stat conversion now covers
 Recursive `fs.rmdir()` is rejected with `ERR_INVALID_ARG_VALUE` across sync,
 callback, and promise forms, covered by the authoritative
 `test-fs-rmdir-recursive-error.js` fixture.
+
+`fs.accessSync()` preserves Node-shaped `ENOENT` and `EACCES` failures and
+validates access modes before touching the filesystem. The host capability
+dispatcher now preserves the `ERR_OUT_OF_RANGE` and `ERR_INVALID_ARG_TYPE`
+errors emitted by mode validation instead of rewriting them as path errors.
+The authoritative focused fixture passes:
+`cargo run -p quench-node-test --bin run -- tests/node-compat/stage-2087/fs-access-portable-contract.js`

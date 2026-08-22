@@ -1,3 +1,23 @@
+## 2026-08-21 filesystem access callback boundary
+
+`fs.access(path, mode, callback)` previously invoked `fs_access_sync()` before
+selecting the callback, causing missing-path and permission errors to escape
+synchronously instead of being delivered through the callback. The duplicate
+check was removed; callback success/error delivery now owns the single check.
+`cargo build -p quench-node` passes. No matching upstream fixture is currently
+present in the maintained `crates/quench-node-test/node-tests/` manifest; the
+full upstream `test-fs-access.js` remains a known open boundary and is not
+claimed as passed.
+Focused fixture result: `cargo run -p quench-node-test --bin run-compat --
+--quiet tests/node-compat/stage-2559` reports the new fs-access fixture passed.
+The directory also contains an unrelated existing stream fixture failure, so
+the aggregate result is `1 passed, 1 failed`; the fs-access fixture itself is
+green. Direct authoritative execution with
+`cargo run -p quench-node-test --bin run --
+tests/node/test/parallel/test-fs-access.js` fails before the fixture body with
+`EvalError("Cannot find module 'internal/test/binding'")`. The upstream fixture
+is therefore unrunnable in the current harness; no upstream pass is claimed.
+
 # Ten remaining evidence boundaries
 
 > Contract: This task is part of broad Node 24 compatibility across Linux
@@ -1631,3 +1651,32 @@ fixture still reports a separate duplicate callback in another lifecycle case.
 The PassThrough constructor now preserves identity through `new.target`, so
 close and lifecycle events target the public stream object. Stages 1861,
 1873, 1875, and 2489 now pass together with the application gates.
+## Boundary evidence — fs.access callback/error sequencing (2026-08-21)
+
+The maintained focused fixture `tests/node-compat/stage-2559/fs-access-callback-error.js` was rerun with `cargo run -p quench-node-test --bin run-compat -- --quiet tests/node-compat/stage-2559`. Its `fs.access()` missing-path callback passed and printed `fs access callback error delivered`. The stage directory aggregate was `1 passed, 1 failed`: the unrelated `stream-pipe-finish-trace.js` fixture failed with `readable did not end`.
+
+This is direct evidence for exactly-once callback delivery on the missing-path error path, not for the full upstream credential/invalid-argument sequence. The authoritative `test-fs-access.js` remains unrunnable in this harness at `internal/test/binding`, and the existing `Callback 7` mismatch is therefore classified as a combined credential and callback-sequencing boundary. No additional filesystem implementation change is justified by this rerun.
+## Boundary evidence — net server close lifecycle (2026-08-21)
+
+`server.close()` now emits the server `'close'` event immediately when the
+listener is stopped and no accepted sockets remain, after registering the
+optional callback. This closes the lifecycle gap where the close method could
+mark the server closed but rely on a later pump that was not guaranteed to run.
+
+The authoritative fixture `tests/node/test/parallel/test-net-server-close.js`
+passes with `cargo run -p quench-node-test --bin run --
+tests/node/test/parallel/test-net-server-close.js` (`PASS`). This is a focused
+boundary fix; no broader net close or HTTP lifecycle claim is made.
+## Boundary evidence — dgram multi-socket identity (2026-08-21)
+
+The focused Node fixture `tests/node-compat/stage-2601/dgram-multi-socket-identity.js`
+creates two independent IPv4 sockets, verifies distinct loopback bindings and
+addresses, sends in both directions, checks send callback byte counts, and
+observes both close events. It passes with
+`cargo run -p quench-node-test --bin run-compat -- --quiet tests/node-compat/stage-2601`
+(`1 passed, 0 failed`).
+
+This directly improves item 7's multi-socket handle-identity evidence. It does
+not claim the unsupported cluster-worker fixture or IPv6 multicast coverage;
+those remain the precise open dgram boundaries. No broad task closure is
+claimed.

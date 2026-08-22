@@ -143,6 +143,7 @@ impl CapabilityName {
     const StringDecoderCall: u16 = 2080;
     const VmRunInNewContext: u16 = 2055;
     const CryptoRandomBytes: u16 = 2056;
+    const CryptoTimingSafeEqual: u16 = 0x2105;
     const CryptoRandomFillSync: u16 = 2057;
     const CryptoPbkdf2Sync: u16 = 2203;
     const CryptoPbkdf2: u16 = 2204;
@@ -324,6 +325,9 @@ impl CapabilityName {
     const ModuleRequireCall: u16 = 2344;
     const TimersPromisesSetTimeout: u16 = 2346;
     const TimersPromisesSetImmediate: u16 = 2347;
+    const TimersPromisesSchedulerWait: u16 = 2348;
+    const TimersPromisesSchedulerYield: u16 = 2349;
+    const TimersPromisesSchedulerConstructor: u16 = 2350;
     const HttpServer: u16 = 11;
     const HttpGet: u16 = 12;
     const HttpRequestOn: u16 = 401;

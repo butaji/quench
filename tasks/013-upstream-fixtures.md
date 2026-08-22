@@ -1,23 +1,28 @@
 # Upstream fixtures — Node 24 application compatibility manifest
 
-> Contract: This task is part of broad Node 24 compatibility across Linux
-> x86_64, Linux ARM64, macOS, and Windows. Native addons and Node-API are
-> excluded. Use the statuses and release gates in
-> [compatibility-contract.md](../docs/compatibility-contract.md).
 
-Node's upstream suite is the primary behavioral oracle. The first manifest
-covers `test/parallel/` and `test/es-module/`, with required `test/common/` and
-`test/fixtures/` support files. It is versioned as JSONC under
-`tests/node-compat/` and records `pass`, `fail`, `unsupported`,
-`platform-limited`, `known-conflict`, and `not-tested`. Upstream counts measure
-progress, not an API percentage; six workload-class application gates are also
-release gates.
-The source relationships and implementation order are documented in
-`docs/authoritative-test-sources.md`: Node is the oracle, LLRT is the
-QuickJS/Rust reference, Deno is the foreign-runtime runner reference, WPT
-covers web APIs, and Test262 covers the engine baseline.
+## 2026-08-21 manifest expansion
 
-## Stage 1160: crypto random size validation
+- Added module-prefixed upstream Node parallel fixtures:
+  `test-module-prototype-mutation.js`, `test-module-readonly.js`,
+  `test-module-strip-types.js`, `test-module-subpath-import-long-path.js`.
+- Verification command: `cargo run -p quench-node-test --bin run-parallel`
+  → `parallel: 276 passed, 0 failed, 276 total`.
+- Task evidence status: module surface evidence now includes these additional Node
+  oracle data points; implementation remains unchanged for this slice.
+
+## 2026-08-22 manifest artifact refresh
+
+- Refreshed `target/compat/inventory.json` from the current source and
+  `tests/node/test/parallel` fixture tree; this is an inventory artifact only and
+  does not establish broad fixture compatibility.
+- Exact command: `node tools/compat-inventory.cjs target/compat/inventory.json`
+- Result: `Wrote target/compat/inventory.json: 66 modules, 25 registered, 140
+  globals, 4234 fixtures`.
+- Artifact parse/count check:
+  `node -e "const r=require('./target/compat/inventory.json'); if(r.fixtures.parallelCount!==4234||r.modules.count!==66||r.modules.registered.length!==25) process.exit(1); console.log(JSON.stringify({generatedAt:r.generatedAt,modules:r.modules.count,registered:r.modules.registered.length,fixtures:r.fixtures.parallelCount}))"`
+- Result: `{"generatedAt":"2026-08-22T04:02:37.112Z","modules":66,"registered":25,"fixtures":4234}`.
+
 
 - Fixture: `test-crypto-random.js`
 - Added a separate random-byte polyfill with Node-shaped type/range errors and
