@@ -3,6 +3,7 @@ use std::{env, fs, path::PathBuf, process::Command, time::Instant};
 struct Sample {
     program: String,
     status: i32,
+    timed_out: bool,
     wall_ns: u128,
     peak_rss_bytes: Option<u64>,
     stdout: String,
@@ -70,7 +71,10 @@ fn main() {
         let (qw, qr) = summary(&q);
         let wall_ratio = ratio_u128(nw, qw);
         let rss_ratio = ratio_u64(nr, qr);
-        let rss_target = rss_ratio.parse::<f64>().is_ok_and(|ratio| ratio >= 10.0);
+        let rss_target = q
+            .iter()
+            .all(|sample| !sample.timed_out && sample.status == 0)
+            && rss_ratio.parse::<f64>().is_ok_and(|ratio| ratio >= 10.0);
         println!("{{\"fixture\":{},\"runs\":{},\"output_equal\":{},\"wall_ratio\":{},\"rss_ratio\":{},\"rss_target_met\":{},\"node\":{},\"quench\":{}}}",json(&f.display().to_string()),runs,e,wall_ratio,rss_ratio,rss_target,samples(&n),samples(&q));
     }
 }
@@ -127,9 +131,11 @@ fn run(p: &str, args: &[String], s: &PathBuf, t: u64) -> Sample {
         ),
         Err(e) => (-1, e.to_string(), String::new()),
     };
+    let timed_out = stderr.contains("command terminated abnormally");
     Sample {
         program: p.into(),
         status,
+        timed_out,
         wall_ns: st.elapsed().as_nanos(),
         peak_rss_bytes: stderr.lines().find_map(|l| {
             l.trim()
@@ -141,7 +147,7 @@ fn run(p: &str, args: &[String], s: &PathBuf, t: u64) -> Sample {
     }
 }
 fn samples(v: &[Sample]) -> String {
-    format!("[{}]",v.iter().map(|s|format!("{{\"program\":{},\"status\":{},\"wall_ns\":{},\"peak_rss_bytes\":{},\"stdout\":{},\"stderr\":{}}}",json(&s.program),s.status,s.wall_ns,s.peak_rss_bytes.map_or("null".into(),|x:u64|x.to_string()),json(&s.stdout),json(&s.stderr))).collect::<Vec<_>>().join(","))
+    format!("[{}]",v.iter().map(|s|format!("{{\"program\":{},\"status\":{},\"timed_out\":{},\"wall_ns\":{},\"peak_rss_bytes\":{},\"stdout\":{},\"stderr\":{}}}",json(&s.program),s.status,s.timed_out,s.wall_ns,s.peak_rss_bytes.map_or("null".into(),|x:u64|x.to_string()),json(&s.stdout),json(&s.stderr))).collect::<Vec<_>>().join(","))
 }
 fn json(s: &str) -> String {
     format!(
@@ -152,7 +158,7 @@ fn json(s: &str) -> String {
     )
 }
 fn usage(s: &str) -> ! {
-    eprintln!("{s}\nusage: quench-bench <fixture.js>|--all [--runs N] [--timeout-ms N] [--quench-arg ARG]");
+    eprintln!("{s}\nusage: quench-bench <fixture.js>|--all [--runs N]");
     std::process::exit(2)
 }
 
@@ -166,6 +172,7 @@ mod tests {
             Sample {
                 program: "test".into(),
                 status: 0,
+                timed_out: false,
                 wall_ns: 30,
                 peak_rss_bytes: Some(300),
                 stdout: String::new(),
@@ -174,6 +181,7 @@ mod tests {
             Sample {
                 program: "test".into(),
                 status: 0,
+                timed_out: false,
                 wall_ns: 10,
                 peak_rss_bytes: Some(100),
                 stdout: String::new(),
@@ -182,6 +190,7 @@ mod tests {
             Sample {
                 program: "test".into(),
                 status: 0,
+                timed_out: false,
                 wall_ns: 20,
                 peak_rss_bytes: Some(200),
                 stdout: String::new(),
