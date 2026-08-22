@@ -217,10 +217,19 @@ const __quenchModule = {
   globalPaths,
   _initPaths: initPaths
 };
-globalThis.require = (specifier) => {
-  if (String(specifier).replace(/^node:/, "") === "module") {
-    return __quenchModule;
+const __quenchRequire = (specifier) =>
+  __quenchOriginalRequireWithModule(specifier);
+__quenchRequire.resolve = (specifier) => {
+  const value = String(specifier);
+  const builtin = value.replace(/^node:/, "");
+  if (__quenchBuiltinModules.includes(builtin)) return value;
+  if (value.startsWith(".") || value.startsWith("/")) {
+    const pathApi = __quenchOriginalRequireWithModule("path");
+    return pathApi.resolve(process.cwd(), value);
   }
-  return __quenchOriginalRequireWithModule(specifier);
+  const error = new Error(`Cannot find module '${value}'`);
+  error.code = "MODULE_NOT_FOUND";
+  throw error;
 };
+globalThis.require = __quenchRequire;
 "#);
