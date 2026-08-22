@@ -64,11 +64,7 @@ pub(crate) trait JsRuntime {
         host: &dyn NodeHost,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
-    fn poll_jobs(&self) -> Result<bool, Box<dyn std::error::Error>>;
-
-    fn has_pending_jobs(&self) -> bool;
 }
-
 pub(crate) struct QuenchRuntime;
 
 struct QuenchNodeHost {
