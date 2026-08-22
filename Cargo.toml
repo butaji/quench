@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "quench-bench",
     "crates/quench-js-check",
     "crates/quench-node",
     "crates/quench-node-test",
@@ -10,3 +11,13 @@ members = [
 
 [profile.dev]
 opt-level = 3
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[profile.release-thin]
+inherits = "release"
+lto = "thin"

@@ -1,0 +1,9 @@
+[package]
+name = "quench-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "quench-bench"
+path = "src/main.rs"

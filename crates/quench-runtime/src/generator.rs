@@ -5,10 +5,7 @@ use crate::{
     value::{GeneratorData, GeneratorState, Value},
 };
 use std::collections::{HashMap, VecDeque};
-use std::{
-    cell::{Ref, RefCell, RefMut},
-    rc::Rc,
-};
+use std::{cell::RefCell, rc::Rc};
 type InitialGeneratorState = (
     Option<GeneratorState>,
     Vec<Value>,
@@ -53,7 +50,7 @@ pub(crate) fn create(
     }
     Ok(Value::Generator(Rc::new(GeneratorData {
         function: Rc::clone(function),
-        machine: RefCell::new(machine),
+        machine: crate::value::ExecutionCell::new(machine),
         receiver: receiver.clone(),
         arguments: deferred_arguments,
         done: RefCell::new(false),
@@ -104,16 +101,12 @@ fn initialize_parameters(
     ))
 }
 
-fn registers(generator: &GeneratorData) -> Ref<'_, Vec<Value>> {
-    Ref::map(generator.machine.borrow(), |machine| {
-        &machine.registers.values
-    })
+fn registers(generator: &GeneratorData) -> &[Value] {
+    &generator.machine.borrow().registers.values
 }
 
-fn registers_mut(generator: &GeneratorData) -> RefMut<'_, Vec<Value>> {
-    RefMut::map(generator.machine.borrow_mut(), |machine| {
-        &mut machine.registers.values
-    })
+fn registers_mut(generator: &GeneratorData) -> &mut Vec<Value> {
+    &mut generator.machine.borrow_mut().registers.values
 }
 
 fn machine_pc(generator: &GeneratorData) -> usize {

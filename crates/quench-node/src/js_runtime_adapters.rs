@@ -122,6 +122,7 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
                 HostCapabilityKind::Custom(CapabilityName::ProcessEmit),
                 HostCapabilityKind::Custom(CapabilityName::ProcessCpuUsage),
                 HostCapabilityKind::Custom(CapabilityName::ProcessHrtime),
+                HostCapabilityKind::Custom(CapabilityName::ProcessHrtimeBigint),
                 HostCapabilityKind::Custom(CapabilityName::ProcessActiveResourcesInfo),
                 HostCapabilityKind::Custom(CapabilityName::ProcessPermissionHas),
                 HostCapabilityKind::Custom(CapabilityName::AssertNotStrictEqual),
@@ -357,43 +358,5 @@ globalThis.crypto.subtle = globalThis.crypto.subtle || __quench_crypto_subtle_st
 
     fn has_pending_jobs(&self) -> bool {
         false
-    }
-}
-
-pub(crate) struct QuickJsRuntime {
-    runtime: rquickjs::Runtime,
-}
-
-impl QuickJsRuntime {
-    pub(crate) fn new() -> Result<Self, rquickjs::Error> {
-        Ok(Self {
-            runtime: rquickjs::Runtime::new()?,
-        })
-    }
-}
-
-impl JsRuntime for QuickJsRuntime {
-    fn execute(
-        &self,
-        source: &str,
-        path: Option<&Path>,
-        _host: &dyn NodeHost,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let transformed = transform_esm_imports(source);
-        crate::quickjs_backend::execute_source(&transformed, &self.runtime, path)?;
-        while self.has_pending_jobs() {
-            self.poll_jobs()?;
-        }
-        Ok(())
-    }
-
-    fn poll_jobs(&self) -> Result<bool, Box<dyn std::error::Error>> {
-        self.runtime
-            .execute_pending_job()
-            .map_err(|error| format!("QuickJS job failed: {error:?}").into())
-    }
-
-    fn has_pending_jobs(&self) -> bool {
-        self.runtime.is_job_pending()
     }
 }

@@ -175,9 +175,6 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
     ) {
       globalThis.process.allowedNodeEnvironmentFlags.add("--no-warnings");
     }
-    if (globalThis.process.hrtime) {
-      globalThis.process.hrtime.bigint ||= () => BigInt(Date.now()) * 1000000n;
-    }
     const config = (globalThis.process.config ||= {});
     config.variables ||= {};
     config.target_defaults ||= {};
