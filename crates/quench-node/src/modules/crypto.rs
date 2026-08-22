@@ -345,7 +345,10 @@ pub fn create_hmac(
         Some(Value::String(s)) => s.to_lowercase(),
         _ => return Err(execute::type_error("algorithm required")),
     };
-    if !matches!(alg.as_str(), "sha1" | "sha-1" | "sha256" | "sha-256") {
+    if !matches!(
+        alg.as_str(),
+        "sha1" | "sha-1" | "sha256" | "sha-256" | "sha384" | "sha-384" | "sha512" | "sha-512"
+    ) {
         return Err(execute::type_error("Digest method not supported"));
     }
     let key = argbytes(
@@ -413,10 +416,11 @@ pub fn hash_digest(
         Value::Uint8Array(_)
     ) {
         let key = argbytes(&execute::get_property(object, CRYPTO_KEY))?;
-        if name.contains("1") {
-            hmac_sha1(&key, &data).to_vec()
-        } else {
-            hmac_sha256(&key, &data).to_vec()
+        match name.as_str() {
+            "sha1" | "sha-1" => hmac_sha1(&key, &data).to_vec(),
+            "sha384" | "sha-384" => hmac_sha384(&key, &data).to_vec(),
+            "sha512" | "sha-512" => hmac_sha512(&key, &data).to_vec(),
+            _ => hmac_sha256(&key, &data).to_vec(),
         }
     } else {
         match name.as_str() {
@@ -544,8 +548,8 @@ pub fn subtle_sign(
     let mac: Vec<u8> = match hash_name.as_str() {
         "SHA-256" => hmac_sha256(&secret, &data).to_vec(),
         "SHA-1" => hmac_sha1(&secret, &data).to_vec(),
-        "SHA-384" => return Err(execute::type_error("sign: SHA-384 not yet supported")),
-        "SHA-512" => return Err(execute::type_error("sign: SHA-512 not yet supported")),
+        "SHA-384" => hmac_sha384(&secret, &data).to_vec(),
+        "SHA-512" => hmac_sha512(&secret, &data).to_vec(),
         _ => {
             return Err(execute::type_error(
                 format!("sign: unsupported hash {hash_name}").as_str(),
@@ -586,6 +590,8 @@ pub fn subtle_verify(
     let mac: Vec<u8> = match hash_name.as_str() {
         "SHA-256" => hmac_sha256(&secret, &data).to_vec(),
         "SHA-1" => hmac_sha1(&secret, &data).to_vec(),
+        "SHA-384" => hmac_sha384(&secret, &data).to_vec(),
+        "SHA-512" => hmac_sha512(&secret, &data).to_vec(),
         _ => {
             return Err(execute::type_error(
                 format!("verify: unsupported hash {hash_name}").as_str(),
@@ -954,9 +960,8 @@ pub fn subtle_derive_key(
         ),
     ])))
 }
-
 mod crypto_hash;
 pub use crypto_hash::{
-    hmac_sha1, hmac_sha256, md5_digest, sha1_digest, sha224_digest, sha256_digest, sha384_digest,
-    sha512_digest,
+    hmac_sha1, hmac_sha256, hmac_sha384, hmac_sha512, md5_digest, sha1_digest, sha224_digest,
+    sha256_digest, sha384_digest, sha512_digest,
 };

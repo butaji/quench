@@ -418,18 +418,23 @@ pub fn sha224_digest(data: &[u8]) -> [u8; 28] {
     out
 }
 
-fn hmac_with<F, const N: usize>(key: &[u8], data: &[u8], digest: F) -> [u8; N]
+fn hmac_with<F, const N: usize>(
+    key: &[u8],
+    data: &[u8],
+    digest: F,
+    block_size: usize,
+) -> [u8; N]
 where
     F: Fn(&[u8]) -> [u8; N],
 {
     let mut k = key.to_vec();
-    if k.len() > 64 {
+    if k.len() > block_size {
         k = digest(&k).to_vec();
     }
-    k.resize(64, 0);
-    let mut inner = vec![0x36; 64];
-    let mut outer = vec![0x5c; 64];
-    for i in 0..64 {
+    k.resize(block_size, 0);
+    let mut inner = vec![0x36; block_size];
+    let mut outer = vec![0x5c; block_size];
+    for i in 0..block_size {
         inner[i] ^= k[i];
         outer[i] ^= k[i];
     }
@@ -440,8 +445,14 @@ where
 }
 
 pub fn hmac_sha1(key: &[u8], data: &[u8]) -> [u8; 20] {
-    hmac_with(key, data, sha1_digest)
+    hmac_with(key, data, sha1_digest, 64)
 }
 pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    hmac_with(key, data, sha256_digest)
+    hmac_with(key, data, sha256_digest, 64)
+}
+pub fn hmac_sha384(key: &[u8], data: &[u8]) -> [u8; 48] {
+    hmac_with(key, data, sha384_digest, 128)
+}
+pub fn hmac_sha512(key: &[u8], data: &[u8]) -> [u8; 64] {
+    hmac_with(key, data, sha512_digest, 128)
 }
