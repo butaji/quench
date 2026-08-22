@@ -43,62 +43,69 @@ fn bytes_of(value: &Value) -> Result<Vec<u8>, VmError> {
     };
     Ok(bytes)
 }
-
 fn output(bytes: Vec<u8>) -> Value {
     crate::modules::buffer_proto::make_buffer(&bytes)
 }
 
+fn compression_level(args: &[Value]) -> flate2::Compression {
+    let Some(options) = args.get(1) else {
+        return flate2::Compression::default();
+    };
+    let level = match quench_runtime::vm::get_property(options, "level") {
+        Value::Number(n) if n.is_finite() => n.round().clamp(0.0, 9.0) as u32,
+        _ => return flate2::Compression::default(),
+    };
+    flate2::Compression::new(level)
+}
+
 fn run<F>(args: &[Value], mut f: F) -> Result<Value, VmError>
 where
-    F: FnMut(&[u8]) -> Result<Vec<u8>, std::io::Error>,
+    F: FnMut(&[u8], flate2::Compression) -> Result<Vec<u8>, std::io::Error>,
 {
     let data = bytes_of(args.first().unwrap_or(&Value::Undefined))?;
-    let out = f(&data).map_err(|e| execute::type_error(&e.to_string()))?;
+    let out = f(&data, compression_level(args)).map_err(|e| execute::type_error(&e.to_string()))?;
     Ok(output(out))
 }
 
-fn gzip_deflate(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    let mut encoder = flate2::write::GzEncoder::new(
-        Vec::with_capacity(data.len() / 3),
-        flate2::Compression::default(),
-    );
+fn gzip_deflate(data: &[u8], level: flate2::Compression) -> Result<Vec<u8>, std::io::Error> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::with_capacity(data.len() / 3), level);
     encoder.write_all(data)?;
     encoder.finish()
 }
 
-fn gzip_inflate(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+fn gzip_inflate(data: &[u8], _: flate2::Compression) -> Result<Vec<u8>, std::io::Error> {
     let mut decoder = flate2::bufread::GzDecoder::new(data);
     let mut out = Vec::new();
     decoder.read_to_end(&mut out)?;
     Ok(out)
 }
 
-fn zlib_deflate(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+fn zlib_deflate(data: &[u8], level: flate2::Compression) -> Result<Vec<u8>, std::io::Error> {
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), level);
     encoder.write_all(data)?;
     encoder.finish()
 }
 
-fn zlib_inflate(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+fn zlib_inflate(data: &[u8], _: flate2::Compression) -> Result<Vec<u8>, std::io::Error> {
     let mut decoder = flate2::bufread::ZlibDecoder::new(data);
     let mut out = Vec::new();
     decoder.read_to_end(&mut out)?;
     Ok(out)
 }
 
-fn raw_deflate(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
-    let mut encoder =
-        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+fn raw_deflate(data: &[u8], level: flate2::Compression) -> Result<Vec<u8>, std::io::Error> {
+    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), level);
     encoder.write_all(data)?;
     encoder.finish()
 }
 
-fn raw_inflate(data: &[u8]) -> Result<Vec<u8>, std::io::Error> {
+fn raw_inflate(data: &[u8], _: flate2::Compression) -> Result<Vec<u8>, std::io::Error> {
     let mut decoder = flate2::bufread::DeflateDecoder::new(data);
     let mut out = Vec::new();
     decoder.read_to_end(&mut out)?;
     Ok(out)
 }
+
 
 pub fn gzip(
     state: &Rc<RefCell<HostState>>,
@@ -157,34 +164,18 @@ pub fn inflate(
 /// The `zlib` module namespace.
 pub fn build() -> Value {
     crate::host::namespace_object(vec![
-        (
-            "gzipSync",
-            crate::host::capability(crate::registry::SPEC_ZLIB_GZIP),
-        ),
-        (
-            "gunzipSync",
-            crate::host::capability(crate::registry::SPEC_ZLIB_GUNZIP),
-        ),
-        (
-            "deflateRawSync",
-            crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE_RAW),
-        ),
-        (
-            "inflateRawSync",
-            crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE_RAW),
-        ),
-        (
-            "deflateSync",
-            crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE),
-        ),
-        (
-            "inflateSync",
-            crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE),
-        ),
-        (
-            "gzip",
-            crate::host::capability(crate::registry::SPEC_ZLIB_GZIP),
-        ),
+        ("gzipSync", crate::host::capability(crate::registry::SPEC_ZLIB_GZIP)),
+        ("gunzipSync", crate::host::capability(crate::registry::SPEC_ZLIB_GUNZIP)),
+        ("deflateRawSync", crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE_RAW)),
+        ("inflateRawSync", crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE_RAW)),
+        ("deflateSync", crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE)),
+        ("inflateSync", crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE)),
+        ("gzip", crate::host::capability(crate::registry::SPEC_ZLIB_GZIP)),
+        ("gunzip", crate::host::capability(crate::registry::SPEC_ZLIB_GUNZIP)),
+        ("deflateRaw", crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE_RAW)),
+        ("inflateRaw", crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE_RAW)),
+        ("deflate", crate::host::capability(crate::registry::SPEC_ZLIB_DEFLATE)),
+        ("inflate", crate::host::capability(crate::registry::SPEC_ZLIB_INFLATE)),
     ])
     .unwrap_or_else(|_| Value::Undefined)
 }
