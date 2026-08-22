@@ -215,6 +215,24 @@ pub fn stats(meta: &std::fs::Metadata) -> Value {
         )
     }
 }
+/// Build a Stats value using bigint values for Node's `bigint: true` option.
+pub fn stats_bigint(meta: &std::fs::Metadata) -> Value {
+    let mut value = stats(meta);
+    for key in [
+        "dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "blksize", "blocks",
+    ] {
+        if let Ok(Value::Number(number)) =
+            quench_runtime::execute::get_property_result(&value, key)
+        {
+            value = quench_runtime::execute::set_property(
+                value,
+                key,
+                Value::BigInt((number as u64).to_string()),
+            );
+        }
+    }
+    value
+}
 
 #[cfg(unix)]
 fn stats_unix(meta: &std::fs::Metadata) -> Value {

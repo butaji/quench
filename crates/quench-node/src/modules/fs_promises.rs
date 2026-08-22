@@ -173,9 +173,13 @@ pub fn open(
 pub fn filehandle_stat(
     _state: &Rc<RefCell<HostState>>,
     receiver: Option<&Value>,
-    _args: &[Value],
+    args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(settle(fd(receiver).and_then(super::fs::fd_stat)))
+    let bigint = args.first().is_some_and(|options| {
+        quench_runtime::execute::get_property_result(options, "bigint")
+            == Ok(Value::Boolean(true))
+    });
+    Ok(settle(fd(receiver).and_then(|fd| super::fs::fd_stat(fd, bigint))))
 }
 
 pub fn filehandle_close(

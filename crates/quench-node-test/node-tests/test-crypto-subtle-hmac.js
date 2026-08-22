@@ -9,6 +9,10 @@ if (typeof s.verify !== 'function') throw new Error('no verify');
   const keyBytes = new TextEncoder().encode('key');
   const k = await s.importKey('raw', keyBytes,
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+  if (k.extractable !== false) throw new Error('extractable=' + k.extractable);
+  if (k.usages.length !== 2 || k.usages[0] !== 'sign' || k.usages[1] !== 'verify') {
+    throw new Error('usages=' + k.usages);
+  }
   if (k.algorithm.name !== 'HMAC') throw new Error('algo.name=' + k.algorithm.name);
   if (k.algorithm.hash !== 'SHA-256') throw new Error('algo.hash=' + k.algorithm.hash);
 

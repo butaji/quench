@@ -489,14 +489,16 @@ pub fn subtle_import_key(
     if !matches!(length_v, Value::Undefined) {
         alg_fields.push(("length".to_string(), length_v));
     }
+    let extractable = match args.get(3) {
+        Some(Value::Boolean(value)) => *value,
+        _ => return Err(execute::type_error("extractable must be a boolean")),
+    };
+    let usages = args.get(4).cloned().unwrap_or_else(|| host_api::array(Vec::new()));
     Ok(fulfilled(host_api::object(vec![
         ("type".to_string(), Value::String("secret".into())),
-        ("extractable".to_string(), Value::Boolean(true)),
+        ("extractable".to_string(), Value::Boolean(extractable)),
         ("algorithm".to_string(), host_api::object(alg_fields)),
-        (
-            "usages".to_string(),
-            host_api::array(vec![Value::String("digest".into())]),
-        ),
+        ("usages".to_string(), usages),
         (
             "\0crypto:keydata".to_string(),
             crate::modules::buffer_proto::make_buffer(&data),
