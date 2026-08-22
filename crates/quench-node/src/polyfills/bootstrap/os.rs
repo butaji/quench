@@ -18,6 +18,7 @@ const __quenchOsFallback = {
       ).replace(/\/$/, "") || "/"
     );
   },
+  getuid: () => (typeof globalThis.process?.getuid === "function" ? globalThis.process.getuid() : 0),
   userInfo: (options = {}) => {
     const value = {
       uid: 0,
@@ -63,6 +64,7 @@ for (const name of ["homedir", "tmpdir"]) {
 }
 globalThis.require = (specifier) => {
   if (String(specifier).replace(/^node:/, "") === "os") {
+    globalThis.__nodeOs.getuid ||= () => 0;
     globalThis.__nodeOsInitialized = true;
     if (globalThis.__nodeOs.devNull === undefined) {
       globalThis.__nodeOs.devNull =
