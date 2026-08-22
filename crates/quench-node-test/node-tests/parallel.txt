@@ -2,8 +2,16 @@
 # Real Node.js test/parallel fixtures verified passing through the host.
 # stub passes. Grow by failure families, verify before adding.
 test-assert-checktag.js
+test-assert-class-destructuring.js
+test-assert-class.js
+test-assert-deep-with-error.js
+test-assert-deep.js
+test-assert-esm-cjs-message-verify.js
 test-assert-fail.js
+test-assert-first-line.js
 test-assert-if-error.js
+test-assert-partial-deep-equal.js
+test-assert.js
 test-async-hooks-run-in-async-scope-caught-exception.js
 test-async-hooks-run-in-async-scope-this-arg.js
 test-atomics-wake.js
@@ -42,6 +50,15 @@ test-buffer-zero-fill.js
 test-console-not-call-toString.js
 test-console-self-assign.js
 test-crypto.js
+test-dgram-bind-socket-close-before-cluster-reply.js
+test-dgram-bind-socket-close-before-lookup.js
+test-dgram-bytes-length.js
+test-dgram-cluster-close-during-bind.js
+test-dgram-cluster-close-in-listening.js
+test-dgram-msgsize.js
+test-dgram-reuseport.js
+test-dgram-send-empty-array.js
+test-dgram-unref-in-cluster.js
 test-eval.js
 test-event-emitter-modify-in-emit.js
 test-event-emitter-num-args.js
@@ -108,7 +125,9 @@ test-path-resolve.js
 test-path-win32-exists.js
 test-path-zero-length-strings.js
 test-path.js
+test-process-binding-internalbinding-allowlist.js
 test-process-constants-noatime.js
+test-process-cpuUsage.js
 test-process-default.js
 test-process-domain-segfault.js
 test-process-env-windows-error-reset.js
@@ -116,6 +135,10 @@ test-process-exit-from-before-exit.js
 test-process-exit-handler.js
 test-process-exit-recursive.js
 test-process-exit.js
+test-process-kill-pid.js
+test-process-load-env-file.js
+test-process-ref-unref.js
+test-process-uptime.js
 test-querystring-escape.js
 test-querystring-maxKeys-non-finite.js
 test-querystring-multichar-separator.js
@@ -177,7 +200,9 @@ test-url-domain-ascii-unicode.js
 test-url-fileurltopath.js
 test-url-format-invalid-input.js
 test-url-format-whatwg.js
+test-url-format.js
 test-url-invalid-file-url-path-input.js
+test-url-parse-format.js
 test-url-pathtofileurl.js
 test-url-revokeobjecturl.js
 test-url-urltooptions.js
@@ -189,6 +214,23 @@ test-util-stripvtcontrolcharacters.js
 test-util-styletext-hex.js
 test-util-styletext.js
 test-util-text-decoder.js
+test-vm-access-process-env.js
+test-vm-data-property-writable.js
+test-vm-deleting-property.js
+test-vm-global-configurable-properties.js
+test-vm-global-get-own.js
+test-vm-global-restricted-property.js
+test-vm-module-hasasyncgraph.js
+test-vm-module-hastoplevelawait.js
+test-vm-module-instantiate.js
+test-vm-module-linkmodulerequests-circular.js
+test-vm-module-linkmodulerequests-deep.js
+test-vm-module-linkmodulerequests.js
+test-vm-module-modulerequests.js
+test-vm-parse-abort-on-uncaught-exception.js
+test-vm-proxy-failure-CP.js
+test-vm-script-after-evaluate.js
+test-vm-script-throw-in-tostring.js
 test-whatwg-url-custom-deepequal.js
 test-zlib-flush.js
 test-zlib-no-stream.js
