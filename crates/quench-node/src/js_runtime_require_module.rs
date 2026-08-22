@@ -34,12 +34,35 @@ fn dns_promises_module() -> Value {
     })
 }
 
+fn async_hooks_module() -> Result<Value, VmError> {
+    if let Some(module) = NODE_ASYNC_HOOKS_MODULE.with(|cached| cached.borrow().clone()) {
+        return Ok(module);
+    }
+    let program = quench_runtime::reduce::reduce_global_script_source(include_str!("modules/async_hooks.js"))
+        .map_err(|errors| VmError::EvalError(errors.join("; ")))?;
+    let context = quench_runtime::vm::current_context();
+    let mut registers = Vec::new();
+    let factory = quench_runtime::vm::with_current_context(&context, || {
+        quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
+    })?;
+    let module = quench_runtime::vm::call_value(
+        &factory,
+        &Value::Undefined,
+        &[quench_runtime::host_api::object(vec![])],
+    )?;
+    NODE_ASYNC_HOOKS_MODULE.with(|cached| *cached.borrow_mut() = Some(module.clone()));
+    Ok(module)
+}
+
 fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(name)) = arguments.first() else {
         return Err(VmError::EvalError("require expects a module name".into()));
     };
     if let Some(value) = require_early_module(name)? {
         return Ok(value);
+    }
+    if name == "async_hooks" || name == "node:async_hooks" {
+        return async_hooks_module();
     }
     if name == "dns/promises" || name == "node:dns/promises" {
         return Ok(dns_promises_module());

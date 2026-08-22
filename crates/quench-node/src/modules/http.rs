@@ -78,6 +78,20 @@ impl HttpState {
 /// `http.createServer([requestListener])` — a net server object that
 /// parses HTTP on each connection and emits `'request'`.
 pub fn create_server(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if let Some(options) = args.first() {
+        let valid = quench_runtime::is_callable(options)
+            || matches!(options, Value::Object(_) | Value::ObjectAlias(_));
+        if !valid {
+            let error = host_api::object(vec![
+                ("code".into(), Value::String("ERR_INVALID_ARG_TYPE".into())),
+                (
+                    "message".into(),
+                    Value::String("options must be a function or an object".into()),
+                ),
+            ]);
+            return Err(VmError::Thrown(error));
+        }
+    }
     let object = net::create_server(state, &[])?;
     if let Some(cb) = args.first() {
         if quench_runtime::is_callable(cb) {
@@ -441,9 +455,6 @@ fn res_cap(spec: crate::registry::NodeSpec) -> Value {
     crate::host::capability(spec)
 }
 
-// Response methods live in `http_res`; re-exported here for dispatch.
-pub use crate::modules::http_res::{res_end, res_set_header, res_write, res_write_head};
-
 /// `http.request(options[, cb])` — an outbound ClientRequest.
 pub fn request(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     crate::modules::http_client::request(state, args)
@@ -454,13 +465,13 @@ pub fn get(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmEr
     crate::modules::http_client::get(state, args)
 }
 
-/// The `http` module namespace.
+// Response methods live in `http_res`; re-exported here for dispatch.
+pub use crate::modules::http_res::{res_end, res_set_header, res_write, res_write_head};
 pub fn build() -> Value {
+    let create_server = crate::host::capability(crate::registry::SPEC_HTTP_SERVER);
     crate::host::namespace_object(vec![
-        (
-            "createServer",
-            crate::host::capability(crate::registry::SPEC_HTTP_SERVER),
-        ),
+        ("createServer", create_server.clone()),
+        ("Server", create_server),
         (
             "request",
             crate::host::capability(crate::registry::SPEC_HTTP_REQUEST),

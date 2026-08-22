@@ -50,7 +50,10 @@ fn static_pairs() -> Vec<(String, Value)> {
         .collect();
     pairs.push(("poolSize".to_string(), Value::Number(8192.0)));
     pairs.push(("kMaxLength".to_string(), Value::Number(MAX_LENGTH)));
-    pairs.push(("kStringMaxLength".to_string(), Value::Number(MAX_STRING_LENGTH)));
+    pairs.push((
+        "kStringMaxLength".to_string(),
+        Value::Number(MAX_STRING_LENGTH),
+    ));
     pairs.push(("constants".to_string(), constants_object()));
     pairs.push((
         "prototype".to_string(),

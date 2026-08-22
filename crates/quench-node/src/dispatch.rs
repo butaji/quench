@@ -403,7 +403,7 @@ pub fn lookup_construct(cap: u16) -> Option<ConstructHandler> {
         CAP_URL_SEARCH => url_search_params,
         CAP_READLINE => readline_create_interface,
         CAP_NET_SERVER => net_create_server,
-        CAP_BUFFER_NEW => buffer_new_construct,
+        CAP_HTTP_SERVER => http_construct_server,
         CAP_ABORT_CONTROLLER => abort_controller_new,
         CAP_ABORT_SIGNAL => abort_signal_new,
         0x2400 => crate::modules::sqlite::construct,
