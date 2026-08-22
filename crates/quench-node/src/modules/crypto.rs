@@ -590,7 +590,7 @@ pub fn subtle_verify(
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
-    Aes256Gcm, Nonce,
+    Aes128Gcm, Aes256Gcm, Nonce,
 };
 
 fn aes_gcm_nonce(iv_v: &Value) -> Result<[u8; 12], quench_runtime::execute::VmError> {
@@ -620,16 +620,18 @@ pub fn subtle_encrypt(
     let iv = aes_gcm_nonce(&execute::get_property(&algorithm, "iv"))?;
     let key = args.get(1).cloned().unwrap_or(Value::Undefined);
     let secret = crypto_key_bytes(&key)?;
-    if secret.len() != 32 {
-        return Err(execute::type_error("AES-GCM: key must be 32 bytes"));
-    }
     let data_v = args.get(2).cloned().unwrap_or(Value::Undefined);
     let plaintext = argbytes(&data_v)?;
-    let cipher = Aes256Gcm::new_from_slice(&secret)
-        .map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?;
-    let ciphertext = cipher
-        .encrypt(Nonce::from_slice(&iv), plaintext.as_ref())
-        .map_err(|e| execute::type_error(format!("AES-GCM encrypt: {e}").as_str()))?;
+    let ciphertext = match secret.len() {
+        16 => Aes128Gcm::new_from_slice(&secret)
+            .map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?
+            .encrypt(Nonce::from_slice(&iv), plaintext.as_ref()),
+        32 => Aes256Gcm::new_from_slice(&secret)
+            .map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?
+            .encrypt(Nonce::from_slice(&iv), plaintext.as_ref()),
+        _ => return Err(execute::type_error("AES-GCM: key must be 16 or 32 bytes")),
+    }
+    .map_err(|e| execute::type_error(format!("AES-GCM encrypt: {e}").as_str()))?;
     Ok(fulfilled(crate::modules::buffer_proto::make_buffer(
         &ciphertext,
     )))
@@ -652,16 +654,18 @@ pub fn subtle_decrypt(
     let iv = aes_gcm_nonce(&execute::get_property(&algorithm, "iv"))?;
     let key = args.get(1).cloned().unwrap_or(Value::Undefined);
     let secret = crypto_key_bytes(&key)?;
-    if secret.len() != 32 {
-        return Err(execute::type_error("AES-GCM: key must be 32 bytes"));
-    }
     let data_v = args.get(2).cloned().unwrap_or(Value::Undefined);
     let ciphertext = argbytes(&data_v)?;
-    let cipher = Aes256Gcm::new_from_slice(&secret)
-        .map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?;
-    let plaintext = cipher
-        .decrypt(Nonce::from_slice(&iv), ciphertext.as_ref())
-        .map_err(|e| execute::type_error(format!("AES-GCM decrypt: {e}").as_str()))?;
+    let plaintext = match secret.len() {
+        16 => Aes128Gcm::new_from_slice(&secret)
+            .map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?
+            .decrypt(Nonce::from_slice(&iv), ciphertext.as_ref()),
+        32 => Aes256Gcm::new_from_slice(&secret)
+            .map_err(|e| execute::type_error(format!("AES-GCM key: {e}").as_str()))?
+            .decrypt(Nonce::from_slice(&iv), ciphertext.as_ref()),
+        _ => return Err(execute::type_error("AES-GCM: key must be 16 or 32 bytes")),
+    }
+    .map_err(|e| execute::type_error(format!("AES-GCM decrypt: {e}").as_str()))?;
     Ok(fulfilled(crate::modules::buffer_proto::make_buffer(
         &plaintext,
     )))
