@@ -101,7 +101,7 @@ fn require_cached_group_a(
             "perf_hooks",
             Box::new(|| crate::modules::perf_hooks::build(state)),
         ),
-        "trace_events" | "node:trace_events" => (
+        "trace_events" | "trace-events" | "node:trace_events" | "node:trace-events" => (
             "trace_events",
             Box::new(|| crate::modules::trace_events::build(state)),
         ),

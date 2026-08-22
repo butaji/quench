@@ -1,10 +1,10 @@
 //! Polyfill: `module-surface-07`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"{
+  let traceEventsModule;
   if (globalThis.require) {
-    const originalRequire = globalThis.require;
     globalThis.require = (name) => {
-      const normalized = String(name).replace(/^node:/, "");
+      const normalized = String(name).replace(/^node:/, "").replace(/-/g, "_");
       if (normalized === "wasi") {
         return {
           WASI: function WASI() {},
@@ -14,24 +14,27 @@ pub const JS: &str = quench_js_check::checked_js!(r#"{
         };
       }
       if (normalized === "trace_events") {
-        return {
-          createTracing: (options) => {
-            let enabled = Boolean(options?.enabled);
-            return {
-              get enabled() {
-                return enabled;
-              },
-              enable: () => {
-                enabled = true;
-              },
-              disable: () => {
-                enabled = false;
-              },
-              categories: (options?.categories || []).join(",")
-            };
-          },
-          getEnabledCategories: () => ""
-        };
+        if (!traceEventsModule) {
+          traceEventsModule = {
+            createTracing: (options) => {
+              let enabled = Boolean(options?.enabled);
+              return {
+                get enabled() {
+                  return enabled;
+                },
+                enable: () => {
+                  enabled = true;
+                },
+                disable: () => {
+                  enabled = false;
+                },
+                categories: (options?.categories || []).join(",")
+              };
+            },
+            getEnabledCategories: () => ""
+          };
+        }
+        return traceEventsModule;
       }
       let result = originalRequire(name);
       if (normalized === "timers/promises") {
