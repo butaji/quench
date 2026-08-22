@@ -151,6 +151,7 @@ TracingChannel.prototype.traceSync = function (fn, context, thisArg) {
   } catch (error) {
     context.error = error;
     if (this.error) this.error.publish(context);
+    if (this.end) this.end.publish(context);
     throw error;
   }
 };
