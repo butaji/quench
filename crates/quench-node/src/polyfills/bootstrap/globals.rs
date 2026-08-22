@@ -159,7 +159,7 @@ globalThis.console.time = (label = "default") => {
 };
 globalThis.console.timeLog = (label = "default", ...args) => {
   if (consoleTimers[label] === undefined) return;
-  globalThis.__quench_console_write(
+  __nodeConsoleWrite(
     `${label}: ${
       Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6
     } ms ${globalThis.__nodeFormat(args)}`
@@ -167,7 +167,7 @@ globalThis.console.timeLog = (label = "default", ...args) => {
 };
 globalThis.console.timeEnd = (label = "default") => {
   if (consoleTimers[label] === undefined) return;
-  globalThis.__quench_console_write(
+  __nodeConsoleWrite(
     `${label}: ${
       Number(BigInt(globalThis.__quench_now_ns()) - consoleTimers[label]) / 1e6
     } ms`
