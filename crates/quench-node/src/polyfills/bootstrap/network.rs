@@ -81,14 +81,11 @@ const __quenchNetModule = {
             return;
           }
           const selected = autoSelect
-            ? addresses.find((entry) =>
-              [...__quenchNetServers].some((server) =>
-                server.listening &&
-                server.address().address === entry.address &&
-                server.address().port === Number(options.port)
-              )
-            )
-            : addresses[0];
+            ? addresses.find((entry) => [...__quenchNetServers].some((server) =>
+              server.listening &&
+              server.address().address === entry.address &&
+              server.address().port === Number(options.port)
+            ))
           if (!selected) {
             const noAddress = new AggregateError(
               addresses.map((entry) => {
@@ -258,6 +255,7 @@ const __quenchNetModule = {
       options = {};
     }
     const server = new globalThis.__nodeEventEmitter();
+    if (typeof handler === "function") server.on("connection", handler);
     server.listening = false;
     server._connections = new Set();
     server._closeRequested = false;

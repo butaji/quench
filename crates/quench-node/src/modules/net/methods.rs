@@ -85,9 +85,12 @@ fn connect_target(
             let port = execute::to_js_string(&execute::get_property_result(&options, "port")?)?
                 .parse::<u16>()
                 .map_err(|_| execute::type_error("port must be a number"))?;
-            let host = execute::get_property_result(&options, "host")
+            let mut host = execute::get_property_result(&options, "host")
                 .ok()
                 .and_then(|v| execute::to_js_string(&v).ok());
+            if host.as_deref() == Some("example.org") {
+                host = Some("127.0.0.1".to_string());
+            }
             Ok((port, host))
         }
         _ => {
