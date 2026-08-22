@@ -317,17 +317,12 @@ fn network_dispatch_host(cap: u16) -> Option<CallHandler> {
     Some(match cap {
         CAP_CRYPTO_SUBTLE_DIGEST => crypto_subtle_digest,
         CAP_CRYPTO_SUBTLE_IMPORT_KEY => crypto_subtle_import_key,
-        CAP_CRYPTO_SUBTLE_ENCRYPT
-        | CAP_CRYPTO_SUBTLE_DECRYPT
-        | CAP_CRYPTO_SUBTLE_SIGN
-        | CAP_CRYPTO_SUBTLE_VERIFY
-        | CAP_CRYPTO_SUBTLE_GENERATE_KEY
-        | CAP_CRYPTO_SUBTLE_SIGN => crypto_subtle_sign,
-        | CAP_CRYPTO_SUBTLE_VERIFY => crypto_subtle_verify,
-        | CAP_CRYPTO_SUBTLE_EXPORT_KEY => crypto_subtle_export_key,
-        | CAP_CRYPTO_SUBTLE_ENCRYPT => crypto_subtle_encrypt,
-        | CAP_CRYPTO_SUBTLE_DECRYPT => crypto_subtle_decrypt,
-        | CAP_CRYPTO_SUBTLE_GENERATE_KEY => crypto_subtle_generate_key,
+        CAP_CRYPTO_SUBTLE_ENCRYPT => crypto_subtle_encrypt,
+        CAP_CRYPTO_SUBTLE_DECRYPT => crypto_subtle_decrypt,
+        CAP_CRYPTO_SUBTLE_SIGN => crypto_subtle_sign,
+        CAP_CRYPTO_SUBTLE_VERIFY => crypto_subtle_verify,
+        CAP_CRYPTO_SUBTLE_GENERATE_KEY => crypto_subtle_generate_key,
+        CAP_CRYPTO_SUBTLE_EXPORT_KEY => crypto_subtle_export_key,
         CAP_CRYPTO_SUBTLE_DERIVE_BITS => crypto_subtle_derive_bits,
         CAP_CRYPTO_SUBTLE_DERIVE_KEY => crypto_subtle_derive_key,
         CAP_REQUIRE => node_require,
