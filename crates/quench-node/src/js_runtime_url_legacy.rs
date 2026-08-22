@@ -308,7 +308,14 @@ fn url_parse_legacy(arguments: &[Value]) -> Result<Value, VmError> {
         ),
         (
             "host".into(),
-            Value::String(parsed.host_str().unwrap_or_default().into()),
+            Value::String(
+                match (parsed.host_str(), parsed.port()) {
+                    (Some(host), Some(port)) => format!("{host}:{port}"),
+                    (Some(host), None) => host.to_owned(),
+                    _ => String::new(),
+                }
+                .into(),
+            ),
         ),
         (
             "port".into(),
