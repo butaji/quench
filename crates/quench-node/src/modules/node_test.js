@@ -20,8 +20,8 @@
   test.todo=function(n,o,f){return test(n,typeof o==='function'?{todo:true}:Object.assign({},o,{todo:true}),typeof o==='function'?o:f);};
   test.only=function(n,o,f){test._hasOnly=true;return test(n,typeof o==='function'?{only:true}:Object.assign({},o,{only:true}),typeof o==='function'?o:f);};
   test.run=function(){running=true;var a=test._records.slice(),i=0;function next(){return i<a.length?execute(a[i++]).then(next):Promise.resolve();}return next().then(function(){running=false;return test.summary();});};
-  function describe(name,fn){var s={beforeEach:[],afterEach:[],before:[],after:[],parent:current},old=current;suites.push(s);current=s;try{invoke(fn,{test:test,assert:assert});}catch(e){failures++;}suites.pop();current=old;}
+  function describe(name,opts,fn){if(typeof opts==='function'){fn=opts;opts={};}opts=opts||{};var s={name:String(name),options:opts,beforeEach:[],afterEach:[],before:[],after:[],parent:current},old=current;suites.push(s);current=s;try{invoke(fn,{test:test,assert:assert});}catch(e){failures++;}suites.pop();current=old;}
   function hook(k,fn){if(current&&typeof fn==='function')current[k].push(fn);} describe.beforeEach=function(f){hook('beforeEach',f);};describe.afterEach=function(f){hook('afterEach',f);};describe.before=function(f){hook('before',f);};describe.after=function(f){hook('after',f);};
-  test.test=test;test.describe=describe;test.it=test;test.beforeEach=describe.beforeEach;test.afterEach=describe.afterEach;test.before=describe.before;test.after=describe.after;test.summary=function(){return {tests:count,pass:passed,fail:failures,skip:skipped,passed:passed,failed:failures,skipped:skipped};};test.assert=assert;
+  test.test=test;test.describe=describe;test.suite=describe;test.it=test;test.beforeEach=describe.beforeEach;test.afterEach=describe.afterEach;test.before=describe.before;test.after=describe.after;test.summary=function(){return {tests:count,pass:passed,fail:failures,skip:skipped,passed:passed,failed:failures,skipped:skipped};};test.assert=assert;
   return test;
 })
