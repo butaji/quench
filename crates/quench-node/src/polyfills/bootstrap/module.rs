@@ -2,7 +2,7 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithModule = globalThis.require;
 const __quenchBuiltinModules =
-  "assert buffer child_process cluster crypto events fs http https module net os path perf_hooks process querystring stream string_decoder timers tls tty url util vm worker_threads zlib".split(
+  "assert assert/strict async_hooks buffer child_process cluster console crypto diagnostics_channel dns dns/promises events fs fs/promises http http2 https module net os path perf_hooks process punycode querystring readline readline/promises repl stream stream/consumers stream/promises stream/web string_decoder sys timers timers/promises tls trace_events tty url util v8 vm wasi worker_threads zlib".split(
     " "
   );
 const decodeFilePath = (value) => {
