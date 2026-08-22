@@ -35,6 +35,10 @@ pub fn build() -> Vec<(String, Value)> {
             "trace".to_string(),
             crate::host::capability(crate::registry::SPEC_CONSOLE_TRACE),
         ),
+        (
+            "dir".to_string(),
+            crate::host::capability(crate::registry::SPEC_CONSOLE_LOG),
+        ),
     ]
 }
 

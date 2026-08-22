@@ -90,8 +90,15 @@ fn filter_fixtures(fixtures: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf>
 
 struct SuiteSummary {
     passed: usize,
+    skipped: usize,
     failed: usize,
     failed_names: Vec<String>,
+}
+
+impl SuiteSummary {
+    fn total(&self) -> usize {
+        self.passed + self.skipped + self.failed
+    }
 }
 
 fn run_suite(
@@ -101,6 +108,7 @@ fn run_suite(
 ) -> SuiteSummary {
     let mut summary = SuiteSummary {
         passed: 0,
+        skipped: 0,
         failed: 0,
         failed_names: Vec::new(),
     };
@@ -117,6 +125,7 @@ fn run_suite(
                 if !quiet {
                     println!("SKIP  {}: {reason}", fixture.display());
                 }
+                summary.skipped += 1;
             }
             NodeOutcome::Fail { reason } => {
                 println!("FAIL  {}: {reason}", fixture.display());
@@ -129,9 +138,11 @@ fn run_suite(
 }
 
 fn print_summary(summary: &SuiteSummary, total: usize) {
+    debug_assert_eq!(summary.total(), total);
     println!(
-        "\ncompat: {passed} passed, {failed} failed, {total} total",
+        "\ncompat: {passed} passed, {skipped} skipped, {failed} failed, {total} total",
         passed = summary.passed,
+        skipped = summary.skipped,
         failed = summary.failed,
     );
     if !summary.failed_names.is_empty() {
@@ -139,5 +150,21 @@ fn print_summary(summary: &SuiteSummary, total: usize) {
         for name in &summary.failed_names {
             println!("  - {name}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SuiteSummary;
+
+    #[test]
+    fn summary_total_includes_skips_and_failures() {
+        let summary = SuiteSummary {
+            passed: 2,
+            skipped: 3,
+            failed: 1,
+            failed_names: vec!["broken.js".into()],
+        };
+        assert_eq!(summary.total(), 6);
     }
 }
