@@ -321,7 +321,7 @@ point; reports must pass `tools/compat-report-status.sh` before being
 treated as a current upstream baseline. Prior reports remain historical
 comparisons.
 
-The ESM host path now evaluates `.mjs` entries through rquickjs modules and
+The ESM host path now evaluates `.mjs` entries through runtime modules and
 resolves relative `.mjs` imports, CommonJS `.js` default imports, and selected
 `node:` builtin namespaces. Focused stages 1735--1739 and 1741 cover builtin,
 relative, filesystem, `module.createRequire`, `import.meta.url`, and the Node
@@ -347,7 +347,7 @@ implementation covering `run`, `enterWith`, `exit`, `withScope`, `disable`,
 synchronous contract. Promise continuation context propagation remains an
 explicit runtime gap, demonstrated by upstream
 `test-async-local-storage-enter-with.js`, and is not counted as resolved.
-The remaining await-context mismatch is at the rquickjs native microtask
+The remaining await-context mismatch is at the runtime microtask
 boundary: native `await` continuations do not pass through the JavaScript
 `Promise.prototype.then` hook, so complete fidelity requires engine-facing
 microtask integration in the existing `quench-node` host.
@@ -1075,7 +1075,7 @@ The fs-promises appendFile investigation found and fixed eager consumption of
 Focused coverage also passes latin1 and large-iterable append cases. The large
 case is functionally correct but currently takes about 25 seconds under
 Quench; profiling isolates roughly 10 seconds to `Buffer.from()` UTF-8
-encoding of a 6 MiB string in rquickjs. This is recorded as a measured
+encoding of a 6 MiB string in the runtime. This is recorded as a measured
 performance limitation, not an undocumented semantic failure. The upstream
 appendfile fixture still exceeds the local 10-second fixture timeout, while
 the focused contract passes.
@@ -1721,7 +1721,7 @@ filesystem integration remains to be isolated.
 
 A minimal stage-1930 ESM probe confirmed the gap is earlier than `fs.cp`: even
 `node:assert`, `node:fs`, and `node:timers/promises` imports fail before module
-body execution. The Rust loader currently reports only a generic QuickJS
+body execution. The Rust loader currently reports only a generic engine
 `Exception`, so this is documented as an ESM builtin-loader gap rather than
 misattributed to filesystem copying.
 
@@ -1905,7 +1905,7 @@ needs a direct runtime probe before this is counted as fixed.
 function and sets both the process-local and global forced-exit flags. An
 attempt to interrupt evaluation by throwing a sentinel was reverted because
 the host still surfaced the sentinel as a test exception. The remaining work
-is to make the evaluator consume that sentinel/flag at the exact QuickJS
+is to make the evaluator consume that sentinel/flag at the exact engine
 evaluation boundary without converting a normal skip into a failure.
 2026-08-07: Fixed `fs.opendirSync()` invalid encoding validation. Node throws
 `ERR_INVALID_ARG_VALUE` with the exact `invalid encoding` message for values
@@ -1913,7 +1913,7 @@ such as `"no"`; Quench previously accepted the option. The focused probe and
 upstream `test-fs-internal-assertencoding.js` now pass.
 2026-08-07: Resolved the platform-skip control-flow gap. `common.skip()` now
 uses a process-exit sentinel after setting the forced-exit flags, and the
-QuickJS entry evaluator consumes evaluation errors when that flag is set.
+runtime entry evaluator consumes evaluation errors when that flag is set.
 This prevents skipped fixtures from continuing into unsupported assertions.
 The upstream `test-crypto-argon2-unsupported.js` fixture now exits cleanly
 with Node's skip marker; focused stage 1154 remains green.

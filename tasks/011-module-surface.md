@@ -77,7 +77,7 @@ cluster, and the next concrete slice.
 - `console` — focused core surface is covered by stage 828; `Console`,
   `console.assert`, `console.trace`, `console.table`, and group methods are
   available. The module `dir`/`createTask` exports are covered by stage 2557.
-- `constants` — return `{...libuv constants…}` (mostly no-op on rquickjs host).
+- `constants` — return `{...libuv constants…}` (mostly no-op on the runtime host).
 - `crypto` — hash/HMAC/random/uuid/cert done. Need: `Cipheriv`/`Decipheriv`,
   `Sign`/`Verify`, `KeyObject`, `KeyExportCallback`, `createPrivateKey`,
   `createPublicKey`, `diffieHellman`, `scrypt`, `pbkdf2` (done), `hkdf`,
@@ -195,7 +195,7 @@ cluster, and the next concrete slice.
 
 Stage 519 is complete. The implementation required no new host callback: the
 polyfill keeps incomplete UTF-8 bytes locally and delegates complete sequences
-to the existing `TextDecoder`. The focused stage caught that rquickjs does not
+to the existing `TextDecoder`. The focused stage caught that the runtime does not
 flush `TextDecoder.decode(undefined)`, so `end()` explicitly supplies an empty
 typed array. Future slices should include a direct runtime probe for boundary
 inputs before finalizing the focused assertion. Stage 520 is complete as a
@@ -211,12 +211,12 @@ Stage 524 confirms `util/types` can be implemented entirely from JavaScript
 intrinsics, with no host callback or Rust surface expansion. Stage 525 confirms
 promise stream orchestration can remain in JavaScript: `pipeline`/`finished`
 subscribe to the existing `pipe`, `end`, and `error` events without expanding
-the Rust host. Stage 526 found rquickjs does not provide WHATWG stream globals,
+the Rust host. Stage 526 found the runtime does not provide WHATWG stream globals,
 so the focused module uses a small queue/controller implementation in
 JavaScript; no Rust host state is required for the initial contract. Stage 527
 reuses the same reader contract and centralizes collection in one helper,
 keeping byte conversion behavior consistent across all consumers. Stage 528
-confirmed rquickjs URL hostname normalization does not provide Punycode
+confirmed runtime URL hostname normalization does not provide Punycode
 conversion, so the module uses the RFC 3492 algorithm directly and keeps the
 implementation independent of a Rust or external runtime hook. Stage 529 reuses
 the existing global loader for `createRequire`, keeping the module registration
@@ -241,7 +241,7 @@ formatting and inspection behavior. Stage 537 converts the unsupported
 unsupported-target behavior Node-compatible and testable instead of leaking a
 generic loader exception. Stage 538 applies the same explicit unsupported-module
 contract to `wasi`; WASI runtime integration remains outside the in-process
-rquickjs target. Stage 539 extends the explicit unsupported boundary to both
+target. Stage 539 extends the explicit unsupported boundary to both
 inspector module variants, preventing debugger APIs from falling through to a
 generic loader error on this target. Stage 540 adds `util.parseArgs` for
 boolean/string options, negated flags, positionals, repeated values, and token
@@ -255,7 +255,7 @@ abort propagation without requiring structured-clone host support. Stage 544
 adds the `console` module constructor and table, tracing, grouping, and
 assertion methods by delegating output to the existing process streams. Stage
 545 adds `URL.canParse` and `URL.parse`, including relative URL bases and
-null-returning invalid input behavior where rquickjs lacks the statics. Stage
+null-returning invalid input behavior where the runtime lacks the statics. Stage
 546 adds V8 heap-statistics and coverage controls with stable numeric shapes;
 heap snapshots return an explicit unsupported-target error. Stage 547 adds
 `os.homedir`, `os.tmpdir`, and `os.userInfo` using the existing host-provided

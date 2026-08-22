@@ -107,7 +107,7 @@ The set of names Node attaches to `globalThis`, taken from the
   `fetch`-bundled).
 - `Worker` — web worker. Out of scope on this target (return
   `Error("Worker is not supported")`).
-- `SharedArrayBuffer`, `Atomics` — built-in (rquickjs feature flag).
+- `SharedArrayBuffer`, `Atomics` — built-in (engine feature flag).
 - `FinalizationRegistry`, `WeakRef` — built-in.
 - `gc` — Node extension. In the harness, expose a no-op or a real
   hook (host decision).
