@@ -20,7 +20,7 @@ globalThis.require = (specifier) => {
   }
   if (name === "internal/assert/myers_diff") {
     return {
-      myersDiff(a, b) {
+      myersDiff: function (a, b) {
         const size = a.length + b.length;
         if (size >= 2 ** 31) {
           const error = new RangeError(
