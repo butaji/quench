@@ -58,7 +58,7 @@ pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchCoreStaticMod
   ],
   ["assert", () => globalThis.__nodeAssert],
   ["internal/assert/myers_diff", () => ({
-    myersDiff(a, b) {
+    myersDiff: function (a, b) {
       const size = a.length + b.length;
       if (size >= 2 ** 31) {
         const error = new RangeError(
