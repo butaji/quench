@@ -71,6 +71,22 @@ function cloneMessage(value) {
 }
 function messagePort() {
   var port = emitter({ _queueEvents: true, _peer: null, close: function () { if (!this._closed) { this._closed = true; this.emit('close'); } } });
+  var onmessage = null;
+  var onmessageListener = null;
+  port.onmessage = null;
+  Object.defineProperty(port, 'onmessage', {
+    configurable: true,
+    enumerable: true,
+    get: function () { return onmessage; },
+    set: function (fn) {
+      if (onmessageListener) port.removeListener('message', onmessageListener);
+      onmessage = typeof fn === 'function' ? fn : null;
+      onmessageListener = onmessage ? function (value) {
+        onmessage.call(port, { data: value, target: port });
+      } : null;
+      if (onmessageListener) port.on('message', onmessageListener);
+    }
+  });
   port.postMessage = function (value) {
     if (!this._closed && this._peer && !this._peer._closed) this._peer.emit('message', cloneMessage(value));
   };
