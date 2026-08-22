@@ -63,10 +63,17 @@ pub(crate) fn fd_open(path: &str, flag: Option<&str>) -> Result<i32, VmError> {
     });
     Ok(fd)
 }
-pub(crate) fn fd_stat(fd: i32) -> Result<Value, VmError> {
+pub(crate) fn fd_stat(fd: i32, bigint: bool) -> Result<Value, VmError> {
+    let build = |metadata: std::fs::Metadata| {
+        if bigint {
+            super::fs_stats::stats_bigint(&metadata)
+        } else {
+            super::fs_stats::stats(&metadata)
+        }
+    };
     if let Some(stream) = std_stream_fd(fd) {
         return std::fs::metadata(stream)
-            .map(|m| super::fs_stats::stats(&m))
+            .map(build)
             .map_err(|e| crate::modules::fs_error::fs_error("fstat", None, &e));
     }
     FDS.with(|t| {
@@ -77,7 +84,7 @@ pub(crate) fn fd_stat(fd: i32) -> Result<Value, VmError> {
             })
             .and_then(|f| {
                 f.metadata()
-                    .map(|m| super::fs_stats::stats(&m))
+                    .map(build)
                     .map_err(|e| crate::modules::fs_error::fs_error("fstat", None, &e))
             })
     })

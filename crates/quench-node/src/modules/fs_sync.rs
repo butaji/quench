@@ -231,8 +231,12 @@ pub fn fstat_sync(
     _r: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
+    let bigint = args.get(1).is_some_and(|options| {
+        quench_runtime::execute::get_property_result(options, "bigint")
+            == Ok(Value::Boolean(true))
+    });
     match args.first() {
-        Some(Value::Number(n)) => super::fs::fd_stat(*n as i32),
+        Some(Value::Number(n)) => super::fs::fd_stat(*n as i32, bigint),
         _ => Err(crate::modules::buffer_enc::invalid_arg_type(
             "fd must be a number".into(),
         )),
