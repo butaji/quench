@@ -6,8 +6,9 @@ Accepted
 
 ## Decision
 
-quench-node is a broad Node-compatible runtime built on Rust and rquickjs. Its
-target is Node 24 behavior on Linux x86_64, Linux ARM64, macOS, and Windows.
+quench-node is a broad Node-compatible runtime built on Rust and a standalone
+JavaScript engine. Its target is Node 24 behavior on Linux x86_64, Linux ARM64,
+macOS, and Windows.
 Native addons and Node-API are outside the contract.
 
 Applicable Node upstream tests are the primary oracle. Native-addon and
@@ -33,7 +34,7 @@ primitives. No separate `quench-runtime` crate may be introduced. TypeScript
 execution and package installation are outside the runtime contract;
 applications start after dependencies are installed.
 
-LLRT remains a QuickJS/Rust design reference, WinterJS a web-platform and
+LLRT remains a Rust runtime design reference, WinterJS a web-platform and
 capability-matrix reference, Deno a foreign-runtime runner reference, WPT a
 web-platform oracle, and Test262 an ECMAScript baseline.
 

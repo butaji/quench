@@ -26,10 +26,10 @@ vendored copy under `tests/node-compat/suite`.
 
 - Repository: [awslabs/llrt](https://github.com/awslabs/llrt)
 
-LLRT is a QuickJS/Rust runtime reference for separating JavaScript semantics
-from Rust and for documenting supported, partial, and unavailable APIs. Its
-unit, end-to-end, and WPT test organization informs quench-node structure; it
-does not define quench-node's compatibility target.
+LLRT is a Rust runtime reference for separating JavaScript semantics from Rust
+and for documenting supported, partial, and unavailable APIs. Its unit,
+end-to-end, and WPT test organization informs quench-node structure; it does
+not define quench-node's compatibility target.
 
 ## 3. Deno node compatibility — foreign-runtime runner reference
 
@@ -52,8 +52,8 @@ globals such as URL, fetch, encoders, streams, WebCrypto, and abort signals.
 
 - Repository: [tc39/test262](https://github.com/tc39/test262)
 
-Test262 is a secondary baseline for QuickJS/rquickjs language conformance. It
-becomes a direct regression gate if quench-node changes engine behavior.
+Test262 is a secondary baseline for ECMAScript language conformance. It becomes
+a direct regression gate if quench-node changes engine behavior.
 
 ## Implementation order
 

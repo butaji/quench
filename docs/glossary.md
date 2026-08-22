@@ -71,14 +71,14 @@ capabilities, and event-loop integration.
 
 ## Runtime plugin
 
-An implementation of `JsRuntime`. `QuickJsRuntime` adapts rquickjs;
-`QuenchRuntime` adapts the standalone quench-runtime engine.
+An implementation of `JsRuntime`; each plugin adapts a concrete JavaScript
+engine while preserving the engine-neutral contract.
 
 ## Opaque JsValue
 
 A handle to a JavaScript value whose representation is private to a runtime
 plugin. Host code uses engine-neutral operations instead of matching on
-rquickjs or Quench value types.
+engine-specific value types.
 
 ## Engine-neutral host function
 
