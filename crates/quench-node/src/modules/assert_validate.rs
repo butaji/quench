@@ -189,7 +189,7 @@ fn validate_callable(
     // callables (including ones that happen to have a `prototype`
     // property, like common.mustCall wrappers) are validation functions.
     if is_error_constructor(expected) {
-        if !expected_name.is_empty() && expected_name == name_of(error) {
+        if is_instance_of(error, expected) {
             return Ok(Value::Undefined);
         }
         return Err(invalid_expected(
@@ -232,6 +232,31 @@ fn is_error_constructor(expected: &Value) -> bool {
                 Err(_) => return false,
             },
             _ => return false,
+        };
+    }
+    false
+}
+/// Check the same prototype-chain relation used by JavaScript `instanceof`.
+/// Comparing names alone incorrectly accepts plain objects that merely expose
+/// an Error-like `name` property.
+fn is_instance_of(value: &Value, constructor: &Value) -> bool {
+    let Ok(expected_proto) = execute::get_property_result(constructor, "prototype") else {
+        return false;
+    };
+    let mut current = match execute::get_prototype_of(value) {
+        Ok(proto) => proto,
+        Err(_) => return false,
+    };
+    for _ in 0..64 {
+        if current == expected_proto {
+            return true;
+        }
+        current = match current {
+            Value::Null => return false,
+            _ => match execute::get_prototype_of(&current) {
+                Ok(next) => next,
+                Err(_) => return false,
+            },
         };
     }
     false

@@ -2,6 +2,15 @@
 
 pub const JS: &str = quench_js_check::checked_js!(r#"{
   if (globalThis.process) {
+    const env = globalThis.process.env;
+    if (env && !Object.prototype.hasOwnProperty.call(env, "")) {
+      Object.defineProperty(env, "", {
+        configurable: true,
+        enumerable: false,
+        get: () => undefined,
+        set: () => {}
+      });
+    }
     const write = (chunk) => {
       globalThis.__quench_console_write(String(chunk));
       return true;
