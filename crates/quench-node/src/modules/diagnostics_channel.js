@@ -1,23 +1,42 @@
 // Node compat: diagnostics_channel, matching Bun's documented surface.
-var channels = {};
+// The registry is a Map so channel names may be strings or Symbols.
+var channels = new Map();
 function Channel(name) {
-  this.name = String(name);
+  this.name = name;
   this._subscribers = [];
   this._store = undefined;
+  this._index = undefined;
+}
+function channelNameTypeError(name) {
+  var err = new TypeError('The "channel" argument must be of type string or an instance of Symbol. Received ' + typeName(name));
+  err.code = 'ERR_INVALID_ARG_TYPE';
+  err.name = 'TypeError';
+  return err;
+}
+function channelArgTypeError(name) {
+  var err = new TypeError('The "' + name + '" argument must be of type function');
+  err.code = 'ERR_INVALID_ARG_TYPE';
+  err.name = 'TypeError';
+  return err;
 }
 Channel.prototype.subscribe = function (fn) {
-  if (typeof fn !== 'function') throw new TypeError('subscriber must be a function');
+  if (typeof fn !== 'function') throw channelArgTypeError('subscriber');
   if (this._subscribers.indexOf(fn) < 0) this._subscribers.push(fn);
   return this;
 };
 Channel.prototype.unsubscribe = function (fn) {
   var i = this._subscribers.indexOf(fn);
-  if (i >= 0) this._subscribers.splice(i, 1);
-  return this;
+  if (i < 0) return false;
+  this._subscribers.splice(i, 1);
+  return true;
 };
-Channel.prototype.publish = function (message, context) {
+// Node: `publish(message, ...rest)` invokes each subscriber as
+// `subscriber(message, this.name)`; extra call args are not forwarded
+// to the subscriber. The channel name is always the 2nd argument.
+Channel.prototype.publish = function (message) {
   var copy = this._subscribers.slice();
-  for (var i = 0; i < copy.length; i++) copy[i](message, context);
+  var name = this.name;
+  for (var i = 0; i < copy.length; i++) copy[i](message, name);
 };
 Channel.prototype.bindStore = function (store) {
   this._store = store;
@@ -31,9 +50,14 @@ Object.defineProperty(Channel.prototype, 'hasSubscribers', { get: function () {
   return this._subscribers.length > 0;
 }});
 function channel(name) {
-  var key = String(name);
-  if (!channels[key]) channels[key] = new Channel(key);
-  return channels[key];
+  if (typeof name !== 'string' && typeof name !== 'symbol') {
+    throw channelNameTypeError(name);
+  }
+  var existing = channels.get(name);
+  if (existing) return existing;
+  var created = new Channel(name);
+  channels.set(name, created);
+  return created;
 }
 
 function TracingChannel(names) {
@@ -54,10 +78,41 @@ function tracingChannel(nameOrChannels) {
       asyncEnd: channel(base + ':asyncEnd'),
       error: channel(base + ':error')
     };
+  } else if (nameOrChannels && typeof nameOrChannels === 'object') {
+    var start = channelFromMap(nameOrChannels, 'start');
+    if (typeof start.hasSubscribers === 'undefined') {
+      throw new TypeError('Cannot convert undefined or null to object');
+    }
+    names = {
+      start: start,
+      end: channelFromMap(nameOrChannels, 'end'),
+      asyncStart: channelFromMap(nameOrChannels, 'asyncStart'),
+      asyncEnd: channelFromMap(nameOrChannels, 'asyncEnd'),
+      error: channelFromMap(nameOrChannels, 'error')
+    };
   } else {
-    names = nameOrChannels;
+    var err = new TypeError('The "nameOrChannels" argument must be of type string or an instance of TracingChannel or Object. Received ' + typeName(nameOrChannels));
+    err.code = 'ERR_INVALID_ARG_TYPE';
+    err.name = 'TypeError';
+    throw err;
   }
   return new TracingChannel(names);
+}
+function typeName(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'an array';
+  return typeof value;
+}
+function channelFromMap(map, name) {
+  var value = map[name];
+  if (value === undefined) return { hasSubscribers: undefined };
+  if (!(value instanceof Channel)) {
+    var err = new TypeError('The "nameOrChannels.' + name + '" property must be an instance of Channel. Received an instance of ' + (value && value.constructor ? value.constructor.name : typeof value));
+    err.code = 'ERR_INVALID_ARG_TYPE';
+    err.name = 'TypeError';
+    throw err;
+  }
+  return value;
 }
 Object.defineProperty(TracingChannel.prototype, 'hasSubscribers', { get: function () {
   return Boolean(
@@ -162,7 +217,13 @@ module.exports = {
   subscribe: function (name, fn) { return channel(name).subscribe(fn); },
   unsubscribe: function (name, fn) { return channel(name).unsubscribe(fn); },
   hasSubscribers: function (name) { return channel(name).hasSubscribers; },
-  channelNames: function () { return Object.keys(channels); },
+  channelNames: function () {
+    var out = [];
+    channels.forEach(function (ch, key) {
+      if (typeof key === 'string') out.push(key);
+    });
+    return out;
+  },
   tracingChannel: tracingChannel,
   boundedChannel: boundedChannel
 };
