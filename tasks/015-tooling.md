@@ -181,7 +181,7 @@ manual log comparison. `tools/coverage-by-prefix.sh` now emits pass/total
 percentages grouped by the leading fixture prefix for corpus-level progress
 measurement. The unused ESLint suppression in the dgram membership polyfill was
 removed, so the repository lint gate is warning-free for owned source. The Node
-harness now prints the underlying error message instead of only the QuickJS
+harness now prints the underlying error message instead of only the engine
 error category when an upstream fixture fails.
 
 The parallel differential runner now builds `quench-node` once before fan-out,

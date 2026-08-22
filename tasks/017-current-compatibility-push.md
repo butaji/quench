@@ -92,7 +92,7 @@ Stage 2042 verifies that basic top-level `await` itself already passes; the
 remaining Hono behavior is an untracked application Promise at process exit.
 The ESM entry boundary now finishes the module evaluation Promise. Re-running
 the Hono smoke app reaches its awaited `app.fetch()` and reports a real
-QuickJS exception instead of exiting after `loaded`; Hono’s async fetch path
+runtime exception instead of exiting after `loaded`; Hono’s async fetch path
 remains an open live-application compatibility gap.
 The concrete first gap was the missing global `Request`; stage 2043 adds
 minimal Web `Request`/`Response` behavior used by Hono-style handlers.
@@ -371,7 +371,7 @@ conversions. The same deterministic assertions pass under quench-node and
 host Node.
 
 An ESLint Linter application probe remains unresolved: package loading reaches
-the public API, but the first lint operation overflows the QuickJS stack inside
+the public API, but the first lint operation overflows the runtime stack inside
 ESLint's parser/configuration path. A focused RegExp-flags surface probe (stage 2083) passes, so this is not being misclassified as a missing primitive.
 
 Fresh full differential rebaseline completed at 2026-08-08T02:42:45Z against
@@ -934,7 +934,7 @@ pass.
 - Stage 2270 propagates dgram `sendBlockList` failures through asynchronous `connect()` and `send()` callbacks as `ERR_IP_BLOCKED`, suppresses packets rejected by `receiveBlockList`, and models implicit sender loopback addresses. The focused blocklist contract and upstream `test-dgram-blocklist.js` pass.
 - Stage 2271 routes dgram binding through the exposed internal handle lookup hook and prevents a deferred bind from completing after `close()`. The focused lifecycle contract and upstream `test-dgram-close-during-bind.js` pass.
 - Stage 2272 validates dgram `signal` options and closes sockets on live or pre-aborted `AbortSignal`s. The focused signal contract and upstream `test-dgram-close-signal.js` pass.
-- Default-address isolation on 2026-08-08: a focused two-socket UDP4/UDP6 contract with the same `common.mustCall` callback shape passes and reports `0.0.0.0`/`::`; upstream `test-dgram-bind-default-address.js` still fails with an opaque QuickJS exception. No speculative address change was retained.
+- Default-address isolation on 2026-08-08: a focused two-socket UDP4/UDP6 contract with the same `common.mustCall` callback shape passes and reports `0.0.0.0`/`::`; upstream `test-dgram-bind-default-address.js` still fails with an opaque runtime exception. No speculative address change was retained.
 - HTTP-agent isolation on 2026-08-08: upstream `test-http-agent-maxsockets-respected.js` reports `Callback 1` (the server-listen wrapper) was never called, while a standalone `http.createServer().listen()` probe completes and returns a valid address. The remaining issue is interaction-specific to the HTTP-agent fixture; no unrelated server-listen change was retained.
 - Stage 2274 adds dgram hostname-resolution failure callbacks (`ENOTFOUND`), `removeListener()`, and correct removal of `once()` wrappers. The focused host-error contract and upstream `test-dgram-send-cb-quelches-error.js` pass, including callback-vs-error-event behavior.
 - Stage 2275 validates dgram bind addresses and asynchronously reports `EADDRNOTAVAIL` with Node-compatible `code`, `address`, and message fields for non-local IPv4/IPv6 addresses. The focused contract and upstream `test-dgram-error-message-address.js` pass.

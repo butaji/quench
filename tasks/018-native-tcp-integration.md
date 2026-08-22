@@ -129,7 +129,7 @@ fixtures and consumed CPU during long waits, so the prototype was discarded
 rather than integrated. A production fix needs host-backed non-blocking timers
 or an equivalent bounded scheduler mechanism.
 
-The local `rquickjs` 0.9 source confirms two host-backed implementation routes:
+The local `engine` 0.9 source confirms two host-backed implementation routes:
 `AsyncRuntime`/`AsyncContext` with `Promise::wrap_future()` can host a Rust
 sleep future, but would require migrating the synchronous harness; alternatively
 the existing `Runtime` can keep its shape while a Rust deadline registry is
@@ -146,7 +146,7 @@ backpressure and watch-promises fixtures remain unresolved, so this is a partial
 scheduler integration rather than a completed Node timer claim.
 
 Stage 2445 exposed a second scheduler interaction: draining every pending
-QuickJS job before polling timers starved `setImmediate` callbacks behind
+runtime job before polling timers starved `setImmediate` callbacks behind
 stream-demand microtasks. Polling the host timer registry between jobs raises
 the large backpressure trace from 1 to 18 writes, but readable demand still
 stops at 3/11 reads. The timer interleave is retained as partial evidence; the

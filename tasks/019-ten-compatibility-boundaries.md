@@ -110,7 +110,7 @@ ownership still needs a separate state model.
   and callback/promise permission errors, including single-callback ordering.
   The authoritative fixture cannot currently provide stronger evidence in this
   harness because its root-user guard and `process.setuid('nobody')` branch
-  terminate with an opaque QuickJS exception; credential-switch behavior must
+  terminate with an opaque runtime exception; credential-switch behavior must
   be fixed before claiming the full fixture.
 - Item 9: partially improved. Stage 2342 covers `node:` builtin normalization
   through the central dispatcher. Replacing loader-time regex stripping with
@@ -871,7 +871,7 @@ writable halves complete. The focused write/final/end lifecycle passes.
 Previously failing focused Duplex stages 1912, 2016, 2025, 2150, 2153–2155,
 2167, and 2169 now pass together with the maintained writable/stream cluster.
 The authoritative `test-stream-finished.js` advances beyond its prior missing
-queue TypeError but aborts later in QuickJS GC (`gc_decref_child` ref-count
+queue TypeError but aborts later in runtime GC (`gc_decref_child` ref-count
 assertion), so the full finished fixture remains unclaimed and requires an
 interaction-level reduction before further lifecycle changes.
 
@@ -934,10 +934,10 @@ helper stages and authoritative `test-stream-filter.js`. The dependency block
 previously reported as map `Callback 13` passes in isolation, along with both
 subsequent 20-item high-water-mark matrices and the chained-map delay block.
 The complete `test-stream-map.js` fixture now exits with status 139 only when
-those blocks share one realm, so an aggregate QuickJS/GC interaction remains
+those blocks share one realm, so an aggregate runtime/GC interaction remains
 and no full map-fixture pass is claimed.
 
-Stage 2467 resolves that aggregate QuickJS lifetime interaction. Scheduler
+Stage 2467 resolves that aggregate runtime lifetime interaction. Scheduler
 entries no longer retain the callback-settlement promise whose handlers close
 over the same entry; progress already uses a separate deferred notification,
 so the back-reference was unnecessary and formed a collectible cycle for each
@@ -1143,7 +1143,7 @@ inside the bind callback. Stage 554 is corrected to inspect and use the socket
 from that callback instead of asserting a synchronous bind that local Node
 does not provide. Both focused stages and authoritative
 `test-dgram-address.js` pass. `test-dgram-bind-default-address.js` still ends in
-an opaque QuickJS exception and is not claimed. The post-fix audit reports
+an opaque runtime exception and is not claimed. The post-fix audit reports
 2305/2324 passing with 19 unclassified failures.
 
 Stage 2486 corrects three stale timer contracts against the local Node 26.5.1
@@ -1176,7 +1176,7 @@ before writable `finish` triggers auto-destroy. The focused event-order stage
 and stages 1923, 1925, and 2146 observe `end`, `finish`, the custom destroy hook,
 and `close` exactly once in Node order. The complete authoritative
 `test-stream-auto-destroy.js` fixture passes; the broader Transform destroy
-fixture retains a separate opaque QuickJS failure and is not claimed. The
+fixture retains a separate opaque engine failure and is not claimed. The
 post-fix audit reports 2317/2327 passing with 10 unclassified failures.
 
 Stage 2489 makes `stream.finished()` monitor the stream sides selected by its
@@ -1191,7 +1191,7 @@ Node's current contracts: a plain emitter-like object is rejected with
 `ERR_INVALID_ARG_TYPE`, and premature close is exercised by destroying a real
 Readable rather than replacing its listener API. Close is successful only
 after every selected side completes. The focused finished cluster passes; the
-authoritative fixture now advances further and terminates in a QuickJS GC
+authoritative fixture now advances further and terminates in a runtime GC
 reference-count assertion, which remains separate. The post-fix audit reports
 2320/2328 passing with 8 unclassified failures.
 
@@ -1287,7 +1287,7 @@ spawned script before closing stdout and emits the executable path as a Buffer,
 preserving data-before-close ordering without adding a host spawn API. The
 focused self-spawn stage and complete authoritative `test-process-argv-0.js`
 fixture pass; the adjacent exec-path and maintained child-process stages remain
-green. The broader `test-process-env.js` retains its separate opaque QuickJS
+green. The broader `test-process-env.js` retains its separate opaque engine
 exception and is not claimed. The full focused gate reports 2338/2338 passing.
 
 Stage 2500 evaluates CommonJS entry files through the module wrapper that Node
@@ -1380,7 +1380,7 @@ reports 2354/2354 passing.
 Stage 2518 adds the callback form of `stream.finished()` for readable and
 writable streams. The focused stream-finished callback stage passes and the
 full focused gate reports 2355/2355 passing. The larger upstream
-`test-stream-finished.js` fixture now reaches a native QuickJS GC assertion
+`test-stream-finished.js` fixture now reaches a native runtime GC assertion
 after exercising cancellation and promisified paths; that runtime limitation
 remains under investigation.
 
@@ -1692,3 +1692,21 @@ This directly improves item 6's response/close sequencing evidence for a
 single keep-alive client. It does not claim concurrent multi-request,
 connection-reuse, or full upstream HTTP fixture compatibility; those remain
 separate boundaries. No broad task closure is claimed.
+## Sole-runtime CLI fixture execution (2026-08-22)
+
+Representative focused stages were executed directly through the sole
+`quench-runtime` CLI path with
+`cargo run -p quench-node --bin quench-node -- <fixture>`:
+
+- `tests/node-compat/stage-2591/bootstrap-lazy-api.js` — **PASS**, printing
+  `bootstrap lazy API surface: ok`.
+- `tests/node-compat/stage-2579/tty-style-probe.js` — **FAIL**, before fixture
+  assertions, with `EvalError("Cannot find module 'tty'")`; this is a runtime
+  module-surface limitation, not a passing compatibility result.
+- `tests/node-compat/stage-2553/crypto-sha512-and-invalid-hmac.js` — **FAIL**,
+  before fixture assertions, with `EvalError("unsupported hash algorithm")`;
+  this is a runtime crypto limitation, not a passing compatibility result.
+
+These direct CLI runs provide sole-runtime evidence for one passing stage and
+two explicit limitations. They do not establish full focused-stage or Node
+fixture compatibility.

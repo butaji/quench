@@ -2825,12 +2825,12 @@ Stage 890 verifies the node:crypto timing-safe equality comparison.
 Stage 891 verifies the node:crypto algorithm inventory.
 
 Retrospective: inventory stages now assert useful contents in addition to
-callable exports, which catches native-but-empty rquickjs surfaces earlier.
+callable exports, which catches native-but-empty engine surfaces earlier.
 
 Stage 892 verifies the node:crypto Web Crypto digest API.
 
 Retrospective: async compatibility fixtures should settle promises through
-callbacks so the harness can drain rquickjs pending jobs deterministically.
+callbacks so the harness can drain the runtime pending jobs deterministically.
 
 Stage 893 verifies the node:crypto synchronous random fill API.
 
@@ -2850,7 +2850,7 @@ random APIs while avoiding brittle expectations about exact generated values.
 
 Stage 896 verifies the node:crypto buffer random bytes API.
 
-Retrospective: verify native rquickjs behavior before adding polyfills; this
+Retrospective: verify native runtime behavior before adding polyfills; this
 stage needed only a contract gate because the existing byte primitive matched.
 
 Stage 897 verifies the node:crypto Web Crypto random-values API.
@@ -2887,7 +2887,7 @@ Stage 903 verifies the node:crypto FIPS mode state controls.
 
 Retrospective: configuration-only APIs can remain process-local in the
 polyfill, avoiding host-global state for a compatibility surface that is not
-backed by rquickjs.
+backed by the runtime.
 
 Stage 904 verifies the node:crypto asynchronous PBKDF2 derivation API.
 
@@ -3189,7 +3189,7 @@ listener-presence results. Retrospective: checking both absent and present
 listeners confirms the async-resource wrapper does not alter EventEmitter flow.
 
 Upstream audit: `test-events-once.js` now reaches the AbortSignal propagation
-checks, but the rquickjs host still delivers an undefined abort-event argument
+checks, but the runtime host still delivers an undefined abort-event argument
 to native `AbortSignal` listeners. Focused `events.once()` stages pass; the
 remaining fix belongs at the host AbortSignal event boundary rather than in the
 Node events polyfill.
@@ -3227,7 +3227,7 @@ stage 973; the remaining fix belongs in common-test helper compatibility.
 
 Stage 974 verifies global `CustomEvent` detail, cancelability, and required
 type behavior. Retrospective: native Event metadata is kept as a separate
-boundary task after the upstream fixture exposed that rquickjs does not allow
+boundary task after the upstream fixture exposed that runtime does not allow
 all dispatch fields to be assigned from JavaScript.
 
 Stage 975 verifies EventTarget one-shot and repeated listener lifecycles.
@@ -3244,7 +3244,7 @@ small observable pieces keeps native EventTarget dispatch behavior isolated
 from Node-specific bookkeeping.
 
 Upstream audit: `test-nodeeventtarget.js` now reaches callback metadata checks;
-the remaining failure is native rquickjs dispatch metadata rather than
+the remaining failure is native runtime dispatch metadata rather than
 NodeEventTarget construction or listener bookkeeping.
 
 Stage 977 verifies NodeEventTarget object listeners receive the listener object
@@ -3253,7 +3253,7 @@ keeps callback binding independent from native EventTarget invocation rules.
 
 Stage 978 verifies NodeEventTarget function listeners receive the target as
 `this`. Retrospective: capturing the owner before crossing the native dispatch
-boundary avoids depending on rquickjs callback receiver behavior.
+boundary avoids depending on engine callback receiver behavior.
 
 Stage 979 verifies NodeEventTarget `emit()` separates EventTarget Event payloads
 from Node-style raw listener arguments. Retrospective: an explicit listener
