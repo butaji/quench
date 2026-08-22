@@ -247,7 +247,12 @@ test-vm-parse-abort-on-uncaught-exception.js
 test-vm-proxy-failure-CP.js
 test-vm-script-after-evaluate.js
 test-vm-script-throw-in-tostring.js
+test-whatwg-events-event-constructors.js
+test-whatwg-transformstream-cancel-write-race.js
 test-whatwg-url-custom-deepequal.js
+test-whatwg-url-custom-global.js
+test-whatwg-url-custom-href-side-effect.js
+test-whatwg-writablestream-close.js
 test-zlib-flush.js
 test-zlib-no-stream.js
 test-zlib-reject-garbage-after-end.js
