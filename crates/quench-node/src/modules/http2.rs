@@ -38,7 +38,10 @@ pub fn build() -> Value {
         ),
     ]);
     crate::host::namespace_object(vec![
-        ("createServer", create_server),
+        ("createServer", create_server.clone()),
+        // Keep the loopback contract usable for callers that select the TLS
+        // spelling; transport remains owned by the existing HTTP/1 engine.
+        ("createSecureServer", create_server),
         ("request", request),
         ("get", get),
         ("constants", constants),

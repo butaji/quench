@@ -1,3 +1,39 @@
+fn dns_promises_module() -> Value {
+    NODE_DNS_PROMISES_MODULE.with(|module| {
+        module
+            .borrow_mut()
+            .get_or_insert_with(|| {
+                quench_runtime::host_api::object(vec![
+                    (
+                        "lookup".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::DnsPromiseLookup,
+                        )),
+                    ),
+                    (
+                        "resolve4".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::DnsPromiseResolve4,
+                        )),
+                    ),
+                    (
+                        "resolve".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::DnsPromiseResolve4,
+                        )),
+                    ),
+                    (
+                        "lookupService".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::DnsLookupService,
+                        )),
+                    ),
+                ])
+            })
+            .clone()
+    })
+}
+
 fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(name)) = arguments.first() else {
         return Err(VmError::EvalError("require expects a module name".into()));
@@ -5,64 +41,11 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
     if let Some(value) = require_early_module(name)? {
         return Ok(value);
     }
-    if let Some(value) = require_common_module(name) {
-        return Ok(value);
-    }
-    if name == "internal/fs/utils" {
-        return Ok(quench_runtime::host_api::object(vec![
-            (
-                "validateRmOptionsSync".into(),
-                capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::FsValidateRmOptions,
-                )),
-            ),
-            (
-                "stringToFlags".into(),
-                capability_function(HostCapabilityKind::Custom(CapabilityName::FsStringToFlags)),
-            ),
-        ]));
-    }
-    if name == "internal/test/binding" {
-        return Ok(quench_runtime::host_api::object(vec![(
-            "internalBinding".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
-        )]));
-    }
-    if name == "tty" || name == "node:tty" {
-        return Ok(Value::object(vec![
-            ("isatty".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyIsatty))),
-            ("ReadStream".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyReadStream))),
-            ("WriteStream".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyWriteStream))),
-            ("Socket".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyWriteStream))),
-        ]));
-    }
     if name == "dns/promises" || name == "node:dns/promises" {
-        return Ok(Value::object(vec![
-            (
-                "lookup".into(),
-                capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::DnsPromiseLookup,
-                )),
-            ),
-            (
-                "resolve4".into(),
-                capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::DnsPromiseResolve4,
-                )),
-            ),
-            (
-                "resolve".into(),
-                capability_function(HostCapabilityKind::Custom(
-                    CapabilityName::DnsPromiseResolve4,
-                )),
-            ),
-        ]));
+        return Ok(dns_promises_module());
     }
     if name == "dns" || name == "node:dns" {
-        let promises = quench_runtime::host_api::object(vec![(
-            "lookupService".into(),
-            capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService)),
-        )]);
+        let promises = dns_promises_module();
         return Ok(quench_runtime::host_api::object(vec![
             ("setServers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsSetServers))),
             ("getServers".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsGetServers))),
@@ -70,6 +53,14 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
             ("lookupService".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsLookupService))),
             ("resolveMx".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DnsResolveMx))),
             ("promises".into(), promises),
+        ]));
+    }
+    if name == "tty" || name == "node:tty" {
+        return Ok(Value::object(vec![
+            ("isatty".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyIsatty))),
+            ("ReadStream".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyReadStream))),
+            ("WriteStream".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyWriteStream))),
+            ("Socket".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::TtyWriteStream))),
         ]));
     }
     if name == "zlib" || name == "node:zlib" {
