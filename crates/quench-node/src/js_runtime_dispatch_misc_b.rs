@@ -9,13 +9,20 @@ impl QuenchNodeHost {
             match capability.kind {
             HostCapabilityKind::Custom(CapabilityName::CryptoGetHashes) => {
                 Ok(quench_runtime::host_api::array(vec![
-                    Value::String("sha1".into()),
                     Value::String("RSA-SHA1".into()),
+                    Value::String("md5".into()),
+                    Value::String("sha1".into()),
+                    Value::String("sha224".into()),
                     Value::String("sha256".into()),
+                    Value::String("sha384".into()),
+                    Value::String("sha512".into()),
                 ]))
             }
             HostCapabilityKind::Custom(CapabilityName::CryptoGetCiphers) => Ok(
-                quench_runtime::host_api::array(vec![Value::String("aes-128-cbc".into())]),
+                quench_runtime::host_api::array(vec![
+                    Value::String("aes-128-cbc".into()),
+                    Value::String("aes-256-gcm".into()),
+                ]),
             ),
             HostCapabilityKind::Custom(CapabilityName::CryptoGetCipherInfo) => {
                 Ok(quench_runtime::host_api::object(vec![
@@ -36,9 +43,18 @@ impl QuenchNodeHost {
                     Value::String("tls_aes_128_ccm_8_sha256".into()),
                 ]))
             }
-            HostCapabilityKind::Custom(CapabilityName::TlsCreateSecureContext) => Err(
-                VmError::Thrown(fs_error("ERR_INVALID_ARG_VALUE", "Failed to parse CRL")),
-            ),
+            HostCapabilityKind::Custom(CapabilityName::TlsCreateSecureContext) => {
+                // Keep the context opaque, as Node does: callers pass it back to
+                // TLS APIs rather than inspecting OpenSSL internals.  Accept the
+                // common options object (including cert/key/ca) and expose a
+                // stable marker so feature detection works without pretending
+                Ok(quench_runtime::host_api::object(vec![
+                    (
+                        "context".into(),
+                        quench_runtime::host_api::object(Vec::new()),
+                    ),
+                ]))
+            }
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoGetDiffieHellman | CapabilityName::CryptoCreateDiffieHellman,
             ) => {

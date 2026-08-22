@@ -8,6 +8,14 @@ t.enable();
 if (!t.enabled || trace.getEnabledCategories() !== 'node.test,v8') throw new Error('enable');
 t.disable();
 if (t.enabled || trace.getEnabledCategories() !== '') throw new Error('disable');
+const first = trace.createTracing({ categories: ['shared'] });
+const second = trace.createTracing({ categories: ['shared'] });
+first.enable();
+second.enable();
+first.disable();
+if (trace.getEnabledCategories() !== 'shared') throw new Error('shared category removed too early');
+second.disable();
+if (trace.getEnabledCategories() !== '') throw new Error('shared category retained');
 let threw = false;
 try { trace.createTracing({ categories: 'node.test' }); } catch (_) { threw = true; }
 if (!threw) throw new Error('validation');

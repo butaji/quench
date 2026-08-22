@@ -102,15 +102,28 @@ const __quenchValidateRequireFilename = (
   }
 };
 const __quenchRequireFilename = (filename, pathApi) => {
-  const isFileUrl =
-    typeof filename === "string" && filename.startsWith("file://");
+  const isFileUrlString =
+    typeof filename === "string" && filename.startsWith("file:");
   const isFileUrlObject =
     typeof URL === "function" &&
     filename instanceof URL &&
     filename.protocol === "file:";
-  const raw = isFileUrlObject
-    ? decodeFilePath(filename.pathname)
-    : String(filename || "");
+  let isFileUrl = isFileUrlString || isFileUrlObject;
+  let raw;
+  if (isFileUrlObject) {
+    raw = decodeFilePath(filename.pathname);
+  } else if (isFileUrlString) {
+    try {
+      const parsed = new URL(filename);
+      if (parsed.protocol !== "file:") isFileUrl = false;
+      raw = isFileUrl ? decodeFilePath(parsed.pathname) : "";
+    } catch (_) {
+      raw = "";
+      isFileUrl = false;
+    }
+  } else {
+    raw = String(filename || "");
+  }
   __quenchValidateRequireFilename(
     filename,
     pathApi,
@@ -126,16 +139,69 @@ const __quenchCreatedRequire = (directory, pathApi) => (specifier) => {
     ? __quenchOriginalRequireWithModule(pathApi.resolve(directory, value))
     : __quenchOriginalRequireWithModule(specifier);
 };
+const __quenchFindPackageJson = (specifier, base) => {
+  if (typeof specifier !== "string") {
+    const error = new TypeError("The \"specifier\" argument must be of type string");
+    error.code = "ERR_INVALID_ARG_TYPE";
+    throw error;
+  }
+  const pathApi = __quenchOriginalRequireWithModule("path");
+  const fsApi = __quenchOriginalRequireWithModule("fs");
+  const start = pathApi.resolve(base === undefined ? process.cwd() : String(base));
+  const isPath = specifier.startsWith("./") || specifier.startsWith("../") ||
+    specifier.startsWith("/") || specifier.startsWith("file:");
+  let candidate;
+  if (isPath) {
+    candidate = specifier.startsWith("file:")
+      ? decodeFilePath(new URL(specifier).pathname)
+      : pathApi.resolve(start, specifier);
+  } else {
+    const parts = specifier.split("/");
+    const packageName = specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+    let current = start;
+    while (true) {
+      const packageRoot = pathApi.join(current, "node_modules", packageName);
+      try {
+        if (fsApi.statSync(packageRoot).isDirectory()) {
+          candidate = packageRoot;
+          break;
+        }
+      } catch (_) {}
+      const parent = pathApi.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+    if (!candidate) return undefined;
+  }
+  try {
+    if (!fsApi.statSync(candidate).isDirectory()) candidate = pathApi.dirname(candidate);
+  } catch (_) {}
+  while (true) {
+    const packageJson = pathApi.join(candidate, "package.json");
+    try {
+      if (fsApi.statSync(packageJson).isFile()) return packageJson;
+    } catch (_) {}
+    const parent = pathApi.dirname(candidate);
+    if (parent === candidate) return undefined;
+    candidate = parent;
+  }
+};
 const __quenchModule = {
   builtinModules: __quenchBuiltinModules,
   _cache: Object.create(null),
   _extensions: Object.create(null),
   createRequire: (filename) => {
     const pathApi = __quenchOriginalRequireWithModule("path");
-    const { isFileUrl, raw } = __quenchRequireFilename(filename, pathApi);
-    const base = isFileUrl ? decodeFilePath(raw.slice(7)) : raw;
+    const { raw } = __quenchRequireFilename(filename, pathApi);
+    const base = raw;
     const directory = base ? pathApi.dirname(base) : process.cwd();
-    return __quenchCreatedRequire(directory, pathApi);
+    const created = __quenchCreatedRequire(directory, pathApi);
+    created.resolve = (specifier) => {
+      const value = String(specifier);
+      if (!value.startsWith(".") && !value.startsWith("/")) return value;
+      return pathApi.resolve(directory, value);
+    };
+    return created;
   },
   isBuiltin: (name) =>
     __quenchBuiltinModules.includes(String(name).replace(/^node:/, "")),
@@ -146,6 +212,7 @@ const __quenchModule = {
   },
   _nodeModulePaths: nodeModulePaths,
   _stat: moduleStat,
+  findPackageJSON: __quenchFindPackageJson,
   setSourceMapsSupport,
   globalPaths,
   _initPaths: initPaths

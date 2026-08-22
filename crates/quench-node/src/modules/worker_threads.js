@@ -44,34 +44,54 @@ var parentPort = workerEnv ? emitter({
   postMessage: function (value) { console.log('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(value)); },
   close: function () {}
 }) : null;
+function messagePort() {
+  var port = emitter({ _queueEvents: true, _peer: null, close: function () { if (!this._closed) { this._closed = true; this.emit('close'); } } });
+  port.postMessage = function (value) {
+    if (!this._closed && this._peer && !this._peer._closed) this._peer.emit('message', value);
+  };
+  port.start = function () { return this; };
+  return port;
+}
+function MessageChannel() {
+  this.port1 = messagePort();
+  this.port2 = messagePort();
+  this.port1._peer = this.port2;
+  this.port2._peer = this.port1;
+}
 var api = {
   isMainThread: !workerEnv, threadId: workerEnv ? 1 : 0, workerData: workerData,
-  parentPort: parentPort, MessageChannel: function MessageChannel() {},
-  MessagePort: function MessagePort() {},
-  Worker: function Worker(filename, options) {
-    var self = emitter({ threadId: 1, exited: false, _queueEvents: true });
-    options = options || {};
-    var cp = require('child_process');
-    var env = {};
-    var keys = Object.keys(proc.env || {});
-    for (var i = 0; i < keys.length; i++) env[keys[i]] = proc.env[keys[i]];
-    env.QUENCH_WORKER = '1';
-    env.QUENCH_WORKER_DATA = JSON.stringify(options.workerData === undefined ? null : options.workerData);
-    var result = cp.spawnSync(proc.execPath, [filename, '--quench-worker', '--quench-worker-data=' + JSON.stringify(options.workerData === undefined ? null : options.workerData)], { env: env, cwd: options.cwd });
-    var output = result.stdout && typeof result.stdout.toString === 'function' ? result.stdout.toString() : String(result.stdout || '');
-    var lines = output.split('\n');
-    for (var j = 0; j < lines.length; j++) {
-      var marker = '__QUENCH_WORKER_MESSAGE__';
+  parentPort: parentPort, MessageChannel: MessageChannel, MessagePort: messagePort,
+    Worker: function Worker(filename, options) {
+      if (!(typeof filename === 'string' || (filename && typeof filename.toString === 'function'))) {
+        throw new TypeError('The "filename" argument must be a string');
+      }
+      var self = emitter({ threadId: 1, exited: false, _queueEvents: true });
+      options = options || {};
+      var cp = require('child_process');
+      var env = {};
+      var keys = Object.keys(proc.env || {});
+      for (var i = 0; i < keys.length; i++) env[keys[i]] = proc.env[keys[i]];
+      env.QUENCH_WORKER = '1';
+      var data = options.workerData === undefined ? null : options.workerData;
+      env.QUENCH_WORKER_DATA = JSON.stringify(data);
+      var result = cp.spawnSync(proc.execPath, [String(filename), '--quench-worker', '--quench-worker-data=' + JSON.stringify(data)], { env: env, cwd: options.cwd });
+      var status = result && result.status === null ? 1 : (result ? result.status : 1);
+      var output = result && result.stdout && typeof result.stdout.toString === 'function' ? result.stdout.toString() : String(result && result.stdout || '');
+      var lines = output.split('\n');
+      for (var j = 0; j < lines.length; j++) {
+        var marker = '__QUENCH_WORKER_MESSAGE__';
+        if (lines[j].indexOf(marker) !== 0) continue;
         try { self.emit('message', JSON.parse(lines[j].slice(marker.length))); } catch (_) {}
       }
-    self.exited = true;
-    self.emit('exit', result.status === null ? 1 : result.status);
-    if (result.status !== 0 && result.stderr) self.emit('error', new Error(String(result.stderr)));
-    self.postMessage = function () {};
-    self.terminate = function () { return Promise.resolve(result.status === null ? 1 : result.status); };
-    self.ref = self.unref = function () { return self; };
-    return self;
-  },
+      self.exited = true;
+      self.emit('online');
+      self.emit('exit', status);
+      if (status !== 0 && result && result.stderr) self.emit('error', new Error(String(result.stderr)));
+      self.postMessage = function () {};
+      self.terminate = function () { self.exited = true; return Promise.resolve(status); };
+      self.ref = self.unref = function () { return self; };
+      return self;
+    },
   receiveMessageOnPort: function () { return undefined; },
   markAsUncloneable: function () {}, markAsUntransferable: function () {},
   setEnvironmentData: function () {}, getEnvironmentData: function () { return undefined; }
