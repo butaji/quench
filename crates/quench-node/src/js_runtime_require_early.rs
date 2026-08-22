@@ -15,7 +15,7 @@ fn require_early_module(name: &str) -> Result<Option<Value>, VmError> {
         "dgram" | "node:dgram" => quench_runtime::host_api::object(vec![(
             "createSocket".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::DgramCreateSocket)),
         )]),
-        "timers/promises" | "node:timers/promises" => timers_promises_module(),
+        "async_hooks" | "node:async_hooks" => async_hooks_module()?,
         "worker_threads" | "node:worker_threads" => quench_runtime::host_api::object(vec![(
             "Worker".into(), capability_function(HostCapabilityKind::Custom(CapabilityName::WorkerConstructor)),
         )]),

@@ -138,28 +138,38 @@ fn run_suite(
             .arg(fixture)
             .stdout(if quiet { Stdio::null() } else { Stdio::inherit() })
             .stderr(Stdio::piped())
-            .spawn()
-            .and_then(|mut child| {
+            .spawn();
+        let result = match result {
+            Err(error) => Err(error),
+            Ok(mut child) => {
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
                 loop {
-                    if child.try_wait()?.is_some() {
-                        break child.wait_with_output();
+                    match child.try_wait() {
+                        Ok(Some(_)) => break child.wait_with_output().map(Some),
+                        Ok(None) => {}
+                        Err(error) => break Err(error),
                     }
                     if std::time::Instant::now() >= deadline {
                         let _ = child.kill();
                         let _ = child.wait();
-                        return Ok(None);
+                        break Ok(None);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
-            });
+            }
+        };
         let (passed, skipped, reason) = match result {
-            Ok(output) if output.status.success() => (true, false, None),
-            Ok(output) if output.status.code() == Some(2) => (false, true, None),
-            Ok(output) => (
+            Ok(Some(output)) if output.status.success() => (true, false, None),
+            Ok(Some(output)) if output.status.code() == Some(2) => (false, true, None),
+            Ok(Some(output)) => (
                 false,
                 false,
                 Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+            ),
+            Ok(None) => (
+                false,
+                false,
+                Some("fixture timed out after 30s".to_string()),
             ),
             Err(error) => (
                 false,
