@@ -215,7 +215,15 @@ impl QuenchNodeHost {
                     .map(|p| format!("/{p}"))
                     .unwrap_or_else(|| "/".into());
                 let response = response_object(500);
-                let request = Value::object(vec![("url".into(), Value::String(path))]);
+                let request = Value::object(vec![
+                    ("url".into(), Value::String(path)),
+                    (
+                        "on".into(),
+                        capability_function(HostCapabilityKind::Custom(
+                            CapabilityName::HttpRequestOn,
+                        )),
+                    ),
+                ]);
                 let server = self
                     .http
                     .borrow()
@@ -225,7 +233,7 @@ impl QuenchNodeHost {
                 quench_runtime::execute::call(
                     &server,
                     &Value::Undefined,
-                    &[request, response.clone()],
+                    &[request.clone(), response.clone()],
                 )?;
                 quench_runtime::execute::call(&callback, &Value::Undefined, &[response])?;
                 let state = self.http.borrow();
@@ -239,7 +247,7 @@ impl QuenchNodeHost {
                 if let Some(end) = state.end_callback.clone() {
                     quench_runtime::execute::call(&end, &Value::Undefined, &[])?;
                 }
-                Ok(Value::Undefined)
+                Ok(request)
             }
             HostCapabilityKind::Custom(CapabilityName::HttpRequestOn) => {
                 if let Some(callback) = arguments.last() {
