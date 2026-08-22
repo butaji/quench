@@ -1,16 +1,17 @@
 {
-  "title": "quench-node Node API compatibility roadmap",
+  "title": "quench-node Node API test-suite coverage",
   "oracle": "tests/node",
-  "runner": "cargo run -p quench-node-test --bin run-stages -- --from <first> --to <last> --continue",
+  "runner": "cargo run -p quench-node-test --bin run-parallel",
+  "target": "100% of the applicable tests/node Node API suite",
   "stages": [
-    {"id": "01", "file": "01-foundations.md", "scope": "assert, buffer, console, util, string_decoder, punycode"},
-    {"id": "02", "file": "02-module-loader.md", "scope": "module, require, ESM, packages, globals"},
-    {"id": "03", "file": "03-process-timers.md", "scope": "process, timers, timers/promises, performance, async context"},
-    {"id": "04", "file": "04-events-streams.md", "scope": "events, stream, stream/web, consumers, promises"},
-    {"id": "05", "file": "05-os-fs-tty.md", "scope": "os, fs, fs/promises, readline, tty"},
-    {"id": "06", "file": "06-networking.md", "scope": "net, dns, dgram, child_process, cluster"},
-    {"id": "07", "file": "07-http-crypto-compression.md", "scope": "http, https, http2, tls, crypto, zlib"},
-    {"id": "08", "file": "08-runtime-remaining.md", "scope": "vm, worker_threads, test, diagnostics, trace, sqlite, web globals"},
-    {"id": "09", "file": "09-acceptance.md", "scope": "full upstream suite, WPT supplements, npm consumers, release evidence"}
+    {"id":"01","file":"01-foundations.md","scope":"assert, buffer, console, util, string_decoder, punycode"},
+    {"id":"02","file":"02-module-loader.md","scope":"module, require, ESM, packages, globals"},
+    {"id":"03","file":"03-process-timers.md","scope":"process, timers, timers/promises, performance, async context"},
+    {"id":"04","file":"04-events-streams.md","scope":"events, stream, stream/web, consumers, promises"},
+    {"id":"05","file":"05-os-fs-tty.md","scope":"os, fs, fs/promises, readline, tty"},
+    {"id":"06","file":"06-networking.md","scope":"net, dns, dgram, child_process, cluster"},
+    {"id":"07","file":"07-http-crypto-compression.md","scope":"http, https, http2, tls, crypto, zlib"},
+    {"id":"08","file":"08-runtime-remaining.md","scope":"vm, worker_threads, test, diagnostics, trace, sqlite, web globals"},
+    {"id":"09","file":"09-acceptance.md","scope":"complete tests/node Node API suite"}
   ]
 }
