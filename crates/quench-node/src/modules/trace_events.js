@@ -15,7 +15,7 @@
     for (var category in active) out.push(category);
     return out.join(',');
   }
-  function createTracing(options) {
+  function Tracing(options) {
     if (!options || !Array.isArray(options.categories)) {
       throw new TypeError('The "options.categories" argument must be an instance of Array');
     }
@@ -23,23 +23,24 @@
     for (var i = 0; i < list.length; i++) {
       if (typeof list[i] !== 'string') throw new TypeError('Category must be a string');
     }
-    var tracing = {
-      categories: list.join(','),
-      enabled: false,
-      enable: function () {
-        if (!tracing.enabled) {
-          tracing.enabled = true;
-          for (var j = 0; j < list.length; j++) add(list[j]);
-        }
-      },
-      disable: function () {
-        if (tracing.enabled) {
-          tracing.enabled = false;
-          for (var j = 0; j < list.length; j++) remove(list[j]);
-        }
-      }
-    };
-    return tracing;
+    this.categories = list.join(',');
+    this.enabled = false;
+    this._categories = list;
+  }
+  Tracing.prototype.enable = function () {
+    if (!this.enabled) {
+      this.enabled = true;
+      for (var i = 0; i < this._categories.length; i++) add(this._categories[i]);
+    }
+  };
+  Tracing.prototype.disable = function () {
+    if (this.enabled) {
+      this.enabled = false;
+      for (var i = 0; i < this._categories.length; i++) remove(this._categories[i]);
+    }
+  };
+  function createTracing(options) {
+    return new Tracing(options);
   }
 
   function getEnabledCategories() { return categoriesString(); }
@@ -47,8 +48,9 @@
   return {
     createTracing: createTracing,
     getEnabledCategories: getEnabledCategories,
-    Tracing: Object,
+    Tracing: Tracing,
     WRITE_METADATA: 1,
     WRITE_EVENTS: 2
   };
+
 });
