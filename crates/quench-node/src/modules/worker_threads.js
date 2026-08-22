@@ -52,8 +52,17 @@ function emitter(target) {
   return target;
 }
 var parentPort = workerEnv ? emitter({
-  postMessage: function (value) { console.log('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(value)); },
-  close: function () {}
+  _closed: false,
+  postMessage: function (value) {
+    if (this._closed) throw new Error('Cannot post message after closing parentPort');
+    console.log('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(value));
+  },
+  close: function () {
+    if (!this._closed) {
+      this._closed = true;
+      this.emit('close');
+    }
+  }
 }) : null;
 function cloneMessage(value) {
   if (Array.isArray(value)) {
