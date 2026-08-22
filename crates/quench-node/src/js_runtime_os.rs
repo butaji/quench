@@ -448,21 +448,56 @@ fn os_extra(kind: HostCapabilityKind, arguments: &[Value]) -> Result<Value, VmEr
 fn os_network_interfaces() -> Result<Value, VmError> {
     use std::ffi::CStr;
     let mut raw = std::ptr::null_mut();
-    if unsafe { libc::getifaddrs(&mut raw) } != 0 { return Ok(quench_runtime::host_api::object(vec![])); }
+    if unsafe { libc::getifaddrs(&mut raw) } != 0 {
+        return Ok(quench_runtime::host_api::object(vec![]));
+    }
     let mut accum: Vec<(String, Vec<Value>)> = Vec::new();
     let mut p = raw;
     while !p.is_null() {
         unsafe {
             let ifa = &*p;
-            if !ifa.ifa_addr.is_null() && (*ifa.ifa_addr).sa_family as i32 == libc::AF_INET {
+            if !ifa.ifa_addr.is_null() {
+                let family = (*ifa.ifa_addr).sa_family as i32;
+                let (ip, netmask, prefix, family_name, internal) = match family {
+                    libc::AF_INET => {
+                        let addr = &*(ifa.ifa_addr as *const libc::sockaddr_in);
+                        let ip = std::net::Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr));
+                        let mask = if ifa.ifa_netmask.is_null() {
+                            std::net::Ipv4Addr::UNSPECIFIED
+                        } else {
+                            std::net::Ipv4Addr::from(u32::from_be(
+                                (*(ifa.ifa_netmask as *const libc::sockaddr_in)).sin_addr.s_addr,
+                            ))
+                        };
+                        let prefix = mask.octets().iter().map(|b| b.count_ones()).sum::<u32>();
+                        (ip.to_string(), mask.to_string(), prefix, "IPv4", ip.is_loopback())
+                    }
+                    libc::AF_INET6 => {
+                        let addr = &*(ifa.ifa_addr as *const libc::sockaddr_in6);
+                        let ip = std::net::Ipv6Addr::from(addr.sin6_addr.s6_addr);
+                        let mask = if ifa.ifa_netmask.is_null() {
+                            std::net::Ipv6Addr::UNSPECIFIED
+                        } else {
+                            std::net::Ipv6Addr::from(
+                                (*(ifa.ifa_netmask as *const libc::sockaddr_in6)).sin6_addr.s6_addr,
+                            )
+                        };
+                        let prefix = mask.octets().iter().map(|b| b.count_ones()).sum::<u32>();
+                        (ip.to_string(), mask.to_string(), prefix, "IPv6", ip.is_loopback())
+                    }
+                    _ => {
+                        p = ifa.ifa_next;
+                        continue;
+                    }
+                };
                 let name = CStr::from_ptr(ifa.ifa_name).to_string_lossy().into_owned();
-                let addr = &*(ifa.ifa_addr as *const libc::sockaddr_in);
-                let ip = std::net::Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr)).to_string();
-                let internal = ip == "127.0.0.1";
                 let entry = quench_runtime::host_api::object(vec![
-                    ("address".into(), Value::String(ip.clone().into())), ("netmask".into(), Value::String(if internal {"255.0.0.0"} else {"0.0.0.0"}.into())),
-                    ("family".into(), Value::String("IPv4".into())), ("mac".into(), Value::String("".into())),
-                    ("internal".into(), Value::Boolean(internal)), ("cidr".into(), Value::String(format!("{ip}/{}", if internal {8} else {0}).into())),
+                    ("address".into(), Value::String(ip.clone())),
+                    ("netmask".into(), Value::String(netmask)),
+                    ("family".into(), Value::String(family_name.into())),
+                    ("mac".into(), Value::String("".into())),
+                    ("internal".into(), Value::Boolean(internal)),
+                    ("cidr".into(), Value::String(format!("{ip}/{prefix}"))),
                 ]);
                 if let Some((_, entries)) = accum.iter_mut().find(|(n, _)| n == &name) {
                     entries.push(entry);
@@ -474,7 +509,10 @@ fn os_network_interfaces() -> Result<Value, VmError> {
         }
     }
     unsafe { libc::freeifaddrs(raw); }
-    let out: Vec<(String, Value)> = accum.into_iter().map(|(name, entries)| (name, quench_runtime::host_api::array(entries))).collect();
+    let out = accum
+        .into_iter()
+        .map(|(name, entries)| (name, quench_runtime::host_api::array(entries)))
+        .collect();
     Ok(quench_runtime::host_api::object(out))
 }
 
