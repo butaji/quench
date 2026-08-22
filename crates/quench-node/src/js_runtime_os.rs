@@ -284,21 +284,19 @@ fn module_is_builtin(arguments: &[Value]) -> Result<Value, VmError> {
     let Some(Value::String(name)) = arguments.first() else {
         return Ok(Value::Boolean(false));
     };
+    let name = name.strip_prefix("node:").unwrap_or(name);
     Ok(Value::Boolean(matches!(
-        name.as_str(),
-        "assert"
-            | "buffer"
-            | "crypto"
-            | "events"
-            | "fs"
-            | "http"
-            | "module"
-            | "net"
-            | "os"
-            | "path"
-            | "stream"
-            | "url"
-            | "util"
+        name,
+        "assert" | "assert/strict" | "async_hooks" | "buffer" | "child_process"
+            | "cluster" | "console" | "constants" | "crypto" | "dgram"
+            | "diagnostics_channel" | "dns" | "dns/promises" | "domain" | "events"
+            | "fs" | "fs/promises" | "http" | "http2" | "https" | "module" | "net"
+            | "os" | "path" | "path/posix" | "path/win32" | "perf_hooks" | "process"
+            | "punycode" | "querystring" | "readline" | "repl" | "stream"
+            | "stream/consumers" | "stream/promises" | "stream/web" | "string_decoder"
+            | "sys" | "timers" | "timers/promises" | "tls" | "trace_events" | "tty"
+            | "url" | "util" | "util/types" | "v8" | "vm" | "wasi" | "worker_threads"
+            | "zlib"
     )))
 }
 
