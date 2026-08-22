@@ -15,6 +15,7 @@ use quench_runtime::value::Value;
 use crate::host::HostState;
 
 const ID: &str = "\0quench:dgram:id";
+const TYPE: &str = "\0quench:dgram:type";
 
 struct Sock {
     socket: UdpSocket,
@@ -42,25 +43,34 @@ fn sock_id(value: &Value) -> Option<u64> {
 }
 
 fn addr_object(addr: SocketAddr) -> Value {
+    let family = if addr.is_ipv6() { "IPv6" } else { "IPv4" };
     quench_runtime::host_api::object(vec![
         ("address".to_string(), Value::String(addr.ip().to_string())),
-        ("family".to_string(), Value::String("IPv4".into())),
+        ("family".to_string(), Value::String(family.into())),
         ("port".to_string(), Value::Number(addr.port() as f64)),
     ])
 }
 
 fn rinfo_object(addr: SocketAddr, size: usize) -> Value {
+    let family = if addr.is_ipv6() { "IPv6" } else { "IPv4" };
     quench_runtime::host_api::object(vec![
         ("address".to_string(), Value::String(addr.ip().to_string())),
-        ("family".to_string(), Value::String("IPv4".into())),
+        ("family".to_string(), Value::String(family.into())),
         ("port".to_string(), Value::Number(addr.port() as f64)),
         ("size".to_string(), Value::Number(size as f64)),
     ])
 }
 
+fn socket_type(value: &Value) -> &str {
+    match execute::get_property_result(value, TYPE).ok() {
+        Some(Value::String(kind)) if kind == "udp6" => "udp6",
+        _ => "udp4",
+    }
+}
+
 /// `dgram.createSocket(type)` — build a socket object. `type` is accepted but
 /// only IPv4-ish loopback behaviour is meaningful today.
-pub fn create_socket(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<Value, VmError> {
+pub fn create_socket(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let mut object = crate::modules::events::new_emitter_object(state)?;
     for (name, cap_id) in [
         ("bind", 0x2301),
@@ -89,6 +99,17 @@ pub fn create_socket(state: &Rc<RefCell<HostState>>, _args: &[Value]) -> Result<
         *next.borrow_mut() += 1;
         value
     });
+    let kind = match args.first() {
+        Some(Value::String(value)) if value == "udp6" => "udp6",
+        Some(Value::Object(options)) => match execute::get_property_result(
+            &Value::Object(options.clone()), "type",
+        ) {
+            Ok(Value::String(value)) if value == "udp6" => "udp6",
+            _ => "udp4",
+        },
+        _ => "udp4",
+    };
+    let object = install(object, TYPE, Value::String(kind.into()))?;
     install(object, ID, Value::Number(id as f64))
 }
 
@@ -104,10 +125,11 @@ pub fn bind(
         .and_then(|v| execute::to_js_string(v).ok())
         .and_then(|s| s.parse::<u16>().ok())
         .unwrap_or(0);
+    let kind = socket_type(&receiver);
     let host = args
         .get(1)
         .and_then(|v| execute::to_js_string(v).ok())
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+        .unwrap_or_else(|| if kind == "udp6" { "::1" } else { "127.0.0.1" }.to_string());
     let socket =
         UdpSocket::bind((host.as_str(), port)).map_err(|e| execute::type_error(&e.to_string()))?;
     socket.set_nonblocking(true).ok();
