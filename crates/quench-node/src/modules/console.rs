@@ -39,6 +39,10 @@ pub fn build() -> Vec<(String, Value)> {
             "dir".to_string(),
             crate::host::capability(crate::registry::SPEC_CONSOLE_LOG),
         ),
+        (
+            "createTask".to_string(),
+            crate::host::scheduler_capability(2351),
+        ),
     ]
 }
 
