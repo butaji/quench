@@ -59,6 +59,13 @@ test-dgram-msgsize.js
 test-dgram-reuseport.js
 test-dgram-send-empty-array.js
 test-dgram-unref-in-cluster.js
+test-diagnostics-channel-has-subscribers.js
+test-diagnostics-channel-sync-unsubscribe.js
+test-diagnostics-channel-tracing-channel-has-subscribers.js
+test-diagnostics-channel-tracing-channel-promise-early-exit.js
+test-diagnostics-channel-tracing-channel-sync-early-exit.js
+test-diagnostics-channel-tracing-channel-sync.js
+test-diagnostics-channel-web-locks.js
 test-eval.js
 test-event-emitter-modify-in-emit.js
 test-event-emitter-num-args.js
@@ -125,6 +132,8 @@ test-path-resolve.js
 test-path-win32-exists.js
 test-path-zero-length-strings.js
 test-path.js
+test-performance-resourcetimingbufferfull.js
+test-performance-resourcetimingbuffersize.js
 test-process-binding-internalbinding-allowlist.js
 test-process-constants-noatime.js
 test-process-cpuUsage.js
@@ -143,6 +152,8 @@ test-querystring-escape.js
 test-querystring-maxKeys-non-finite.js
 test-querystring-multichar-separator.js
 test-querystring.js
+test-readline-carriage-return-between-chunks.js
+test-readline-input-onerror.js
 test-regression-object-prototype.js
 test-stream-destroy-event-order.js
 test-stream-duplex-writable-finished.js
