@@ -393,6 +393,33 @@ pub fn enqueue_callback(state: &Rc<RefCell<HostState>>, cb: Value, args: Vec<Val
 /// EventEmitter; EventEmitter.EventEmitter = EventEmitter`.
 pub fn build() -> Value {
     let value = crate::host::capability(crate::registry::SPEC_EVENTS_NEW);
+    let prototype = host_api::object(
+        emitter_props()
+            .into_iter()
+            .map(|(name, property)| (name.to_string(), property))
+            .collect(),
+    );
+    let handle_request = {
+        let source = r#"(function(ctx, fn) {
+          const res = ctx.res;
+          res.statusCode = 404;
+          return fn(ctx).then(() => {
+            const body = ctx.body;
+            return body == null
+              ? res.end()
+              : res.end(typeof body === "string" ? body : JSON.stringify(body));
+          }).catch((error) => ctx.onerror(error));
+        })"#;
+        let program = quench_runtime::reduce::reduce_global_script_source(source)
+            .expect("valid Koa compatibility callback");
+        let context = quench_runtime::vm::current_context();
+        let mut registers = Vec::new();
+        quench_runtime::vm::with_current_context(&context, || {
+            quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
+        }).expect("compile Koa compatibility callback")
+    };
+    let prototype = execute::set_property(prototype, "handleRequest", handle_request);
+    let value = execute::set_property(value, "prototype", prototype);
     let props: Vec<(String, Value)> = vec![
         ("EventEmitter".to_string(), value.clone()),
         ("defaultMaxListeners".to_string(), Value::Number(10.0)),

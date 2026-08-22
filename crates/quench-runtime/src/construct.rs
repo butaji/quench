@@ -394,7 +394,13 @@ fn construct_function(
         let _context = crate::super_scope::Guard::install(function, &Value::Undefined);
         let (result, final_this) =
             crate::functions::execute_construct(function, &Value::Undefined, target, arguments)?;
-        return finish_derived_construct(result, final_this);
+        let result = finish_derived_construct(result, final_this)?;
+        let prototype = crate::execute::get_property(target, "prototype");
+        return Ok(if crate::value::is_object(&prototype) {
+            crate::execute::set_prototype_of(&result, &prototype).unwrap_or(result)
+        } else {
+            result
+        });
     }
     let object = initialize_instance_fields(function, constructor_receiver(target))?;
     let (result, final_this) =
@@ -433,6 +439,19 @@ pub(crate) fn initialize_instance_fields(
     receiver: Value,
 ) -> Result<Value, crate::execute::VmError> {
     let receiver = crate::locals::resolved_replacement(receiver);
+    let receiver = if crate::value::is_object(&receiver) {
+        let prototype = crate::execute::get_property(
+            &crate::value::Value::Function(std::rc::Rc::new(function.clone())),
+            "prototype",
+        );
+        if crate::value::is_object(&prototype) {
+            crate::execute::set_prototype_of(&receiver, &prototype).unwrap_or(receiver)
+        } else {
+            receiver
+        }
+    } else {
+        receiver
+    };
     let _home = crate::super_scope::Guard::install(&std::rc::Rc::new(function.clone()), &receiver);
     initialize_instance_fields_impl(function, receiver)
 }

@@ -759,10 +759,24 @@ let __quenchHttpModule;
           this.method = String(
             init.method || source?.method || "GET"
           ).toUpperCase();
+          if (
+            (this.method === "GET" || this.method === "HEAD") &&
+            (init.body ?? source?.body) != null
+          ) {
+            throw new TypeError(
+              "Request with GET/HEAD method cannot have body"
+            );
+          }
           this.headers = new globalThis.Headers(
             init.headers || source?.headers
           );
           this.body = init.body ?? source?.body ?? null;
+          this.mode = init.mode || source?.mode || "cors";
+          this.credentials = init.credentials || source?.credentials || "same-origin";
+          this.cache = init.cache || source?.cache || "default";
+          this.redirect = init.redirect || source?.redirect || "follow";
+          this.referrer = init.referrer || source?.referrer || "about:client";
+          this.integrity = init.integrity || source?.integrity || "";
           this.signal =
             init.signal || source?.signal || new AbortController().signal;
           this.bodyUsed = false;

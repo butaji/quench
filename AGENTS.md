@@ -41,11 +41,11 @@ are forbidden.
 
 1. Select the next upstream Node fixture or API cluster.
 2. Model the reusable API facts in the shared declaration/IR layer first.
-3. Generate registration, wrappers, and ordinary tests; hand-write only
-   irreducible compatibility behavior.
-4. Add a focused stage under `tests/node-compat/stage-N/`, run it, format with
+3. Generate registration and wrappers; hand-write only irreducible compatibility behavior.
+4. Write tests only for critical behavior. For non-critical behavior, use the tests provided by submodules.
+5. Add a focused stage under `tests/node-compat/stage-N/`, run the relevant checks, format with
    Prettier, and run `git diff --check`.
-5. Commit and push each verified stage before starting the next one.
+6. Commit and push each verified stage before starting the next one.
 
 ```bash
 cargo build -p quench-runtime

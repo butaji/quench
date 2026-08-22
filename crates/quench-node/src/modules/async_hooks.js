@@ -21,34 +21,70 @@
     opts = opts || {}; var enabled = false;
     return { enable: function () { enabled = true; return this; }, disable: function () { enabled = false; return this; }, _enabled: function () { return enabled; } };
   }
-  function AsyncLocalStorage() {
-    this._store = undefined;
-    this._defaultValue = undefined;
-    this._disabled = false;
+  function AsyncLocalStorage(options) {
+    options = options || {}; this._store = undefined;
+    this._defaultValue = options.defaultValue; this._disabled = false; this._exitDepth = 0;
   }
   AsyncLocalStorage.prototype.run = function (store, fn) {
     var args = Array.prototype.slice.call(arguments, 2);
-    if (typeof fn !== 'function') {
-      throw new TypeError('The "callback" argument must be of type function');
-    }
-    var previous = this._store;
-    this._store = store;
-    try { return fn.apply(undefined, args); }
-    finally { this._store = previous; }
+    if (typeof fn !== 'function') throw new TypeError('The "callback" argument must be of type function');
+    if (this._disabled) return fn.apply(undefined, args);
+    var previous = this._store; this._store = store;
+    try { return fn.apply(undefined, args); } finally { this._store = previous; }
   };
-  AsyncLocalStorage.prototype.enterWith = function (store) {
-    if (!this._disabled) this._store = store;
-  };
-  AsyncLocalStorage.prototype.disable = function () {
-    this._disabled = true;
-    this._store = undefined;
-  };
+  AsyncLocalStorage.prototype.enterWith = function (store) { if (!this._disabled && this._exitDepth === 0) this._store = store; };
+  AsyncLocalStorage.prototype.disable = function () { this._disabled = true; this._store = undefined; };
   AsyncLocalStorage.prototype.getStore = function () {
-    return this._disabled ? undefined :
-      (this._store === undefined ? this._defaultValue : this._store);
+    return this._disabled ? undefined : (this._exitDepth > 0 ? this._defaultValue : (this._store === undefined ? this._defaultValue : this._store));
+  };
+  AsyncLocalStorage.prototype.exit = function (fn) {
+    if (typeof fn !== 'function') throw new TypeError('The "callback" argument must be of type function');
+    var previous = this._store; this._exitDepth += 1;
+    try { return fn(); } finally { this._exitDepth -= 1; this._store = previous; }
+  };
+  AsyncLocalStorage.prototype.bind = function (fn) {
+    var storage = this;
+    var captured = storage._store;
+    return function () {
+      var previous = storage._store;
+      if (!storage._disabled) storage._store = captured;
+      try { return fn.apply(undefined, arguments); }
+      finally { storage._store = previous; }
+    };
+  };
+  AsyncLocalStorage.prototype.snapshot = function () {
+    var storage = this;
+    var captured = storage._store;
+    return function (fn) {
+      var args = Array.prototype.slice.call(arguments, 1);
+      var previous = storage._store;
+      if (!storage._disabled) storage._store = captured;
+      try { return fn.apply(undefined, args); }
+      finally { storage._store = previous; }
+    };
+  };
+  AsyncLocalStorage.bind = function (fn) {
+    var storage = this;
+    var captured = storage._store;
+    return function () {
+      var previous = storage._store;
+      if (!storage._disabled) storage._store = captured;
+      try { return fn.apply(undefined, arguments); }
+      finally { storage._store = previous; }
+    };
+  };
+  AsyncLocalStorage.snapshot = function () {
+    var storage = this;
+    var captured = storage._store;
+    return function (fn) {
+      var args = Array.prototype.slice.call(arguments, 1);
+      var previous = storage._store;
+      if (!storage._disabled) storage._store = captured;
+      try { return fn.apply(undefined, args); }
+      finally { storage._store = previous; }
+    };
   };
   return { AsyncResource: AsyncResource, createHook: createHook,
     executionAsyncId: function () { return current; }, triggerAsyncId: function () { return current; },
-    enabledHooksExist: function () { return false; },
-    AsyncLocalStorage: AsyncLocalStorage };
+    enabledHooksExist: function () { return false; }, AsyncLocalStorage: AsyncLocalStorage };
 });

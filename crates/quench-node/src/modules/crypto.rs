@@ -49,7 +49,6 @@ fn capability_props() -> Vec<(String, Value)> {
     let mut props = capability_props_core();
     props.extend(
         [
-            ("getHashes", SPEC_CRYPTO_GET_HASHES),
             ("getCiphers", SPEC_CRYPTO_GET_CIPHERS),
             ("createCipheriv", SPEC_CRYPTO_UNSUPPORTED),
             ("createDecipheriv", SPEC_CRYPTO_UNSUPPORTED),
@@ -276,6 +275,17 @@ pub fn get_hashes(
 const CRYPTO_ALG: &str = "\0crypto:alg";
 const CRYPTO_DATA: &str = "\0crypto:data";
 const CRYPTO_KEY: &str = "\0crypto:key";
+/// Return the cipher names implemented by the runtime's common crypto baseline.
+///
+/// Keep this list deliberately conservative: callers use it to decide whether
+/// an algorithm can be requested, so advertising an algorithm without a real
+/// implementation is worse than omitting it.
+pub fn get_ciphers(
+    _: &Rc<RefCell<HostState>>,
+    _: &[Value],
+) -> Result<Value, quench_runtime::execute::VmError> {
+    Ok(host_api::array(vec![Value::String("aes-256-gcm".into())]))
+}
 
 pub fn create_hash(
     _: &Rc<RefCell<HostState>>,
@@ -335,6 +345,9 @@ pub fn create_hmac(
         Some(Value::String(s)) => s.to_lowercase(),
         _ => return Err(execute::type_error("algorithm required")),
     };
+    if !matches!(alg.as_str(), "sha1" | "sha-1" | "sha256" | "sha-256") {
+        return Err(execute::type_error("Digest method not supported"));
+    }
     let key = argbytes(
         args.get(1)
             .ok_or_else(|| execute::type_error("key required"))?,

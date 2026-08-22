@@ -472,9 +472,6 @@ fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
                 capability_function(HostCapabilityKind::Custom(CapabilityName::InternalBinding)),
             )]));
         }
-        if name == "os" || name == "node:os" {
-            return Ok(os_module());
-        }
         if name == "repl" || name == "node:repl" {
             return Ok(quench_runtime::host_api::object(vec![(
                 "REPLServer".into(),

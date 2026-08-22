@@ -76,7 +76,7 @@ pub fn crypto_get_ciphers(
     _r: Option<&Value>,
     a: &[Value],
 ) -> Result<Value, VmError> {
-    crate::modules::crypto::unsupported(s, a)
+    crate::modules::crypto::get_ciphers(s, a)
 }
 pub fn crypto_hash_update(
     s: &Rc<RefCell<HostState>>,

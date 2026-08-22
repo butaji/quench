@@ -437,9 +437,24 @@ impl QuenchNodeHost {
                 self.resolve_promisified(id, arguments)
             }
             HostCapabilityKind::Custom(CapabilityName::ModuleIsBuiltin) => module_is_builtin(arguments),
-            HostCapabilityKind::Custom(CapabilityName::ModuleCreateRequire) => Ok(
-                capability_function(HostCapabilityKind::Custom(CapabilityName::ModuleRequireCall)),
-            ),
+            HostCapabilityKind::Custom(CapabilityName::ModuleCreateRequire) => {
+                let Some(Value::String(filename)) = arguments.first() else {
+                    return Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_VALUE",
+                        "The argument 'filename' must be a file URL object, file URL string, or absolute path string",
+                    )));
+                };
+                if filename.starts_with("file:///") || filename.starts_with('/') {
+                    Ok(capability_function(HostCapabilityKind::Custom(
+                        CapabilityName::ModuleRequireCall,
+                    )))
+                } else {
+                    Err(VmError::Thrown(fs_error(
+                        "ERR_INVALID_ARG_VALUE",
+                        "The argument 'filename' must be a file URL object, file URL string, or absolute path string",
+                    )))
+                }
+            }
             HostCapabilityKind::Custom(
                 CapabilityName::ModuleFindSourceMap..=CapabilityName::ModuleSyncBuiltinExports,
             ) => Ok(Value::Undefined),

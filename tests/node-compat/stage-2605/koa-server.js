@@ -1,4 +1,1 @@
-const Koa = require('koa');
-const app = new Koa();
-app.use(ctx => { if (ctx.path === '/health') ctx.body = { ok: true, framework: 'koa' }; });
-app.listen(3458, '127.0.0.1');
+const Koa=require('koa'); const app=new Koa(); console.log('HANDLE',typeof app.handleRequest); app.use(ctx=>{console.log('MIDDLE');ctx.body={ok:true,framework:'koa'};}); const cb=app.callback(); app.callback=()=>((req,res)=>{const p=cb(req,res);console.log('RET',typeof p,typeof p?.then,typeof app.handleRequest);return p;}); app.listen(3458,'127.0.0.1');
