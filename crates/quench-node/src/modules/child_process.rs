@@ -250,7 +250,11 @@ fn exec_output(cmd: &mut std::process::Command) -> (Value, String, String) {
                 if output.status.success() {
                     Value::Null
                 } else {
-                    coded_error("1", "command failed")
+                    // Node exposes the process exit status as the callback
+                    // error's numeric `code`, rather than a generic failure
+                    // marker. Preserve that distinction for callers that
+                    // need to handle different command failures.
+                    exec_failed_error(output.status.code().unwrap_or(1))
                 },
                 out,
                 err,
@@ -262,6 +266,14 @@ fn exec_output(cmd: &mut std::process::Command) -> (Value, String, String) {
             String::new(),
         ),
     }
+}
+fn exec_failed_error(code: i32) -> Value {
+    host_api::object(vec![
+        ("name".to_string(), Value::String("Error".to_string())),
+        ("message".to_string(), Value::String("command failed".to_string())),
+        ("code".to_string(), Value::Number(code as f64)),
+        ("cmd".to_string(), Value::String("".to_string())),
+    ])
 }
 
 /// Execute a file directly (without a shell), with optional callback.
