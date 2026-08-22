@@ -105,23 +105,40 @@ impl QuenchNodeHost {
                 Ok(Value::Undefined)
             }
             3 => {
-                let output = arguments.get(1).cloned().unwrap_or(Value::Undefined);
-                if !matches!(output, Value::Null | Value::Undefined) {
-                    if let Some(data) = self
-                        .streams
-                        .borrow()
-                        .get(&stream_id)
-                        .and_then(|s| s.data.clone())
-                    {
-                        quench_runtime::execute::call(&data, &Value::Undefined, &[output])?;
-                    }
-                }
-                if let Some(end) = self
+                let destroying = self
                     .streams
                     .borrow()
                     .get(&stream_id)
-                    .and_then(|s| s.end.clone())
-                {
+                    .is_some_and(|state| state.destroyed);
+                if destroying {
+                    let already_closed = self
+                        .streams
+                        .borrow()
+                        .get(&stream_id)
+                        .is_some_and(|state| state.close_emitted);
+                    if already_closed {
+                        return Ok(Value::Undefined);
+                    }
+                    if let Some(state) = self.streams.borrow_mut().get_mut(&stream_id) {
+                        state.close_emitted = true;
+                    }
+                    if let Some(error) = arguments.first().filter(|v| !matches!(v, Value::Null | Value::Undefined)) {
+                        if let Some(callback) = self.streams.borrow().get(&stream_id).and_then(|s| s.error.clone()) {
+                            quench_runtime::execute::call(&callback, &Value::Undefined, &[error.clone()])?;
+                        }
+                    }
+                    if let Some(close) = self.streams.borrow().get(&stream_id).and_then(|s| s.close.clone()) {
+                        quench_runtime::execute::call(&close, &Value::Undefined, &[])?;
+                    }
+                    return Ok(Value::Undefined);
+                }
+                let output = arguments.get(1).cloned().unwrap_or(Value::Undefined);
+                if !matches!(output, Value::Null | Value::Undefined) {
+                    if let Some(data) = self.streams.borrow().get(&stream_id).and_then(|s| s.data.clone()) {
+                        quench_runtime::execute::call(&data, &Value::Undefined, &[output])?;
+                    }
+                }
+                if let Some(end) = self.streams.borrow().get(&stream_id).and_then(|s| s.end.clone()) {
                     quench_runtime::execute::call(&end, &Value::Undefined, &[])?;
                 }
                 Ok(Value::Undefined)
@@ -247,6 +264,44 @@ impl QuenchNodeHost {
             }
             7 => Ok(receiver.cloned().unwrap_or(Value::Undefined)),
             9 => {
+                let pending = self
+                    .streams
+                    .borrow()
+                    .get(&stream_id)
+                    .is_some_and(|state| state.destroy_scheduled);
+                if pending {
+                    if let Some(state) = self.streams.borrow_mut().get_mut(&stream_id) {
+                        state.destroy_scheduled = false;
+                    }
+                    if let Some(destroy) = self
+                        .streams
+                        .borrow()
+                        .get(&stream_id)
+                        .and_then(|state| state.destroy.clone())
+                    {
+                        let callback = capability_function(HostCapabilityKind::Custom(stream_id + 3));
+                        quench_runtime::execute::call(
+                            &destroy,
+                            &Value::Undefined,
+                            &[
+                                self.streams
+                                    .borrow()
+                                    .get(&stream_id)
+                                    .and_then(|state| state.errored.clone())
+                                    .unwrap_or(Value::Null),
+                                callback,
+                            ],
+                        )?;
+                    } else {
+                        let callback = capability_function(HostCapabilityKind::Custom(stream_id + 3));
+                        quench_runtime::execute::call(
+                            &callback,
+                            &Value::Undefined,
+                            &[Value::Null, Value::Null],
+                        )?;
+                    }
+                    return Ok(receiver.cloned().unwrap_or(Value::Undefined));
+                }
                 let already_destroyed = self
                     .streams
                     .borrow()
@@ -257,29 +312,17 @@ impl QuenchNodeHost {
                 }
                 if let Some(state) = self.streams.borrow_mut().get_mut(&stream_id) {
                     state.destroyed = true;
+                    state.destroy_scheduled = true;
                     state.errored = arguments.first().cloned();
                 }
-                if let Some(destroy) = self
-                    .streams
-                    .borrow()
-                    .get(&stream_id)
-                    .and_then(|state| state.destroy.clone())
-                {
-                    let callback = capability_function(HostCapabilityKind::Custom(stream_id + 3));
-                    quench_runtime::execute::call(
-                        &destroy,
-                        &Value::Undefined,
-                        &[arguments.first().cloned().unwrap_or(Value::Null), callback],
-                    )?;
-                }
-                if let Some(close) = self
-                    .streams
-                    .borrow()
-                    .get(&stream_id)
-                    .and_then(|state| state.close.clone())
-                {
-                    quench_runtime::execute::call(&close, &Value::Undefined, &[])?;
-                }
+                let next_tick =
+                    capability_function(HostCapabilityKind::Custom(CapabilityName::QueueMicrotask));
+                let destroy_call = capability_function(HostCapabilityKind::Custom(stream_id + 9));
+                quench_runtime::execute::call(
+                    &next_tick,
+                    &Value::Undefined,
+                    &[destroy_call],
+                )?;
                 Ok(receiver.cloned().unwrap_or(Value::Undefined))
             }
             _ => Err(VmError::NotCallable),
