@@ -416,7 +416,8 @@ pub fn build() -> Value {
         let mut registers = Vec::new();
         quench_runtime::vm::with_current_context(&context, || {
             quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
-        }).expect("compile Koa compatibility callback")
+        })
+        .expect("compile Koa compatibility callback")
     };
     let prototype = execute::set_property(prototype, "handleRequest", handle_request);
     let value = execute::set_property(value, "prototype", prototype);

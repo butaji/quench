@@ -101,12 +101,12 @@ pub fn create_socket(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<V
     });
     let kind = match args.first() {
         Some(Value::String(value)) if value == "udp6" => "udp6",
-        Some(Value::Object(options)) => match execute::get_property_result(
-            &Value::Object(options.clone()), "type",
-        ) {
-            Ok(Value::String(value)) if value == "udp6" => "udp6",
-            _ => "udp4",
-        },
+        Some(Value::Object(options)) => {
+            match execute::get_property_result(&Value::Object(options.clone()), "type") {
+                Ok(Value::String(value)) if value == "udp6" => "udp6",
+                _ => "udp4",
+            }
+        }
         _ => "udp4",
     };
     let object = install(object, TYPE, Value::String(kind.into()))?;

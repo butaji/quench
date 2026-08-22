@@ -36,7 +36,9 @@ fn main() -> ExitCode {
         println!("  --list           enumerate the suite instead of running it");
         println!("  --filter NAME    only run scripts whose name contains NAME");
         println!("  --quiet          skip per-test output, only the summary");
-        println!("  --test-dir DIR  compat suite root (default: crates/quench-node-test/node-tests)");
+        println!(
+            "  --test-dir DIR  compat suite root (default: crates/quench-node-test/node-tests)"
+        );
         println!("  each fixture is bounded by a 30 second timeout");
         return ExitCode::SUCCESS;
     }
@@ -136,7 +138,11 @@ fn run_suite(
         let result = Command::new(&exe)
             .arg("--fixture-one")
             .arg(fixture)
-            .stdout(if quiet { Stdio::null() } else { Stdio::inherit() })
+            .stdout(if quiet {
+                Stdio::null()
+            } else {
+                Stdio::inherit()
+            })
             .stderr(Stdio::piped())
             .spawn();
         let result = match result {

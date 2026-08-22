@@ -243,10 +243,10 @@ pub fn random_int(
     // required to be safe integers and max exclusive.
     let number = |value: &Value| match value {
         Value::Number(n)
-            if n.is_finite()
-                && n.fract() == 0.0
-                && n.abs() <= 9_007_199_254_740_991.0 =>
-            Some(*n as i64),
+            if n.is_finite() && n.fract() == 0.0 && n.abs() <= 9_007_199_254_740_991.0 =>
+        {
+            Some(*n as i64)
+        }
         _ => None,
     };
     let (min, max) = match a {
@@ -522,7 +522,10 @@ pub fn subtle_import_key(
         Some(Value::Boolean(value)) => *value,
         _ => return Err(execute::type_error("extractable must be a boolean")),
     };
-    let usages = args.get(4).cloned().unwrap_or_else(|| host_api::array(Vec::new()));
+    let usages = args
+        .get(4)
+        .cloned()
+        .unwrap_or_else(|| host_api::array(Vec::new()));
     Ok(fulfilled(host_api::object(vec![
         ("type".to_string(), Value::String("secret".into())),
         ("extractable".to_string(), Value::Boolean(extractable)),
