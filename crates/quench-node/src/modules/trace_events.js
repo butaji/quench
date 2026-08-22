@@ -13,11 +13,13 @@
   function categoriesString() {
     var out = [];
     for (var category in active) out.push(category);
-    return out.length ? out.join(',') : undefined;
+    return out.join(',');
   }
   function Tracing(options) {
     if (!options || !Array.isArray(options.categories)) {
-      throw new TypeError('The "options.categories" argument must be an instance of Array');
+      var invalid = new TypeError('The "options.categories" argument must be an instance of Array');
+      invalid.code = 'ERR_INVALID_ARG_TYPE';
+      throw invalid;
     }
     var list = options.categories.slice();
     if (list.length === 0) {
@@ -26,7 +28,11 @@
       throw empty;
     }
     for (var i = 0; i < list.length; i++) {
-      if (typeof list[i] !== 'string') throw new TypeError('Category must be a string');
+      if (typeof list[i] !== 'string') {
+        var invalidCategory = new TypeError('Category must be a string');
+        invalidCategory.code = 'ERR_INVALID_ARG_TYPE';
+        throw invalidCategory;
+      }
     }
     this.categories = list.join(',');
     this.enabled = false;
