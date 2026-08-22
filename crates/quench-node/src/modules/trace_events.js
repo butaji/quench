@@ -20,6 +20,11 @@
       throw new TypeError('The "options.categories" argument must be an instance of Array');
     }
     var list = options.categories.slice();
+    if (list.length === 0) {
+      var empty = new TypeError('At least one category is required');
+      empty.code = 'ERR_TRACE_EVENTS_CATEGORY_REQUIRED';
+      throw empty;
+    }
     for (var i = 0; i < list.length; i++) {
       if (typeof list[i] !== 'string') throw new TypeError('Category must be a string');
     }
