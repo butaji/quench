@@ -207,6 +207,7 @@ class NodeEventEmitter {
       this.removeListener(event, wrapped);
       listener(...args);
     };
+    wrapped.listener = listener;
     return this.on(event, wrapped);
   }
   emit(event, ...args) {
@@ -224,15 +225,24 @@ class NodeEventEmitter {
       : Array.isArray(listeners)
       ? listeners
       : [listeners];
-    if (event === "error" && values.length === 0 && this.domain) {
-      const error = args[0];
-      if (error && typeof error === "object") {
-        error.domain = this.domain;
-        error.domainEmitter = this;
-        error.domainThrown = false;
+    if (event === "error" && values.length === 0) {
+      if (this.domain) {
+        const error = args[0];
+        if (error && typeof error === "object") {
+          error.domain = this.domain;
+          error.domainEmitter = this;
+          error.domainThrown = false;
+        }
+        this.domain.emit("error", error);
+        return true;
       }
-      this.domain.emit("error", error);
-      return true;
+      const error = args[0] instanceof Error
+        ? args[0]
+        : Object.assign(
+            new Error(`Unhandled error. (${String(args[0])})`),
+            { code: "ERR_UNHANDLED_ERROR", context: args[0] },
+          );
+      throw error;
     }
     values.slice().filter((listener) => typeof listener === "function").forEach(
       (listener) => {

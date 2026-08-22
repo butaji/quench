@@ -89,17 +89,29 @@ fn string_data(data: &Value, encoding: Option<&str>) -> Result<Vec<u8>, VmError>
 fn write_open(path: &str, flag: Option<&str>, syscall: &str) -> Result<std::fs::File, VmError> {
     let mut open = std::fs::OpenOptions::new();
     match flag.unwrap_or("w") {
-        "w" | "w+" => {
+        "w" => {
             open.write(true).create(true).truncate(true);
         }
-        "a" | "a+" => {
+        "w+" => {
+            open.read(true).write(true).create(true).truncate(true);
+        }
+        "a" => {
             open.append(true).create(true);
         }
-        "wx" | "ax" => {
+        "a+" => {
+            open.read(true).append(true).create(true);
+        }
+        "wx" => {
             open.write(true).create_new(true);
+        }
+        "ax" => {
+            open.append(true).create_new(true);
         }
         "r" => {
             open.read(true);
+        }
+        "r+" => {
+            open.read(true).write(true);
         }
         other => {
             return Err(crate::modules::buffer_enc::invalid_arg_value(format!(
