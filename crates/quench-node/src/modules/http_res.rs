@@ -61,18 +61,34 @@ pub fn res_write_head(
             res.status = status;
             merge_headers(res, &object)?;
         }
+        drop(guard);
+        if let Some(response) = receiver {
+            let _ = execute::set_property(
+                response.clone(),
+                "headersSent",
+                Value::Boolean(true),
+            );
+        }
         return Ok(Value::Undefined);
     }
+    let mut guard = state.borrow_mut();
     let mut text = String::new();
     if let Some(Value::String(s)) = args.get(1) {
         text = s.clone();
     }
-    let mut guard = state.borrow_mut();
     if let Some(res) = guard.http.res.get_mut(&id) {
         res.status = status;
         if !text.is_empty() {
             res.text = text;
         }
+    }
+    drop(guard);
+    if let Some(response) = receiver {
+        let _ = execute::set_property(
+            response.clone(),
+            "headersSent",
+            Value::Boolean(true),
+        );
     }
     Ok(Value::Undefined)
 }
@@ -146,6 +162,15 @@ pub fn res_end(
     let payload = host_api::bytes(&compose(status, &text, &headers, &body, keep_alive));
     crate::modules::net::socket_write(state, Some(&socket), std::slice::from_ref(&payload))?;
     finish_response(state, &socket, keep_alive)?;
+    if let Some(response) = receiver {
+        let _ = execute::set_property(
+            response.clone(),
+            "headersSent",
+            Value::Boolean(true),
+        );
+        let _ = execute::set_property(response.clone(), "finished", Value::Boolean(true));
+        let _ = execute::set_property(response.clone(), "writable", Value::Boolean(false));
+    }
     Ok(receiver.cloned().unwrap_or(Value::Undefined))
 }
 
