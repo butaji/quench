@@ -50,18 +50,20 @@ fn build_factory(args: &[Value]) -> Value {
         var specs=config.options||{}, values={}, positionals=[], tokens=[];
         Object.keys(specs).forEach(function(k){var s=specs[k]||{}; if(s.default!==undefined) values[k]=s.default; else if(s.type==='boolean') values[k]=false;});
         function set(k,v){var s=specs[k]||{}, value=s.multiple?(Array.isArray(values[k])?values[k]:[]).concat([v]):v; values[k]=value;}
-        for(var i=0;i<input.length;i++){var arg=String(input[i]), name, value;
-          if(arg==='--'){positionals=positionals.concat(input.slice(i+1)); break;}
-          if(arg.indexOf('--')===0){var raw=arg.slice(2), eq=raw.indexOf('='); value=eq<0?undefined:raw.slice(eq+1); name=eq<0?raw:raw.slice(0,eq);
-            if(name.indexOf('no-')===0 && specs[name.slice(3)]&&specs[name.slice(3)].type==='boolean'){set(name.slice(3),false); continue;}
-            if(!specs[name]){if(config.strict!==false) throw new TypeError('Unknown option: --'+name); positionals.push(arg); continue;}
-            if(specs[name].type==='boolean') set(name,value===undefined?true:value!=='false');
-            else {if(value===undefined) value=String(input[++i]); set(name,value);} continue;
+        function optionToken(name,rawName,value,index,inlineValue){if(config.tokens) tokens.push({kind:'option',name:name,rawName:rawName,value:value,index:index,inlineValue:inlineValue});}
+        function positionalToken(value,index){if(config.tokens) tokens.push({kind:'positional',value:value,index:index});}
+        for(var i=0;i<input.length;i++){var arg=String(input[i]), name, value, rawName, inlineValue=false;
+          if(arg==='--'){for(var j=i+1;j<input.length;j++){positionals.push(input[j]); positionalToken(input[j],j);} break;}
+          if(arg.indexOf('--')===0){var raw=arg.slice(2), eq=raw.indexOf('='); value=eq<0?undefined:raw.slice(eq+1); name=eq<0?raw:raw.slice(0,eq); rawName=arg;
+            if(name.indexOf('no-')===0 && specs[name.slice(3)]&&specs[name.slice(3)].type==='boolean'){set(name.slice(3),false); optionToken(name.slice(3),rawName,false,i,false); continue;}
+            if(!specs[name]){if(config.strict!==false) throw new TypeError('Unknown option: --'+name); positionals.push(arg); positionalToken(arg,i); continue;}
+            if(specs[name].type==='boolean') {set(name,value===undefined?true:value!=='false'); inlineValue=eq>=0; optionToken(name,rawName,value===undefined?true:value!=='false',i,inlineValue);}
+            else {if(value===undefined) value=String(input[++i]); else inlineValue=true; set(name,value); optionToken(name,rawName,value,i,inlineValue);} continue;
           }
           if(arg.charAt(0)==='-'&&arg.length>1){name=arg.charAt(1); var key=Object.keys(specs).find(function(k){return specs[k].short===name;});
-            if(key){if(specs[key].type==='boolean') set(key,true); else set(key,String(input[++i])); continue;}
+            if(key){if(specs[key].type==='boolean'){set(key,true); optionToken(key,arg,true,i,false);} else {value=String(input[++i]); set(key,value); optionToken(key,arg,value,i,false);} continue;}
           }
-          if(config.allowPositionals!==false) positionals.push(input[i]); else if(config.strict!==false) throw new TypeError('Unexpected argument: '+arg);
+          if(config.allowPositionals!==false){positionals.push(input[i]); positionalToken(input[i],i);} else if(config.strict!==false) throw new TypeError('Unexpected argument: '+arg);
         }
         var result={values:values,positionals:positionals}; if(config.tokens) result.tokens=tokens; return result;
       }

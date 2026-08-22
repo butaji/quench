@@ -474,7 +474,12 @@ impl QuenchNodeHost {
             HostCapabilityKind::Custom(CapabilityName::OsHostname) => Ok(Value::String(
                 sysinfo::System::host_name().unwrap_or_else(|| "unknown".into()).into(),
             )),
-            HostCapabilityKind::Custom(CapabilityName::OsVersion) => Ok(Value::String("".into())),
+            HostCapabilityKind::Custom(CapabilityName::OsVersion) => Ok(Value::String(
+                sysinfo::System::long_os_version()
+                    .or_else(sysinfo::System::kernel_version)
+                    .unwrap_or_default()
+                    .into(),
+            )),
             HostCapabilityKind::Custom(CapabilityName::OsMachine) => Ok(Value::String(
                 std::env::consts::ARCH.into(),
             )),
