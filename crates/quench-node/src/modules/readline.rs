@@ -144,7 +144,7 @@ fn input_lines(input: &Value) -> Result<Vec<String>, VmError> {
             }
             Ok(lines)
         }
-        Value::String(s) => Ok(s.split('\n').map(str::to_string).collect()),
+        Value::String(s) => Ok(s.split('\n').map(|line| line.strip_suffix('\r').unwrap_or(line).to_string()).collect()),
         _ => Ok(Vec::new()),
     }
 }

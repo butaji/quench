@@ -55,10 +55,24 @@ var parentPort = workerEnv ? emitter({
   postMessage: function (value) { console.log('__QUENCH_WORKER_MESSAGE__' + JSON.stringify(value)); },
   close: function () {}
 }) : null;
+function cloneMessage(value) {
+  if (Array.isArray(value)) {
+    var array = [];
+    for (var i = 0; i < value.length; i++) array.push(cloneMessage(value[i]));
+    return array;
+  }
+  if (value && typeof value === 'object') {
+    var object = {};
+    var keys = Object.keys(value);
+    for (var j = 0; j < keys.length; j++) object[keys[j]] = cloneMessage(value[keys[j]]);
+    return object;
+  }
+  return value;
+}
 function messagePort() {
   var port = emitter({ _queueEvents: true, _peer: null, close: function () { if (!this._closed) { this._closed = true; this.emit('close'); } } });
   port.postMessage = function (value) {
-    if (!this._closed && this._peer && !this._peer._closed) this._peer.emit('message', value);
+    if (!this._closed && this._peer && !this._peer._closed) this._peer.emit('message', cloneMessage(value));
   };
   port.start = function () { return this; };
   return port;
