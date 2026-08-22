@@ -206,9 +206,11 @@ pub fn method_ref(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> V
 }
 
 pub fn method_has_ref(state: &Rc<RefCell<HostState>>, receiver: Option<&Value>) -> Value {
+    // A cleared/disposed handle is no longer ref'ed. Node reports false for
+    // `hasRef()` after the timer has been removed from the registry.
     let referenced = timer_id_of(receiver)
         .and_then(|id| state.borrow().timers.timers.get(&id).map(|t| t.referenced))
-        .unwrap_or(true);
+        .unwrap_or(false);
     Value::Boolean(referenced)
 }
 
