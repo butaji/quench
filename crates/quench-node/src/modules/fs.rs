@@ -111,6 +111,39 @@ pub(crate) fn fd_truncate(fd: i32, len: u64) -> Result<Value, VmError> {
             })
     })
 }
+/// Flush file data without requiring metadata updates, matching Node's
+/// `FileHandle.datasync()` primitive.
+pub(crate) fn fd_datasync(fd: i32) -> Result<Value, VmError> {
+    FDS.with(|t| {
+        t.borrow()
+            .get(&fd)
+            .ok_or_else(|| {
+                crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
+            })
+            .and_then(|f| {
+                f.sync_data()
+                    .map(|_| Value::Undefined)
+                    .map_err(|e| crate::modules::fs_error::fs_error("fdatasync", None, &e))
+            })
+    })
+}
+
+/// Flush file contents and metadata, matching Node's `FileHandle.sync()`.
+pub(crate) fn fd_sync(fd: i32) -> Result<Value, VmError> {
+    FDS.with(|t| {
+        t.borrow()
+            .get(&fd)
+            .ok_or_else(|| {
+                crate::modules::buffer_enc::invalid_arg_value("Invalid file descriptor".into())
+            })
+            .and_then(|f| {
+                f.sync_all()
+                    .map(|_| Value::Undefined)
+                    .map_err(|e| crate::modules::fs_error::fs_error("fsync", None, &e))
+            })
+    })
+}
+
 pub(crate) fn fd_write(
     fd: i32,
     data: &[u8],

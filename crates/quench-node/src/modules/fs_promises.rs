@@ -330,12 +330,12 @@ pub fn filehandle_datasync(
     r: Option<&Value>,
     _a: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(settle(fd(r).map(|_| Value::Undefined)))
+    Ok(settle(fd(r).and_then(super::fs::fd_datasync)))
 }
 pub fn filehandle_sync(
     _s: &Rc<RefCell<HostState>>,
     r: Option<&Value>,
     _a: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(settle(fd(r).map(|_| Value::Undefined)))
+    Ok(settle(fd(r).and_then(super::fs::fd_sync)))
 }
