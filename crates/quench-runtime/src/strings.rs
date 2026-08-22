@@ -1,5 +1,148 @@
 use crate::value::Value;
 
+/// Return the stable FNV-1a hash of UTF-16 code units without materializing
+/// cache keys.
+pub(crate) fn hash_units(units: &[u16]) -> u64 {
+    units.iter().fold(0xcbf29ce484222325, |hash, unit| {
+        (hash ^ u64::from(*unit)).wrapping_mul(0x100000001b3)
+    })
+}
+
+/// Hash a UTF-8 string without first allocating a UTF-16 buffer.
+pub(crate) fn hash_str(value: &str) -> u64 {
+    value.encode_utf16().fold(0xcbf29ce484222325, |hash, unit| {
+        (hash ^ u64::from(unit)).wrapping_mul(0x100000001b3)
+    })
+}
+
+/// Compatibility name retained for callers while avoiding a duplicate cache.
+#[inline]
+pub(crate) fn hash_str_cached(value: &str) -> u64 {
+    hash_str(value)
+}
+pub(crate) const ROPE_MIN_BYTES: usize = 4096;
+
+#[inline]
+pub(crate) fn should_use_rope(left_bytes: usize, right_bytes: usize) -> bool {
+    left_bytes.saturating_add(right_bytes) >= ROPE_MIN_BYTES
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConcatStrategy {
+    Flat,
+    Rope,
+}
+
+#[inline]
+pub(crate) fn concat_strategy(
+    left_bytes: usize,
+    right_bytes: usize,
+    boundary: bool,
+) -> ConcatStrategy {
+    if boundary || !should_use_rope(left_bytes, right_bytes) {
+        ConcatStrategy::Flat
+    } else {
+        ConcatStrategy::Rope
+    }
+}
+
+pub(crate) const MAX_STRING_BYTES: usize = 256 * 1024 * 1024;
+
+#[inline]
+pub(crate) fn string_bytes_fit_limit(value: &str) -> bool {
+    value.len() <= MAX_STRING_BYTES
+}
+#[cfg(test)]
+mod hash_tests {
+    use super::{
+        concat_strategy, encoding_of, for_each_unit, hash_str, hash_str_cached, hash_units,
+        is_short_string, is_short_units, should_use_rope, string_bytes_fit_limit, ConcatStrategy,
+        StringEncoding, Value,
+    };
+    fn utf8_hash_matches_utf16_hash_without_buffer() {
+        let value = "héllo";
+        let units: Vec<u16> = value.encode_utf16().collect();
+        assert_eq!(hash_str(value), hash_units(&units));
+    }
+    #[test]
+    fn short_string_boundary_is_explicit() {
+        assert!(is_short_string("a".repeat(22).as_str()));
+        assert!(!is_short_string("a".repeat(23).as_str()));
+    }
+    #[test]
+    fn utf16_capacity_uses_code_units() {
+        assert!(is_short_units(&[0xD83D, 0xDE00]));
+        assert!(!is_short_units(&[0; 23]));
+    }
+    #[test]
+    fn encoding_classification_preserves_latin1_boundary() {
+        assert_eq!(encoding_of(&[0x41, 0xFF]), StringEncoding::Latin1);
+        assert_eq!(encoding_of(&[0x100]), StringEncoding::Utf16);
+    }
+    #[test]
+    fn unit_visitation_avoids_materialization() {
+        let mut units = Vec::new();
+        assert!(for_each_unit(&Value::String("hé".into()), |unit| units.push(unit)));
+        assert_eq!(units, vec![b'h' as u16, 0xE9]);
+    }
+    #[test]
+    fn cached_hash_matches_direct_hash() {
+        assert_eq!(hash_str_cached("persistent"), hash_str("persistent"));
+        assert_eq!(hash_str_cached("persistent"), hash_str("persistent"));
+    }
+    #[test]
+    fn rope_policy_has_large_concat_boundary() {
+        assert!(!should_use_rope(2047, 2048));
+        assert!(should_use_rope(2048, 2049));
+    }
+    #[test]
+    fn concat_strategy_flattens_only_at_boundaries() {
+        assert_eq!(concat_strategy(3000, 2000, false), ConcatStrategy::Rope);
+        assert_eq!(concat_strategy(3000, 2000, true), ConcatStrategy::Flat);
+    }
+    #[test]
+    fn string_memory_limit_is_explicit() {
+        assert!(string_bytes_fit_limit("small"));
+    }
+}
+
+/// True when all code units can use a compact one-byte representation.
+pub(crate) fn is_latin1(units: &[u16]) -> bool {
+    units.iter().all(|unit| *unit <= 0xff)
+}
+#[inline]
+pub(crate) fn is_short_string(value: &str) -> bool {
+    value.len() <= 22
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StringEncoding {
+    Latin1,
+    Utf16,
+}
+
+#[inline]
+pub(crate) fn encoding_of(units: &[u16]) -> StringEncoding {
+    if is_latin1(units) {
+        StringEncoding::Latin1
+    } else {
+        StringEncoding::Utf16
+    }
+}
+pub(crate) fn is_short_units(units: &[u16]) -> bool {
+    units.len() <= 22
+}
+
+/// Convert compact Latin-1 storage to UTF-16 only at an API boundary.
+pub(crate) fn latin1_to_units(bytes: &[u8]) -> Vec<u16> {
+    bytes.iter().map(|byte| u16::from(*byte)).collect()
+}
+
+/// Build compact storage without expanding to UTF-16 when possible.
+pub(crate) fn units_to_latin1(units: &[u16]) -> Option<Vec<u8>> {
+    is_latin1(units).then(|| units.iter().map(|unit| *unit as u8).collect())
+}
+
 /// Builds the canonical string value for raw UTF-16 code units: a plain
 /// `String` when the units are valid UTF-16, otherwise `StringUnits`.
 pub(crate) fn from_units(units: Vec<u16>) -> Value {
@@ -40,6 +183,20 @@ pub(crate) fn units_well_formed(units: &[u16]) -> bool {
         }
     }
     true
+}
+/// Visit UTF-16 code units without materializing a temporary vector.
+pub(crate) fn for_each_unit(value: &Value, mut visit: impl FnMut(u16)) -> bool {
+    match value {
+        Value::String(value) => {
+            value.encode_utf16().for_each(&mut visit);
+            true
+        }
+        Value::StringUnits(units) => {
+            units.iter().copied().for_each(&mut visit);
+            true
+        }
+        _ => false,
+    }
 }
 
 /// The string value of the code point at UTF-16 code-unit `index`, preserving
@@ -400,3 +557,23 @@ pub(crate) fn to_string_value(receiver: Option<&Value>) -> Value {
 include!("strings_tail.rs");
 
 include!("strings_search.rs");
+
+#[cfg(test)]
+mod tests {
+    use super::{hash_units, is_latin1, latin1_to_units, units_to_latin1};
+
+    #[test]
+    fn latin1_round_trip_is_delayed() {
+        let units = [65, 0xff];
+        let bytes = units_to_latin1(&units).expect("compact");
+        assert_eq!(latin1_to_units(&bytes), units);
+        assert!(!is_latin1(&[0x100]));
+        assert!(units_to_latin1(&[0x100]).is_none());
+    }
+
+    #[test]
+    fn long_string_hash_is_stable_and_cached() {
+        let units = [1, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(hash_units(&units), hash_units(&units));
+    }
+}
