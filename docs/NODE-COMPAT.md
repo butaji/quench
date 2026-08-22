@@ -44,7 +44,7 @@ Legend
 | cluster | 🟡 | partial | single-process lifecycle/worker handle; child IPC remains |
 | crypto | 🟡 | partial | `randomBytes`, hashes, HMAC, WebCrypto AES-GCM, and cipher validation are present; cipher/key edge coverage remains |
 | domain | 🟡 | missing | not resolvable |
-| module | 🟡 | partial | CJS require, `builtinModules`, and CLI eval; ESM APIs and `createRequire` integration remain |
+| module | 🟡 | partial | CJS require, builtin subpath inventory, and CLI eval; `isBuiltin` early-loader callable path, ESM APIs, and `createRequire` integration remain |
 | tls | 🟡 | partial | `createSecureContext` returns an opaque context; TLS transport remains |
 | util | 🟡 | real | upstream selects green; missing diff, transferableAbort* |
 | v8 | 🟡 | missing | not resolvable |
