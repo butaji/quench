@@ -196,6 +196,7 @@ fn process_dispatch(cap: u16) -> Option<CallHandler> {
         CAP_PROCESS_RESOURCE_USAGE => process_resource_usage,
         CAP_PROCESS_CPU_USAGE => process_cpu_usage,
         CAP_PROCESS_BINDING => process_binding,
+        CAP_PROCESS_EMIT => process_emit,
         CAP_PROCESS_ACTIVE_RESOURCES => process_active_resources,
         CAP_PROCESS_REPORT => process_report,
         CAP_CRYPTO_RANDOM_BYTES => crypto_random_bytes,

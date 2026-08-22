@@ -1,5 +1,0 @@
-# Diagnostics and performance surfaces
-
-Status: partial.
-
-Diagnostics channels, including synchronous tracing error/end publication, performance marks/measures, resource entries, observer record buffering, histograms, timerify, and event-loop delay monitoring are implemented; inspector/V8/trace instrumentation remains.

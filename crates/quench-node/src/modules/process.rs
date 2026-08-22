@@ -191,11 +191,37 @@ fn parent_pid() -> u32 {
     }
 }
 
-/// `process.binding()` is an internal Node escape hatch. Quench has no
-/// internal-binding ABI; keep the callable surface and fail explicitly,
-/// rather than returning a fake namespace that later crashes mysteriously.
+/// `process.binding()` exposes the legacy internal namespaces that Node's
+/// public fixtures probe. Quench does not expose their native ABI, but these
+/// names are valid and must return an object rather than fail resolution.
 pub fn binding(_state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
     let name = args.first().map(value_to_string).unwrap_or_default();
+    if matches!(
+        name.as_str(),
+        "buffer"
+            | "cares_wrap"
+            | "constants"
+            | "contextify"
+            | "fs"
+            | "fs_event_wrap"
+            | "icu"
+            | "inspector"
+            | "js_stream"
+            | "natives"
+            | "os"
+            | "pipe_wrap"
+            | "spawn_sync"
+            | "stream_wrap"
+            | "tcp_wrap"
+            | "tls_wrap"
+            | "tty_wrap"
+            | "udp_wrap"
+            | "util"
+            | "uv"
+            | "zlib"
+    ) {
+        return Ok(Value::object(vec![]));
+    }
     Err(VmError::EvalError(format!(
         "process.binding('{name}') is not supported"
     )))
@@ -684,6 +710,37 @@ pub fn on(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmErr
         }
     }
     Ok(Value::Undefined)
+}
+/// Emit a process event to the handlers stored by `process.on`.
+pub fn emit(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    let Some(Value::String(event)) = args.first() else {
+        return Ok(Value::Boolean(false));
+    };
+    let handlers = match event.as_str() {
+        "uncaughtException" => state
+            .borrow()
+            .process
+            .uncaught_exception_handlers
+            .iter()
+            .map(|(handler, _)| handler.clone())
+            .collect::<Vec<_>>(),
+        "warning" => state
+            .borrow()
+            .process
+            .warning_handlers
+            .iter()
+            .map(|(handler, _)| handler.clone())
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    for handler in &handlers {
+        quench_runtime::execute::call(
+            handler,
+            &Value::Undefined,
+            &args[1..],
+        )?;
+    }
+    Ok(Value::Boolean(!handlers.is_empty()))
 }
 
 /// Queue a process `warning` event for registered handlers. Warnings

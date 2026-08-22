@@ -44,16 +44,89 @@ impl QuenchNodeHost {
                 ]))
             }
             HostCapabilityKind::Custom(CapabilityName::TlsCreateSecureContext) => {
-                // Keep the context opaque, as Node does: callers pass it back to
-                // TLS APIs rather than inspecting OpenSSL internals.  Accept the
-                // common options object (including cert/key/ca) and expose a
-                // stable marker so feature detection works without pretending
-                Ok(quench_runtime::host_api::object(vec![
-                    (
-                        "context".into(),
-                        quench_runtime::host_api::object(Vec::new()),
-                    ),
-                ]))
+                let mut fields = Vec::new();
+                if let Some(Value::Object(_)) = arguments.first() {
+                    for name in [
+                        "minVersion",
+                        "maxVersion",
+                        "ciphers",
+                        "ca",
+                        "cert",
+                        "key",
+                        "passphrase",
+                        "ecdhCurve",
+                        "handshakeTimeout",
+                        "sessionTimeout",
+                        "requestCert",
+                        "rejectUnauthorized",
+                        "sessionIdContext",
+                        "secureProtocol",
+                        "ticketKeys",
+                    ] {
+                        if let Ok(value) = quench_runtime::execute::get_property_result(
+                            &arguments[0],
+                            name,
+                        ) {
+                            if name == "ticketKeys" {
+                                if let Ok(Value::Number(length)) =
+                                    quench_runtime::execute::get_property_result(&value, "byteLength")
+                                {
+                                    if length != 48.0 {
+                                        return Err(VmError::EvalError(
+                                            "The property 'options.ticketKeys' must be exactly 48 bytes"
+                                                .into(),
+                                        ));
+                                    }
+                                }
+                            }
+                            if !matches!(value, Value::Undefined) {
+                                if matches!(name, "minVersion" | "maxVersion") {
+                                    let Value::String(version) = &value else {
+                                        return Err(VmError::EvalError(format!(
+                                            "The \"options.{name}\" property must be of type string"
+                                        )));
+                                    };
+                                    if !matches!(
+                                        version.as_str(),
+                                        "TLSv1" | "TLSv1.1" | "TLSv1.2" | "TLSv1.3"
+                                    ) {
+                                        return Err(VmError::EvalError(format!(
+                                            "Invalid TLS protocol version: {version}"
+                                        )));
+                                    }
+                                }
+                                if matches!(
+                                    name,
+                                    "ciphers" | "sessionIdContext" | "secureProtocol"
+                                ) && !matches!(value, Value::String(_))
+                                {
+                                    return Err(VmError::EvalError(format!(
+                                        "The \"options.{name}\" property must be of type string"
+                                    )));
+                                }
+                                if matches!(name, "handshakeTimeout" | "sessionTimeout")
+                                    && !matches!(value, Value::Number(_))
+                                {
+                                    return Err(VmError::EvalError(format!(
+                                        "The \"options.{name}\" property must be of type number"
+                                    )));
+                                }
+                                if matches!(name, "requestCert" | "rejectUnauthorized")
+                                    && !matches!(value, Value::Boolean(_))
+                                {
+                                    return Err(VmError::EvalError(format!(
+                                        "The \"options.{name}\" property must be of type boolean"
+                                    )));
+                                }
+                                fields.push((name.into(), value));
+                            }
+                        }
+                    }
+                }
+                Ok(quench_runtime::host_api::object(vec![(
+                    "context".into(),
+                    quench_runtime::host_api::object(fields),
+                )]))
             }
             HostCapabilityKind::Custom(
                 CapabilityName::CryptoGetDiffieHellman | CapabilityName::CryptoCreateDiffieHellman,

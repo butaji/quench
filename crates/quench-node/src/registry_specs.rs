@@ -163,19 +163,20 @@ pub const SPEC_PROCESS_HRTIME: NodeSpec = NodeSpec::new("process:hrtime", 0x0A05
 pub const SPEC_PROCESS_UMASK: NodeSpec = NodeSpec::new("process:umask", 0x0A06);
 pub const SPEC_PROCESS_ON: NodeSpec = NodeSpec::new("process:on", 0x0A07);
 pub const SPEC_PROCESS_ONCE: NodeSpec = NodeSpec::new("process:once", 0x0A08);
-pub const SPEC_PROCESS_BINDING: NodeSpec = NodeSpec::new("process:binding", 0x0A0D);
+pub const SPEC_PROCESS_BINDING: NodeSpec = NodeSpec::new("process:binding", 0x0A15);
 pub const SPEC_PROCESS_GETUID: NodeSpec = NodeSpec::new("process:getuid", 0x0A0B);
 pub const SPEC_PROCESS_GETGID: NodeSpec = NodeSpec::new("process:getgid", 0x0A0C);
 pub const SPEC_PROCESS_UPTIME: NodeSpec = NodeSpec::new("process:uptime", 0x0A0D);
 pub const SPEC_PROCESS_MEMORYUSAGE: NodeSpec = NodeSpec::new("process:memoryUsage", 0x0A0E);
 pub const SPEC_PROCESS_ACTIVE_RESOURCES: NodeSpec =
-    NodeSpec::new("process:activeResourcesInfo", 0x0A0E);
+    NodeSpec::new("process:activeResourcesInfo", 0x0A16);
 pub const SPEC_PROCESS_REPORT: NodeSpec = NodeSpec::new("process:report", 0x0A0F);
 pub const SPEC_PROCESS_RESOURCE_USAGE: NodeSpec = NodeSpec::new("process:resourceUsage", 0x0A10);
 pub const SPEC_PROCESS_CPU_USAGE: NodeSpec = NodeSpec::new("process:cpuUsage", 0x0A11);
 pub const SPEC_PROCESS_KILL: NodeSpec = NodeSpec::new("process:kill", 0x0A12);
 pub const SPEC_PROCESS_EXIT_CODE_GET: NodeSpec = NodeSpec::new("process:exitCode:get", 0x0A13);
 pub const SPEC_PROCESS_EXIT_CODE_SET: NodeSpec = NodeSpec::new("process:exitCode:set", 0x0A14);
+pub const SPEC_PROCESS_EMIT: NodeSpec = NodeSpec::new("process:emit", 0x0A17);
 pub const SPEC_CRYPTO_RANDOM_BYTES: NodeSpec = NodeSpec::new("crypto:randomBytes", 0x2100);
 pub const SPEC_CRYPTO_RANDOM_FILL_SYNC: NodeSpec = NodeSpec::new("crypto:randomFillSync", 0x2102);
 pub const SPEC_CRYPTO_UNSUPPORTED: NodeSpec = NodeSpec::new("crypto:unsupported", 0x2101);
