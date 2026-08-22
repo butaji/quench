@@ -221,6 +221,9 @@ class NodeAbortController {
     this.signal = new NodeAbortSignal();
   }
   abort(reason) {
+    // AbortController.abort() is idempotent: subsequent calls must preserve
+    // the original reason and must not dispatch another abort event.
+    if (this.signal.aborted) return;
     this.signal.aborted = true;
     this.signal.reason = reason === undefined
       ? new DOMException("This operation was aborted", "AbortError")
