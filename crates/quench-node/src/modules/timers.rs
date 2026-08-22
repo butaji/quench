@@ -277,13 +277,17 @@ pub(crate) fn monotonic_ms() -> u64 {
 /// Node delay normalization with duration warnings: NaN, negative,
 /// and >2^31-1 delays clamp to 1ms and emit a process warning.
 fn normalize_delay(state: &Rc<RefCell<HostState>>, value: Option<&Value>) -> u64 {
-    let Some(Value::Number(n)) = value else {
-        return match value {
-            None => 0,
-            Some(_) => 1,
-        };
+    let Some(value) = value else {
+        return 0;
     };
-    let n = *n;
+    // The public timers API applies JavaScript numeric coercion to delay,
+    // rather than treating every non-number as the 1ms fallback.
+    let n = match value {
+        Value::Number(n) => *n,
+        Value::String(s) => s.trim().parse::<f64>().unwrap_or(f64::NAN),
+        Value::Boolean(b) => f64::from(u8::from(*b)),
+        _ => f64::NAN,
+    };
     if n.is_finite() && (0.0..=1.0).contains(&n) {
         return if n >= 1.0 { 1 } else { 0 };
     }
