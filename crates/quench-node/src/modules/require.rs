@@ -144,6 +144,7 @@ fn require_cached_group_b(
             "fastify",
             Box::new(|| crate::modules::fastify::build(state)),
         ),
+        "hono" | "node:hono" => ("hono", Box::new(|| crate::modules::hono::build(state))),
         _ => return None,
     };
     Some(cached_module(state, key, build))
