@@ -278,8 +278,14 @@ fn child_exec_file(arguments: &[Value]) -> Result<Value, VmError> {
 
 fn child_fork(arguments: &[Value]) -> Result<Value, VmError> {
     let _ = arguments;
-    Ok(Value::object(vec![(
-        "send".into(),
-        capability_function(HostCapabilityKind::Custom(CapabilityName::ChildSend)),
-    )]))
+    Ok(Value::object(vec![
+        (
+            "once".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ChildForkOnce)),
+        ),
+        (
+            "send".into(),
+            capability_function(HostCapabilityKind::Custom(CapabilityName::ChildSend)),
+        ),
+    ]))
 }
