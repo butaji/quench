@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{RefCell, UnsafeCell},
     collections::{HashMap, HashSet},
     rc::Rc,
 };
@@ -11,30 +11,60 @@ use crate::value::Value;
 /// cell identity so a reused slot number never shadows a live binding.
 type DeletedCells = Rc<RefCell<Vec<Rc<RefCell<Value>>>>>;
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug)]
 struct SlotStore {
-    values: RefCell<Vec<Value>>,
+    // Execution is single-threaded and methods never expose this reference.
+    // UnsafeCell removes borrow bookkeeping from the hot slot load/store path.
+    values: UnsafeCell<Vec<Value>>,
     bridges: RefCell<Vec<Option<Rc<RefCell<Value>>>>>,
+}
+
+impl PartialEq for SlotStore {
+    fn eq(&self, other: &Self) -> bool {
+        self.values() == other.values() && self.bridges == other.bridges
+    }
+}
+
+impl Default for SlotStore {
+    fn default() -> Self {
+        Self {
+            values: UnsafeCell::new(Vec::new()),
+            bridges: RefCell::new(Vec::new()),
+        }
+    }
 }
 
 impl SlotStore {
     fn from_values(values: Vec<Value>) -> Rc<Self> {
         Rc::new(Self {
             bridges: RefCell::new((0..values.len()).map(|_| None).collect()),
-            values: RefCell::new(values),
+            values: UnsafeCell::new(values),
         })
     }
 
     fn from_cell(cell: Rc<RefCell<Value>>) -> Rc<Self> {
         let value = cell.borrow().clone();
         Rc::new(Self {
-            values: RefCell::new(vec![value]),
+            values: UnsafeCell::new(vec![value]),
             bridges: RefCell::new(vec![Some(cell)]),
         })
     }
 
+    fn values(&self) -> &Vec<Value> {
+        // SAFETY: SlotStore is only reachable through Rc on the single-threaded
+        // VM path; no reference returned here escapes the method call.
+        unsafe { &*self.values.get() }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    fn values_mut(&self) -> &mut Vec<Value> {
+        // SAFETY: all mutation is confined to these short, non-reentrant
+        // operations; callers never retain the returned reference.
+        unsafe { &mut *self.values.get() }
+    }
+
     fn ensure(&self, index: usize) {
-        let mut values = self.values.borrow_mut();
+        let values = self.values_mut();
         while values.len() <= index {
             values.push(Value::Undefined);
         }
@@ -45,7 +75,7 @@ impl SlotStore {
     }
 
     fn len(&self) -> usize {
-        self.values.borrow().len()
+        self.values().len()
     }
 
     fn load(&self, index: usize) -> Value {
@@ -55,7 +85,7 @@ impl SlotStore {
             .get(index)
             .and_then(Option::as_ref)
             .map_or_else(
-                || self.values.borrow()[index].clone(),
+                || self.values()[index].clone(),
                 |cell| cell.borrow().clone(),
             )
     }
@@ -65,7 +95,7 @@ impl SlotStore {
         if let Some(Some(cell)) = self.bridges.borrow().get(index) {
             *cell.borrow_mut() = value;
         } else {
-            self.values.borrow_mut()[index] = value;
+            self.values_mut()[index] = value;
         }
     }
 
@@ -74,7 +104,7 @@ impl SlotStore {
         if let Some(Some(cell)) = self.bridges.borrow().get(index) {
             return Rc::clone(cell);
         }
-        let cell = Rc::new(RefCell::new(self.values.borrow()[index].clone()));
+        let cell = Rc::new(RefCell::new(self.values()[index].clone()));
         self.bridges.borrow_mut()[index] = Some(Rc::clone(&cell));
         cell
     }
@@ -543,3 +573,26 @@ impl Environment {
 }
 
 include!("environment_alias.rs");
+
+#[cfg(test)]
+mod tests {
+    use super::SlotStore;
+    use crate::value::Value;
+
+    #[test]
+    fn slot_store_round_trips_values_without_borrow_tracking() {
+        let store = SlotStore::from_values(vec![Value::Number(1.0)]);
+        assert_eq!(store.load(0), Value::Number(1.0));
+        store.store(0, Value::Number(2.0));
+        assert_eq!(store.load(0), Value::Number(2.0));
+        assert_eq!(store.load(2), Value::Undefined);
+    }
+
+    #[test]
+    fn bridge_cells_preserve_shared_binding_identity() {
+        let store = SlotStore::from_values(vec![Value::Undefined]);
+        let cell = store.bridge(0);
+        store.store(0, Value::Number(3.0));
+        assert_eq!(*cell.borrow(), Value::Number(3.0));
+    }
+}

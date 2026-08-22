@@ -24,8 +24,19 @@ macro_rules! set_number_view {
 }
 
 fn typed_array_index(key: &str) -> Option<usize> {
-    let index = key.parse::<usize>().ok()?;
-    (index.to_string() == key).then_some(index)
+    if key.is_empty() || (key.len() > 1 && key.as_bytes()[0] == b'0') {
+        return None;
+    }
+    let mut index = 0usize;
+    for byte in key.bytes() {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        index = index
+            .checked_mul(10)?
+            .checked_add(usize::from(byte - b'0'))?;
+    }
+    Some(index)
 }
 
 pub(crate) fn is_view(value: &Value) -> bool {

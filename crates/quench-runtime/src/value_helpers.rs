@@ -45,4 +45,37 @@ impl Value {
             _ => None,
         }
     }
+
+    #[inline]
+    pub(crate) fn is_number(&self) -> bool {
+        matches!(self, Self::Number(_))
+    }
+
+    #[inline]
+    pub(crate) fn as_number(&self) -> Option<f64> {
+        match self {
+            Self::Number(number) => Some(*number),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn is_boolean(&self) -> bool {
+        matches!(self, Self::Boolean(_))
+    }
+
+    #[inline]
+    pub(crate) fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    #[inline]
+    pub(crate) fn is_undefined(&self) -> bool {
+        matches!(self, Self::Undefined)
+    }
+
+    #[inline]
+    pub(crate) fn from_integer(value: i64) -> Self {
+        Self::Number(value as f64)
+    }
 }

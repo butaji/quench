@@ -1,0 +1,8 @@
+{
+  "iterations": 100000,
+  "allocations": 100000,
+  "copies": 900000,
+  "bytes": 2500000,
+  "peak_rss": 100000000,
+  "wall_ms": 1000
+}
