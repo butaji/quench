@@ -112,6 +112,7 @@ test-fs-truncate-sync.js
 test-fs-unlink-type-check.js
 test-fs-watch-recursive-validate.js
 test-fs-write-file-buffer.js
+test-http-header-obstext.js
 test-net-autoselectfamily-ipv4first.js
 test-net-connect-after-destroy.js
 test-net-connect-immediate-destroy.js
