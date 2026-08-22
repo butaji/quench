@@ -446,6 +446,12 @@ pub fn subtle_digest(
 ) -> Result<Value, quench_runtime::execute::VmError> {
     let algorithm = match args.first() {
         Some(Value::String(s)) => s.to_ascii_lowercase(),
+        Some(Value::Object(_)) | Some(Value::ObjectAlias(_)) => {
+            match execute::get_property(args.first().unwrap(), "name") {
+                Value::String(s) => s.to_ascii_lowercase(),
+                _ => return Err(execute::type_error("algorithm name required")),
+            }
+        }
         _ => return Err(execute::type_error("algorithm required")),
     };
     let data = argbytes(
