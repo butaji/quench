@@ -189,11 +189,18 @@ pub fn require(state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, 
     {
         return result;
     }
-    if let Some(cached) = state.borrow().module_cache.get(&spec) {
+    // `node:` is an alias, not a distinct module identity. Keep the
+    // canonical builtin name in the cache so `require("path")` and
+    // `require("node:path")` share the same object.
+    let cache_key = spec.strip_prefix("node:").unwrap_or(&spec);
+    if let Some(cached) = state.borrow().module_cache.get(cache_key) {
         return Ok(cached.clone());
     }
     if let Some(ns) = resolve(state, &spec) {
-        state.borrow_mut().module_cache.insert(spec, ns.clone());
+        state
+            .borrow_mut()
+            .module_cache
+            .insert(cache_key.to_string(), ns.clone());
         return Ok(ns);
     }
     load_file_module(state, &spec)
