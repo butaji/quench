@@ -24,7 +24,10 @@ impl QuenchNodeHost {
                 Ok(Value::object(vec![
                     (
                         "name".into(),
-                        arguments.first().cloned().unwrap_or(Value::Undefined),
+                        match arguments.first().unwrap_or(&Value::Undefined) {
+                            Value::String(value) => Value::String(value.clone()),
+                            value => Value::String(format!("{value:?}")),
+                        },
                     ),
                     (
                         "run".into(),

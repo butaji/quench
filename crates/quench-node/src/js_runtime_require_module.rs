@@ -63,7 +63,15 @@ fn myers_diff_module() -> Result<Value, VmError> {
     let factory = quench_runtime::vm::with_current_context(&context, || {
         quench_runtime::vm::execute_in_place_context(program.ops(), &mut registers, &context)
     })?;
-    quench_runtime::vm::call_value(&factory, &Value::Undefined, &[])
+    // Some compatibility modules are source-level value expressions rather
+    // than CommonJS factories. Preserve those values instead of attempting
+    // to call them (which would surface as an unrelated "value is not
+    // callable" error to the requiring module).
+    if quench_runtime::is_callable(&factory) {
+        quench_runtime::vm::call_value(&factory, &Value::Undefined, &[])
+    } else {
+        Ok(factory)
+    }
 }
 
 fn require_module(arguments: &[Value]) -> Result<Value, VmError> {
