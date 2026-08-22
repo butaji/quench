@@ -221,8 +221,7 @@ pub fn stats_bigint(meta: &std::fs::Metadata) -> Value {
     for key in [
         "dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "blksize", "blocks",
     ] {
-        if let Ok(Value::Number(number)) =
-            quench_runtime::execute::get_property_result(&value, key)
+        if let Ok(Value::Number(number)) = quench_runtime::execute::get_property_result(&value, key)
         {
             value = quench_runtime::execute::set_property(
                 value,

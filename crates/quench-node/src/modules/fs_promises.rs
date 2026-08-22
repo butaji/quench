@@ -187,10 +187,11 @@ pub fn filehandle_stat(
     args: &[Value],
 ) -> Result<Value, VmError> {
     let bigint = args.first().is_some_and(|options| {
-        quench_runtime::execute::get_property_result(options, "bigint")
-            == Ok(Value::Boolean(true))
+        quench_runtime::execute::get_property_result(options, "bigint") == Ok(Value::Boolean(true))
     });
-    Ok(settle(fd(receiver).and_then(|fd| super::fs::fd_stat(fd, bigint))))
+    Ok(settle(
+        fd(receiver).and_then(|fd| super::fs::fd_stat(fd, bigint)),
+    ))
 }
 
 pub fn filehandle_close(

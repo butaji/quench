@@ -156,14 +156,36 @@ fn require_special(_state: &Rc<RefCell<HostState>>, spec: &str) -> Option<Result
     match spec {
         "module" | "node:module" => {
             let names = [
-                "assert", "buffer", "crypto", "events", "fs", "http", "https", "module",
-                "net", "os", "path", "perf_hooks", "process", "querystring", "stream",
-                "timers", "tls", "url", "util", "vm", "worker_threads", "zlib",
+                "assert",
+                "buffer",
+                "crypto",
+                "events",
+                "fs",
+                "http",
+                "https",
+                "module",
+                "net",
+                "os",
+                "path",
+                "perf_hooks",
+                "process",
+                "querystring",
+                "stream",
+                "timers",
+                "tls",
+                "url",
+                "util",
+                "vm",
+                "worker_threads",
+                "zlib",
             ];
             Some(Ok(namespace_of_owned(vec![(
                 "builtinModules".to_string(),
                 quench_runtime::host_api::array(
-                    names.into_iter().map(|name| Value::String(name.into())).collect(),
+                    names
+                        .into_iter()
+                        .map(|name| Value::String(name.into()))
+                        .collect(),
                 ),
             )])))
         }
@@ -242,11 +264,7 @@ fn resolve_path(state: &Rc<RefCell<HostState>>, spec: &str) -> Result<std::path:
     resolver
         .resolve(std::path::Path::new(&base), spec)
         .map(|resolution| resolution.into_path_buf())
-        .map_err(|_| {
-            not_found(&format!(
-                "{spec} (base={base})"
-            ))
-        })
+        .map_err(|_| not_found(&format!("{spec} (base={base})")))
 }
 fn not_found(spec: &str) -> VmError {
     VmError::EvalError(format!("Cannot find module '{spec}'"))

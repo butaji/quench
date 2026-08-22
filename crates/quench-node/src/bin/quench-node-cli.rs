@@ -23,7 +23,10 @@ fn main() -> ExitCode {
         print_usage();
         return ExitCode::from(64);
     };
-    if args.first().is_some_and(|arg| arg == "-e" || arg == "--eval") {
+    if args
+        .first()
+        .is_some_and(|arg| arg == "-e" || arg == "--eval")
+    {
         let Some(source) = args.get(1) else {
             eprintln!("quench-node: missing argument for -e");
             return ExitCode::from(9);
