@@ -164,9 +164,12 @@ TracingChannel.prototype.tracePromise = function (fn, context, thisArg) {
   var result;
   try {
     result = fn.apply(thisArg, args);
+    context.result = result;
+    if (self.end) self.end.publish(context);
   } catch (error) {
     context.error = error;
-    if (this.error) this.error.publish(context);
+    if (self.error) self.error.publish(context);
+    if (self.end) self.end.publish(context);
     throw error;
   }
   if (!result || typeof result.then !== 'function') return result;
