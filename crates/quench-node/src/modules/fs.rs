@@ -306,9 +306,43 @@ pub(crate) struct FsOptions {
     pub signal_aborted: bool,
 }
 
-/// `path` argument: string only (Buffer/URL paths unsupported).
+/// Convert Node's accepted filesystem path values to a host path.
+///
+/// Node accepts strings, Buffers, and WHATWG `file:` URLs for fs APIs.
+/// Keep this conversion centralized so sync, callback, and promise APIs
+/// agree on the contract.
 pub(crate) fn path_arg(value: Option<&Value>) -> Result<String, VmError> {
-    crate::modules::path::validate_string(value.unwrap_or(&Value::Undefined), "path")
+    let value = value.unwrap_or(&Value::Undefined);
+    match value {
+        Value::String(path) if !quench_runtime::execute::is_symbol(value) => Ok(path.clone()),
+        Value::Uint8Array(view) => {
+            let bytes = view.buffer.bytes.borrow();
+            String::from_utf8(bytes[view.byte_offset..view.byte_offset + view.length].to_vec())
+                .map_err(|_| crate::modules::buffer_enc::invalid_arg_type(
+                    "The \"path\" argument must be a string, Buffer, or URL".into(),
+                ))
+        }
+        Value::Object(_) => {
+            let href = quench_runtime::execute::get_property_result(value, "href")
+                .ok()
+                .and_then(|href| match href {
+                    Value::String(href) => Some(href),
+                    _ => None,
+                })
+                .ok_or_else(|| crate::modules::buffer_enc::invalid_arg_type(
+                    "The \"path\" argument must be a string, Buffer, or URL".into(),
+                ))?;
+            if !href.starts_with("file://") {
+                return Err(crate::modules::buffer_enc::invalid_arg_value(
+                    "The \"path\" argument must be a file URL".into(),
+                ));
+            }
+            Ok(href.strip_prefix("file://").unwrap_or(&href).to_string())
+        }
+        _ => Err(crate::modules::buffer_enc::invalid_arg_type(
+            "The \"path\" argument must be a string, Buffer, or URL".into(),
+        )),
+    }
 }
 
 /// Parse the trailing `options` argument (string encoding or object).
