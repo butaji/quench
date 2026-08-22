@@ -147,21 +147,32 @@ pub fn network_interfaces(
     for (name, addrs) in ifaces {
         let mut arr = Vec::new();
         for addr in addrs {
-            arr.push(host_api::object(vec![
-                ("address".to_string(), Value::String(addr)),
-                ("family".to_string(), Value::String("IPv4".to_string())),
-                ("internal".to_string(), Value::Boolean(false)),
-            ]));
+            let mut fields = vec![
+                ("address".to_string(), Value::String(addr.address)),
+                ("family".to_string(), Value::String(addr.family)),
+                ("internal".to_string(), Value::Boolean(addr.internal)),
+            ];
+            if let Some(scopeid) = addr.scopeid {
+                fields.push(("scopeid".to_string(), Value::Number(scopeid as f64)));
+            }
+            arr.push(host_api::object(fields));
         }
         out.push((name, host_api::array(arr)));
     }
     Ok(host_api::object(out))
 }
 
+struct InterfaceAddress {
+    address: String,
+    family: String,
+    internal: bool,
+    scopeid: Option<u32>,
+}
+
 #[cfg(unix)]
-fn read_ifaddrs() -> Vec<(String, Vec<String>)> {
+fn read_ifaddrs() -> Vec<(String, Vec<InterfaceAddress>)> {
     use std::ffi::CStr;
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, Ipv6Addr};
     extern "C" {
         fn getifaddrs(ifap: *mut *mut libc::ifaddrs) -> i32;
         fn freeifaddrs(ifa: *mut libc::ifaddrs);
@@ -170,31 +181,58 @@ fn read_ifaddrs() -> Vec<(String, Vec<String>)> {
     if unsafe { getifaddrs(&mut raw) } != 0 {
         return Vec::new();
     }
-    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    let mut out: Vec<(String, Vec<InterfaceAddress>)> = Vec::new();
     let mut p = raw;
     while !p.is_null() {
         unsafe {
             let ifa = &*p;
-            if !ifa.ifa_addr.is_null() && (*ifa.ifa_addr).sa_family as i32 == 2 {
+            if !ifa.ifa_addr.is_null() {
+                let family = (*ifa.ifa_addr).sa_family as i32;
                 let name = CStr::from_ptr(ifa.ifa_name).to_string_lossy().into_owned();
-                let sin = ifa.ifa_addr as *const libc::sockaddr_in;
-                let octets = (*sin).sin_addr.s_addr.to_ne_bytes();
-                let ip = Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]).to_string();
-                out.push((name, vec![ip]));
+                let address = match family {
+                    libc::AF_INET => {
+                        let sin = ifa.ifa_addr as *const libc::sockaddr_in;
+                        let octets = (*sin).sin_addr.s_addr.to_ne_bytes();
+                        let ip = Ipv4Addr::from(octets);
+                        Some(InterfaceAddress {
+                            address: ip.to_string(),
+                            family: "IPv4".to_string(),
+                            internal: ip.is_loopback(),
+                            scopeid: None,
+                        })
+                    }
+                    libc::AF_INET6 => {
+                        let sin6 = ifa.ifa_addr as *const libc::sockaddr_in6;
+                        let ip = Ipv6Addr::from((*sin6).sin6_addr.s6_addr);
+                        Some(InterfaceAddress {
+                            address: ip.to_string(),
+                            family: "IPv6".to_string(),
+                            internal: ip.is_loopback(),
+                            scopeid: Some((*sin6).sin6_scope_id),
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(address) = address {
+                    if let Some((_, addrs)) = out.iter_mut().find(|(n, _)| *n == name) {
+                        addrs.push(address);
+                    } else {
+                        out.push((name, vec![address]));
+                    }
+                }
             }
             p = ifa.ifa_next;
         }
     }
-    unsafe {
-        freeifaddrs(raw);
-    }
+    unsafe { freeifaddrs(raw) };
     out
 }
 
 #[cfg(not(unix))]
-fn read_ifaddrs() -> Vec<(String, Vec<String>)> {
+fn read_ifaddrs() -> Vec<(String, Vec<InterfaceAddress>)> {
     Vec::new()
 }
+
 
 pub fn build() -> Vec<(String, Value)> {
     let mut out = Vec::new();

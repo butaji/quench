@@ -47,6 +47,13 @@ pub fn console_trace(
     crate::modules::console::trace(state, args)
 }
 
+pub fn console_assert(
+    state: &Rc<RefCell<HostState>>,
+    _receiver: Option<&Value>,
+    args: &[Value],
+) -> Result<Value, VmError> {
+    crate::modules::console::assert_(state, args)
+}
 // ---- util ----
 pub fn util_format(
     _state: &Rc<RefCell<HostState>>,
