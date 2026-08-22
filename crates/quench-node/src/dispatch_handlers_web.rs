@@ -14,7 +14,22 @@ pub fn fetch(
     _receiver: Option<&Value>,
     _args: &[Value],
 ) -> Result<Value, VmError> {
-    Ok(Value::Undefined)
+    // `fetch()` is promise-based even when the transport is unavailable.  Returning
+    // `undefined` here made `await fetch(...)` appear to succeed and caused the
+    // subsequent `response.text()` access to fail with an unrelated TypeError.
+    // Reject immediately with the same shape callers receive from other host
+    // operations until a network transport is wired up.
+    use quench_runtime::value::{PromiseData, PromiseState};
+    let error = quench_runtime::host_api::object(vec![
+        ("name".to_string(), Value::String("TypeError".to_string())),
+        (
+            "message".to_string(),
+            Value::String("fetch is not available".to_string()),
+        ),
+    ]);
+    Ok(Value::Promise(Rc::new(PromiseData::new(
+        PromiseState::Rejected(error),
+    ))))
 }
 
 pub fn abort_controller_new(
