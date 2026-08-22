@@ -42,6 +42,9 @@ impl QuenchNodeHost {
                     &arguments[1..],
                 )
             }
+            HostCapabilityKind::Custom(CapabilityName::AsyncHooksEnabledHooksExist) => {
+                Ok(Value::Boolean(false))
+            }
             HostCapabilityKind::Custom(CapabilityName::DnsPromiseLookup) => Ok(fulfilled(
                 quench_runtime::host_api::array(vec![
                     Value::String("127.0.0.1".into()),
