@@ -141,8 +141,20 @@ Complete for the supported Linux/macOS runtime surface via tasks 001, 003,
 005, 007, 008, and 011. EventTarget,
 CustomEvent, MessageChannel/Port, BroadcastChannel, and streams/web are
 covered by the existing focused stages. The navigator surface is covered by
-stage 2555, and the DOMException code table and string behavior are covered by
-stage 2556. The global fetch/request/response/body surface is covered by
-stages 2044, 2230–2232, and 2234. The remaining cross-platform global
-descriptor audit is covered by stage 1164; platform-specific omissions remain
-classified by the compatibility contract.
+`tests/node-compat/stage-2555/navigator-global.js`, and the DOMException code
+table and string behavior are covered by
+`tests/node-compat/stage-2556/domexception-code-table.js`. The global
+fetch/request/response/body surface is covered by stages 2044, 2230–2232, and
+2234. The remaining cross-platform global descriptor audit is covered by
+stage 1164; platform-specific omissions remain classified by the
+compatibility contract.
+
+## Definition-of-done evidence
+
+- Focused gate: `cargo run -p quench-node-test --bin run-compat -- --quiet`
+  — **80 passed, 0 failed, 80 total** (2026-08-21).
+- Upstream Node fixture gate: `cargo run -p quench-node-test --bin run-parallel`
+  — **276 passed, 0 failed, 276 total** (2026-08-21).
+- Remaining gap: platform-specific omissions remain classified by the
+  compatibility contract; aggregate gates do not provide per-global
+  differential attribution.

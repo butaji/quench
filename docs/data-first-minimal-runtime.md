@@ -6,8 +6,8 @@ Describe Node APIs as data first: modules, exports, argument schemas, coercion,
 errors, calling conventions, native capabilities, and compatibility evidence.
 Generate repetitive Rust registration and JavaScript wrappers from that data.
 Keep handwritten JavaScript only for behavior that cannot be expressed by the
-schema or a shared adapter. Keep Rust limited to rquickjs integration and
-unsafe or OS-bound primitives.
+schema or a shared adapter. Keep Rust limited to `quench-runtime` integration
+and unsafe or OS-bound primitives.
 
 The optimization target is the minimum maintainable LOC, not the minimum raw
 source byte count. One generic adapter plus a compact declaration is preferred
@@ -22,7 +22,7 @@ API declarations → normalized IR → generated wrappers/registration/tests
                                       ↓
                               small generic adapters
                                       ↓
-                              rquickjs + OS primitives
+                              quench-runtime + OS primitives
 ```
 
 Declarative Rust macros are preferred for Rust-facing schemas and registration.

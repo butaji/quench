@@ -13,7 +13,7 @@ Model API facts as declarations and normalize them into a shared IR. Generate
 repetitive module registration, exports, argument validation, error mapping,
 sync/async and callback/promise adapters, and routine tests. Keep handwritten
 JavaScript only for irreducible compatibility behavior. Keep Rust limited to
-the generator, rquickjs integration, and unsafe or OS-bound primitives.
+the generator, quench-runtime integration, and unsafe or OS-bound primitives.
 
 Prefer one generic adapter and one compact declaration over duplicated wrappers.
 Do not minify or obscure the declarations or exceptional behavior. Generated

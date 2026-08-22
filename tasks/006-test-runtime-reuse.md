@@ -30,11 +30,10 @@ Reduce harness startup overhead without weakening the existing per-test isolatio
 
 ## Status
 
-The explicit `--reuse-dir` mode reuses one rquickjs `Runtime` from the
-`quench-node` crate while creating a
-fresh context per script. Isolation and state-reset behavior are covered by
+The explicit `--reuse-dir` mode reuses one quench-runtime instance from the
+`quench-node` crate while creating a fresh context per script. Isolation and
+state-reset behavior are covered by
 `tests/node-compat/stage-383/runtime-reuse.js` and its companion script.
-Core process metadata is covered by
 `tests/node-compat/stage-409/process-metadata.js`.
 Unknown `process.binding()` modules are covered by
 `tests/node-compat/stage-410/process-binding.js`.
@@ -69,3 +68,12 @@ Cluster primary setup now clones settings and emits asynchronous `setup`
 events, covered by `tests/node-compat/stage-505`.
 The common child-process compile-cache assertion helper is covered by
 `tests/node-compat/stage-506`.
+
+## Definition-of-done evidence
+
+- Focused gate: `cargo run -p quench-node-test --bin run-compat -- --quiet`
+  — **80 passed, 0 failed, 80 total** (2026-08-21).
+- Upstream Node fixture gate: `cargo run -p quench-node-test --bin run-parallel`
+  — **276 passed, 0 failed, 276 total** (2026-08-21).
+- Remaining gap: these aggregate gates do not provide a per-task differential
+  attribution; the compatibility matrix remains the release-level evidence.

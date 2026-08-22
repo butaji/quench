@@ -169,7 +169,7 @@ terminal detection, window sizing, and raw-mode transitions.
   confirms the callable `tty.WriteStream` constructor boundary while preserving
   `isatty` behavior. Definition-of-done evidence:
   `cargo test -p quench-node --lib tty` passes, and
-  `cargo run --quiet -p quench-node --bin quench-node -- --quickjs --stage 2579`
+  `cargo run --quiet -p quench-node --bin quench-node -- --stage 2579`
   reports `tty style probe passed` with 1 test passed.
 Completed. The `__quench_script_source` callback and the cluster
 host family are the next batch. Network and TLS are sequenced after the

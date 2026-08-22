@@ -1,11 +1,18 @@
 # AGENTS.md
 
-This repository implements Node-compatible APIs on rquickjs. Treat API shape,
+This repository implements Node-compatible APIs on quench-runtime. Treat API shape,
 validation, errors, calling conventions, exports, and evidence as data. Generate
 repetitive Rust registration and JavaScript wrappers from that data; keep only
 irreducible behavior handwritten. Optimize for the minimum maintainable LOC.
 Keep the Rust host minimal and do not add or restore a separate runtime crate.
 The architecture is defined in `docs/data-first-minimal-runtime.md`.
+
+## Runtime prohibition
+
+`quench-runtime` is the sole JavaScript runtime for `quench-node`. Do not add,
+restore, select, document, or test QuickJS, rquickjs, or any other third-party
+JavaScript runtime. Engine-specific dependencies and alternate runtime flags
+are forbidden.
 
 ## Frozen doctrine
 

@@ -1,71 +1,17 @@
-use std::{env, fs, path::PathBuf, sync::atomic::AtomicUsize};
+use std::{env, fs, path::PathBuf};
 use walkdir::WalkDir;
-mod esm;
-#[macro_use]
-mod host_context;
 mod js_runtime;
-mod quickjs_backend;
-
 mod polyfills;
-use js_runtime::{FilesystemNodeHost, JsRuntime, NodeHost, QuenchRuntime, QuickJsRuntime};
-#[rustfmt::skip]
-static BOOTSTRAP_SOURCE: std::sync::LazyLock<String> =
-    std::sync::LazyLock::new(|| polyfills::node_compat().bootstrap_source());
-static MKDTEMP_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+use js_runtime::{FilesystemNodeHost, JsRuntime, NodeHost, QuenchRuntime};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let host = FilesystemNodeHost::default();
-    if !env::args().skip(1).any(|arg| arg == "--quickjs") {
-        return run_quench_cli();
-    }
-    let mut args = cli_args().into_iter();
-    let mode = args.next();
-    if mode.as_deref() == Some("--help") || mode.as_deref() == Some("-h") {
-        print_help();
-        return Ok(());
-    }
-    if mode.as_deref() == Some("--stage") {
-        let stage = args.next().unwrap_or_else(|| "0".into());
-        return run_directory(&PathBuf::from(format!("tests/node-compat/stage-{stage}")));
-    }
-    if mode.as_deref() == Some("--test-dir") {
-        let dir = PathBuf::from(
-            args.next()
-                .unwrap_or_else(|| "tests/node/test/parallel".into()),
-        );
-        return run_directory(&dir);
-    }
-    if mode.as_deref() == Some("--reuse-dir") {
-        let dir = PathBuf::from(args.next().unwrap_or_else(|| "tests/node-compat".into()));
-        return run_directory_reuse(&dir);
-    }
-    match mode.as_deref() {
-        Some("-e") | Some("--eval") => {
-            let runtime = QuickJsRuntime::new()?;
-            runtime.execute(&args.next().unwrap_or_default(), None, &host)
-        }
-        Some(path) => {
-            let path = host.resolve_module(path, None)?;
-            let source = host.load_module(&path)?;
-            let runtime = QuickJsRuntime::new()?;
-            runtime.execute(&source, Some(path.as_path()), &host)
-        }
-        None => {
-            let runtime = QuickJsRuntime::new()?;
-            runtime.execute("", None, &host)
-        }
-    }
+    run_quench_cli()
 }
 fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
     let host = FilesystemNodeHost::default();
-    let args: Vec<String> = env::args()
-        .skip(1)
-        .filter(|arg| arg != "--quickjs")
-        .collect();
+    let args: Vec<String> = env::args().skip(1).collect();
     // Node CLI switches (--experimental-*, --network-family-autoselection,
     // --title=*) select runtime behavior in the polyfills and may precede the
-    // mode. They must not be mistaken for the script path. The argv reachable
-    // from JS is rebuilt from env::args() by the host, so dropping them here
-    // does not hide them from the polyfills.
+    // mode. They must not be mistaken for the script path.
     let mode_index = args
         .iter()
         .position(|arg| {
@@ -77,7 +23,7 @@ fn run_quench_cli() -> Result<(), Box<dyn std::error::Error>> {
     let mode = args.get(mode_index).map(String::as_str);
     match mode {
         Some("--help") | Some("-h") => {
-            println!("quench-node [--quickjs] [-e CODE|SCRIPT]");
+            println!("quench-node [-e CODE|SCRIPT]");
             Ok(())
         }
         Some("-e") | Some("--eval") => {
@@ -155,12 +101,11 @@ fn cli_args() -> Vec<String> {
     args
 }
 fn print_help() {
-    println!("quench-node [--stage N|--test-dir DIR|--reuse-dir DIR|-e CODE|SCRIPT]\n  --reuse-dir reuses one rquickjs runtime with isolated contexts per script");
+    println!("quench-node [--stage N|--test-dir DIR|--reuse-dir DIR|-e CODE|SCRIPT]");
 }
 fn run_single_file(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let source = fs::read_to_string(dir)?;
-    let runtime = QuickJsRuntime::new()?;
-    match runtime.execute(&source, Some(dir), &FilesystemNodeHost::default()) {
+    match QuenchRuntime.execute(&source, Some(dir), &FilesystemNodeHost::default()) {
         Ok(()) => {
             println!("ok {}", dir.display());
             Ok(())
@@ -192,33 +137,20 @@ fn run_directory_reuse(dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> 
 }
 fn run_directory_with_runtime(
     dir: &PathBuf,
-    reuse: bool,
+    _reuse: bool,
     empty_error: &str,
     failure_error: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let shared_runtime = reuse.then(QuickJsRuntime::new).transpose()?;
     let mut failed = 0;
     let mut total = 0;
     for entry in WalkDir::new(dir).into_iter().filter_map(Result::ok) {
         if entry.file_type().is_file()
-            && entry
-                .path()
-                .extension()
-                .is_some_and(|e| e == "js" || e == "mjs")
+            && entry.path().extension().is_some_and(|e| e == "js" || e == "mjs")
         {
             total += 1;
             let source = fs::read_to_string(entry.path())?;
-            let result = match shared_runtime.as_ref() {
-                Some(runtime) => {
-                    runtime.execute(&source, Some(entry.path()), &FilesystemNodeHost::default())
-                }
-                None => QuickJsRuntime::new()?.execute(
-                    &source,
-                    Some(entry.path()),
-                    &FilesystemNodeHost::default(),
-                ),
-            };
-            match result {
+            match QuenchRuntime.execute(&source, Some(entry.path()), &FilesystemNodeHost::default())
+            {
                 Ok(()) => println!("ok {}", entry.path().display()),
                 Err(error) => {
                     failed += 1;
@@ -238,30 +170,17 @@ fn run_directory_with_runtime(
 }
 #[cfg(test)]
 mod tests {
-    use super::{
-        js_runtime::{FilesystemNodeHost, JsRuntime},
-        QuickJsRuntime,
-    };
+    use super::{js_runtime::{FilesystemNodeHost, JsRuntime}, QuenchRuntime};
     #[test]
     fn evaluates_javascript_source() {
-        QuickJsRuntime::new()
-            .unwrap()
-            .execute(
-                "if (1 + 1 !== 2) throw new Error('bad arithmetic');",
-                None,
-                &FilesystemNodeHost::default(),
-            )
+        QuenchRuntime
+            .execute("if (1 + 1 !== 2) throw new Error('bad arithmetic');", None, &FilesystemNodeHost::default())
             .unwrap();
     }
     #[test]
     fn loads_node_compatibility_globals() {
-        QuickJsRuntime::new()
-            .unwrap()
-            .execute(
-                "if (typeof Buffer !== 'function') throw new Error('Buffer missing');",
-                None,
-                &FilesystemNodeHost::default(),
-            )
+        QuenchRuntime
+            .execute("if (typeof Buffer !== 'function') throw new Error('Buffer missing');", None, &FilesystemNodeHost::default())
             .unwrap();
     }
 }
