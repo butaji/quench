@@ -31,6 +31,15 @@ skip-vacuous):
 - `tracingChannel(nameOrChannels)` validates the argument type, and each
   present channel property must be a `Channel` instance.
   → `test-diagnostics-channel-tracing-channel-args-types.js`
+- `BoundedChannel` is a named export; `run(context, fn, thisArg, ...args)`
+  publishes start/end around the call and rethrows after publishing end;
+  `withScope(context)` enters/exits a start/end window; `unsubscribe`
+  returns a boolean.
+  → `test-diagnostics-channel-bounded-channel.js`
 
-Measured: `cargo run -p quench-node-test --bin run-parallel` → 261 passed,
-0 failed, 261 total (up from 257 in this slice).
+Remaining diagnostics_channel fixtures (`bounded-channel-run*`,
+`bounded-channel-scope*`) require async_hooks `AsyncLocalStorage`
+(`bindStore`/`getStore`), which is currently a stub; tracked separately.
+
+Measured: `cargo run -p quench-node-test --bin run-parallel` → 272 passed,
+0 failed, 272 total (up from 178 at goal start; this slice +5).
