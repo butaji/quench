@@ -197,6 +197,7 @@ pub(super) const CAP_HTTP_REQ_WRITE: u16 = 0x0F09;
 pub(super) const CAP_HTTP_REQ_END: u16 = 0x0F0A;
 pub(super) const CAP_HTTP_RESDATA: u16 = 0x0F0B;
 pub(super) const CAP_HTTP_RESEND: u16 = 0x0F0C;
+pub(super) const CAP_HTTP_RESUME: u16 = 0x0F0D;
 pub(super) const CAP_NET_CONNECT: u16 = 0x1000;
 pub(super) const CAP_NET_SERVER: u16 = 0x1001;
 pub(super) const CAP_NET_ISIP: u16 = 0x1002;

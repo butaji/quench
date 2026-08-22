@@ -22,21 +22,33 @@
     return { enable: function () { enabled = true; return this; }, disable: function () { enabled = false; return this; }, _enabled: function () { return enabled; } };
   }
   function AsyncLocalStorage() {
-    this._stack = [];
+    this._store = undefined;
     this._defaultValue = undefined;
+    this._disabled = false;
   }
   AsyncLocalStorage.prototype.run = function (store, fn) {
+    var args = Array.prototype.slice.call(arguments, 2);
     if (typeof fn !== 'function') {
       throw new TypeError('The "callback" argument must be of type function');
     }
-    this._stack.push(store);
-    try { return fn(); }
-    finally { this._stack.pop(); }
+    var previous = this._store;
+    this._store = store;
+    try { return fn.apply(undefined, args); }
+    finally { this._store = previous; }
+  };
+  AsyncLocalStorage.prototype.enterWith = function (store) {
+    if (!this._disabled) this._store = store;
+  };
+  AsyncLocalStorage.prototype.disable = function () {
+    this._disabled = true;
+    this._store = undefined;
   };
   AsyncLocalStorage.prototype.getStore = function () {
-    return this._stack.length ? this._stack[this._stack.length - 1] : this._defaultValue;
+    return this._disabled ? undefined :
+      (this._store === undefined ? this._defaultValue : this._store);
   };
   return { AsyncResource: AsyncResource, createHook: createHook,
     executionAsyncId: function () { return current; }, triggerAsyncId: function () { return current; },
+    enabledHooksExist: function () { return false; },
     AsyncLocalStorage: AsyncLocalStorage };
 });

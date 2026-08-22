@@ -32,31 +32,42 @@ fn main() -> ExitCode {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("run-compat: walk a Node compat test directory through the host");
         println!();
-        println!("usage: run-compat [--list] [--filter NAME] [--quiet] [DIR]");
+        println!("usage: run-compat [--list] [--filter NAME] [--quiet] [--test-dir DIR]");
         println!("  --list           enumerate the suite instead of running it");
         println!("  --filter NAME    only run scripts whose name contains NAME");
         println!("  --quiet          skip per-test output, only the summary");
-        println!(
-            "  DIR              compat suite root (default: crates/quench-node-test/node-tests)"
-        );
+        println!("  --test-dir DIR  compat suite root (default: crates/quench-node-test/node-tests)");
+        println!("  each fixture is bounded by a 30 second timeout");
         return ExitCode::SUCCESS;
     }
     let mut args = args.into_iter().skip(1);
     let mut quiet = false;
+    let mut list = false;
+    let mut dir = PathBuf::from("crates/quench-node-test/node-tests");
     while let Some(a) = args.next() {
-        if a == "--list" {
-        } else if a == "--filter" {
-            args.next();
-        } else if a == "--quiet" {
-            quiet = true;
-        } else {
-            return run_with_dir(PathBuf::from(a), quiet);
+        match a.as_str() {
+            "--list" => list = true,
+            "--filter" => {
+                args.next();
+            }
+            "--quiet" => quiet = true,
+            "--test-dir" => {
+                let Some(path) = args.next() else {
+                    eprintln!("error: --test-dir requires a directory");
+                    return ExitCode::from(2);
+                };
+                dir = PathBuf::from(path);
+            }
+            _ if a.starts_with('-') => {
+                eprintln!("error: unknown option {a}");
+                return ExitCode::from(2);
+            }
+            _ => dir = PathBuf::from(a),
         }
     }
-    run_with_dir(PathBuf::from("crates/quench-node-test/node-tests"), quiet)
+    run_with_dir(dir, quiet, list)
 }
-
-fn run_with_dir(dir: std::path::PathBuf, quiet: bool) -> ExitCode {
+fn run_with_dir(dir: std::path::PathBuf, quiet: bool, list: bool) -> ExitCode {
     if !dir.is_dir() {
         eprintln!("error: {} is not a directory", dir.display());
         return ExitCode::from(2);
@@ -67,7 +78,7 @@ fn run_with_dir(dir: std::path::PathBuf, quiet: bool) -> ExitCode {
         return ExitCode::from(2);
     }
     let fixtures = filter_fixtures(fixtures);
-    if std::env::args().any(|a| a == "--list") {
+    if list {
         for f in &fixtures {
             println!("{}", f.file_name().unwrap().to_string_lossy());
         }
@@ -125,13 +136,23 @@ fn run_suite(
         let result = Command::new(&exe)
             .arg("--fixture-one")
             .arg(fixture)
-            .stdout(if quiet {
-                Stdio::null()
-            } else {
-                Stdio::inherit()
-            })
+            .stdout(if quiet { Stdio::null() } else { Stdio::inherit() })
             .stderr(Stdio::piped())
-            .output();
+            .spawn()
+            .and_then(|mut child| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                loop {
+                    if child.try_wait()?.is_some() {
+                        break child.wait_with_output();
+                    }
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Ok(None);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            });
         let (passed, skipped, reason) = match result {
             Ok(output) if output.status.success() => (true, false, None),
             Ok(output) if output.status.code() == Some(2) => (false, true, None),
