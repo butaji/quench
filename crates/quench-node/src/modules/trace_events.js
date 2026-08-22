@@ -34,19 +34,30 @@
         throw invalidCategory;
       }
     }
-    this.categories = list.join(',');
-    this.enabled = false;
     this._categories = list;
+    this._enabled = false;
   }
+  Object.defineProperties(Tracing.prototype, {
+    categories: {
+      enumerable: false,
+      configurable: true,
+      get: function () { return this._categories.join(','); }
+    },
+    enabled: {
+      enumerable: false,
+      configurable: true,
+      get: function () { return this._enabled; }
+    }
+  });
   Tracing.prototype.enable = function () {
-    if (!this.enabled) {
-      this.enabled = true;
+    if (!this._enabled) {
+      this._enabled = true;
       for (var i = 0; i < this._categories.length; i++) add(this._categories[i]);
     }
   };
   Tracing.prototype.disable = function () {
-    if (this.enabled) {
-      this.enabled = false;
+    if (this._enabled) {
+      this._enabled = false;
       for (var i = 0; i < this._categories.length; i++) remove(this._categories[i]);
     }
   };
