@@ -25,5 +25,23 @@ if (typeof storage.run !== 'function' || typeof storage.getStore !== 'function')
   throw new Error('AsyncLocalStorage methods');
 }
 if (storage.getStore() !== undefined) throw new Error('initial store');
+let nested;
+storage.run({ label: 'fixture' }, function () {
+  nested = storage.run({ label: 'nested' }, function () {
+    return storage.getStore().label;
+  });
+  if (storage.getStore().label !== 'fixture') throw new Error('run store');
+});
+if (nested !== 'nested' || storage.getStore() !== undefined) {
+  throw new Error('AsyncLocalStorage propagation');
+}
+const internal = require('internal/async_hooks');
+if (typeof internal.enabledHooksExist !== 'function' || internal.enabledHooksExist() !== false) {
+  throw new Error('internal/async_hooks alias');
+}
+storage.enterWith({ label: 'entered' });
+if (storage.getStore().label !== 'entered') throw new Error('AsyncLocalStorage enterWith');
+storage.disable();
+if (storage.getStore() !== undefined) throw new Error('AsyncLocalStorage disable');
 resource.emitDestroy();
 console.log('async_hooks: ok');

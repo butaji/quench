@@ -1,17 +1,15 @@
 //! Polyfill: `https`
 
 pub const JS: &str = quench_js_check::checked_js!(r#"const __quenchOriginalRequireWithHttps = globalThis.require;
-const __quenchHttpsUnsupported = (operation) => {
-  const error = new Error(`${operation} is not supported by quench-node`);
-  error.code = "ERR_TLS_NOT_SUPPORTED";
-  throw error;
-};
-const __quenchHttps = {
-  request: () => __quenchHttpsUnsupported("https.request"),
-  get: () => __quenchHttpsUnsupported("https.get"),
-  createServer: () => __quenchHttpsUnsupported("https.createServer"),
-};
 const __quenchHttp = __quenchOriginalRequireWithHttps("http");
+// QuenchRuntime's transport is loopback HTTP/1.1. Reuse its complete
+// request/server contract for HTTPS spellings until a TLS backend exists;
+// callers still receive the normal Agent defaults for port/protocol.
+const __quenchHttps = {
+  request: __quenchHttp.request,
+  get: __quenchHttp.get,
+  createServer: __quenchHttp.createServer,
+};
 class __quenchHttpsAgent extends __quenchHttp.Agent {
   constructor(options = {}) {
     super(options);
