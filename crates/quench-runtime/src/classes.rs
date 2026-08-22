@@ -96,7 +96,8 @@ fn is_constructor(value: &crate::value::Value) -> bool {
         crate::value::Value::BoundFunction(bound) => is_constructor(&bound.target),
         crate::value::Value::HostCapability(_) => true,
         crate::value::Value::Builtin(builtin) => {
-            crate::builtin_meta::constructor_name(*builtin).is_some()
+            matches!(builtin, crate::ops::Builtin::HostCapability(_))
+                || crate::builtin_meta::constructor_name(*builtin).is_some()
         }
         crate::value::Value::Proxy(proxy) => {
             crate::proxy::get_handler_trap(proxy, "construct").is_some()
