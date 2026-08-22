@@ -16,6 +16,12 @@ use quench_runtime::vm::{Host, OutputSink, VmContext};
 
 use crate::registry::{CapId, NodeSpec};
 
+pub fn scheduler_capability(kind: u16) -> Value {
+    quench_runtime::host_api::capability_function(HostCapabilityRef {
+        realm: RealmId::ROOT,
+        kind: HostCapabilityKind::Custom(kind),
+    })
+}
 pub struct NodeHost {
     state: Rc<RefCell<HostState>>,
 }
@@ -182,13 +188,56 @@ fn dispatch(
     receiver: Option<&Value>,
     args: &[Value],
 ) -> Result<Value, VmError> {
-    if let Some(handler) = crate::dispatch::lookup(cap) {
-        return handler(state, receiver, args);
+    if matches!(cap, 2348 | 2349)
+        && !receiver.is_some_and(|value| {
+            quench_runtime::execute::get_property_result(value, "__quench_scheduler_identity")
+                .ok()
+                .is_some_and(|marker| marker == Value::Boolean(true))
+        })
+    {
+        return Err(VmError::Thrown(scheduler_error(
+            "ERR_INVALID_THIS",
+            "Value of \"this\" must be of type Scheduler",
+        )));
     }
-    Err(VmError::NotCallable)
+    match cap {
+        2348 => dispatch(2346, state, None, &[
+            args.first().cloned().unwrap_or(Value::Number(0.0)),
+            Value::Undefined,
+            args.get(1).cloned().unwrap_or(Value::Undefined),
+        ]),
+        2349 => dispatch(2347, state, None, &[
+            Value::Undefined,
+            args.first().cloned().unwrap_or(Value::Undefined),
+        ]),
+        2350 => Err(VmError::Thrown(scheduler_error(
+            "ERR_ILLEGAL_CONSTRUCTOR",
+            "Illegal constructor",
+        ))),
+        _ => {
+            if let Some(handler) = crate::dispatch::lookup(cap) {
+                return handler(state, receiver, args);
+            }
+            Err(VmError::NotCallable)
+        }
+    }
+}
+
+fn scheduler_error(code: &str, message: &str) -> Value {
+    quench_runtime::host_api::object(vec![
+        ("name".into(), Value::String("TypeError".into())),
+        ("message".into(), Value::String(message.into())),
+        ("code".into(), Value::String(code.into())),
+    ])
 }
 
 fn construct(cap: CapId, state: &Rc<RefCell<HostState>>, args: &[Value]) -> Result<Value, VmError> {
+    if cap == 2350 {
+        return Err(VmError::Thrown(scheduler_error(
+            "ERR_ILLEGAL_CONSTRUCTOR",
+            "Illegal constructor",
+        )));
+    }
     if let Some(handler) = crate::dispatch::lookup_construct(cap) {
         return handler(state, args);
     }

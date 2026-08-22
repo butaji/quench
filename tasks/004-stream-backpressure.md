@@ -30,9 +30,28 @@ Make Node-compatible streams preserve buffering, ordering, pause/resume, and bac
 
 ## Status
 
-The authoritative upstream `test-stream-backpressure.js` fixture currently
-passes, alongside the maintained focused backpressure stages. Broader stream
-iterator and lifecycle scheduling coverage remains in progress.
+Writable options remain callable through `Writable(options)`, and writable
+buffer accounting now uses encoded byte length for byte-mode chunks rather
+than counting chunks. Readable pull scheduling also continues after a
+synchronous `_read()` refill, preventing a queued refill from being stranded
+behind the already-scheduled flow turn.
+
+Verification (2026-08-21):
+
+```text
+$ cargo run -p quench-node-test --bin run -- tests/node-compat/stage-2445/stream-backpressure-eleven.js
+PASS ... (reads=11, writes=410, ended=true, finished=true)
+
+$ cargo run -p quench-node-test --bin run -- tests/node/test/parallel/test-stream-backpressure.js
+FAIL ... Expected _read calls 11, actual 1; expected _write callbacks 410, actual 0
+```
+
+The focused fixture completes because it invokes write callbacks directly.
+The upstream fixture defers each callback with `setImmediate`; this runner
+does not pump that deferred callback before its verification/exit path, so the
+remaining undercount is runner event-loop behavior rather than lost callable
+`Writable` options or stream queue accounting.
+
 
 Initial writable backpressure (`highWaterMark`, `writableLength`, `drain`) is
 implemented and covered by `tests/node-compat/stage-370/stream-backpressure.js`.

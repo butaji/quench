@@ -433,8 +433,30 @@ pub fn access_sync(
 ) -> Result<Value, VmError> {
     let path = path_arg(args.first())?;
     let mode = match args.get(1) {
-        Some(Value::Number(m)) => *m as u32,
-        _ => 0,
+        None => 0,
+        Some(Value::Number(mode)) if mode.is_finite() && mode.fract() == 0.0 => {
+            if !(0.0..=7.0).contains(mode) {
+                return Err(crate::modules::buffer_enc::out_of_range(
+                    "mode",
+                    ">= 0 && <= 7",
+                    &mode.to_string(),
+                ));
+            }
+            *mode as u32
+        }
+        Some(Value::Number(mode)) => {
+            return Err(crate::modules::buffer_enc::out_of_range(
+                "mode",
+                "an integer",
+                &mode.to_string(),
+            ));
+        }
+        Some(value) => {
+            return Err(crate::modules::buffer_enc::invalid_arg_type(format!(
+                "The \"mode\" argument must be of type number.{}",
+                crate::modules::util::invalid_arg_received(value)
+            )));
+        }
     };
     check_access(&path, mode).map_err(|e| fs_error::fs_error("access", Some(&path), &e))?;
     Ok(Value::Undefined)

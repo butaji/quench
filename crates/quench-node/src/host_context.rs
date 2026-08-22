@@ -128,6 +128,17 @@ pub(crate) fn quench_tcp_readable(id: u32) -> rquickjs::Result<i32> {
         Err(_) => Err(rquickjs::Error::new_from_js("tcp", "peek failed")),
     }
 }
+pub(crate) fn quench_tcp_set_nodelay(id: u32, enabled: bool) -> rquickjs::Result<()> {
+    let mut resources = quench_tcp_resources_lock();
+    let stream = match resources.get_mut(&id) {
+        Some(QuenchTcpResource::Stream(stream)) => stream,
+        _ => return Err(rquickjs::Error::new_from_js("tcp", "not a stream")),
+    };
+    stream
+        .set_nodelay(enabled)
+        .map_err(|_| rquickjs::Error::new_from_js("tcp", "set nodelay failed"))
+}
+
 pub(crate) fn quench_tcp_write(id: u32, data: Vec<u8>) -> rquickjs::Result<u32> {
     let mut resources = quench_tcp_resources_lock();
     let stream = match resources.get_mut(&id) {

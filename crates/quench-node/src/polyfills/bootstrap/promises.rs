@@ -80,12 +80,17 @@ globalThis.__nodeTimersPromises = {
     options = __nodeTimerPromiseOptions(options);
     return new Promise((resolve, reject) => {
       const signal = options.signal;
-      const abort = () => reject(__nodeTimerPromiseAbortError(signal));
+      let timer;
+      const abort = () => {
+        globalThis.clearImmediate(timer);
+        reject(__nodeTimerPromiseAbortError(signal));
+      };
       if (signal?.aborted) { reject(__nodeTimerPromiseAbortError(signal)); return; }
-      queueMicrotask(() => {
+      timer = globalThis.setImmediate(() => {
         signal?.removeEventListener?.("abort", abort);
         if (!signal?.aborted) resolve(value);
       });
+      if (options.ref === false) timer.unref?.();
       signal?.addEventListener?.("abort", abort, { once: true });
     });
   },

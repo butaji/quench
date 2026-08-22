@@ -69,9 +69,16 @@ const __nodeCryptoApi = {
   getCipherInfo: __nodeCryptoCipherInfo,
   getCurves: () => ["secp384r1"],
   timingSafeEqual: (left, right) => {
-    if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array)) {
-      throw Object.assign(new TypeError('The "buf1" and "buf2" arguments must be instances of Buffer or Uint8Array'), { code: "ERR_INVALID_ARG_TYPE" });
-    }
+    const normalize = (value) => {
+      if (value instanceof Uint8Array) return value;
+      if (value instanceof DataView) {
+        return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+      }
+      if (value instanceof ArrayBuffer) return new Uint8Array(value);
+      throw Object.assign(new TypeError('The "buf1" and "buf2" arguments must be instances of Buffer, TypedArray, DataView, or ArrayBuffer'), { code: "ERR_INVALID_ARG_TYPE" });
+    };
+    left = normalize(left);
+    right = normalize(right);
     if (left.length !== right.length) {
       throw Object.assign(new RangeError("Input buffers must have the same byte length"), { code: "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH" });
     }

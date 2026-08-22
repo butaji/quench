@@ -33,11 +33,8 @@ Measured after the latest compatibility fixes:
 
 - `cargo check -p quench-node`: passes, with one existing unused-variable
   warning.
-- `cargo test --workspace`: passes (80 tests across 22 suites).
-- `cargo run -p quench-node-test --bin run-compat -- --quiet`: **79 passed,
-  0 failed, 79 total**.
-- `cargo run -p quench-node-test --bin run-parallel`: **178 passed, 0 failed,
-  178 total**.
+- `cargo run -p quench-node-test --bin run-parallel`: **276 passed,
+  0 failed, 276 total**.
 - Focused URL static/legacy fixtures, diagnostics_channel, inspector, repl/wasi,
   DNS, path, events, HTTP, net, readline, and WASI option fixtures pass
   individually.

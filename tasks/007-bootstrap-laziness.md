@@ -95,3 +95,16 @@ Additional ordered-tail splits now cover the network socket prototype methods,
 the `net/promises` module, filesystem bigint-stat normalization, async stat
 adapters, and the final core require-dispatch hook. Network, filesystem, HTTP,
 and application regression stages remain green after these extractions.
+
+The post-bootstrap fragment API now returns a lazy iterator instead of
+allocating a temporary `Vec` for every context. The Node-visible API boundary
+is covered by `tests/node-compat/stage-2591/bootstrap-lazy-api.js`.
+
+Measured focused result:
+`cargo run -p quench-node --bin quench-node -- tests/node-compat/stage-2591/bootstrap-lazy-api.js`
+passed (`bootstrap lazy API surface: ok`; compiler emitted existing
+unreachable-pattern and unused-variable warnings).
+
+Affected upstream result: not run in this slice; the focused authoritative
+stage passed, while the broader upstream compatibility suite remains for the
+task owner.

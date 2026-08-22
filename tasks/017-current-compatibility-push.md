@@ -1030,3 +1030,9 @@ Current pushed increments (2026-08-09):
 - The full differential remains open: the latest bounded run processed 4,682
   fixtures with 1,211 matches, 3,471 differences, 2,095 quench failures, and
   134 timeouts. HTTP, net, stream, and fs remain the largest actionable queues.
+- Stage 2592 fixes the unowned `os.devNull` compatibility gap in the shared
+  `modules/os` static export, with a focused cross-platform regression in
+  `tests/node-compat/stage-2593/os-dev-null-fallback.js`. The authoritative
+  focused run
+  `cargo run -p quench-node-test --bin run-compat -- --quiet
+  tests/node-compat/stage-2592 tests/node-compat/stage-2593` passes 1/1.

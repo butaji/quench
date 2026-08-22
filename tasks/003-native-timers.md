@@ -92,3 +92,25 @@ abort behavior; stages 405 and 407 pass after this change.
 
 Positive-delay interval waits now also observe abort signals while the timer is
 pending, preventing an extra yielded value after cancellation.
+
+The early CommonJS `timers/promises` export now includes the `scheduler`
+object and its `wait()`/`yield()` methods. Native timer callbacks are drained
+from the Rust registry immediately before `common.mustCall` verification in
+the host context, so callback accounting includes `require('timers')`
+callbacks alongside bootstrap timers. Definition-of-done focused evidence:
+`cargo run -p quench-node-test --bin run -- tests/node-compat/stage-2227/timers-promises-scheduler.js`
+and `tests/node-compat/stage-2228/timers-promises-scheduler-validation.js`
+The authoritative fixture was rerun after `host_context_macro` gained
+`__quench_run_loop__()` before verification. It still fails with callback
+accounting (`noop` and anonymous `common.mustCall` wrappers each expected one
+call, observed zero), while focused stages 2227 and 2228 pass. Draining
+pending promise jobs after the native pump does not resolve the discrepancy;
+the remaining fix must align native timer pumping with the host scheduler's
+
+The authoritative `test-timers-promises-scheduler.js` remains blocked on
+callback accounting: `noop` and the anonymous `common.mustCall` wrapper each
+report zero calls, even after draining native timers and pending promise jobs.
+Stages 2227 and 2228 continue to pass. Attempts to move native pumping before
+exit and to separate native pumping from exit-handler dispatch did not change
+the authoritative failure, so no general fix is claimed.
+exit ordering before verification.

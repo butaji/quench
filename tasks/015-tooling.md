@@ -412,3 +412,19 @@ The compatibility report freshness checker now honors the explicit experimental
 stage policy for stage 394. A complete 4,682-fixture differential report
 therefore validates as current with the intentional experimental focused
 exception, and `tools/compat-queue.sh` emits the owned queue again.
+
+The compatibility queue tool is now restored as `tools/compat-queue.sh`
+(`compat-queue.cjs`). It accepts a differential report, groups non-matching
+fixtures by stable signature, ranks groups deterministically, classifies owned,
+unclassified, and platform-limited results from `tools/compat-ownership.json`,
+and optionally reports resolved/regressed fixtures against a prior report. A
+direct deterministic smoke check used:
+
+```sh
+tools/compat-queue.sh target/compat/queue-test.json 2
+```
+
+and returned `Compatibility queue: 5 fixtures, 3 signatures`,
+`Actionable: owned=2 unclassified=1 platform-limited=1`, followed by the
+two-fixture `ERR_HTTP` owned group and the one-fixture `ENOTSUP`
+platform-limited group in that order.

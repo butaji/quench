@@ -136,3 +136,16 @@ inventory document; historical Buffer, formatting, open-flag,
 crypto, TLS, and contradictory legacy URL fixture conflicts were resolved
 against the installed Node CLI behavior. These are
 tracked by the differential reports and tasks 011–014.
+
+### Inventory refresh evidence (2026-08-22)
+
+Implemented the previously referenced but missing `tools/compat-inventory.sh`
+and its Node implementation `tools/compat-inventory.cjs`. Running
+`tools/compat-inventory.sh target/compat/inventory.json` completed successfully
+in 0.14s and generated the machine-readable artifact
+`target/compat/inventory.json`. The measured local result is 66 Node CLI
+`builtinModules`, 25 statically detected registrations, 140 host Node globals,
+225 unique polyfill global assignments (344 assignment occurrences), and 4,234
+`tests/node/test/parallel` JavaScript fixtures across 227 filename prefixes.
+The inventory records complete arrays and detector metadata; these shape/count
+measurements do not claim runtime compatibility or fixture pass coverage.
